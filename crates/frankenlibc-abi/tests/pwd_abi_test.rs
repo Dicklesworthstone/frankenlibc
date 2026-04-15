@@ -775,7 +775,10 @@ fn strict_mode_pwent_iteration_works() {
                 break;
             }
             count += 1;
-            assert!(count <= 10, "strict mode: pwent iteration should not infinite loop");
+            assert!(
+                count <= 10,
+                "strict mode: pwent iteration should not infinite loop"
+            );
         }
         unsafe { endpwent() };
         assert_eq!(count, 3, "strict mode: fixture has 3 entries");
@@ -793,7 +796,10 @@ fn hardened_mode_pwent_iteration_works() {
                 break;
             }
             count += 1;
-            assert!(count <= 10, "hardened mode: pwent iteration should not infinite loop");
+            assert!(
+                count <= 10,
+                "hardened mode: pwent iteration should not infinite loop"
+            );
         }
         unsafe { endpwent() };
         assert_eq!(count, 3, "hardened mode: fixture has 3 entries");

@@ -661,8 +661,7 @@ fn getgrnam_r_large_buffer() {
 static MODE_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Test fixture for group entries (group_name:password:gid:members).
-const GROUP_FIXTURE: &[u8] =
-    b"root:x:0:root\nusers:x:100:alice,bob\nadmins:x:999:alice\n";
+const GROUP_FIXTURE: &[u8] = b"root:x:0:root\nusers:x:100:alice,bob\nadmins:x:999:alice\n";
 
 fn with_mode(mode: &str, f: impl FnOnce()) {
     let _guard = MODE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -775,7 +774,10 @@ fn strict_mode_grent_iteration_works() {
                 break;
             }
             count += 1;
-            assert!(count <= 10, "strict mode: grent iteration should not infinite loop");
+            assert!(
+                count <= 10,
+                "strict mode: grent iteration should not infinite loop"
+            );
         }
         unsafe { endgrent() };
         assert_eq!(count, 3, "strict mode: fixture has 3 entries");
@@ -793,7 +795,10 @@ fn hardened_mode_grent_iteration_works() {
                 break;
             }
             count += 1;
-            assert!(count <= 10, "hardened mode: grent iteration should not infinite loop");
+            assert!(
+                count <= 10,
+                "hardened mode: grent iteration should not infinite loop"
+            );
         }
         unsafe { endgrent() };
         assert_eq!(count, 3, "hardened mode: fixture has 3 entries");

@@ -542,7 +542,8 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         b""
     } else if spec.flags.alt_form && spec.conversion == b'o' {
         // Octal: only add '0' if first digit wouldn't already be 0
-        let first_digit_is_zero = zero_prefix_count > 0 || (digit_count > 0 && digit_slice[0] == b'0');
+        let first_digit_is_zero =
+            zero_prefix_count > 0 || (digit_count > 0 && digit_slice[0] == b'0');
         if first_digit_is_zero { b"" } else { b"0" }
     } else {
         alt_prefix(spec)

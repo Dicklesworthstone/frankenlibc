@@ -553,7 +553,11 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
             {
                 i += 5;
             }
-            let val: f64 = if negative { f64::NEG_INFINITY } else { f64::INFINITY };
+            let val: f64 = if negative {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            };
             return Some((Some(ScanValue::Float(val)), i));
         }
         if remaining.len() >= 3 && remaining[..3].eq_ignore_ascii_case(b"nan") {
@@ -569,13 +573,12 @@ fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanV
         && i + 1 < input.len()
         && input[i] == b'0'
         && (input[i + 1] == b'x' || input[i + 1] == b'X')
+        && let Some(result) = scan_hex_float(input, pos, i, chars_read, negative, max_chars)
     {
-        if let Some(result) = scan_hex_float(input, pos, i, chars_read, negative, max_chars) {
-            return Some(result);
-        }
-        // Hex parsing failed - fall through to decimal parsing.
-        // This handles cases like "0xyz" where we should parse "0" as decimal.
+        return Some(result);
     }
+    // If hex prefix was seen but parsing failed, we fall through to decimal
+    // parsing. This handles cases like "0xyz" where we should parse "0" as decimal.
 
     // Decimal float: digits, decimal point, exponent.
     let mut buf = Vec::with_capacity(64);
@@ -719,7 +722,7 @@ fn scan_hex_float(
             // Per C11, if 'p' is present, exponent digits are required.
             // Restore position and treat as if we never saw the 'p'.
             i = saved_i;
-            chars_read = saved_chars_read;
+            let _ = saved_chars_read; // chars_read logically restored but unused after this point
         } else if exp_negative {
             bin_exp = -bin_exp;
         }
@@ -976,7 +979,10 @@ mod tests {
         let dirs = parse_scanf_format(b"%d");
         let result = scan_input(b"2147483648", &dirs);
         assert_eq!(result.count, 1);
-        assert!(matches!(result.values[0], ScanValue::SignedInt(-2147483648)));
+        assert!(matches!(
+            result.values[0],
+            ScanValue::SignedInt(-2147483648)
+        ));
     }
 
     #[test]

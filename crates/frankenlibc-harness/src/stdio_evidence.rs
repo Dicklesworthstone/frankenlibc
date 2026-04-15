@@ -83,20 +83,11 @@ pub struct ProcessInfo {
 #[serde(untagged)]
 pub enum StdioParams {
     /// fopen/freopen parameters.
-    Open {
-        path: Option<String>,
-        mode: String,
-    },
+    Open { path: Option<String>, mode: String },
     /// fread/fwrite parameters.
-    ReadWrite {
-        size: usize,
-        nmemb: usize,
-    },
+    ReadWrite { size: usize, nmemb: usize },
     /// fseek parameters.
-    Seek {
-        offset: i64,
-        whence: String,
-    },
+    Seek { offset: i64, whence: String },
     /// fprintf/snprintf parameters.
     Format {
         format: String,
@@ -104,9 +95,7 @@ pub enum StdioParams {
         size: Option<usize>,
     },
     /// ungetc parameters.
-    Ungetc {
-        c: i32,
-    },
+    Ungetc { c: i32 },
     /// Generic/no parameters.
     None {},
 }
@@ -238,7 +227,10 @@ pub enum ParseError {
     /// IO error reading the file.
     Io(std::io::Error),
     /// JSON deserialization error.
-    Json { line: usize, error: serde_json::Error },
+    Json {
+        line: usize,
+        error: serde_json::Error,
+    },
     /// Unsupported schema version.
     UnsupportedVersion { line: usize, version: u32 },
 }

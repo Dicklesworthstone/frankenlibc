@@ -582,7 +582,9 @@ fn udp_dns_query(
     };
     use std::ffi::c_void;
 
-    DNS_METRICS.queries_attempted.fetch_add(1, AtomicOrdering::Relaxed);
+    DNS_METRICS
+        .queries_attempted
+        .fetch_add(1, AtomicOrdering::Relaxed);
 
     // Generate transaction ID
     let id = {
@@ -602,7 +604,9 @@ fn udp_dns_query(
     let msg = DnsMessage::new_query(id, hostname, qtype_val);
     let mut send_buf = [0u8; DNS_MAX_UDP_SIZE];
     let Some(send_len) = msg.encode(&mut send_buf) else {
-        DNS_METRICS.queries_parse_error.fetch_add(1, AtomicOrdering::Relaxed);
+        DNS_METRICS
+            .queries_parse_error
+            .fetch_add(1, AtomicOrdering::Relaxed);
         return None;
     };
 
@@ -621,7 +625,9 @@ fn udp_dns_query(
         ) as i32
     };
     if fd < 0 {
-        DNS_METRICS.queries_send_error.fetch_add(1, AtomicOrdering::Relaxed);
+        DNS_METRICS
+            .queries_send_error
+            .fetch_add(1, AtomicOrdering::Relaxed);
         return None;
     }
 
@@ -690,7 +696,9 @@ fn udp_dns_query(
 
     if sent < 0 {
         unsafe { libc::syscall(libc::SYS_close, fd) };
-        DNS_METRICS.queries_send_error.fetch_add(1, AtomicOrdering::Relaxed);
+        DNS_METRICS
+            .queries_send_error
+            .fetch_add(1, AtomicOrdering::Relaxed);
         return None;
     }
 
@@ -710,7 +718,9 @@ fn udp_dns_query(
     unsafe { libc::syscall(libc::SYS_close, fd) };
 
     if received < DNS_HEADER_SIZE as i64 {
-        DNS_METRICS.queries_timeout.fetch_add(1, AtomicOrdering::Relaxed);
+        DNS_METRICS
+            .queries_timeout
+            .fetch_add(1, AtomicOrdering::Relaxed);
         return None;
     }
 
@@ -719,10 +729,14 @@ fn udp_dns_query(
     match &result {
         Some(records) if records.is_empty() => {
             // Empty records typically means NXDOMAIN
-            DNS_METRICS.queries_nxdomain.fetch_add(1, AtomicOrdering::Relaxed);
+            DNS_METRICS
+                .queries_nxdomain
+                .fetch_add(1, AtomicOrdering::Relaxed);
         }
         Some(_) => {
-            DNS_METRICS.queries_success.fetch_add(1, AtomicOrdering::Relaxed);
+            DNS_METRICS
+                .queries_success
+                .fetch_add(1, AtomicOrdering::Relaxed);
         }
         None => {
             // Check if we got a DNS error code vs parse failure
@@ -730,15 +744,23 @@ fn udp_dns_query(
                 let header = frankenlibc_core::resolv::dns::DnsHeader::decode(&recv_buf);
                 if let Some(h) = header {
                     if h.rcode() != rcode::NOERROR {
-                        DNS_METRICS.queries_dns_error.fetch_add(1, AtomicOrdering::Relaxed);
+                        DNS_METRICS
+                            .queries_dns_error
+                            .fetch_add(1, AtomicOrdering::Relaxed);
                     } else {
-                        DNS_METRICS.queries_parse_error.fetch_add(1, AtomicOrdering::Relaxed);
+                        DNS_METRICS
+                            .queries_parse_error
+                            .fetch_add(1, AtomicOrdering::Relaxed);
                     }
                 } else {
-                    DNS_METRICS.queries_parse_error.fetch_add(1, AtomicOrdering::Relaxed);
+                    DNS_METRICS
+                        .queries_parse_error
+                        .fetch_add(1, AtomicOrdering::Relaxed);
                 }
             } else {
-                DNS_METRICS.queries_parse_error.fetch_add(1, AtomicOrdering::Relaxed);
+                DNS_METRICS
+                    .queries_parse_error
+                    .fetch_add(1, AtomicOrdering::Relaxed);
             }
         }
     }
@@ -1506,7 +1528,14 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
 
     let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
     let (name_len, name_terminated) = unsafe {
-        crate::util::scan_c_string(name, if repair { known_remaining(name as usize) } else { None })
+        crate::util::scan_c_string(
+            name,
+            if repair {
+                known_remaining(name as usize)
+            } else {
+                None
+            },
+        )
     };
     if !name_terminated {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
@@ -1518,7 +1547,14 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         None
     } else {
         let (proto_len, proto_terminated) = unsafe {
-            crate::util::scan_c_string(proto, if repair { known_remaining(proto as usize) } else { None })
+            crate::util::scan_c_string(
+                proto,
+                if repair {
+                    known_remaining(proto as usize)
+                } else {
+                    None
+                },
+            )
         };
         if !proto_terminated {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
@@ -1536,11 +1572,7 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
     };
 
     // Use core parser to find the service
-    let port = match frankenlibc_core::resolv::lookup_service(
-        &content,
-        name_bytes,
-        proto_filter,
-    ) {
+    let port = match frankenlibc_core::resolv::lookup_service(&content, name_bytes, proto_filter) {
         Some(p) => p,
         None => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
@@ -1681,7 +1713,14 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
 
     let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
     let (name_len, name_terminated) = unsafe {
-        crate::util::scan_c_string(name, if repair { known_remaining(name as usize) } else { None })
+        crate::util::scan_c_string(
+            name,
+            if repair {
+                known_remaining(name as usize)
+            } else {
+                None
+            },
+        )
     };
     if !name_terminated {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
@@ -1733,7 +1772,7 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
 pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
-        0,     // no pointer argument
+        0, // no pointer argument
         0,
         false, // read-only lookup
         true,  // no pointer to validate

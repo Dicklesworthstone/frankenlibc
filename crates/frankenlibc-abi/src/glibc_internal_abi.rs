@@ -85,14 +85,8 @@ pub unsafe extern "C" fn _pthread_cleanup_push(
     }
     // Buffer layout: { void (*routine)(void*); void *arg; int canceltype; prev *; }
     // Size is approx 32 bytes on x86_64.
-    let (_, decision) = crate::runtime_policy::decide(
-        ApiFamily::Threading,
-        buf as usize,
-        32,
-        true,
-        false,
-        0,
-    );
+    let (_, decision) =
+        crate::runtime_policy::decide(ApiFamily::Threading, buf as usize, 32, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, true);
         return;
@@ -117,14 +111,8 @@ pub unsafe extern "C" fn _pthread_cleanup_pop(buf: *mut c_void, execute: c_int) 
     if buf.is_null() {
         return;
     }
-    let (_, decision) = crate::runtime_policy::decide(
-        ApiFamily::Threading,
-        buf as usize,
-        32,
-        false,
-        false,
-        0,
-    );
+    let (_, decision) =
+        crate::runtime_policy::decide(ApiFamily::Threading, buf as usize, 32, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         crate::runtime_policy::observe(ApiFamily::Threading, decision.profile, 5, true);
         return;
@@ -3914,7 +3902,15 @@ pub unsafe extern "C" fn __mq_open_2(name: *const c_char, oflag: c_int) -> c_int
         unsafe { crate::stdlib_abi::abort() };
     }
     // mq_open without O_CREAT: mode/attr are ignored, pass 0/null
-    unsafe { libc::syscall(libc::SYS_mq_open, name, oflag, 0, std::ptr::null::<c_void>()) as c_int }
+    unsafe {
+        libc::syscall(
+            libc::SYS_mq_open,
+            name,
+            oflag,
+            0,
+            std::ptr::null::<c_void>(),
+        ) as c_int
+    }
 }
 
 // ==========================================================================

@@ -1049,14 +1049,8 @@ pub unsafe extern "C" fn sigaction(
     act: *const libc::sigaction,
     oldact: *mut libc::sigaction,
 ) -> c_int {
-    let (_mode, decision) = runtime_policy::decide(
-        ApiFamily::Signal,
-        signum as usize,
-        0,
-        false,
-        true,
-        0,
-    );
+    let (_mode, decision) =
+        runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);

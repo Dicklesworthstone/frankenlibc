@@ -930,12 +930,7 @@ fn dns_metrics_counters_increment_on_hosts_miss() {
 
     // This will try DNS after /etc/hosts miss
     let _ = unsafe {
-        resolv_abi::getaddrinfo(
-            nonexistent.as_ptr(),
-            ptr::null(),
-            ptr::null(),
-            &mut result,
-        )
+        resolv_abi::getaddrinfo(nonexistent.as_ptr(), ptr::null(), ptr::null(), &mut result)
     };
     if !result.is_null() {
         unsafe { resolv_abi::freeaddrinfo(result) };

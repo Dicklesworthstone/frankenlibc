@@ -9,7 +9,7 @@ use std::ffi::{c_char, c_int, c_void};
 use std::mem::{align_of, offset_of, size_of};
 
 use frankenlibc_abi::io_internal_abi::{
-    file_flags, NativeFile, NativeFileBufMode, NATIVE_FILE_MAGIC,
+    NATIVE_FILE_MAGIC, NativeFile, NativeFileBufMode, file_flags,
 };
 
 // ---------------------------------------------------------------------------
@@ -21,37 +21,37 @@ use frankenlibc_abi::io_internal_abi::{
 #[allow(non_snake_case, dead_code)]
 #[repr(C)]
 struct IoFileLayout {
-    _flags: c_int,         // offset 0
-    _padding0: c_int,      // offset 4 (alignment padding)
-    _IO_read_ptr: *mut c_char,  // offset 8
-    _IO_read_end: *mut c_char,  // offset 16
-    _IO_read_base: *mut c_char, // offset 24
-    _IO_write_base: *mut c_char, // offset 32
-    _IO_write_ptr: *mut c_char, // offset 40
-    _IO_write_end: *mut c_char, // offset 48
-    _IO_buf_base: *mut c_char,  // offset 56
-    _IO_buf_end: *mut c_char,   // offset 64
-    _IO_save_base: *mut c_char, // offset 72
-    _IO_backup_base: *mut c_char, // offset 80
-    _IO_save_end: *mut c_char,  // offset 88
-    _markers: *mut c_void,      // offset 96
-    _chain: *mut IoFileLayout,  // offset 104
-    _fileno: c_int,             // offset 112
-    _flags2: c_int,             // offset 116
-    _old_offset: libc::off_t,   // offset 120
-    _cur_column: u16,           // offset 128
-    _vtable_offset: i8,         // offset 130
-    _shortbuf: [c_char; 1],     // offset 131
-    _padding1: [u8; 4],         // offset 132 (alignment padding)
-    _lock: *mut c_void,         // offset 136
-    _offset: libc::off64_t,     // offset 144
-    _codecvt: *mut c_void,      // offset 152
-    _wide_data: *mut c_void,    // offset 160
+    _flags: c_int,                    // offset 0
+    _padding0: c_int,                 // offset 4 (alignment padding)
+    _IO_read_ptr: *mut c_char,        // offset 8
+    _IO_read_end: *mut c_char,        // offset 16
+    _IO_read_base: *mut c_char,       // offset 24
+    _IO_write_base: *mut c_char,      // offset 32
+    _IO_write_ptr: *mut c_char,       // offset 40
+    _IO_write_end: *mut c_char,       // offset 48
+    _IO_buf_base: *mut c_char,        // offset 56
+    _IO_buf_end: *mut c_char,         // offset 64
+    _IO_save_base: *mut c_char,       // offset 72
+    _IO_backup_base: *mut c_char,     // offset 80
+    _IO_save_end: *mut c_char,        // offset 88
+    _markers: *mut c_void,            // offset 96
+    _chain: *mut IoFileLayout,        // offset 104
+    _fileno: c_int,                   // offset 112
+    _flags2: c_int,                   // offset 116
+    _old_offset: libc::off_t,         // offset 120
+    _cur_column: u16,                 // offset 128
+    _vtable_offset: i8,               // offset 130
+    _shortbuf: [c_char; 1],           // offset 131
+    _padding1: [u8; 4],               // offset 132 (alignment padding)
+    _lock: *mut c_void,               // offset 136
+    _offset: libc::off64_t,           // offset 144
+    _codecvt: *mut c_void,            // offset 152
+    _wide_data: *mut c_void,          // offset 160
     _freeres_list: *mut IoFileLayout, // offset 168
-    _freeres_buf: *mut c_void,  // offset 176
-    _pad5: usize,               // offset 184
-    _mode: c_int,               // offset 192
-    _unused2: [u8; 20],         // offset 196
+    _freeres_buf: *mut c_void,        // offset 176
+    _pad5: usize,                     // offset 184
+    _mode: c_int,                     // offset 192
+    _unused2: [u8; 20],               // offset 196
 }
 
 /// glibc 2.34 _IO_FILE size (216 bytes on x86_64)
@@ -345,7 +345,10 @@ fn native_file_mbstate_zeroed_is_c_locale() {
     // We can't directly access _mbstate, but we can verify the file is valid
     // and that zero-initialization is the correct C-locale behavior.
     // The implementation zeroes mbstate_t which is correct per POSIX.
-    assert!(f.is_valid(), "NativeFile should be valid after construction");
+    assert!(
+        f.is_valid(),
+        "NativeFile should be valid after construction"
+    );
 
     // Note: Direct mbstate_t verification would require a test accessor.
     // The const assertion in io_internal_abi.rs already covers this via
@@ -451,7 +454,11 @@ fn native_file_lock_ptr_accessible_via_layout() {
 
 #[test]
 fn native_file_cast_to_file_preserves_fileno() {
-    let f = NativeFile::new(42, file_flags::READ | file_flags::WRITE, NativeFileBufMode::Full);
+    let f = NativeFile::new(
+        42,
+        file_flags::READ | file_flags::WRITE,
+        NativeFileBufMode::Full,
+    );
 
     // Cast to the layout and verify _fileno
     let file_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
@@ -519,14 +526,16 @@ fn io_file_layout_matches_glibc_234() {
 #[test]
 fn native_file_prefix_compatible_with_glibc() {
     // The first 216 bytes of NativeFile should be castable to IoFileLayout
-    let f = NativeFile::new(99, file_flags::READ | file_flags::WRITE, NativeFileBufMode::Line);
+    let f = NativeFile::new(
+        99,
+        file_flags::READ | file_flags::WRITE,
+        NativeFileBufMode::Line,
+    );
 
     let prefix_ptr = (&f as *const NativeFile).cast::<IoFileLayout>();
 
     // Read fields via the layout to ensure no UB
-    let (fileno, mode) = unsafe {
-        ((*prefix_ptr)._fileno, (*prefix_ptr)._mode)
-    };
+    let (fileno, mode) = unsafe { ((*prefix_ptr)._fileno, (*prefix_ptr)._mode) };
 
     assert_eq!(fileno, 99);
     // mode starts at 0 (unset)

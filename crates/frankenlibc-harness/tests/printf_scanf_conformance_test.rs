@@ -79,13 +79,20 @@ fn printf_conformance_fixture_valid_schema() {
     for case in &fixture.cases {
         assert!(!case.name.is_empty(), "Case name must not be empty");
         assert!(!case.function.is_empty(), "Function must not be empty");
-        assert!(!case.spec_section.is_empty(), "Spec section must not be empty");
+        assert!(
+            !case.spec_section.is_empty(),
+            "Spec section must not be empty"
+        );
         // Cases can have expected output, pattern, bytes, n_value, or return-only (for snprintf with null buffer)
         let has_output = case.expected_output.is_some()
             || case.expected_output_pattern.is_some()
             || case.expected_output_bytes.is_some();
         let has_n_value = case.expected_n_value.is_some();
-        let is_null_buffer_test = case.inputs.get("buffer").map(|v| v.is_null()).unwrap_or(false);
+        let is_null_buffer_test = case
+            .inputs
+            .get("buffer")
+            .map(|v| v.is_null())
+            .unwrap_or(false);
         assert!(
             has_output || has_n_value || is_null_buffer_test,
             "Case {} must have expected output, n_value, or be a null buffer test",
@@ -123,10 +130,7 @@ fn printf_conformance_covers_all_specifiers() {
 
     for (spec, pattern) in specifier_patterns {
         let found = case_names.iter().any(|name| name.contains(pattern));
-        assert!(
-            found,
-            "Missing test coverage for %{spec} specifier"
-        );
+        assert!(found, "Missing test coverage for %{spec} specifier");
     }
 }
 
@@ -238,7 +242,9 @@ fn printf_conformance_covers_edge_cases() {
         "Missing null pointer/buffer test coverage"
     );
     assert!(
-        case_names.iter().any(|name| name.contains("negative_zero") || name.contains("neg_zero")),
+        case_names
+            .iter()
+            .any(|name| name.contains("negative_zero") || name.contains("neg_zero")),
         "Missing negative zero test coverage"
     );
 }
@@ -264,7 +270,10 @@ fn scanf_conformance_fixture_valid_schema() {
     for case in &fixture.cases {
         assert!(!case.name.is_empty(), "Case name must not be empty");
         assert!(!case.function.is_empty(), "Function must not be empty");
-        assert!(!case.spec_section.is_empty(), "Spec section must not be empty");
+        assert!(
+            !case.spec_section.is_empty(),
+            "Spec section must not be empty"
+        );
         assert!(
             case.expected_return.is_some(),
             "Case {} must have expected return value",
@@ -282,7 +291,9 @@ fn scanf_conformance_covers_all_specifiers() {
 
     for spec in specifiers {
         let pattern = format!("_{spec}_");
-        let found = case_names.iter().any(|name| name.contains(&pattern) || name.ends_with(&format!("_{spec}")));
+        let found = case_names
+            .iter()
+            .any(|name| name.contains(&pattern) || name.ends_with(&format!("_{spec}")));
         assert!(
             found,
             "Missing test coverage for %{spec} specifier in scanf"
@@ -322,7 +333,9 @@ fn scanf_conformance_covers_eof_and_errors() {
         "Missing EOF test coverage"
     );
     assert!(
-        case_names.iter().any(|name| name.contains("no_match") || name.contains("mismatch")),
+        case_names
+            .iter()
+            .any(|name| name.contains("no_match") || name.contains("mismatch")),
         "Missing conversion failure test coverage"
     );
 }
@@ -418,8 +431,8 @@ fn scanf_fixture_has_strict_mode_cases() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 use frankenlibc_core::stdio::{
-    Precision, Width, format_signed, format_unsigned,
-    format_float, format_str as render_str, format_char, parse_format_string, FormatSegment,
+    FormatSegment, Precision, Width, format_char, format_float, format_signed,
+    format_str as render_str, format_unsigned, parse_format_string,
 };
 
 /// Run a printf conformance test case and compare output.
@@ -440,7 +453,9 @@ fn run_printf_case(case: &FixtureCase) -> Result<(), String> {
     // DISC-001 FIXED: Banker's rounding now implemented with round_ties_even()
 
     let inputs = &case.inputs;
-    let format_str_val = inputs.get("format").and_then(|v| v.as_str())
+    let format_str_val = inputs
+        .get("format")
+        .and_then(|v| v.as_str())
         .ok_or("missing format in inputs")?;
 
     let mut output = Vec::new();
@@ -454,28 +469,28 @@ fn run_printf_case(case: &FixtureCase) -> Result<(), String> {
             FormatSegment::Percent => output.push(b'%'),
             FormatSegment::Spec(mut spec) => {
                 // Handle dynamic width from arguments
-                if matches!(spec.width, Width::FromArg) {
-                    if let Some(w) = args.and_then(|a| a.get(arg_idx)).and_then(|v| v.as_i64()) {
-                        arg_idx += 1;
-                        if w < 0 {
-                            // Negative width means left-justify
-                            spec.flags.left_justify = true;
-                            spec.width = Width::Fixed((-w) as usize);
-                        } else {
-                            spec.width = Width::Fixed(w as usize);
-                        }
+                if matches!(spec.width, Width::FromArg)
+                    && let Some(w) = args.and_then(|a| a.get(arg_idx)).and_then(|v| v.as_i64())
+                {
+                    arg_idx += 1;
+                    if w < 0 {
+                        // Negative width means left-justify
+                        spec.flags.left_justify = true;
+                        spec.width = Width::Fixed((-w) as usize);
+                    } else {
+                        spec.width = Width::Fixed(w as usize);
                     }
                 }
 
                 // Handle dynamic precision from arguments
-                if matches!(spec.precision, Precision::FromArg) {
-                    if let Some(p) = args.and_then(|a| a.get(arg_idx)).and_then(|v| v.as_i64()) {
-                        arg_idx += 1;
-                        if p >= 0 {
-                            spec.precision = Precision::Fixed(p as usize);
-                        } else {
-                            spec.precision = Precision::None; // Negative precision = no precision
-                        }
+                if matches!(spec.precision, Precision::FromArg)
+                    && let Some(p) = args.and_then(|a| a.get(arg_idx)).and_then(|v| v.as_i64())
+                {
+                    arg_idx += 1;
+                    if p >= 0 {
+                        spec.precision = Precision::Fixed(p as usize);
+                    } else {
+                        spec.precision = Precision::None; // Negative precision = no precision
                     }
                 }
 
@@ -489,7 +504,9 @@ fn run_printf_case(case: &FixtureCase) -> Result<(), String> {
                         }
                     }
                     b'u' | b'o' | b'x' | b'X' => {
-                        if let Some(val) = arg.and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|i| i as u64))) {
+                        if let Some(val) =
+                            arg.and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|i| i as u64)))
+                        {
                             format_unsigned(val, &spec, &mut output);
                         }
                     }
@@ -536,13 +553,13 @@ fn run_printf_case(case: &FixtureCase) -> Result<(), String> {
                 expected, actual
             ));
         }
-    } else if let Some(expected_bytes) = &case.expected_output_bytes {
-        if output != *expected_bytes {
-            return Err(format!(
-                "mismatch: expected {:?}, got {:?}",
-                expected_bytes, output
-            ));
-        }
+    } else if let Some(expected_bytes) = &case.expected_output_bytes
+        && output != *expected_bytes
+    {
+        return Err(format!(
+            "mismatch: expected {:?}, got {:?}",
+            expected_bytes, output
+        ));
     }
     // Skip pattern-based tests for now
 
@@ -558,9 +575,13 @@ fn printf_conformance_runtime_integer_specifiers() {
 
     for case in &fixture.cases {
         // Only test integer specifiers in this test
-        if !case.name.contains("_d_") && !case.name.contains("_i_") &&
-           !case.name.contains("_u_") && !case.name.contains("_o_") &&
-           !case.name.contains("_x_") && !case.name.contains("_X_") {
+        if !case.name.contains("_d_")
+            && !case.name.contains("_i_")
+            && !case.name.contains("_u_")
+            && !case.name.contains("_o_")
+            && !case.name.contains("_x_")
+            && !case.name.contains("_X_")
+        {
             skipped += 1;
             continue;
         }
@@ -620,8 +641,11 @@ fn printf_conformance_runtime_float_specifiers() {
     for case in &fixture.cases {
         // Test %f, %e but not %g (adaptive format has impl-specific thresholds)
         // and not %a (hex float) or inf/nan
-        if !case.name.contains("_f_") && !case.name.contains("_e_") &&
-           !case.name.contains("_E_") && !case.name.contains("_F_") {
+        if !case.name.contains("_f_")
+            && !case.name.contains("_e_")
+            && !case.name.contains("_E_")
+            && !case.name.contains("_F_")
+        {
             skipped += 1;
             continue;
         }
@@ -661,10 +685,14 @@ fn printf_conformance_runtime_flags_and_width() {
 
     for case in &fixture.cases {
         // Test flag and width cases
-        if !case.name.contains("flag") && !case.name.contains("width") &&
-           !case.name.contains("precision") && !case.name.contains("star") &&
-           !case.name.contains("overrides") && !case.name.contains("pad") &&
-           !case.name.contains("left") {
+        if !case.name.contains("flag")
+            && !case.name.contains("width")
+            && !case.name.contains("precision")
+            && !case.name.contains("star")
+            && !case.name.contains("overrides")
+            && !case.name.contains("pad")
+            && !case.name.contains("left")
+        {
             skipped += 1;
             continue;
         }
@@ -689,7 +717,7 @@ fn printf_conformance_runtime_flags_and_width() {
 // Scanf runtime execution tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-use frankenlibc_core::stdio::{parse_scanf_format, scan_input, ScanValue};
+use frankenlibc_core::stdio::{ScanValue, parse_scanf_format, scan_input};
 
 /// Run a scanf conformance test case and compare output.
 fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
@@ -701,9 +729,13 @@ fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
     }
 
     let inputs = &case.inputs;
-    let input = inputs.get("input").and_then(|v| v.as_str())
+    let input = inputs
+        .get("input")
+        .and_then(|v| v.as_str())
         .ok_or("missing input in inputs")?;
-    let format = inputs.get("format").and_then(|v| v.as_str())
+    let format = inputs
+        .get("format")
+        .and_then(|v| v.as_str())
         .ok_or("missing format in inputs")?;
 
     let directives = parse_scanf_format(format.as_bytes());
@@ -722,33 +754,25 @@ fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
 
     // Check expected values if provided
     if let Some(expected_values) = &case.expected_values {
-        for (i, (actual, expected)) in result.values.iter().zip(expected_values.iter()).enumerate() {
+        for (i, (actual, expected)) in result.values.iter().zip(expected_values.iter()).enumerate()
+        {
             match actual {
                 ScanValue::SignedInt(v) => {
-                    if let Some(e) = expected.as_i64() {
-                        if *v != e {
-                            return Err(format!(
-                                "value {} mismatch: expected {}, got {}",
-                                i, e, v
-                            ));
-                        }
+                    if let Some(e) = expected.as_i64()
+                        && *v != e
+                    {
+                        return Err(format!("value {} mismatch: expected {}, got {}", i, e, v));
                     }
                 }
                 ScanValue::UnsignedInt(v) => {
-                    if let Some(e) = expected.as_u64() {
-                        if *v != e {
-                            return Err(format!(
-                                "value {} mismatch: expected {}, got {}",
-                                i, e, v
-                            ));
-                        }
-                    } else if let Some(e) = expected.as_i64() {
-                        if *v != e as u64 {
-                            return Err(format!(
-                                "value {} mismatch: expected {}, got {}",
-                                i, e, v
-                            ));
-                        }
+                    if let Some(e) = expected.as_u64()
+                        && *v != e
+                    {
+                        return Err(format!("value {} mismatch: expected {}, got {}", i, e, v));
+                    } else if let Some(e) = expected.as_i64()
+                        && *v != e as u64
+                    {
+                        return Err(format!("value {} mismatch: expected {}, got {}", i, e, v));
                     }
                 }
                 ScanValue::Float(v) => {
@@ -757,22 +781,19 @@ fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
                         let diff = (v - e).abs();
                         let rel = diff / e.abs().max(1e-10);
                         if rel > 1e-9 && diff > 1e-15 {
-                            return Err(format!(
-                                "value {} mismatch: expected {}, got {}",
-                                i, e, v
-                            ));
+                            return Err(format!("value {} mismatch: expected {}, got {}", i, e, v));
                         }
                     }
                 }
                 ScanValue::String(v) => {
-                    if let Some(e) = expected.as_str() {
-                        let actual_str = String::from_utf8_lossy(v);
-                        if actual_str != e {
-                            return Err(format!(
-                                "value {} mismatch: expected {:?}, got {:?}",
-                                i, e, actual_str
-                            ));
-                        }
+                    let actual_str = String::from_utf8_lossy(v);
+                    if let Some(e) = expected.as_str()
+                        && actual_str != e
+                    {
+                        return Err(format!(
+                            "value {} mismatch: expected {:?}, got {:?}",
+                            i, e, actual_str
+                        ));
                     }
                 }
                 ScanValue::Char(v) => {
@@ -796,13 +817,13 @@ fn run_scanf_case(case: &FixtureCase) -> Result<(), String> {
                     }
                 }
                 ScanValue::CharsConsumed(v) => {
-                    if let Some(e) = expected.as_u64() {
-                        if *v != e as usize {
-                            return Err(format!(
-                                "value {} (%n) mismatch: expected {}, got {}",
-                                i, e, v
-                            ));
-                        }
+                    if let Some(e) = expected.as_u64()
+                        && *v != e as usize
+                    {
+                        return Err(format!(
+                            "value {} (%n) mismatch: expected {}, got {}",
+                            i, e, v
+                        ));
                     }
                 }
                 ScanValue::Pointer(_) => {
@@ -824,13 +845,20 @@ fn scanf_conformance_runtime_integer_specifiers() {
 
     for case in &fixture.cases {
         // Only test integer specifiers
-        if !case.name.contains("_d_") && !case.name.contains("_d ") &&
-           !case.name.contains("_i_") && !case.name.contains("_u_") &&
-           !case.name.contains("_o_") && !case.name.contains("_x_") &&
-           !case.name.contains("_X_") && !case.name.starts_with("sscanf_d") &&
-           !case.name.starts_with("sscanf_i") && !case.name.starts_with("sscanf_u") &&
-           !case.name.starts_with("sscanf_o") && !case.name.starts_with("sscanf_x") &&
-           !case.name.starts_with("sscanf_X") {
+        if !case.name.contains("_d_")
+            && !case.name.contains("_d ")
+            && !case.name.contains("_i_")
+            && !case.name.contains("_u_")
+            && !case.name.contains("_o_")
+            && !case.name.contains("_x_")
+            && !case.name.contains("_X_")
+            && !case.name.starts_with("sscanf_d")
+            && !case.name.starts_with("sscanf_i")
+            && !case.name.starts_with("sscanf_u")
+            && !case.name.starts_with("sscanf_o")
+            && !case.name.starts_with("sscanf_x")
+            && !case.name.starts_with("sscanf_X")
+        {
             skipped += 1;
             continue;
         }

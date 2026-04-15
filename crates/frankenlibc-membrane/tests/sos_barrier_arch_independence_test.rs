@@ -23,12 +23,14 @@ use frankenlibc_membrane::runtime_math::sos_barrier::{
 mod golden_values {
     // Fragmentation barrier: balanced profile (bd-10pq canonical)
     // Expected value computed on x86_64 Linux 6.x
-    pub const FRAGMENTATION_BALANCED: (u32, u32, u32, u32, i64) =
-        (50_000, 49_000, 120_000, 450_000, /* expected= */ 800_000);
+    pub const FRAGMENTATION_BALANCED: (u32, u32, u32, u32, i64) = (
+        50_000, 49_000, 120_000, 450_000, /* expected= */ 800_000,
+    );
 
     // Fragmentation barrier: zero stress profile
     // Note: zero inputs still produce non-max value due to basis normalization
-    pub const FRAGMENTATION_ZERO: (u32, u32, u32, u32, i64) = (0, 0, 0, 0, /* expected= */ 800_000);
+    pub const FRAGMENTATION_ZERO: (u32, u32, u32, u32, i64) =
+        (0, 0, 0, 0, /* expected= */ 800_000);
 
     // Thread safety barrier: nominal profile (bd-10pq canonical)
     // Expected value computed on x86_64 Linux 6.x
@@ -48,7 +50,8 @@ mod golden_values {
 
     // Size class barrier: exact match profile (request == mapped)
     // Note: even exact match has waste from rounding to size class
-    pub const SIZE_CLASS_EXACT: (usize, usize, bool, i64) = (64, 64, true, /* expected= */ 150_000);
+    pub const SIZE_CLASS_EXACT: (usize, usize, bool, i64) =
+        (64, 64, true, /* expected= */ 150_000);
 }
 
 /// Verify fragmentation barrier produces golden values.
@@ -81,7 +84,8 @@ fn fragmentation_barrier_golden_values_arch_independent() {
 #[test]
 fn thread_safety_barrier_golden_values_arch_independent() {
     {
-        let (threads, writers, conflict, skew, lag, expected) = golden_values::THREAD_SAFETY_NOMINAL;
+        let (threads, writers, conflict, skew, lag, expected) =
+            golden_values::THREAD_SAFETY_NOMINAL;
         let actual = evaluate_thread_safety_barrier(threads, writers, conflict, skew, lag);
         assert_eq!(
             actual, expected,

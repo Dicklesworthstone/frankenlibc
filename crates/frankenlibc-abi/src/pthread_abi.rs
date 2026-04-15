@@ -4659,7 +4659,9 @@ pub unsafe extern "C" fn pthread_setname_np(
     if name.is_null() {
         return libc::EINVAL;
     }
-    let (len, terminated) = unsafe { crate::util::scan_c_string(name, crate::malloc_abi::known_remaining(name as usize)) };
+    let (len, terminated) = unsafe {
+        crate::util::scan_c_string(name, crate::malloc_abi::known_remaining(name as usize))
+    };
     if !terminated {
         return libc::EFAULT;
     }

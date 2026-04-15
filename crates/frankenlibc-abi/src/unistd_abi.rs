@@ -2404,7 +2404,8 @@ static SYSLOG_STATE: std::sync::Mutex<SyslogState> = std::sync::Mutex::new(Syslo
 });
 
 fn syslog_connect() -> c_int {
-    let fd = unsafe { libc::syscall(libc::SYS_socket, libc::AF_UNIX, libc::SOCK_DGRAM, 0) as c_int };
+    let fd =
+        unsafe { libc::syscall(libc::SYS_socket, libc::AF_UNIX, libc::SOCK_DGRAM, 0) as c_int };
     if fd < 0 {
         return -1;
     }
@@ -2739,7 +2740,8 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
 
     let mut pty_num: c_int = 0;
     // SAFETY: ioctl writes PTY slave index into `pty_num` on success.
-    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCGPTN as i64, &mut pty_num) as c_int };
+    let rc =
+        unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCGPTN as i64, &mut pty_num) as c_int };
     if rc < 0 {
         return Err(last_host_errno(errno::EBADF));
     }
@@ -2819,7 +2821,14 @@ unsafe fn mkdtemp_inner(template: *mut c_char) -> (*mut c_char, bool) {
         }
 
         // SAFETY: `template` points to a valid candidate pathname.
-        let rc = unsafe { libc::syscall(libc::SYS_mkdirat, libc::AT_FDCWD, template as *const c_char, 0o700) as c_int };
+        let rc = unsafe {
+            libc::syscall(
+                libc::SYS_mkdirat,
+                libc::AT_FDCWD,
+                template as *const c_char,
+                0o700,
+            ) as c_int
+        };
         if rc == 0 {
             return (template, false);
         }
@@ -5324,7 +5333,8 @@ pub unsafe extern "C" fn forkpty(
 pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
     let mut pty_num: c_int = 0;
     // SAFETY: ioctl validates `fd` as PTY master and writes index on success.
-    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCGPTN as i64, &mut pty_num) as c_int };
+    let rc =
+        unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCGPTN as i64, &mut pty_num) as c_int };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
         return -1;
@@ -5336,7 +5346,9 @@ pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
 pub unsafe extern "C" fn unlockpt(fd: c_int) -> c_int {
     let mut unlock: c_int = 0;
     // SAFETY: ioctl reads lock toggle value from `unlock`.
-    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCSPTLCK as i64, &mut unlock) as c_int };
+    let rc = unsafe {
+        libc::syscall(libc::SYS_ioctl, fd, libc::TIOCSPTLCK as i64, &mut unlock) as c_int
+    };
     if rc < 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
         return -1;

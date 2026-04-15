@@ -836,10 +836,7 @@ fn hardened_mode_iconv_invalid_utf8_reports_eilseq() {
         *__errno_location() = 0;
         let rc = iconv(cd, &mut in_ptr, &mut in_left, &mut out_ptr, &mut out_left);
         // Hardened mode: invalid sequences still fail (conversion errors aren't healed)
-        assert_eq!(
-            rc, ICONV_ERROR,
-            "hardened mode: invalid UTF-8 should fail"
-        );
+        assert_eq!(rc, ICONV_ERROR, "hardened mode: invalid UTF-8 should fail");
         assert_eq!(*__errno_location(), core_iconv::ICONV_EILSEQ);
 
         assert_eq!(iconv_close(cd), 0);

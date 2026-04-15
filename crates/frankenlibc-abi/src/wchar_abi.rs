@@ -1748,7 +1748,6 @@ pub unsafe extern "C" fn wcwidth(wc: u32) -> c_int {
 
 // [End of wchar string functions]
 
-
 // ---------------------------------------------------------------------------
 // mkstemp — create a temporary file from a template
 // ---------------------------------------------------------------------------

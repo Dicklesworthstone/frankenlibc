@@ -2658,7 +2658,8 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
         let err_msg = if err_ptr.is_null() {
             "Unknown error"
         } else {
-            let (len, terminated) = unsafe { scan_c_string(err_ptr, known_remaining(err_ptr as usize)) };
+            let (len, terminated) =
+                unsafe { scan_c_string(err_ptr, known_remaining(err_ptr as usize)) };
             if !terminated {
                 "Unknown error"
             } else {
@@ -3059,12 +3060,19 @@ pub unsafe extern "C" fn cfmakeraw(termios: *mut libc::termios) {
     }
     let t = unsafe { &mut *termios };
     // Clear input flags: no break handling, parity, strip, newline translation, XON/XOFF
-    t.c_iflag &= !(libc::IGNBRK | libc::BRKINT | libc::PARMRK | libc::ISTRIP
-        | libc::INLCR | libc::IGNCR | libc::ICRNL | libc::IXON) as libc::tcflag_t;
+    t.c_iflag &= !(libc::IGNBRK
+        | libc::BRKINT
+        | libc::PARMRK
+        | libc::ISTRIP
+        | libc::INLCR
+        | libc::IGNCR
+        | libc::ICRNL
+        | libc::IXON) as libc::tcflag_t;
     // Clear output flag: no output processing
     t.c_oflag &= !(libc::OPOST) as libc::tcflag_t;
     // Clear local flags: no echo, no canonical mode, no signals, no extended processing
-    t.c_lflag &= !(libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN) as libc::tcflag_t;
+    t.c_lflag &=
+        !(libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN) as libc::tcflag_t;
     // Set char size to 8 bits, no parity
     t.c_cflag &= !(libc::CSIZE | libc::PARENB) as libc::tcflag_t;
     t.c_cflag |= libc::CS8 as libc::tcflag_t;
@@ -3079,8 +3087,8 @@ pub unsafe extern "C" fn cfsetspeed(termios: *mut libc::termios, speed: libc::sp
     if termios.is_null() {
         return -1;
     }
-    let r1 = unsafe { crate::termios_abi::cfsetispeed(termios, speed as u32) };
-    let r2 = unsafe { crate::termios_abi::cfsetospeed(termios, speed as u32) };
+    let r1 = unsafe { crate::termios_abi::cfsetispeed(termios, speed) };
+    let r2 = unsafe { crate::termios_abi::cfsetospeed(termios, speed) };
     if r1 < 0 || r2 < 0 { -1 } else { 0 }
 }
 
@@ -3180,7 +3188,8 @@ pub unsafe extern "C" fn __assert_fail(
     let a = if assertion.is_null() {
         "??".to_string()
     } else {
-        let (len, terminated) = unsafe { scan_c_string(assertion, known_remaining(assertion as usize)) };
+        let (len, terminated) =
+            unsafe { scan_c_string(assertion, known_remaining(assertion as usize)) };
         if !terminated {
             "??".to_string()
         } else {
@@ -3202,7 +3211,8 @@ pub unsafe extern "C" fn __assert_fail(
     let func = if function.is_null() {
         "??".to_string()
     } else {
-        let (len, terminated) = unsafe { scan_c_string(function, known_remaining(function as usize)) };
+        let (len, terminated) =
+            unsafe { scan_c_string(function, known_remaining(function as usize)) };
         if !terminated {
             "??".to_string()
         } else {
@@ -3210,10 +3220,7 @@ pub unsafe extern "C" fn __assert_fail(
             String::from_utf8_lossy(bytes).into_owned()
         }
     };
-    let msg = format!(
-        "{}: {}: {}: Assertion `{}' failed.\n",
-        f, line, func, a
-    );
+    let msg = format!("{}: {}: {}: Assertion `{}' failed.\n", f, line, func, a);
     unsafe {
         crate::unistd_abi::sys_write_fd(libc::STDERR_FILENO, msg.as_ptr().cast(), msg.len());
     }

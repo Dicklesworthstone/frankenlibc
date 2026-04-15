@@ -4759,7 +4759,14 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return std::ptr::null_mut();
         }
-        unsafe { libc::syscall(libc::SYS_fcntl, fd, libc::F_SETFD, existing | libc::FD_CLOEXEC) };
+        unsafe {
+            libc::syscall(
+                libc::SYS_fcntl,
+                fd,
+                libc::F_SETFD,
+                existing | libc::FD_CLOEXEC,
+            )
+        };
     }
 
     // Create stream via fdopen_native_impl.

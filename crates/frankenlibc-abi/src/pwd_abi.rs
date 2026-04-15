@@ -241,7 +241,6 @@ impl PwdStorage {
 
         &mut self.pw as *mut libc::passwd
     }
-
 }
 
 thread_local! {
