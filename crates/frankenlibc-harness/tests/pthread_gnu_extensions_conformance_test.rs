@@ -58,16 +58,22 @@ fn load_fixture(name: &str) -> FixtureFile {
 struct MatrixCaseEnvelope {
     kind: String,
     #[serde(default)]
-    run: Option<frankenlibc_fixture_exec::DifferentialExecution>,
+    run: Option<DifferentialExecution>,
     #[serde(default)]
     error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DifferentialExecution {
+    impl_output: String,
+    host_parity: bool,
 }
 
 fn execute_case_via_harness(
     function: &str,
     inputs: &serde_json::Value,
     mode: &str,
-) -> Result<frankenlibc_fixture_exec::DifferentialExecution, String> {
+) -> Result<DifferentialExecution, String> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_harness"))
         .arg("conformance-matrix-case")
         .arg("--function")
