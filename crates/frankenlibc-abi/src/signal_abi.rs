@@ -11,18 +11,12 @@ use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use frankenlibc_core::errno;
 use frankenlibc_core::signal as signal_core;
 use frankenlibc_core::syscall;
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::hji_reachability::{HjiReachabilityController, ReachState};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
-
-#[inline]
-fn last_host_errno(default_errno: c_int) -> c_int {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(default_errno)
-}
 
 const MAX_TRACKED_SIGNAL: usize = 128;
 const HJI_WARMUP_OBSERVATIONS: usize = 64;
@@ -671,17 +665,14 @@ pub unsafe extern "C" fn raise(signum: c_int) -> c_int {
     }
 
     let pid = syscall::sys_getpid();
-    let rc = unsafe { libc::syscall(libc::SYS_kill, pid, signum) as c_int };
+    let rc = match raw_syscall::sys_kill(pid, signum) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
     let adverse = rc != 0;
-    if adverse {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::EINVAL),
-            )
-        };
-    }
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
     rc
 }
@@ -706,11 +697,14 @@ pub unsafe extern "C" fn kill(pid: libc::pid_t, signum: c_int) -> c_int {
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_kill, pid, signum) as c_int };
+    let rc = match raw_syscall::sys_kill(pid, signum) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
     let adverse = rc != 0;
-    if adverse {
-        unsafe { set_abi_errno(last_host_errno(errno::ESRCH)) };
-    }
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
     rc
 }
@@ -746,11 +740,14 @@ pub unsafe extern "C" fn killpg(pgrp: libc::pid_t, signum: c_int) -> c_int {
 
     // killpg(pgrp, sig) == kill(-pgrp, sig); for pgrp==0 means own process group.
     let target = if pgrp == 0 { 0 } else { -pgrp };
-    let rc = unsafe { libc::syscall(libc::SYS_kill, target, signum) as c_int };
+    let rc = match raw_syscall::sys_kill(target, signum) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
     let adverse = rc != 0;
-    if adverse {
-        unsafe { set_abi_errno(last_host_errno(errno::ESRCH)) };
-    }
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
     rc
 }
@@ -773,19 +770,21 @@ pub unsafe extern "C" fn sigprocmask(
     }
 
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigprocmask,
+    let rc = match unsafe {
+        raw_syscall::sys_rt_sigprocmask(
             how,
-            set,
-            oldset,
+            set as *const u8,
+            oldset as *mut u8,
             kernel_sigset_size,
-        ) as c_int
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     let adverse = rc != 0;
-    if adverse {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
-    }
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 8, adverse);
     rc
 }
@@ -980,11 +979,11 @@ pub unsafe extern "C" fn pause() -> c_int {
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_pause) as c_int };
     // pause always returns -1 with EINTR when interrupted.
-    unsafe { set_abi_errno(last_host_errno(errno::EINTR)) };
+    let _ = raw_syscall::sys_pause();
+    unsafe { set_abi_errno(errno::EINTR) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
-    rc
+    -1
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,11 +1006,11 @@ pub unsafe extern "C" fn sigsuspend(mask: *const libc::sigset_t) -> c_int {
     }
 
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
-    let rc = unsafe { libc::syscall(libc::SYS_rt_sigsuspend, mask, kernel_sigset_size) as c_int };
     // sigsuspend always returns -1 with EINTR.
-    unsafe { set_abi_errno(last_host_errno(errno::EINTR)) };
+    let _ = unsafe { raw_syscall::sys_rt_sigsuspend(mask as *const u8, kernel_sigset_size) };
+    unsafe { set_abi_errno(errno::EINTR) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
-    rc
+    -1
 }
 
 // ---------------------------------------------------------------------------
@@ -1030,11 +1029,14 @@ pub unsafe extern "C" fn sigaltstack(
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_sigaltstack, ss, old_ss) as c_int };
+    let rc = match unsafe { raw_syscall::sys_sigaltstack(ss as *const u8, old_ss as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
     let adverse = rc != 0;
-    if adverse {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
-    }
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
     rc
 }
@@ -1100,19 +1102,22 @@ pub unsafe extern "C" fn sigaction(
             )
         })
         .unwrap_or((0, 0));
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigaction,
+    let rc = match unsafe {
+        raw_syscall::sys_rt_sigaction(
             signum,
-            kernel_act_ptr,
-            kernel_oldact_ptr,
+            kernel_act_ptr as *const u8,
+            kernel_oldact_ptr as *mut u8,
             kernel_sigset_size,
-        ) as c_int
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     let adverse = rc != 0;
-    if adverse {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
-    } else {
+    if !adverse {
         if !oldact.is_null() {
             let mut user_oldact = kernel_to_user_sigaction(&kernel_oldact);
             rewrite_old_sigaction(&mut user_oldact, prev_handler, prev_flags);
@@ -1152,11 +1157,13 @@ pub unsafe extern "C" fn sigpending(set: *mut libc::sigset_t) -> c_int {
     }
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     // SAFETY: rt_sigpending writes to the provided set pointer.
-    let rc = unsafe { libc::syscall(libc::SYS_rt_sigpending, set, kernel_sigset_size) as c_int };
-    if rc != 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EFAULT)) };
+    match unsafe { raw_syscall::sys_rt_sigpending(set as *mut u8, kernel_sigset_size) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `sigwait` — wait for a signal from `set` via `rt_sigtimedwait` syscall.
@@ -1169,22 +1176,21 @@ pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) ->
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     // SAFETY: rt_sigtimedwait blocks until a signal from `set` is pending.
     // With null timeout, it blocks indefinitely. Returns the signal number.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigtimedwait,
-            set,
-            std::ptr::null::<libc::siginfo_t>(),
-            std::ptr::null::<libc::timespec>(),
+    match unsafe {
+        raw_syscall::sys_rt_sigtimedwait(
+            set as *const u8,
+            std::ptr::null_mut(),
+            std::ptr::null(),
             kernel_sigset_size,
-        ) as c_int
-    };
-    if rc > 0 {
-        // SAFETY: sig is non-null; we checked above.
-        unsafe { *sig = rc };
-        0
-    } else {
-        // On error, return the errno value per POSIX sigwait semantics.
-        last_host_errno(libc::EINTR)
+        )
+    } {
+        Ok(signo) if signo > 0 => {
+            // SAFETY: sig is non-null; we checked above.
+            unsafe { *sig = signo };
+            0
+        }
+        Ok(_) => libc::EINTR,
+        Err(e) => e,
     }
 }
 
@@ -1199,14 +1205,14 @@ pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
     let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
     // SAFETY: get current action for the signal.
     if unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigaction,
+        raw_syscall::sys_rt_sigaction(
             sig,
-            std::ptr::null::<libc::sigaction>(),
-            &mut sa as *mut libc::sigaction,
+            std::ptr::null(),
+            &mut sa as *mut libc::sigaction as *mut u8,
             std::mem::size_of::<libc::c_ulong>(),
         )
-    } != 0
+    }
+    .is_err()
     {
         return -1;
     }
@@ -1216,16 +1222,17 @@ pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
         sa.sa_flags |= libc::SA_RESTART;
     }
     // SAFETY: set the modified action.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigaction,
+    match unsafe {
+        raw_syscall::sys_rt_sigaction(
             sig,
-            &sa as *const libc::sigaction,
-            std::ptr::null::<libc::sigaction>(),
+            &sa as *const libc::sigaction as *const u8,
+            std::ptr::null_mut(),
             std::mem::size_of::<libc::c_ulong>(),
-        ) as c_int
-    };
-    if rc != 0 { -1 } else { 0 }
+        )
+    } {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
 }
 
 /// `sighold` — add signal to process signal mask (XSI obsolete).
@@ -1235,16 +1242,17 @@ pub unsafe extern "C" fn sighold(sig: c_int) -> c_int {
     unsafe { sigemptyset(&mut set) };
     unsafe { sigaddset(&mut set, sig) };
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigprocmask,
+    match unsafe {
+        raw_syscall::sys_rt_sigprocmask(
             libc::SIG_BLOCK,
-            &set as *const libc::sigset_t,
-            std::ptr::null::<libc::sigset_t>(),
+            &set as *const libc::sigset_t as *const u8,
+            std::ptr::null_mut(),
             kernel_sigset_size,
-        ) as c_int
-    };
-    if rc != 0 { -1 } else { 0 }
+        )
+    } {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
 }
 
 /// `sigrelse` — remove signal from process signal mask (XSI obsolete).
@@ -1254,16 +1262,17 @@ pub unsafe extern "C" fn sigrelse(sig: c_int) -> c_int {
     unsafe { sigemptyset(&mut set) };
     unsafe { sigaddset(&mut set, sig) };
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigprocmask,
+    match unsafe {
+        raw_syscall::sys_rt_sigprocmask(
             libc::SIG_UNBLOCK,
-            &set as *const libc::sigset_t,
-            std::ptr::null::<libc::sigset_t>(),
+            &set as *const libc::sigset_t as *const u8,
+            std::ptr::null_mut(),
             kernel_sigset_size,
-        ) as c_int
-    };
-    if rc != 0 { -1 } else { 0 }
+        )
+    } {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
 }
 
 /// `sigignore` — set signal disposition to SIG_IGN (XSI obsolete).
@@ -1273,16 +1282,17 @@ pub unsafe extern "C" fn sigignore(sig: c_int) -> c_int {
     sa.sa_sigaction = libc::SIG_IGN;
     sa.sa_flags = 0;
     unsafe { sigemptyset(&mut sa.sa_mask) };
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigaction,
+    match unsafe {
+        raw_syscall::sys_rt_sigaction(
             sig,
-            &sa as *const libc::sigaction,
-            std::ptr::null::<libc::sigaction>(),
+            &sa as *const libc::sigaction as *const u8,
+            std::ptr::null_mut(),
             std::mem::size_of::<libc::c_ulong>(),
-        ) as c_int
-    };
-    if rc != 0 { -1 } else { 0 }
+        )
+    } {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
 }
 
 /// `psiginfo` — print signal info to stderr.

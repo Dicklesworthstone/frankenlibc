@@ -313,8 +313,45 @@ pub const SYS_GETTID: usize = 178;
 pub const SYS_SCHED_GET_PRIORITY_MAX: usize = 125;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SCHED_GET_PRIORITY_MIN: usize = 126;
+
+// Signal syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_KILL: usize = 62;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RT_SIGACTION: usize = 13;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RT_SIGPROCMASK: usize = 14;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RT_SIGPENDING: usize = 127;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RT_SIGTIMEDWAIT: usize = 128;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RT_SIGSUSPEND: usize = 130;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SIGALTSTACK: usize = 131;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PAUSE: usize = 34;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PPOLL: usize = 271;
+
+// Signal syscalls - aarch64
 #[cfg(target_arch = "aarch64")]
-const SYS_DUP3: usize = 24;
+pub const SYS_KILL: usize = 129;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RT_SIGACTION: usize = 134;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RT_SIGPROCMASK: usize = 135;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RT_SIGPENDING: usize = 136;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RT_SIGTIMEDWAIT: usize = 137;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RT_SIGSUSPEND: usize = 133;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SIGALTSTACK: usize = 132;
+// aarch64 does not have SYS_PAUSE; use ppoll with null mask
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PPOLL: usize = 73;
 
 // -------------------------------------------------------------------------
 // Error handling
@@ -1436,6 +1473,149 @@ pub unsafe fn sys_mremap(
         )
     };
     syscall_result(ret)
+}
+
+// -------------------------------------------------------------------------
+// Signal syscalls
+// -------------------------------------------------------------------------
+
+/// `kill(pid, sig)` — send a signal to a process.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_kill(pid: i32, sig: i32) -> Result<(), i32> {
+    // SAFETY: kill is safe to call with any arguments.
+    let ret = unsafe { raw::syscall2(SYS_KILL, pid as usize, sig as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `rt_sigaction(signum, act, oldact, sigsetsize)` — examine and change a signal action.
+///
+/// # Safety
+///
+/// `act` and `oldact` must be valid pointers to sigaction structs or null.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_rt_sigaction(
+    signum: i32,
+    act: *const u8,
+    oldact: *mut u8,
+    sigsetsize: usize,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_RT_SIGACTION,
+            signum as usize,
+            act as usize,
+            oldact as usize,
+            sigsetsize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `rt_sigprocmask(how, set, oldset, sigsetsize)` — examine and change blocked signals.
+///
+/// # Safety
+///
+/// `set` and `oldset` must be valid pointers to sigset_t or null.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_rt_sigprocmask(
+    how: i32,
+    set: *const u8,
+    oldset: *mut u8,
+    sigsetsize: usize,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_RT_SIGPROCMASK,
+            how as usize,
+            set as usize,
+            oldset as usize,
+            sigsetsize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `rt_sigpending(set, sigsetsize)` — examine pending signals.
+///
+/// # Safety
+///
+/// `set` must be a valid pointer to sigset_t.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_rt_sigpending(set: *mut u8, sigsetsize: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_RT_SIGPENDING, set as usize, sigsetsize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `rt_sigtimedwait(set, info, timeout, sigsetsize)` — synchronously wait for queued signals.
+///
+/// # Safety
+///
+/// All pointers must be valid or null as appropriate.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_rt_sigtimedwait(
+    set: *const u8,
+    info: *mut u8,
+    timeout: *const u8,
+    sigsetsize: usize,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_RT_SIGTIMEDWAIT,
+            set as usize,
+            info as usize,
+            timeout as usize,
+            sigsetsize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `rt_sigsuspend(mask, sigsetsize)` — wait for a signal.
+///
+/// # Safety
+///
+/// `mask` must be a valid pointer to sigset_t.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_rt_sigsuspend(mask: *const u8, sigsetsize: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_RT_SIGSUSPEND, mask as usize, sigsetsize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sigaltstack(ss, old_ss)` — get and/or set signal stack context.
+///
+/// # Safety
+///
+/// `ss` and `old_ss` must be valid pointers to stack_t or null.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sigaltstack(ss: *const u8, old_ss: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SIGALTSTACK, ss as usize, old_ss as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `pause()` — wait for a signal.
+///
+/// Note: On aarch64, this is emulated via ppoll.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_pause() -> Result<(), i32> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let ret = unsafe { raw::syscall0(SYS_PAUSE) };
+        syscall_result(ret).map(|_| ())
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // aarch64 doesn't have pause, emulate with ppoll(NULL, 0, NULL, NULL)
+        let ret = unsafe { raw::syscall4(SYS_PPOLL, 0, 0, 0, 0) };
+        syscall_result(ret).map(|_| ())
+    }
 }
 
 // -------------------------------------------------------------------------
