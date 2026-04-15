@@ -353,6 +353,51 @@ pub const SYS_SIGALTSTACK: usize = 132;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PPOLL: usize = 73;
 
+// Poll/select syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_POLL: usize = 7;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SELECT: usize = 23;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PSELECT6: usize = 270;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_EPOLL_CREATE1: usize = 291;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_EPOLL_CTL: usize = 233;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_EPOLL_PWAIT: usize = 281;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_EVENTFD2: usize = 290;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TIMERFD_CREATE: usize = 283;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TIMERFD_SETTIME: usize = 286;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TIMERFD_GETTIME: usize = 287;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PRCTL: usize = 157;
+
+// Poll/select syscalls - aarch64
+// aarch64 does not have SYS_POLL or SYS_SELECT; use ppoll/pselect6
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PSELECT6: usize = 72;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_EPOLL_CREATE1: usize = 20;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_EPOLL_CTL: usize = 21;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_EPOLL_PWAIT: usize = 22;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_EVENTFD2: usize = 19;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TIMERFD_CREATE: usize = 85;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TIMERFD_SETTIME: usize = 86;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TIMERFD_GETTIME: usize = 87;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PRCTL: usize = 167;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -1616,6 +1661,234 @@ pub fn sys_pause() -> Result<(), i32> {
         let ret = unsafe { raw::syscall4(SYS_PPOLL, 0, 0, 0, 0) };
         syscall_result(ret).map(|_| ())
     }
+}
+
+// -------------------------------------------------------------------------
+// Poll/epoll/timerfd syscalls
+// -------------------------------------------------------------------------
+
+/// `poll(fds, nfds, timeout)` — wait for events on file descriptors.
+///
+/// # Safety
+///
+/// `fds` must be a valid pointer to `nfds` pollfd structures.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_poll(fds: *mut u8, nfds: usize, timeout: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_POLL, fds as usize, nfds, timeout as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `ppoll(fds, nfds, timeout, sigmask, sigsetsize)` — wait for events with signal mask.
+///
+/// # Safety
+///
+/// All pointers must be valid or null as appropriate.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_ppoll(
+    fds: *mut u8,
+    nfds: usize,
+    timeout: *const u8,
+    sigmask: *const u8,
+    sigsetsize: usize,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_PPOLL,
+            fds as usize,
+            nfds,
+            timeout as usize,
+            sigmask as usize,
+            sigsetsize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `select(nfds, readfds, writefds, exceptfds, timeout)` — synchronous I/O multiplexing.
+///
+/// # Safety
+///
+/// All pointers must be valid or null as appropriate.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_select(
+    nfds: i32,
+    readfds: *mut u8,
+    writefds: *mut u8,
+    exceptfds: *mut u8,
+    timeout: *mut u8,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_SELECT,
+            nfds as usize,
+            readfds as usize,
+            writefds as usize,
+            exceptfds as usize,
+            timeout as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `pselect6(nfds, readfds, writefds, exceptfds, timeout, sigmask_data)` — synchronous I/O multiplexing with signal mask.
+///
+/// # Safety
+///
+/// All pointers must be valid or null as appropriate.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_pselect6(
+    nfds: i32,
+    readfds: *mut u8,
+    writefds: *mut u8,
+    exceptfds: *mut u8,
+    timeout: *const u8,
+    sigmask_data: *const u8,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_PSELECT6,
+            nfds as usize,
+            readfds as usize,
+            writefds as usize,
+            exceptfds as usize,
+            timeout as usize,
+            sigmask_data as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `epoll_create1(flags)` — open an epoll file descriptor.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_epoll_create1(flags: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_EPOLL_CREATE1, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `epoll_ctl(epfd, op, fd, event)` — control interface for an epoll file descriptor.
+///
+/// # Safety
+///
+/// `event` must be a valid pointer to an epoll_event or null (for EPOLL_CTL_DEL).
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut u8) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_EPOLL_CTL,
+            epfd as usize,
+            op as usize,
+            fd as usize,
+            event as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `epoll_pwait(epfd, events, maxevents, timeout, sigmask, sigsetsize)` — wait for I/O events with signal mask.
+///
+/// # Safety
+///
+/// `events` must be a valid pointer to `maxevents` epoll_event structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_epoll_pwait(
+    epfd: i32,
+    events: *mut u8,
+    maxevents: i32,
+    timeout: i32,
+    sigmask: *const u8,
+    sigsetsize: usize,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_EPOLL_PWAIT,
+            epfd as usize,
+            events as usize,
+            maxevents as usize,
+            timeout as usize,
+            sigmask as usize,
+            sigsetsize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `eventfd2(initval, flags)` — create a file descriptor for event notification.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_eventfd2(initval: u32, flags: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_EVENTFD2, initval as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `timerfd_create(clockid, flags)` — create a timer file descriptor.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_timerfd_create(clockid: i32, flags: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_TIMERFD_CREATE, clockid as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `timerfd_settime(fd, flags, new_value, old_value)` — arm/disarm and fetch state of timer.
+///
+/// # Safety
+///
+/// `new_value` and `old_value` must be valid pointers to itimerspec or null.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_timerfd_settime(
+    fd: i32,
+    flags: i32,
+    new_value: *const u8,
+    old_value: *mut u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_TIMERFD_SETTIME,
+            fd as usize,
+            flags as usize,
+            new_value as usize,
+            old_value as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `timerfd_gettime(fd, curr_value)` — fetch state of timer.
+///
+/// # Safety
+///
+/// `curr_value` must be a valid pointer to itimerspec.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_timerfd_gettime(fd: i32, curr_value: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_TIMERFD_GETTIME, fd as usize, curr_value as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `prctl(option, arg2, arg3, arg4, arg5)` — operations on a process.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_prctl(option: i32, arg2: usize, arg3: usize, arg4: usize, arg5: usize) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_PRCTL,
+            option as usize,
+            arg2,
+            arg3,
+            arg4,
+            arg5,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
 }
 
 // -------------------------------------------------------------------------

@@ -5,10 +5,10 @@
 //! `ApiFamily::Poll`.
 
 use std::ffi::c_int;
-use std::os::raw::c_long;
 
 use frankenlibc_core::errno;
 use frankenlibc_core::poll as poll_core;
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -49,9 +49,9 @@ pub unsafe extern "C" fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeou
 
     // SYS_poll doesn't exist on aarch64; use SYS_ppoll with timeout conversion.
     #[cfg(target_arch = "x86_64")]
-    let rc = unsafe { libc::syscall(libc::SYS_poll as c_long, fds, actual_nfds, timeout) as c_int };
+    let result = unsafe { raw_syscall::sys_poll(fds as *mut u8, actual_nfds as usize, timeout) };
     #[cfg(not(target_arch = "x86_64"))]
-    let rc = {
+    let result = {
         // Convert millisecond timeout to timespec for ppoll.
         let (ts_ptr, ts_storage);
         if timeout < 0 {
@@ -69,23 +69,22 @@ pub unsafe extern "C" fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeou
             ts_ptr = &ts_storage as *const libc::timespec;
         }
         unsafe {
-            libc::syscall(
-                libc::SYS_ppoll as c_long,
-                fds,
-                actual_nfds,
-                ts_ptr,
-                std::ptr::null::<libc::sigset_t>(),
-                0usize,
-            ) as c_int
+            raw_syscall::sys_ppoll(
+                fds as *mut u8,
+                actual_nfds as usize,
+                ts_ptr as *const u8,
+                std::ptr::null(),
+                0,
+            )
         }
     };
-    let adverse = rc < 0;
-    if adverse {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
-    }
+    let (rc, adverse) = match result {
+        Ok(n) => (n, false),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            (-1, true)
+        }
+    };
     runtime_policy::observe(ApiFamily::Poll, decision.profile, 20, adverse);
     rc
 }
@@ -129,23 +128,21 @@ pub unsafe extern "C" fn ppoll(
 
     // Use SYS_ppoll with sigset size parameter.
     let sigset_size = core::mem::size_of::<libc::c_ulong>();
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_ppoll as c_long,
-            fds,
-            actual_nfds,
-            timeout_ts,
-            sigmask,
+    let (rc, adverse) = match unsafe {
+        raw_syscall::sys_ppoll(
+            fds as *mut u8,
+            actual_nfds as usize,
+            timeout_ts as *const u8,
+            sigmask as *const u8,
             sigset_size,
-        ) as c_int
+        )
+    } {
+        Ok(n) => (n, false),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            (-1, true)
+        }
     };
-    let adverse = rc < 0;
-    if adverse {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
-    }
     runtime_policy::observe(ApiFamily::Poll, decision.profile, 25, adverse);
     rc
 }
@@ -196,18 +193,17 @@ pub unsafe extern "C" fn select(
 
     // SYS_select doesn't exist on aarch64; use SYS_pselect6 with timeout conversion.
     #[cfg(target_arch = "x86_64")]
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_select as c_long,
+    let result = unsafe {
+        raw_syscall::sys_select(
             actual_nfds,
-            readfds,
-            writefds,
-            exceptfds,
-            timeout,
-        ) as c_int
+            readfds as *mut u8,
+            writefds as *mut u8,
+            exceptfds as *mut u8,
+            timeout as *mut u8,
+        )
     };
     #[cfg(not(target_arch = "x86_64"))]
-    let rc = {
+    let result = {
         // Convert timeval to timespec for pselect6 and mirror the remaining
         // timeout back into the caller's timeval (select() semantics).
         let mut ts_storage = libc::timespec {
@@ -215,40 +211,39 @@ pub unsafe extern "C" fn select(
             tv_nsec: 0,
         };
         let ts_ptr = if timeout.is_null() {
-            std::ptr::null_mut::<libc::timespec>()
+            std::ptr::null::<libc::timespec>()
         } else {
             let tv = unsafe { &*timeout };
             ts_storage = libc::timespec {
                 tv_sec: tv.tv_sec,
                 tv_nsec: tv.tv_usec * 1000,
             };
-            &mut ts_storage as *mut libc::timespec
+            &ts_storage as *const libc::timespec
         };
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_pselect6 as c_long,
+        let res = unsafe {
+            raw_syscall::sys_pselect6(
                 actual_nfds,
-                readfds,
-                writefds,
-                exceptfds,
-                ts_ptr,
-                std::ptr::null::<[usize; 2]>(),
-            ) as c_int
+                readfds as *mut u8,
+                writefds as *mut u8,
+                exceptfds as *mut u8,
+                ts_ptr as *const u8,
+                std::ptr::null(),
+            )
         };
         if !timeout.is_null() {
             let tv = unsafe { &mut *timeout };
             tv.tv_sec = ts_storage.tv_sec;
             tv.tv_usec = (ts_storage.tv_nsec / 1000) as libc::suseconds_t;
         }
-        rc
+        res
     };
-    let adverse = rc < 0;
-    if adverse {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
-    }
+    let (rc, adverse) = match result {
+        Ok(n) => (n, false),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            (-1, true)
+        }
+    };
     runtime_policy::observe(ApiFamily::Poll, decision.profile, 25, adverse);
     rc
 }
@@ -307,24 +302,22 @@ pub unsafe extern "C" fn pselect(
         &sig_data as *const [usize; 2]
     };
 
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_pselect6 as c_long,
+    let (rc, adverse) = match unsafe {
+        raw_syscall::sys_pselect6(
             actual_nfds,
-            readfds,
-            writefds,
-            exceptfds,
-            timeout,
-            sig_ptr,
-        ) as c_int
+            readfds as *mut u8,
+            writefds as *mut u8,
+            exceptfds as *mut u8,
+            timeout as *const u8,
+            sig_ptr as *const u8,
+        )
+    } {
+        Ok(n) => (n, false),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            (-1, true)
+        }
     };
-    let adverse = rc < 0;
-    if adverse {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
-    }
     runtime_policy::observe(ApiFamily::Poll, decision.profile, 30, adverse);
     rc
 }
@@ -342,27 +335,25 @@ pub unsafe extern "C" fn epoll_create(size: c_int) -> c_int {
         return -1;
     }
     // Modern kernels ignore size; use epoll_create1(0) internally.
-    let rc = unsafe { libc::syscall(libc::SYS_epoll_create1 as c_long, 0) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOMEM);
-        unsafe { set_abi_errno(e) };
+    match raw_syscall::sys_epoll_create1(0) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `epoll_create1` — open an epoll file descriptor with flags.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn epoll_create1(flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_epoll_create1 as c_long, flags) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match raw_syscall::sys_epoll_create1(flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -377,14 +368,13 @@ pub unsafe extern "C" fn epoll_ctl(
     fd: c_int,
     event: *mut libc::epoll_event,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_epoll_ctl as c_long, epfd, op, fd, event) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EBADF);
-        unsafe { set_abi_errno(e) };
+    match unsafe { raw_syscall::sys_epoll_ctl(epfd, op, fd, event as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -407,24 +397,22 @@ pub unsafe extern "C" fn epoll_wait(
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_epoll_pwait as c_long,
+    match unsafe {
+        raw_syscall::sys_epoll_pwait(
             epfd,
-            events,
+            events as *mut u8,
             maxevents,
             timeout,
-            std::ptr::null::<libc::sigset_t>(),
+            std::ptr::null(),
             core::mem::size_of::<libc::c_ulong>(),
-        ) as c_int
-    };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EBADF);
-        unsafe { set_abi_errno(e) };
+        )
+    } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `epoll_pwait` — wait for events with signal mask.
@@ -444,24 +432,22 @@ pub unsafe extern "C" fn epoll_pwait(
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_epoll_pwait as c_long,
+    match unsafe {
+        raw_syscall::sys_epoll_pwait(
             epfd,
-            events,
+            events as *mut u8,
             maxevents,
             timeout,
-            sigmask,
+            sigmask as *const u8,
             core::mem::size_of::<libc::c_ulong>(),
-        ) as c_int
-    };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EBADF);
-        unsafe { set_abi_errno(e) };
+        )
+    } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -471,14 +457,13 @@ pub unsafe extern "C" fn epoll_pwait(
 /// Linux `eventfd` — create a file descriptor for event notification.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn eventfd(initval: u32, flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_eventfd2 as c_long, initval, flags) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match raw_syscall::sys_eventfd2(initval, flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -488,14 +473,13 @@ pub unsafe extern "C" fn eventfd(initval: u32, flags: c_int) -> c_int {
 /// Linux `timerfd_create` — create a timer file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timerfd_create(clockid: c_int, flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_timerfd_create as c_long, clockid, flags) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match raw_syscall::sys_timerfd_create(clockid, flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `timerfd_settime` — arm/disarm a timer file descriptor.
@@ -510,22 +494,20 @@ pub unsafe extern "C" fn timerfd_settime(
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_timerfd_settime as c_long,
+    match unsafe {
+        raw_syscall::sys_timerfd_settime(
             fd,
             flags,
-            new_value,
-            old_value,
-        ) as c_int
-    };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EBADF);
-        unsafe { set_abi_errno(e) };
+            new_value as *const u8,
+            old_value as *mut u8,
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `timerfd_gettime` — get current setting of a timer file descriptor.
@@ -550,17 +532,17 @@ pub unsafe extern "C" fn timerfd_gettime(fd: c_int, curr_value: *mut libc::itime
         runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_timerfd_gettime as c_long, fd, curr_value) as c_int };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EBADF);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
-    } else {
-        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, false);
+    match unsafe { raw_syscall::sys_timerfd_gettime(fd, curr_value as *mut u8) } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::Time, decision.profile, 5, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -570,17 +552,8 @@ pub unsafe extern "C" fn timerfd_gettime(fd: c_int, curr_value: *mut libc::itime
 /// POSIX `sched_yield` — yield the processor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_yield() -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_sched_yield as c_long) as c_int };
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::EAGAIN),
-            )
-        };
-    }
-    rc
+    raw_syscall::sys_sched_yield();
+    0
 }
 
 /// Linux `prctl` — operations on a process.
@@ -592,14 +565,11 @@ pub unsafe extern "C" fn prctl(
     arg4: libc::c_ulong,
     arg5: libc::c_ulong,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(libc::SYS_prctl as c_long, option, arg2, arg3, arg4, arg5) as c_int
-    };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match raw_syscall::sys_prctl(option, arg2 as usize, arg3 as usize, arg4 as usize, arg5 as usize) {
+        Ok(rc) => rc,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
