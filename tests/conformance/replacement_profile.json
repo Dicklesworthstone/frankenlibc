@@ -123,7 +123,6 @@
       "glibc_internal_abi",
       "malloc_abi",
       "pthread_abi",
-      "rpc_abi",
       "stdio_abi",
       "unistd_abi"
     ],
@@ -308,15 +307,9 @@
         ]
       },
       "rpc_abi": {
-        "count": 8,
-        "functions": [
-          "fflush",
-          "fread",
-          "fseek",
-          "ftell",
-          "fwrite",
-          "getrlimit"
-        ]
+        "count": 0,
+        "functions": [],
+        "note": "XDR stdio helpers now route through stdio_abi entrypoints, and _rpc_dtablesize uses resource_abi::getrlimit."
       },
       "signal_abi": {
         "count": 0,

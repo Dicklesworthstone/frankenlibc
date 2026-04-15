@@ -57,22 +57,6 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_rpc_abi_fread",
-      "mode": "interpose",
-      "module": "rpc_abi",
-      "symbol": "fread",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_rpc_abi_fwrite",
-      "mode": "replacement",
-      "module": "rpc_abi",
-      "symbol": "fwrite",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
       "id": "interpose_allow_stdio_abi_mkstemp",
       "mode": "interpose",
       "module": "stdio_abi",
@@ -124,14 +108,13 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 12,
-    "interpose_allowed_count": 6,
-    "replacement_forbidden_count": 6,
+    "fixture_count": 10,
+    "interpose_allowed_count": 5,
+    "replacement_forbidden_count": 5,
     "covered_callthrough_modules": [
       "glibc_internal_abi",
       "malloc_abi",
       "pthread_abi",
-      "rpc_abi",
       "stdio_abi",
       "unistd_abi"
     ]
