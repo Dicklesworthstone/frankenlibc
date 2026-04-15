@@ -1,0 +1,319 @@
+{
+  "version": "v1",
+  "family": "pthread/gnu_extensions",
+  "captured_at": "2026-04-15T00:30:00Z",
+  "description": "GNU/Linux pthread extensions: pthread_cond_clockwait, pthread_timedjoin_np, pthread_tryjoin_np, pthread_clockjoin_np, pthread_getattr_np — glibc extensions to POSIX pthread",
+  "spec_reference": "glibc manual: https://www.gnu.org/software/libc/manual/html_node/Threads.html",
+  "cases": [
+    {
+      "name": "clockwait_realtime",
+      "function": "pthread_cond_clockwait",
+      "spec_section": "glibc pthread_cond_clockwait",
+      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_REALTIME", "deadline": "future" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Wait with explicit CLOCK_REALTIME. Signal arrives before deadline. Returns 0."
+    },
+    {
+      "name": "clockwait_monotonic",
+      "function": "pthread_cond_clockwait",
+      "spec_section": "glibc pthread_cond_clockwait",
+      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_MONOTONIC", "deadline": "future" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Wait with CLOCK_MONOTONIC regardless of condvar's default clock. Returns 0."
+    },
+    {
+      "name": "clockwait_timeout",
+      "function": "pthread_cond_clockwait",
+      "spec_section": "glibc pthread_cond_clockwait",
+      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_MONOTONIC", "deadline": "past" },
+      "expected_output": "ETIMEDOUT",
+      "expected_errno": 110,
+      "mode": "both",
+      "notes": "Deadline already passed. Returns ETIMEDOUT after reacquiring mutex."
+    },
+    {
+      "name": "clockwait_null_condvar",
+      "function": "pthread_cond_clockwait",
+      "spec_section": "glibc pthread_cond_clockwait",
+      "inputs": { "condvar": "NULL", "mutex": "locked_by_caller", "clock_id": "CLOCK_REALTIME", "deadline": "future" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Null condvar pointer. Returns EINVAL."
+    },
+    {
+      "name": "clockwait_null_mutex",
+      "function": "pthread_cond_clockwait",
+      "spec_section": "glibc pthread_cond_clockwait",
+      "inputs": { "condvar": "initialized", "mutex": "NULL", "clock_id": "CLOCK_REALTIME", "deadline": "future" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Null mutex pointer. Returns EINVAL."
+    },
+    {
+      "name": "clockwait_null_abstime",
+      "function": "pthread_cond_clockwait",
+      "spec_section": "glibc pthread_cond_clockwait",
+      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_REALTIME", "abstime": "NULL" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Null abstime pointer. Returns EINVAL."
+    },
+    {
+      "name": "clockwait_invalid_clock",
+      "function": "pthread_cond_clockwait",
+      "spec_section": "glibc pthread_cond_clockwait",
+      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": -1, "deadline": "future" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Invalid clock_id. Returns EINVAL."
+    },
+    {
+      "name": "clockwait_invalid_nsec",
+      "function": "pthread_cond_clockwait",
+      "spec_section": "glibc pthread_cond_clockwait",
+      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_REALTIME", "tv_nsec": 1000000000 },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "tv_nsec >= 1e9. Returns EINVAL."
+    },
+    {
+      "name": "timedjoin_before_exit",
+      "function": "pthread_timedjoin_np",
+      "spec_section": "glibc pthread_timedjoin_np",
+      "inputs": { "thread": "running", "deadline": "future_long" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Thread exits before deadline. Returns 0 with thread's return value."
+    },
+    {
+      "name": "timedjoin_timeout",
+      "function": "pthread_timedjoin_np",
+      "spec_section": "glibc pthread_timedjoin_np",
+      "inputs": { "thread": "running_long", "deadline": "past" },
+      "expected_output": "ETIMEDOUT",
+      "expected_errno": 110,
+      "mode": "both",
+      "notes": "Deadline expires before thread exits. Returns ETIMEDOUT."
+    },
+    {
+      "name": "timedjoin_null_abstime_blocks",
+      "function": "pthread_timedjoin_np",
+      "spec_section": "glibc pthread_timedjoin_np",
+      "inputs": { "thread": "running", "abstime": "NULL" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "NULL abstime means block indefinitely (like pthread_join). Returns 0."
+    },
+    {
+      "name": "timedjoin_detached_thread",
+      "function": "pthread_timedjoin_np",
+      "spec_section": "glibc pthread_timedjoin_np",
+      "inputs": { "thread": "detached" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Cannot join detached thread. Returns EINVAL."
+    },
+    {
+      "name": "timedjoin_invalid_thread",
+      "function": "pthread_timedjoin_np",
+      "spec_section": "glibc pthread_timedjoin_np",
+      "inputs": { "thread": "invalid_handle" },
+      "expected_output": "ESRCH",
+      "expected_errno": 3,
+      "mode": "both",
+      "notes": "Invalid thread handle. Returns ESRCH."
+    },
+    {
+      "name": "timedjoin_self",
+      "function": "pthread_timedjoin_np",
+      "spec_section": "glibc pthread_timedjoin_np",
+      "inputs": { "thread": "self" },
+      "expected_output": "EDEADLK",
+      "expected_errno": 35,
+      "mode": "both",
+      "notes": "Thread cannot join itself. Returns EDEADLK."
+    },
+    {
+      "name": "timedjoin_invalid_nsec",
+      "function": "pthread_timedjoin_np",
+      "spec_section": "glibc pthread_timedjoin_np",
+      "inputs": { "thread": "running", "tv_nsec": -1 },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Negative tv_nsec. Returns EINVAL."
+    },
+    {
+      "name": "tryjoin_finished",
+      "function": "pthread_tryjoin_np",
+      "spec_section": "glibc pthread_tryjoin_np",
+      "inputs": { "thread": "finished" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Thread already finished. Returns 0 with thread's return value."
+    },
+    {
+      "name": "tryjoin_running",
+      "function": "pthread_tryjoin_np",
+      "spec_section": "glibc pthread_tryjoin_np",
+      "inputs": { "thread": "running" },
+      "expected_output": "EBUSY",
+      "expected_errno": 16,
+      "mode": "both",
+      "notes": "Thread still running. Returns EBUSY immediately."
+    },
+    {
+      "name": "tryjoin_detached",
+      "function": "pthread_tryjoin_np",
+      "spec_section": "glibc pthread_tryjoin_np",
+      "inputs": { "thread": "detached" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Cannot join detached thread. Returns EINVAL."
+    },
+    {
+      "name": "tryjoin_invalid_thread",
+      "function": "pthread_tryjoin_np",
+      "spec_section": "glibc pthread_tryjoin_np",
+      "inputs": { "thread": "invalid_handle" },
+      "expected_output": "ESRCH",
+      "expected_errno": 3,
+      "mode": "both",
+      "notes": "Invalid thread handle. Returns ESRCH."
+    },
+    {
+      "name": "tryjoin_self",
+      "function": "pthread_tryjoin_np",
+      "spec_section": "glibc pthread_tryjoin_np",
+      "inputs": { "thread": "self" },
+      "expected_output": "EDEADLK",
+      "expected_errno": 35,
+      "mode": "both",
+      "notes": "Thread cannot join itself. Returns EDEADLK."
+    },
+    {
+      "name": "clockjoin_realtime_success",
+      "function": "pthread_clockjoin_np",
+      "spec_section": "glibc pthread_clockjoin_np",
+      "inputs": { "thread": "running", "clock_id": "CLOCK_REALTIME", "deadline": "future_long" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Join with CLOCK_REALTIME deadline. Thread exits before deadline. Returns 0."
+    },
+    {
+      "name": "clockjoin_monotonic_success",
+      "function": "pthread_clockjoin_np",
+      "spec_section": "glibc pthread_clockjoin_np",
+      "inputs": { "thread": "running", "clock_id": "CLOCK_MONOTONIC", "deadline": "future_long" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Join with CLOCK_MONOTONIC deadline. Thread exits before deadline. Returns 0."
+    },
+    {
+      "name": "clockjoin_timeout",
+      "function": "pthread_clockjoin_np",
+      "spec_section": "glibc pthread_clockjoin_np",
+      "inputs": { "thread": "running_long", "clock_id": "CLOCK_MONOTONIC", "deadline": "past" },
+      "expected_output": "ETIMEDOUT",
+      "expected_errno": 110,
+      "mode": "both",
+      "notes": "Deadline expires before thread exits. Returns ETIMEDOUT."
+    },
+    {
+      "name": "clockjoin_null_abstime_blocks",
+      "function": "pthread_clockjoin_np",
+      "spec_section": "glibc pthread_clockjoin_np",
+      "inputs": { "thread": "running", "clock_id": "CLOCK_REALTIME", "abstime": "NULL" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "NULL abstime means block indefinitely (like pthread_join). Returns 0."
+    },
+    {
+      "name": "clockjoin_detached",
+      "function": "pthread_clockjoin_np",
+      "spec_section": "glibc pthread_clockjoin_np",
+      "inputs": { "thread": "detached", "clock_id": "CLOCK_REALTIME", "deadline": "future" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Cannot join detached thread. Returns EINVAL."
+    },
+    {
+      "name": "clockjoin_self",
+      "function": "pthread_clockjoin_np",
+      "spec_section": "glibc pthread_clockjoin_np",
+      "inputs": { "thread": "self", "clock_id": "CLOCK_REALTIME", "deadline": "future" },
+      "expected_output": "EDEADLK",
+      "expected_errno": 35,
+      "mode": "both",
+      "notes": "Thread cannot join itself. Returns EDEADLK."
+    },
+    {
+      "name": "getattr_np_self",
+      "function": "pthread_getattr_np",
+      "spec_section": "glibc pthread_getattr_np",
+      "inputs": { "thread": "self" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Get attributes of calling thread. Returns 0 with valid attr."
+    },
+    {
+      "name": "getattr_np_other_thread",
+      "function": "pthread_getattr_np",
+      "spec_section": "glibc pthread_getattr_np",
+      "inputs": { "thread": "other_running" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Get attributes of another thread. Returns 0 with valid attr."
+    },
+    {
+      "name": "getattr_np_null_attr",
+      "function": "pthread_getattr_np",
+      "spec_section": "glibc pthread_getattr_np",
+      "inputs": { "thread": "self", "attr": "NULL" },
+      "expected_output": "EINVAL",
+      "expected_errno": 22,
+      "mode": "both",
+      "notes": "Null attr pointer. Returns EINVAL."
+    },
+    {
+      "name": "getattr_np_detach_state",
+      "function": "pthread_getattr_np",
+      "spec_section": "glibc pthread_getattr_np",
+      "inputs": { "thread": "detached", "check": "detach_state" },
+      "expected_output": "PTHREAD_CREATE_DETACHED",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Detached thread reports PTHREAD_CREATE_DETACHED detach state."
+    },
+    {
+      "name": "getattr_np_stack_info",
+      "function": "pthread_getattr_np",
+      "spec_section": "glibc pthread_getattr_np",
+      "inputs": { "thread": "self", "check": "stack" },
+      "expected_output": "valid_stack_info",
+      "expected_errno": 0,
+      "mode": "both",
+      "notes": "Returns valid stack address and size. Stack address is within addressable memory."
+    }
+  ]
+}
