@@ -966,6 +966,50 @@ pub const SYS_SWAPOFF: usize = 225;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SYSINFO: usize = 179;
 
+// Memory/process management syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETCWD: usize = 79;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PRLIMIT64: usize = 302;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETRLIMIT: usize = 97;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TGKILL: usize = 234;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RT_SIGQUEUEINFO: usize = 129;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_NEWFSTATAT: usize = 262;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_STATX: usize = 332;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MKNODAT: usize = 259;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_EXECVEAT: usize = 322;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PIDFD_GETFD: usize = 438;
+
+// Memory/process management syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETCWD: usize = 17;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PRLIMIT64: usize = 261;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETRLIMIT: usize = 163; // prlimit64 preferred on aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TGKILL: usize = 131;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RT_SIGQUEUEINFO: usize = 138;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_NEWFSTATAT: usize = 79;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_STATX: usize = 291;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MKNODAT: usize = 33;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_EXECVEAT: usize = 281;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PIDFD_GETFD: usize = 438;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -4123,6 +4167,183 @@ pub unsafe fn sys_swapoff(path: *const u8) -> Result<(), i32> {
 pub unsafe fn sys_sysinfo(info: *mut u8) -> Result<(), i32> {
     let ret = unsafe { raw::syscall1(SYS_SYSINFO, info as usize) };
     syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Resource limit syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `getrlimit(resource, rlim)` — get resource limits.
+///
+/// # Safety
+///
+/// `rlim` must point to a valid rlimit structure.
+#[inline]
+#[allow(unsafe_code)]
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn sys_getrlimit(resource: i32, rlim: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_GETRLIMIT, resource as usize, rlim as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+// On aarch64, use prlimit64 for getrlimit functionality
+#[inline]
+#[allow(unsafe_code)]
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn sys_getrlimit(resource: i32, rlim: *mut u8) -> Result<(), i32> {
+    // Use prlimit64 with pid=0, new_limit=null to get current limits
+    let ret = unsafe { raw::syscall4(SYS_PRLIMIT64, 0, resource as usize, 0, rlim as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Signal/thread syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `tgkill(tgid, tid, sig)` — send signal to specific thread.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_tgkill(tgid: i32, tid: i32, sig: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_TGKILL, tgid as usize, tid as usize, sig as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `rt_sigqueueinfo(tgid, sig, uinfo)` — queue a signal and data.
+///
+/// # Safety
+///
+/// `uinfo` must point to a valid siginfo_t structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_rt_sigqueueinfo(tgid: i32, sig: i32, uinfo: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_RT_SIGQUEUEINFO, tgid as usize, sig as usize, uinfo as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// File stat syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `newfstatat(dirfd, pathname, statbuf, flags)` — get file status.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string.
+/// `statbuf` must point to a valid stat structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_newfstatat(
+    dirfd: i32,
+    pathname: *const u8,
+    statbuf: *mut u8,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_NEWFSTATAT,
+            dirfd as usize,
+            pathname as usize,
+            statbuf as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `statx(dirfd, pathname, flags, mask, statxbuf)` — get extended file status.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string (or empty with AT_EMPTY_PATH).
+/// `statxbuf` must point to a valid statx structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_statx(
+    dirfd: i32,
+    pathname: *const u8,
+    flags: i32,
+    mask: u32,
+    statxbuf: *mut u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_STATX,
+            dirfd as usize,
+            pathname as usize,
+            flags as usize,
+            mask as usize,
+            statxbuf as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// File creation syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `mknodat(dirfd, pathname, mode, dev)` — create a special or ordinary file.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mknodat(dirfd: i32, pathname: *const u8, mode: u32, dev: u64) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_MKNODAT,
+            dirfd as usize,
+            pathname as usize,
+            mode as usize,
+            dev as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Process execution syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `execveat(dirfd, pathname, argv, envp, flags)` — execute program relative to dirfd.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string (or empty with AT_EMPTY_PATH).
+/// `argv` and `envp` must be null-terminated arrays of pointers to NUL-terminated strings.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_execveat(
+    dirfd: i32,
+    pathname: *const u8,
+    argv: *const *const u8,
+    envp: *const *const u8,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_EXECVEAT,
+            dirfd as usize,
+            pathname as usize,
+            argv as usize,
+            envp as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Pidfd syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `pidfd_getfd(pidfd, targetfd, flags)` — obtain a duplicate of another process's fd.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_pidfd_getfd(pidfd: i32, targetfd: i32, flags: u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_PIDFD_GETFD, pidfd as usize, targetfd as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
 }
 
 // -------------------------------------------------------------------------
