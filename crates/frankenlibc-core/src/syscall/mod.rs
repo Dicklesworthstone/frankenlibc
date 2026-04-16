@@ -1079,6 +1079,102 @@ pub const SYS_PKEY_FREE: usize = 290;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PKEY_MPROTECT: usize = 288;
 
+// io_uring syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IO_URING_SETUP: usize = 425;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IO_URING_ENTER: usize = 426;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IO_URING_REGISTER: usize = 427;
+
+// io_uring syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IO_URING_SETUP: usize = 425;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IO_URING_ENTER: usize = 426;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IO_URING_REGISTER: usize = 427;
+
+// Priority and misc syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_KCMP: usize = 312;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IOPRIO_SET: usize = 251;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IOPRIO_GET: usize = 252;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_USERFAULTFD: usize = 323;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SYNC_FILE_RANGE: usize = 277;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_REMAP_FILE_PAGES: usize = 216;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_SETATTR: usize = 314;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_GETATTR: usize = 315;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_QUOTACTL: usize = 179;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LOOKUP_DCOOKIE: usize = 212;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PERF_EVENT_OPEN: usize = 298;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_ADD_KEY: usize = 248;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_REQUEST_KEY: usize = 249;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_KEYCTL: usize = 250;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_STATFS: usize = 137;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FSTATFS: usize = 138;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LANDLOCK_CREATE_RULESET: usize = 444;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LANDLOCK_ADD_RULE: usize = 445;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LANDLOCK_RESTRICT_SELF: usize = 446;
+
+// Priority and misc syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_KCMP: usize = 272;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IOPRIO_SET: usize = 30;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IOPRIO_GET: usize = 31;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_USERFAULTFD: usize = 282;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SYNC_FILE_RANGE: usize = 84;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_REMAP_FILE_PAGES: usize = 234;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_SETATTR: usize = 274;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_GETATTR: usize = 275;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_QUOTACTL: usize = 60;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LOOKUP_DCOOKIE: usize = 18;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PERF_EVENT_OPEN: usize = 241;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_ADD_KEY: usize = 217;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_REQUEST_KEY: usize = 218;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_KEYCTL: usize = 219;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_STATFS: usize = 43;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FSTATFS: usize = 44;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LANDLOCK_CREATE_RULESET: usize = 444;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LANDLOCK_ADD_RULE: usize = 445;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LANDLOCK_RESTRICT_SELF: usize = 446;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -4605,6 +4701,248 @@ pub fn sys_pkey_free(pkey: i32) -> Result<(), i32> {
 #[allow(unsafe_code)]
 pub unsafe fn sys_pkey_mprotect(addr: *mut u8, len: usize, prot: i32, pkey: i32) -> Result<(), i32> {
     let ret = raw::syscall4(SYS_PKEY_MPROTECT, addr as usize, len, prot as usize, pkey as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// io_uring syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `io_uring_setup(entries, params)` — setup an io_uring instance.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_io_uring_setup(entries: u32, params: *mut u8) -> Result<i32, i32> {
+    let ret = raw::syscall2(SYS_IO_URING_SETUP, entries as usize, params as usize);
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `io_uring_enter(fd, to_submit, min_complete, flags, sig)` — enter an io_uring instance.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_io_uring_enter(
+    fd: i32,
+    to_submit: u32,
+    min_complete: u32,
+    flags: u32,
+    sig: *const u8,
+    sigsetsize: usize,
+) -> Result<i32, i32> {
+    let ret = raw::syscall6(
+        SYS_IO_URING_ENTER,
+        fd as usize,
+        to_submit as usize,
+        min_complete as usize,
+        flags as usize,
+        sig as usize,
+        sigsetsize,
+    );
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `io_uring_register(fd, opcode, arg, nr_args)` — register files or user buffers for io_uring.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_io_uring_register(fd: i32, opcode: u32, arg: *const u8, nr_args: u32) -> Result<i32, i32> {
+    let ret = raw::syscall4(SYS_IO_URING_REGISTER, fd as usize, opcode as usize, arg as usize, nr_args as usize);
+    syscall_result(ret).map(|v| v as i32)
+}
+
+// -------------------------------------------------------------------------
+// Misc process/kernel syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `kcmp(pid1, pid2, type, idx1, idx2)` — compare two processes to determine if they share a kernel resource.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_kcmp(pid1: i32, pid2: i32, type_: i32, idx1: u64, idx2: u64) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall5(SYS_KCMP, pid1 as usize, pid2 as usize, type_ as usize, idx1 as usize, idx2 as usize)
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `ioprio_set(which, who, ioprio)` — set I/O scheduling class and priority.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_ioprio_set(which: i32, who: i32, ioprio: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_IOPRIO_SET, which as usize, who as usize, ioprio as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `ioprio_get(which, who)` — get I/O scheduling class and priority.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_ioprio_get(which: i32, who: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_IOPRIO_GET, which as usize, who as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `userfaultfd(flags)` — create a userfaultfd object.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_userfaultfd(flags: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_USERFAULTFD, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `sync_file_range(fd, offset, nbytes, flags)` — sync a file segment with disk.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_sync_file_range(fd: i32, offset: i64, nbytes: i64, flags: u32) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(SYS_SYNC_FILE_RANGE, fd as usize, offset as usize, nbytes as usize, flags as usize)
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `remap_file_pages(addr, size, prot, pgoff, flags)` — create a nonlinear file mapping.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_remap_file_pages(addr: *mut u8, size: usize, prot: i32, pgoff: usize, flags: i32) -> Result<(), i32> {
+    let ret = raw::syscall5(SYS_REMAP_FILE_PAGES, addr as usize, size, prot as usize, pgoff, flags as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sched_setattr(pid, attr, flags)` — set scheduling policy and attributes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sched_setattr(pid: i32, attr: *const u8, flags: u32) -> Result<(), i32> {
+    let ret = raw::syscall3(SYS_SCHED_SETATTR, pid as usize, attr as usize, flags as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sched_getattr(pid, attr, size, flags)` — fetch scheduling policy and attributes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sched_getattr(pid: i32, attr: *mut u8, size: u32, flags: u32) -> Result<(), i32> {
+    let ret = raw::syscall4(SYS_SCHED_GETATTR, pid as usize, attr as usize, size as usize, flags as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `quotactl(cmd, special, id, addr)` — manipulate disk quotas.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_quotactl(cmd: i32, special: *const u8, id: i32, addr: *mut u8) -> Result<(), i32> {
+    let ret = raw::syscall4(SYS_QUOTACTL, cmd as usize, special as usize, id as usize, addr as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `lookup_dcookie(cookie, buffer, len)` — return a directory entry's path.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_lookup_dcookie(cookie: u64, buffer: *mut u8, len: usize) -> Result<usize, i32> {
+    let ret = raw::syscall3(SYS_LOOKUP_DCOOKIE, cookie as usize, buffer as usize, len);
+    syscall_result(ret)
+}
+
+/// `perf_event_open(attr, pid, cpu, group_fd, flags)` — set up performance monitoring.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_perf_event_open(
+    attr: *const u8,
+    pid: i32,
+    cpu: i32,
+    group_fd: i32,
+    flags: u32,
+) -> Result<i32, i32> {
+    let ret = raw::syscall5(
+        SYS_PERF_EVENT_OPEN,
+        attr as usize,
+        pid as usize,
+        cpu as usize,
+        group_fd as usize,
+        flags as usize,
+    );
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `add_key(type, description, payload, plen, ringid)` — add a key to the kernel's key management facility.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_add_key(
+    type_: *const u8,
+    description: *const u8,
+    payload: *const u8,
+    plen: usize,
+    ringid: i32,
+) -> Result<i32, i32> {
+    let ret = raw::syscall5(
+        SYS_ADD_KEY,
+        type_ as usize,
+        description as usize,
+        payload as usize,
+        plen,
+        ringid as usize,
+    );
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `request_key(type, description, callout_info, dest_keyring)` — request a key from the kernel's key management facility.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_request_key(
+    type_: *const u8,
+    description: *const u8,
+    callout_info: *const u8,
+    dest_keyring: i32,
+) -> Result<i32, i32> {
+    let ret = raw::syscall4(
+        SYS_REQUEST_KEY,
+        type_ as usize,
+        description as usize,
+        callout_info as usize,
+        dest_keyring as usize,
+    );
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `keyctl(operation, arg2, arg3, arg4, arg5)` — manipulate the kernel's key management facility.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_keyctl(operation: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
+    let ret = unsafe {
+        raw::syscall5(SYS_KEYCTL, operation as usize, arg2 as usize, arg3 as usize, arg4 as usize, arg5 as usize)
+    };
+    syscall_result(ret).map(|v| v as i64)
+}
+
+/// `statfs(path, buf)` — get filesystem statistics.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_statfs(path: *const u8, buf: *mut u8) -> Result<(), i32> {
+    let ret = raw::syscall2(SYS_STATFS, path as usize, buf as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fstatfs(fd, buf)` — get filesystem statistics.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fstatfs(fd: i32, buf: *mut u8) -> Result<(), i32> {
+    let ret = raw::syscall2(SYS_FSTATFS, fd as usize, buf as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `landlock_create_ruleset(attr, size, flags)` — create a new Landlock ruleset.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_landlock_create_ruleset(attr: *const u8, size: usize, flags: u32) -> Result<i32, i32> {
+    let ret = raw::syscall3(SYS_LANDLOCK_CREATE_RULESET, attr as usize, size, flags as usize);
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `landlock_add_rule(ruleset_fd, rule_type, rule_attr, flags)` — add a new Landlock rule to a ruleset.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_landlock_add_rule(ruleset_fd: i32, rule_type: i32, rule_attr: *const u8, flags: u32) -> Result<(), i32> {
+    let ret = raw::syscall4(SYS_LANDLOCK_ADD_RULE, ruleset_fd as usize, rule_type as usize, rule_attr as usize, flags as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `landlock_restrict_self(ruleset_fd, flags)` — enforce a Landlock ruleset on the calling thread.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_landlock_restrict_self(ruleset_fd: i32, flags: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd as usize, flags as usize) };
     syscall_result(ret).map(|_| ())
 }
 

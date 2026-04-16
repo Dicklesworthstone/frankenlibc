@@ -10420,11 +10420,13 @@ pub unsafe extern "C" fn dngettext(
 /// Linux `io_uring_setup` — set up io_uring instance.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn io_uring_setup(entries: c_uint, p: *mut c_void) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_io_uring_setup, entries, p) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_io_uring_setup(entries, p as *mut u8) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `io_uring_enter` — enter io_uring.
@@ -10436,21 +10438,22 @@ pub unsafe extern "C" fn io_uring_enter(
     flags: c_uint,
     sig: *const libc::sigset_t,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_io_uring_enter,
-            fd,
+    match unsafe {
+        syscall::sys_io_uring_enter(
+            fd as i32,
             to_submit,
             min_complete,
             flags,
-            sig,
+            sig as *const u8,
             std::mem::size_of::<libc::c_ulong>(),
-        ) as c_int
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+        )
+    } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `io_uring_register` — register resources with io_uring.
@@ -10461,12 +10464,13 @@ pub unsafe extern "C" fn io_uring_register(
     arg: *mut c_void,
     nr_args: c_uint,
 ) -> c_int {
-    let rc =
-        unsafe { libc::syscall(libc::SYS_io_uring_register, fd, opcode, arg, nr_args) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_io_uring_register(fd as i32, opcode, arg as *const u8, nr_args) } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -10482,31 +10486,37 @@ pub unsafe extern "C" fn kcmp(
     idx1: c_ulong,
     idx2: c_ulong,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_kcmp, pid1, pid2, type_, idx1, idx2) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ESRCH)) };
+    match syscall::sys_kcmp(pid1, pid2, type_, idx1 as u64, idx2 as u64) {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `ioprio_set` — set I/O scheduling class and priority.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ioprio_set(which: c_int, who: c_int, ioprio: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_ioprio_set, which, who, ioprio) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_ioprio_set(which, who, ioprio) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `ioprio_get` — get I/O scheduling class and priority.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ioprio_get(which: c_int, who: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_ioprio_get, which, who) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_ioprio_get(which, who) {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -10516,11 +10526,13 @@ pub unsafe extern "C" fn ioprio_get(which: c_int, who: c_int) -> c_int {
 /// Linux `userfaultfd` — create userfault file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn userfaultfd(flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_userfaultfd, flags) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_userfaultfd(flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `landlock_create_ruleset` — create landlock ruleset.
@@ -10530,12 +10542,13 @@ pub unsafe extern "C" fn landlock_create_ruleset(
     size: usize,
     flags: c_uint,
 ) -> c_int {
-    let rc =
-        unsafe { libc::syscall(libc::SYS_landlock_create_ruleset, attr, size, flags) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_landlock_create_ruleset(attr as *const u8, size, flags) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `landlock_add_rule` — add landlock rule to ruleset.
@@ -10546,29 +10559,27 @@ pub unsafe extern "C" fn landlock_add_rule(
     rule_attr: *const c_void,
     flags: c_uint,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_landlock_add_rule,
-            ruleset_fd,
-            rule_type,
-            rule_attr,
-            flags,
-        ) as c_int
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe {
+        syscall::sys_landlock_add_rule(ruleset_fd, rule_type, rule_attr as *const u8, flags)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `landlock_restrict_self` — enforce landlock ruleset on current process.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn landlock_restrict_self(ruleset_fd: c_int, flags: c_uint) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd, flags) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_landlock_restrict_self(ruleset_fd, flags) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -10592,12 +10603,13 @@ pub unsafe extern "C" fn sync_file_range(
     nbytes: i64,
     flags: c_uint,
 ) -> c_int {
-    let rc =
-        unsafe { libc::syscall(libc::SYS_sync_file_range, fd, offset, nbytes, flags) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+    match syscall::sys_sync_file_range(fd, offset, nbytes, flags) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `remap_file_pages` — create nonlinear file mapping (deprecated).
@@ -10609,13 +10621,13 @@ pub unsafe extern "C" fn remap_file_pages(
     pgoff: usize,
     flags: c_int,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(libc::SYS_remap_file_pages, addr, size, prot, pgoff, flags) as c_int
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_remap_file_pages(addr as *mut u8, size, prot, pgoff, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `tgkill` — send signal to specific thread.
@@ -10649,11 +10661,13 @@ pub unsafe extern "C" fn sched_setattr(
     attr: *mut c_void,
     flags: c_uint,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_sched_setattr, pid, attr, flags) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_sched_setattr(pid, attr as *const u8, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `sched_getattr` — get extended scheduling attributes.
@@ -10664,11 +10678,13 @@ pub unsafe extern "C" fn sched_getattr(
     size: c_uint,
     flags: c_uint,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_sched_getattr, pid, attr, size, flags) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_sched_getattr(pid, attr as *mut u8, size, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `quotactl` — manipulate disk quotas.
@@ -10679,21 +10695,25 @@ pub unsafe extern "C" fn quotactl(
     id: c_int,
     addr: *mut c_void,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_quotactl, cmd, special, id, addr) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_quotactl(cmd, special as *const u8, id, addr as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `lookup_dcookie` — return directory entry path for a cookie.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lookup_dcookie(cookie: u64, buffer: *mut c_char, len: usize) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_lookup_dcookie, cookie, buffer, len) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_lookup_dcookie(cookie, buffer as *mut u8, len) } {
+        Ok(v) => v as c_int,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `perf_event_open` — set up performance monitoring.
@@ -10705,13 +10725,13 @@ pub unsafe extern "C" fn perf_event_open(
     group_fd: c_int,
     flags: c_ulong,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(libc::SYS_perf_event_open, attr, pid, cpu, group_fd, flags) as c_int
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_perf_event_open(attr as *const u8, pid, cpu, group_fd, flags as u32) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `add_key` — add key to kernel keyring.
@@ -10723,11 +10743,21 @@ pub unsafe extern "C" fn add_key(
     plen: usize,
     ringid: i32,
 ) -> c_long {
-    let rc = unsafe { libc::syscall(libc::SYS_add_key, type_, description, payload, plen, ringid) };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe {
+        syscall::sys_add_key(
+            type_ as *const u8,
+            description as *const u8,
+            payload as *const u8,
+            plen,
+            ringid,
+        )
+    } {
+        Ok(key) => key as c_long,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `request_key` — request key from keyring.
@@ -10738,19 +10768,20 @@ pub unsafe extern "C" fn request_key(
     callout_info: *const c_char,
     dest_keyring: i32,
 ) -> c_long {
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_request_key,
-            type_,
-            description,
-            callout_info,
+    match unsafe {
+        syscall::sys_request_key(
+            type_ as *const u8,
+            description as *const u8,
+            callout_info as *const u8,
             dest_keyring,
         )
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    } {
+        Ok(key) => key as c_long,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `keyctl` — keyring operations.
@@ -10762,11 +10793,13 @@ pub unsafe extern "C" fn keyctl(
     arg4: c_ulong,
     arg5: c_ulong,
 ) -> c_long {
-    let rc = unsafe { libc::syscall(libc::SYS_keyctl, operation, arg2, arg3, arg4, arg5) };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_keyctl(operation, arg2 as u64, arg3 as u64, arg4 as u64, arg5 as u64) {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -10776,21 +10809,25 @@ pub unsafe extern "C" fn keyctl(
 /// `statfs` — get filesystem statistics.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn statfs(path: *const c_char, buf: *mut c_void) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_statfs, path, buf) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+    match unsafe { syscall::sys_statfs(path as *const u8, buf as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `fstatfs` — get filesystem statistics by fd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fstatfs(fd: c_int, buf: *mut c_void) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_fstatfs, fd, buf) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+    match unsafe { syscall::sys_fstatfs(fd, buf as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Convert kernel statfs result to statvfs layout.
