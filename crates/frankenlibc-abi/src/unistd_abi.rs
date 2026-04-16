@@ -1554,11 +1554,9 @@ pub unsafe extern "C" fn linkat(
 #[inline]
 fn read_utsname() -> Result<libc::utsname, c_int> {
     let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
-    let rc = unsafe { libc::syscall(libc::SYS_uname, uts.as_mut_ptr()) };
-    if rc < 0 {
-        Err(last_host_errno(errno::EFAULT))
-    } else {
-        Ok(unsafe { uts.assume_init() })
+    match unsafe { syscall::sys_uname(uts.as_mut_ptr() as *mut u8) } {
+        Ok(()) => Ok(unsafe { uts.assume_init() }),
+        Err(e) => Err(e),
     }
 }
 
@@ -1574,7 +1572,10 @@ pub unsafe extern "C" fn uname(buf: *mut libc::utsname) -> c_int {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    unsafe { syscall_ret_int(libc::syscall(libc::SYS_uname, buf), errno::EFAULT) }
+    match unsafe { syscall::sys_uname(buf as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+    }
 }
 
 /// POSIX `gethostname` — get the hostname.
@@ -3451,12 +3452,9 @@ pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int
         unsafe { set_abi_errno(libc::EIO) };
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_getrandom, buffer, length, 0) };
-    if rc < 0 || (rc as usize) < length {
-        unsafe { set_abi_errno(libc::EIO) };
-        -1
-    } else {
-        0
+    match unsafe { syscall::sys_getrandom(buffer as *mut u8, length, 0) } {
+        Ok(n) if (n as usize) >= length => 0,
+        _ => { unsafe { set_abi_errno(libc::EIO) }; -1 }
     }
 }
 
@@ -3468,23 +3466,14 @@ pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn arc4random() -> u32 {
     let mut val: u32 = 0;
-    unsafe {
-        libc::syscall(
-            libc::SYS_getrandom,
-            &mut val as *mut u32 as *mut c_void,
-            4usize,
-            0,
-        );
-    }
+    let _ = unsafe { syscall::sys_getrandom(&mut val as *mut u32 as *mut u8, 4, 0) };
     val
 }
 
 /// BSD `arc4random_buf` — fill buffer with random bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn arc4random_buf(buf: *mut c_void, nbytes: usize) {
-    unsafe {
-        libc::syscall(libc::SYS_getrandom, buf, nbytes, 0);
-    }
+    let _ = unsafe { syscall::sys_getrandom(buf as *mut u8, nbytes, 0) };
 }
 
 /// BSD `arc4random_uniform` — return a uniform random value less than `upper_bound`.
