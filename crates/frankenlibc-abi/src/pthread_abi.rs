@@ -36,7 +36,7 @@ use frankenlibc_core::pthread::{
     join_thread as core_join_thread, self_tid as core_self_tid,
 };
 use frankenlibc_core::syscall::{
-    syscall_result, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5,
+    self as raw_syscall, syscall_result, syscall0, syscall2, syscall3, syscall4,
 };
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::runtime_math::ApiFamily;
@@ -1379,12 +1379,8 @@ fn thread_tid_appears_alive(tid: i32) -> bool {
     if tid <= 0 {
         return false;
     }
-    let pid = match syscall_result(unsafe { syscall0(libc::SYS_getpid as usize) }) {
-        Ok(pid) => pid as i32,
-        Err(_) => return false,
-    };
-    let rc = unsafe { syscall3(libc::SYS_tgkill as usize, pid as usize, tid as usize, 0) };
-    match syscall_result(rc) {
+    let pid = raw_syscall::sys_getpid();
+    match raw_syscall::sys_tgkill(pid, tid, 0) {
         Ok(_) => true,
         Err(errno) => errno != libc::ESRCH,
     }
@@ -1465,15 +1461,8 @@ fn detached_thread_tid_snapshot(handle_ptr: *mut ThreadHandle) -> Option<i32> {
 
 fn clock_gettime_checked(clockid: c_int) -> Result<libc::timespec, c_int> {
     let mut now: libc::timespec = unsafe { std::mem::zeroed() };
-    let rc = unsafe {
-        syscall2(
-            libc::SYS_clock_gettime as usize,
-            clockid as usize,
-            &mut now as *mut libc::timespec as usize,
-        )
-    };
-    match syscall_result(rc) {
-        Ok(_) => Ok(now),
+    match unsafe { raw_syscall::sys_clock_gettime(clockid, &mut now as *mut _ as *mut u8) } {
+        Ok(()) => Ok(now),
         Err(errno) => Err(errno),
     }
 }
@@ -1559,21 +1548,17 @@ fn futex_wait_timed(
         unsafe { set_abi_errno(libc::ETIMEDOUT) };
         return -1;
     }
-    let ret = unsafe {
-        syscall4(
-            libc::SYS_futex as usize,
-            word as *const AtomicI32 as *const i32 as usize,
-            (libc::FUTEX_WAIT as usize)
-                | if private {
-                    libc::FUTEX_PRIVATE_FLAG as usize
-                } else {
-                    0
-                },
-            expected as usize,
+    let futex_op = libc::FUTEX_WAIT | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 };
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            futex_op,
+            expected as u32,
             &rel as *const libc::timespec as usize,
+            0,
+            0,
         )
-    };
-    match syscall_result(ret) {
+    } {
         Ok(_) => 0,
         Err(errno) => {
             unsafe { set_abi_errno(errno) };
@@ -1991,16 +1976,16 @@ unsafe fn native_pthread_detach(thread: libc::pthread_t) -> c_int {
 #[cfg(target_os = "linux")]
 fn futex_wait_private(word: &AtomicI32, expected: i32) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address and null timeout.
-    let ret = unsafe {
-        syscall4(
-            libc::SYS_futex as usize,
-            word as *const AtomicI32 as *const i32 as usize,
-            (libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG) as usize,
-            expected as usize,
-            std::ptr::null::<libc::timespec>() as usize,
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+            expected as u32,
+            0, // null timeout
+            0,
+            0,
         )
-    };
-    match syscall_result(ret) {
+    } {
         Ok(v) => v as c_int,
         Err(errno) => {
             unsafe { set_abi_errno(errno) };
@@ -2012,15 +1997,16 @@ fn futex_wait_private(word: &AtomicI32, expected: i32) -> c_int {
 #[cfg(target_os = "linux")]
 fn futex_wake_private(word: &AtomicI32, count: i32) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address.
-    let ret = unsafe {
-        syscall3(
-            libc::SYS_futex as usize,
-            word as *const AtomicI32 as *const i32 as usize,
-            (libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG) as usize,
-            count as usize,
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+            count as u32,
+            0,
+            0,
+            0,
         )
-    };
-    match syscall_result(ret) {
+    } {
         Ok(v) => v as c_int,
         Err(errno) => {
             unsafe { set_abi_errno(errno) };
@@ -4738,16 +4724,16 @@ fn barrier_data_ptr(barrier: *mut c_void) -> Option<*mut BarrierData> {
 
 fn futex_wait_u32(addr: &AtomicU32, expected: u32) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address and null timeout.
-    let ret = unsafe {
-        syscall4(
-            libc::SYS_futex as usize,
-            addr as *const AtomicU32 as *const u32 as usize,
-            (libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG) as usize,
-            expected as usize,
-            std::ptr::null::<libc::timespec>() as usize,
+    match unsafe {
+        raw_syscall::sys_futex(
+            addr as *const AtomicU32 as *const u32,
+            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+            expected,
+            0, // null timeout
+            0,
+            0,
         )
-    };
-    match syscall_result(ret) {
+    } {
         Ok(v) => v as c_int,
         Err(errno) => {
             unsafe { set_abi_errno(errno) };
@@ -4758,15 +4744,16 @@ fn futex_wait_u32(addr: &AtomicU32, expected: u32) -> c_int {
 
 fn futex_wake_u32(addr: &AtomicU32, count: i32) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address.
-    let ret = unsafe {
-        syscall3(
-            libc::SYS_futex as usize,
-            addr as *const AtomicU32 as *const u32 as usize,
-            (libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG) as usize,
-            count as usize,
+    match unsafe {
+        raw_syscall::sys_futex(
+            addr as *const AtomicU32 as *const u32,
+            libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+            count as u32,
+            0,
+            0,
+            0,
         )
-    };
-    match syscall_result(ret) {
+    } {
         Ok(v) => v as c_int,
         Err(errno) => {
             unsafe { set_abi_errno(errno) };
@@ -5006,17 +4993,7 @@ pub unsafe extern "C" fn pthread_setname_np(
         return set_other_thread_name_via_procfs(tid, name_cstr);
     }
     // SAFETY: prctl(PR_SET_NAME) sets the calling thread's name.
-    let ret = unsafe {
-        syscall5(
-            libc::SYS_prctl as usize,
-            PR_SET_NAME as usize,
-            name as usize,
-            0,
-            0,
-            0,
-        )
-    };
-    match syscall_result(ret) {
+    match raw_syscall::sys_prctl(PR_SET_NAME, name as usize, 0, 0, 0) {
         Ok(_) => 0,
         Err(errno) => errno,
     }
@@ -5047,17 +5024,7 @@ pub unsafe extern "C" fn pthread_getname_np(
         return get_other_thread_name_via_procfs(tid, name, len);
     }
     // SAFETY: prctl(PR_GET_NAME) reads the calling thread's name into a buffer.
-    let ret = unsafe {
-        syscall5(
-            libc::SYS_prctl as usize,
-            PR_GET_NAME as usize,
-            name as usize,
-            0,
-            0,
-            0,
-        )
-    };
-    match syscall_result(ret) {
+    match raw_syscall::sys_prctl(PR_GET_NAME, name as usize, 0, 0, 0) {
         Ok(_) => 0,
         Err(errno) => errno,
     }
@@ -6369,19 +6336,8 @@ pub unsafe extern "C" fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_
     }
     match resolve_thread_tid(thread) {
         Some(tid) => {
-            let pid = match syscall_result(unsafe { syscall0(libc::SYS_getpid as usize) }) {
-                Ok(pid) => pid as i32,
-                Err(errno) => return errno,
-            };
-            let ret = unsafe {
-                syscall3(
-                    libc::SYS_tgkill as usize,
-                    pid as usize,
-                    tid as usize,
-                    sig as usize,
-                )
-            };
-            match syscall_result(ret) {
+            let pid = raw_syscall::sys_getpid();
+            match raw_syscall::sys_tgkill(pid, tid, sig) {
                 Ok(_) => 0,
                 Err(errno) => errno,
             }
@@ -6411,10 +6367,7 @@ pub unsafe extern "C" fn pthread_sigqueue(
     }
     match resolve_thread_tid(thread) {
         Some(tid) => {
-            let pid = match syscall_result(unsafe { syscall0(libc::SYS_getpid as usize) }) {
-                Ok(pid) => pid as i32,
-                Err(errno) => return errno,
-            };
+            let pid = raw_syscall::sys_getpid();
             let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
             info.si_signo = sig;
             info.si_errno = 0;
@@ -6422,10 +6375,7 @@ pub unsafe extern "C" fn pthread_sigqueue(
             // Encode sender identity and queued payload using the Linux queue
             // siginfo layout instead of hard-coded byte offsets.
             let info_words = (&mut info as *mut libc::siginfo_t).cast::<u32>();
-            let caller_uid = match syscall_result(unsafe { syscall0(libc::SYS_getuid as usize) }) {
-                Ok(uid) => uid as u32,
-                Err(errno) => return errno,
-            };
+            let caller_uid = raw_syscall::sys_getuid();
             let value_bits = value.sival_ptr as usize as u64;
             unsafe {
                 *info_words.add(3) = pid as u32;
@@ -6439,16 +6389,7 @@ pub unsafe extern "C" fn pthread_sigqueue(
                     *info_words.add(5) = value_bits as u32;
                 }
             }
-            let ret = unsafe {
-                syscall4(
-                    libc::SYS_rt_tgsigqueueinfo as usize,
-                    pid as usize,
-                    tid as usize,
-                    sig as usize,
-                    &info as *const libc::siginfo_t as usize,
-                )
-            };
-            match syscall_result(ret) {
+            match unsafe { raw_syscall::sys_rt_tgsigqueueinfo(pid, tid, sig, &info as *const libc::siginfo_t as *const u8) } {
                 Ok(_) => 0,
                 Err(errno) => errno,
             }
@@ -6482,18 +6423,10 @@ pub unsafe extern "C" fn pthread_getaffinity_np(
     }
     match resolve_thread_tid(thread) {
         Some(tid) => {
-            let ret = unsafe {
-                syscall3(
-                    libc::SYS_sched_getaffinity as usize,
-                    tid as usize,
-                    cpusetsize,
-                    cpuset as usize,
-                )
-            };
-            match syscall_result(ret) {
-                Ok(ret) => {
+            match unsafe { raw_syscall::sys_sched_getaffinity(tid, cpusetsize, cpuset as *mut u8) } {
+                Ok(filled) => {
                     // Kernel may return fewer bytes than requested; zero the rest.
-                    let filled = ret;
+                    let filled = filled as usize;
                     if filled < cpusetsize {
                         unsafe {
                             std::ptr::write_bytes(
@@ -6533,16 +6466,8 @@ pub unsafe extern "C" fn pthread_setaffinity_np(
     }
     match resolve_thread_tid(thread) {
         Some(tid) => {
-            let ret = unsafe {
-                syscall3(
-                    libc::SYS_sched_setaffinity as usize,
-                    tid as usize,
-                    cpusetsize,
-                    cpuset as usize,
-                )
-            };
-            match syscall_result(ret) {
-                Ok(_) => 0,
+            match unsafe { raw_syscall::sys_sched_setaffinity(tid, cpusetsize, cpuset as *const u8) } {
+                Ok(()) => 0,
                 Err(errno) => errno,
             }
         }
@@ -6575,14 +6500,8 @@ pub unsafe extern "C" fn pthread_getconcurrency() -> c_int {
 /// Native implementation using `sched_yield(2)` syscall.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_yield() -> c_int {
-    let ret = unsafe { syscall0(libc::SYS_sched_yield as usize) };
-    match syscall_result(ret) {
-        Ok(_) => 0,
-        Err(errno) => {
-            unsafe { set_abi_errno(errno) };
-            -1
-        }
-    }
+    raw_syscall::sys_sched_yield();
+    0
 }
 
 // ---------------------------------------------------------------------------
@@ -6603,10 +6522,7 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
         unsafe { host_exit(retval) };
     }
 
-    unsafe { syscall1(libc::SYS_exit as usize, 0) };
-    loop {
-        std::hint::spin_loop();
-    }
+    raw_syscall::sys_exit_thread(0);
 }
 
 /// GNU `pthread_getcpuclockid` — get CPU-time clock for a thread.
@@ -6636,14 +6552,7 @@ pub unsafe extern "C" fn pthread_getcpuclockid(
             let cid: libc::clockid_t = (!tid as libc::clockid_t) << 3 | 6;
             // Validate that the clock is usable via clock_getres.
             let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-            let ret = unsafe {
-                syscall2(
-                    libc::SYS_clock_getres as usize,
-                    cid as usize,
-                    &mut ts as *mut libc::timespec as usize,
-                )
-            };
-            if syscall_result(ret).is_err() {
+            if unsafe { raw_syscall::sys_clock_getres(cid, &mut ts as *mut libc::timespec as *mut u8) }.is_err() {
                 return libc::ESRCH;
             }
             unsafe { *clockid = cid };
