@@ -16,7 +16,7 @@
 use std::ffi::{c_char, c_int, c_void};
 
 use crate::errno_abi::set_abi_errno;
-use frankenlibc_core::syscall::{self as raw_syscall, syscall_result, syscall6};
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 type c_uint = u32;
@@ -272,19 +272,23 @@ pub unsafe extern "C" fn pthread_setschedprio(thread: c_ulong, prio: c_int) -> c
 // __sched_*: native syscalls
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_get_priority_max(policy: c_int) -> c_int {
-    let ret =
-        unsafe { raw_syscall::syscall1(raw_syscall::SYS_SCHED_GET_PRIORITY_MAX, policy as usize) };
-    raw_syscall::syscall_result(ret)
-        .map(|v| v as c_int)
-        .unwrap_or(-1)
+    match raw_syscall::sys_sched_get_priority_max(policy) {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_get_priority_min(policy: c_int) -> c_int {
-    let ret =
-        unsafe { raw_syscall::syscall1(raw_syscall::SYS_SCHED_GET_PRIORITY_MIN, policy as usize) };
-    raw_syscall::syscall_result(ret)
-        .map(|v| v as c_int)
-        .unwrap_or(-1)
+    match raw_syscall::sys_sched_get_priority_min(policy) {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_getparam(pid: c_int, param: *mut c_void) -> c_int {
@@ -6079,24 +6083,19 @@ pub unsafe extern "C" fn sem_clockwait(
         };
         let _ = clock_flag;
         let ts = abstime as *const libc::timespec;
-        let rc = unsafe {
-            syscall6(
-                libc::SYS_futex as usize,
-                sem_val as *mut c_void as usize,
-                (libc::FUTEX_WAIT_BITSET
-                    | (libc::FUTEX_CLOCK_REALTIME
-                        * (if clockid == libc::CLOCK_REALTIME {
-                            1
-                        } else {
-                            0
-                        }))) as usize,
-                val as usize,
+        let futex_op = libc::FUTEX_WAIT_BITSET
+            | (libc::FUTEX_CLOCK_REALTIME
+                * (if clockid == libc::CLOCK_REALTIME { 1 } else { 0 }));
+        if let Err(err) = unsafe {
+            raw_syscall::sys_futex(
+                sem_val as *mut u32,
+                futex_op,
+                val as u32,
                 ts as usize,
                 std::ptr::null::<c_void>() as usize,
-                !0u32 as usize, // FUTEX_BITSET_MATCH_ANY
+                !0u32, // FUTEX_BITSET_MATCH_ANY
             )
-        };
-        if let Err(err) = syscall_result(rc) {
+        } {
             if err == libc::ETIMEDOUT {
                 unsafe { crate::errno_abi::set_abi_errno(err) };
                 return -1;
