@@ -1175,6 +1175,42 @@ pub const SYS_LANDLOCK_ADD_RULE: usize = 445;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_LANDLOCK_RESTRICT_SELF: usize = 446;
 
+// Additional syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PERSONALITY: usize = 135;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PROCESS_MADVISE: usize = 440;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PROCESS_MRELEASE: usize = 448;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_STAT: usize = 4;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SEMTIMEDOP: usize = 220;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETCPU: usize = 309;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CLOCK_ADJTIME: usize = 305;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_ADJTIMEX: usize = 159;
+
+// Additional syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PERSONALITY: usize = 92;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PROCESS_MADVISE: usize = 440;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PROCESS_MRELEASE: usize = 448;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_STAT: usize = 0; // Not available on aarch64 - use newfstatat instead
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SEMTIMEDOP: usize = 192;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETCPU: usize = 168;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CLOCK_ADJTIME: usize = 266;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_ADJTIMEX: usize = 171;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -4944,6 +4980,86 @@ pub unsafe fn sys_landlock_add_rule(ruleset_fd: i32, rule_type: i32, rule_attr: 
 pub fn sys_landlock_restrict_self(ruleset_fd: i32, flags: u32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall2(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd as usize, flags as usize) };
     syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Additional syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `personality(persona)` — set the process execution domain.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_personality(persona: u32) -> Result<u32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_PERSONALITY, persona as usize) };
+    syscall_result(ret).map(|v| v as u32)
+}
+
+/// `process_madvise(pidfd, iovec, vlen, advice, flags)` — give advice about memory usage for another process.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_process_madvise(
+    pidfd: i32,
+    iovec: *const u8,
+    vlen: usize,
+    advice: i32,
+    flags: u32,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_PROCESS_MADVISE,
+            pidfd as usize,
+            iovec as usize,
+            vlen,
+            advice as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `process_mrelease(pidfd, flags)` — release a dying process's memory.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_process_mrelease(pidfd: i32, flags: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_PROCESS_MRELEASE, pidfd as usize, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `semtimedop(semid, sops, nsops, timeout)` — semaphore operations with timeout.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_semtimedop(
+    semid: i32,
+    sops: *const u8,
+    nsops: usize,
+    timeout: *const u8,
+) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall4(SYS_SEMTIMEDOP, semid as usize, sops as usize, nsops, timeout as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getcpu(cpu, node, unused)` — determine CPU and NUMA node on which the calling thread is running.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getcpu(cpu: *mut u32, node: *mut u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_GETCPU, cpu as usize, node as usize, 0) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `clock_adjtime(clk_id, buf)` — adjust the time of a specified clock.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_clock_adjtime(clk_id: i32, buf: *mut u8) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_CLOCK_ADJTIME, clk_id as usize, buf as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `adjtimex(buf)` — tune kernel clock.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_adjtimex(buf: *mut u8) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_ADJTIMEX, buf as usize) };
+    syscall_result(ret).map(|v| v as i32)
 }
 
 // -------------------------------------------------------------------------

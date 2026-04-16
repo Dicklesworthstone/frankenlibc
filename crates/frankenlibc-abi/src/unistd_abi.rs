@@ -10869,13 +10869,16 @@ unsafe fn statfs_to_statvfs(sfs: *const libc::statfs, vfs: *mut libc::statvfs) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn statvfs(path: *const c_char, buf: *mut libc::statvfs) -> c_int {
     let mut sfs = std::mem::MaybeUninit::<libc::statfs>::zeroed();
-    let rc = unsafe { libc::syscall(libc::SYS_statfs, path, sfs.as_mut_ptr()) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
-        return rc;
+    match unsafe { syscall::sys_statfs(path as *const u8, sfs.as_mut_ptr() as *mut u8) } {
+        Ok(()) => {
+            unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
-    0
 }
 
 /// POSIX `fstatvfs` — POSIX filesystem statistics by fd.
@@ -10883,13 +10886,16 @@ pub unsafe extern "C" fn statvfs(path: *const c_char, buf: *mut libc::statvfs) -
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fstatvfs(fd: c_int, buf: *mut libc::statvfs) -> c_int {
     let mut sfs = std::mem::MaybeUninit::<libc::statfs>::zeroed();
-    let rc = unsafe { libc::syscall(libc::SYS_fstatfs, fd, sfs.as_mut_ptr()) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
-        return rc;
+    match unsafe { syscall::sys_fstatfs(fd, sfs.as_mut_ptr() as *mut u8) } {
+        Ok(()) => {
+            unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
-    0
 }
 
 // ===========================================================================
@@ -10899,11 +10905,13 @@ pub unsafe extern "C" fn fstatvfs(fd: c_int, buf: *mut libc::statvfs) -> c_int {
 /// Linux `getdents64` — get directory entries (64-bit).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getdents64(fd: c_int, dirp: *mut c_void, count: usize) -> c_long {
-    let rc = unsafe { libc::syscall(libc::SYS_getdents64, fd, dirp, count) };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+    match unsafe { syscall::sys_getdents64(fd, dirp as *mut u8, count) } {
+        Ok(n) => n as c_long,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -11816,12 +11824,17 @@ pub unsafe extern "C" fn personality(persona: c_ulong) -> c_int {
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_personality, persona) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_personality(persona as u32) {
+        Ok(v) => {
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 6, false);
+            v as c_int
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 6, true);
+            -1
+        }
     }
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 6, rc < 0);
-    rc
 }
 
 /// Linux `process_madvise` — advise about memory usage for another process.
@@ -11863,17 +11876,27 @@ pub unsafe extern "C" fn process_madvise(
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_process_madvise, pidfd, iovec, vlen, advice, flags) };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_process_madvise(pidfd, iovec as *const u8, vlen, advice, flags) } {
+        Ok(n) => {
+            runtime_policy::observe(
+                ApiFamily::VirtualMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(10, vlen),
+                false,
+            );
+            n
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(
+                ApiFamily::VirtualMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(10, vlen),
+                true,
+            );
+            -1
+        }
     }
-    runtime_policy::observe(
-        ApiFamily::VirtualMemory,
-        decision.profile,
-        runtime_policy::scaled_cost(10, vlen),
-        rc < 0,
-    );
-    rc as isize
 }
 
 /// Linux `process_mrelease` — release memory of a dying process.
@@ -11893,12 +11916,17 @@ pub unsafe extern "C" fn process_mrelease(pidfd: c_int, flags: c_uint) -> c_int 
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_process_mrelease, pidfd, flags) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_process_mrelease(pidfd, flags) {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 8, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 8, true);
+            -1
+        }
     }
-    runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 8, rc < 0);
-    rc
 }
 
 // ===========================================================================
