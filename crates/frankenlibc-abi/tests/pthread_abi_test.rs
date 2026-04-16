@@ -2665,7 +2665,7 @@ fn mutex_timedlock_rejects_invalid_abstime_nanoseconds() {
 }
 
 #[test]
-fn mutex_timedlock_delegates_for_host_errorcheck_mutex() {
+fn mutex_timedlock_rejects_host_errorcheck_mutex() {
     unsafe {
         let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
         assert_eq!(libc::pthread_mutexattr_init(&mut attr), 0);
@@ -2685,12 +2685,37 @@ fn mutex_timedlock_delegates_for_host_errorcheck_mutex() {
         };
         assert_eq!(
             pthread_mutex_timedlock(&mut mutex, &ts),
-            libc::EDEADLK,
-            "host-managed errorcheck mutexes must stay on the host timedlock path"
+            libc::EINVAL,
+            "host-managed mutexes are rejected by the native-only ABI path"
         );
 
         assert_eq!(libc::pthread_mutex_unlock(&mut mutex), 0);
         assert_eq!(libc::pthread_mutex_destroy(&mut mutex), 0);
+    }
+}
+
+#[test]
+fn cond_timedwait_rejects_host_cond_and_host_mutex_pair() {
+    unsafe {
+        let mut cond: libc::pthread_cond_t = std::mem::zeroed();
+        let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(libc::pthread_cond_init(&mut cond, ptr::null()), 0);
+        assert_eq!(libc::pthread_mutex_init(&mut mutex, ptr::null()), 0);
+        assert_eq!(libc::pthread_mutex_lock(&mut mutex), 0);
+
+        let deadline = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        assert_eq!(
+            pthread_cond_timedwait(&mut cond, &mut mutex, &deadline),
+            libc::EINVAL,
+            "host-owned condvar/mutex pairs are rejected by the native-only ABI path"
+        );
+
+        assert_eq!(libc::pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(libc::pthread_mutex_destroy(&mut mutex), 0);
+        assert_eq!(libc::pthread_cond_destroy(&mut cond), 0);
     }
 }
 
