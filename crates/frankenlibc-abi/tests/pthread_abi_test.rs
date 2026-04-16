@@ -2341,6 +2341,47 @@ fn mutexattr_gettype_after_destroy_is_rejected() {
 }
 
 #[test]
+fn mutexattr_unknown_word_is_rejected() {
+    unsafe {
+        let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+        *(std::ptr::addr_of_mut!(attr).cast::<c_int>()) = 0x1234_5678;
+
+        let mut kind: c_int = -1;
+        let mut protocol: c_int = -1;
+        let mut pshared: c_int = -1;
+        let mut robust: c_int = -1;
+
+        assert_eq!(pthread_mutexattr_destroy(&mut attr), libc::EINVAL);
+        assert_eq!(
+            pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE),
+            libc::EINVAL
+        );
+        assert_eq!(pthread_mutexattr_gettype(&attr, &mut kind), libc::EINVAL);
+        assert_eq!(
+            pthread_mutexattr_setprotocol(&mut attr, libc::PTHREAD_PRIO_NONE),
+            libc::EINVAL
+        );
+        assert_eq!(
+            pthread_mutexattr_getprotocol(&attr, &mut protocol),
+            libc::EINVAL
+        );
+        assert_eq!(
+            pthread_mutexattr_setpshared(&mut attr, libc::PTHREAD_PROCESS_PRIVATE),
+            libc::EINVAL
+        );
+        assert_eq!(
+            pthread_mutexattr_getpshared(&attr, &mut pshared),
+            libc::EINVAL
+        );
+        assert_eq!(
+            pthread_mutexattr_setrobust(&mut attr, libc::PTHREAD_MUTEX_STALLED),
+            libc::EINVAL
+        );
+        assert_eq!(pthread_mutexattr_getrobust(&attr, &mut robust), libc::EINVAL);
+    }
+}
+
+#[test]
 fn mutex_init_rejects_destroyed_attr() {
     unsafe {
         let _guard = MutexForceNativeGuard {

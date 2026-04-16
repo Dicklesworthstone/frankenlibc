@@ -85,20 +85,12 @@ type HostPthreadMutexattrInitFn = unsafe extern "C" fn(*mut libc::pthread_mutexa
 type HostPthreadMutexattrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_mutexattr_t) -> c_int;
 type HostPthreadMutexattrSettypeFn =
     unsafe extern "C" fn(*mut libc::pthread_mutexattr_t, c_int) -> c_int;
-type HostPthreadMutexattrGettypeFn =
-    unsafe extern "C" fn(*const libc::pthread_mutexattr_t, *mut c_int) -> c_int;
 type HostPthreadMutexattrSetprotocolFn =
     unsafe extern "C" fn(*mut libc::pthread_mutexattr_t, c_int) -> c_int;
-type HostPthreadMutexattrGetprotocolFn =
-    unsafe extern "C" fn(*const libc::pthread_mutexattr_t, *mut c_int) -> c_int;
 type HostPthreadMutexattrSetpsharedFn =
     unsafe extern "C" fn(*mut libc::pthread_mutexattr_t, c_int) -> c_int;
-type HostPthreadMutexattrGetpsharedFn =
-    unsafe extern "C" fn(*const libc::pthread_mutexattr_t, *mut c_int) -> c_int;
 type HostPthreadMutexattrSetrobustFn =
     unsafe extern "C" fn(*mut libc::pthread_mutexattr_t, c_int) -> c_int;
-type HostPthreadMutexattrGetrobustFn =
-    unsafe extern "C" fn(*const libc::pthread_mutexattr_t, *mut c_int) -> c_int;
 type ResolvedPthreadAttrInitFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
 type ResolvedPthreadAttrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
 type ResolvedPthreadAttrSetdetachstateFn =
@@ -752,21 +744,6 @@ unsafe fn resolved_pthread_mutexattr_settype_fn() -> Option<HostPthreadMutexattr
     }
 }
 
-unsafe fn resolved_pthread_mutexattr_gettype_fn() -> Option<HostPthreadMutexattrGettypeFn> {
-    let ptr = unsafe {
-        resolve_host_symbol_with_aliases(&[
-            b"pthread_mutexattr_gettype\0",
-            b"__pthread_mutexattr_gettype\0",
-        ])
-    };
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_mutexattr_gettype ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrGettypeFn>(ptr) })
-    }
-}
-
 unsafe fn resolved_pthread_mutexattr_setprotocol_fn() -> Option<HostPthreadMutexattrSetprotocolFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
@@ -779,21 +756,6 @@ unsafe fn resolved_pthread_mutexattr_setprotocol_fn() -> Option<HostPthreadMutex
     } else {
         // SAFETY: resolved symbol has pthread_mutexattr_setprotocol ABI.
         Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrSetprotocolFn>(ptr) })
-    }
-}
-
-unsafe fn resolved_pthread_mutexattr_getprotocol_fn() -> Option<HostPthreadMutexattrGetprotocolFn> {
-    let ptr = unsafe {
-        resolve_host_symbol_with_aliases(&[
-            b"pthread_mutexattr_getprotocol\0",
-            b"__pthread_mutexattr_getprotocol\0",
-        ])
-    };
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_mutexattr_getprotocol ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrGetprotocolFn>(ptr) })
     }
 }
 
@@ -812,21 +774,6 @@ unsafe fn resolved_pthread_mutexattr_setpshared_fn() -> Option<HostPthreadMutexa
     }
 }
 
-unsafe fn resolved_pthread_mutexattr_getpshared_fn() -> Option<HostPthreadMutexattrGetpsharedFn> {
-    let ptr = unsafe {
-        resolve_host_symbol_with_aliases(&[
-            b"pthread_mutexattr_getpshared\0",
-            b"__pthread_mutexattr_getpshared\0",
-        ])
-    };
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_mutexattr_getpshared ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrGetpsharedFn>(ptr) })
-    }
-}
-
 unsafe fn resolved_pthread_mutexattr_setrobust_fn() -> Option<HostPthreadMutexattrSetrobustFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
@@ -839,21 +786,6 @@ unsafe fn resolved_pthread_mutexattr_setrobust_fn() -> Option<HostPthreadMutexat
     } else {
         // SAFETY: resolved symbol has pthread_mutexattr_setrobust ABI.
         Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrSetrobustFn>(ptr) })
-    }
-}
-
-unsafe fn resolved_pthread_mutexattr_getrobust_fn() -> Option<HostPthreadMutexattrGetrobustFn> {
-    let ptr = unsafe {
-        resolve_host_symbol_with_aliases(&[
-            b"pthread_mutexattr_getrobust\0",
-            b"__pthread_mutexattr_getrobust\0",
-        ])
-    };
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_mutexattr_getrobust ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadMutexattrGetrobustFn>(ptr) })
     }
 }
 
@@ -4009,15 +3941,8 @@ pub unsafe extern "C" fn pthread_mutexattr_destroy(attr: *mut libc::pthread_mute
         return libc::EINVAL;
     }
     let word = unsafe { *(attr.cast::<c_int>()) };
-    if word != 0
-        && word != MUTEXATTR_DESTROYED_SENTINEL
-        && !mutexattr_word_valid(word)
-        && let Some(destroy) = unsafe { resolved_pthread_mutexattr_destroy_fn() }
-    {
-        let rc = unsafe { destroy(attr) };
-        if rc != 0 {
-            return rc;
-        }
+    if word != 0 && word != MUTEXATTR_DESTROYED_SENTINEL && !mutexattr_word_valid(word) {
+        return libc::EINVAL;
     }
     // SAFETY: attr is non-null; caller owns the memory.
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
@@ -4038,10 +3963,7 @@ pub unsafe extern "C" fn pthread_mutexattr_settype(
         return libc::EINVAL;
     }
     if !mutexattr_word_valid(*word) {
-        let Some(settype) = (unsafe { resolved_pthread_mutexattr_settype_fn() }) else {
-            return libc::EINVAL;
-        };
-        return unsafe { settype(attr, kind) };
+        return libc::EINVAL;
     }
     let Some(next_word) = encode_mutexattr(
         kind,
@@ -4068,10 +3990,7 @@ pub unsafe extern "C" fn pthread_mutexattr_gettype(
         return libc::EINVAL;
     }
     if !mutexattr_word_valid(word) {
-        let Some(gettype) = (unsafe { resolved_pthread_mutexattr_gettype_fn() }) else {
-            return libc::EINVAL;
-        };
-        return unsafe { gettype(attr, kind) };
+        return libc::EINVAL;
     }
     unsafe { *kind = decode_mutexattr_type(word) };
     0
@@ -5535,10 +5454,7 @@ pub unsafe extern "C" fn pthread_mutexattr_getprotocol(
         return libc::EINVAL;
     }
     if !mutexattr_word_valid(word) {
-        let Some(getprotocol) = (unsafe { resolved_pthread_mutexattr_getprotocol_fn() }) else {
-            return libc::EINVAL;
-        };
-        return unsafe { getprotocol(attr, protocol) };
+        return libc::EINVAL;
     }
     unsafe { *protocol = decode_mutexattr_protocol(word) };
     0
@@ -5558,10 +5474,7 @@ pub unsafe extern "C" fn pthread_mutexattr_setprotocol(
         return libc::EINVAL;
     }
     if !mutexattr_word_valid(*word) {
-        let Some(setprotocol) = (unsafe { resolved_pthread_mutexattr_setprotocol_fn() }) else {
-            return libc::EINVAL;
-        };
-        return unsafe { setprotocol(attr, protocol) };
+        return libc::EINVAL;
     }
     let Some(next_word) = encode_mutexattr(
         decode_mutexattr_type(*word),
@@ -5589,10 +5502,7 @@ pub unsafe extern "C" fn pthread_mutexattr_getpshared(
         return libc::EINVAL;
     }
     if !mutexattr_word_valid(word) {
-        let Some(getpshared) = (unsafe { resolved_pthread_mutexattr_getpshared_fn() }) else {
-            return libc::EINVAL;
-        };
-        return unsafe { getpshared(attr, pshared) };
+        return libc::EINVAL;
     }
     unsafe { *pshared = decode_mutexattr_pshared(word) };
     0
@@ -5612,10 +5522,7 @@ pub unsafe extern "C" fn pthread_mutexattr_setpshared(
         return libc::EINVAL;
     }
     if !mutexattr_word_valid(*word) {
-        let Some(setpshared) = (unsafe { resolved_pthread_mutexattr_setpshared_fn() }) else {
-            return libc::EINVAL;
-        };
-        return unsafe { setpshared(attr, pshared) };
+        return libc::EINVAL;
     }
     let Some(next_word) = encode_mutexattr(
         decode_mutexattr_type(*word),
@@ -5643,10 +5550,7 @@ pub unsafe extern "C" fn pthread_mutexattr_getrobust(
         return libc::EINVAL;
     }
     if !mutexattr_word_valid(word) {
-        let Some(getrobust) = (unsafe { resolved_pthread_mutexattr_getrobust_fn() }) else {
-            return libc::EINVAL;
-        };
-        return unsafe { getrobust(attr, robust) };
+        return libc::EINVAL;
     }
     unsafe { *robust = decode_mutexattr_robust(word) };
     0
@@ -5666,10 +5570,7 @@ pub unsafe extern "C" fn pthread_mutexattr_setrobust(
         return libc::EINVAL;
     }
     if !mutexattr_word_valid(*word) {
-        let Some(setrobust) = (unsafe { resolved_pthread_mutexattr_setrobust_fn() }) else {
-            return libc::EINVAL;
-        };
-        return unsafe { setrobust(attr, robust) };
+        return libc::EINVAL;
     }
     let Some(next_word) = encode_mutexattr(
         decode_mutexattr_type(*word),
