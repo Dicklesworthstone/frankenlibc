@@ -4338,6 +4338,43 @@ pub unsafe extern "C" fn sprofil(
 pub unsafe extern "C" fn adjtime(delta: *const c_void, olddelta: *mut c_void) -> c_int {
     unsafe { libc::adjtime(delta.cast(), olddelta.cast()) }
 }
+
+#[inline]
+unsafe fn timeval_pair_to_timespecs(tv: *const c_void) -> Option<[libc::timespec; 2]> {
+    if tv.is_null() {
+        return None;
+    }
+    let tv = tv as *const libc::timeval;
+    Some([
+        libc::timespec {
+            tv_sec: unsafe { (*tv).tv_sec },
+            tv_nsec: unsafe { (*tv).tv_usec * 1_000 },
+        },
+        libc::timespec {
+            tv_sec: unsafe { (*tv.add(1)).tv_sec },
+            tv_nsec: unsafe { (*tv.add(1)).tv_usec * 1_000 },
+        },
+    ])
+}
+
+#[inline]
+unsafe fn utimbuf_to_timespecs(times: *const c_void) -> Option<[libc::timespec; 2]> {
+    if times.is_null() {
+        return None;
+    }
+    let times = times as *const libc::utimbuf;
+    Some([
+        libc::timespec {
+            tv_sec: unsafe { (*times).actime },
+            tv_nsec: 0,
+        },
+        libc::timespec {
+            tv_sec: unsafe { (*times).modtime },
+            tv_nsec: 0,
+        },
+    ])
+}
+
 // arch_prctl: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn arch_prctl(code: c_int, addr: c_ulong) -> c_int {
@@ -4672,7 +4709,9 @@ pub unsafe extern "C" fn ftime(tp: *mut c_void) -> c_int {
 // futimes: native — forward to libc
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn futimes(fd: c_int, tv: *const c_void) -> c_int {
-    unsafe { libc::futimes(fd, tv.cast()) }
+    let times = unsafe { timeval_pair_to_timespecs(tv) };
+    let times_ptr = times.as_ref().map_or(std::ptr::null(), |buf| buf.as_ptr());
+    unsafe { crate::unistd_abi::futimens(fd, times_ptr) }
 }
 // futimesat: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5053,7 +5092,16 @@ pub unsafe extern "C" fn llseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
 // lutimes: native — forward to libc
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lutimes(filename: *const c_char, tv: *const c_void) -> c_int {
-    unsafe { libc::lutimes(filename, tv.cast()) }
+    let times = unsafe { timeval_pair_to_timespecs(tv) };
+    let times_ptr = times.as_ref().map_or(std::ptr::null(), |buf| buf.as_ptr());
+    unsafe {
+        crate::unistd_abi::utimensat(
+            libc::AT_FDCWD,
+            filename,
+            times_ptr,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    }
 }
 // mkostemp64/mkostemps64/mkstemp64/mkstemps64: forward to libc (64-bit aliases)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5992,7 +6040,13 @@ pub unsafe extern "C" fn getsourcefilter(
 // settimeofday: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn settimeofday(tv: *const c_void, tz: *const c_void) -> c_int {
-    unsafe { libc::settimeofday(tv.cast(), tz.cast()) }
+    match unsafe { raw_syscall::sys_settimeofday(tv as *const u8, tz as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // sgetspent: native — parse shadow password entry from string
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6222,12 +6276,16 @@ pub unsafe extern "C" fn ustat(dev: c_uint, ubuf: *mut c_void) -> c_int {
 // utime: forward to libc
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn utime(filename: *const c_char, times: *const c_void) -> c_int {
-    unsafe { libc::utime(filename, times.cast()) }
+    let times = unsafe { utimbuf_to_timespecs(times) };
+    let times_ptr = times.as_ref().map_or(std::ptr::null(), |buf| buf.as_ptr());
+    unsafe { crate::unistd_abi::utimensat(libc::AT_FDCWD, filename, times_ptr, 0) }
 }
 // utimes: forward to libc
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn utimes(filename: *const c_char, tv: *const c_void) -> c_int {
-    unsafe { libc::utimes(filename, tv.cast()) }
+    let times = unsafe { timeval_pair_to_timespecs(tv) };
+    let times_ptr = times.as_ref().map_or(std::ptr::null(), |buf| buf.as_ptr());
+    unsafe { crate::unistd_abi::utimensat(libc::AT_FDCWD, filename, times_ptr, 0) }
 }
 // vhangup: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

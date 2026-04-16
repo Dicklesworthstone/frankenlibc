@@ -114,6 +114,8 @@ pub const SYS_EXIT_GROUP: usize = 231;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_OPENAT: usize = 257;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_UTIMENSAT: usize = 280;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_PIPE2: usize = 293;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_PRLIMIT64: usize = 302;
@@ -123,6 +125,8 @@ pub const SYS_SCHED_YIELD: usize = 24;
 pub const SYS_NANOSLEEP: usize = 35;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_CLOCK_SETTIME: usize = 227;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETTIMEOFDAY: usize = 164;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_CLOCK_GETTIME: usize = 228;
 #[cfg(target_arch = "x86_64")]
@@ -254,6 +258,8 @@ pub const SYS_EXIT_GROUP: usize = 94;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_OPENAT: usize = 56;
 #[cfg(target_arch = "aarch64")]
+pub const SYS_UTIMENSAT: usize = 88;
+#[cfg(target_arch = "aarch64")]
 pub const SYS_PIPE2: usize = 59;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PRLIMIT64: usize = 261;
@@ -263,6 +269,8 @@ pub const SYS_SCHED_YIELD: usize = 124;
 pub const SYS_NANOSLEEP: usize = 101;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_CLOCK_SETTIME: usize = 112;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETTIMEOFDAY: usize = 170;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_CLOCK_GETTIME: usize = 113;
 #[cfg(target_arch = "aarch64")]
@@ -1433,6 +1441,18 @@ pub unsafe fn sys_clock_settime(clock_id: i32, tp: *const u8) -> Result<(), i32>
     syscall_result(ret).map(|_| ())
 }
 
+/// `settimeofday(tv, tz)` — set wall-clock time and timezone parameters.
+///
+/// # Safety
+///
+/// `tv` and `tz` may be null, or valid pointers to the corresponding structs.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_settimeofday(tv: *const u8, tz: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SETTIMEOFDAY, tv as usize, tz as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
 /// `clock_getres(clock_id, res)` — get resolution of specified clock.
 ///
 /// # Safety
@@ -1871,6 +1891,31 @@ pub unsafe fn sys_readlinkat(
         )
     };
     syscall_result(ret).map(|v| v as isize)
+}
+
+/// `utimensat(dirfd, pathname, times, flags)` — update file timestamps.
+///
+/// # Safety
+///
+/// `pathname` and `times` may be null, or valid pointers for the syscall contract.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_utimensat(
+    dirfd: i32,
+    pathname: *const u8,
+    times: *const u8,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_UTIMENSAT,
+            dirfd as usize,
+            pathname as usize,
+            times as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
 }
 
 /// `clone(flags, stack, ...)` — create a child process (simple fork variant).
