@@ -88,6 +88,12 @@ type HostPthreadCondTimedwaitFn = unsafe extern "C" fn(
     *mut libc::pthread_mutex_t,
     *const libc::timespec,
 ) -> c_int;
+type ResolvedPthreadCondattrInitFn =
+    unsafe extern "C" fn(*mut libc::pthread_condattr_t) -> c_int;
+type ResolvedPthreadCondattrDestroyFn =
+    unsafe extern "C" fn(*mut libc::pthread_condattr_t) -> c_int;
+type ResolvedPthreadCondattrSetclockFn =
+    unsafe extern "C" fn(*mut libc::pthread_condattr_t, libc::clockid_t) -> c_int;
 type HostPthreadCondattrGetclockFn =
     unsafe extern "C" fn(*const libc::pthread_condattr_t, *mut libc::clockid_t) -> c_int;
 type HostPthreadMutexattrInitFn = unsafe extern "C" fn(*mut libc::pthread_mutexattr_t) -> c_int;
@@ -227,6 +233,9 @@ static HOST_PTHREAD_EQUAL_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_CONDATTR_GETCLOCK_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
+static RESOLVED_PTHREAD_CONDATTR_INIT_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_CONDATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_CONDATTR_SETCLOCK_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_INIT_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
@@ -1053,7 +1062,37 @@ unsafe fn host_pthread_cond_timedwait_fn() -> Option<HostPthreadCondTimedwaitFn>
     }
 }
 
-unsafe fn host_pthread_condattr_getclock_fn() -> Option<HostPthreadCondattrGetclockFn> {
+unsafe fn resolved_pthread_condattr_init_fn() -> Option<ResolvedPthreadCondattrInitFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_CONDATTR_INIT_PTR,
+            &[b"pthread_condattr_init\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadCondattrInitFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_condattr_destroy_fn() -> Option<ResolvedPthreadCondattrDestroyFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_CONDATTR_DESTROY_PTR,
+            &[b"pthread_condattr_destroy\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadCondattrDestroyFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_condattr_setclock_fn() -> Option<ResolvedPthreadCondattrSetclockFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_CONDATTR_SETCLOCK_PTR,
+            &[b"pthread_condattr_setclock\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadCondattrSetclockFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_condattr_getclock_fn() -> Option<HostPthreadCondattrGetclockFn> {
     let ptr = unsafe {
         resolve_cached_host_thread_symbol(
             &HOST_PTHREAD_CONDATTR_GETCLOCK_PTR,
@@ -3032,14 +3071,40 @@ pub unsafe extern "C" fn pthread_cond_init(
             }
             if word & CONDATTR_VALID_BIT != 0 && condattr_word_valid(word) {
                 let clock = decode_condattr_clock(word);
+                let Some(condattr_init) = (unsafe { resolved_pthread_condattr_init_fn() }) else {
+                    return libc::EINVAL;
+                };
+                let Some(condattr_destroy) = (unsafe { resolved_pthread_condattr_destroy_fn() })
+                else {
+                    return libc::EINVAL;
+                };
                 let mut host_attr: libc::pthread_condattr_t = unsafe { std::mem::zeroed() };
-                unsafe { libc::pthread_condattr_init(&mut host_attr) };
+                let init_rc = unsafe { condattr_init(&mut host_attr) };
+                if init_rc != 0 {
+                    return init_rc;
+                }
                 if clock != libc::CLOCK_REALTIME {
-                    unsafe { libc::pthread_condattr_setclock(&mut host_attr, clock) };
+                    let Some(condattr_setclock) =
+                        (unsafe { resolved_pthread_condattr_setclock_fn() })
+                    else {
+                        let _ = unsafe { condattr_destroy(&mut host_attr) };
+                        return libc::EINVAL;
+                    };
+                    let setclock_rc = unsafe { condattr_setclock(&mut host_attr, clock) };
+                    if setclock_rc != 0 {
+                        let _ = unsafe { condattr_destroy(&mut host_attr) };
+                        return setclock_rc;
+                    }
                 }
                 let rc = unsafe { host_init(cond, &host_attr) };
-                unsafe { libc::pthread_condattr_destroy(&mut host_attr) };
-                return rc;
+                let destroy_rc = unsafe { condattr_destroy(&mut host_attr) };
+                return if rc != 0 {
+                    rc
+                } else if destroy_rc != 0 {
+                    destroy_rc
+                } else {
+                    0
+                };
             }
         }
         return unsafe { host_init(cond, attr) };
@@ -4268,7 +4333,7 @@ pub unsafe extern "C" fn pthread_condattr_getclock(
         unsafe { *clock_id = decode_condattr_clock(word) };
         return 0;
     }
-    if let Some(host_getclock) = unsafe { host_pthread_condattr_getclock_fn() } {
+    if let Some(host_getclock) = unsafe { resolved_pthread_condattr_getclock_fn() } {
         return unsafe { host_getclock(attr, clock_id) };
     }
     libc::EINVAL
