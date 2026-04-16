@@ -5169,11 +5169,8 @@ pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
 pub unsafe extern "C" fn unlockpt(fd: c_int) -> c_int {
     let mut unlock: c_int = 0;
     // SAFETY: ioctl reads lock toggle value from `unlock`.
-    let rc = unsafe {
-        libc::syscall(libc::SYS_ioctl, fd, libc::TIOCSPTLCK as i64, &mut unlock) as c_int
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+    if let Err(e) = unsafe { syscall::sys_ioctl(fd, libc::TIOCSPTLCK as usize, &mut unlock as *mut c_int as usize) } {
+        unsafe { set_abi_errno(e) };
         return -1;
     }
     0
@@ -9669,11 +9666,8 @@ pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -
         return libc::EINVAL;
     }
     let mut pty_num: c_uint = 0;
-    const TIOCGPTN: std::os::raw::c_ulong = 0x80045430;
-    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, TIOCGPTN, &mut pty_num as *mut c_uint) }
-        as c_int;
-    if rc < 0 {
-        let e = last_host_errno(libc::ENOTTY);
+    const TIOCGPTN: usize = 0x80045430;
+    if let Err(e) = unsafe { syscall::sys_ioctl(fd, TIOCGPTN, &mut pty_num as *mut c_uint as usize) } {
         unsafe { set_abi_errno(e) };
         return e;
     }
@@ -9696,7 +9690,7 @@ pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -
 /// POSIX `cuserid` — get login name (deprecated).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cuserid(s: *mut c_char) -> *mut c_char {
-    let uid = unsafe { libc::syscall(libc::SYS_getuid) } as libc::uid_t;
+    let uid = syscall::sys_getuid();
     let name = if uid == 0 { "root" } else { "user" };
     if s.is_null() {
         std::thread_local! {
@@ -10017,24 +10011,20 @@ pub unsafe extern "C" fn tcgetpgrp(fd: c_int) -> libc::pid_t {
 /// POSIX `tcsetpgrp` — set foreground process group of terminal.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int {
-    const TIOCSPGRP: std::os::raw::c_ulong = 0x5410;
-    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, TIOCSPGRP, &pgrp as *const libc::pid_t) }
-        as c_int;
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ENOTTY)) };
+    const TIOCSPGRP: usize = 0x5410;
+    match unsafe { syscall::sys_ioctl(fd, TIOCSPGRP, &pgrp as *const libc::pid_t as usize) } {
+        Ok(_) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 /// POSIX `tcgetsid` — get session leader of controlling terminal.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tcgetsid(fd: c_int) -> libc::pid_t {
     let mut sid: libc::pid_t = 0;
-    const TIOCGSID: std::os::raw::c_ulong = 0x5429;
-    let rc = unsafe { libc::syscall(libc::SYS_ioctl, fd, TIOCGSID, &mut sid as *mut libc::pid_t) }
-        as c_int;
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ENOTTY)) };
+    const TIOCGSID: usize = 0x5429;
+    if let Err(e) = unsafe { syscall::sys_ioctl(fd, TIOCGSID, &mut sid as *mut libc::pid_t as usize) } {
+        unsafe { set_abi_errno(e) };
         return -1;
     }
     sid
