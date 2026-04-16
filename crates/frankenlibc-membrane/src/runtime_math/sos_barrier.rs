@@ -812,7 +812,7 @@ pub fn evaluate_quarantine_barrier(
         let scale = fixed_power(FIXED_SCALE, degree);
         let _ = k; // used for iteration only
         if scale != 0 {
-            result = result.saturating_add(i128::from(coeff) * mono / scale);
+            result = result.saturating_add(i128::from(coeff).saturating_mul(mono) / scale);
         }
     }
 
