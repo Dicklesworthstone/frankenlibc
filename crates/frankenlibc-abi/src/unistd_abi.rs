@@ -3878,37 +3878,50 @@ unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI
 }
 
 fn sem_futex_wait(word: *mut c_void, expected: i32) -> i64 {
-    unsafe {
-        libc::syscall(
-            libc::SYS_futex,
-            word as *const i32,
+    match unsafe {
+        syscall::sys_futex(
+            word as *const u32,
             libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
-            expected,
-            std::ptr::null::<libc::timespec>(),
+            expected as u32,
+            0, // null timeout
+            0,
+            0,
         )
+    } {
+        Ok(v) => v as i64,
+        Err(e) => -(e as i64),
     }
 }
 
 fn sem_futex_wait_timed(word: *mut c_void, expected: i32, ts: *const libc::timespec) -> i64 {
-    unsafe {
-        libc::syscall(
-            libc::SYS_futex,
-            word as *const i32,
+    match unsafe {
+        syscall::sys_futex(
+            word as *const u32,
             libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
-            expected,
-            ts,
+            expected as u32,
+            ts as usize,
+            0,
+            0,
         )
+    } {
+        Ok(v) => v as i64,
+        Err(e) => -(e as i64),
     }
 }
 
 fn sem_futex_wake(word: *mut c_void, count: i32) -> i64 {
-    unsafe {
-        libc::syscall(
-            libc::SYS_futex,
-            word as *const i32,
+    match unsafe {
+        syscall::sys_futex(
+            word as *const u32,
             libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
-            count,
+            count as u32,
+            0,
+            0,
+            0,
         )
+    } {
+        Ok(v) => v as i64,
+        Err(e) => -(e as i64),
     }
 }
 
@@ -10146,13 +10159,22 @@ pub unsafe extern "C" fn futex(
     uaddr2: *mut c_int,
     val3: c_int,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(libc::SYS_futex, uaddr, futex_op, val, timeout, uaddr2, val3) as c_int
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe {
+        syscall::sys_futex(
+            uaddr as *const u32,
+            futex_op,
+            val as u32,
+            timeout as usize,
+            uaddr2 as usize,
+            val3 as u32,
+        )
+    } {
+        Ok(v) => v as c_int,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `membarrier` — issue memory barriers on a set of threads.
