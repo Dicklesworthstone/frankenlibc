@@ -9791,7 +9791,7 @@ pub unsafe extern "C" fn get_current_dir_name() -> *mut c_char {
 /// GNU `canonicalize_file_name` — resolve path like realpath(path, NULL).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn canonicalize_file_name(path: *const c_char) -> *mut c_char {
-    unsafe { libc::realpath(path, std::ptr::null_mut()) }
+    unsafe { crate::stdlib_abi::realpath(path, std::ptr::null_mut()) }
 }
 
 // ---------------------------------------------------------------------------
@@ -12593,7 +12593,8 @@ pub unsafe extern "C" fn gethostbyname2_r(
         ai_next: std::ptr::null_mut(),
     };
     let mut res: *mut libc::addrinfo = std::ptr::null_mut();
-    let rc = unsafe { libc::getaddrinfo(name, std::ptr::null(), &hints, &mut res) };
+    let rc =
+        unsafe { crate::resolv_abi::getaddrinfo(name, std::ptr::null(), &hints, &mut res) };
     if rc != 0 {
         unsafe {
             *result = std::ptr::null_mut();
@@ -12608,7 +12609,7 @@ pub unsafe extern "C" fn gethostbyname2_r(
         let needed = addr_len + std::mem::size_of::<*mut c_char>() * 2;
         if buflen < needed {
             unsafe {
-                libc::freeaddrinfo(res);
+                crate::resolv_abi::freeaddrinfo(res);
                 *result = std::ptr::null_mut();
                 *h_errnop = 2; // TRY_AGAIN
             }
@@ -12642,12 +12643,12 @@ pub unsafe extern "C" fn gethostbyname2_r(
 
             *result = result_buf;
             *h_errnop = 0;
-            libc::freeaddrinfo(res);
+            crate::resolv_abi::freeaddrinfo(res);
         }
         return 0;
     }
     unsafe {
-        libc::freeaddrinfo(res);
+        crate::resolv_abi::freeaddrinfo(res);
         *result = std::ptr::null_mut();
         *h_errnop = 1; // HOST_NOT_FOUND
     }
@@ -12716,7 +12717,8 @@ pub unsafe extern "C" fn putspent(sp: *const libc::spwd, stream: *mut libc::FILE
         spw.sp_flag
     );
     let bytes = line.as_bytes();
-    let written = unsafe { libc::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
+    let written =
+        unsafe { crate::stdio_abi::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream.cast()) };
     if written == bytes.len() { 0 } else { -1 }
 }
 
@@ -14492,11 +14494,7 @@ pub unsafe extern "C" fn fgetspent(stream: *mut c_void) -> *mut libc::spwd {
     let mut line_buf = [0u8; 1024];
     loop {
         let line_ptr = unsafe {
-            libc::fgets(
-                line_buf.as_mut_ptr() as *mut c_char,
-                line_buf.len() as c_int,
-                stream as *mut libc::FILE,
-            )
+            crate::stdio_abi::fgets(line_buf.as_mut_ptr().cast(), line_buf.len() as c_int, stream)
         };
         if line_ptr.is_null() {
             return std::ptr::null_mut();
@@ -14568,10 +14566,10 @@ pub unsafe extern "C" fn fgetspent_r(
     let mut line_buf = [0u8; 1024];
     loop {
         let line_ptr = unsafe {
-            libc::fgets(
-                line_buf.as_mut_ptr() as *mut c_char,
+            crate::stdio_abi::fgets(
+                line_buf.as_mut_ptr().cast(),
                 line_buf.len() as c_int,
-                stream,
+                stream.cast(),
             )
         };
         if line_ptr.is_null() {
@@ -14644,10 +14642,10 @@ pub unsafe extern "C" fn fgetpwent_r(
     let mut line_buf = [0u8; 1024];
     loop {
         let line_ptr = unsafe {
-            libc::fgets(
-                line_buf.as_mut_ptr() as *mut c_char,
+            crate::stdio_abi::fgets(
+                line_buf.as_mut_ptr().cast(),
                 line_buf.len() as c_int,
-                stream,
+                stream.cast(),
             )
         };
         if line_ptr.is_null() {
@@ -14722,10 +14720,10 @@ pub unsafe extern "C" fn fgetgrent_r(
     let mut line_buf = [0u8; 1024];
     loop {
         let line_ptr = unsafe {
-            libc::fgets(
-                line_buf.as_mut_ptr() as *mut c_char,
+            crate::stdio_abi::fgets(
+                line_buf.as_mut_ptr().cast(),
                 line_buf.len() as c_int,
-                stream,
+                stream.cast(),
             )
         };
         if line_ptr.is_null() {
@@ -15497,7 +15495,10 @@ pub unsafe extern "C" fn __sched_cpucount(setsize: usize, setp: *const c_void) -
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_cpualloc(count: c_int) -> *mut c_void {
     let size = (count as usize).div_ceil(8).max(128); // At least 128 bytes (1024 CPUs).
-    let ptr = unsafe { libc::calloc(1, size) };
+    let ptr = unsafe { crate::malloc_abi::raw_alloc(size) };
+    if !ptr.is_null() {
+        unsafe { std::ptr::write_bytes(ptr, 0, size) };
+    }
     ptr.cast()
 }
 
@@ -15505,7 +15506,7 @@ pub unsafe extern "C" fn __sched_cpualloc(count: c_int) -> *mut c_void {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_cpufree(setp: *mut c_void) {
     if !setp.is_null() {
-        unsafe { libc::free(setp.cast()) };
+        unsafe { crate::malloc_abi::raw_free(setp.cast()) };
     }
 }
 
@@ -16543,7 +16544,7 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
     }
 
     // Read DATEMSK environment variable
-    let datemsk_ptr = unsafe { libc::getenv(c"DATEMSK".as_ptr()) };
+    let datemsk_ptr = unsafe { crate::stdlib_abi::getenv(c"DATEMSK".as_ptr()) };
     if datemsk_ptr.is_null() || unsafe { *datemsk_ptr == 0 } {
         return 1; // DATEMSK not set
     }

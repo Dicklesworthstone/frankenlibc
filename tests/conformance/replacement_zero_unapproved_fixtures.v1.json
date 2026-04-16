@@ -25,18 +25,18 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "interpose_allow_unistd_abi_fgets",
+      "id": "interpose_allow_unistd_abi_backtrace",
       "mode": "interpose",
       "module": "unistd_abi",
-      "symbol": "fgets",
+      "symbol": "backtrace",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_unistd_abi_freeaddrinfo",
+      "id": "replacement_forbid_unistd_abi_dlsym",
       "mode": "replacement",
       "module": "unistd_abi",
-      "symbol": "freeaddrinfo",
+      "symbol": "dlsym",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     }
