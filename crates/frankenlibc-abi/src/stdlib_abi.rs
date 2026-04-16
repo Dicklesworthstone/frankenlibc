@@ -3977,7 +3977,7 @@ pub unsafe extern "C" fn realpath(
         )
     };
     let fd = match fd {
-        Ok(f) => f as i32,
+        Ok(f) => f,
         Err(_) => {
             unsafe { set_abi_errno(errno::ENOENT) };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);

@@ -299,10 +299,7 @@ pub unsafe extern "C" fn __sched_getparam(pid: c_int, param: *mut c_void) -> c_i
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_getscheduler(pid: c_int) -> c_int {
-    match raw_syscall::sys_sched_getscheduler(pid) {
-        Ok(policy) => policy,
-        Err(_) => -1,
-    }
+    raw_syscall::sys_sched_getscheduler(pid).unwrap_or(-1)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_setscheduler(
@@ -4882,9 +4879,9 @@ pub unsafe extern "C" fn ftime(tp: *mut c_void) -> c_int {
         return -1;
     }
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-    if let Err(_) = unsafe {
+    if unsafe {
         raw_syscall::sys_clock_gettime(libc::CLOCK_REALTIME, (&mut ts) as *mut _ as *mut u8)
-    } {
+    }.is_err() {
         return -1;
     }
     // struct timeb layout: time_t(8), millitm(u16), timezone(i16), dstflag(i16)

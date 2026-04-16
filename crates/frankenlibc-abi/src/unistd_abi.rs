@@ -890,7 +890,7 @@ pub unsafe extern "C" fn readlink(path: *const c_char, buf: *mut c_char, bufsiz:
     let rc = match unsafe {
         syscall::sys_readlinkat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, bufsiz)
     } {
-        Ok(n) => n as isize,
+        Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
             -1
@@ -1170,7 +1170,7 @@ pub unsafe extern "C" fn lchown(
             path as *const u8,
             owner,
             group,
-            libc::AT_SYMLINK_NOFOLLOW as i32,
+            libc::AT_SYMLINK_NOFOLLOW,
         )
     } {
         Ok(()) => 0,
@@ -1521,7 +1521,7 @@ pub unsafe extern "C" fn readlinkat(
     let rc = match unsafe {
         syscall::sys_readlinkat(dirfd, path as *const u8, buf as *mut u8, bufsiz)
     } {
-        Ok(n) => n as isize,
+        Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
             -1
@@ -2545,7 +2545,7 @@ fn syslog_send(priority: c_int, message: &[u8]) {
         tv_nsec: 0,
     };
     let _ = unsafe {
-        syscall::sys_clock_gettime(libc::CLOCK_REALTIME as i32, &mut tv as *mut _ as *mut u8)
+        syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut tv as *mut _ as *mut u8)
     };
     let epoch = tv.tv_sec;
     let secs_in_day = epoch % 86400;
@@ -2784,9 +2784,7 @@ unsafe fn resolve_ttyname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
     }
 
     // Validate descriptor first so callers can distinguish EBADF from ENOTTY.
-    if let Err(e) = unsafe { syscall::sys_fcntl(fd, libc::F_GETFD, 0) } {
-        return Err(e);
-    }
+    unsafe { syscall::sys_fcntl(fd, libc::F_GETFD, 0) }?;
 
     let mut winsize = std::mem::MaybeUninit::<libc::winsize>::zeroed();
     // SAFETY: ioctl writes winsize on success and performs terminal capability check.
@@ -2823,15 +2821,13 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
 
     let mut pty_num: c_int = 0;
     // SAFETY: ioctl writes PTY slave index into `pty_num` on success.
-    if let Err(e) = unsafe {
+    unsafe {
         syscall::sys_ioctl(
             fd,
             libc::TIOCGPTN as usize,
             &mut pty_num as *mut c_int as usize,
         )
-    } {
-        return Err(e);
-    }
+    }?;
 
     let path = format!("/dev/pts/{pty_num}");
     let c_path = CString::new(path).map_err(|_| errno::EINVAL)?;
@@ -3160,7 +3156,8 @@ pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uin
         return -1;
     }
 
-    let rc = match unsafe { syscall::sys_getrandom(buf as *mut u8, buflen, flags) } {
+    
+    match unsafe { syscall::sys_getrandom(buf as *mut u8, buflen, flags) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n
@@ -3170,8 +3167,7 @@ pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uin
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
             -1
         }
-    };
-    rc
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5180,25 +5176,23 @@ pub unsafe extern "C" fn openpty(
     };
 
     // Apply terminal attributes if provided
-    if !termp.is_null() {
-        if unsafe { syscall::sys_ioctl(slave, libc::TCSETS as usize, termp as usize) }.is_err() {
+    if !termp.is_null()
+        && unsafe { syscall::sys_ioctl(slave, libc::TCSETS as usize, termp as usize) }.is_err() {
             unsafe { set_abi_errno(errno::EBADF) };
             let _ = syscall::sys_close(master);
             let _ = syscall::sys_close(slave);
             return -1;
         }
-    }
 
     // Apply window size if provided
     const TIOCSWINSZ: usize = 0x5414;
-    if !winp.is_null() {
-        if unsafe { syscall::sys_ioctl(slave, TIOCSWINSZ, winp as usize) }.is_err() {
+    if !winp.is_null()
+        && unsafe { syscall::sys_ioctl(slave, TIOCSWINSZ, winp as usize) }.is_err() {
             unsafe { set_abi_errno(errno::EBADF) };
             let _ = syscall::sys_close(master);
             let _ = syscall::sys_close(slave);
             return -1;
         }
-    }
 
     // Copy slave name if buffer provided
     if !name.is_null() {
@@ -6801,7 +6795,7 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
                 std::ptr::null_mut(),
             )
         } {
-            Ok(n) => n as isize,
+            Ok(n) => n,
             Err(_) => break,
         };
         if n <= 0 {
@@ -8958,7 +8952,7 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
 
     // Restore terminal settings
     if saved_ok {
-        let _ = unsafe { syscall::sys_ioctl(fd, TCSETS as usize, termios_buf.as_ptr() as usize) };
+        let _ = unsafe { syscall::sys_ioctl(fd, TCSETS, termios_buf.as_ptr() as usize) };
         // Print newline since echo was off
         let _ = unsafe { syscall::sys_write(fd, b"\n".as_ptr(), 1) };
     }
@@ -10454,7 +10448,7 @@ pub unsafe extern "C" fn kcmp(
     idx1: c_ulong,
     idx2: c_ulong,
 ) -> c_int {
-    match syscall::sys_kcmp(pid1, pid2, type_, idx1 as u64, idx2 as u64) {
+    match syscall::sys_kcmp(pid1, pid2, type_, idx1, idx2) {
         Ok(v) => v,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -10761,7 +10755,7 @@ pub unsafe extern "C" fn keyctl(
     arg4: c_ulong,
     arg5: c_ulong,
 ) -> c_long {
-    match syscall::sys_keyctl(operation, arg2 as u64, arg3 as u64, arg4 as u64, arg5 as u64) {
+    match syscall::sys_keyctl(operation, arg2, arg3, arg4, arg5) {
         Ok(v) => v,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -13224,7 +13218,7 @@ pub unsafe extern "C" fn clock_adjtime(clk_id: libc::clockid_t, buf: *mut libc::
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    match unsafe { syscall::sys_clock_adjtime(clk_id as i32, buf as *mut u8) } {
+    match unsafe { syscall::sys_clock_adjtime(clk_id, buf as *mut u8) } {
         Ok(v) => v,
         Err(e) => {
             unsafe { set_abi_errno(e) };

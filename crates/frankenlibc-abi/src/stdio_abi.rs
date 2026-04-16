@@ -896,11 +896,10 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
 
     // Create StdioStream and set initial offset for append mode.
     let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
-    if open_flags.append {
-        if let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END) {
+    if open_flags.append
+        && let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END) {
             stream.set_offset(end_off);
         }
-    }
 
     // Register in the StdioStream registry.
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
@@ -1019,11 +1018,10 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
     }
 
     // Close the fd (don't close stdin/stdout/stderr sentinel fds).
-    if fd >= 0 && id != STDIN_SENTINEL && id != STDOUT_SENTINEL && id != STDERR_SENTINEL {
-        if raw_syscall::sys_close(fd).is_err() {
+    if fd >= 0 && id != STDIN_SENTINEL && id != STDOUT_SENTINEL && id != STDERR_SENTINEL
+        && raw_syscall::sys_close(fd).is_err() {
             adverse = true;
         }
-    }
 
     if adverse { libc::EOF } else { 0 }
 }
@@ -4963,14 +4961,13 @@ pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
     let errno_val = std::io::Error::last_os_error()
         .raw_os_error()
         .unwrap_or(errno::EIO);
-    if errno_val == errno::EISDIR {
-        if let Ok(()) = unsafe {
+    if errno_val == errno::EISDIR
+        && let Ok(()) = unsafe {
             raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, libc::AT_REMOVEDIR)
         } {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
             return 0;
         }
-    }
 
     let final_errno = std::io::Error::last_os_error()
         .raw_os_error()

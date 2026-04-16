@@ -958,11 +958,10 @@ unsafe fn read_file_actions_mut(fa_ptr: *mut c_void) -> Option<&'static mut Spaw
 unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
     let flags = attr.flags as c_int;
 
-    if flags & libc::POSIX_SPAWN_SETPGROUP != 0 {
-        if let Err(e) = raw_syscall::sys_setpgid(0, attr.pgroup) {
+    if flags & libc::POSIX_SPAWN_SETPGROUP != 0
+        && let Err(e) = raw_syscall::sys_setpgid(0, attr.pgroup) {
             return e;
         }
-    }
 
     if flags & libc::POSIX_SPAWN_SETSIGMASK != 0 {
         let mut sigset: libc::sigset_t = unsafe { std::mem::zeroed() };
@@ -988,10 +987,10 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
         let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
         act.sa_sigaction = libc::SIG_DFL;
         for sig in 1..=63 {
-            if attr.sigdefault & (1u64 << sig) != 0 {
-                if let Err(e) = unsafe {
+            if attr.sigdefault & (1u64 << sig) != 0
+                && let Err(e) = unsafe {
                     raw_syscall::sys_rt_sigaction(
-                        sig as i32,
+                        sig,
                         &act as *const libc::sigaction as *const u8,
                         std::ptr::null_mut(),
                         8, // kernel _NSIG / 8 (NOT sizeof(sigset_t))
@@ -999,7 +998,6 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
                 } {
                     return e;
                 }
-            }
         }
     }
 
