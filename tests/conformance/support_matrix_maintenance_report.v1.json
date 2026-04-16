@@ -1,35 +1,35 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-16T11:32:15Z",
+  "generated_at": "2026-04-16T11:55:04Z",
   "summary": {
     "total_symbols": 3980,
-    "status_validated": 3980,
-    "status_invalid": 0,
+    "status_validated": 3975,
+    "status_invalid": 5,
     "status_skipped": 0,
-    "status_valid_pct": 100.0,
+    "status_valid_pct": 99.9,
     "fixture_linked": 241,
     "fixture_unlinked": 3739,
     "fixture_coverage_pct": 6.1,
-    "total_warnings": 91
+    "total_warnings": 96
   },
   "coverage_dashboard": {
     "total_symbols": 3980,
     "status_counts": {
-      "Implemented": 3550,
+      "Implemented": 3569,
       "RawSyscall": 404,
-      "WrapsHostLibc": 26,
+      "WrapsHostLibc": 7,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 89.2,
+      "Implemented": 89.7,
       "RawSyscall": 10.2,
-      "WrapsHostLibc": 0.7,
+      "WrapsHostLibc": 0.2,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
     },
-    "native_coverage_pct": 99.3
+    "native_coverage_pct": 99.8
   },
   "trend": {
     "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
@@ -37,13 +37,13 @@
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 4,
+      "Implemented": 19,
       "RawSyscall": 0,
       "Stub": 0,
-      "WrapsHostLibc": -4
+      "WrapsHostLibc": -19
     },
-    "native_coverage_pct_delta": 0.15,
-    "reclassified_symbol_count": 4,
+    "native_coverage_pct_delta": 0.52,
+    "reclassified_symbol_count": 19,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
     "new_symbols": [],
@@ -59,15 +59,32 @@
     "reclassification_requires_conformance": {
       "status": "fail",
       "baseline_symbol_map_loaded": true,
-      "total_reclassified": 4,
+      "total_reclassified": 19,
       "violations": [
         {
-          "symbol": "pthread_clockjoin_np",
+          "symbol": "pthread_cancel",
           "previous_status": "WrapsHostLibc",
           "current_status": "Implemented",
           "promotion_requires_evidence": true,
-          "strict_fixture_count": 6,
-          "hardened_fixture_count": 6,
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "pthread_cond_clockwait",
+          "previous_status": "WrapsHostLibc",
+          "current_status": "Implemented",
+          "promotion_requires_evidence": true,
+          "strict_fixture_count": 8,
+          "hardened_fixture_count": 8,
           "strict_conformance": null,
           "hardened_conformance": null,
           "conformance_evidence_passed": false,
@@ -77,17 +94,127 @@
           ]
         },
         {
-          "symbol": "pthread_join",
+          "symbol": "pthread_create",
+          "previous_status": "WrapsHostLibc",
+          "current_status": "Implemented",
+          "promotion_requires_evidence": true,
+          "strict_fixture_count": 2,
+          "hardened_fixture_count": 0,
+          "strict_conformance": {
+            "total": 2,
+            "passed": 0,
+            "failed": 0,
+            "errors": 2,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "pthread_detach",
           "previous_status": "WrapsHostLibc",
           "current_status": "Implemented",
           "promotion_requires_evidence": true,
           "strict_fixture_count": 3,
-          "hardened_fixture_count": 2,
+          "hardened_fixture_count": 1,
           "strict_conformance": {
             "total": 3,
             "passed": 0,
             "failed": 0,
             "errors": 3,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "pthread_exit",
+          "previous_status": "WrapsHostLibc",
+          "current_status": "Implemented",
+          "promotion_requires_evidence": true,
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "pthread_mutex_clocklock",
+          "previous_status": "WrapsHostLibc",
+          "current_status": "Implemented",
+          "promotion_requires_evidence": true,
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "pthread_mutex_destroy",
+          "previous_status": "WrapsHostLibc",
+          "current_status": "Implemented",
+          "promotion_requires_evidence": true,
+          "strict_fixture_count": 1,
+          "hardened_fixture_count": 1,
+          "strict_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "pthread_mutex_init",
+          "previous_status": "WrapsHostLibc",
+          "current_status": "Implemented",
+          "promotion_requires_evidence": true,
+          "strict_fixture_count": 2,
+          "hardened_fixture_count": 2,
+          "strict_conformance": {
+            "total": 2,
+            "passed": 0,
+            "failed": 0,
+            "errors": 2,
             "pass_rate_percent": 0.0
           },
           "hardened_conformance": {
@@ -104,14 +231,26 @@
           ]
         },
         {
-          "symbol": "pthread_timedjoin_np",
+          "symbol": "pthread_mutex_lock",
           "previous_status": "WrapsHostLibc",
           "current_status": "Implemented",
           "promotion_requires_evidence": true,
-          "strict_fixture_count": 7,
-          "hardened_fixture_count": 7,
-          "strict_conformance": null,
-          "hardened_conformance": null,
+          "strict_fixture_count": 2,
+          "hardened_fixture_count": 1,
+          "strict_conformance": {
+            "total": 2,
+            "passed": 0,
+            "failed": 0,
+            "errors": 2,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
           "conformance_evidence_passed": false,
           "missing_evidence": [
             "strict_conformance_not_passing",
@@ -119,16 +258,89 @@
           ]
         },
         {
-          "symbol": "pthread_tryjoin_np",
+          "symbol": "pthread_mutex_timedlock",
           "previous_status": "WrapsHostLibc",
           "current_status": "Implemented",
           "promotion_requires_evidence": true,
-          "strict_fixture_count": 5,
-          "hardened_fixture_count": 5,
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
           "strict_conformance": null,
           "hardened_conformance": null,
           "conformance_evidence_passed": false,
           "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "pthread_mutex_trylock",
+          "previous_status": "WrapsHostLibc",
+          "current_status": "Implemented",
+          "promotion_requires_evidence": true,
+          "strict_fixture_count": 2,
+          "hardened_fixture_count": 2,
+          "strict_conformance": {
+            "total": 2,
+            "passed": 0,
+            "failed": 0,
+            "errors": 2,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": {
+            "total": 2,
+            "passed": 0,
+            "failed": 0,
+            "errors": 2,
+            "pass_rate_percent": 0.0
+          },
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "pthread_mutex_unlock",
+          "previous_status": "WrapsHostLibc",
+          "current_status": "Implemented",
+          "promotion_requires_evidence": true,
+          "strict_fixture_count": 1,
+          "hardened_fixture_count": 1,
+          "strict_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
+          "hardened_conformance": {
+            "total": 1,
+            "passed": 0,
+            "failed": 0,
+            "errors": 1,
+            "pass_rate_percent": 0.0
+          },
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "strict_conformance_not_passing",
+            "hardened_conformance_not_passing"
+          ]
+        },
+        {
+          "symbol": "pthread_setcancelstate",
+          "previous_status": "WrapsHostLibc",
+          "current_status": "Implemented",
+          "promotion_requires_evidence": true,
+          "strict_fixture_count": 0,
+          "hardened_fixture_count": 0,
+          "strict_conformance": null,
+          "hardened_conformance": null,
+          "conformance_evidence_passed": false,
+          "missing_evidence": [
+            "missing_strict_fixture",
+            "missing_hardened_fixture",
             "strict_conformance_not_passing",
             "hardened_conformance_not_passing"
           ]
@@ -138,16 +350,16 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 3550,
-      "fixture_linked": 174
+      "count": 3569,
+      "fixture_linked": 188
     },
     "RawSyscall": {
       "count": 404,
       "fixture_linked": 53
     },
     "WrapsHostLibc": {
-      "count": 26,
-      "fixture_linked": 14
+      "count": 7,
+      "fixture_linked": 0
     }
   },
   "module_coverage": {
@@ -3203,25 +3415,25 @@
     "pthread_barrierattr_getpshared": "Implemented",
     "pthread_barrierattr_init": "Implemented",
     "pthread_barrierattr_setpshared": "Implemented",
-    "pthread_cancel": "WrapsHostLibc",
+    "pthread_cancel": "Implemented",
     "pthread_clockjoin_np": "Implemented",
-    "pthread_cond_broadcast": "WrapsHostLibc",
-    "pthread_cond_clockwait": "WrapsHostLibc",
-    "pthread_cond_destroy": "WrapsHostLibc",
-    "pthread_cond_init": "WrapsHostLibc",
-    "pthread_cond_signal": "WrapsHostLibc",
-    "pthread_cond_timedwait": "WrapsHostLibc",
-    "pthread_cond_wait": "WrapsHostLibc",
+    "pthread_cond_broadcast": "Implemented",
+    "pthread_cond_clockwait": "Implemented",
+    "pthread_cond_destroy": "Implemented",
+    "pthread_cond_init": "Implemented",
+    "pthread_cond_signal": "Implemented",
+    "pthread_cond_timedwait": "Implemented",
+    "pthread_cond_wait": "Implemented",
     "pthread_condattr_destroy": "Implemented",
     "pthread_condattr_getclock": "Implemented",
     "pthread_condattr_getpshared": "Implemented",
     "pthread_condattr_init": "Implemented",
     "pthread_condattr_setclock": "Implemented",
     "pthread_condattr_setpshared": "Implemented",
-    "pthread_create": "WrapsHostLibc",
-    "pthread_detach": "WrapsHostLibc",
+    "pthread_create": "Implemented",
+    "pthread_detach": "Implemented",
     "pthread_equal": "Implemented",
-    "pthread_exit": "WrapsHostLibc",
+    "pthread_exit": "Implemented",
     "pthread_getaffinity_np": "Implemented",
     "pthread_getattr_default_np": "Implemented",
     "pthread_getattr_np": "Implemented",
@@ -3236,17 +3448,17 @@
     "pthread_key_delete": "Implemented",
     "pthread_kill": "Implemented",
     "pthread_kill_other_threads_np": "Implemented",
-    "pthread_mutex_clocklock": "WrapsHostLibc",
+    "pthread_mutex_clocklock": "Implemented",
     "pthread_mutex_consistent": "Implemented",
     "pthread_mutex_consistent_np": "Implemented",
-    "pthread_mutex_destroy": "WrapsHostLibc",
+    "pthread_mutex_destroy": "Implemented",
     "pthread_mutex_getprioceiling": "Implemented",
-    "pthread_mutex_init": "WrapsHostLibc",
-    "pthread_mutex_lock": "WrapsHostLibc",
+    "pthread_mutex_init": "Implemented",
+    "pthread_mutex_lock": "Implemented",
     "pthread_mutex_setprioceiling": "Implemented",
-    "pthread_mutex_timedlock": "WrapsHostLibc",
-    "pthread_mutex_trylock": "WrapsHostLibc",
-    "pthread_mutex_unlock": "WrapsHostLibc",
+    "pthread_mutex_timedlock": "Implemented",
+    "pthread_mutex_trylock": "Implemented",
+    "pthread_mutex_unlock": "Implemented",
     "pthread_mutexattr_destroy": "Implemented",
     "pthread_mutexattr_getkind_np": "Implemented",
     "pthread_mutexattr_getprioceiling": "Implemented",
@@ -3284,7 +3496,7 @@
     "pthread_self": "Implemented",
     "pthread_setaffinity_np": "Implemented",
     "pthread_setattr_default_np": "Implemented",
-    "pthread_setcancelstate": "WrapsHostLibc",
+    "pthread_setcancelstate": "Implemented",
     "pthread_setcanceltype": "WrapsHostLibc",
     "pthread_setconcurrency": "Implemented",
     "pthread_setname_np": "Implemented",
@@ -4336,12 +4548,53 @@
   },
   "reclassified_symbols": [
     {
-      "symbol": "pthread_clockjoin_np",
+      "symbol": "pthread_cancel",
       "previous_status": "WrapsHostLibc",
       "current_status": "Implemented",
       "promotion_requires_evidence": true,
-      "strict_fixture_count": 6,
-      "hardened_fixture_count": 6,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "pthread_cond_broadcast",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 3,
+      "hardened_fixture_count": 3,
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_cond_clockwait",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 8,
+      "hardened_fixture_count": 8,
       "strict_conformance": null,
       "hardened_conformance": null,
       "conformance_evidence_passed": false,
@@ -4351,17 +4604,247 @@
       ]
     },
     {
-      "symbol": "pthread_join",
+      "symbol": "pthread_cond_destroy",
       "previous_status": "WrapsHostLibc",
       "current_status": "Implemented",
       "promotion_requires_evidence": true,
       "strict_fixture_count": 3,
-      "hardened_fixture_count": 2,
+      "hardened_fixture_count": 3,
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_cond_init",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 4,
+      "hardened_fixture_count": 4,
+      "strict_conformance": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_cond_signal",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 3,
+      "hardened_fixture_count": 3,
+      "strict_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_cond_timedwait",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 5,
+      "hardened_fixture_count": 5,
+      "strict_conformance": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_cond_wait",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 6,
+      "hardened_fixture_count": 6,
+      "strict_conformance": {
+        "total": 6,
+        "passed": 6,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "hardened_conformance": {
+        "total": 6,
+        "passed": 6,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate_percent": 100.0
+      },
+      "conformance_evidence_passed": true,
+      "missing_evidence": []
+    },
+    {
+      "symbol": "pthread_create",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 0,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 0,
+        "failed": 0,
+        "errors": 2,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "pthread_detach",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 3,
+      "hardened_fixture_count": 1,
       "strict_conformance": {
         "total": 3,
         "passed": 0,
         "failed": 0,
         "errors": 3,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "pthread_exit",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "pthread_mutex_clocklock",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "pthread_mutex_destroy",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "pthread_mutex_init",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 0,
+        "failed": 0,
+        "errors": 2,
         "pass_rate_percent": 0.0
       },
       "hardened_conformance": {
@@ -4378,14 +4861,26 @@
       ]
     },
     {
-      "symbol": "pthread_timedjoin_np",
+      "symbol": "pthread_mutex_lock",
       "previous_status": "WrapsHostLibc",
       "current_status": "Implemented",
       "promotion_requires_evidence": true,
-      "strict_fixture_count": 7,
-      "hardened_fixture_count": 7,
-      "strict_conformance": null,
-      "hardened_conformance": null,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 0,
+        "failed": 0,
+        "errors": 2,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
       "conformance_evidence_passed": false,
       "missing_evidence": [
         "strict_conformance_not_passing",
@@ -4393,16 +4888,89 @@
       ]
     },
     {
-      "symbol": "pthread_tryjoin_np",
+      "symbol": "pthread_mutex_timedlock",
       "previous_status": "WrapsHostLibc",
       "current_status": "Implemented",
       "promotion_requires_evidence": true,
-      "strict_fixture_count": 5,
-      "hardened_fixture_count": 5,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
       "strict_conformance": null,
       "hardened_conformance": null,
       "conformance_evidence_passed": false,
       "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "pthread_mutex_trylock",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 2,
+      "hardened_fixture_count": 2,
+      "strict_conformance": {
+        "total": 2,
+        "passed": 0,
+        "failed": 0,
+        "errors": 2,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": {
+        "total": 2,
+        "passed": 0,
+        "failed": 0,
+        "errors": 2,
+        "pass_rate_percent": 0.0
+      },
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "pthread_mutex_unlock",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 1,
+      "hardened_fixture_count": 1,
+      "strict_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
+      "hardened_conformance": {
+        "total": 1,
+        "passed": 0,
+        "failed": 0,
+        "errors": 1,
+        "pass_rate_percent": 0.0
+      },
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "strict_conformance_not_passing",
+        "hardened_conformance_not_passing"
+      ]
+    },
+    {
+      "symbol": "pthread_setcancelstate",
+      "previous_status": "WrapsHostLibc",
+      "current_status": "Implemented",
+      "promotion_requires_evidence": true,
+      "strict_fixture_count": 0,
+      "hardened_fixture_count": 0,
+      "strict_conformance": null,
+      "hardened_conformance": null,
+      "conformance_evidence_passed": false,
+      "missing_evidence": [
+        "missing_strict_fixture",
+        "missing_hardened_fixture",
         "strict_conformance_not_passing",
         "hardened_conformance_not_passing"
       ]
@@ -5730,6 +6298,56 @@
       "warnings": []
     },
     {
+      "symbol": "pthread_cancel",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
+      "symbol": "pthread_create",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
+      "symbol": "pthread_detach",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
+      "symbol": "pthread_exit",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
+      "symbol": "pthread_setcancelstate",
+      "status": "Implemented",
+      "module": "pthread_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
       "symbol": "putc",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -7046,6 +7664,56 @@
       "valid": true,
       "findings": [
         "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "__pthread_mutex_destroy",
+      "status": "WrapsHostLibc",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "WrapsHostLibc but no host delegation detected"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "__pthread_mutex_init",
+      "status": "WrapsHostLibc",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "WrapsHostLibc but no host delegation detected"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "__pthread_mutex_lock",
+      "status": "WrapsHostLibc",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "WrapsHostLibc but no host delegation detected"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "__pthread_mutex_trylock",
+      "status": "WrapsHostLibc",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "WrapsHostLibc but no host delegation detected"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "__pthread_mutex_unlock",
+      "status": "WrapsHostLibc",
+      "module": "pthread_abi",
+      "valid": false,
+      "findings": [
+        "WrapsHostLibc but no host delegation detected"
       ],
       "warnings": []
     },
