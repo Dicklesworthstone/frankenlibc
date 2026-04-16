@@ -4414,16 +4414,6 @@ pub unsafe extern "C" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
         return libc::ESRCH;
     }
 
-    // Host-backed pthread_create remains the default. Those pthread_t values are
-    // opaque glibc handles, so our native kill/TID path cannot validate or cancel
-    // them reliably. Delegate non-self, non-managed threads back to host pthread.
-    if !force_native_threading_enabled()
-        && !is_managed_thread_handle(thread)
-        && let Some(host_cancel) = crate::host_resolve::host_pthread_cancel_raw()
-    {
-        return unsafe { host_cancel(thread) };
-    }
-
     // Validate that the target looks alive before enqueuing a cancel request.
     // Signal 0 performs existence checking without delivering a signal.
     let liveness = unsafe { pthread_kill(thread, 0) };
@@ -4450,12 +4440,6 @@ pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, oldstate: *mut c_i
     if state != PTHREAD_CANCEL_ENABLE_STATE && state != PTHREAD_CANCEL_DISABLE_STATE {
         return libc::EINVAL;
     }
-    if !force_native_threading_enabled()
-        && !current_thread_is_managed()
-        && let Some(host_setcancelstate) = crate::host_resolve::host_pthread_setcancelstate_raw()
-    {
-        return unsafe { host_setcancelstate(state, oldstate) };
-    }
 
     let previous = THREAD_CANCEL_STATE.with(|cell| {
         let prev = cell.get();
@@ -4478,12 +4462,6 @@ pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) 
     if typ != PTHREAD_CANCEL_DEFERRED_TYPE && typ != PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
         return libc::EINVAL;
     }
-    if !force_native_threading_enabled()
-        && !current_thread_is_managed()
-        && let Some(host_setcanceltype) = crate::host_resolve::host_pthread_setcanceltype_raw()
-    {
-        return unsafe { host_setcanceltype(typ, oldtype) };
-    }
 
     let previous = THREAD_CANCEL_TYPE.with(|cell| {
         let prev = cell.get();
@@ -4503,13 +4481,6 @@ pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_testcancel() {
-    if !force_native_threading_enabled()
-        && !current_thread_is_managed()
-        && let Some(host_testcancel) = crate::host_resolve::host_pthread_testcancel_raw()
-    {
-        unsafe { host_testcancel() };
-        return;
-    }
     if consume_pending_cancel_for_current_thread() {
         // PTHREAD_CANCELED is typically defined as ((void *) -1)
         unsafe { pthread_exit(!0usize as *mut std::ffi::c_void) };
