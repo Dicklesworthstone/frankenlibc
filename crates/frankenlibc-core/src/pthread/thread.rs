@@ -300,10 +300,7 @@ unsafe fn detached_thread_self_cleanup_and_exit(handle_ptr: *mut ThreadHandle) -
         unsafe { unmapself_and_exit(stack_base, stack_total_size) };
     }
 
-    let _ = unsafe { syscall::syscall1(syscall::SYS_EXIT, 0) };
-    loop {
-        core::hint::spin_loop();
-    }
+    syscall::sys_exit_thread(0);
 }
 
 /// Finalize the current native-managed thread and terminate it.
@@ -349,10 +346,7 @@ pub unsafe fn exit_current_thread(handle_ptr: *mut ThreadHandle, retval: usize) 
         }
     }
 
-    let _ = unsafe { syscall::syscall1(syscall::SYS_EXIT, 0) };
-    loop {
-        core::hint::spin_loop();
-    }
+    syscall::sys_exit_thread(0);
 }
 
 /// Unmap the thread's own stack and exit immediately.
