@@ -2377,7 +2377,10 @@ fn mutexattr_unknown_word_is_rejected() {
             pthread_mutexattr_setrobust(&mut attr, libc::PTHREAD_MUTEX_STALLED),
             libc::EINVAL
         );
-        assert_eq!(pthread_mutexattr_getrobust(&attr, &mut robust), libc::EINVAL);
+        assert_eq!(
+            pthread_mutexattr_getrobust(&attr, &mut robust),
+            libc::EINVAL
+        );
     }
 }
 

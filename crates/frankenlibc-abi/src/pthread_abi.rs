@@ -73,8 +73,7 @@ type HostPthreadCondTimedwaitFn = unsafe extern "C" fn(
     *mut libc::pthread_mutex_t,
     *const libc::timespec,
 ) -> c_int;
-type ResolvedPthreadCondattrInitFn =
-    unsafe extern "C" fn(*mut libc::pthread_condattr_t) -> c_int;
+type ResolvedPthreadCondattrInitFn = unsafe extern "C" fn(*mut libc::pthread_condattr_t) -> c_int;
 type ResolvedPthreadCondattrDestroyFn =
     unsafe extern "C" fn(*mut libc::pthread_condattr_t) -> c_int;
 type ResolvedPthreadCondattrSetclockFn =
@@ -103,11 +102,8 @@ type ResolvedPthreadAttrGetguardsizeFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
 type ResolvedPthreadAttrSetstackFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, *mut c_void, usize) -> c_int;
-type ResolvedPthreadAttrGetstackFn = unsafe extern "C" fn(
-    *const libc::pthread_attr_t,
-    *mut *mut c_void,
-    *mut usize,
-) -> c_int;
+type ResolvedPthreadAttrGetstackFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut *mut c_void, *mut usize) -> c_int;
 type ResolvedPthreadAttrSetstacksizeFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
 type ResolvedPthreadAttrGetstacksizeFn =
@@ -559,7 +555,8 @@ unsafe fn resolved_pthread_attr_getstacksize_fn() -> Option<ResolvedPthreadAttrG
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetstacksizeFn>(ptr) })
 }
 
-unsafe fn resolved_pthread_attr_setinheritsched_fn() -> Option<ResolvedPthreadAttrSetinheritschedFn> {
+unsafe fn resolved_pthread_attr_setinheritsched_fn() -> Option<ResolvedPthreadAttrSetinheritschedFn>
+{
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
             &RESOLVED_PTHREAD_ATTR_SETINHERITSCHED_PTR,
@@ -569,7 +566,8 @@ unsafe fn resolved_pthread_attr_setinheritsched_fn() -> Option<ResolvedPthreadAt
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetinheritschedFn>(ptr) })
 }
 
-unsafe fn resolved_pthread_attr_getinheritsched_fn() -> Option<ResolvedPthreadAttrGetinheritschedFn> {
+unsafe fn resolved_pthread_attr_getinheritsched_fn() -> Option<ResolvedPthreadAttrGetinheritschedFn>
+{
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
             &RESOLVED_PTHREAD_ATTR_GETINHERITSCHED_PTR,
@@ -1493,7 +1491,8 @@ unsafe fn native_pthread_create(
             if rc != 0 {
                 return rc;
             }
-            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() }) else {
+            let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() })
+            else {
                 return libc::ENOSYS;
             };
             let rc = unsafe { getdetachstate(attr, &mut detach_state) };
@@ -1634,7 +1633,11 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             // SAFETY: pthread_create validated `thread_out` as writable before dispatch.
             unsafe { *thread_out = host_thread };
             // SAFETY: `start_ctx` remains owned by the child trampoline.
-            unsafe { (*start_ctx).host_thread.store(host_thread as usize, Ordering::Release) };
+            unsafe {
+                (*start_ctx)
+                    .host_thread
+                    .store(host_thread as usize, Ordering::Release)
+            };
         }
         return rc;
     };
@@ -1680,7 +1683,13 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
     }
     if rc == 0 {
         if data.stack_addr != 0 {
-            rc = unsafe { setstack(&mut host_attr, data.stack_addr as *mut c_void, data.stack_size) };
+            rc = unsafe {
+                setstack(
+                    &mut host_attr,
+                    data.stack_addr as *mut c_void,
+                    data.stack_size,
+                )
+            };
         } else {
             rc = unsafe { setstacksize(&mut host_attr, data.stack_size) };
         }
@@ -1727,7 +1736,9 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
         if let Some(ext) = reg.get(&key)
             && let Some(mask_bytes) = &ext.sigmask
         {
-            rc = unsafe { setsigmask_np(&mut host_attr, mask_bytes.as_ptr().cast::<libc::sigset_t>()) };
+            rc = unsafe {
+                setsigmask_np(&mut host_attr, mask_bytes.as_ptr().cast::<libc::sigset_t>())
+            };
         }
     }
 
@@ -2458,8 +2469,7 @@ pub unsafe extern "C" fn pthread_mutex_init(
                 else {
                     return libc::EINVAL;
                 };
-                let Some(setrobust) = (unsafe { resolved_pthread_mutexattr_setrobust_fn() })
-                else {
+                let Some(setrobust) = (unsafe { resolved_pthread_mutexattr_setrobust_fn() }) else {
                     return libc::EINVAL;
                 };
 
@@ -2486,8 +2496,7 @@ pub unsafe extern "C" fn pthread_mutex_init(
                     let _ = unsafe { attr_destroy(&mut host_attr) };
                     return pshared_rc;
                 }
-                let robust_rc =
-                    unsafe { setrobust(&mut host_attr, decode_mutexattr_robust(word)) };
+                let robust_rc = unsafe { setrobust(&mut host_attr, decode_mutexattr_robust(word)) };
                 if robust_rc != 0 {
                     let _ = unsafe { attr_destroy(&mut host_attr) };
                     return robust_rc;
@@ -5649,8 +5658,7 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
     }
     let force_native = FORCE_NATIVE_MUTEX.load(Ordering::Acquire);
     if !is_managed_mutex(mutex) {
-        if !force_native && let Some(host_timedlock) = unsafe { resolved_mutex_timedlock_fn() }
-        {
+        if !force_native && let Some(host_timedlock) = unsafe { resolved_mutex_timedlock_fn() } {
             return unsafe { host_timedlock(mutex, abstime) };
         }
         return libc::EINVAL;
@@ -6234,7 +6242,14 @@ pub unsafe extern "C" fn pthread_sigqueue(
                     *info_words.add(5) = value_bits as u32;
                 }
             }
-            match unsafe { raw_syscall::sys_rt_tgsigqueueinfo(pid, tid, sig, &info as *const libc::siginfo_t as *const u8) } {
+            match unsafe {
+                raw_syscall::sys_rt_tgsigqueueinfo(
+                    pid,
+                    tid,
+                    sig,
+                    &info as *const libc::siginfo_t as *const u8,
+                )
+            } {
                 Ok(_) => 0,
                 Err(errno) => errno,
             }
@@ -6261,7 +6276,8 @@ pub unsafe extern "C" fn pthread_getaffinity_np(
     }
     match resolve_thread_tid(thread) {
         Some(tid) => {
-            match unsafe { raw_syscall::sys_sched_getaffinity(tid, cpusetsize, cpuset as *mut u8) } {
+            match unsafe { raw_syscall::sys_sched_getaffinity(tid, cpusetsize, cpuset as *mut u8) }
+            {
                 Ok(filled) => {
                     // Kernel may return fewer bytes than requested; zero the rest.
                     let filled = filled as usize;
@@ -6297,7 +6313,9 @@ pub unsafe extern "C" fn pthread_setaffinity_np(
     }
     match resolve_thread_tid(thread) {
         Some(tid) => {
-            match unsafe { raw_syscall::sys_sched_setaffinity(tid, cpusetsize, cpuset as *const u8) } {
+            match unsafe {
+                raw_syscall::sys_sched_setaffinity(tid, cpusetsize, cpuset as *const u8)
+            } {
                 Ok(()) => 0,
                 Err(errno) => errno,
             }
@@ -6376,7 +6394,11 @@ pub unsafe extern "C" fn pthread_getcpuclockid(
             let cid: libc::clockid_t = (!tid as libc::clockid_t) << 3 | 6;
             // Validate that the clock is usable via clock_getres.
             let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-            if unsafe { raw_syscall::sys_clock_getres(cid, &mut ts as *mut libc::timespec as *mut u8) }.is_err() {
+            if unsafe {
+                raw_syscall::sys_clock_getres(cid, &mut ts as *mut libc::timespec as *mut u8)
+            }
+            .is_err()
+            {
                 return libc::ESRCH;
             }
             unsafe { *clockid = cid };
