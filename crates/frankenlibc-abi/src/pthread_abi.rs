@@ -44,7 +44,6 @@ use crate::host_resolve::{
     host_pthread_create_raw as resolved_thread_create_raw,
     host_pthread_detach_raw as resolved_thread_detach_raw,
     host_pthread_exit_raw as resolved_thread_exit_raw,
-    host_pthread_join_raw as resolved_thread_join_raw,
 };
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
@@ -2292,12 +2291,6 @@ pub unsafe extern "C" fn pthread_create(
 /// POSIX `pthread_join`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
-    if !force_native_threading_enabled()
-        && !is_managed_thread_handle(thread)
-        && let Some(host_join) = resolved_thread_join_raw()
-    {
-        return unsafe { host_join(thread, retval) };
-    }
     unsafe { native_pthread_join(thread, retval) }
 }
 
@@ -5759,18 +5752,6 @@ pub unsafe extern "C" fn pthread_timedjoin_np(
     retval: *mut *mut c_void,
     abstime: *const libc::timespec,
 ) -> c_int {
-    if !force_native_threading_enabled()
-        && !is_managed_thread_handle(thread)
-        && let Some(host_addr) =
-            crate::host_resolve::resolve_host_symbol_raw("pthread_timedjoin_np")
-    {
-        let host_timedjoin: unsafe extern "C" fn(
-            libc::pthread_t,
-            *mut *mut c_void,
-            *const libc::timespec,
-        ) -> c_int = unsafe { core::mem::transmute(host_addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
-        return unsafe { host_timedjoin(thread, retval, abstime) };
-    }
     if abstime.is_null() {
         // NULL timeout = blocking join.
         return unsafe { native_pthread_join(thread, retval) };
@@ -5858,14 +5839,6 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
 ) -> c_int {
-    if !force_native_threading_enabled()
-        && !is_managed_thread_handle(thread)
-        && let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw("pthread_tryjoin_np")
-    {
-        let host_tryjoin: unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> c_int =
-            unsafe { core::mem::transmute(host_addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
-        return unsafe { host_tryjoin(thread, retval) };
-    }
     let thread_key = thread as usize;
     let handle_ptr = thread as *mut ThreadHandle;
     let my_tid = core_self_tid();
@@ -5926,19 +5899,6 @@ pub unsafe extern "C" fn pthread_clockjoin_np(
     clockid: c_int,
     abstime: *const libc::timespec,
 ) -> c_int {
-    if !force_native_threading_enabled()
-        && !is_managed_thread_handle(thread)
-        && let Some(host_addr) =
-            crate::host_resolve::resolve_host_symbol_raw("pthread_clockjoin_np")
-    {
-        let host_clockjoin: unsafe extern "C" fn(
-            libc::pthread_t,
-            *mut *mut c_void,
-            c_int,
-            *const libc::timespec,
-        ) -> c_int = unsafe { core::mem::transmute(host_addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
-        return unsafe { host_clockjoin(thread, retval, clockid, abstime) };
-    }
     if abstime.is_null() {
         return unsafe { native_pthread_join(thread, retval) };
     }
