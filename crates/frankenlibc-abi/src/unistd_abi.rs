@@ -10360,11 +10360,9 @@ pub unsafe extern "C" fn pthread_setschedparam(
     if tid <= 0 {
         return libc::ESRCH;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_sched_setscheduler, tid, policy, param) as c_int };
-    if rc < 0 {
-        last_host_errno(libc::EINVAL)
-    } else {
-        0
+    match unsafe { syscall::sys_sched_setscheduler(tid as i32, policy, param as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => e,
     }
 }
 
@@ -10382,16 +10380,15 @@ pub unsafe extern "C" fn pthread_getschedparam(
     if tid <= 0 {
         return libc::ESRCH;
     }
-    let p = unsafe { libc::syscall(libc::SYS_sched_getscheduler, tid) as c_int };
-    if p < 0 {
-        return last_host_errno(libc::ESRCH);
-    }
+    let p = match syscall::sys_sched_getscheduler(tid as i32) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     unsafe { *policy = p };
-    let rc = unsafe { libc::syscall(libc::SYS_sched_getparam, tid, param) as c_int };
-    if rc < 0 {
-        return last_host_errno(libc::ESRCH);
+    match unsafe { syscall::sys_sched_getparam(tid as i32, param as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => e,
     }
-    0
 }
 
 // ===========================================================================
@@ -10603,11 +10600,9 @@ pub unsafe extern "C" fn landlock_restrict_self(ruleset_fd: c_int, flags: c_uint
 /// POSIX `posix_fadvise64` — file access pattern advise (64-bit).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_fadvise64(fd: c_int, offset: i64, len: i64, advice: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_fadvise64, fd, offset, len, advice) as c_int };
-    if rc < 0 {
-        last_host_errno(libc::EBADF)
-    } else {
-        0
+    match syscall::sys_fadvise64(fd, offset, len, advice) {
+        Ok(()) => 0,
+        Err(e) => e,
     }
 }
 
