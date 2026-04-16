@@ -9887,16 +9887,16 @@
     },
     {
       "symbol": "pthread_mutexattr_destroy",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
+      "strict_semantics": "Destroys native mutexattr word and rejects unknown layouts with EINVAL.",
+      "hardened_semantics": "Same deterministic validation and errno contract.",
       "default_stub": "Returns EINVAL"
     },
     {
       "symbol": "pthread_mutexattr_getprotocol",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Get mutex protocol (returns PRIO_NONE)",
@@ -9905,7 +9905,7 @@
     },
     {
       "symbol": "pthread_mutexattr_getpshared",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Get mutex pshared (returns PROCESS_PRIVATE)",
@@ -9914,7 +9914,7 @@
     },
     {
       "symbol": "pthread_mutexattr_getrobust",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Get mutex robust attribute (returns STALLED)",
@@ -9923,11 +9923,11 @@
     },
     {
       "symbol": "pthread_mutexattr_gettype",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
+      "strict_semantics": "Reads managed mutexattr type and rejects unknown layouts with EINVAL.",
+      "hardened_semantics": "Same deterministic validation and errno contract.",
       "default_stub": "Returns EINVAL"
     },
     {
@@ -9935,13 +9935,13 @@
       "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
+      "strict_semantics": "Initializes a managed mutexattr word with default NORMAL/PRIO_NONE/PRIVATE/STALLED state.",
+      "hardened_semantics": "Same deterministic initialization and errno contract.",
       "default_stub": "Returns EINVAL"
     },
     {
       "symbol": "pthread_mutexattr_setprotocol",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Set mutex protocol",
@@ -9950,7 +9950,7 @@
     },
     {
       "symbol": "pthread_mutexattr_setpshared",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Set mutex pshared attribute",
@@ -9959,7 +9959,7 @@
     },
     {
       "symbol": "pthread_mutexattr_setrobust",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Set mutex robust attribute",
@@ -9968,11 +9968,11 @@
     },
     {
       "symbol": "pthread_mutexattr_settype",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
+      "strict_semantics": "Writes managed mutexattr type and rejects unknown layouts with EINVAL.",
+      "hardened_semantics": "Same deterministic validation and errno contract.",
       "default_stub": "Returns EINVAL"
     },
     {
@@ -17558,7 +17558,7 @@
     },
     {
       "symbol": "__pthread_mutexattr_destroy",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
@@ -17570,7 +17570,7 @@
     },
     {
       "symbol": "__pthread_mutexattr_settype",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
