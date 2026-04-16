@@ -6773,17 +6773,10 @@ fn rta_align(len: usize) -> usize {
 /// Send a netlink dump request and collect all response data.
 fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
     // Create netlink socket
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_socket as std::os::raw::c_long,
-            libc::AF_NETLINK,
-            libc::SOCK_RAW | libc::SOCK_CLOEXEC,
-            libc::NETLINK_ROUTE,
-        ) as c_int
+    let fd = match syscall::sys_socket(libc::AF_NETLINK, libc::SOCK_RAW | libc::SOCK_CLOEXEC, libc::NETLINK_ROUTE) {
+        Ok(fd) => fd,
+        Err(_) => return Err(errno::ENOBUFS),
     };
-    if fd < 0 {
-        return Err(errno::ENOBUFS);
-    }
 
     // Build request
     let hdr_size = std::mem::size_of::<NlMsgHdr>();
@@ -6811,18 +6804,9 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
     }
 
     // Send
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_sendto as std::os::raw::c_long,
-            fd,
-            buf.as_ptr(),
-            msg_len,
-            0,
-            std::ptr::null::<c_void>(),
-            0,
-        ) as isize
-    };
-    if rc < 0 {
+    if unsafe {
+        syscall::sys_sendto(fd, buf.as_ptr(), msg_len, 0, std::ptr::null(), 0)
+    }.is_err() {
         let _ = syscall::sys_close(fd);
         return Err(errno::EIO);
     }
