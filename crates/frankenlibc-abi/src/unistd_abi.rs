@@ -2319,25 +2319,16 @@ static SYSLOG_STATE: std::sync::Mutex<SyslogState> = std::sync::Mutex::new(Syslo
 });
 
 fn syslog_connect() -> c_int {
-    let fd =
-        unsafe { libc::syscall(libc::SYS_socket, libc::AF_UNIX, libc::SOCK_DGRAM, 0) as c_int };
-    if fd < 0 {
-        return -1;
-    }
+    let fd = match syscall::sys_socket(libc::AF_UNIX, libc::SOCK_DGRAM, 0) {
+        Ok(f) => f,
+        Err(_) => return -1,
+    };
     let mut addr = [0u8; 110];
     addr[0] = 1; // AF_UNIX
     let path = b"/dev/log";
     addr[2..2 + path.len()].copy_from_slice(path);
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_connect,
-            fd,
-            addr.as_ptr() as *const libc::sockaddr,
-            (2 + path.len() + 1) as u32,
-        ) as c_int
-    };
-    if rc < 0 {
-        unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
+    if unsafe { syscall::sys_connect(fd, addr.as_ptr(), (2 + path.len() + 1) as u32) }.is_err() {
+        let _ = syscall::sys_close(fd);
         return -1;
     }
     fd
@@ -2390,9 +2381,7 @@ fn syslog_send(priority: c_int, message: &[u8]) {
     };
 
     let pid_part = if state.option & LOG_PID != 0 {
-        format!("[{}]", unsafe {
-            libc::syscall(libc::SYS_getpid) as libc::pid_t
-        })
+        format!("[{}]", syscall::sys_getpid())
     } else {
         String::new()
     };
@@ -2411,33 +2400,31 @@ fn syslog_send(priority: c_int, message: &[u8]) {
     let mut sent = false;
     if state.sock_fd >= 0 {
         let rc = unsafe {
-            libc::syscall(
-                libc::SYS_sendto,
+            syscall::sys_sendto(
                 state.sock_fd,
-                packet_bytes.as_ptr() as *const c_void,
+                packet_bytes.as_ptr(),
                 packet_bytes.len(),
                 libc::MSG_NOSIGNAL,
-                std::ptr::null::<libc::sockaddr>(),
-                0u32,
+                std::ptr::null(),
+                0,
             )
         };
-        sent = rc >= 0;
+        sent = rc.is_ok();
         if !sent {
-            unsafe { libc::syscall(libc::SYS_close, state.sock_fd) as c_int };
+            let _ = syscall::sys_close(state.sock_fd);
             state.sock_fd = syslog_connect();
             if state.sock_fd >= 0 {
                 let rc2 = unsafe {
-                    libc::syscall(
-                        libc::SYS_sendto,
+                    syscall::sys_sendto(
                         state.sock_fd,
-                        packet_bytes.as_ptr() as *const c_void,
+                        packet_bytes.as_ptr(),
                         packet_bytes.len(),
                         libc::MSG_NOSIGNAL,
-                        std::ptr::null::<libc::sockaddr>(),
-                        0u32,
+                        std::ptr::null(),
+                        0,
                     )
                 };
-                sent = rc2 >= 0;
+                sent = rc2.is_ok();
             }
         }
     }
@@ -2552,7 +2539,7 @@ pub unsafe extern "C" fn syslog(priority: c_int, format: *const c_char, mut args
 pub unsafe extern "C" fn closelog() {
     let mut state = SYSLOG_STATE.lock().unwrap_or_else(|e| e.into_inner());
     if state.sock_fd >= 0 {
-        unsafe { libc::syscall(libc::SYS_close, state.sock_fd) as c_int };
+        let _ = syscall::sys_close(state.sock_fd);
         state.sock_fd = -1;
     }
     state.ident_ptr = std::ptr::null();
