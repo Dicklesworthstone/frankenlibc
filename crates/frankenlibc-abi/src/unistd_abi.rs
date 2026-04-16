@@ -3782,29 +3782,29 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: .
         };
         if rc < 0 {
             let e = last_host_errno(errno::EIO);
-            unsafe {
-                libc::syscall(libc::SYS_close as std::os::raw::c_long, fd);
-                set_abi_errno(e);
-            };
+            let _ = syscall::sys_close(fd);
+            unsafe { set_abi_errno(e) };
             return usize::MAX as *mut c_void;
         }
     }
 
     // mmap the file.
-    let ptr = unsafe {
-        libc::syscall(
-            libc::SYS_mmap as std::os::raw::c_long,
-            std::ptr::null::<c_void>(),
+    let ptr = match unsafe {
+        syscall::sys_mmap(
+            std::ptr::null_mut(),
             SEM_MMAP_SIZE,
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_SHARED,
             fd,
-            0_i64,
-        ) as *mut c_void
+            0,
+        )
+    } {
+        Ok(p) => p as *mut c_void,
+        Err(_) => libc::MAP_FAILED,
     };
 
     // Close the fd — the mapping keeps the file open.
-    unsafe { libc::syscall(libc::SYS_close as std::os::raw::c_long, fd) };
+    let _ = syscall::sys_close(fd);
 
     if ptr == libc::MAP_FAILED {
         unsafe { set_abi_errno(last_host_errno(errno::ENOMEM)) };
@@ -4045,7 +4045,10 @@ pub unsafe extern "C" fn mq_open(name: *const c_char, oflag: c_int, mut args: ..
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mq_close(mqdes: c_int) -> c_int {
-    unsafe { syscall_ret_int(libc::syscall(libc::SYS_close, mqdes), errno::EBADF) }
+    match syscall::sys_close(mqdes) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6618,7 +6621,7 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
         ) as isize
     };
     if rc < 0 {
-        unsafe { libc::syscall(libc::SYS_close as std::os::raw::c_long, fd) };
+        let _ = syscall::sys_close(fd);
         return Err(errno::EIO);
     }
 
@@ -6626,16 +6629,18 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
     let mut result = Vec::with_capacity(8192);
     let mut recv_buf = vec![0u8; 16384];
     loop {
-        let n = unsafe {
-            libc::syscall(
-                libc::SYS_recvfrom as std::os::raw::c_long,
+        let n = match unsafe {
+            syscall::sys_recvfrom(
                 fd,
                 recv_buf.as_mut_ptr(),
                 recv_buf.len(),
                 0,
-                std::ptr::null::<c_void>(),
-                std::ptr::null::<c_void>(),
-            ) as isize
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        } {
+            Ok(n) => n as isize,
+            Err(_) => break,
         };
         if n <= 0 {
             break;
@@ -6662,7 +6667,7 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
         }
     }
 
-    unsafe { libc::syscall(libc::SYS_close as std::os::raw::c_long, fd) };
+    let _ = syscall::sys_close(fd);
     Ok(result)
 }
 
