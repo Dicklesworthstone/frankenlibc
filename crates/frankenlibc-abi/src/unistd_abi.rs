@@ -8939,45 +8939,26 @@ std::thread_local! {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
     let tty = b"/dev/tty\0";
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_open,
-            tty.as_ptr(),
-            libc::O_RDWR | libc::O_NOCTTY,
-            0i64,
-        )
-    } as c_int;
-    if fd < 0 {
-        return std::ptr::null_mut();
-    }
+    let fd = match unsafe { syscall::sys_open(tty.as_ptr(), libc::O_RDWR | libc::O_NOCTTY, 0) } {
+        Ok(fd) => fd,
+        Err(_) => return std::ptr::null_mut(),
+    };
 
     // Write prompt
     if !prompt.is_null() {
         let prompt_cstr = unsafe { std::ffi::CStr::from_ptr(prompt) };
         let prompt_bytes = prompt_cstr.to_bytes();
-        unsafe {
-            libc::syscall(
-                libc::SYS_write,
-                fd as i64,
-                prompt_bytes.as_ptr() as i64,
-                prompt_bytes.len() as i64,
-            );
-        }
+        let _ = unsafe { syscall::sys_write(fd, prompt_bytes.as_ptr(), prompt_bytes.len()) };
     }
 
     // Disable echo via ioctl (TCGETS=0x5401, TCSETS=0x5402)
-    const TCGETS: u64 = 0x5401;
-    const TCSETS: u64 = 0x5402;
+    const TCGETS: usize = 0x5401;
+    const TCSETS: usize = 0x5402;
     const ECHO_FLAG: u32 = 0o10; // ECHO in termios c_lflag
     let mut termios_buf = [0u8; 60]; // struct termios size on Linux
     let saved_ok = unsafe {
-        libc::syscall(
-            libc::SYS_ioctl,
-            fd as i64,
-            TCGETS as i64,
-            termios_buf.as_mut_ptr() as i64,
-        )
-    } >= 0;
+        syscall::sys_ioctl(fd, TCGETS, termios_buf.as_mut_ptr() as usize)
+    }.is_ok();
 
     if saved_ok {
         let mut modified = termios_buf;
@@ -8990,14 +8971,7 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
         );
         let new_lflag = lflag & !ECHO_FLAG;
         modified[lflag_offset..lflag_offset + 4].copy_from_slice(&new_lflag.to_ne_bytes());
-        unsafe {
-            libc::syscall(
-                libc::SYS_ioctl,
-                fd as i64,
-                TCSETS as i64,
-                modified.as_ptr() as i64,
-            );
-        }
+        let _ = unsafe { syscall::sys_ioctl(fd, TCSETS, modified.as_ptr() as usize) };
     }
 
     // Read password
@@ -9942,20 +9916,13 @@ pub unsafe extern "C" fn cuserid(s: *mut c_char) -> *mut c_char {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sockatmark(sockfd: c_int) -> c_int {
     let mut atmark: c_int = 0;
-    const SIOCATMARK: std::os::raw::c_ulong = 0x8905;
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_ioctl,
-            sockfd,
-            SIOCATMARK,
-            &mut atmark as *mut c_int,
-        )
-    } as c_int;
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
-        -1
-    } else {
-        atmark
+    const SIOCATMARK: usize = 0x8905;
+    match unsafe { syscall::sys_ioctl(sockfd, SIOCATMARK, &mut atmark as *mut c_int as usize) } {
+        Ok(_) => atmark,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -10238,20 +10205,14 @@ pub unsafe extern "C" fn io_getevents(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tcgetpgrp(fd: c_int) -> libc::pid_t {
     let mut pgrp: libc::pid_t = 0;
-    const TIOCGPGRP: std::os::raw::c_ulong = 0x540F;
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_ioctl,
-            fd,
-            TIOCGPGRP,
-            &mut pgrp as *mut libc::pid_t,
-        )
-    } as c_int;
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ENOTTY)) };
-        return -1;
+    const TIOCGPGRP: usize = 0x540F;
+    match unsafe { syscall::sys_ioctl(fd, TIOCGPGRP, &mut pgrp as *mut libc::pid_t as usize) } {
+        Ok(_) => pgrp,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    pgrp
 }
 
 /// POSIX `tcsetpgrp` — set foreground process group of terminal.
