@@ -412,14 +412,19 @@ pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut libc::stat) -> c_in
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_newfstatat, libc::AT_FDCWD, path, buf, 0),
-            errno::ENOENT,
-        )
-    };
-    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, rc != 0);
-    rc
+    match unsafe {
+        syscall::sys_newfstatat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, 0)
+    } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1796,12 +1801,32 @@ pub unsafe extern "C" fn alarm(seconds: u32) -> u32 {
 }
 
 /// POSIX `alarm` — schedule a SIGALRM signal.
-/// On aarch64, alarm is implemented via setitimer.
+/// On aarch64, alarm is implemented via setitimer (no direct alarm syscall).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[cfg(target_arch = "aarch64")]
 pub unsafe extern "C" fn alarm(seconds: u32) -> u32 {
-    // Fallback to libc::syscall for aarch64 (alarm is not a direct syscall)
-    unsafe { libc::syscall(libc::SYS_alarm, seconds) as u32 }
+    // aarch64 doesn't have SYS_alarm, use setitimer instead
+    let new_value = libc::itimerval {
+        it_interval: libc::timeval { tv_sec: 0, tv_usec: 0 },
+        it_value: libc::timeval { tv_sec: seconds as i64, tv_usec: 0 },
+    };
+    let mut old_value = libc::itimerval {
+        it_interval: libc::timeval { tv_sec: 0, tv_usec: 0 },
+        it_value: libc::timeval { tv_sec: 0, tv_usec: 0 },
+    };
+    match unsafe {
+        syscall::sys_setitimer(
+            libc::ITIMER_REAL,
+            &new_value as *const _ as *const u8,
+            &mut old_value as *mut _ as *mut u8,
+        )
+    } {
+        Ok(()) => {
+            // Return remaining seconds from old timer
+            old_value.it_value.tv_sec as u32 + if old_value.it_value.tv_usec > 0 { 1 } else { 0 }
+        }
+        Err(_) => 0,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -9663,7 +9688,7 @@ static CURRENT_BRK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUs
 /// POSIX `brk` — set the program break.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn brk(addr: *mut c_void) -> c_int {
-    let new_brk = unsafe { libc::syscall(libc::SYS_brk, addr) } as usize;
+    let new_brk = syscall::sys_brk(addr as usize);
     CURRENT_BRK.store(new_brk, std::sync::atomic::Ordering::Relaxed);
     if new_brk < addr as usize {
         unsafe { set_abi_errno(libc::ENOMEM) };
@@ -9678,7 +9703,7 @@ pub unsafe extern "C" fn brk(addr: *mut c_void) -> c_int {
 pub unsafe extern "C" fn sbrk(increment: isize) -> *mut c_void {
     let current = CURRENT_BRK.load(std::sync::atomic::Ordering::Relaxed);
     let current = if current == 0 {
-        let b = unsafe { libc::syscall(libc::SYS_brk, 0) } as usize;
+        let b = syscall::sys_brk(0);
         CURRENT_BRK.store(b, std::sync::atomic::Ordering::Relaxed);
         b
     } else {
@@ -9695,7 +9720,7 @@ pub unsafe extern "C" fn sbrk(increment: isize) -> *mut c_void {
         current.wrapping_sub((-increment) as usize)
     };
 
-    let new_brk = unsafe { libc::syscall(libc::SYS_brk, new_addr) } as usize;
+    let new_brk = syscall::sys_brk(new_addr);
     if new_brk < new_addr {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return usize::MAX as *mut c_void;
@@ -9727,22 +9752,25 @@ pub unsafe extern "C" fn setlogmask(mask: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn get_current_dir_name() -> *mut c_char {
     let mut buf = [0u8; 4096];
-    let rc = unsafe { libc::syscall(libc::SYS_getcwd, buf.as_mut_ptr(), buf.len()) as isize };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::ERANGE)) };
-        return std::ptr::null_mut();
+    match unsafe { syscall::sys_getcwd(buf.as_mut_ptr(), buf.len()) } {
+        Ok(rc) => {
+            let len = buf.iter().position(|&b| b == 0).unwrap_or(rc);
+            let ptr = unsafe { crate::malloc_abi::raw_alloc(len + 1) as *mut c_char };
+            if ptr.is_null() {
+                unsafe { set_abi_errno(libc::ENOMEM) };
+                return std::ptr::null_mut();
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, ptr, len);
+                *ptr.add(len) = 0;
+            };
+            ptr
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            std::ptr::null_mut()
+        }
     }
-    let len = buf.iter().position(|&b| b == 0).unwrap_or(rc as usize);
-    let ptr = unsafe { crate::malloc_abi::raw_alloc(len + 1) as *mut c_char };
-    if ptr.is_null() {
-        unsafe { set_abi_errno(libc::ENOMEM) };
-        return std::ptr::null_mut();
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, ptr, len);
-        *ptr.add(len) = 0;
-    };
-    ptr
 }
 
 /// GNU `canonicalize_file_name` — resolve path like realpath(path, NULL).

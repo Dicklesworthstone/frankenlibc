@@ -4347,6 +4347,20 @@ pub fn sys_pidfd_getfd(pidfd: i32, targetfd: i32, flags: u32) -> Result<i32, i32
 }
 
 // -------------------------------------------------------------------------
+// Memory management syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `brk(addr)` — change data segment size.
+///
+/// Returns the new program break on success, or the current break on failure.
+/// Unlike the libc wrapper, this returns the raw syscall result.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_brk(addr: usize) -> usize {
+    unsafe { raw::syscall1(SYS_BRK, addr) }
+}
+
+// -------------------------------------------------------------------------
 // Unit tests
 // -------------------------------------------------------------------------
 
