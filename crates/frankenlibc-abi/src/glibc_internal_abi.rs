@@ -15,6 +15,7 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
+use crate::errno_abi::set_abi_errno;
 use frankenlibc_core::syscall::{self as raw_syscall, syscall_result, syscall6};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -2930,12 +2931,32 @@ pub unsafe extern "C" fn __inet_pton_chk(
 // __adjtimex: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __adjtimex(buf: *mut c_void) -> c_int {
-    unsafe { libc::syscall(libc::SYS_adjtimex, buf) as c_int }
+    match unsafe { raw_syscall::sys_adjtimex(buf as *mut u8) } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
-// __arch_prctl: native syscall
+// __arch_prctl: native syscall (x86_64 only)
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __arch_prctl(code: c_int, addr: c_ulong) -> c_int {
-    unsafe { libc::syscall(libc::SYS_arch_prctl, code as c_long, addr as c_long) as c_int }
+    match unsafe { raw_syscall::sys_arch_prctl(code, addr as usize) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+// __arch_prctl stub for non-x86_64
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __arch_prctl(_code: c_int, _addr: c_ulong) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
 }
 // __asprintf: glibc internal alias for asprintf — forward to our vasprintf via va_list
 // Since this is variadic and we can't easily forward varargs, use dlsym fallback
@@ -2977,10 +2998,16 @@ pub unsafe extern "C" fn __backtrace_symbols_fd(
 ) {
     unsafe { super::unistd_abi::backtrace_symbols_fd(buffer, size, fd) }
 }
-// __bsd_getpgrp: native — getpgid alias (raw syscall)
+/// __bsd_getpgrp: native — getpgid alias (raw syscall)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __bsd_getpgrp(pid: c_int) -> c_int {
-    unsafe { libc::syscall(libc::SYS_getpgid, pid) as c_int }
+    match raw_syscall::sys_getpgid(pid) {
+        Ok(pgid) => pgid,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // __check_rhosts_file is a global variable, defined below as a static
 // __clone: glibc-compatible clone wrapper (must be asm — child runs on different stack).
@@ -3221,20 +3248,57 @@ pub unsafe extern "C" fn __getmntent_r(
 pub unsafe extern "C" fn __getpagesize() -> c_int {
     unsafe { crate::unistd_abi::sysconf(libc::_SC_PAGESIZE) as c_int }
 }
-// __getpgid: native syscall
+/// __getpgid: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getpgid(pid: c_int) -> c_int {
-    unsafe { libc::syscall(libc::SYS_getpgid, pid) as c_int }
+    match raw_syscall::sys_getpgid(pid) {
+        Ok(pgid) => pgid,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // __getpid: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getpid() -> c_int {
     raw_syscall::sys_getpid()
 }
-// __gettimeofday: native syscall
+/// __gettimeofday: native syscall (x86_64: gettimeofday, aarch64: clock_gettime)
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __gettimeofday(tv: *mut c_void, tz: *mut c_void) -> c_int {
-    unsafe { libc::syscall(libc::SYS_gettimeofday, tv, tz) as c_int }
+    match unsafe { raw_syscall::sys_gettimeofday(tv as *mut u8, tz as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gettimeofday(tv: *mut c_void, _tz: *mut c_void) -> c_int {
+    // aarch64 doesn't have gettimeofday syscall, use clock_gettime
+    if tv.is_null() {
+        return 0;
+    }
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    match unsafe { raw_syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) } {
+        Ok(()) => {
+            let tvp = tv as *mut libc::timeval;
+            unsafe {
+                (*tvp).tv_sec = ts.tv_sec;
+                (*tvp).tv_usec = ts.tv_nsec / 1000;
+            }
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // __ivaliduser: validate remote user against .rhosts — deny-all for security
 // .rhosts-based authentication is deprecated and dangerous.
@@ -3537,10 +3601,16 @@ pub unsafe extern "C" fn __send(
 pub unsafe extern "C" fn __setmntent(filename: *const c_char, typ: *const c_char) -> *mut c_void {
     unsafe { super::unistd_abi::setmntent(filename, typ) }
 }
-// __setpgid: native syscall
+/// __setpgid: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __setpgid(pid: c_int, pgid: c_int) -> c_int {
-    unsafe { libc::syscall(libc::SYS_setpgid, pid, pgid) as c_int }
+    match raw_syscall::sys_setpgid(pid, pgid) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // __sigaction: native via signal_abi
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3601,10 +3671,16 @@ pub unsafe extern "C" fn __sigsetjmp(env: *mut c_void, savesigs: c_int) -> c_int
 pub unsafe extern "C" fn __sigsuspend(set: *const c_void) -> c_int {
     unsafe { crate::signal_abi::sigsuspend(set.cast()) }
 }
-// __statfs: native syscall
+/// __statfs: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __statfs(path: *const c_char, buf: *mut c_void) -> c_int {
-    unsafe { libc::syscall(libc::SYS_statfs, path, buf) as c_int }
+    match unsafe { raw_syscall::sys_statfs(path as *const u8, buf as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // __sysconf: native — forward to libc
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3684,7 +3760,7 @@ pub unsafe extern "C" fn __write(fd: c_int, buf: *const c_void, count: SizeT) ->
         }
     }
 }
-// __xmknod: native — forward to mknod syscall (ignoring ver)
+// __xmknod: native — forward to mknodat syscall with AT_FDCWD (ignoring ver)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __xmknod(
     ver: c_int,
@@ -3693,7 +3769,13 @@ pub unsafe extern "C" fn __xmknod(
     dev: *mut c_void,
 ) -> c_int {
     let _ = ver;
-    unsafe { libc::syscall(libc::SYS_mknod, pathname, mode, *(dev.cast::<u64>())) as c_int }
+    match unsafe { raw_syscall::sys_mknodat(libc::AT_FDCWD, pathname as *const u8, mode, *(dev.cast::<u64>())) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // __xmknodat: native — forward to mknodat syscall (ignoring ver)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3705,14 +3787,12 @@ pub unsafe extern "C" fn __xmknodat(
     dev: *mut c_void,
 ) -> c_int {
     let _ = ver;
-    unsafe {
-        libc::syscall(
-            libc::SYS_mknodat,
-            dirfd,
-            pathname,
-            mode,
-            *(dev.cast::<u64>()),
-        ) as c_int
+    match unsafe { raw_syscall::sys_mknodat(dirfd, pathname as *const u8, mode, *(dev.cast::<u64>())) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __xpg_sigpause: native — XPG sigpause removes sig from mask then sigsuspend
@@ -4528,7 +4608,13 @@ pub unsafe extern "C" fn create_module(name: *const c_char, size: SizeT) -> c_lo
 // delete_module: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn delete_module(name: *const c_char, flags: c_uint) -> c_int {
-    unsafe { libc::syscall(libc::SYS_delete_module, name, flags) as c_int }
+    match unsafe { raw_syscall::sys_delete_module(name as *const u8, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 /// `dladdr1` — extended dladdr with extra info (ELF symbol/header).
 ///
@@ -4800,14 +4886,34 @@ pub unsafe extern "C" fn futimes(fd: c_int, tv: *const c_void) -> c_int {
     let times_ptr = times.as_ref().map_or(std::ptr::null(), |buf| buf.as_ptr());
     unsafe { crate::unistd_abi::futimens(fd, times_ptr) }
 }
-// futimesat: native syscall
+// futimesat: native syscall (x86_64 only; aarch64 doesn't have it, use utimensat)
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn futimesat(
     dirfd: c_int,
     pathname: *const c_char,
     tv: *const c_void,
 ) -> c_int {
-    unsafe { libc::syscall(libc::SYS_futimesat, dirfd, pathname, tv) as c_int }
+    match unsafe { raw_syscall::sys_futimesat(dirfd, pathname as *const u8, tv as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn futimesat(
+    dirfd: c_int,
+    pathname: *const c_char,
+    tv: *const c_void,
+) -> c_int {
+    // aarch64 doesn't have futimesat, convert timeval to timespec and use utimensat
+    let times = unsafe { timeval_pair_to_timespecs(tv) };
+    let times_ptr = times.as_ref().map_or(std::ptr::null(), |buf| buf.as_ptr());
+    unsafe { crate::unistd_abi::utimensat(dirfd, pathname, times_ptr as *const _, 0) }
 }
 // fwide: native — always return 0 (unset, compatible with byte-oriented streams)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4981,29 +5087,39 @@ pub unsafe extern "C" fn getpw(uid: c_uint, buf: *mut c_char) -> c_int {
 pub unsafe extern "C" fn gettid() -> c_int {
     raw_syscall::sys_gettid()
 }
-// getwd: deprecated — forward to libc::getcwd
+// getwd: deprecated — forward to getcwd syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getwd(buf: *mut c_char) -> *mut c_char {
     // PATH_MAX is typically 4096 on Linux
-    unsafe { libc::syscall(libc::SYS_getcwd, buf, 4096) as *mut c_char }
+    match unsafe { raw_syscall::sys_getcwd(buf as *mut u8, 4096) } {
+        Ok(_) => buf,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            std::ptr::null_mut()
+        }
+    }
 }
 // group_member: native — check if current process is in supplementary group
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn group_member(gid: c_uint) -> c_int {
-    if unsafe { libc::syscall(libc::SYS_getegid) as libc::gid_t } == gid {
+    if raw_syscall::sys_getegid() == gid {
         return 1;
     }
     // Query actual group count first, then allocate dynamically.
     // This avoids the old hard-coded 64-group limit which silently
     // truncated membership for users in many groups.
-    let n = unsafe {
-        libc::syscall(libc::SYS_getgroups, 0, std::ptr::null_mut::<libc::gid_t>()) as c_int
+    let n = match unsafe { raw_syscall::sys_getgroups(0, std::ptr::null_mut()) } {
+        Ok(n) => n,
+        Err(_) => return 0,
     };
     if n <= 0 {
         return 0;
     }
     let mut groups = vec![0 as libc::gid_t; n as usize];
-    let actual = unsafe { libc::syscall(libc::SYS_getgroups, n, groups.as_mut_ptr()) as c_int };
+    let actual = match unsafe { raw_syscall::sys_getgroups(n, groups.as_mut_ptr() as *mut u32) } {
+        Ok(n) => n,
+        Err(_) => return 0,
+    };
     if actual < 0 {
         return 0;
     }
@@ -5030,7 +5146,13 @@ pub unsafe extern "C" fn init_module(
     len: c_ulong,
     param_values: *const c_char,
 ) -> c_int {
-    unsafe { libc::syscall(libc::SYS_init_module, module_image, len, param_values) as c_int }
+    match unsafe { raw_syscall::sys_init_module(module_image as *const u8, len as usize, param_values as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // innetgr: check if (host,user,domain) is in netgroup — returns 0 (not found)
 // Netgroups are an NIS/NIS+ feature rarely used on modern systems.
@@ -5057,9 +5179,24 @@ pub unsafe extern "C" fn ioperm(from: c_ulong, num: c_ulong, turn_on: c_int) -> 
         ) as c_int
     }
 }
+// iopl: x86_64 only
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iopl(level: c_int) -> c_int {
-    unsafe { libc::syscall(libc::SYS_iopl, level as c_long) as c_int }
+    match raw_syscall::sys_iopl(level) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn iopl(_level: c_int) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
 }
 // iruserok/iruserok_af: .rhosts-based remote user auth — deny-all for security
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5230,10 +5367,24 @@ pub unsafe extern "C" fn modfl(x: f64, iptr: *mut f64) -> f64 {
     }
     x - int_part
 }
-// modify_ldt: native syscall
+/// modify_ldt: x86_64 only
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn modify_ldt(func: c_int, ptr: *mut c_void, bytecount: c_ulong) -> c_int {
-    unsafe { libc::syscall(libc::SYS_modify_ldt, func, ptr, bytecount) as c_int }
+    match unsafe { raw_syscall::sys_modify_ldt(func, ptr as *mut u8, bytecount as usize) } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn modify_ldt(_func: c_int, _ptr: *mut c_void, _bytecount: c_ulong) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
 }
 // parse_printf_format: introspect printf format string to get argument types
 // glibc PA_* type constants
@@ -5353,10 +5504,16 @@ pub unsafe extern "C" fn parse_printf_format(
     }
     count as SizeT
 }
-// pidfd_getpid: native syscall (Linux 6.9+, nr 438)
+/// pidfd_getpid: native syscall (Linux 6.9+)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pidfd_getpid(pidfd: c_int) -> c_int {
-    unsafe { libc::syscall(438, pidfd) as c_int } // SYS_pidfd_getpid
+    match raw_syscall::sys_pidfd_getpid(pidfd) {
+        Ok(pid) => pid,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // pidfd_spawn: posix_spawn + pidfd_open to get a pidfd for the child process
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5960,14 +6117,14 @@ pub unsafe extern "C" fn sem_clockwait(
 pub unsafe extern "C" fn setaliasent() {
     unsafe { super::unistd_abi::endaliasent() };
 }
-// setfsgid/setfsuid: native syscalls
+/// setfsgid/setfsuid: native syscalls
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setfsgid(fsgid: c_uint) -> c_int {
-    unsafe { libc::syscall(libc::SYS_setfsgid, fsgid as c_ulong) as c_int }
+    raw_syscall::sys_setfsgid(fsgid)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setfsuid(fsuid: c_uint) -> c_int {
-    unsafe { libc::syscall(libc::SYS_setfsuid, fsuid as c_ulong) as c_int }
+    raw_syscall::sys_setfsuid(fsuid)
 }
 
 #[inline]
