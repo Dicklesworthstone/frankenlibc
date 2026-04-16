@@ -348,7 +348,12 @@ report_path_rel=$(echo "${scan_result}" | grep '^REPORT_PATH=' | cut -d= -f2)
 non_threading_top=$(echo "${scan_result}" | grep '^NON_THREADING_TOP=' | cut -d= -f2)
 
 echo "Total call-throughs found: ${total_ct} across ${modules_ct} modules"
-echo "${scan_result}" | grep '  MODULE:'
+module_lines=$(echo "${scan_result}" | grep '  MODULE:' || true)
+if [[ -n "${module_lines}" ]]; then
+    echo "${module_lines}"
+else
+    echo "  MODULE: none"
+fi
 if [[ -n "${non_threading_top}" ]]; then
     echo "Top non-threading backlog: ${non_threading_top}"
 fi
@@ -418,8 +423,12 @@ if fixtures.get('schema_version') != 'v1':
     errors.append('fixture pack schema_version must be v1')
 if fixtures.get('bead') != 'bd-27kh':
     errors.append('fixture pack bead must be bd-27kh')
-if not isinstance(fixture_rows, list) or not fixture_rows:
-    errors.append('fixture pack fixtures must be a non-empty array')
+if not isinstance(fixture_rows, list):
+    errors.append('fixture pack fixtures must be an array')
+elif profile_modules and not fixture_rows:
+    errors.append('fixture pack fixtures must be non-empty when callthrough families exist')
+elif not profile_modules and fixture_rows:
+    errors.append('fixture pack fixtures must be empty when no callthrough families are tracked')
 
 mode_counts = {'interpose': 0, 'replacement': 0}
 module_mode_coverage = {}
@@ -475,7 +484,8 @@ if required_log_fields:
             first_row = json.loads(line)
             break
     if first_row is None:
-        errors.append('replacement_guard.log.jsonl is empty')
+        if profile_modules:
+            errors.append('replacement_guard.log.jsonl is empty')
     else:
         missing = sorted(required_log_fields - set(first_row.keys()))
         if missing:
@@ -588,7 +598,10 @@ for mod, calls in sorted(syscalls_by_module.items()):
 
 raw_syscalls=$(echo "${syscall_check}" | grep '^RAW_SYSCALLS=' | cut -d= -f2)
 echo "Raw syscalls found: ${raw_syscalls} (these are safe)"
-echo "${syscall_check}" | grep '  '
+raw_syscall_lines=$(echo "${syscall_check}" | grep '  ' || true)
+if [[ -n "${raw_syscall_lines}" ]]; then
+    echo "${raw_syscall_lines}"
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
