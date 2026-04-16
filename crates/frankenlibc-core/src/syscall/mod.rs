@@ -5009,6 +5009,10 @@ pub unsafe fn sys_io_uring_enter(
 }
 
 /// `io_uring_register(fd, opcode, arg, nr_args)` — register files or user buffers for io_uring.
+///
+/// # Safety
+///
+/// `arg` must point to valid data appropriate for the opcode.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_io_uring_register(fd: i32, opcode: u32, arg: *const u8, nr_args: u32) -> Result<i32, i32> {
@@ -5067,6 +5071,10 @@ pub fn sys_sync_file_range(fd: i32, offset: i64, nbytes: i64, flags: u32) -> Res
 }
 
 /// `remap_file_pages(addr, size, prot, pgoff, flags)` — create a nonlinear file mapping.
+///
+/// # Safety
+///
+/// `addr` must be page-aligned and point to a valid mapped region.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_remap_file_pages(addr: *mut u8, size: usize, prot: i32, pgoff: usize, flags: i32) -> Result<(), i32> {
@@ -5077,6 +5085,10 @@ pub unsafe fn sys_remap_file_pages(addr: *mut u8, size: usize, prot: i32, pgoff:
 }
 
 /// `sched_setattr(pid, attr, flags)` — set scheduling policy and attributes.
+///
+/// # Safety
+///
+/// `attr` must point to a valid sched_attr structure.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_sched_setattr(pid: i32, attr: *const u8, flags: u32) -> Result<(), i32> {
@@ -5085,6 +5097,10 @@ pub unsafe fn sys_sched_setattr(pid: i32, attr: *const u8, flags: u32) -> Result
 }
 
 /// `sched_getattr(pid, attr, size, flags)` — fetch scheduling policy and attributes.
+///
+/// # Safety
+///
+/// `attr` must point to a writable sched_attr structure of at least `size` bytes.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_sched_getattr(pid: i32, attr: *mut u8, size: u32, flags: u32) -> Result<(), i32> {
@@ -5095,6 +5111,10 @@ pub unsafe fn sys_sched_getattr(pid: i32, attr: *mut u8, size: u32, flags: u32) 
 }
 
 /// `quotactl(cmd, special, id, addr)` — manipulate disk quotas.
+///
+/// # Safety
+///
+/// `special` must be a valid null-terminated path. `addr` must point to valid quota data.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_quotactl(cmd: i32, special: *const u8, id: i32, addr: *mut u8) -> Result<(), i32> {
@@ -5103,6 +5123,10 @@ pub unsafe fn sys_quotactl(cmd: i32, special: *const u8, id: i32, addr: *mut u8)
 }
 
 /// `lookup_dcookie(cookie, buffer, len)` — return a directory entry's path.
+///
+/// # Safety
+///
+/// `buffer` must point to a writable region of at least `len` bytes.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_lookup_dcookie(cookie: u64, buffer: *mut u8, len: usize) -> Result<usize, i32> {
@@ -5111,6 +5135,10 @@ pub unsafe fn sys_lookup_dcookie(cookie: u64, buffer: *mut u8, len: usize) -> Re
 }
 
 /// `perf_event_open(attr, pid, cpu, group_fd, flags)` — set up performance monitoring.
+///
+/// # Safety
+///
+/// `attr` must point to a valid perf_event_attr structure.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_perf_event_open(
@@ -5134,6 +5162,10 @@ pub unsafe fn sys_perf_event_open(
 }
 
 /// `add_key(type, description, payload, plen, ringid)` — add a key to the kernel's key management facility.
+///
+/// # Safety
+///
+/// `type_`, `description` must be valid null-terminated strings. `payload` must be valid for `plen` bytes.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_add_key(
@@ -5157,6 +5189,10 @@ pub unsafe fn sys_add_key(
 }
 
 /// `request_key(type, description, callout_info, dest_keyring)` — request a key from the kernel's key management facility.
+///
+/// # Safety
+///
+/// `type_`, `description`, and `callout_info` must be valid null-terminated strings or null.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_request_key(
@@ -5188,6 +5224,10 @@ pub fn sys_keyctl(operation: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) ->
 }
 
 /// `statfs(path, buf)` — get filesystem statistics.
+///
+/// # Safety
+///
+/// `path` must be a valid null-terminated string. `buf` must point to a valid statfs structure.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_statfs(path: *const u8, buf: *mut u8) -> Result<(), i32> {
@@ -5196,6 +5236,10 @@ pub unsafe fn sys_statfs(path: *const u8, buf: *mut u8) -> Result<(), i32> {
 }
 
 /// `fstatfs(fd, buf)` — get filesystem statistics.
+///
+/// # Safety
+///
+/// `buf` must point to a valid writable statfs structure.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_fstatfs(fd: i32, buf: *mut u8) -> Result<(), i32> {
@@ -5204,6 +5248,10 @@ pub unsafe fn sys_fstatfs(fd: i32, buf: *mut u8) -> Result<(), i32> {
 }
 
 /// `landlock_create_ruleset(attr, size, flags)` — create a new Landlock ruleset.
+///
+/// # Safety
+///
+/// `attr` must point to a valid landlock_ruleset_attr structure or be null.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_landlock_create_ruleset(attr: *const u8, size: usize, flags: u32) -> Result<i32, i32> {
@@ -5212,6 +5260,10 @@ pub unsafe fn sys_landlock_create_ruleset(attr: *const u8, size: usize, flags: u
 }
 
 /// `landlock_add_rule(ruleset_fd, rule_type, rule_attr, flags)` — add a new Landlock rule to a ruleset.
+///
+/// # Safety
+///
+/// `rule_attr` must point to a valid rule attribute structure appropriate for `rule_type`.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_landlock_add_rule(ruleset_fd: i32, rule_type: i32, rule_attr: *const u8, flags: u32) -> Result<(), i32> {
@@ -5240,6 +5292,10 @@ pub fn sys_personality(persona: u32) -> Result<u32, i32> {
 }
 
 /// `process_madvise(pidfd, iovec, vlen, advice, flags)` — give advice about memory usage for another process.
+///
+/// # Safety
+///
+/// `iovec` must point to a valid array of `vlen` iovec structures.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_process_madvise(
@@ -5271,6 +5327,10 @@ pub fn sys_process_mrelease(pidfd: i32, flags: u32) -> Result<(), i32> {
 }
 
 /// `semtimedop(semid, sops, nsops, timeout)` — semaphore operations with timeout.
+///
+/// # Safety
+///
+/// `sops` must point to a valid array of `nsops` sembuf structures. `timeout` must be null or point to a valid timespec.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_semtimedop(
@@ -5284,6 +5344,10 @@ pub unsafe fn sys_semtimedop(
 }
 
 /// `getcpu(cpu, node, unused)` — determine CPU and NUMA node on which the calling thread is running.
+///
+/// # Safety
+///
+/// `cpu` and `node` must be null or point to valid u32 locations.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_getcpu(cpu: *mut u32, node: *mut u32) -> Result<(), i32> {
@@ -5292,6 +5356,10 @@ pub unsafe fn sys_getcpu(cpu: *mut u32, node: *mut u32) -> Result<(), i32> {
 }
 
 /// `clock_adjtime(clk_id, buf)` — adjust the time of a specified clock.
+///
+/// # Safety
+///
+/// `buf` must point to a valid timex structure.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_clock_adjtime(clk_id: i32, buf: *mut u8) -> Result<i32, i32> {
@@ -5300,6 +5368,10 @@ pub unsafe fn sys_clock_adjtime(clk_id: i32, buf: *mut u8) -> Result<i32, i32> {
 }
 
 /// `adjtimex(buf)` — tune kernel clock.
+///
+/// # Safety
+///
+/// `buf` must point to a valid timex structure.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_adjtimex(buf: *mut u8) -> Result<i32, i32> {
@@ -5308,6 +5380,10 @@ pub unsafe fn sys_adjtimex(buf: *mut u8) -> Result<i32, i32> {
 }
 
 /// `mount(source, target, filesystemtype, mountflags, data)` — mount filesystem.
+///
+/// # Safety
+///
+/// `source`, `target`, and `filesystemtype` must be null or valid null-terminated strings. `data` must be null or a valid pointer for the filesystem type.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_mount(
@@ -5331,6 +5407,10 @@ pub unsafe fn sys_mount(
 }
 
 /// `process_vm_readv(pid, local_iov, liovcnt, remote_iov, riovcnt, flags)` — read data from another process.
+///
+/// # Safety
+///
+/// `local_iov` and `remote_iov` must point to valid arrays of their respective counts of iovec structures.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_process_vm_readv(
@@ -5356,6 +5436,10 @@ pub unsafe fn sys_process_vm_readv(
 }
 
 /// `process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags)` — write data to another process.
+///
+/// # Safety
+///
+/// `local_iov` and `remote_iov` must point to valid arrays of their respective counts of iovec structures.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_process_vm_writev(
@@ -5381,6 +5465,10 @@ pub unsafe fn sys_process_vm_writev(
 }
 
 /// `epoll_pwait2(epfd, events, maxevents, timeout, sigmask)` — wait for epoll events with nanosecond timeout.
+///
+/// # Safety
+///
+/// `events` must point to a buffer for `maxevents` epoll_event structures. `timeout` must be null or a valid timespec. `sigmask` must be null or a valid sigset_t.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_epoll_pwait2(
@@ -5406,6 +5494,10 @@ pub unsafe fn sys_epoll_pwait2(
 }
 
 /// `ptrace(request, pid, addr, data)` — process trace.
+///
+/// # Safety
+///
+/// `addr` and `data` semantics depend on `request`. Caller must ensure valid pointers when the request type requires them.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_ptrace(request: i32, pid: i32, addr: usize, data: usize) -> Result<isize, i32> {
@@ -5416,6 +5508,10 @@ pub unsafe fn sys_ptrace(request: i32, pid: i32, addr: usize, data: usize) -> Re
 }
 
 /// `open_tree(dirfd, path, flags)` — open/clone a mount tree.
+///
+/// # Safety
+///
+/// `path` must be a valid null-terminated string.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_open_tree(dirfd: i32, path: *const u8, flags: u32) -> Result<i32, i32> {
@@ -5426,6 +5522,10 @@ pub unsafe fn sys_open_tree(dirfd: i32, path: *const u8, flags: u32) -> Result<i
 }
 
 /// `move_mount(from_dirfd, from_path, to_dirfd, to_path, flags)` — move a mount.
+///
+/// # Safety
+///
+/// `from_path` and `to_path` must be valid null-terminated strings.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_move_mount(
@@ -5449,6 +5549,10 @@ pub unsafe fn sys_move_mount(
 }
 
 /// `fsopen(fsname, flags)` — open a filesystem by name.
+///
+/// # Safety
+///
+/// `fsname` must be a valid null-terminated filesystem type string.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_fsopen(fsname: *const u8, flags: u32) -> Result<i32, i32> {
@@ -5457,6 +5561,10 @@ pub unsafe fn sys_fsopen(fsname: *const u8, flags: u32) -> Result<i32, i32> {
 }
 
 /// `fsconfig(fd, cmd, key, value, aux)` — configure a filesystem context.
+///
+/// # Safety
+///
+/// `key` and `value` must be null or valid null-terminated strings depending on `cmd`.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_fsconfig(
@@ -5480,6 +5588,10 @@ pub unsafe fn sys_fsconfig(
 }
 
 /// `fsmount(fs_fd, flags, attr_flags)` — create a mount from a filesystem context.
+///
+/// # Safety
+///
+/// `fs_fd` must be a valid filesystem context file descriptor obtained from fsopen/fspick.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_fsmount(fs_fd: i32, flags: u32, attr_flags: u32) -> Result<i32, i32> {
@@ -5490,6 +5602,10 @@ pub unsafe fn sys_fsmount(fs_fd: i32, flags: u32, attr_flags: u32) -> Result<i32
 }
 
 /// `fspick(dirfd, path, flags)` — pick a mount for configuration.
+///
+/// # Safety
+///
+/// `path` must be a valid null-terminated string.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_fspick(dirfd: i32, path: *const u8, flags: u32) -> Result<i32, i32> {
@@ -5500,6 +5616,10 @@ pub unsafe fn sys_fspick(dirfd: i32, path: *const u8, flags: u32) -> Result<i32,
 }
 
 /// `mount_setattr(dirfd, pathname, flags, uattr, usize)` — set mount attributes.
+///
+/// # Safety
+///
+/// `pathname` must be a valid null-terminated string. `uattr` must point to a valid mount_attr structure of size `usize_`.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_mount_setattr(
@@ -5523,6 +5643,10 @@ pub unsafe fn sys_mount_setattr(
 }
 
 /// `rt_sigreturn(scp)` — return from signal handler (kernel internal).
+///
+/// # Safety
+///
+/// Must only be called from a signal handler context. `scp` must point to a valid signal context.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_rt_sigreturn(scp: *mut u8) -> Result<(), i32> {
@@ -5531,6 +5655,10 @@ pub unsafe fn sys_rt_sigreturn(scp: *mut u8) -> Result<(), i32> {
 }
 
 /// `gettimeofday(tv, tz)` — get time of day. x86_64 only (aarch64 uses clock_gettime).
+///
+/// # Safety
+///
+/// `tv` must be null or point to a valid timeval structure. `tz` must be null or point to a valid timezone structure.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[allow(unsafe_code)]
@@ -5540,6 +5668,10 @@ pub unsafe fn sys_gettimeofday(tv: *mut u8, tz: *mut u8) -> Result<(), i32> {
 }
 
 /// `arch_prctl(code, addr)` — set/get architecture-specific thread state. x86_64 only.
+///
+/// # Safety
+///
+/// `addr` semantics depend on `code`. For get operations, `addr` must point to valid memory. For set operations, `addr` is the value to set.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[allow(unsafe_code)]
@@ -5549,6 +5681,10 @@ pub unsafe fn sys_arch_prctl(code: i32, addr: usize) -> Result<(), i32> {
 }
 
 /// `init_module(module_image, len, param_values)` — load a kernel module.
+///
+/// # Safety
+///
+/// `module_image` must point to a valid module binary of `len` bytes. `param_values` must be a valid null-terminated string.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_init_module(
@@ -5563,6 +5699,10 @@ pub unsafe fn sys_init_module(
 }
 
 /// `delete_module(name, flags)` — unload a kernel module.
+///
+/// # Safety
+///
+/// `name` must be a valid null-terminated module name string.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_delete_module(name: *const u8, flags: u32) -> Result<(), i32> {
@@ -5587,6 +5727,10 @@ pub fn sys_setfsgid(fsgid: u32) -> i32 {
 }
 
 /// `times(buf)` — get process times.
+///
+/// # Safety
+///
+/// `buf` must point to a valid tms structure.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_times(buf: *mut u8) -> Result<isize, i32> {
@@ -5612,6 +5756,10 @@ pub fn sys_iopl(level: i32) -> Result<(), i32> {
 }
 
 /// `modify_ldt(func, ptr, bytecount)` — read or write LDT entries. x86_64 only.
+///
+/// # Safety
+///
+/// `ptr` must point to a valid buffer of `bytecount` bytes appropriate for the operation type.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[allow(unsafe_code)]
