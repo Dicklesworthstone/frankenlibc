@@ -6655,33 +6655,37 @@ pub unsafe extern "C" fn sigtimedwait(
     info: *mut c_void,
     timeout: *const libc::timespec,
 ) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_rt_sigtimedwait,
-                set,
-                info,
-                timeout,
-                std::mem::size_of::<libc::c_ulong>(),
-            ),
-            errno::EINVAL,
+    match unsafe {
+        syscall::sys_rt_sigtimedwait(
+            set as *const u8,
+            info as *mut u8,
+            timeout as *const u8,
+            std::mem::size_of::<libc::c_ulong>(),
         )
+    } {
+        Ok(sig) => sig,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigwaitinfo(set: *const c_void, info: *mut c_void) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_rt_sigtimedwait,
-                set,
-                info,
-                std::ptr::null::<libc::timespec>(),
-                std::mem::size_of::<libc::c_ulong>(),
-            ),
-            errno::EINVAL,
+    match unsafe {
+        syscall::sys_rt_sigtimedwait(
+            set as *const u8,
+            info as *mut u8,
+            std::ptr::null(),
+            std::mem::size_of::<libc::c_ulong>(),
         )
+    } {
+        Ok(sig) => sig,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
