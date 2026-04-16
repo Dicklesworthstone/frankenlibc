@@ -94,28 +94,18 @@ type ResolvedPthreadAttrGetdetachstateFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
 type ResolvedPthreadAttrSetguardsizeFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
-type ResolvedPthreadAttrGetguardsizeFn =
-    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
 type ResolvedPthreadAttrSetstackFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, *mut c_void, usize) -> c_int;
-type ResolvedPthreadAttrGetstackFn =
-    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut *mut c_void, *mut usize) -> c_int;
 type ResolvedPthreadAttrSetstacksizeFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
 type ResolvedPthreadAttrGetstacksizeFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
 type ResolvedPthreadAttrSetinheritschedFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
-type ResolvedPthreadAttrGetinheritschedFn =
-    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
 type ResolvedPthreadAttrSetschedpolicyFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
-type ResolvedPthreadAttrGetschedpolicyFn =
-    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
 type ResolvedPthreadAttrSetschedparamFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, *const libc::sched_param) -> c_int;
-type ResolvedPthreadAttrGetschedparamFn =
-    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut libc::sched_param) -> c_int;
 type ResolvedPthreadAttrSetaffinityNpFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize, *const libc::cpu_set_t) -> c_int;
 type ResolvedPthreadAttrSetsigmaskNpFn =
@@ -205,17 +195,12 @@ static RESOLVED_PTHREAD_ATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_GETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
-static RESOLVED_PTHREAD_ATTR_GETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSTACK_PTR: OnceLock<usize> = OnceLock::new();
-static RESOLVED_PTHREAD_ATTR_GETSTACK_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_GETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETINHERITSCHED_PTR: OnceLock<usize> = OnceLock::new();
-static RESOLVED_PTHREAD_ATTR_GETINHERITSCHED_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSCHEDPOLICY_PTR: OnceLock<usize> = OnceLock::new();
-static RESOLVED_PTHREAD_ATTR_GETSCHEDPOLICY_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new();
-static RESOLVED_PTHREAD_ATTR_GETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETAFFINITY_NP_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSIGMASK_NP_PTR: OnceLock<usize> = OnceLock::new();
 
@@ -470,16 +455,6 @@ unsafe fn resolved_pthread_attr_setguardsize_fn() -> Option<ResolvedPthreadAttrS
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetguardsizeFn>(ptr) })
 }
 
-unsafe fn resolved_pthread_attr_getguardsize_fn() -> Option<ResolvedPthreadAttrGetguardsizeFn> {
-    let ptr = unsafe {
-        resolve_cached_pthread_attr_symbol(
-            &RESOLVED_PTHREAD_ATTR_GETGUARDSIZE_PTR,
-            &[b"pthread_attr_getguardsize\0"],
-        )
-    }?;
-    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetguardsizeFn>(ptr) })
-}
-
 unsafe fn resolved_pthread_attr_setstack_fn() -> Option<ResolvedPthreadAttrSetstackFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -488,16 +463,6 @@ unsafe fn resolved_pthread_attr_setstack_fn() -> Option<ResolvedPthreadAttrSetst
         )
     }?;
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetstackFn>(ptr) })
-}
-
-unsafe fn resolved_pthread_attr_getstack_fn() -> Option<ResolvedPthreadAttrGetstackFn> {
-    let ptr = unsafe {
-        resolve_cached_pthread_attr_symbol(
-            &RESOLVED_PTHREAD_ATTR_GETSTACK_PTR,
-            &[b"pthread_attr_getstack\0"],
-        )
-    }?;
-    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetstackFn>(ptr) })
 }
 
 unsafe fn resolved_pthread_attr_setstacksize_fn() -> Option<ResolvedPthreadAttrSetstacksizeFn> {
@@ -531,17 +496,6 @@ unsafe fn resolved_pthread_attr_setinheritsched_fn() -> Option<ResolvedPthreadAt
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetinheritschedFn>(ptr) })
 }
 
-unsafe fn resolved_pthread_attr_getinheritsched_fn() -> Option<ResolvedPthreadAttrGetinheritschedFn>
-{
-    let ptr = unsafe {
-        resolve_cached_pthread_attr_symbol(
-            &RESOLVED_PTHREAD_ATTR_GETINHERITSCHED_PTR,
-            &[b"pthread_attr_getinheritsched\0"],
-        )
-    }?;
-    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetinheritschedFn>(ptr) })
-}
-
 unsafe fn resolved_pthread_attr_setschedpolicy_fn() -> Option<ResolvedPthreadAttrSetschedpolicyFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -552,16 +506,6 @@ unsafe fn resolved_pthread_attr_setschedpolicy_fn() -> Option<ResolvedPthreadAtt
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetschedpolicyFn>(ptr) })
 }
 
-unsafe fn resolved_pthread_attr_getschedpolicy_fn() -> Option<ResolvedPthreadAttrGetschedpolicyFn> {
-    let ptr = unsafe {
-        resolve_cached_pthread_attr_symbol(
-            &RESOLVED_PTHREAD_ATTR_GETSCHEDPOLICY_PTR,
-            &[b"pthread_attr_getschedpolicy\0"],
-        )
-    }?;
-    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetschedpolicyFn>(ptr) })
-}
-
 unsafe fn resolved_pthread_attr_setschedparam_fn() -> Option<ResolvedPthreadAttrSetschedparamFn> {
     let ptr = unsafe {
         resolve_cached_pthread_attr_symbol(
@@ -570,16 +514,6 @@ unsafe fn resolved_pthread_attr_setschedparam_fn() -> Option<ResolvedPthreadAttr
         )
     }?;
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetschedparamFn>(ptr) })
-}
-
-unsafe fn resolved_pthread_attr_getschedparam_fn() -> Option<ResolvedPthreadAttrGetschedparamFn> {
-    let ptr = unsafe {
-        resolve_cached_pthread_attr_symbol(
-            &RESOLVED_PTHREAD_ATTR_GETSCHEDPARAM_PTR,
-            &[b"pthread_attr_getschedparam\0"],
-        )
-    }?;
-    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetschedparamFn>(ptr) })
 }
 
 unsafe fn resolved_pthread_attr_setaffinity_np_fn() -> Option<ResolvedPthreadAttrSetaffinityNpFn> {
@@ -3587,86 +3521,6 @@ fn managed_attr_data_ptr_const(
     // SAFETY: `data` comes from `attr_data_ptr_const`, which validated non-null/alignment.
     let is_managed = unsafe { (*data).magic == MANAGED_ATTR_MAGIC };
     is_managed.then_some(data)
-}
-
-unsafe fn populate_managed_attr_from_host_attr(
-    dst: *mut libc::pthread_attr_t,
-    host_attr: *const libc::pthread_attr_t,
-) -> c_int {
-    let Some(data) = managed_attr_data_ptr(dst) else {
-        return libc::EINVAL;
-    };
-
-    let mut detach_state = libc::PTHREAD_CREATE_JOINABLE;
-    let mut stack_size = 0usize;
-    let mut guard_size = 0usize;
-    let mut stack_addr: *mut c_void = std::ptr::null_mut();
-    let mut inherit_sched = 0;
-    let mut sched_policy = 0;
-    let mut sched_param: libc::sched_param = unsafe { std::mem::zeroed() };
-
-    let Some(getdetachstate) = (unsafe { resolved_pthread_attr_getdetachstate_fn() }) else {
-        return libc::ENOSYS;
-    };
-    let Some(getstacksize) = (unsafe { resolved_pthread_attr_getstacksize_fn() }) else {
-        return libc::ENOSYS;
-    };
-    let Some(getguardsize) = (unsafe { resolved_pthread_attr_getguardsize_fn() }) else {
-        return libc::ENOSYS;
-    };
-    let Some(getstack) = (unsafe { resolved_pthread_attr_getstack_fn() }) else {
-        return libc::ENOSYS;
-    };
-    let Some(getinheritsched) = (unsafe { resolved_pthread_attr_getinheritsched_fn() }) else {
-        return libc::ENOSYS;
-    };
-    let Some(getschedpolicy) = (unsafe { resolved_pthread_attr_getschedpolicy_fn() }) else {
-        return libc::ENOSYS;
-    };
-    let Some(getschedparam) = (unsafe { resolved_pthread_attr_getschedparam_fn() }) else {
-        return libc::ENOSYS;
-    };
-
-    let mut rc = unsafe { getdetachstate(host_attr, &mut detach_state) };
-    if rc == 0 {
-        rc = unsafe { getstacksize(host_attr, &mut stack_size) };
-    }
-    if rc == 0 {
-        rc = unsafe { getguardsize(host_attr, &mut guard_size) };
-    }
-    if rc == 0 {
-        rc = unsafe { getstack(host_attr, &mut stack_addr, &mut stack_size) };
-    }
-    if rc == 0 {
-        rc = unsafe { getinheritsched(host_attr, &mut inherit_sched) };
-    }
-    if rc == 0 {
-        rc = unsafe { getschedpolicy(host_attr, &mut sched_policy) };
-    }
-    if rc == 0 {
-        rc = unsafe { getschedparam(host_attr, &mut sched_param) };
-    }
-    if rc != 0 {
-        return rc;
-    }
-
-    unsafe {
-        (*data).detach_state = detach_state;
-        (*data).stack_size = stack_size;
-        (*data).guard_size = guard_size;
-        (*data).stack_addr = stack_addr as usize;
-        (*data).inherit_sched = inherit_sched;
-        (*data).sched_policy = sched_policy;
-        (*data).sched_priority = sched_param.sched_priority;
-        (*data).flags = 0;
-    }
-
-    let key = dst as usize;
-    let mut reg = EXTENDED_ATTR_REGISTRY
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    reg.remove(&key);
-    0
 }
 
 // --- Thread attributes ---
