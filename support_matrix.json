@@ -9720,11 +9720,11 @@
     },
     {
       "symbol": "pthread_getattr_np",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc pthread_getattr_np",
-      "hardened_semantics": "Passthrough to glibc pthread_getattr_np",
+      "strict_semantics": "Projects managed thread metadata and falls back to /proc/self/task/<tid>/maps for non-managed live threads.",
+      "hardened_semantics": "Same deterministic registry/proc-maps projection with ESRCH for stale thread handles.",
       "default_stub": false
     },
     {

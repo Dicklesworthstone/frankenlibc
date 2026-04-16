@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-16T10:26:54Z",
+  "generated_at": "2026-04-16T10:57:36Z",
   "summary": {
     "total_symbols": 3980,
     "status_validated": 3980,
@@ -16,9 +16,9 @@
   "coverage_dashboard": {
     "total_symbols": 3980,
     "status_counts": {
-      "Implemented": 3545,
+      "Implemented": 3546,
       "RawSyscall": 404,
-      "WrapsHostLibc": 31,
+      "WrapsHostLibc": 30,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
@@ -42,7 +42,7 @@
       "Stub": 0,
       "WrapsHostLibc": -1
     },
-    "native_coverage_pct_delta": 0.02,
+    "native_coverage_pct_delta": 0.05,
     "reclassified_symbol_count": 1,
     "new_symbol_count": 0,
     "removed_symbol_count": 0,
@@ -62,18 +62,16 @@
       "total_reclassified": 1,
       "violations": [
         {
-          "symbol": "pthread_condattr_getclock",
+          "symbol": "pthread_getattr_np",
           "previous_status": "WrapsHostLibc",
           "current_status": "Implemented",
           "promotion_requires_evidence": true,
-          "strict_fixture_count": 0,
-          "hardened_fixture_count": 0,
+          "strict_fixture_count": 5,
+          "hardened_fixture_count": 5,
           "strict_conformance": null,
           "hardened_conformance": null,
           "conformance_evidence_passed": false,
           "missing_evidence": [
-            "missing_strict_fixture",
-            "missing_hardened_fixture",
             "strict_conformance_not_passing",
             "hardened_conformance_not_passing"
           ]
@@ -83,16 +81,16 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 3545,
-      "fixture_linked": 169
+      "count": 3546,
+      "fixture_linked": 170
     },
     "RawSyscall": {
       "count": 404,
       "fixture_linked": 53
     },
     "WrapsHostLibc": {
-      "count": 31,
-      "fixture_linked": 19
+      "count": 30,
+      "fixture_linked": 18
     }
   },
   "module_coverage": {
@@ -3169,7 +3167,7 @@
     "pthread_exit": "WrapsHostLibc",
     "pthread_getaffinity_np": "Implemented",
     "pthread_getattr_default_np": "Implemented",
-    "pthread_getattr_np": "WrapsHostLibc",
+    "pthread_getattr_np": "Implemented",
     "pthread_getconcurrency": "Implemented",
     "pthread_getcpuclockid": "Implemented",
     "pthread_getname_np": "Implemented",
@@ -4281,18 +4279,16 @@
   },
   "reclassified_symbols": [
     {
-      "symbol": "pthread_condattr_getclock",
+      "symbol": "pthread_getattr_np",
       "previous_status": "WrapsHostLibc",
       "current_status": "Implemented",
       "promotion_requires_evidence": true,
-      "strict_fixture_count": 0,
-      "hardened_fixture_count": 0,
+      "strict_fixture_count": 5,
+      "hardened_fixture_count": 5,
       "strict_conformance": null,
       "hardened_conformance": null,
       "conformance_evidence_passed": false,
       "missing_evidence": [
-        "missing_strict_fixture",
-        "missing_hardened_fixture",
         "strict_conformance_not_passing",
         "hardened_conformance_not_passing"
       ]
