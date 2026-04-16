@@ -4093,15 +4093,13 @@ pub unsafe extern "C" fn __mq_open_2(name: *const c_char, oflag: c_int) -> c_int
         // O_CREAT requires mode and attr args — missing is a bug
         unsafe { crate::stdlib_abi::abort() };
     }
-    // mq_open without O_CREAT: mode/attr are ignored, pass 0/null
-    unsafe {
-        libc::syscall(
-            libc::SYS_mq_open,
-            name,
-            oflag,
-            0,
-            std::ptr::null::<c_void>(),
-        ) as c_int
+    // mq_open without O_CREAT: mode/attr are ignored, pass 0/0
+    match unsafe { raw_syscall::sys_mq_open(name as *const u8, oflag, 0, 0) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -4444,14 +4442,15 @@ unsafe fn write_remaining_adjtime(olddelta: *mut c_void) -> Result<(), c_int> {
     }
     let mut timex: libc::timex = unsafe { std::mem::zeroed() };
     timex.modes = libc::ADJ_OFFSET_SS_READ as _;
-    let ret = unsafe { libc::syscall(libc::SYS_adjtimex, &mut timex) };
-    if ret < 0 {
-        return Err(last_os_errno(libc::EINVAL));
+    match unsafe { raw_syscall::sys_adjtimex(&mut timex as *mut _ as *mut u8) } {
+        Ok(_) => {
+            unsafe {
+                *(olddelta as *mut libc::timeval) = offset_micros_to_timeval(timex.offset as c_long);
+            }
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
-    unsafe {
-        *(olddelta as *mut libc::timeval) = offset_micros_to_timeval(timex.offset as c_long);
-    }
-    Ok(())
 }
 
 // adjtime: native via adjtimex single-shot offset mode
@@ -4476,12 +4475,12 @@ pub unsafe extern "C" fn adjtime(delta: *const c_void, olddelta: *mut c_void) ->
     let mut timex: libc::timex = unsafe { std::mem::zeroed() };
     timex.modes = libc::ADJ_OFFSET_SINGLESHOT as _;
     timex.offset = offset as _;
-    let ret = unsafe { libc::syscall(libc::SYS_adjtimex, &mut timex) };
-    if ret < 0 {
-        unsafe { crate::errno_abi::set_abi_errno(last_os_errno(libc::EINVAL)) };
-        -1
-    } else {
-        0
+    match unsafe { raw_syscall::sys_adjtimex(&mut timex as *mut _ as *mut u8) } {
+        Ok(_) => 0,
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -5167,17 +5166,24 @@ pub unsafe extern "C" fn innetgr(
 ) -> c_int {
     0
 }
-// ioperm/iopl: native syscalls
+// ioperm: x86_64 only
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ioperm(from: c_ulong, num: c_ulong, turn_on: c_int) -> c_int {
-    unsafe {
-        libc::syscall(
-            libc::SYS_ioperm,
-            from as c_long,
-            num as c_long,
-            turn_on as c_long,
-        ) as c_int
+    match raw_syscall::sys_ioperm(from as usize, num as usize, turn_on) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ioperm(_from: c_ulong, _num: c_ulong, _turn_on: c_int) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
 }
 // iopl: x86_64 only
 #[cfg(target_arch = "x86_64")]
@@ -5275,26 +5281,23 @@ pub unsafe extern "C" fn finitel(x: f64) -> c_int {
 // klogctl: native syscall (syslog)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn klogctl(typ: c_int, bufp: *mut c_char, len: c_int) -> c_int {
-    unsafe {
-        libc::syscall(
-            libc::SYS_syslog,
-            typ as c_long,
-            bufp as c_long,
-            len as c_long,
-        ) as c_int
+    match unsafe { raw_syscall::sys_syslog(typ, bufp as *mut u8, len) } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 // lchmod: native — fchmodat with AT_SYMLINK_NOFOLLOW
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lchmod(pathname: *const c_char, mode: c_uint) -> c_int {
-    unsafe {
-        libc::syscall(
-            libc::SYS_fchmodat,
-            libc::AT_FDCWD,
-            pathname,
-            mode,
-            libc::AT_SYMLINK_NOFOLLOW,
-        ) as c_int
+    match unsafe { raw_syscall::sys_fchmodat(libc::AT_FDCWD, pathname as *const u8, mode, libc::AT_SYMLINK_NOFOLLOW) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 // ldexpl: native — x * 2^exp via repeated doubling/halving
@@ -6511,10 +6514,16 @@ pub unsafe extern "C" fn sysctl(
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
     -1
 }
-// times: native syscall
+/// times: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn times(buf: *mut c_void) -> c_long {
-    unsafe { libc::syscall(libc::SYS_times, buf) as c_long }
+    match unsafe { raw_syscall::sys_times(buf as *mut u8) } {
+        Ok(v) => v as c_long,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // tr_break: obsolete regex debugging hook — no-op
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6578,10 +6587,24 @@ pub unsafe extern "C" fn ulimit(cmd: c_int, newlimit: c_long) -> c_long {
 pub unsafe extern "C" fn ullabs(n: u64) -> u64 {
     n
 }
-// uselib: deprecated Linux syscall
+/// uselib: deprecated Linux syscall (x86_64 only)
+#[cfg(target_arch = "x86_64")]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn uselib(library: *const c_char) -> c_int {
-    unsafe { libc::syscall(libc::SYS_uselib, library) as c_int }
+    match unsafe { raw_syscall::sys_uselib(library as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn uselib(_library: *const c_char) -> c_int {
+    unsafe { set_abi_errno(libc::ENOSYS) };
+    -1
 }
 // ustat: removed in Linux 4.18 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6606,10 +6629,16 @@ pub unsafe extern "C" fn utimes(filename: *const c_char, tv: *const c_void) -> c
     let times_ptr = times.as_ref().map_or(std::ptr::null(), |buf| buf.as_ptr());
     unsafe { crate::unistd_abi::utimensat(libc::AT_FDCWD, filename, times_ptr, 0) }
 }
-// vhangup: native syscall
+/// vhangup: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vhangup() -> c_int {
-    unsafe { libc::syscall(libc::SYS_vhangup) as c_int }
+    match raw_syscall::sys_vhangup() {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 // vlimit: obsolete BSD resource limit — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7040,7 +7069,13 @@ pub unsafe extern "C" fn __sendmmsg(
     vlen: c_uint,
     flags: c_int,
 ) -> c_int {
-    unsafe { libc::syscall(libc::SYS_sendmmsg, sockfd, msgvec, vlen, flags) as c_int }
+    match unsafe { raw_syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags) } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -7074,14 +7109,12 @@ pub unsafe extern "C" fn __ftello64(stream: *mut c_void) -> i64 {
 /// `__getrlimit` — internal getrlimit alias.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getrlimit(resource: c_int, rlim: *mut c_void) -> c_int {
-    unsafe {
-        libc::syscall(
-            libc::SYS_prlimit64,
-            0,
-            resource,
-            std::ptr::null::<c_void>(),
-            rlim,
-        ) as c_int
+    match unsafe { raw_syscall::sys_prlimit64(0, resource as u32, std::ptr::null(), rlim as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -7129,20 +7162,14 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     // Use getrandom for random bytes
     let mut rand_bytes = [0u8; 6];
-    let ret = unsafe { libc::syscall(libc::SYS_getrandom, rand_bytes.as_mut_ptr(), 6usize, 0u32) };
-    if ret != 6 {
+    let got_random = unsafe { raw_syscall::sys_getrandom(rand_bytes.as_mut_ptr(), 6, 0) };
+    if got_random != Ok(6) {
         // Fallback: use clock_gettime for entropy
         let mut ts = libc::timespec {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        unsafe {
-            libc::syscall(
-                libc::SYS_clock_gettime,
-                libc::CLOCK_MONOTONIC as i64,
-                &mut ts,
-            ) as c_int
-        };
+        let _ = unsafe { raw_syscall::sys_clock_gettime(libc::CLOCK_MONOTONIC, &mut ts as *mut _ as *mut u8) };
         let mut seed = ts.tv_nsec as u64 ^ ts.tv_sec as u64;
         for b in &mut rand_bytes {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -7155,16 +7182,7 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
     }
     // Check that the file doesn't exist (per mktemp spec)
     let mut statbuf: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe {
-        libc::syscall(
-            libc::SYS_newfstatat,
-            libc::AT_FDCWD,
-            template,
-            &mut statbuf,
-            0,
-        ) as c_int
-    } == 0
-    {
+    if unsafe { raw_syscall::sys_newfstatat(libc::AT_FDCWD, template as *const u8, &mut statbuf as *mut _ as *mut u8, 0) }.is_ok() {
         // File exists — set first byte to 0 and return error
         unsafe {
             *template = 0;
@@ -7430,15 +7448,16 @@ pub unsafe extern "C" fn __lll_lock_wait_private(futex: *mut c_int, private: c_i
     let _ = private;
     // FUTEX_WAIT_PRIVATE: wait while *futex == 2 (contended)
     loop {
-        unsafe {
-            libc::syscall(
-                libc::SYS_futex,
-                futex,
+        let _ = unsafe {
+            raw_syscall::sys_futex(
+                futex as *const u32,
                 libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
                 2,
-                std::ptr::null::<c_void>(),
-            );
-        }
+                0,
+                0,
+                0,
+            )
+        };
         // Try to acquire: if we can swap 0->2, we got the lock
         let ptr = futex as *mut std::sync::atomic::AtomicI32;
         if unsafe {
@@ -7460,14 +7479,16 @@ pub unsafe extern "C" fn __lll_lock_wait_private(futex: *mut c_int, private: c_i
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __lll_lock_wake_private(futex: *mut c_int, private: c_int) {
     let _ = private;
-    unsafe {
-        libc::syscall(
-            libc::SYS_futex,
-            futex,
+    let _ = unsafe {
+        raw_syscall::sys_futex(
+            futex as *const u32,
             libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
             1,
-        );
-    }
+            0,
+            0,
+            0,
+        )
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -8643,9 +8664,7 @@ pub unsafe extern "C" fn __file_change_detection_for_path(
     }
     let fcd = result as *mut FileChangeDetection;
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::syscall(libc::SYS_newfstatat, libc::AT_FDCWD, path, &mut st, 0) as c_int }
-        != 0
-    {
+    if unsafe { raw_syscall::sys_newfstatat(libc::AT_FDCWD, path as *const u8, &mut st as *mut _ as *mut u8, 0) }.is_err() {
         // stat failed — zero out the detection struct
         unsafe { std::ptr::write_bytes(fcd, 0, 1) };
         return 0;
@@ -9188,15 +9207,12 @@ pub unsafe extern "C" fn __libc_msgrcv(
     msgtyp: c_long,
     msgflg: c_int,
 ) -> isize {
-    unsafe {
-        libc::syscall(
-            libc::SYS_msgrcv,
-            msqid as c_long,
-            msgp as c_long,
-            msgsz as c_long,
-            msgtyp,
-            msgflg as c_long,
-        ) as isize
+    match unsafe { raw_syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -9207,14 +9223,12 @@ pub unsafe extern "C" fn __libc_msgsnd(
     msgsz: usize,
     msgflg: c_int,
 ) -> c_int {
-    unsafe {
-        libc::syscall(
-            libc::SYS_msgsnd,
-            msqid as c_long,
-            msgp as c_long,
-            msgsz as c_long,
-            msgflg as c_long,
-        ) as c_int
+    match unsafe { raw_syscall::sys_msgsnd(msqid, msgp as *const u8, msgsz, msgflg) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 

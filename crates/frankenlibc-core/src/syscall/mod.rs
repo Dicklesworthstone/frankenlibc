@@ -1320,6 +1320,18 @@ pub const SYS_SETFSUID: usize = 151;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SETFSGID: usize = 152;
 
+// I/O permissions - x86_64 only
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IOPERM: usize = 173;
+
+// Kernel syslog - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SYSLOG: usize = 103;
+
+// Kernel syslog - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SYSLOG: usize = 116;
+
 // Process times - x86_64
 #[cfg(target_arch = "x86_64")]
 pub const SYS_TIMES: usize = 100;
@@ -5527,6 +5539,23 @@ pub unsafe fn sys_futimesat(dirfd: i32, pathname: *const u8, tv: *const u8) -> R
 #[allow(unsafe_code)]
 pub fn sys_pidfd_getpid(pidfd: i32) -> Result<i32, i32> {
     let ret = unsafe { raw::syscall1(SYS_PIDFD_GETPID, pidfd as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `ioperm(from, num, turn_on)` — set I/O port permissions. x86_64 only.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_ioperm(from: usize, num: usize, turn_on: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_IOPERM, from, num, turn_on as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `syslog(type, bufp, len)` — read/clear kernel log buffer.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_syslog(typ: i32, bufp: *mut u8, len: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_SYSLOG, typ as usize, bufp as usize, len as usize) };
     syscall_result(ret).map(|v| v as i32)
 }
 
