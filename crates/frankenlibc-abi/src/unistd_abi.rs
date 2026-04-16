@@ -5908,15 +5908,20 @@ pub unsafe extern "C" fn prlimit(
     new_limit: *const libc::rlimit,
     old_limit: *mut libc::rlimit,
 ) -> c_int {
-    let rc =
-        unsafe { libc::syscall(libc::SYS_prlimit64, pid, resource, new_limit, old_limit) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match unsafe {
+        syscall::sys_prlimit64(
+            pid,
+            resource,
+            new_limit as *const u8,
+            old_limit as *mut u8,
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `prlimit64` alias — on LP64, identical to prlimit.
