@@ -10155,7 +10155,7 @@
     },
     {
       "symbol": "pthread_setcanceltype",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native thread-local cancel type (deferred/async); returns EINVAL for invalid type",
@@ -10263,7 +10263,7 @@
     },
     {
       "symbol": "pthread_testcancel",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native cancellation point; consumes pending cancel if enabled",
@@ -17528,19 +17528,19 @@
     },
     {
       "symbol": "__pthread_mutex_destroy",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
     {
       "symbol": "__pthread_mutex_init",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
     {
       "symbol": "__pthread_mutex_lock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
