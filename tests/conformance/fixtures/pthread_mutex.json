@@ -50,6 +50,24 @@
       "mode": "both"
     },
     {
+      "name": "alias_mutex_trylock_unlocked",
+      "function": "__pthread_mutex_trylock",
+      "spec_section": "POSIX.1-2017 pthread_mutex_trylock",
+      "inputs": { "mutex": "initialized_unlocked" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "alias_mutex_unlock",
+      "function": "__pthread_mutex_unlock",
+      "spec_section": "POSIX.1-2017 pthread_mutex_unlock",
+      "inputs": { "mutex": "initialized_locked_by_self" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
       "name": "mutex_destroy",
       "function": "pthread_mutex_destroy",
       "spec_section": "POSIX.1-2017 pthread_mutex_destroy",

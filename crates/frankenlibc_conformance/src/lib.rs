@@ -336,6 +336,17 @@ pub fn execute_fixture_case(
         // iconv lifecycle
         "iconv_open" => execute_iconv_open_case(inputs, mode),
         "iconv_close" => execute_iconv_close_case(inputs, mode),
+        // pthread mutexes
+        "pthread_mutex_init" => execute_pthread_mutex_init_case(inputs, mode),
+        "pthread_mutex_destroy" => execute_pthread_mutex_destroy_case(inputs, mode),
+        "pthread_mutex_lock" => execute_pthread_mutex_lock_case(inputs, mode),
+        "pthread_mutex_trylock" => execute_pthread_mutex_trylock_case(inputs, mode),
+        "pthread_mutex_unlock" => execute_pthread_mutex_unlock_case(inputs, mode),
+        "__pthread_mutex_init" => execute_pthread_mutex_init_case(inputs, mode),
+        "__pthread_mutex_destroy" => execute_pthread_mutex_destroy_case(inputs, mode),
+        "__pthread_mutex_lock" => execute_pthread_mutex_lock_case(inputs, mode),
+        "__pthread_mutex_trylock" => execute_pthread_mutex_trylock_case(inputs, mode),
+        "__pthread_mutex_unlock" => execute_pthread_mutex_unlock_case(inputs, mode),
         // pthread condvars
         "pthread_cond_init" => execute_pthread_cond_init_case(inputs, mode),
         "pthread_cond_destroy" => execute_pthread_cond_destroy_case(inputs, mode),
@@ -6050,6 +6061,252 @@ fn init_pthread_mutex_for_case(mutex: *mut libc::pthread_mutex_t) -> Result<(), 
     }
 }
 
+fn execute_pthread_mutex_init_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_cond_case_state();
+
+    if parse_optional_string(inputs, "mutex")?.as_deref() == Some("NULL") {
+        let rc = unsafe {
+            frankenlibc_abi::pthread_abi::pthread_mutex_init(std::ptr::null_mut(), std::ptr::null())
+        };
+        return Ok(non_host_execution(format_pthread_status(rc)));
+    }
+
+    let mutex = alloc_pthread_mutex_ptr();
+    let init_rc = unsafe {
+        frankenlibc_abi::pthread_abi::pthread_mutex_init(mutex, std::ptr::null())
+    };
+    let impl_output = format_pthread_status(init_rc);
+
+    unsafe {
+        if init_rc == 0 {
+            let _ = frankenlibc_abi::pthread_abi::pthread_mutex_destroy(mutex);
+        }
+        free_pthread_mutex_ptr(mutex);
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_pthread_mutex_destroy_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_cond_case_state();
+
+    if parse_optional_string(inputs, "mutex")?.as_deref() == Some("NULL") {
+        let rc =
+            unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_destroy(std::ptr::null_mut()) };
+        return Ok(non_host_execution(format_pthread_status(rc)));
+    }
+
+    let mutex = alloc_pthread_mutex_ptr();
+    init_pthread_mutex_for_case(mutex)?;
+    let destroy_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_destroy(mutex) };
+    let impl_output = format_pthread_status(destroy_rc);
+
+    unsafe { free_pthread_mutex_ptr(mutex) };
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_pthread_mutex_lock_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_cond_case_state();
+
+    if parse_optional_string(inputs, "mutex")?.as_deref() == Some("NULL") {
+        let rc = unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_lock(std::ptr::null_mut()) };
+        return Ok(non_host_execution(format_pthread_status(rc)));
+    }
+
+    let thread_count = inputs
+        .get("threads")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1);
+    let iterations = inputs
+        .get("iterations")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1);
+
+    let mutex = alloc_pthread_mutex_ptr();
+    init_pthread_mutex_for_case(mutex)?;
+
+    let impl_output = if thread_count > 1 {
+        let successes = std::sync::Arc::new(AtomicU32::new(0));
+        let mut workers = Vec::new();
+        for _ in 0..thread_count {
+            let mutex_addr = mutex as usize;
+            let successes = std::sync::Arc::clone(&successes);
+            workers.push(std::thread::spawn(move || -> Result<(), String> {
+                let mutex = mutex_addr as *mut libc::pthread_mutex_t;
+                for _ in 0..iterations {
+                    let lock_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex) };
+                    if lock_rc != 0 {
+                        return Err(format!("lock={}", format_pthread_status(lock_rc)));
+                    }
+                    let unlock_rc =
+                        unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex) };
+                    if unlock_rc != 0 {
+                        return Err(format!("unlock={}", format_pthread_status(unlock_rc)));
+                    }
+                    successes.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(())
+            }));
+        }
+
+        let mut errors = Vec::new();
+        for worker in workers {
+            match worker.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => errors.push(err),
+                Err(_) => errors.push(String::from("thread_panicked")),
+            }
+        }
+
+        if errors.is_empty() && u64::from(successes.load(Ordering::Relaxed)) == thread_count * iterations {
+            String::from("0")
+        } else {
+            format!(
+                "successes={};errors={}",
+                successes.load(Ordering::Relaxed),
+                errors.join("|")
+            )
+        }
+    } else {
+        let lock_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex) };
+        let unlock_rc = if lock_rc == 0 {
+            unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex) }
+        } else {
+            0
+        };
+        if lock_rc == 0 && unlock_rc == 0 {
+            String::from("0")
+        } else {
+            format!(
+                "lock={};unlock={}",
+                format_pthread_status(lock_rc),
+                format_pthread_status(unlock_rc)
+            )
+        }
+    };
+
+    unsafe {
+        let _ = frankenlibc_abi::pthread_abi::pthread_mutex_destroy(mutex);
+        free_pthread_mutex_ptr(mutex);
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_pthread_mutex_trylock_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_cond_case_state();
+
+    if parse_optional_string(inputs, "mutex")?.as_deref() == Some("NULL") {
+        let rc =
+            unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_trylock(std::ptr::null_mut()) };
+        return Ok(non_host_execution(format_pthread_status(rc)));
+    }
+
+    let mutex = alloc_pthread_mutex_ptr();
+    init_pthread_mutex_for_case(mutex)?;
+    let state =
+        parse_optional_string(inputs, "mutex")?.unwrap_or_else(|| String::from("initialized_unlocked"));
+
+    let impl_output = if state == "initialized_locked" {
+        let lock_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex) };
+        if lock_rc != 0 {
+            format!("lock={}", format_pthread_status(lock_rc))
+        } else {
+            let trylock_rc =
+                unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_trylock(mutex) };
+            let unlock_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex) };
+            if trylock_rc == libc::EBUSY && unlock_rc == 0 {
+                String::from("EBUSY")
+            } else {
+                format!(
+                    "trylock={};unlock={}",
+                    format_pthread_status(trylock_rc),
+                    format_pthread_status(unlock_rc)
+                )
+            }
+        }
+    } else {
+        let trylock_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_trylock(mutex) };
+        let unlock_rc = if trylock_rc == 0 {
+            unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex) }
+        } else {
+            0
+        };
+        if trylock_rc == 0 && unlock_rc == 0 {
+            String::from("0")
+        } else {
+            format!(
+                "trylock={};unlock={}",
+                format_pthread_status(trylock_rc),
+                format_pthread_status(unlock_rc)
+            )
+        }
+    };
+
+    unsafe {
+        let _ = frankenlibc_abi::pthread_abi::pthread_mutex_destroy(mutex);
+        free_pthread_mutex_ptr(mutex);
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_pthread_mutex_unlock_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    reset_pthread_cond_case_state();
+
+    if parse_optional_string(inputs, "mutex")?.as_deref() == Some("NULL") {
+        let rc =
+            unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_unlock(std::ptr::null_mut()) };
+        return Ok(non_host_execution(format_pthread_status(rc)));
+    }
+
+    let mutex = alloc_pthread_mutex_ptr();
+    init_pthread_mutex_for_case(mutex)?;
+    let lock_rc = unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_lock(mutex) };
+    let unlock_rc = if lock_rc == 0 {
+        unsafe { frankenlibc_abi::pthread_abi::pthread_mutex_unlock(mutex) }
+    } else {
+        0
+    };
+    let impl_output = if lock_rc == 0 && unlock_rc == 0 {
+        String::from("0")
+    } else {
+        format!(
+            "lock={};unlock={}",
+            format_pthread_status(lock_rc),
+            format_pthread_status(unlock_rc)
+        )
+    };
+
+    unsafe {
+        let _ = frankenlibc_abi::pthread_abi::pthread_mutex_destroy(mutex);
+        free_pthread_mutex_ptr(mutex);
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
 fn init_pthread_cond_for_case(
     cond: *mut libc::pthread_cond_t,
     attr_clock: Option<c_int>,
@@ -7996,6 +8253,57 @@ mod tests {
         let raw = include_str!("../../../tests/conformance/fixtures/pthread_cond.json");
         let fixture: FixtureSetLite =
             serde_json::from_str(raw).expect("pthread_cond fixture should parse");
+
+        for case in fixture.cases {
+            let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+                &["strict", "hardened"]
+            } else {
+                &[case.mode.as_str()]
+            };
+
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
+                    });
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "fixture expected_output mismatch for {} ({mode})",
+                    case.name
+                );
+                if *mode == "strict" {
+                    assert!(
+                        result.host_parity,
+                        "strict host parity mismatch for {}",
+                        case.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pthread_mutex_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/pthread_mutex.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("pthread_mutex fixture should parse");
 
         for case in fixture.cases {
             let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
