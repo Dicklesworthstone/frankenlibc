@@ -739,7 +739,7 @@ pub unsafe extern "C" fn setregid(rgid: libc::gid_t, egid: libc::gid_t) -> c_int
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getgroups(size: c_int, list: *mut libc::gid_t) -> c_int {
-    match unsafe { syscall::sys_getgroups(size, list as *mut u32) } {
+    match unsafe { syscall::sys_getgroups(size, list) } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -750,7 +750,7 @@ pub unsafe extern "C" fn getgroups(size: c_int, list: *mut libc::gid_t) -> c_int
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setgroups(size: usize, list: *const libc::gid_t) -> c_int {
-    match unsafe { syscall::sys_setgroups(size, list as *const u32) } {
+    match unsafe { syscall::sys_setgroups(size, list) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -6784,20 +6784,16 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
     // Receive all responses
     let mut result = Vec::with_capacity(8192);
     let mut recv_buf = vec![0u8; 16384];
-    loop {
-        let n = match unsafe {
-            syscall::sys_recvfrom(
-                fd,
-                recv_buf.as_mut_ptr(),
-                recv_buf.len(),
-                0,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        } {
-            Ok(n) => n,
-            Err(_) => break,
-        };
+    while let Ok(n) = unsafe {
+        syscall::sys_recvfrom(
+            fd,
+            recv_buf.as_mut_ptr(),
+            recv_buf.len(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    } {
         if n <= 0 {
             break;
         }
@@ -9201,7 +9197,7 @@ pub unsafe extern "C" fn getresuid(
     euid: *mut libc::uid_t,
     suid: *mut libc::uid_t,
 ) -> c_int {
-    match unsafe { syscall::sys_getresuid(ruid as *mut u32, euid as *mut u32, suid as *mut u32) } {
+    match unsafe { syscall::sys_getresuid(ruid, euid, suid) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -9216,7 +9212,7 @@ pub unsafe extern "C" fn getresgid(
     egid: *mut libc::gid_t,
     sgid: *mut libc::gid_t,
 ) -> c_int {
-    match unsafe { syscall::sys_getresgid(rgid as *mut u32, egid as *mut u32, sgid as *mut u32) } {
+    match unsafe { syscall::sys_getresgid(rgid, egid, sgid) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

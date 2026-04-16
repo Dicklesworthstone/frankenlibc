@@ -5131,7 +5131,7 @@ pub unsafe extern "C" fn group_member(gid: c_uint) -> c_int {
         return 0;
     }
     let mut groups = vec![0 as libc::gid_t; n as usize];
-    let actual = match unsafe { raw_syscall::sys_getgroups(n, groups.as_mut_ptr() as *mut u32) } {
+    let actual = match unsafe { raw_syscall::sys_getgroups(n, groups.as_mut_ptr()) } {
         Ok(n) => n,
         Err(_) => return 0,
     };
