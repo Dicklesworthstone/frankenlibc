@@ -1412,14 +1412,17 @@ pub unsafe extern "C" fn fstatat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_newfstatat, dirfd, path, buf, flags),
-            errno::ENOENT,
-        )
-    };
-    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, rc != 0);
-    rc
+    match unsafe { syscall::sys_newfstatat(dirfd, path as *const u8, buf as *mut u8, flags) } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
+            -1
+        }
+    }
 }
 
 /// POSIX `unlinkat` — remove a directory entry relative to a directory fd.
@@ -3310,9 +3313,10 @@ unsafe fn ftw_walk_dir(
     const FTW_NS: c_int = 3; // stat failed
 
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    let rc =
-        unsafe { libc::syscall(libc::SYS_newfstatat, libc::AT_FDCWD, path, &mut st, 0) as c_int };
-    if rc != 0 {
+    let stat_ok = unsafe {
+        syscall::sys_newfstatat(libc::AT_FDCWD, path as *const u8, &mut st as *mut _ as *mut u8, 0)
+    };
+    if stat_ok.is_err() {
         return unsafe { func(path, &st, FTW_NS) };
     }
 
