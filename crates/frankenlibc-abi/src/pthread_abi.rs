@@ -78,8 +78,6 @@ type ResolvedPthreadCondattrDestroyFn =
     unsafe extern "C" fn(*mut libc::pthread_condattr_t) -> c_int;
 type ResolvedPthreadCondattrSetclockFn =
     unsafe extern "C" fn(*mut libc::pthread_condattr_t, libc::clockid_t) -> c_int;
-type HostPthreadCondattrGetclockFn =
-    unsafe extern "C" fn(*const libc::pthread_condattr_t, *mut libc::clockid_t) -> c_int;
 type HostPthreadMutexattrInitFn = unsafe extern "C" fn(*mut libc::pthread_mutexattr_t) -> c_int;
 type HostPthreadMutexattrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_mutexattr_t) -> c_int;
 type HostPthreadMutexattrSettypeFn =
@@ -201,8 +199,6 @@ static HOST_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static [u8], usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static str, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static HOST_PTHREAD_CONDATTR_GETCLOCK_PTR: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
 static RESOLVED_PTHREAD_CONDATTR_INIT_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_CONDATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_CONDATTR_SETCLOCK_PTR: OnceLock<usize> = OnceLock::new();
@@ -416,35 +412,6 @@ unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_vo
         }
     }
     std::ptr::null_mut()
-}
-
-fn load_cached_host_ptr(cache: &std::sync::atomic::AtomicUsize) -> Option<usize> {
-    let ptr = cache.load(Ordering::Acquire);
-    (ptr != 0).then_some(ptr)
-}
-
-fn cache_host_ptr(cache: &std::sync::atomic::AtomicUsize, ptr: usize) -> Option<usize> {
-    if ptr == 0 {
-        return None;
-    }
-    let _ = cache.compare_exchange(0, ptr, Ordering::AcqRel, Ordering::Acquire);
-    Some(cache.load(Ordering::Acquire))
-}
-
-unsafe fn resolve_cached_host_thread_symbol(
-    cache: &std::sync::atomic::AtomicUsize,
-    public_name: &'static str,
-    public_symbol: &'static [u8],
-) -> Option<usize> {
-    if let Some(ptr) = load_cached_host_ptr(cache) {
-        return Some(ptr);
-    }
-    if let Some(ptr) = resolve_loaded_libc_symbol_direct(public_name) {
-        return cache_host_ptr(cache, ptr);
-    }
-    // SAFETY: symbol name is NUL-terminated and belongs to the host pthread surface.
-    let ptr = unsafe { resolve_host_symbol_nocache(public_symbol) } as usize;
-    cache_host_ptr(cache, ptr)
 }
 
 unsafe fn resolve_cached_pthread_attr_symbol(
@@ -875,18 +842,6 @@ unsafe fn resolved_pthread_condattr_setclock_fn() -> Option<ResolvedPthreadConda
         )
     }?;
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadCondattrSetclockFn>(ptr) })
-}
-
-unsafe fn resolved_pthread_condattr_getclock_fn() -> Option<HostPthreadCondattrGetclockFn> {
-    let ptr = unsafe {
-        resolve_cached_host_thread_symbol(
-            &HOST_PTHREAD_CONDATTR_GETCLOCK_PTR,
-            "pthread_condattr_getclock",
-            b"pthread_condattr_getclock\0",
-        )
-    }?;
-    // SAFETY: resolved symbol has pthread_condattr_getclock ABI.
-    Some(unsafe { std::mem::transmute::<usize, HostPthreadCondattrGetclockFn>(ptr) })
 }
 
 pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
@@ -4124,9 +4079,6 @@ pub unsafe extern "C" fn pthread_condattr_getclock(
     if condattr_word_valid(word) {
         unsafe { *clock_id = decode_condattr_clock(word) };
         return 0;
-    }
-    if let Some(host_getclock) = unsafe { resolved_pthread_condattr_getclock_fn() } {
-        return unsafe { host_getclock(attr, clock_id) };
     }
     libc::EINVAL
 }

@@ -9625,11 +9625,11 @@
     },
     {
       "symbol": "pthread_condattr_getclock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc.",
-      "hardened_semantics": "Same.",
+      "strict_semantics": "Reads managed condattr clock id and rejects unknown layouts with EINVAL.",
+      "hardened_semantics": "Same deterministic validation and errno contract.",
       "default_stub": "Returns EINVAL"
     },
     {

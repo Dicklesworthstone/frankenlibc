@@ -2462,6 +2462,20 @@ fn condattr_getclock_after_destroy_is_rejected() {
 }
 
 #[test]
+fn condattr_unknown_word_is_rejected() {
+    unsafe {
+        let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
+        *(std::ptr::addr_of_mut!(attr).cast::<c_int>()) = 0x1357_9bdf;
+
+        let mut clock_id: libc::clockid_t = 0;
+        assert_eq!(
+            pthread_condattr_getclock(&attr, &mut clock_id),
+            libc::EINVAL
+        );
+    }
+}
+
+#[test]
 fn cond_init_rejects_destroyed_attr() {
     unsafe {
         let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
