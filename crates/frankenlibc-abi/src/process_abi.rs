@@ -5,7 +5,6 @@
 //! under `ApiFamily::Process`.
 
 use std::ffi::{c_char, c_int, c_void};
-use std::os::raw::c_long;
 use std::os::unix::ffi::OsStrExt;
 
 use frankenlibc_core::process;
@@ -42,13 +41,6 @@ unsafe fn path_bytes_from_env_vector(mut envp: *const *mut c_char) -> Vec<u8> {
     }
 
     b"/bin:/usr/bin".to_vec()
-}
-
-#[inline]
-fn last_host_errno(default_errno: c_int) -> c_int {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(default_errno)
 }
 
 unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> c_int {
@@ -1078,19 +1070,13 @@ unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
     for action in &fa.actions {
         match action {
             SpawnFileAction::Close(fd) => {
-                let rc = unsafe { libc::syscall(libc::SYS_close, *fd) };
-                if rc < 0 {
-                    return std::io::Error::last_os_error()
-                        .raw_os_error()
-                        .unwrap_or(libc::EBADF);
+                if let Err(e) = raw_syscall::sys_close(*fd) {
+                    return e;
                 }
             }
             SpawnFileAction::Dup2 { oldfd, newfd } => {
-                let rc = unsafe { libc::syscall(libc::SYS_dup2, *oldfd, *newfd) };
-                if rc < 0 {
-                    return std::io::Error::last_os_error()
-                        .raw_os_error()
-                        .unwrap_or(libc::EBADF);
+                if let Err(e) = raw_syscall::sys_dup2(*oldfd, *newfd) {
+                    return e;
                 }
             }
             SpawnFileAction::Open {
@@ -1099,74 +1085,50 @@ unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
                 oflag,
                 mode,
             } => {
-                let rc = unsafe {
-                    libc::syscall(
-                        libc::SYS_openat,
-                        libc::AT_FDCWD,
-                        path.as_ptr(),
-                        *oflag,
-                        *mode,
-                    )
-                } as c_int;
-                if rc < 0 {
-                    return std::io::Error::last_os_error()
-                        .raw_os_error()
-                        .unwrap_or(libc::ENOENT);
-                }
-                if rc != *fd {
-                    let dup_rc = unsafe { libc::syscall(libc::SYS_dup2, rc, *fd) };
-                    unsafe { libc::syscall(libc::SYS_close, rc) };
-                    if dup_rc < 0 {
-                        return std::io::Error::last_os_error()
-                            .raw_os_error()
-                            .unwrap_or(libc::EBADF);
+                let opened_fd = match unsafe {
+                    raw_syscall::sys_openat(libc::AT_FDCWD, path.as_ptr(), *oflag, *mode)
+                } {
+                    Ok(f) => f,
+                    Err(e) => return e,
+                };
+                if opened_fd != *fd {
+                    if let Err(e) = raw_syscall::sys_dup2(opened_fd, *fd) {
+                        let _ = raw_syscall::sys_close(opened_fd);
+                        return e;
                     }
+                    let _ = raw_syscall::sys_close(opened_fd);
                 }
             }
             SpawnFileAction::CloseFrom(from) => {
-                let rc =
-                    unsafe { libc::syscall(libc::SYS_close_range, *from, u32::MAX, 0) } as c_int;
-                if rc < 0 {
-                    let err = std::io::Error::last_os_error()
-                        .raw_os_error()
-                        .unwrap_or(libc::EINVAL);
-                    if err != libc::ENOSYS {
-                        return err;
+                if let Err(e) = raw_syscall::sys_close_range(*from as u32, u32::MAX, 0) {
+                    if e != libc::ENOSYS {
+                        return e;
                     }
-
+                    // Fallback for older kernels without close_range
                     let max_fd = unsafe { crate::unistd_abi::sysconf(libc::_SC_OPEN_MAX) };
                     let end = if max_fd > 0 { max_fd as c_int } else { 1024 };
                     for fd in *from..end {
-                        let _ = unsafe { libc::syscall(libc::SYS_close, fd) };
+                        let _ = raw_syscall::sys_close(fd);
                     }
                 }
             }
             SpawnFileAction::Chdir { path } => {
-                let rc = unsafe { libc::syscall(libc::SYS_chdir, path.as_ptr()) };
-                if rc < 0 {
-                    return std::io::Error::last_os_error()
-                        .raw_os_error()
-                        .unwrap_or(libc::ENOENT);
+                if let Err(e) = unsafe { raw_syscall::sys_chdir(path.as_ptr()) } {
+                    return e;
                 }
             }
             SpawnFileAction::Fchdir(fd) => {
-                let rc = unsafe { libc::syscall(libc::SYS_fchdir, *fd) };
-                if rc < 0 {
-                    return std::io::Error::last_os_error()
-                        .raw_os_error()
-                        .unwrap_or(libc::EBADF);
+                if let Err(e) = raw_syscall::sys_fchdir(*fd) {
+                    return e;
                 }
             }
             SpawnFileAction::TcSetPgrp(fd) => {
-                const TIOCSPGRP: std::os::raw::c_ulong = 0x5410;
-                let pgrp = unsafe { libc::syscall(libc::SYS_getpgrp) as libc::pid_t };
-                let rc = unsafe {
-                    libc::syscall(libc::SYS_ioctl, *fd, TIOCSPGRP, &pgrp as *const libc::pid_t)
-                } as c_int;
-                if rc < 0 {
-                    return std::io::Error::last_os_error()
-                        .raw_os_error()
-                        .unwrap_or(libc::ENOTTY);
+                const TIOCSPGRP: usize = 0x5410;
+                let pgrp = raw_syscall::sys_getpgrp();
+                if let Err(e) = unsafe {
+                    raw_syscall::sys_ioctl(*fd, TIOCSPGRP, &pgrp as *const i32 as usize)
+                } {
+                    return e;
                 }
             }
         }
@@ -1181,23 +1143,14 @@ unsafe fn child_spawn_fail(err_fd: c_int, err: c_int) -> ! {
     while written < std::mem::size_of::<c_int>() {
         let ptr = (&mut to_write as *mut c_int as *mut u8).wrapping_add(written);
         let rc = unsafe {
-            libc::syscall(
-                libc::SYS_write as c_long,
-                err_fd,
-                ptr.cast::<c_void>(),
-                std::mem::size_of::<c_int>() - written,
-            )
+            raw_syscall::sys_write(err_fd, ptr, std::mem::size_of::<c_int>() - written)
         };
-        if rc <= 0 {
-            break;
+        match rc {
+            Ok(n) if n > 0 => written += n,
+            _ => break,
         }
-        written += rc as usize;
     }
-    unsafe { libc::syscall(libc::SYS_exit_group as c_long, 127) };
-    // If exit_group returns, keep attempting SYS_exit to avoid panicking in child context.
-    loop {
-        unsafe { libc::syscall(libc::SYS_exit as c_long, 127) };
-    }
+    raw_syscall::sys_exit_group(127)
 }
 
 /// Core posix_spawn implementation shared between posix_spawn and posix_spawnp.
@@ -1271,36 +1224,23 @@ unsafe fn posix_spawn_impl(
     // `O_CLOEXEC` ensures successful exec closes the write end and the parent
     // observes EOF as success.
     let mut err_pipe = [-1_i32; 2];
-    let pipe_rc = unsafe {
-        libc::syscall(
-            libc::SYS_pipe2 as c_long,
-            err_pipe.as_mut_ptr(),
-            libc::O_CLOEXEC,
-        )
-    } as c_int;
-    if pipe_rc < 0 {
-        return last_host_errno(libc::EAGAIN);
+    if let Err(e) = unsafe { raw_syscall::sys_pipe2(err_pipe.as_mut_ptr(), libc::O_CLOEXEC) } {
+        return e;
     }
 
     // Fork using clone syscall (minimal flags = just SIGCHLD for basic fork)
-    let child_pid =
-        unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) } as libc::pid_t;
-
-    if child_pid < 0 {
-        unsafe {
-            libc::syscall(libc::SYS_close as c_long, err_pipe[0]);
-            libc::syscall(libc::SYS_close as c_long, err_pipe[1]);
+    let child_pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
+        Ok(pid) => pid,
+        Err(e) => {
+            let _ = raw_syscall::sys_close(err_pipe[0]);
+            let _ = raw_syscall::sys_close(err_pipe[1]);
+            return e;
         }
-        return std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::EAGAIN);
-    }
+    };
 
     if child_pid == 0 {
         // --- Child process ---
-        unsafe {
-            libc::syscall(libc::SYS_close as c_long, err_pipe[0]);
-        }
+        let _ = raw_syscall::sys_close(err_pipe[0]);
 
         // Apply spawn attributes if provided
         if let Some(attr) = unsafe { read_spawn_attrs(attrp) } {
@@ -1330,8 +1270,16 @@ unsafe fn posix_spawn_impl(
         let mut saw_eacces = false;
         let mut final_err = libc::ENOENT;
         for &cand_path in candidate_ptrs.iter() {
-            unsafe { libc::syscall(libc::SYS_execve, cand_path, argv, env) };
-            let err = last_host_errno(libc::ENOENT);
+            // execve only returns on error
+            let err = unsafe {
+                raw_syscall::sys_execve(
+                    cand_path as *const u8,
+                    argv as *const *const u8,
+                    env as *const *const u8,
+                )
+            }
+            .err()
+            .unwrap_or(libc::ENOENT);
             match err {
                 libc::ENOENT | libc::ENOTDIR => {}
                 libc::EACCES => {
@@ -1351,49 +1299,30 @@ unsafe fn posix_spawn_impl(
     }
 
     // --- Parent process ---
-    unsafe {
-        libc::syscall(libc::SYS_close as c_long, err_pipe[1]);
-    }
+    let _ = raw_syscall::sys_close(err_pipe[1]);
     let mut child_err: c_int = 0;
     let mut bytes_read = 0usize;
     while bytes_read < std::mem::size_of::<c_int>() {
         let ptr = (&mut child_err as *mut c_int as *mut u8).wrapping_add(bytes_read);
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_read as c_long,
-                err_pipe[0],
-                ptr.cast::<c_void>(),
-                std::mem::size_of::<c_int>() - bytes_read,
-            )
-        } as isize;
-        if rc == 0 {
-            break; // EOF => exec succeeded.
-        }
-        if rc < 0 {
-            let err = last_host_errno(libc::EIO);
-            if err == libc::EINTR {
-                continue;
+        match unsafe {
+            raw_syscall::sys_read(err_pipe[0], ptr, std::mem::size_of::<c_int>() - bytes_read)
+        } {
+            Ok(0) => break, // EOF => exec succeeded.
+            Ok(n) => bytes_read += n,
+            Err(libc::EINTR) => continue,
+            Err(e) => {
+                child_err = e;
+                bytes_read = std::mem::size_of::<c_int>();
+                break;
             }
-            child_err = err;
-            bytes_read = std::mem::size_of::<c_int>();
-            break;
         }
-        bytes_read += rc as usize;
     }
-    unsafe {
-        libc::syscall(libc::SYS_close as c_long, err_pipe[0]);
-    }
+    let _ = raw_syscall::sys_close(err_pipe[0]);
 
     if bytes_read > 0 {
-        unsafe {
-            libc::syscall(
-                libc::SYS_wait4 as c_long,
-                child_pid,
-                std::ptr::null_mut::<c_int>(),
-                0,
-                std::ptr::null_mut::<c_void>(),
-            );
-        }
+        let _ = unsafe {
+            raw_syscall::sys_wait4(child_pid, std::ptr::null_mut(), 0, std::ptr::null_mut())
+        };
         if child_err == 0 { libc::EIO } else { child_err }
     } else {
         if !pid.is_null() {
