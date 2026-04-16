@@ -804,11 +804,9 @@ pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_unlinkat, libc::AT_FDCWD, path, 0),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path as *const u8, 0) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -827,11 +825,9 @@ pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_unlinkat, libc::AT_FDCWD, path, libc::AT_REMOVEDIR),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path as *const u8, libc::AT_REMOVEDIR) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -904,11 +900,9 @@ pub unsafe extern "C" fn readlink(path: *const c_char, buf: *mut c_char, bufsiz:
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_isize(
-            libc::syscall(libc::SYS_readlinkat, libc::AT_FDCWD, path, buf, bufsiz),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_readlinkat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, bufsiz) } {
+        Ok(n) => n as isize,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     let adverse = rc < 0;
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, adverse);
@@ -975,11 +969,9 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: libc::mod
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_openat, libc::AT_FDCWD, path, flags, mode),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_openat(libc::AT_FDCWD, path as *const u8, flags, mode) } {
+        Ok(fd) => fd,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
     rc
@@ -1273,11 +1265,9 @@ pub unsafe extern "C" fn openat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_openat, dirfd, path, flags, mode),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_openat(dirfd, path as *const u8, flags, mode) } {
+        Ok(fd) => fd,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
     rc
@@ -1393,11 +1383,9 @@ pub unsafe extern "C" fn unlinkat(dirfd: c_int, path: *const c_char, flags: c_in
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_unlinkat, dirfd, path, flags),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_unlinkat(dirfd, path as *const u8, flags) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1480,11 +1468,9 @@ pub unsafe extern "C" fn readlinkat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_isize(
-            libc::syscall(libc::SYS_readlinkat, dirfd, path, buf, bufsiz),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_readlinkat(dirfd, path as *const u8, buf as *mut u8, bufsiz) } {
+        Ok(n) => n as isize,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
     rc
