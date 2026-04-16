@@ -45,14 +45,6 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
-type HostPthreadCreateFn = unsafe extern "C" fn(
-    *mut libc::pthread_t,
-    *const libc::pthread_attr_t,
-    Option<StartRoutine>,
-    *mut c_void,
-) -> c_int;
-type HostPthreadJoinFn = unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> c_int;
-type HostPthreadDetachFn = unsafe extern "C" fn(libc::pthread_t) -> c_int;
 type HostPthreadSelfFn = unsafe extern "C" fn() -> libc::pthread_t;
 type HostPthreadGetattrFn =
     unsafe extern "C" fn(libc::pthread_t, *mut libc::pthread_attr_t) -> c_int;
@@ -215,12 +207,6 @@ static HOST_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static [u8], usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static str, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static HOST_PTHREAD_CREATE_PTR: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-static HOST_PTHREAD_JOIN_PTR: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-static HOST_PTHREAD_DETACH_PTR: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_SELF_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_CONDATTR_GETCLOCK_PTR: std::sync::atomic::AtomicUsize =
@@ -661,38 +647,6 @@ unsafe fn resolved_pthread_attr_setsigmask_np_fn() -> Option<ResolvedPthreadAttr
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetsigmaskNpFn>(ptr) })
 }
 
-unsafe fn host_pthread_create_fn() -> Option<HostPthreadCreateFn> {
-    let ptr = unsafe {
-        resolve_cached_host_thread_symbol(
-            &HOST_PTHREAD_CREATE_PTR,
-            "pthread_create",
-            b"pthread_create\0",
-        )
-    }?;
-    // SAFETY: resolved symbol has pthread_create ABI.
-    Some(unsafe { std::mem::transmute::<usize, HostPthreadCreateFn>(ptr) })
-}
-
-unsafe fn host_pthread_join_fn() -> Option<HostPthreadJoinFn> {
-    let ptr = unsafe {
-        resolve_cached_host_thread_symbol(&HOST_PTHREAD_JOIN_PTR, "pthread_join", b"pthread_join\0")
-    }?;
-    // SAFETY: resolved symbol has pthread_join ABI.
-    Some(unsafe { std::mem::transmute::<usize, HostPthreadJoinFn>(ptr) })
-}
-
-unsafe fn host_pthread_detach_fn() -> Option<HostPthreadDetachFn> {
-    let ptr = unsafe {
-        resolve_cached_host_thread_symbol(
-            &HOST_PTHREAD_DETACH_PTR,
-            "pthread_detach",
-            b"pthread_detach\0",
-        )
-    }?;
-    // SAFETY: resolved symbol has pthread_detach ABI.
-    Some(unsafe { std::mem::transmute::<usize, HostPthreadDetachFn>(ptr) })
-}
-
 unsafe fn host_pthread_self_fn() -> Option<HostPthreadSelfFn> {
     let ptr = unsafe {
         resolve_cached_host_thread_symbol(&HOST_PTHREAD_SELF_PTR, "pthread_self", b"pthread_self\0")
@@ -1014,46 +968,14 @@ unsafe fn resolved_pthread_condattr_getclock_fn() -> Option<HostPthreadCondattrG
 }
 
 pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
-    // Resolve the thread lifecycle surface while startup is still in bootstrap
-    // passthrough, before constructors or early runtime paths can create or
-    // detach threads.
+    // Keep startup on the raw bootstrap path, but leave individual pthread
+    // host-fallback symbols lazy so the live guard reflects only runtime
+    // fallback sites that are still needed.
     crate::host_resolve::bootstrap_host_symbols();
-    unsafe {
-        let _ = host_pthread_self_fn();
-        let _ = host_pthread_create_fn();
-        let _ = host_pthread_join_fn();
-        let _ = host_pthread_detach_fn();
-    }
 }
 
 pub(crate) fn prewarm_host_thread_symbols() {
     prewarm_host_thread_lifecycle_symbols();
-    // Resolve the rest of the host pthread surface while startup is still in
-    // bootstrap passthrough, so active-mode execution does not lazily enter
-    // dl* symbol resolution through validated string/memory paths.
-    unsafe {
-        let _ = host_pthread_mutex_init_fn();
-        let _ = host_pthread_mutex_destroy_fn();
-        let _ = host_pthread_mutex_lock_fn();
-        let _ = host_pthread_mutex_trylock_fn();
-        let _ = host_pthread_mutex_unlock_fn();
-        let _ = resolved_pthread_mutexattr_init_fn();
-        let _ = resolved_pthread_mutexattr_destroy_fn();
-        let _ = resolved_pthread_mutexattr_settype_fn();
-        let _ = resolved_pthread_mutexattr_gettype_fn();
-        let _ = resolved_pthread_mutexattr_setprotocol_fn();
-        let _ = resolved_pthread_mutexattr_getprotocol_fn();
-        let _ = resolved_pthread_mutexattr_setpshared_fn();
-        let _ = resolved_pthread_mutexattr_getpshared_fn();
-        let _ = resolved_pthread_mutexattr_setrobust_fn();
-        let _ = resolved_pthread_mutexattr_getrobust_fn();
-        let _ = host_pthread_cond_init_fn();
-        let _ = host_pthread_cond_destroy_fn();
-        let _ = host_pthread_cond_wait_fn();
-        let _ = host_pthread_cond_signal_fn();
-        let _ = host_pthread_cond_broadcast_fn();
-        let _ = host_pthread_cond_timedwait_fn();
-    }
 }
 
 // Host pthread mutexattr resolution is used in host mode to preserve
