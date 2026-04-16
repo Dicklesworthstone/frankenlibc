@@ -5095,29 +5095,27 @@ pub unsafe extern "C" fn login_tty(fd: c_int) -> c_int {
 
     // Set controlling terminal (TIOCSCTTY = 0x540E on Linux)
     const TIOCSCTTY: u64 = 0x540E;
-    if unsafe { libc::syscall(libc::SYS_ioctl, fd as i64, TIOCSCTTY as i64, 0i64) } < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::ENOTTY)) };
+    if unsafe { syscall::sys_ioctl(fd, TIOCSCTTY as usize, 0) }.is_err() {
+        unsafe { set_abi_errno(errno::ENOTTY) };
         return -1;
     }
 
     // Dup fd to stdin/stdout/stderr
-    unsafe {
-        if libc::syscall(libc::SYS_dup2, fd as i64, 0i64) < 0 {
-            set_abi_errno(last_host_errno(errno::EBADF));
-            return -1;
-        }
-        if libc::syscall(libc::SYS_dup2, fd as i64, 1i64) < 0 {
-            set_abi_errno(last_host_errno(errno::EBADF));
-            return -1;
-        }
-        if libc::syscall(libc::SYS_dup2, fd as i64, 2i64) < 0 {
-            set_abi_errno(last_host_errno(errno::EBADF));
-            return -1;
-        }
-    };
+    if syscall::sys_dup2(fd, 0).is_err() {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    if syscall::sys_dup2(fd, 1).is_err() {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
+    if syscall::sys_dup2(fd, 2).is_err() {
+        unsafe { set_abi_errno(errno::EBADF) };
+        return -1;
+    }
 
     if fd > 2 {
-        unsafe { libc::syscall(libc::SYS_close, fd as i64) };
+        let _ = syscall::sys_close(fd);
     }
     0
 }
