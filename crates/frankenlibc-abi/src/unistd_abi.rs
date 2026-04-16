@@ -10655,11 +10655,13 @@ pub unsafe extern "C" fn tgkill(tgid: c_int, tid: c_int, sig: c_int) -> c_int {
 /// Linux `tkill` — send signal to thread (deprecated, use tgkill).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tkill(tid: c_int, sig: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_tkill, tid, sig) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ESRCH)) };
+    match syscall::sys_tkill(tid, sig) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `sched_setattr` — extended scheduling attributes.

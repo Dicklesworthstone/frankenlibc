@@ -1006,6 +1006,11 @@ pub const SYS_EXECVEAT: usize = 281;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PIDFD_GETFD: usize = 438;
 
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TKILL: usize = 200;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TKILL: usize = 130;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -4201,6 +4206,14 @@ pub unsafe fn sys_getrlimit(resource: i32, rlim: *mut u8) -> Result<(), i32> {
 #[allow(unsafe_code)]
 pub fn sys_tgkill(tgid: i32, tid: i32, sig: i32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall3(SYS_TGKILL, tgid as usize, tid as usize, sig as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `tkill(tid, sig)` — send signal to thread (deprecated, use tgkill).
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_tkill(tid: i32, sig: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_TKILL, tid as usize, sig as usize) };
     syscall_result(ret).map(|_| ())
 }
 
