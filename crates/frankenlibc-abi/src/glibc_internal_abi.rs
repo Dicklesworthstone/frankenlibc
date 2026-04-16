@@ -270,17 +270,19 @@ pub unsafe extern "C" fn pthread_setschedprio(thread: c_ulong, prio: c_int) -> c
 // __sched_*: native syscalls
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_get_priority_max(policy: c_int) -> c_int {
-    let ret = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_SCHED_GET_PRIORITY_MAX, policy as usize)
-    };
-    raw_syscall::syscall_result(ret).map(|v| v as c_int).unwrap_or(-1)
+    let ret =
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_SCHED_GET_PRIORITY_MAX, policy as usize) };
+    raw_syscall::syscall_result(ret)
+        .map(|v| v as c_int)
+        .unwrap_or(-1)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_get_priority_min(policy: c_int) -> c_int {
-    let ret = unsafe {
-        raw_syscall::syscall1(raw_syscall::SYS_SCHED_GET_PRIORITY_MIN, policy as usize)
-    };
-    raw_syscall::syscall_result(ret).map(|v| v as c_int).unwrap_or(-1)
+    let ret =
+        unsafe { raw_syscall::syscall1(raw_syscall::SYS_SCHED_GET_PRIORITY_MIN, policy as usize) };
+    raw_syscall::syscall_result(ret)
+        .map(|v| v as c_int)
+        .unwrap_or(-1)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_getparam(pid: c_int, param: *mut c_void) -> c_int {
@@ -291,7 +293,7 @@ pub unsafe extern "C" fn __sched_getparam(pid: c_int, param: *mut c_void) -> c_i
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sched_getscheduler(pid: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_sched_getscheduler(pid) } {
+    match raw_syscall::sys_sched_getscheduler(pid) {
         Ok(policy) => policy,
         Err(_) => -1,
     }
@@ -984,7 +986,9 @@ fn res_randomid() -> c_int {
     let mut val = COUNTER.fetch_add(1, Ordering::Relaxed);
     // Mix with a time-based value for randomness
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-    let _ = unsafe { raw_syscall::sys_clock_gettime(libc::CLOCK_MONOTONIC, (&mut ts) as *mut _ as *mut u8) };
+    let _ = unsafe {
+        raw_syscall::sys_clock_gettime(libc::CLOCK_MONOTONIC, (&mut ts) as *mut _ as *mut u8)
+    };
     val = val.wrapping_add(ts.tv_nsec as u32);
     val = val.wrapping_mul(1103515245).wrapping_add(12345);
     ((val >> 16) & 0xFFFF) as c_int
@@ -3052,7 +3056,10 @@ pub unsafe extern "C" fn __clone(
 pub unsafe extern "C" fn __close(fd: c_int) -> c_int {
     match raw_syscall::sys_close(fd) {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __cmsg_nxthdr: native — navigate to next CMSG header
@@ -3071,7 +3078,10 @@ pub unsafe extern "C" fn __cmsg_nxthdr(mhdr: *mut c_void, cmsg: *mut c_void) -> 
 pub unsafe extern "C" fn __connect(sockfd: c_int, addr: *const c_void, addrlen: c_uint) -> c_int {
     match unsafe { raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __cyg_profile_func_enter/exit: GCC -finstrument-functions hooks — no-op
@@ -3088,7 +3098,10 @@ pub unsafe extern "C" fn __cyg_profile_func_exit(this_fn: *mut c_void, call_site
 pub unsafe extern "C" fn __dup2(oldfd: c_int, newfd: c_int) -> c_int {
     match raw_syscall::sys_dup2(oldfd, newfd) {
         Ok(fd) => fd,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __endmntent: native — close mount table (libc forwarding)
@@ -3109,7 +3122,10 @@ pub unsafe extern "C" fn __fbufsize(fp: *mut c_void) -> SizeT {
 pub unsafe extern "C" fn __fcntl(fd: c_int, cmd: c_int) -> c_int {
     match unsafe { raw_syscall::sys_fcntl(fd, cmd, 0) } {
         Ok(r) => r,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __fdelt_warn: FD_SET overflow check — return d if valid, abort otherwise
@@ -3131,9 +3147,12 @@ pub unsafe extern "C" fn __flbf(fp: *mut c_void) -> c_int {
 // __fork: native — forward to raw syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fork() -> c_int {
-    match unsafe { raw_syscall::sys_clone_fork() } {
+    match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
         Ok(pid) => pid,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3232,7 +3251,10 @@ pub unsafe extern "C" fn __ivaliduser(
 pub unsafe extern "C" fn __lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
     match raw_syscall::sys_lseek(fd, offset, whence) {
         Ok(pos) => pos,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __mbrlen: native — multibyte character length (UTF-8)
@@ -3297,7 +3319,10 @@ pub unsafe extern "C" fn __monstartup(lowpc: c_ulong, highpc: c_ulong) {
 pub unsafe extern "C" fn __nanosleep(rqtp: *const c_void, rmtp: *mut c_void) -> c_int {
     match unsafe { raw_syscall::sys_nanosleep(rqtp as *const u8, rmtp as *mut u8) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __open/__open64: native syscall
@@ -3305,14 +3330,20 @@ pub unsafe extern "C" fn __nanosleep(rqtp: *const c_void, rmtp: *mut c_void) -> 
 pub unsafe extern "C" fn __open(pathname: *const c_char, flags: c_int) -> c_int {
     match unsafe { raw_syscall::sys_open(pathname as *const u8, flags, 0) } {
         Ok(fd) => fd,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __open64(pathname: *const c_char, flags: c_int) -> c_int {
     match unsafe { raw_syscall::sys_open(pathname as *const u8, flags, 0) } {
         Ok(fd) => fd,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __overflow: glibc stdio vtable helper — deterministic fallback stub
@@ -3327,7 +3358,10 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
 pub unsafe extern "C" fn __pipe(pipefd: *mut c_int) -> c_int {
     match unsafe { raw_syscall::sys_pipe2(pipefd, 0) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __poll: native syscall
@@ -3335,7 +3369,10 @@ pub unsafe extern "C" fn __pipe(pipefd: *mut c_int) -> c_int {
 pub unsafe extern "C" fn __poll(fds: *mut c_void, nfds: c_ulong, timeout: c_int) -> c_int {
     match unsafe { raw_syscall::sys_poll(fds as *mut u8, nfds as usize, timeout) } {
         Ok(n) => n,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __posix_getopt → getopt (POSIX semantics — same as getopt)
@@ -3357,7 +3394,10 @@ pub unsafe extern "C" fn __pread64(
 ) -> SSizeT {
     match unsafe { raw_syscall::sys_pread64(fd, buf as *mut u8, count, offset) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __printf_fp: glibc-internal float printf helper — returns -1 (not exposed in public API)
@@ -3383,7 +3423,10 @@ pub unsafe extern "C" fn __pwrite64(
 ) -> SSizeT {
     match unsafe { raw_syscall::sys_pwrite64(fd, buf as *const u8, count, offset) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __rcmd_errstr: pointer to rcmd error string (thread-local for reentrancy)
@@ -3399,7 +3442,10 @@ pub unsafe extern "C" fn __rcmd_errstr() -> *mut *mut c_char {
 pub unsafe extern "C" fn __read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
     match unsafe { raw_syscall::sys_read(fd, buf as *mut u8, count) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __register_atfork: native — forward to our pthread_atfork (dso_handle ignored)
@@ -3431,7 +3477,7 @@ pub unsafe extern "C" fn __register_atfork(
 // __sbrk: forward to libc::sbrk
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sbrk(increment: isize) -> *mut c_void {
-    unsafe { libc::sbrk(increment) }
+    unsafe { crate::unistd_abi::sbrk(increment) }
 }
 // __secure_getenv: native — return null if AT_SECURE, else getenv
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -3451,9 +3497,20 @@ pub unsafe extern "C" fn __select(
     exceptfds: *mut c_void,
     timeout: *mut c_void,
 ) -> c_int {
-    match unsafe { raw_syscall::sys_select(nfds, readfds as *mut u8, writefds as *mut u8, exceptfds as *mut u8, timeout as *mut u8) } {
+    match unsafe {
+        raw_syscall::sys_select(
+            nfds,
+            readfds as *mut u8,
+            writefds as *mut u8,
+            exceptfds as *mut u8,
+            timeout as *mut u8,
+        )
+    } {
         Ok(n) => n,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __send: native syscall
@@ -3464,9 +3521,14 @@ pub unsafe extern "C" fn __send(
     len: SizeT,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe { raw_syscall::sys_sendto(sockfd, buf as *const u8, len, flags, std::ptr::null(), 0) } {
+    match unsafe {
+        raw_syscall::sys_sendto(sockfd, buf as *const u8, len, flags, std::ptr::null(), 0)
+    } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __setmntent: native — forward to our setmntent
@@ -3593,7 +3655,10 @@ pub unsafe extern "C" fn __vsscanf(s: *const c_char, fmt: *const c_char, ap: *mu
 pub unsafe extern "C" fn __wait(status: *mut c_int) -> c_int {
     match unsafe { raw_syscall::sys_wait4(-1, status, 0, std::ptr::null_mut()) } {
         Ok(pid) => pid,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __waitpid: native syscall
@@ -3601,7 +3666,10 @@ pub unsafe extern "C" fn __wait(status: *mut c_int) -> c_int {
 pub unsafe extern "C" fn __waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int {
     match unsafe { raw_syscall::sys_wait4(pid, status, options, std::ptr::null_mut()) } {
         Ok(ret_pid) => ret_pid,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __write: native syscall
@@ -3609,7 +3677,10 @@ pub unsafe extern "C" fn __waitpid(pid: c_int, status: *mut c_int, options: c_in
 pub unsafe extern "C" fn __write(fd: c_int, buf: *const c_void, count: SizeT) -> SSizeT {
     match unsafe { raw_syscall::sys_write(fd, buf as *const u8, count) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // __xmknod: native — forward to mknod syscall (ignoring ver)
@@ -4583,7 +4654,9 @@ pub unsafe extern "C" fn ftime(tp: *mut c_void) -> c_int {
         return -1;
     }
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-    if let Err(_) = unsafe { raw_syscall::sys_clock_gettime(libc::CLOCK_REALTIME, (&mut ts) as *mut _ as *mut u8) } {
+    if let Err(_) = unsafe {
+        raw_syscall::sys_clock_gettime(libc::CLOCK_REALTIME, (&mut ts) as *mut _ as *mut u8)
+    } {
         return -1;
     }
     // struct timeb layout: time_t(8), millitm(u16), timezone(i16), dstflag(i16)
@@ -4634,13 +4707,14 @@ pub unsafe extern "C" fn getdirentries(
     basep: *mut c_long,
 ) -> SSizeT {
     if !basep.is_null() {
-        unsafe {
-            *basep = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0) as c_long
-        };
+        unsafe { *basep = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0) as c_long };
     }
     match unsafe { raw_syscall::sys_getdents64(fd, buf as *mut u8, nbytes) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4651,13 +4725,14 @@ pub unsafe extern "C" fn getdirentries64(
     basep: *mut i64,
 ) -> SSizeT {
     if !basep.is_null() {
-        unsafe {
-            *basep = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0)
-        };
+        unsafe { *basep = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR).unwrap_or(0) };
     }
     match unsafe { raw_syscall::sys_getdents64(fd, buf as *mut u8, nbytes) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // getipv4sourcefilter: get multicast source filter via getsockopt(IP_MSFILTER)
@@ -4969,7 +5044,10 @@ pub unsafe extern "C" fn ldexpl(x: f64, exp: c_int) -> f64 {
 pub unsafe extern "C" fn llseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
     match raw_syscall::sys_lseek(fd, offset, whence) {
         Ok(pos) => pos,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // lutimes: native — forward to libc
@@ -5160,20 +5238,12 @@ pub unsafe extern "C" fn pidfd_spawn(
     }
     let mut child_pid: libc::pid_t = 0;
     let rc = unsafe {
-        libc::posix_spawn(
-            &mut child_pid,
-            path,
-            file_actions as *const libc::posix_spawn_file_actions_t,
-            attrp as *const libc::posix_spawnattr_t,
-            argv,
-            envp,
-        )
+        crate::process_abi::posix_spawn(&mut child_pid, path, file_actions, attrp, argv, envp)
     };
     if rc != 0 {
         return rc;
     }
-    // SYS_pidfd_open = 434 on x86_64
-    let fd = unsafe { libc::syscall(434, child_pid as c_long, 0 as c_long) as c_int };
+    let fd = unsafe { crate::unistd_abi::pidfd_open(child_pid, 0) };
     if fd < 0 {
         // pidfd_open failed, but child is spawned — still return the pidfd as -1
         unsafe { *pidfd = -1 };
@@ -5198,19 +5268,12 @@ pub unsafe extern "C" fn pidfd_spawnp(
     }
     let mut child_pid: libc::pid_t = 0;
     let rc = unsafe {
-        libc::posix_spawnp(
-            &mut child_pid,
-            file,
-            file_actions as *const libc::posix_spawn_file_actions_t,
-            attrp as *const libc::posix_spawnattr_t,
-            argv,
-            envp,
-        )
+        crate::process_abi::posix_spawnp(&mut child_pid, file, file_actions, attrp, argv, envp)
     };
     if rc != 0 {
         return rc;
     }
-    let fd = unsafe { libc::syscall(434, child_pid as c_long, 0 as c_long) as c_int };
+    let fd = unsafe { crate::unistd_abi::pidfd_open(child_pid, 0) };
     if fd < 0 {
         unsafe { *pidfd = -1 };
         return 0;
@@ -5229,7 +5292,10 @@ pub unsafe extern "C" fn preadv64v2(
 ) -> SSizeT {
     match unsafe { raw_syscall::sys_preadv2(fd, iov as *const u8, iovcnt, offset, flags) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // putgrent: native — write group entry to file
@@ -5351,7 +5417,10 @@ pub unsafe extern "C" fn pwritev64v2(
 ) -> SSizeT {
     match unsafe { raw_syscall::sys_pwritev2(fd, iov as *const u8, iovcnt, offset, flags) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // query_module: removed in Linux 2.6 — return ENOSYS
@@ -5487,7 +5556,10 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
     let sock_type = libc::SOCK_STREAM;
     let fd = match raw_syscall::sys_socket(af, sock_type, 0) {
         Ok(fd) => fd,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; return -1; }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            return -1;
+        }
     };
     // Start from the provided port, or 1023 if null/0
     let start_port = if port.is_null() {
@@ -6035,9 +6107,14 @@ pub unsafe extern "C" fn stime(t: *const c_long) -> c_int {
         tv_sec: unsafe { *t },
         tv_nsec: 0,
     };
-    match unsafe { raw_syscall::sys_clock_settime(libc::CLOCK_REALTIME, (&ts) as *const _ as *const u8) } {
+    match unsafe {
+        raw_syscall::sys_clock_settime(libc::CLOCK_REALTIME, (&ts) as *const _ as *const u8)
+    } {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 // stty: legacy V7 — return ENOSYS
@@ -6391,7 +6468,10 @@ pub unsafe extern "C" fn nfsservctl(cmd: c_int, argp: *mut c_void, resp: *mut c_
 pub unsafe extern "C" fn __close_nocancel(fd: c_int) -> c_int {
     match raw_syscall::sys_close(fd) {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6410,7 +6490,10 @@ pub unsafe extern "C" fn __open_nocancel(
 ) -> c_int {
     match unsafe { raw_syscall::sys_openat(libc::AT_FDCWD, pathname as *const u8, flags, mode) } {
         Ok(fd) => fd,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6423,7 +6506,10 @@ pub unsafe extern "C" fn __open64_nocancel(
 ) -> c_int {
     match unsafe { raw_syscall::sys_openat(libc::AT_FDCWD, pathname as *const u8, flags, mode) } {
         Ok(fd) => fd,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6432,7 +6518,10 @@ pub unsafe extern "C" fn __open64_nocancel(
 pub unsafe extern "C" fn __read_nocancel(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
     match unsafe { raw_syscall::sys_read(fd, buf as *mut u8, count) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6441,7 +6530,10 @@ pub unsafe extern "C" fn __read_nocancel(fd: c_int, buf: *mut c_void, count: Siz
 pub unsafe extern "C" fn __write_nocancel(fd: c_int, buf: *const c_void, count: SizeT) -> SSizeT {
     match unsafe { raw_syscall::sys_write(fd, buf as *const u8, count) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6455,7 +6547,10 @@ pub unsafe extern "C" fn __pread64_nocancel(
 ) -> SSizeT {
     match unsafe { raw_syscall::sys_pread64(fd, buf as *mut u8, count, offset) } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6475,7 +6570,10 @@ pub unsafe extern "C" fn __mmap(
 ) -> *mut c_void {
     match unsafe { raw_syscall::sys_mmap(addr as *mut u8, length, prot, flags, fd, offset) } {
         Ok(ptr) => ptr as *mut c_void,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; usize::MAX as *mut c_void }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            usize::MAX as *mut c_void
+        }
     }
 }
 
@@ -6484,7 +6582,10 @@ pub unsafe extern "C" fn __mmap(
 pub unsafe extern "C" fn __mprotect(addr: *mut c_void, length: SizeT, prot: c_int) -> c_int {
     match unsafe { raw_syscall::sys_mprotect(addr as *mut u8, length, prot) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6493,7 +6594,10 @@ pub unsafe extern "C" fn __mprotect(addr: *mut c_void, length: SizeT, prot: c_in
 pub unsafe extern "C" fn __munmap(addr: *mut c_void, length: SizeT) -> c_int {
     match unsafe { raw_syscall::sys_munmap(addr as *mut u8, length) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6502,7 +6606,10 @@ pub unsafe extern "C" fn __munmap(addr: *mut c_void, length: SizeT) -> c_int {
 pub unsafe extern "C" fn __madvise(addr: *mut c_void, length: SizeT, advice: c_int) -> c_int {
     match unsafe { raw_syscall::sys_madvise(addr as *mut u8, length, advice) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6515,7 +6622,10 @@ pub unsafe extern "C" fn __madvise(addr: *mut c_void, length: SizeT, advice: c_i
 pub unsafe extern "C" fn __socket(domain: c_int, sock_type: c_int, protocol: c_int) -> c_int {
     match raw_syscall::sys_socket(domain, sock_type, protocol) {
         Ok(fd) => fd,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6527,9 +6637,21 @@ pub unsafe extern "C" fn __recv(
     len: SizeT,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe { raw_syscall::sys_recvfrom(sockfd, buf as *mut u8, len, flags, std::ptr::null_mut(), std::ptr::null_mut()) } {
+    match unsafe {
+        raw_syscall::sys_recvfrom(
+            sockfd,
+            buf as *mut u8,
+            len,
+            flags,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    } {
         Ok(n) => n as SSizeT,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6553,7 +6675,10 @@ pub unsafe extern "C" fn __sendmmsg(
 pub unsafe extern "C" fn __fstat64(fd: c_int, buf: *mut c_void) -> c_int {
     match unsafe { raw_syscall::sys_fstat(fd, buf as *mut u8) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6588,7 +6713,10 @@ pub unsafe extern "C" fn __getrlimit(resource: c_int, rlim: *mut c_void) -> c_in
 pub unsafe extern "C" fn __clock_gettime(clock_id: c_int, tp: *mut c_void) -> c_int {
     match unsafe { raw_syscall::sys_clock_gettime(clock_id, tp as *mut u8) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -6677,9 +6805,14 @@ pub unsafe extern "C" fn __sigtimedwait(
     timeout: *const c_void,
 ) -> c_int {
     // Kernel expects _NSIG/8 = 8 (NOT sizeof(sigset_t) which is 128 in glibc).
-    match unsafe { raw_syscall::sys_rt_sigtimedwait(set as *const u8, info as *mut u8, timeout as *const u8, 8) } {
+    match unsafe {
+        raw_syscall::sys_rt_sigtimedwait(set as *const u8, info as *mut u8, timeout as *const u8, 8)
+    } {
         Ok(sig) => sig,
-        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { crate::errno_abi::set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -7492,8 +7625,8 @@ pub unsafe extern "C" fn __idna_to_dns_encoding(
     }
     output.push(0); // NUL terminator.
 
-    // Allocate with malloc for caller ownership.
-    let buf = unsafe { libc::malloc(output.len()) } as *mut u8;
+    // Allocate with the ABI allocator so the returned buffer matches free().
+    let buf = unsafe { crate::malloc_abi::raw_alloc(output.len()) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }
@@ -7560,7 +7693,7 @@ pub unsafe extern "C" fn __idna_from_dns_encoding(
     let output_bytes = output.as_bytes();
     let alloc_len = output_bytes.len() + 1; // +1 for NUL.
 
-    let buf = unsafe { libc::malloc(alloc_len) } as *mut u8;
+    let buf = unsafe { crate::malloc_abi::raw_alloc(alloc_len) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }

@@ -17,10 +17,10 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_glibc_internal_abi_malloc",
+      "id": "replacement_forbid_glibc_internal_abi_adjtime",
       "mode": "replacement",
       "module": "glibc_internal_abi",
-      "symbol": "malloc",
+      "symbol": "adjtime",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     },
