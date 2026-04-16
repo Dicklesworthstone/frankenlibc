@@ -188,7 +188,7 @@
         "note": "Spawn-attribute signal-set roundtrips now use signal_abi helpers, and the closefrom fallback uses unistd_abi::sysconf."
       },
       "pthread_abi": {
-        "count": 40,
+        "count": 35,
         "functions": [
           "pthread_cond_broadcast_fn",
           "pthread_cond_destroy_fn",
@@ -211,9 +211,7 @@
           "pthread_exit_raw",
           "pthread_join_raw",
           "pthread_mutex_timedlock_fn",
-          "pthread_probe",
-          "pthread_self_fn",
-          "pthread_symbols"
+          "pthread_self_fn"
         ]
       },
       "rpc_abi": {
@@ -254,7 +252,7 @@
         "note": "Legacy regex register allocation now uses the ABI allocator path instead of direct libc calloc/free."
       }
     },
-    "total_call_throughs": 40,
+    "total_call_throughs": 35,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }

@@ -6881,67 +6881,11 @@ pub unsafe extern "C" fn __pthread_unwind_next(_buf: *mut c_void) {
     std::process::abort();
 }
 
-/// Probe helper for in-process host pthread resolution debugging.
-///
-/// Kind:
-/// 1 = RTLD_NEXT/host nocache pthread_create
-/// 2 = libc-handle pthread_create
-/// 3 = direct loaded-libc ELF pthread_create
-/// 4 = RTLD_NEXT/host nocache pthread_self
-/// 5 = libc-handle pthread_self
-/// 6 = direct loaded-libc ELF pthread_self
-/// 7 = cached host pthread_create fn
-/// 8 = direct loaded-libc ELF pthread_detach
-/// 9 = cached host pthread_detach fn
-/// 10 = direct loaded-libc ELF pthread_join
-/// 11 = cached host pthread_join fn
-/// 12 = direct loaded-libc ELF pthread_equal
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __frankenlibc_host_pthread_probe(kind: c_int) -> usize {
-    match kind {
-        1 => unsafe { resolve_host_symbol_nocache(b"pthread_create\0") as usize },
-        2 => unsafe { resolve_host_symbol_via_libc_handle(b"pthread_create\0") as usize },
-        3 => resolve_loaded_libc_symbol_direct("pthread_create").unwrap_or(0),
-        4 => unsafe { resolve_host_symbol_nocache(b"pthread_self\0") as usize },
-        5 => unsafe { resolve_host_symbol_via_libc_handle(b"pthread_self\0") as usize },
-        6 => resolve_loaded_libc_symbol_direct("pthread_self").unwrap_or(0),
-        7 => unsafe {
-            host_pthread_create_fn()
-                .map(|func| func as usize)
-                .unwrap_or(0)
-        },
-        8 => resolve_loaded_libc_symbol_direct("pthread_detach").unwrap_or(0),
-        9 => unsafe {
-            host_pthread_detach_fn()
-                .map(|func| func as usize)
-                .unwrap_or(0)
-        },
-        10 => resolve_loaded_libc_symbol_direct("pthread_join").unwrap_or(0),
-        11 => unsafe {
-            host_pthread_join_fn()
-                .map(|func| func as usize)
-                .unwrap_or(0)
-        },
-        12 => resolve_loaded_libc_symbol_direct("pthread_equal").unwrap_or(0),
-        _ => 0,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};
     use std::time::Duration;
-
-    #[test]
-    fn direct_libc_resolution_finds_host_pthread_symbols() {
-        let create = resolve_loaded_libc_symbol_direct("pthread_create");
-        let join = resolve_loaded_libc_symbol_direct("pthread_join");
-        let self_fn = resolve_loaded_libc_symbol_direct("pthread_self");
-        assert!(create.is_some(), "pthread_create not found in loaded libc");
-        assert!(join.is_some(), "pthread_join not found in loaded libc");
-        assert!(self_fn.is_some(), "pthread_self not found in loaded libc");
-    }
 
     fn alloc_mutex_ptr() -> *mut libc::pthread_mutex_t {
         let boxed: Box<libc::pthread_mutex_t> = Box::new(unsafe { std::mem::zeroed() });
