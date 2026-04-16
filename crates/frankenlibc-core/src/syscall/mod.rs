@@ -1223,6 +1223,18 @@ pub const SYS_MOUNT: usize = 40;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_CLONE3: usize = 435;
 
+// Process VM syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PROCESS_VM_READV: usize = 310;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PROCESS_VM_WRITEV: usize = 311;
+
+// Process VM syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PROCESS_VM_READV: usize = 270;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PROCESS_VM_WRITEV: usize = 271;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -5095,6 +5107,56 @@ pub unsafe fn sys_mount(
         )
     };
     syscall_result(ret).map(|_| ())
+}
+
+/// `process_vm_readv(pid, local_iov, liovcnt, remote_iov, riovcnt, flags)` — read data from another process.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_process_vm_readv(
+    pid: i32,
+    local_iov: *const u8,
+    liovcnt: usize,
+    remote_iov: *const u8,
+    riovcnt: usize,
+    flags: usize,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_PROCESS_VM_READV,
+            pid as usize,
+            local_iov as usize,
+            liovcnt,
+            remote_iov as usize,
+            riovcnt,
+            flags,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `process_vm_writev(pid, local_iov, liovcnt, remote_iov, riovcnt, flags)` — write data to another process.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_process_vm_writev(
+    pid: i32,
+    local_iov: *const u8,
+    liovcnt: usize,
+    remote_iov: *const u8,
+    riovcnt: usize,
+    flags: usize,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_PROCESS_VM_WRITEV,
+            pid as usize,
+            local_iov as usize,
+            liovcnt,
+            remote_iov as usize,
+            riovcnt,
+            flags,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
 }
 
 // -------------------------------------------------------------------------
