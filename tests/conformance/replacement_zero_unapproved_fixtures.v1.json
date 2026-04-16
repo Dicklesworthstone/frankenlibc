@@ -9,18 +9,18 @@
   },
   "fixtures": [
     {
-      "id": "interpose_allow_pthread_abi_dlsym",
+      "id": "interpose_allow_pthread_abi_pthread_mutex_lock_fn",
       "mode": "interpose",
       "module": "pthread_abi",
-      "symbol": "dlsym",
+      "symbol": "pthread_mutex_lock_fn",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_pthread_abi_dlopen",
+      "id": "replacement_forbid_pthread_abi_pthread_mutex_unlock_fn",
       "mode": "replacement",
       "module": "pthread_abi",
-      "symbol": "dlopen",
+      "symbol": "pthread_mutex_unlock_fn",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     }
