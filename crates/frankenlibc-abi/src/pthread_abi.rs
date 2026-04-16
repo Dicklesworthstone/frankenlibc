@@ -35,9 +35,7 @@ use frankenlibc_core::pthread::{
     exit_current_thread as core_exit_current_thread, handle_for_tid as core_handle_for_tid,
     join_thread as core_join_thread, self_tid as core_self_tid,
 };
-use frankenlibc_core::syscall::{
-    self as raw_syscall, syscall_result, syscall0, syscall2, syscall3, syscall4,
-};
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::runtime_math::ApiFamily;
 
