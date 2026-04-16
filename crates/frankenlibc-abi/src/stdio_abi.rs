@@ -18,6 +18,7 @@ use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::stdio::{BufMode, OpenFlags, StdioStream, flags_to_oflags, parse_mode};
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -857,29 +858,22 @@ pub unsafe extern "C" fn fopen(pathname: *const c_char, mode: *const c_char) -> 
     // Convert to libc open flags and open the file.
     let oflags = flags_to_oflags(&open_flags);
     let create_mode: libc::mode_t = 0o666;
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat,
-            libc::AT_FDCWD,
-            pathname,
-            oflags,
-            create_mode,
-        ) as c_int
+    let fd = match unsafe {
+        raw_syscall::sys_openat(libc::AT_FDCWD, pathname as *const u8, oflags, create_mode)
+    } {
+        Ok(f) => f,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return std::ptr::null_mut();
+        }
     };
-    if fd < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOENT);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return std::ptr::null_mut();
-    }
 
     // Create stream via fdopen_native_impl.
     let fp = fdopen_native_impl(fd, &open_flags);
     if fp.is_null() {
         // fdopen_native_impl failed (registry full) - close the fd we opened.
-        unsafe { libc::syscall(libc::SYS_close, fd) };
+        let _ = raw_syscall::sys_close(fd);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
     } else {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
@@ -904,9 +898,8 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
     // Create StdioStream and set initial offset for append mode.
     let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
     if open_flags.append {
-        let end_off = unsafe { libc::syscall(libc::SYS_lseek, fd, 0i64, libc::SEEK_END) };
-        if end_off >= 0 {
-            stream.set_offset(end_off as i64);
+        if let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END) {
+            stream.set_offset(end_off);
         }
     }
 
@@ -1028,8 +1021,7 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
 
     // Close the fd (don't close stdin/stdout/stderr sentinel fds).
     if fd >= 0 && id != STDIN_SENTINEL && id != STDOUT_SENTINEL && id != STDERR_SENTINEL {
-        let rc = unsafe { libc::syscall(libc::SYS_close as c_long, fd) };
-        if rc < 0 {
+        if raw_syscall::sys_close(fd).is_err() {
             adverse = true;
         }
     }
@@ -2234,15 +2226,14 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
         (offset, whence)
     };
 
-    let new_off = unsafe { libc::syscall(libc::SYS_lseek, fd, target_off, target_whence) as i64 };
-    if new_off < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return -1;
-    }
+    let new_off = match raw_syscall::sys_lseek(fd, target_off, target_whence) {
+        Ok(off) => off,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return -1;
+        }
+    };
 
     s.set_offset(new_off);
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
@@ -4753,19 +4744,16 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void {
     };
 
     if open_flags.cloexec {
-        let existing = unsafe { libc::syscall(libc::SYS_fcntl, fd, libc::F_GETFD) as c_int };
-        if existing < 0 {
-            unsafe { set_abi_errno(errno::EBADF) };
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
-            return std::ptr::null_mut();
-        }
-        unsafe {
-            libc::syscall(
-                libc::SYS_fcntl,
-                fd,
-                libc::F_SETFD,
-                existing | libc::FD_CLOEXEC,
-            )
+        let existing = match unsafe { raw_syscall::sys_fcntl(fd, libc::F_GETFD, 0) } {
+            Ok(flags) => flags,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+                return std::ptr::null_mut();
+            }
+        };
+        let _ = unsafe {
+            raw_syscall::sys_fcntl(fd, libc::F_SETFD, (existing | libc::FD_CLOEXEC) as usize)
         };
     }
 
@@ -4921,31 +4909,21 @@ pub unsafe extern "C" fn freopen(
     // Open the new file.
     let oflags = flags_to_oflags(&open_flags);
     let create_mode: libc::mode_t = 0o666;
-    let mut fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat,
-            libc::AT_FDCWD,
-            pathname,
-            oflags,
-            create_mode,
-        ) as c_int
+    let mut fd = match unsafe {
+        raw_syscall::sys_openat(libc::AT_FDCWD, pathname as *const u8, oflags, create_mode)
+    } {
+        Ok(f) => f,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, true);
+            return std::ptr::null_mut();
+        }
     };
-
-    if fd < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOENT);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, true);
-        return std::ptr::null_mut();
-    }
 
     // If reopening a standard stream, dup2 the new fd onto the standard fd.
     if target_fd >= 0 && fd != target_fd {
-        unsafe {
-            libc::syscall(libc::SYS_dup2 as c_long, fd, target_fd);
-            libc::syscall(libc::SYS_close as c_long, fd);
-        }
+        let _ = raw_syscall::sys_dup2(fd, target_fd);
+        let _ = raw_syscall::sys_close(fd);
         fd = target_fd;
     }
 
@@ -4977,8 +4955,7 @@ pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
     }
 
     // Try unlink first; if EISDIR, try rmdir.
-    let ret = unsafe { libc::syscall(libc::SYS_unlinkat as c_long, libc::AT_FDCWD, pathname, 0) };
-    if ret == 0 {
+    if let Ok(()) = unsafe { raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, 0) } {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
         return 0;
     }
@@ -4988,15 +4965,9 @@ pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
         .raw_os_error()
         .unwrap_or(errno::EIO);
     if errno_val == errno::EISDIR {
-        let ret = unsafe {
-            libc::syscall(
-                libc::SYS_unlinkat as c_long,
-                libc::AT_FDCWD,
-                pathname,
-                libc::AT_REMOVEDIR,
-            )
-        };
-        if ret == 0 {
+        if let Ok(()) = unsafe {
+            raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, libc::AT_REMOVEDIR)
+        } {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
             return 0;
         }
@@ -5180,14 +5151,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
             return std::ptr::null_mut();
         }
         // Unlink immediately so it's deleted on close.
-        unsafe {
-            libc::syscall(
-                libc::SYS_unlinkat as c_long,
-                libc::AT_FDCWD,
-                path.as_ptr(),
-                0,
-            )
-        };
+        let _ = unsafe { raw_syscall::sys_unlinkat(libc::AT_FDCWD, path.as_ptr(), 0) };
 
         let open_flags = OpenFlags {
             readable: true,
@@ -5196,7 +5160,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
         };
         let fp = fdopen_native_impl(fd2, &open_flags);
         if fp.is_null() {
-            unsafe { libc::syscall(libc::SYS_close as c_long, fd2) };
+            let _ = raw_syscall::sys_close(fd2);
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
             return std::ptr::null_mut();
         }
@@ -5211,7 +5175,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
     };
     let fp = fdopen_native_impl(fd, &open_flags);
     if fp.is_null() {
-        unsafe { libc::syscall(libc::SYS_close as c_long, fd) };
+        let _ = raw_syscall::sys_close(fd);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 20, true);
         return std::ptr::null_mut();
     }
@@ -5235,7 +5199,7 @@ pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
     }
 
     let counter = TMPNAM_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let pid = unsafe { libc::syscall(libc::SYS_getpid as c_long) } as u32;
+    let pid = raw_syscall::sys_getpid() as u32;
 
     // Format: /tmp/flc_<pid>_<counter>
     let mut name = [0u8; 48];
