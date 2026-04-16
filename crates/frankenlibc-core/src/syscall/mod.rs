@@ -974,6 +974,8 @@ pub const SYS_TGKILL: usize = 234;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_RT_SIGQUEUEINFO: usize = 129;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_RT_TGSIGQUEUEINFO: usize = 297;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_NEWFSTATAT: usize = 262;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_STATX: usize = 332;
@@ -995,6 +997,8 @@ pub const SYS_GETRLIMIT: usize = 163; // prlimit64 preferred on aarch64
 pub const SYS_TGKILL: usize = 131;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_RT_SIGQUEUEINFO: usize = 138;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RT_TGSIGQUEUEINFO: usize = 240;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_NEWFSTATAT: usize = 79;
 #[cfg(target_arch = "aarch64")]
@@ -4565,6 +4569,18 @@ pub fn sys_tkill(tid: i32, sig: i32) -> Result<(), i32> {
 #[allow(unsafe_code)]
 pub unsafe fn sys_rt_sigqueueinfo(tgid: i32, sig: i32, uinfo: *const u8) -> Result<(), i32> {
     let ret = unsafe { raw::syscall3(SYS_RT_SIGQUEUEINFO, tgid as usize, sig as usize, uinfo as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `rt_tgsigqueueinfo(tgid, tid, sig, uinfo)` — queue a signal to a specific thread.
+///
+/// # Safety
+///
+/// `uinfo` must point to a valid siginfo_t structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_rt_tgsigqueueinfo(tgid: i32, tid: i32, sig: i32, uinfo: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall4(SYS_RT_TGSIGQUEUEINFO, tgid as usize, tid as usize, sig as usize, uinfo as usize) };
     syscall_result(ret).map(|_| ())
 }
 
