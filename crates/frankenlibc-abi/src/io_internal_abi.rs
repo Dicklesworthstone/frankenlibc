@@ -974,7 +974,6 @@ unsafe fn vtable_fd_read(file: *mut NativeFile, buf: *mut u8, count: usize) -> i
     if fd < 0 {
         return -1;
     }
-    // Use native syscall instead of libc::syscall (bd-h5x)
     let ret = unsafe { raw_syscall::sys_read(fd, buf, count) };
     match ret {
         Ok(n) => {
@@ -1005,7 +1004,6 @@ unsafe fn vtable_fd_write(file: *mut NativeFile, buf: *const u8, count: usize) -
     if fd < 0 {
         return -1;
     }
-    // Use native syscall instead of libc::syscall (bd-h5x)
     let ret = unsafe { raw_syscall::sys_write(fd, buf, count) };
     match ret {
         Ok(n) => {
@@ -1031,7 +1029,6 @@ unsafe fn vtable_fd_seek(file: *mut NativeFile, offset: i64, whence: c_int) -> i
     if fd < 0 {
         return -1;
     }
-    // Use native syscall instead of libc::syscall (bd-h5x)
     let ret = raw_syscall::sys_lseek(fd, offset, whence);
     match ret {
         Ok(new_offset) => {
@@ -1062,7 +1059,6 @@ unsafe fn vtable_fd_close(file: *mut NativeFile) -> c_int {
     if fd < 0 {
         return if flush_rc != 0 { -1 } else { 0 };
     }
-    // Use native syscall instead of libc::syscall (bd-h5x)
     let ret = raw_syscall::sys_close(fd);
     unsafe { (*file).set_fd(-1) };
     if ret.is_err() || flush_rc != 0 { -1 } else { 0 }
@@ -1092,8 +1088,7 @@ unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
     let pending = unsafe { pos.offset_from(base) } as usize;
     let mut written = 0usize;
     while written < pending {
-        // Use native syscall instead of libc::syscall (bd-h5x)
-        let ret = unsafe {
+            let ret = unsafe {
             raw_syscall::sys_write(fd, base.add(written) as *const u8, pending - written)
         };
         match ret {
@@ -1507,7 +1502,6 @@ pub unsafe fn adopt_foreign_file(foreign_fp: *mut c_void) -> *mut NativeFile {
     }
 
     // Determine buffering mode based on whether fd is a tty
-    // Use native syscall instead of libc::syscall (bd-h5x)
     let buf_mode = {
         let ret = unsafe { raw_syscall::sys_ioctl(fd, libc::TCGETS as usize, 0) };
         if ret.is_ok() {
@@ -2312,7 +2306,6 @@ pub unsafe extern "C" fn _IO_file_open(
         return std::ptr::null_mut();
     }
 
-    // Use native syscall instead of libc::syscall (bd-h5x)
     let fd = unsafe {
         raw_syscall::sys_openat(
             libc::AT_FDCWD,
@@ -2338,8 +2331,7 @@ pub unsafe extern "C" fn _IO_file_open(
     };
     let fp = unsafe { stdio_abi::fdopen(fd, mode.as_ptr()) };
     if fp.is_null() {
-        // Use native syscall instead of libc::syscall (bd-h5x)
-        let _ = raw_syscall::sys_close(fd);
+            let _ = raw_syscall::sys_close(fd);
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
     } else {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);

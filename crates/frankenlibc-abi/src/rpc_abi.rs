@@ -2785,7 +2785,6 @@ pub unsafe extern "C" fn getnetname(name: *mut c_char) -> c_int {
     if name.is_null() {
         return 0;
     }
-    // Use native syscall instead of libc::syscall (bd-h5x)
     let uid = raw_syscall::sys_geteuid();
     // Format: "unix.<uid>@localhost"
     let netname = format!("unix.{}@localhost\0", uid);

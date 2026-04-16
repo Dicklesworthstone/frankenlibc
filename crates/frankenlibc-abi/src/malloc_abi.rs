@@ -188,7 +188,6 @@ unsafe fn mmap_alloc(size: usize) -> *mut c_void {
     // headroom on 16K/64K page systems).
     let page_size = 4096usize;
     let alloc_size = (size + page_size - 1) & !(page_size - 1);
-    // Use native syscall instead of libc::syscall (bd-h5x)
     let result = unsafe {
         raw_syscall::sys_mmap(
             std::ptr::null_mut(),
