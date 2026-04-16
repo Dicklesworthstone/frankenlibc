@@ -59,15 +59,6 @@ type HostPthreadSelfFn = unsafe extern "C" fn() -> libc::pthread_t;
 type HostPthreadEqualFn = unsafe extern "C" fn(libc::pthread_t, libc::pthread_t) -> c_int;
 type HostPthreadGetattrFn =
     unsafe extern "C" fn(libc::pthread_t, *mut libc::pthread_attr_t) -> c_int;
-type HostPthreadKeyCreateFn = unsafe extern "C" fn(
-    *mut libc::pthread_key_t,
-    Option<unsafe extern "C" fn(*mut c_void)>,
-) -> c_int;
-type HostPthreadKeyDeleteFn = unsafe extern "C" fn(libc::pthread_key_t) -> c_int;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-type HostPthreadGetspecificFn = unsafe extern "C" fn(libc::pthread_key_t) -> *mut c_void;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-type HostPthreadSetspecificFn = unsafe extern "C" fn(libc::pthread_key_t, *const c_void) -> c_int;
 type HostPthreadMutexInitFn =
     unsafe extern "C" fn(*mut libc::pthread_mutex_t, *const libc::pthread_mutexattr_t) -> c_int;
 type HostPthreadMutexDestroyFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
@@ -253,12 +244,6 @@ static RESOLVED_PTHREAD_ATTR_SETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new(
 static RESOLVED_PTHREAD_ATTR_GETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETAFFINITY_NP_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSIGMASK_NP_PTR: OnceLock<usize> = OnceLock::new();
-static HOST_PTHREAD_KEY_CREATE_PTR: OnceLock<usize> = OnceLock::new();
-static HOST_PTHREAD_KEY_DELETE_PTR: OnceLock<usize> = OnceLock::new();
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-static HOST_PTHREAD_GETSPECIFIC_PTR: OnceLock<usize> = OnceLock::new();
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-static HOST_PTHREAD_SETSPECIFIC_PTR: OnceLock<usize> = OnceLock::new();
 
 thread_local! {
     static FORCE_NATIVE_THREADING_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
@@ -726,60 +711,6 @@ unsafe fn host_pthread_equal_fn() -> Option<HostPthreadEqualFn> {
     Some(unsafe { std::mem::transmute::<usize, HostPthreadEqualFn>(ptr) })
 }
 
-unsafe fn host_pthread_key_create_fn() -> Option<HostPthreadKeyCreateFn> {
-    let ptr = *HOST_PTHREAD_KEY_CREATE_PTR.get_or_init(|| unsafe {
-        resolve_host_symbol_with_aliases(&[b"pthread_key_create\0", b"__pthread_key_create\0"])
-            as usize
-    }) as *mut c_void;
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_key_create ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadKeyCreateFn>(ptr) })
-    }
-}
-
-unsafe fn host_pthread_key_delete_fn() -> Option<HostPthreadKeyDeleteFn> {
-    let ptr = *HOST_PTHREAD_KEY_DELETE_PTR.get_or_init(|| unsafe {
-        resolve_host_symbol_with_aliases(&[b"pthread_key_delete\0", b"__pthread_key_delete\0"])
-            as usize
-    }) as *mut c_void;
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_key_delete ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadKeyDeleteFn>(ptr) })
-    }
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-unsafe fn host_pthread_getspecific_fn() -> Option<HostPthreadGetspecificFn> {
-    let ptr = *HOST_PTHREAD_GETSPECIFIC_PTR.get_or_init(|| unsafe {
-        resolve_host_symbol_with_aliases(&[b"pthread_getspecific\0", b"__pthread_getspecific\0"])
-            as usize
-    }) as *mut c_void;
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_getspecific ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadGetspecificFn>(ptr) })
-    }
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-unsafe fn host_pthread_setspecific_fn() -> Option<HostPthreadSetspecificFn> {
-    let ptr = *HOST_PTHREAD_SETSPECIFIC_PTR.get_or_init(|| unsafe {
-        resolve_host_symbol_with_aliases(&[b"pthread_setspecific\0", b"__pthread_setspecific\0"])
-            as usize
-    }) as *mut c_void;
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: resolved symbol has pthread_setspecific ABI.
-        Some(unsafe { std::mem::transmute::<*mut c_void, HostPthreadSetspecificFn>(ptr) })
-    }
-}
-
 unsafe fn host_pthread_mutex_init_fn() -> Option<HostPthreadMutexInitFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_init\0") };
     if ptr.is_null() {
@@ -1112,13 +1043,6 @@ pub(crate) fn prewarm_host_thread_symbols() {
     // bootstrap passthrough, so active-mode execution does not lazily enter
     // dl* symbol resolution through validated string/memory paths.
     unsafe {
-        let _ = host_pthread_key_create_fn();
-        let _ = host_pthread_key_delete_fn();
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        {
-            let _ = host_pthread_getspecific_fn();
-            let _ = host_pthread_setspecific_fn();
-        }
         let _ = host_pthread_mutex_init_fn();
         let _ = host_pthread_mutex_destroy_fn();
         let _ = host_pthread_mutex_lock_fn();
@@ -3490,11 +3414,6 @@ pub unsafe extern "C" fn pthread_key_create(
     if key.is_null() {
         return libc::EINVAL;
     }
-    if current_threading_backend() == THREAD_BACKEND_HOST
-        && let Some(host_key_create) = unsafe { host_pthread_key_create_fn() }
-    {
-        return unsafe { host_key_create(key, destructor) };
-    }
     let sensitive_context = runtime_policy::bootstrap_passthrough_active()
         || crate::malloc_abi::in_allocator_reentry_context()
         || frankenlibc_membrane::ptr_validator::in_validation_context();
@@ -3527,11 +3446,6 @@ pub unsafe extern "C" fn pthread_key_create(
 /// POSIX `pthread_key_delete`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
-    if current_threading_backend() == THREAD_BACKEND_HOST
-        && let Some(host_key_delete) = unsafe { host_pthread_key_delete_fn() }
-    {
-        return unsafe { host_key_delete(key) };
-    }
     let sensitive_context = runtime_policy::bootstrap_passthrough_active()
         || crate::malloc_abi::in_allocator_reentry_context()
         || frankenlibc_membrane::ptr_validator::in_validation_context();
@@ -3551,12 +3465,6 @@ pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_getspecific(key: libc::pthread_key_t) -> *mut c_void {
-    if current_threading_backend() == THREAD_BACKEND_HOST
-        && let Some(host_getspecific) = unsafe { host_pthread_getspecific_fn() }
-    {
-        return unsafe { host_getspecific(key) };
-    }
-
     let sensitive_context = runtime_policy::bootstrap_passthrough_active()
         || crate::malloc_abi::in_allocator_reentry_context()
         || frankenlibc_membrane::ptr_validator::in_validation_context();
@@ -3579,12 +3487,6 @@ pub unsafe extern "C" fn pthread_setspecific(
     key: libc::pthread_key_t,
     value: *const c_void,
 ) -> c_int {
-    if current_threading_backend() == THREAD_BACKEND_HOST
-        && let Some(host_setspecific) = unsafe { host_pthread_setspecific_fn() }
-    {
-        return unsafe { host_setspecific(key, value) };
-    }
-
     let sensitive_context = runtime_policy::bootstrap_passthrough_active()
         || crate::malloc_abi::in_allocator_reentry_context()
         || frankenlibc_membrane::ptr_validator::in_validation_context();

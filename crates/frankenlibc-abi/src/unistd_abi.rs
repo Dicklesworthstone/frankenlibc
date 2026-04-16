@@ -3991,34 +3991,21 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: .
     }
 
     // Open the backing file.
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat as std::os::raw::c_long,
-            libc::AT_FDCWD,
-            path.as_ptr(),
-            oflag | libc::O_RDWR | libc::O_CLOEXEC,
-            mode,
-        ) as c_int
+    let fd = match unsafe {
+        syscall::sys_openat(libc::AT_FDCWD, path.as_ptr(), oflag | libc::O_RDWR | libc::O_CLOEXEC, mode)
+    } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return usize::MAX as *mut c_void;
+        }
     };
-
-    if fd < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::ENOENT)) };
-        return usize::MAX as *mut c_void;
-    }
 
     // If we created a new file, initialize it with the semaphore value.
     let created = (oflag & libc::O_CREAT) != 0;
     if created {
         // Set file size to SEM_MMAP_SIZE.
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_ftruncate as std::os::raw::c_long,
-                fd,
-                SEM_MMAP_SIZE as i64,
-            ) as c_int
-        };
-        if rc < 0 {
-            let e = last_host_errno(errno::EIO);
+        if let Err(e) = unsafe { syscall::sys_ftruncate(fd, SEM_MMAP_SIZE as i64) } {
             let _ = syscall::sys_close(fd);
             unsafe { set_abi_errno(e) };
             return usize::MAX as *mut c_void;
@@ -12977,18 +12964,17 @@ pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     });
 
     let cpath = std::ffi::CString::new(path.as_str()).unwrap_or_default();
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat,
+    let fd = match unsafe {
+        syscall::sys_openat(
             libc::AT_FDCWD,
-            cpath.as_ptr(),
+            cpath.as_ptr() as *const u8,
             libc::O_RDWR | libc::O_CREAT,
             0o644,
-        ) as c_int
+        )
+    } {
+        Ok(fd) => fd,
+        Err(_) => return std::ptr::null_mut(),
     };
-    if fd < 0 {
-        return std::ptr::null_mut();
-    }
 
     let record_size = std::mem::size_of::<libc::utmpx>();
     let _ = syscall::sys_lseek(fd, 0, libc::SEEK_END);
@@ -15754,21 +15740,20 @@ pub unsafe extern "C" fn updwtmp(file: *const c_char, ut: *const c_void) {
         return;
     }
     // Open file for appending (O_WRONLY | O_APPEND)
-    let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat,
+    let fd = match unsafe {
+        syscall::sys_openat(
             libc::AT_FDCWD,
-            file,
+            file as *const u8,
             libc::O_WRONLY | libc::O_APPEND | libc::O_CLOEXEC,
             0o644,
         )
+    } {
+        Ok(fd) => fd,
+        Err(_) => return,
     };
-    if fd < 0 {
-        return;
-    }
     // Write the 384-byte utmp struct
-    let _ = unsafe { libc::syscall(libc::SYS_write, fd, ut, 384usize) };
-    unsafe { libc::syscall(libc::SYS_close, fd) };
+    let _ = unsafe { syscall::sys_write(fd, ut as *const u8, 384) };
+    let _ = syscall::sys_close(fd);
 }
 
 /// `updwtmpx` — append a utmpx record to the specified wtmpx file.
