@@ -5401,17 +5401,12 @@ pub unsafe extern "C" fn ptsname(fd: c_int) -> *mut c_char {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_openpt(flags: c_int) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_openat,
-                libc::AT_FDCWD,
-                PTMX_PATH.as_ptr().cast::<c_char>(),
-                flags,
-                0,
-            ),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_openat(libc::AT_FDCWD, PTMX_PATH.as_ptr(), flags, 0) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -9884,14 +9879,19 @@ pub unsafe extern "C" fn strfry(string: *mut c_char) -> *mut c_char {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpt() -> c_int {
     static PTMX: &[u8] = b"/dev/ptmx\0";
-    unsafe {
-        libc::syscall(
-            libc::SYS_openat,
+    match unsafe {
+        syscall::sys_openat(
             libc::AT_FDCWD,
             PTMX.as_ptr(),
             libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
             0,
-        ) as c_int
+        )
+    } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -15471,17 +15471,21 @@ pub unsafe extern "C" fn renameat2(
     newpath: *const c_char,
     flags: c_uint,
 ) -> c_int {
-    let ret = unsafe {
-        libc::syscall(
-            libc::SYS_renameat2,
+    match unsafe {
+        syscall::sys_renameat2(
             olddirfd,
-            oldpath,
+            oldpath as *const u8,
             newdirfd,
-            newpath,
+            newpath as *const u8,
             flags,
         )
-    };
-    unsafe { syscall_ret_zero(ret, libc::EINVAL) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// `semtimedop` — semaphore operations with timeout.
