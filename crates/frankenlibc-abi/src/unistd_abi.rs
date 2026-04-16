@@ -5123,38 +5123,34 @@ pub unsafe extern "C" fn forkpty(
     let _pipeline_guard =
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
 
-    let pid = unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD as i64, 0i64) } as libc::pid_t;
+    let pid = match syscall::sys_clone_fork(libc::SIGCHLD as usize) {
+        Ok(p) => p,
+        Err(_) => {
+            drop(_pipeline_guard);
+            let _ = syscall::sys_close(master);
+            let _ = syscall::sys_close(slave);
+            return -1;
+        }
+    };
 
     drop(_pipeline_guard);
 
     if pid == 0 {
         crate::pthread_abi::run_atfork_child();
-    } else if pid > 0 {
+    } else {
         crate::pthread_abi::run_atfork_parent();
-    }
-
-    if pid < 0 {
-        unsafe {
-            libc::syscall(libc::SYS_close, master as i64);
-            libc::syscall(libc::SYS_close, slave as i64);
-        };
-        return -1;
     }
 
     if pid == 0 {
         // Child: close master, set up slave as controlling terminal
-        unsafe {
-            libc::syscall(libc::SYS_close, master as i64);
-            login_tty(slave);
-        };
+        let _ = syscall::sys_close(master);
+        unsafe { login_tty(slave) };
         return 0;
     }
 
     // Parent: close slave, return master
-    unsafe {
-        libc::syscall(libc::SYS_close, slave as i64);
-        *amaster = master;
-    };
+    let _ = syscall::sys_close(slave);
+    unsafe { *amaster = master };
     pid
 }
 
@@ -5162,10 +5158,8 @@ pub unsafe extern "C" fn forkpty(
 pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
     let mut pty_num: c_int = 0;
     // SAFETY: ioctl validates `fd` as PTY master and writes index on success.
-    let rc =
-        unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCGPTN as i64, &mut pty_num) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+    if let Err(e) = unsafe { syscall::sys_ioctl(fd, libc::TIOCGPTN as usize, &mut pty_num as *mut c_int as usize) } {
+        unsafe { set_abi_errno(e) };
         return -1;
     }
     0
