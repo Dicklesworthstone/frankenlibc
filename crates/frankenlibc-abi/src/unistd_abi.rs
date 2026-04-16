@@ -439,7 +439,10 @@ pub unsafe extern "C" fn fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
 
     let rc = match unsafe { syscall::sys_fstat(fd, buf as *mut u8) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -521,7 +524,10 @@ pub unsafe extern "C" fn access(path: *const c_char, amode: c_int) -> c_int {
 
     let rc = match unsafe { syscall::sys_faccessat(libc::AT_FDCWD, path as *const u8, amode, 0) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -579,7 +585,10 @@ pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
 
     let rc = match unsafe { syscall::sys_chdir(path as *const u8) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -595,7 +604,10 @@ pub unsafe extern "C" fn fchdir(fd: c_int) -> c_int {
     }
     let rc = match syscall::sys_fchdir(fd) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -638,7 +650,10 @@ pub unsafe extern "C" fn getegid() -> libc::gid_t {
 pub unsafe extern "C" fn getpgid(pid: libc::pid_t) -> libc::pid_t {
     match syscall::sys_getpgid(pid) {
         Ok(pgid) => pgid,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -646,7 +661,10 @@ pub unsafe extern "C" fn getpgid(pid: libc::pid_t) -> libc::pid_t {
 pub unsafe extern "C" fn setpgid(pid: libc::pid_t, pgid: libc::pid_t) -> c_int {
     match syscall::sys_setpgid(pid, pgid) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -654,7 +672,10 @@ pub unsafe extern "C" fn setpgid(pid: libc::pid_t, pgid: libc::pid_t) -> c_int {
 pub unsafe extern "C" fn getsid(pid: libc::pid_t) -> libc::pid_t {
     match syscall::sys_getsid(pid) {
         Ok(sid) => sid,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -662,7 +683,10 @@ pub unsafe extern "C" fn getsid(pid: libc::pid_t) -> libc::pid_t {
 pub unsafe extern "C" fn setsid() -> libc::pid_t {
     match syscall::sys_setsid() {
         Ok(sid) => sid,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -674,7 +698,10 @@ pub unsafe extern "C" fn setsid() -> libc::pid_t {
 pub unsafe extern "C" fn setuid(uid: libc::uid_t) -> c_int {
     match syscall::sys_setuid(uid) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -683,7 +710,10 @@ pub unsafe extern "C" fn seteuid(euid: libc::uid_t) -> c_int {
     // seteuid(euid) == setreuid(-1, euid)
     match syscall::sys_setreuid(libc::uid_t::MAX, euid) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -691,7 +721,10 @@ pub unsafe extern "C" fn seteuid(euid: libc::uid_t) -> c_int {
 pub unsafe extern "C" fn setreuid(ruid: libc::uid_t, euid: libc::uid_t) -> c_int {
     match syscall::sys_setreuid(ruid, euid) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -699,7 +732,10 @@ pub unsafe extern "C" fn setreuid(ruid: libc::uid_t, euid: libc::uid_t) -> c_int
 pub unsafe extern "C" fn setgid(gid: libc::gid_t) -> c_int {
     match syscall::sys_setgid(gid) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -708,7 +744,10 @@ pub unsafe extern "C" fn setegid(egid: libc::gid_t) -> c_int {
     // setegid(egid) == setregid(-1, egid)
     match syscall::sys_setregid(libc::gid_t::MAX, egid) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -716,7 +755,10 @@ pub unsafe extern "C" fn setegid(egid: libc::gid_t) -> c_int {
 pub unsafe extern "C" fn setregid(rgid: libc::gid_t, egid: libc::gid_t) -> c_int {
     match syscall::sys_setregid(rgid, egid) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -728,7 +770,10 @@ pub unsafe extern "C" fn setregid(rgid: libc::gid_t, egid: libc::gid_t) -> c_int
 pub unsafe extern "C" fn getgroups(size: c_int, list: *mut libc::gid_t) -> c_int {
     match unsafe { syscall::sys_getgroups(size, list as *mut u32) } {
         Ok(n) => n,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -736,7 +781,10 @@ pub unsafe extern "C" fn getgroups(size: c_int, list: *mut libc::gid_t) -> c_int
 pub unsafe extern "C" fn setgroups(size: usize, list: *const libc::gid_t) -> c_int {
     match unsafe { syscall::sys_setgroups(size, list as *const u32) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -759,7 +807,10 @@ pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
     }
     let rc = match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path as *const u8, 0) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -778,9 +829,14 @@ pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path as *const u8, libc::AT_REMOVEDIR) } {
+    let rc = match unsafe {
+        syscall::sys_unlinkat(libc::AT_FDCWD, path as *const u8, libc::AT_REMOVEDIR)
+    } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -829,9 +885,14 @@ pub unsafe extern "C" fn symlink(target: *const c_char, linkpath: *const c_char)
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_symlinkat(target as *const u8, libc::AT_FDCWD, linkpath as *const u8) } {
+    let rc = match unsafe {
+        syscall::sys_symlinkat(target as *const u8, libc::AT_FDCWD, linkpath as *const u8)
+    } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
     rc
@@ -851,9 +912,14 @@ pub unsafe extern "C" fn readlink(path: *const c_char, buf: *mut c_char, bufsiz:
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_readlinkat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, bufsiz) } {
+    let rc = match unsafe {
+        syscall::sys_readlinkat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, bufsiz)
+    } {
         Ok(n) => n as isize,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     let adverse = rc < 0;
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, adverse);
@@ -922,7 +988,10 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: libc::mod
     }
     let rc = match unsafe { syscall::sys_openat(libc::AT_FDCWD, path as *const u8, flags, mode) } {
         Ok(fd) => fd,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
     rc
@@ -985,7 +1054,10 @@ pub unsafe extern "C" fn mkdir(path: *const c_char, mode: libc::mode_t) -> c_int
     }
     let rc = match unsafe { syscall::sys_mkdirat(libc::AT_FDCWD, path as *const u8, mode) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1011,7 +1083,10 @@ pub unsafe extern "C" fn chmod(path: *const c_char, mode: libc::mode_t) -> c_int
     }
     let rc = match unsafe { syscall::sys_fchmodat(libc::AT_FDCWD, path as *const u8, mode, 0) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1028,7 +1103,10 @@ pub unsafe extern "C" fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int {
     }
     let rc = match unsafe { syscall::sys_fchmod(fd, mode) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1056,9 +1134,14 @@ pub unsafe extern "C" fn chown(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_fchownat(libc::AT_FDCWD, path as *const u8, owner, group, 0) } {
+    let rc = match unsafe {
+        syscall::sys_fchownat(libc::AT_FDCWD, path as *const u8, owner, group, 0)
+    } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1075,7 +1158,10 @@ pub unsafe extern "C" fn fchown(fd: c_int, owner: libc::uid_t, group: libc::gid_
     }
     let rc = match unsafe { syscall::sys_fchown(fd, owner, group) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1099,9 +1185,20 @@ pub unsafe extern "C" fn lchown(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_fchownat(libc::AT_FDCWD, path as *const u8, owner, group, libc::AT_SYMLINK_NOFOLLOW as i32) } {
+    let rc = match unsafe {
+        syscall::sys_fchownat(
+            libc::AT_FDCWD,
+            path as *const u8,
+            owner,
+            group,
+            libc::AT_SYMLINK_NOFOLLOW as i32,
+        )
+    } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1137,7 +1234,10 @@ pub unsafe extern "C" fn truncate(path: *const c_char, length: i64) -> c_int {
     }
     let rc = match unsafe { syscall::sys_truncate(path as *const u8, length) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1154,7 +1254,10 @@ pub unsafe extern "C" fn ftruncate(fd: c_int, length: i64) -> c_int {
     }
     let rc = match unsafe { syscall::sys_ftruncate(fd, length) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1175,7 +1278,10 @@ pub unsafe extern "C" fn flock(fd: c_int, operation: c_int) -> c_int {
     }
     let rc = match unsafe { syscall::sys_flock(fd, operation) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1206,7 +1312,10 @@ pub unsafe extern "C" fn openat(
     }
     let rc = match unsafe { syscall::sys_openat(dirfd, path as *const u8, flags, mode) } {
         Ok(fd) => fd,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
     rc
@@ -1324,7 +1433,10 @@ pub unsafe extern "C" fn unlinkat(dirfd: c_int, path: *const c_char, flags: c_in
     }
     let rc = match unsafe { syscall::sys_unlinkat(dirfd, path as *const u8, flags) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1349,9 +1461,20 @@ pub unsafe extern "C" fn renameat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_renameat2(olddirfd, oldpath as *const u8, newdirfd, newpath as *const u8, 0) } {
+    let rc = match unsafe {
+        syscall::sys_renameat2(
+            olddirfd,
+            oldpath as *const u8,
+            newdirfd,
+            newpath as *const u8,
+            0,
+        )
+    } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
     rc
@@ -1373,7 +1496,10 @@ pub unsafe extern "C" fn mkdirat(dirfd: c_int, path: *const c_char, mode: libc::
     }
     let rc = match unsafe { syscall::sys_mkdirat(dirfd, path as *const u8, mode) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1403,9 +1529,14 @@ pub unsafe extern "C" fn readlinkat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_readlinkat(dirfd, path as *const u8, buf as *mut u8, bufsiz) } {
+    let rc = match unsafe {
+        syscall::sys_readlinkat(dirfd, path as *const u8, buf as *mut u8, bufsiz)
+    } {
         Ok(n) => n as isize,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
     rc
@@ -1429,9 +1560,14 @@ pub unsafe extern "C" fn symlinkat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_symlinkat(target as *const u8, newdirfd, linkpath as *const u8) } {
+    let rc = match unsafe {
+        syscall::sys_symlinkat(target as *const u8, newdirfd, linkpath as *const u8)
+    } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
     rc
@@ -1458,7 +1594,10 @@ pub unsafe extern "C" fn faccessat(
     }
     let rc = match unsafe { syscall::sys_faccessat(dirfd, path as *const u8, amode, flags) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1486,7 +1625,10 @@ pub unsafe extern "C" fn fchownat(
     }
     let rc = match unsafe { syscall::sys_fchownat(dirfd, path as *const u8, owner, group, flags) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1513,7 +1655,10 @@ pub unsafe extern "C" fn fchmodat(
     }
     let rc = match unsafe { syscall::sys_fchmodat(dirfd, path as *const u8, mode, flags) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1539,9 +1684,20 @@ pub unsafe extern "C" fn linkat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_linkat(olddirfd, oldpath as *const u8, newdirfd, newpath as *const u8, flags) } {
+    let rc = match unsafe {
+        syscall::sys_linkat(
+            olddirfd,
+            oldpath as *const u8,
+            newdirfd,
+            newpath as *const u8,
+            flags,
+        )
+    } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
     rc
@@ -1574,7 +1730,10 @@ pub unsafe extern "C" fn uname(buf: *mut libc::utsname) -> c_int {
     }
     match unsafe { syscall::sys_uname(buf as *mut u8) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -1618,7 +1777,10 @@ pub unsafe extern "C" fn getrusage(who: c_int, usage: *mut libc::rusage) -> c_in
     }
     match unsafe { syscall::sys_getrusage(who, usage as *mut u8) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -1656,7 +1818,12 @@ pub unsafe extern "C" fn sleep(seconds: u32) -> u32 {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    match unsafe { syscall::sys_nanosleep((&req) as *const _ as *const u8, (&mut rem) as *mut _ as *mut u8) } {
+    match unsafe {
+        syscall::sys_nanosleep(
+            (&req) as *const _ as *const u8,
+            (&mut rem) as *mut _ as *mut u8,
+        )
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -1681,7 +1848,10 @@ pub unsafe extern "C" fn usleep(usec: u32) -> c_int {
     };
     match unsafe { syscall::sys_nanosleep((&req) as *const _ as *const u8, std::ptr::null_mut()) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -2640,7 +2810,13 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
 
     let mut pty_num: c_int = 0;
     // SAFETY: ioctl writes PTY slave index into `pty_num` on success.
-    if let Err(e) = unsafe { syscall::sys_ioctl(fd, libc::TIOCGPTN as usize, &mut pty_num as *mut c_int as usize) } {
+    if let Err(e) = unsafe {
+        syscall::sys_ioctl(
+            fd,
+            libc::TIOCGPTN as usize,
+            &mut pty_num as *mut c_int as usize,
+        )
+    } {
         return Err(e);
     }
 
@@ -3042,7 +3218,10 @@ pub unsafe extern "C" fn fallocate(fd: c_int, mode: c_int, offset: i64, len: i64
 
     let rc = match syscall::sys_fallocate(fd, mode, offset, len) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -3437,7 +3616,10 @@ pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int
     }
     match unsafe { syscall::sys_getrandom(buffer as *mut u8, length, 0) } {
         Ok(n) if (n as usize) >= length => 0,
-        _ => { unsafe { set_abi_errno(libc::EIO) }; -1 }
+        _ => {
+            unsafe { set_abi_errno(libc::EIO) };
+            -1
+        }
     }
 }
 
@@ -3613,7 +3795,10 @@ pub unsafe extern "C" fn shm_open(name: *const c_char, oflag: c_int, mode: libc:
 
     match unsafe { syscall::sys_openat(libc::AT_FDCWD, path.as_ptr() as *const u8, oflag, mode) } {
         Ok(fd) => fd,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -3629,7 +3814,10 @@ pub unsafe extern "C" fn shm_unlink(name: *const c_char) -> c_int {
 
     match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path.as_ptr() as *const u8, 0) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -3831,7 +4019,10 @@ pub unsafe extern "C" fn sem_close(sem: *mut c_void) -> c_int {
     }
     match unsafe { syscall::sys_munmap(sem as *mut u8, SEM_MMAP_SIZE) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -3851,7 +4042,10 @@ pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
 
     match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path.as_ptr() as *const u8, 0) } {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -4047,7 +4241,10 @@ pub unsafe extern "C" fn mq_open(name: *const c_char, oflag: c_int, mut args: ..
 pub unsafe extern "C" fn mq_close(mqdes: c_int) -> c_int {
     match syscall::sys_close(mqdes) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -4961,7 +5158,10 @@ pub unsafe extern "C" fn readahead(fd: c_int, offset: i64, count: usize) -> isiz
 pub unsafe extern "C" fn syncfs(fd: c_int) -> c_int {
     match syscall::sys_syncfs(fd) {
         Ok(()) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -5015,7 +5215,14 @@ pub unsafe extern "C" fn openpty(
     }
 
     // Open slave
-    let slave = match unsafe { syscall::sys_openat(libc::AT_FDCWD, slave_name.as_ptr(), libc::O_RDWR | libc::O_NOCTTY, 0) } {
+    let slave = match unsafe {
+        syscall::sys_openat(
+            libc::AT_FDCWD,
+            slave_name.as_ptr(),
+            libc::O_RDWR | libc::O_NOCTTY,
+            0,
+        )
+    } {
         Ok(fd) => fd,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5161,7 +5368,13 @@ pub unsafe extern "C" fn forkpty(
 pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
     let mut pty_num: c_int = 0;
     // SAFETY: ioctl validates `fd` as PTY master and writes index on success.
-    if let Err(e) = unsafe { syscall::sys_ioctl(fd, libc::TIOCGPTN as usize, &mut pty_num as *mut c_int as usize) } {
+    if let Err(e) = unsafe {
+        syscall::sys_ioctl(
+            fd,
+            libc::TIOCGPTN as usize,
+            &mut pty_num as *mut c_int as usize,
+        )
+    } {
         unsafe { set_abi_errno(e) };
         return -1;
     }
@@ -5172,7 +5385,13 @@ pub unsafe extern "C" fn grantpt(fd: c_int) -> c_int {
 pub unsafe extern "C" fn unlockpt(fd: c_int) -> c_int {
     let mut unlock: c_int = 0;
     // SAFETY: ioctl reads lock toggle value from `unlock`.
-    if let Err(e) = unsafe { syscall::sys_ioctl(fd, libc::TIOCSPTLCK as usize, &mut unlock as *mut c_int as usize) } {
+    if let Err(e) = unsafe {
+        syscall::sys_ioctl(
+            fd,
+            libc::TIOCSPTLCK as usize,
+            &mut unlock as *mut c_int as usize,
+        )
+    } {
         unsafe { set_abi_errno(e) };
         return -1;
     }
@@ -7468,21 +7687,37 @@ unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
             let cb = cb_addr as *mut c_void;
 
             let result: i64 = match op {
-                AioOp::Read => match unsafe { syscall::sys_pread64(fd, buf_addr as *mut u8, nbytes, offset) } {
+                AioOp::Read => {
+                    match unsafe { syscall::sys_pread64(fd, buf_addr as *mut u8, nbytes, offset) } {
+                        Ok(n) => n as i64,
+                        Err(e) => {
+                            unsafe { set_abi_errno(e) };
+                            -1
+                        }
+                    }
+                }
+                AioOp::Write => match unsafe {
+                    syscall::sys_pwrite64(fd, buf_addr as *const u8, nbytes, offset)
+                } {
                     Ok(n) => n as i64,
-                    Err(e) => { unsafe { set_abi_errno(e) }; -1 }
-                },
-                AioOp::Write => match unsafe { syscall::sys_pwrite64(fd, buf_addr as *const u8, nbytes, offset) } {
-                    Ok(n) => n as i64,
-                    Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+                    Err(e) => {
+                        unsafe { set_abi_errno(e) };
+                        -1
+                    }
                 },
                 AioOp::Fsync => match syscall::sys_fsync(fd) {
                     Ok(()) => 0,
-                    Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+                    Err(e) => {
+                        unsafe { set_abi_errno(e) };
+                        -1
+                    }
                 },
                 AioOp::Fdatasync => match syscall::sys_fdatasync(fd) {
                     Ok(()) => 0,
-                    Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+                    Err(e) => {
+                        unsafe { set_abi_errno(e) };
+                        -1
+                    }
                 },
             };
 
@@ -9672,7 +9907,9 @@ pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -
     }
     let mut pty_num: c_uint = 0;
     const TIOCGPTN: usize = 0x80045430;
-    if let Err(e) = unsafe { syscall::sys_ioctl(fd, TIOCGPTN, &mut pty_num as *mut c_uint as usize) } {
+    if let Err(e) =
+        unsafe { syscall::sys_ioctl(fd, TIOCGPTN, &mut pty_num as *mut c_uint as usize) }
+    {
         unsafe { set_abi_errno(e) };
         return e;
     }
@@ -10019,7 +10256,10 @@ pub unsafe extern "C" fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int {
     const TIOCSPGRP: usize = 0x5410;
     match unsafe { syscall::sys_ioctl(fd, TIOCSPGRP, &pgrp as *const libc::pid_t as usize) } {
         Ok(_) => 0,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -10028,7 +10268,9 @@ pub unsafe extern "C" fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int {
 pub unsafe extern "C" fn tcgetsid(fd: c_int) -> libc::pid_t {
     let mut sid: libc::pid_t = 0;
     const TIOCGSID: usize = 0x5429;
-    if let Err(e) = unsafe { syscall::sys_ioctl(fd, TIOCGSID, &mut sid as *mut libc::pid_t as usize) } {
+    if let Err(e) =
+        unsafe { syscall::sys_ioctl(fd, TIOCGSID, &mut sid as *mut libc::pid_t as usize) }
+    {
         unsafe { set_abi_errno(e) };
         return -1;
     }
@@ -11698,7 +11940,10 @@ pub unsafe extern "C" fn fcntl64(fd: c_int, cmd: c_int, mut args: ...) -> c_int 
     let arg: c_long = unsafe { (&mut args as *mut _ as *mut c_long).read() };
     match unsafe { syscall::sys_fcntl(fd, cmd, arg as usize) } {
         Ok(r) => r,
-        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -15100,8 +15345,17 @@ pub unsafe extern "C" fn mkfifoat(
     pathname: *const c_char,
     mode: libc::mode_t,
 ) -> c_int {
+    if pathname.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
     // mkfifo is equivalent to mknod with S_IFIFO
-    unsafe { libc::mknodat(dirfd, pathname, mode | libc::S_IFIFO, 0) }
+    unsafe {
+        syscall_ret_zero(
+            libc::syscall(libc::SYS_mknodat, dirfd, pathname, mode | libc::S_IFIFO, 0),
+            errno::ENOENT,
+        )
+    }
 }
 
 /// `mknodat` — create a filesystem node at a directory-relative path.
@@ -15112,7 +15366,16 @@ pub unsafe extern "C" fn mknodat(
     mode: libc::mode_t,
     dev: libc::dev_t,
 ) -> c_int {
-    unsafe { libc::mknodat(dirfd, pathname, mode, dev) }
+    if pathname.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    unsafe {
+        syscall_ret_zero(
+            libc::syscall(libc::SYS_mknodat, dirfd, pathname, mode, dev),
+            errno::ENOENT,
+        )
+    }
 }
 
 /// `utimensat` — change timestamps of a file relative to a directory fd.
@@ -15123,7 +15386,8 @@ pub unsafe extern "C" fn utimensat(
     times: *const libc::timespec,
     flags: c_int,
 ) -> c_int {
-    match unsafe { syscall::sys_utimensat(dirfd, pathname as *const u8, times as *const u8, flags) } {
+    match unsafe { syscall::sys_utimensat(dirfd, pathname as *const u8, times as *const u8, flags) }
+    {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -17188,7 +17452,8 @@ pub unsafe extern "C" fn logout(line: *const c_char) -> c_int {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    let _ = unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) };
+    let _ =
+        unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) };
     entry.ut_tv.tv_sec = ts.tv_sec as i32;
     entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as i32;
 
@@ -17247,7 +17512,8 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
         tv_sec: 0,
         tv_nsec: 0,
     };
-    let _ = unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) };
+    let _ =
+        unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) };
     entry.ut_tv.tv_sec = ts.tv_sec as i32;
     entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as i32;
 

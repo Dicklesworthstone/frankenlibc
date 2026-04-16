@@ -291,7 +291,7 @@
         "note": "In-file test helpers now route through native ABI entrypoints, so the replacement guard sees no direct libc call-throughs."
       },
       "unistd_abi": {
-        "count": 19,
+        "count": 17,
         "functions": [
           "backtrace",
           "backtrace_symbols",
@@ -304,7 +304,6 @@
           "fwrite",
           "getaddrinfo",
           "getenv",
-          "mknodat",
           "realpath"
         ]
       },
@@ -318,7 +317,7 @@
         "note": "Legacy regex register allocation now uses the ABI allocator path instead of direct libc calloc/free."
       }
     },
-    "total_call_throughs": 126,
+    "total_call_throughs": 124,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }
