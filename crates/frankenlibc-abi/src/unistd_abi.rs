@@ -2570,12 +2570,8 @@ fn syslog_send(priority: c_int, message: &[u8]) {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    unsafe {
-        libc::syscall(
-            libc::SYS_clock_gettime,
-            libc::CLOCK_REALTIME as i64,
-            &mut tv,
-        ) as c_int
+    let _ = unsafe {
+        syscall::sys_clock_gettime(libc::CLOCK_REALTIME as i32, &mut tv as *mut _ as *mut u8)
     };
     let epoch = tv.tv_sec;
     let secs_in_day = epoch % 86400;
