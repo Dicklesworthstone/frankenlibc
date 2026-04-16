@@ -117,13 +117,8 @@ mod x86_64_tests {
         // Close.
         sys_close(fd).expect("close temp file");
 
-        // Cleanup: unlink the file.
-        // SYS_unlinkat = 263, AT_FDCWD = -100, flags = 0
-        let ret = unsafe { syscall3(263, AT_FDCWD as usize, path_buf.as_ptr() as usize, 0) };
-        assert!(
-            syscall_result(ret).is_ok(),
-            "unlinkat should succeed for cleanup"
-        );
+        // Cleanup via the typed veneer.
+        unsafe { sys_unlinkat(AT_FDCWD, path_buf.as_ptr(), 0) }.expect("unlinkat cleanup");
     }
 
     // -----------------------------------------------------------------
