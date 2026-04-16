@@ -602,6 +602,74 @@ pub const SYS_SYNC: usize = 81;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SYNCFS: usize = 267;
 
+// Extended attributes syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETXATTR: usize = 188;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LSETXATTR: usize = 189;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FSETXATTR: usize = 190;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETXATTR: usize = 191;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LGETXATTR: usize = 192;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FGETXATTR: usize = 193;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LISTXATTR: usize = 194;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LLISTXATTR: usize = 195;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FLISTXATTR: usize = 196;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_REMOVEXATTR: usize = 197;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LREMOVEXATTR: usize = 198;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FREMOVEXATTR: usize = 199;
+
+// Extended attributes syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETXATTR: usize = 5;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LSETXATTR: usize = 6;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FSETXATTR: usize = 7;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETXATTR: usize = 8;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LGETXATTR: usize = 9;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FGETXATTR: usize = 10;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LISTXATTR: usize = 11;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LLISTXATTR: usize = 12;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FLISTXATTR: usize = 13;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_REMOVEXATTR: usize = 14;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LREMOVEXATTR: usize = 15;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FREMOVEXATTR: usize = 16;
+
+// Inotify syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_INOTIFY_INIT1: usize = 294;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_INOTIFY_ADD_WATCH: usize = 254;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_INOTIFY_RM_WATCH: usize = 255;
+
+// Inotify syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_INOTIFY_INIT1: usize = 26;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_INOTIFY_ADD_WATCH: usize = 27;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_INOTIFY_RM_WATCH: usize = 28;
+
 // Socket syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
 pub const SYS_BIND: usize = 49;
@@ -2919,6 +2987,227 @@ pub fn sys_sync() {
 #[allow(unsafe_code)]
 pub fn sys_syncfs(fd: i32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall1(SYS_SYNCFS, fd as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Extended attributes syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `getxattr(path, name, value, size)` — retrieve an extended attribute value.
+///
+/// # Safety
+///
+/// `path` and `name` must be valid NUL-terminated strings.
+/// `value` must point to a buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getxattr(
+    path: *const u8,
+    name: *const u8,
+    value: *mut u8,
+    size: usize,
+) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall4(SYS_GETXATTR, path as usize, name as usize, value as usize, size) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `lgetxattr(path, name, value, size)` — retrieve extended attribute (no follow symlinks).
+///
+/// # Safety
+///
+/// `path` and `name` must be valid NUL-terminated strings.
+/// `value` must point to a buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_lgetxattr(
+    path: *const u8,
+    name: *const u8,
+    value: *mut u8,
+    size: usize,
+) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall4(SYS_LGETXATTR, path as usize, name as usize, value as usize, size) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `fgetxattr(fd, name, value, size)` — retrieve extended attribute by fd.
+///
+/// # Safety
+///
+/// `name` must be a valid NUL-terminated string.
+/// `value` must point to a buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fgetxattr(
+    fd: i32,
+    name: *const u8,
+    value: *mut u8,
+    size: usize,
+) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall4(SYS_FGETXATTR, fd as usize, name as usize, value as usize, size) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `setxattr(path, name, value, size, flags)` — set extended attribute value.
+///
+/// # Safety
+///
+/// `path` and `name` must be valid NUL-terminated strings.
+/// `value` must point to a readable buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_setxattr(
+    path: *const u8,
+    name: *const u8,
+    value: *const u8,
+    size: usize,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall5(SYS_SETXATTR, path as usize, name as usize, value as usize, size, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `lsetxattr(path, name, value, size, flags)` — set extended attribute (no follow symlinks).
+///
+/// # Safety
+///
+/// `path` and `name` must be valid NUL-terminated strings.
+/// `value` must point to a readable buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_lsetxattr(
+    path: *const u8,
+    name: *const u8,
+    value: *const u8,
+    size: usize,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall5(SYS_LSETXATTR, path as usize, name as usize, value as usize, size, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fsetxattr(fd, name, value, size, flags)` — set extended attribute by fd.
+///
+/// # Safety
+///
+/// `name` must be a valid NUL-terminated string.
+/// `value` must point to a readable buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fsetxattr(
+    fd: i32,
+    name: *const u8,
+    value: *const u8,
+    size: usize,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall5(SYS_FSETXATTR, fd as usize, name as usize, value as usize, size, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `listxattr(path, list, size)` — list extended attribute names.
+///
+/// # Safety
+///
+/// `path` must be a valid NUL-terminated string.
+/// `list` must point to a buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_listxattr(path: *const u8, list: *mut u8, size: usize) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall3(SYS_LISTXATTR, path as usize, list as usize, size) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `llistxattr(path, list, size)` — list extended attributes (no follow symlinks).
+///
+/// # Safety
+///
+/// `path` must be a valid NUL-terminated string.
+/// `list` must point to a buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_llistxattr(path: *const u8, list: *mut u8, size: usize) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall3(SYS_LLISTXATTR, path as usize, list as usize, size) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `flistxattr(fd, list, size)` — list extended attributes by fd.
+///
+/// # Safety
+///
+/// `list` must point to a buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_flistxattr(fd: i32, list: *mut u8, size: usize) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall3(SYS_FLISTXATTR, fd as usize, list as usize, size) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `removexattr(path, name)` — remove an extended attribute.
+///
+/// # Safety
+///
+/// `path` and `name` must be valid NUL-terminated strings.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_removexattr(path: *const u8, name: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_REMOVEXATTR, path as usize, name as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `lremovexattr(path, name)` — remove extended attribute (no follow symlinks).
+///
+/// # Safety
+///
+/// `path` and `name` must be valid NUL-terminated strings.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_lremovexattr(path: *const u8, name: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_LREMOVEXATTR, path as usize, name as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fremovexattr(fd, name)` — remove extended attribute by fd.
+///
+/// # Safety
+///
+/// `name` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fremovexattr(fd: i32, name: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_FREMOVEXATTR, fd as usize, name as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Inotify syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `inotify_init1(flags)` — initialize an inotify instance.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_inotify_init1(flags: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_INOTIFY_INIT1, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `inotify_add_watch(fd, pathname, mask)` — add a watch to an inotify instance.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_inotify_add_watch(fd: i32, pathname: *const u8, mask: u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_INOTIFY_ADD_WATCH, fd as usize, pathname as usize, mask as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `inotify_rm_watch(fd, wd)` — remove a watch from an inotify instance.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_inotify_rm_watch(fd: i32, wd: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_INOTIFY_RM_WATCH, fd as usize, wd as usize) };
     syscall_result(ret).map(|_| ())
 }
 

@@ -108,6 +108,43 @@ type HostPthreadMutexattrSetrobustFn =
     unsafe extern "C" fn(*mut libc::pthread_mutexattr_t, c_int) -> c_int;
 type HostPthreadMutexattrGetrobustFn =
     unsafe extern "C" fn(*const libc::pthread_mutexattr_t, *mut c_int) -> c_int;
+type ResolvedPthreadAttrInitFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
+type ResolvedPthreadAttrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
+type ResolvedPthreadAttrSetdetachstateFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+type ResolvedPthreadAttrGetdetachstateFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
+type ResolvedPthreadAttrSetguardsizeFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
+type ResolvedPthreadAttrGetguardsizeFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
+type ResolvedPthreadAttrSetstackFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, *mut c_void, usize) -> c_int;
+type ResolvedPthreadAttrGetstackFn = unsafe extern "C" fn(
+    *const libc::pthread_attr_t,
+    *mut *mut c_void,
+    *mut usize,
+) -> c_int;
+type ResolvedPthreadAttrSetstacksizeFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
+type ResolvedPthreadAttrGetstacksizeFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
+type ResolvedPthreadAttrSetinheritschedFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+type ResolvedPthreadAttrGetinheritschedFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
+type ResolvedPthreadAttrSetschedpolicyFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, c_int) -> c_int;
+type ResolvedPthreadAttrGetschedpolicyFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
+type ResolvedPthreadAttrSetschedparamFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, *const libc::sched_param) -> c_int;
+type ResolvedPthreadAttrGetschedparamFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut libc::sched_param) -> c_int;
+type ResolvedPthreadAttrSetaffinityNpFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, usize, *const libc::cpu_set_t) -> c_int;
+type ResolvedPthreadAttrSetsigmaskNpFn =
+    unsafe extern "C" fn(*mut libc::pthread_attr_t, *const libc::sigset_t) -> c_int;
 // Host attr type aliases reintroduced for LD_PRELOAD compatibility in host mode.
 
 // ---------------------------------------------------------------------------
@@ -190,6 +227,24 @@ static HOST_PTHREAD_EQUAL_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_CONDATTR_GETCLOCK_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
+static RESOLVED_PTHREAD_ATTR_INIT_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSTACK_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETSTACK_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETINHERITSCHED_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETINHERITSCHED_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSCHEDPOLICY_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETSCHEDPOLICY_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETAFFINITY_NP_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_SETSIGMASK_NP_PTR: OnceLock<usize> = OnceLock::new();
 static HOST_PTHREAD_KEY_CREATE_PTR: OnceLock<usize> = OnceLock::new();
 static HOST_PTHREAD_KEY_DELETE_PTR: OnceLock<usize> = OnceLock::new();
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

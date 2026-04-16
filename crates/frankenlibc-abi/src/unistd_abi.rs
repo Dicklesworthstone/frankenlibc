@@ -1862,21 +1862,25 @@ pub unsafe extern "C" fn usleep(usec: u32) -> c_int {
 /// Linux `inotify_init` — initialize an inotify instance.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inotify_init() -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_inotify_init1, 0) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::ENOMEM)) };
+    match syscall::sys_inotify_init1(0) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `inotify_init1` — initialize an inotify instance with flags.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inotify_init1(flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_inotify_init1, flags) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+    match syscall::sys_inotify_init1(flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `inotify_add_watch` — add a watch to an inotify instance.
@@ -1886,21 +1890,25 @@ pub unsafe extern "C" fn inotify_add_watch(fd: c_int, pathname: *const c_char, m
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_inotify_add_watch, fd, pathname, mask) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+    match unsafe { syscall::sys_inotify_add_watch(fd, pathname as *const u8, mask) } {
+        Ok(wd) => wd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `inotify_rm_watch` — remove a watch from an inotify instance.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_inotify_rm_watch, fd, wd) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
+    match syscall::sys_inotify_rm_watch(fd, wd) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -4976,17 +4984,13 @@ pub unsafe extern "C" fn getxattr(
     value: *mut c_void,
     size: usize,
 ) -> isize {
-    let rc = unsafe { libc::syscall(libc::SYS_getxattr, path, name, value, size) };
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_getxattr(path as *const u8, name as *const u8, value as *mut u8, size) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as isize
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4997,47 +5001,35 @@ pub unsafe extern "C" fn setxattr(
     size: usize,
     flags: c_int,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setxattr, path, name, value, size, flags) } as c_int;
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_setxattr(path as *const u8, name as *const u8, value as *const u8, size, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn listxattr(path: *const c_char, list: *mut c_char, size: usize) -> isize {
-    let rc = unsafe { libc::syscall(libc::SYS_listxattr, path, list, size) };
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_listxattr(path as *const u8, list as *mut u8, size) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as isize
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn removexattr(path: *const c_char, name: *const c_char) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_removexattr, path, name) } as c_int;
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_removexattr(path as *const u8, name as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5047,17 +5039,13 @@ pub unsafe extern "C" fn fgetxattr(
     value: *mut c_void,
     size: usize,
 ) -> isize {
-    let rc = unsafe { libc::syscall(libc::SYS_fgetxattr, fd, name, value, size) };
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_fgetxattr(fd, name as *const u8, value as *mut u8, size) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as isize
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5068,47 +5056,35 @@ pub unsafe extern "C" fn fsetxattr(
     size: usize,
     flags: c_int,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_fsetxattr, fd, name, value, size, flags) } as c_int;
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_fsetxattr(fd, name as *const u8, value as *const u8, size, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn flistxattr(fd: c_int, list: *mut c_char, size: usize) -> isize {
-    let rc = unsafe { libc::syscall(libc::SYS_flistxattr, fd, list, size) };
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_flistxattr(fd, list as *mut u8, size) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as isize
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fremovexattr(fd: c_int, name: *const c_char) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_fremovexattr, fd, name) } as c_int;
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_fremovexattr(fd, name as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -5867,17 +5843,13 @@ pub unsafe extern "C" fn lgetxattr(
     value: *mut c_void,
     size: usize,
 ) -> isize {
-    let rc = unsafe { libc::syscall(libc::SYS_lgetxattr, path, name, value, size) };
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_lgetxattr(path as *const u8, name as *const u8, value as *mut u8, size) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as isize
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5888,47 +5860,35 @@ pub unsafe extern "C" fn lsetxattr(
     size: usize,
     flags: c_int,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_lsetxattr, path, name, value, size, flags) } as c_int;
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_lsetxattr(path as *const u8, name as *const u8, value as *const u8, size, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn llistxattr(path: *const c_char, list: *mut c_char, size: usize) -> isize {
-    let rc = unsafe { libc::syscall(libc::SYS_llistxattr, path, list, size) };
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_llistxattr(path as *const u8, list as *mut u8, size) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as isize
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lremovexattr(path: *const c_char, name: *const c_char) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_lremovexattr, path, name) } as c_int;
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(libc::ENOTSUP),
-            )
-        };
+    match unsafe { syscall::sys_lremovexattr(path as *const u8, name as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
