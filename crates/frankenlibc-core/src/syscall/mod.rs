@@ -1282,6 +1282,62 @@ pub const SYS_MOUNT_SETATTR: usize = 442;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_RT_SIGRETURN: usize = 139;
 
+// Misc legacy/privileged syscalls - x86_64 only
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETTIMEOFDAY: usize = 96;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_ARCH_PRCTL: usize = 158;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IOPL: usize = 172;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MODIFY_LDT: usize = 154;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_USELIB: usize = 134;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FUTIMESAT: usize = 261;
+
+// Kernel module syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_INIT_MODULE: usize = 175;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_DELETE_MODULE: usize = 176;
+
+// Kernel module syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_INIT_MODULE: usize = 105;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_DELETE_MODULE: usize = 106;
+
+// Process credentials - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETFSUID: usize = 122;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETFSGID: usize = 123;
+
+// Process credentials - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETFSUID: usize = 151;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETFSGID: usize = 152;
+
+// Process times - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TIMES: usize = 100;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_VHANGUP: usize = 153;
+
+// Process times - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TIMES: usize = 153;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_VHANGUP: usize = 58;
+
+// Pidfd syscalls (kernel 5.3+, same on both architectures)
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PIDFD_GETPID: usize = 438;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PIDFD_GETPID: usize = 438;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -5354,6 +5410,124 @@ pub unsafe fn sys_mount_setattr(
 pub unsafe fn sys_rt_sigreturn(scp: *mut u8) -> Result<(), i32> {
     let ret = unsafe { raw::syscall1(SYS_RT_SIGRETURN, scp as usize) };
     syscall_result(ret).map(|_| ())
+}
+
+/// `gettimeofday(tv, tz)` — get time of day. x86_64 only (aarch64 uses clock_gettime).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_gettimeofday(tv: *mut u8, tz: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_GETTIMEOFDAY, tv as usize, tz as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `arch_prctl(code, addr)` — set/get architecture-specific thread state. x86_64 only.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_arch_prctl(code: i32, addr: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_ARCH_PRCTL, code as usize, addr) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `init_module(module_image, len, param_values)` — load a kernel module.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_init_module(
+    module_image: *const u8,
+    len: usize,
+    param_values: *const u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_INIT_MODULE, module_image as usize, len, param_values as usize)
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `delete_module(name, flags)` — unload a kernel module.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_delete_module(name: *const u8, flags: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_DELETE_MODULE, name as usize, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `setfsuid(fsuid)` — set filesystem UID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setfsuid(fsuid: u32) -> i32 {
+    let ret = unsafe { raw::syscall1(SYS_SETFSUID, fsuid as usize) };
+    ret as i32
+}
+
+/// `setfsgid(fsgid)` — set filesystem GID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setfsgid(fsgid: u32) -> i32 {
+    let ret = unsafe { raw::syscall1(SYS_SETFSGID, fsgid as usize) };
+    ret as i32
+}
+
+/// `times(buf)` — get process times.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_times(buf: *mut u8) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall1(SYS_TIMES, buf as usize) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `vhangup()` — virtually hang up the current terminal.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_vhangup() -> Result<(), i32> {
+    let ret = unsafe { raw::syscall0(SYS_VHANGUP) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `iopl(level)` — change I/O privilege level. x86_64 only.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_iopl(level: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_IOPL, level as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `modify_ldt(func, ptr, bytecount)` — read or write LDT entries. x86_64 only.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_modify_ldt(func: i32, ptr: *mut u8, bytecount: usize) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_MODIFY_LDT, func as usize, ptr as usize, bytecount) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `uselib(library)` — load a shared library. x86_64 only (deprecated).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_uselib(library: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_USELIB, library as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `futimesat(dirfd, pathname, tv)` — change file timestamps relative to directory. x86_64 only.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_futimesat(dirfd: i32, pathname: *const u8, tv: *const u8) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_FUTIMESAT, dirfd as usize, pathname as usize, tv as usize)
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `pidfd_getpid(pidfd)` — get PID from pidfd (kernel 6.9+).
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_pidfd_getpid(pidfd: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_PIDFD_GETPID, pidfd as usize) };
+    syscall_result(ret).map(|v| v as i32)
 }
 
 // -------------------------------------------------------------------------
