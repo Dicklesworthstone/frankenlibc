@@ -11,7 +11,7 @@
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
 
-use frankenlibc_core::syscall::{self as raw_syscall, syscall_result, syscall3};
+use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -3034,16 +3034,14 @@ pub unsafe extern "C" fn bindresvport(sd: c_int, sin: *mut c_void) -> c_int {
         unsafe {
             (*sa).sin_port = port.to_be();
         }
-        let rc = unsafe {
-            syscall3(
-                libc::SYS_bind as usize,
-                sd as usize,
-                (sa as *const libc::sockaddr_in).cast::<c_void>() as usize,
-                std::mem::size_of::<libc::sockaddr_in>(),
+        match unsafe {
+            raw_syscall::sys_bind(
+                sd,
+                (sa as *const libc::sockaddr_in).cast::<u8>(),
+                std::mem::size_of::<libc::sockaddr_in>() as u32,
             )
-        };
-        match syscall_result(rc) {
-            Ok(_) => return 0,
+        } {
+            Ok(()) => return 0,
             Err(err) => {
                 if err != libc::EADDRINUSE {
                     unsafe { set_abi_errno(err) };
