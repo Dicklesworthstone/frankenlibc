@@ -6228,17 +6228,18 @@ pub unsafe extern "C" fn shmget(key: c_int, size: usize, shmflg: c_int) -> c_int
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_shmget, key, size, shmflg),
-            errno::EINVAL,
-        )
+    let rc = match syscall::sys_shmget(key, size, shmflg) {
+        Ok(id) => id,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Process,
         decision.profile,
         runtime_policy::scaled_cost(10, size),
-        rc != 0,
+        rc < 0,
     );
     rc
 }
@@ -6253,13 +6254,14 @@ pub unsafe extern "C" fn shmctl(shmid: c_int, cmd: c_int, buf: *mut c_void) -> c
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_shmctl, shmid, cmd, buf),
-            errno::EINVAL,
-        )
+    let rc = match unsafe { syscall::sys_shmctl(shmid, cmd, buf as *mut u8) } {
+        Ok(r) => r,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 10, rc != 0);
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 10, rc < 0);
     rc
 }
 
@@ -6285,14 +6287,17 @@ pub unsafe extern "C" fn shmat(shmid: c_int, shmaddr: *const c_void, shmflg: c_i
         return (-1_isize) as *mut c_void;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_shmat, shmid, shmaddr, shmflg) };
-    if rc == -1 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
-        runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 10, true);
-        return (-1_isize) as *mut c_void;
+    match unsafe { syscall::sys_shmat(shmid, shmaddr as usize, shmflg) } {
+        Ok(addr) => {
+            runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 10, false);
+            addr as *mut c_void
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 10, true);
+            (-1_isize) as *mut c_void
+        }
     }
-    runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 10, false);
-    rc as *mut c_void
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6317,7 +6322,13 @@ pub unsafe extern "C" fn shmdt(shmaddr: *const c_void) -> c_int {
         return -1;
     }
 
-    let rc = unsafe { syscall_ret_int(libc::syscall(libc::SYS_shmdt, shmaddr), errno::EINVAL) };
+    let rc = match unsafe { syscall::sys_shmdt(shmaddr as usize) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
     runtime_policy::observe(ApiFamily::VirtualMemory, decision.profile, 8, rc != 0);
     rc
 }
@@ -6338,13 +6349,14 @@ pub unsafe extern "C" fn semget(key: c_int, nsems: c_int, semflg: c_int) -> c_in
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_semget, key, nsems, semflg),
-            errno::EINVAL,
-        )
+    let rc = match syscall::sys_semget(key, nsems, semflg) {
+        Ok(id) => id,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc != 0);
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc < 0);
     rc
 }
 
@@ -6370,13 +6382,14 @@ pub unsafe extern "C" fn semctl(semid: c_int, semnum: c_int, cmd: c_int, mut arg
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_semctl, semid, semnum, cmd, arg),
-            errno::EINVAL,
-        )
+    let rc = match syscall::sys_semctl(semid, semnum, cmd, arg as usize) {
+        Ok(r) => r,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc != 0);
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc < 0);
     rc
 }
 
@@ -6412,11 +6425,12 @@ pub unsafe extern "C" fn semop(semid: c_int, sops: *mut c_void, nsops: usize) ->
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_semop, semid, sops, nsops),
-            errno::EINVAL,
-        )
+    let rc = match unsafe { syscall::sys_semop(semid, sops as *const u8, nsops) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Process,
@@ -6436,9 +6450,14 @@ pub unsafe extern "C" fn msgget(key: c_int, msgflg: c_int) -> c_int {
         return -1;
     }
 
-    let rc =
-        unsafe { syscall_ret_int(libc::syscall(libc::SYS_msgget, key, msgflg), errno::EINVAL) };
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc != 0);
+    let rc = match syscall::sys_msgget(key, msgflg) {
+        Ok(id) => id,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    };
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc < 0);
     rc
 }
 
@@ -6452,13 +6471,14 @@ pub unsafe extern "C" fn msgctl(msqid: c_int, cmd: c_int, buf: *mut c_void) -> c
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_msgctl, msqid, cmd, buf),
-            errno::EINVAL,
-        )
+    let rc = match unsafe { syscall::sys_msgctl(msqid, cmd, buf as *mut u8) } {
+        Ok(r) => r,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc != 0);
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 8, rc < 0);
     rc
 }
 
@@ -6499,11 +6519,12 @@ pub unsafe extern "C" fn msgsnd(
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_msgsnd, msqid, msgp, msgsz, msgflg),
-            errno::EINVAL,
-        )
+    let rc = match unsafe { syscall::sys_msgsnd(msqid, msgp as *const u8, msgsz, msgflg) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Process,
@@ -6552,11 +6573,12 @@ pub unsafe extern "C" fn msgrcv(
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_isize(
-            libc::syscall(libc::SYS_msgrcv, msqid, msgp, msgsz, msgtyp, msgflg),
-            errno::EINVAL,
-        ) as libc::ssize_t
+    let rc = match unsafe { syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg) } {
+        Ok(n) => n as libc::ssize_t,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Process,

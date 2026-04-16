@@ -802,6 +802,54 @@ pub const SYS_TIMER_GETOVERRUN: usize = 109;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_TIMER_DELETE: usize = 111;
 
+// SysV IPC syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SHMGET: usize = 29;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SHMCTL: usize = 31;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SHMAT: usize = 30;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SHMDT: usize = 67;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SEMGET: usize = 64;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SEMCTL: usize = 66;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SEMOP: usize = 65;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MSGGET: usize = 68;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MSGCTL: usize = 71;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MSGSND: usize = 69;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MSGRCV: usize = 70;
+
+// SysV IPC syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SHMGET: usize = 194;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SHMCTL: usize = 195;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SHMAT: usize = 196;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SHMDT: usize = 197;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SEMGET: usize = 190;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SEMCTL: usize = 191;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SEMOP: usize = 193;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MSGGET: usize = 186;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MSGCTL: usize = 187;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MSGSND: usize = 189;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MSGRCV: usize = 188;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -3564,6 +3612,126 @@ pub fn sys_timer_getoverrun(timerid: i32) -> Result<i32, i32> {
 pub fn sys_timer_delete(timerid: i32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall1(SYS_TIMER_DELETE, timerid as usize) };
     syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// SysV IPC syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `shmget(key, size, shmflg)` — get a System V shared memory segment.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_shmget(key: i32, size: usize, shmflg: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_SHMGET, key as usize, size, shmflg as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `shmctl(shmid, cmd, buf)` — System V shared memory control.
+///
+/// # Safety
+///
+/// `buf` may be null or must point to a valid shmid_ds structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_shmctl(shmid: i32, cmd: i32, buf: *mut u8) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_SHMCTL, shmid as usize, cmd as usize, buf as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `shmat(shmid, shmaddr, shmflg)` — attach a shared memory segment.
+///
+/// # Safety
+///
+/// `shmaddr` may be null or must be a valid address hint.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_shmat(shmid: i32, shmaddr: usize, shmflg: i32) -> Result<usize, i32> {
+    let ret = unsafe { raw::syscall3(SYS_SHMAT, shmid as usize, shmaddr, shmflg as usize) };
+    syscall_result(ret)
+}
+
+/// `shmdt(shmaddr)` — detach a shared memory segment.
+///
+/// # Safety
+///
+/// `shmaddr` must be a valid address of an attached shared memory segment.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_shmdt(shmaddr: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_SHMDT, shmaddr) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `semget(key, nsems, semflg)` — get a System V semaphore set.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_semget(key: i32, nsems: i32, semflg: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_SEMGET, key as usize, nsems as usize, semflg as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `semctl(semid, semnum, cmd, arg)` — System V semaphore control.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_semctl(semid: i32, semnum: i32, cmd: i32, arg: usize) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall4(SYS_SEMCTL, semid as usize, semnum as usize, cmd as usize, arg) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `semop(semid, sops, nsops)` — System V semaphore operations.
+///
+/// # Safety
+///
+/// `sops` must point to a valid array of at least `nsops` sembuf structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_semop(semid: i32, sops: *const u8, nsops: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_SEMOP, semid as usize, sops as usize, nsops) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `msgget(key, msgflg)` — get a System V message queue.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_msgget(key: i32, msgflg: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_MSGGET, key as usize, msgflg as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `msgctl(msqid, cmd, buf)` — System V message queue control.
+///
+/// # Safety
+///
+/// `buf` may be null or must point to a valid msqid_ds structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_msgctl(msqid: i32, cmd: i32, buf: *mut u8) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_MSGCTL, msqid as usize, cmd as usize, buf as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `msgsnd(msqid, msgp, msgsz, msgflg)` — send a message to a queue.
+///
+/// # Safety
+///
+/// `msgp` must point to a valid msgbuf structure with at least `msgsz` bytes of data.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_msgsnd(msqid: i32, msgp: *const u8, msgsz: usize, msgflg: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall4(SYS_MSGSND, msqid as usize, msgp as usize, msgsz, msgflg as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `msgrcv(msqid, msgp, msgsz, msgtyp, msgflg)` — receive a message from a queue.
+///
+/// # Safety
+///
+/// `msgp` must point to a writable msgbuf with space for at least `msgsz` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_msgrcv(msqid: i32, msgp: *mut u8, msgsz: usize, msgtyp: isize, msgflg: i32) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall5(SYS_MSGRCV, msqid as usize, msgp as usize, msgsz, msgtyp as usize, msgflg as usize) };
+    syscall_result(ret).map(|v| v as isize)
 }
 
 // -------------------------------------------------------------------------

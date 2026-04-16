@@ -843,7 +843,7 @@ unsafe fn host_pthread_mutex_unlock_fn() -> Option<HostPthreadMutexUnlockFn> {
     }
 }
 
-unsafe fn host_pthread_mutexattr_init_fn() -> Option<HostPthreadMutexattrInitFn> {
+unsafe fn resolved_pthread_mutexattr_init_fn() -> Option<HostPthreadMutexattrInitFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_init\0",
@@ -858,7 +858,7 @@ unsafe fn host_pthread_mutexattr_init_fn() -> Option<HostPthreadMutexattrInitFn>
     }
 }
 
-unsafe fn host_pthread_mutexattr_destroy_fn() -> Option<HostPthreadMutexattrDestroyFn> {
+unsafe fn resolved_pthread_mutexattr_destroy_fn() -> Option<HostPthreadMutexattrDestroyFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_destroy\0",
@@ -873,7 +873,7 @@ unsafe fn host_pthread_mutexattr_destroy_fn() -> Option<HostPthreadMutexattrDest
     }
 }
 
-unsafe fn host_pthread_mutexattr_settype_fn() -> Option<HostPthreadMutexattrSettypeFn> {
+unsafe fn resolved_pthread_mutexattr_settype_fn() -> Option<HostPthreadMutexattrSettypeFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_settype\0",
@@ -888,7 +888,7 @@ unsafe fn host_pthread_mutexattr_settype_fn() -> Option<HostPthreadMutexattrSett
     }
 }
 
-unsafe fn host_pthread_mutexattr_gettype_fn() -> Option<HostPthreadMutexattrGettypeFn> {
+unsafe fn resolved_pthread_mutexattr_gettype_fn() -> Option<HostPthreadMutexattrGettypeFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_gettype\0",
@@ -903,7 +903,7 @@ unsafe fn host_pthread_mutexattr_gettype_fn() -> Option<HostPthreadMutexattrGett
     }
 }
 
-unsafe fn host_pthread_mutexattr_setprotocol_fn() -> Option<HostPthreadMutexattrSetprotocolFn> {
+unsafe fn resolved_pthread_mutexattr_setprotocol_fn() -> Option<HostPthreadMutexattrSetprotocolFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_setprotocol\0",
@@ -918,7 +918,7 @@ unsafe fn host_pthread_mutexattr_setprotocol_fn() -> Option<HostPthreadMutexattr
     }
 }
 
-unsafe fn host_pthread_mutexattr_getprotocol_fn() -> Option<HostPthreadMutexattrGetprotocolFn> {
+unsafe fn resolved_pthread_mutexattr_getprotocol_fn() -> Option<HostPthreadMutexattrGetprotocolFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_getprotocol\0",
@@ -933,7 +933,7 @@ unsafe fn host_pthread_mutexattr_getprotocol_fn() -> Option<HostPthreadMutexattr
     }
 }
 
-unsafe fn host_pthread_mutexattr_setpshared_fn() -> Option<HostPthreadMutexattrSetpsharedFn> {
+unsafe fn resolved_pthread_mutexattr_setpshared_fn() -> Option<HostPthreadMutexattrSetpsharedFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_setpshared\0",
@@ -948,7 +948,7 @@ unsafe fn host_pthread_mutexattr_setpshared_fn() -> Option<HostPthreadMutexattrS
     }
 }
 
-unsafe fn host_pthread_mutexattr_getpshared_fn() -> Option<HostPthreadMutexattrGetpsharedFn> {
+unsafe fn resolved_pthread_mutexattr_getpshared_fn() -> Option<HostPthreadMutexattrGetpsharedFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_getpshared\0",
@@ -963,7 +963,7 @@ unsafe fn host_pthread_mutexattr_getpshared_fn() -> Option<HostPthreadMutexattrG
     }
 }
 
-unsafe fn host_pthread_mutexattr_setrobust_fn() -> Option<HostPthreadMutexattrSetrobustFn> {
+unsafe fn resolved_pthread_mutexattr_setrobust_fn() -> Option<HostPthreadMutexattrSetrobustFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_setrobust\0",
@@ -978,7 +978,7 @@ unsafe fn host_pthread_mutexattr_setrobust_fn() -> Option<HostPthreadMutexattrSe
     }
 }
 
-unsafe fn host_pthread_mutexattr_getrobust_fn() -> Option<HostPthreadMutexattrGetrobustFn> {
+unsafe fn resolved_pthread_mutexattr_getrobust_fn() -> Option<HostPthreadMutexattrGetrobustFn> {
     let ptr = unsafe {
         resolve_host_symbol_with_aliases(&[
             b"pthread_mutexattr_getrobust\0",
@@ -1097,16 +1097,16 @@ pub(crate) fn prewarm_host_thread_symbols() {
         let _ = host_pthread_mutex_lock_fn();
         let _ = host_pthread_mutex_trylock_fn();
         let _ = host_pthread_mutex_unlock_fn();
-        let _ = host_pthread_mutexattr_init_fn();
-        let _ = host_pthread_mutexattr_destroy_fn();
-        let _ = host_pthread_mutexattr_settype_fn();
-        let _ = host_pthread_mutexattr_gettype_fn();
-        let _ = host_pthread_mutexattr_setprotocol_fn();
-        let _ = host_pthread_mutexattr_getprotocol_fn();
-        let _ = host_pthread_mutexattr_setpshared_fn();
-        let _ = host_pthread_mutexattr_getpshared_fn();
-        let _ = host_pthread_mutexattr_setrobust_fn();
-        let _ = host_pthread_mutexattr_getrobust_fn();
+        let _ = resolved_pthread_mutexattr_init_fn();
+        let _ = resolved_pthread_mutexattr_destroy_fn();
+        let _ = resolved_pthread_mutexattr_settype_fn();
+        let _ = resolved_pthread_mutexattr_gettype_fn();
+        let _ = resolved_pthread_mutexattr_setprotocol_fn();
+        let _ = resolved_pthread_mutexattr_getprotocol_fn();
+        let _ = resolved_pthread_mutexattr_setpshared_fn();
+        let _ = resolved_pthread_mutexattr_getpshared_fn();
+        let _ = resolved_pthread_mutexattr_setrobust_fn();
+        let _ = resolved_pthread_mutexattr_getrobust_fn();
         let _ = host_pthread_cond_init_fn();
         let _ = host_pthread_cond_destroy_fn();
         let _ = host_pthread_cond_wait_fn();
