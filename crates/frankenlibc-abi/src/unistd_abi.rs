@@ -2582,7 +2582,7 @@ static mut PTSNAME_FALLBACK: [c_char; PTSNAME_MAX_LEN] = [0; PTSNAME_MAX_LEN];
 
 #[inline]
 unsafe fn lookup_login_name_ptr() -> *const c_char {
-    let pwd = unsafe { crate::pwd_abi::getpwuid(libc::syscall(libc::SYS_geteuid) as libc::uid_t) };
+    let pwd = unsafe { crate::pwd_abi::getpwuid(syscall::sys_geteuid()) };
     if pwd.is_null() {
         return std::ptr::null();
     }
@@ -2601,9 +2601,8 @@ unsafe fn resolve_ttyname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
     }
 
     // Validate descriptor first so callers can distinguish EBADF from ENOTTY.
-    let fcntl_rc = unsafe { libc::syscall(libc::SYS_fcntl, fd, libc::F_GETFD) as c_int };
-    if fcntl_rc < 0 {
-        return Err(last_host_errno(errno::EBADF));
+    if let Err(e) = unsafe { syscall::sys_fcntl(fd, libc::F_GETFD, 0) } {
+        return Err(e);
     }
 
     let mut winsize = std::mem::MaybeUninit::<libc::winsize>::zeroed();
@@ -2612,18 +2611,17 @@ unsafe fn resolve_ttyname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
 
     let proc_link = CString::new(format!("/proc/self/fd/{fd}")).map_err(|_| errno::EINVAL)?;
     let mut resolved = [0 as c_char; TTYNAME_MAX_LEN];
-    let link_rc = unsafe {
-        libc::syscall(
-            libc::SYS_readlink,
-            proc_link.as_ptr(),
-            resolved.as_mut_ptr(),
+    let len = match unsafe {
+        syscall::sys_readlinkat(
+            libc::AT_FDCWD,
+            proc_link.as_ptr() as *const u8,
+            resolved.as_mut_ptr() as *mut u8,
             resolved.len() - 1,
         )
+    } {
+        Ok(n) => n,
+        Err(e) => return Err(e),
     };
-    if link_rc < 0 {
-        return Err(last_host_errno(errno::ENOENT));
-    }
-    let len = link_rc as usize;
     if len + 1 > cap {
         return Err(errno::ERANGE);
     }
@@ -2642,10 +2640,8 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
 
     let mut pty_num: c_int = 0;
     // SAFETY: ioctl writes PTY slave index into `pty_num` on success.
-    let rc =
-        unsafe { libc::syscall(libc::SYS_ioctl, fd, libc::TIOCGPTN as i64, &mut pty_num) as c_int };
-    if rc < 0 {
-        return Err(last_host_errno(errno::EBADF));
+    if let Err(e) = unsafe { syscall::sys_ioctl(fd, libc::TIOCGPTN as usize, &mut pty_num as *mut c_int as usize) } {
+        return Err(e);
     }
 
     let path = format!("/dev/pts/{pty_num}");
@@ -2818,7 +2814,7 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
 
 #[inline]
 fn sys_current_nice() -> Result<c_int, c_int> {
-    syscall::sys_getpriority(libc::PRIO_PROCESS, 0)
+    syscall::sys_getpriority(libc::PRIO_PROCESS as c_int, 0)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2832,7 +2828,7 @@ pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
     };
 
     let target = current.saturating_add(inc).clamp(-20, 19);
-    if let Err(e) = syscall::sys_setpriority(libc::PRIO_PROCESS, 0, target) {
+    if let Err(e) = syscall::sys_setpriority(libc::PRIO_PROCESS as c_int, 0, target) {
         unsafe { set_abi_errno(e) };
         return -1;
     }
