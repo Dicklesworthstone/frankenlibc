@@ -3829,14 +3829,9 @@ pub unsafe extern "C" fn sem_close(sem: *mut c_void) -> c_int {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let rc = unsafe {
-        libc::syscall(libc::SYS_munmap as std::os::raw::c_long, sem, SEM_MMAP_SIZE) as c_int
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
-        -1
-    } else {
-        0
+    match unsafe { syscall::sys_munmap(sem as *mut u8, SEM_MMAP_SIZE) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
 }
 
@@ -3854,16 +3849,9 @@ pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
         }
     };
 
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_unlinkat as std::os::raw::c_long,
-                libc::AT_FDCWD,
-                path.as_ptr(),
-                0,
-            ),
-            errno::ENOENT,
-        )
+    match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path.as_ptr() as *const u8, 0) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
 }
 
