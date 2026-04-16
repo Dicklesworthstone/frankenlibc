@@ -2619,7 +2619,7 @@ unsafe fn resolve_ttyname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
             resolved.len() - 1,
         )
     } {
-        Ok(n) => n,
+        Ok(n) => n as usize,
         Err(e) => return Err(e),
     };
     if len + 1 > cap {
@@ -3611,11 +3611,9 @@ pub unsafe extern "C" fn shm_open(name: *const c_char, oflag: c_int, mode: libc:
         }
     };
 
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_openat, libc::AT_FDCWD, path.as_ptr(), oflag, mode),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_openat(libc::AT_FDCWD, path.as_ptr() as *const u8, oflag, mode) } {
+        Ok(fd) => fd,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
 }
 
@@ -3629,11 +3627,9 @@ pub unsafe extern "C" fn shm_unlink(name: *const c_char) -> c_int {
         }
     };
 
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_unlinkat, libc::AT_FDCWD, path.as_ptr(), 0),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path.as_ptr() as *const u8, 0) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
 }
 
