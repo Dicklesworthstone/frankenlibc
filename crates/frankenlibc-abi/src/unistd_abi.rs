@@ -13259,12 +13259,12 @@ pub unsafe extern "C" fn clock_adjtime(clk_id: libc::clockid_t, buf: *mut libc::
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    let ret = unsafe { libc::syscall(libc::SYS_clock_adjtime, clk_id as c_long, buf as c_long) };
-    if ret < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
-        -1
-    } else {
-        ret as c_int
+    match unsafe { syscall::sys_clock_adjtime(clk_id as i32, buf as *mut u8) } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -15525,8 +15525,13 @@ pub unsafe extern "C" fn semtimedop(
     nsops: usize,
     timeout: *const libc::timespec,
 ) -> c_int {
-    let ret = unsafe { libc::syscall(libc::SYS_semtimedop, semid, sops, nsops, timeout) };
-    unsafe { syscall_ret_zero(ret, libc::EINVAL) }
+    match unsafe { syscall::sys_semtimedop(semid, sops as *const u8, nsops, timeout as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ===========================================================================
@@ -15539,19 +15544,12 @@ pub unsafe extern "C" fn semtimedop(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_getcpu() -> c_int {
     let mut cpu: c_uint = 0;
-    let ret = unsafe {
-        libc::syscall(
-            libc::SYS_getcpu,
-            &mut cpu as *mut c_uint,
-            std::ptr::null_mut::<c_void>(),
-            std::ptr::null_mut::<c_void>(),
-        )
-    };
-    if ret < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EFAULT)) };
-        -1
-    } else {
-        cpu as c_int
+    match unsafe { syscall::sys_getcpu(&mut cpu, std::ptr::null_mut()) } {
+        Ok(()) => cpu as c_int,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -15562,8 +15560,13 @@ pub unsafe extern "C" fn getcpu(
     node: *mut c_uint,
     _unused: *mut c_void,
 ) -> c_int {
-    let ret = unsafe { libc::syscall(libc::SYS_getcpu, cpu, node, std::ptr::null_mut::<c_void>()) };
-    unsafe { syscall_ret_zero(ret, libc::EFAULT) }
+    match unsafe { syscall::sys_getcpu(cpu, node) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// `__sched_cpucount` — count set bits in CPU set.
@@ -16104,8 +16107,13 @@ pub unsafe extern "C" fn move_mount(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn adjtimex(buf: *mut c_void) -> c_int {
-    let ret = unsafe { libc::syscall(libc::SYS_adjtimex, buf) };
-    unsafe { syscall_ret_int(ret, libc::EINVAL) }
+    match unsafe { syscall::sys_adjtimex(buf as *mut u8) } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
