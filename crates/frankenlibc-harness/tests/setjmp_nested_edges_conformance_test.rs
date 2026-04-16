@@ -141,8 +141,8 @@ fn setjmp_nested_edges_has_depth_variants() {
         .iter()
         .map(|s| s.jump_depth)
         .collect();
-    let has_depth_one = depths.iter().any(|&d| d == 1);
-    let has_depth_two = depths.iter().any(|&d| d == 2);
+    let has_depth_one = depths.contains(&1);
+    let has_depth_two = depths.contains(&2);
     assert!(
         has_depth_one && has_depth_two,
         "Need scenarios with jump depth 1 and 2"
