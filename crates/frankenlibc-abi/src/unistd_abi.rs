@@ -9854,7 +9854,7 @@ pub unsafe extern "C" fn strfry(string: *mut c_char) -> *mut c_char {
     if len <= 1 {
         return string;
     }
-    let mut seed: u32 = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
+    let mut seed: u32 = syscall::sys_gettid() as u32;
     let p = string as *mut u8;
     for i in (1..len).rev() {
         seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
@@ -9987,7 +9987,7 @@ pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut
 
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let cnt = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let pid = unsafe { libc::syscall(libc::SYS_getpid) } as u32;
+    let pid = syscall::sys_getpid() as u32;
     let name = format!("{dir_str}/{pfx_str}{pid:x}{cnt:x}");
 
     let ptr = unsafe { crate::malloc_abi::raw_alloc(name.len() + 1) as *mut c_char };
@@ -10328,7 +10328,7 @@ unsafe fn pthread_to_tid(thread: libc::pthread_t) -> c_long {
     let self_handle = unsafe { crate::pthread_abi::pthread_self() };
     if thread == self_handle {
         // Common case: operating on current thread
-        unsafe { libc::syscall(libc::SYS_gettid) as c_long }
+        syscall::sys_gettid() as c_long
     } else {
         // For other threads, try reading TID from the glibc TCB.
         // On glibc x86_64 (NPTL), the pid field is at offset 720.

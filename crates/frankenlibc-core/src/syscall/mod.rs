@@ -968,10 +968,6 @@ pub const SYS_SYSINFO: usize = 179;
 
 // Memory/process management syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
-pub const SYS_GETCWD: usize = 79;
-#[cfg(target_arch = "x86_64")]
-pub const SYS_PRLIMIT64: usize = 302;
-#[cfg(target_arch = "x86_64")]
 pub const SYS_GETRLIMIT: usize = 97;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_TGKILL: usize = 234;
