@@ -9386,30 +9386,36 @@ pub unsafe extern "C" fn process_vm_readv(
         return -1;
     }
 
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_process_vm_readv,
+    match unsafe {
+        syscall::sys_process_vm_readv(
             pid,
-            local_iov,
-            liovcnt,
-            remote_iov,
-            riovcnt,
-            flags,
+            local_iov as *const u8,
+            liovcnt as usize,
+            remote_iov as *const u8,
+            riovcnt as usize,
+            flags as usize,
         )
-    };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    } {
+        Ok(n) => {
+            runtime_policy::observe(
+                ApiFamily::VirtualMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(12, io_units),
+                false,
+            );
+            n
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(
+                ApiFamily::VirtualMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(12, io_units),
+                true,
+            );
+            -1
+        }
     }
-    runtime_policy::observe(
-        ApiFamily::VirtualMemory,
-        decision.profile,
-        runtime_policy::scaled_cost(12, io_units),
-        rc < 0,
-    );
-    rc as isize
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9452,30 +9458,36 @@ pub unsafe extern "C" fn process_vm_writev(
         return -1;
     }
 
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_process_vm_writev,
+    match unsafe {
+        syscall::sys_process_vm_writev(
             pid,
-            local_iov,
-            liovcnt,
-            remote_iov,
-            riovcnt,
-            flags,
+            local_iov as *const u8,
+            liovcnt as usize,
+            remote_iov as *const u8,
+            riovcnt as usize,
+            flags as usize,
         )
-    };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    } {
+        Ok(n) => {
+            runtime_policy::observe(
+                ApiFamily::VirtualMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(12, io_units),
+                false,
+            );
+            n
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(
+                ApiFamily::VirtualMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(12, io_units),
+                true,
+            );
+            -1
+        }
     }
-    runtime_policy::observe(
-        ApiFamily::VirtualMemory,
-        decision.profile,
-        runtime_policy::scaled_cost(12, io_units),
-        rc < 0,
-    );
-    rc as isize
 }
 
 // ---------------------------------------------------------------------------
