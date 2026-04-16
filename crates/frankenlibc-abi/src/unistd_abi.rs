@@ -4997,7 +4997,7 @@ pub unsafe extern "C" fn openpty(
 
     // Grant and unlock
     if unsafe { grantpt(master) } < 0 || unsafe { unlockpt(master) } < 0 {
-        unsafe { libc::syscall(libc::SYS_close, master as i64) };
+        let _ = syscall::sys_close(master);
         return -1;
     }
 
@@ -5007,52 +5007,37 @@ pub unsafe extern "C" fn openpty(
         unsafe { resolve_ptsname_into(master, slave_name.as_mut_ptr().cast::<c_char>(), 64) }
     {
         unsafe { set_abi_errno(err) };
-        unsafe { libc::syscall(libc::SYS_close, master as i64) };
+        let _ = syscall::sys_close(master);
         return -1;
     }
 
     // Open slave
-    let slave = unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_openat,
-                libc::AT_FDCWD,
-                slave_name.as_ptr().cast::<c_char>(),
-                libc::O_RDWR | libc::O_NOCTTY,
-                0,
-            ),
-            errno::ENOENT,
-        )
+    let slave = match unsafe { syscall::sys_openat(libc::AT_FDCWD, slave_name.as_ptr(), libc::O_RDWR | libc::O_NOCTTY, 0) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            let _ = syscall::sys_close(master);
+            return -1;
+        }
     };
-    if slave < 0 {
-        unsafe { libc::syscall(libc::SYS_close, master as i64) };
-        return -1;
-    }
 
     // Apply terminal attributes if provided
     if !termp.is_null() {
-        let rc =
-            unsafe { libc::syscall(libc::SYS_ioctl, slave as i64, libc::TCSETS as i64, termp) };
-        if rc < 0 {
-            unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
-            unsafe {
-                libc::syscall(libc::SYS_close, master as i64);
-                libc::syscall(libc::SYS_close, slave as i64);
-            };
+        if unsafe { syscall::sys_ioctl(slave, libc::TCSETS as usize, termp as usize) }.is_err() {
+            unsafe { set_abi_errno(errno::EBADF) };
+            let _ = syscall::sys_close(master);
+            let _ = syscall::sys_close(slave);
             return -1;
         }
     }
 
     // Apply window size if provided
-    const TIOCSWINSZ: i64 = 0x5414;
+    const TIOCSWINSZ: usize = 0x5414;
     if !winp.is_null() {
-        let rc = unsafe { libc::syscall(libc::SYS_ioctl, slave as i64, TIOCSWINSZ, winp) };
-        if rc < 0 {
-            unsafe { set_abi_errno(last_host_errno(errno::EBADF)) };
-            unsafe {
-                libc::syscall(libc::SYS_close, master as i64);
-                libc::syscall(libc::SYS_close, slave as i64);
-            };
+        if unsafe { syscall::sys_ioctl(slave, TIOCSWINSZ, winp as usize) }.is_err() {
+            unsafe { set_abi_errno(errno::EBADF) };
+            let _ = syscall::sys_close(master);
+            let _ = syscall::sys_close(slave);
             return -1;
         }
     }
@@ -15149,13 +15134,25 @@ pub unsafe extern "C" fn utimensat(
     times: *const libc::timespec,
     flags: c_int,
 ) -> c_int {
-    unsafe { libc::utimensat(dirfd, pathname, times, flags) }
+    match unsafe { syscall::sys_utimensat(dirfd, pathname as *const u8, times as *const u8, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// `futimens` — change timestamps of an open file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn futimens(fd: c_int, times: *const libc::timespec) -> c_int {
-    unsafe { libc::utimensat(fd, std::ptr::null(), times, 0) }
+    match unsafe { syscall::sys_utimensat(fd, std::ptr::null(), times as *const u8, 0) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// `renameat2` — rename file with flags (Linux extension).
