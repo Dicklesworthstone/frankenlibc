@@ -418,11 +418,15 @@ pub const SYS_CLOSE_RANGE: usize = 436;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SCHED_SETPARAM: usize = 142;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_GETPARAM: usize = 143;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_UNLINKAT: usize = 263;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_WAITID: usize = 247;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SCHED_SETSCHEDULER: usize = 144;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_GETSCHEDULER: usize = 145;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SYMLINKAT: usize = 266;
 #[cfg(target_arch = "x86_64")]
@@ -457,6 +461,20 @@ pub const SYS_GETUID: usize = 102;
 pub const SYS_GETEUID: usize = 107;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_GETGID: usize = 104;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETPGID: usize = 121;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETSID: usize = 124;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETSID: usize = 112;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETREUID: usize = 113;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETREGID: usize = 114;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETGROUPS: usize = 115;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETGROUPS: usize = 116;
 
 // Process management syscalls - aarch64
 #[cfg(target_arch = "aarch64")]
@@ -478,11 +496,15 @@ pub const SYS_CLOSE_RANGE: usize = 436;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SCHED_SETPARAM: usize = 118;
 #[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_GETPARAM: usize = 121;
+#[cfg(target_arch = "aarch64")]
 pub const SYS_UNLINKAT: usize = 35;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_WAITID: usize = 95;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SCHED_SETSCHEDULER: usize = 119;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_GETSCHEDULER: usize = 120;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SYMLINKAT: usize = 36;
 #[cfg(target_arch = "aarch64")]
@@ -517,6 +539,20 @@ pub const SYS_GETUID: usize = 174;
 pub const SYS_GETEUID: usize = 175;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_GETGID: usize = 176;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETPGID: usize = 155;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETSID: usize = 156;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETSID: usize = 157;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETREUID: usize = 145;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETREGID: usize = 143;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETGROUPS: usize = 158;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETGROUPS: usize = 159;
 
 // Socket syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2336,6 +2372,18 @@ pub unsafe fn sys_sched_setparam(pid: i32, param: *const u8) -> Result<(), i32> 
     syscall_result(ret).map(|_| ())
 }
 
+/// `sched_getparam(pid, param)` — get scheduling parameters.
+///
+/// # Safety
+///
+/// `param` must be a valid pointer to a sched_param structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sched_getparam(pid: i32, param: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SCHED_GETPARAM, pid as usize, param as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
 /// `unlinkat(dirfd, pathname, flags)` — remove a directory entry.
 ///
 /// # Safety
@@ -2392,6 +2440,14 @@ pub unsafe fn sys_sched_setscheduler(pid: i32, policy: i32, param: *const u8) ->
         )
     };
     syscall_result(ret).map(|_| ())
+}
+
+/// `sched_getscheduler(pid)` — get current scheduling policy.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_sched_getscheduler(pid: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_SCHED_GETSCHEDULER, pid as usize) };
+    syscall_result(ret).map(|v| v as i32)
 }
 
 /// `symlinkat(target, newdirfd, linkpath)` — create a symbolic link relative to directory fd.
@@ -2622,6 +2678,94 @@ pub fn sys_getgid() -> u32 {
 pub fn sys_getegid() -> u32 {
     let ret = unsafe { raw::syscall0(SYS_GETEGID) };
     ret as u32
+}
+
+/// `getpgid(pid)` — get process group ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_getpgid(pid: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_GETPGID, pid as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `setpgid(pid, pgid)` — set process group ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setpgid(pid: i32, pgid: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SETPGID, pid as usize, pgid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getsid(pid)` — get session ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_getsid(pid: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_GETSID, pid as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `setsid()` — create session and set process group ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setsid() -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall0(SYS_SETSID) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `setuid(uid)` — set user identity.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setuid(uid: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_SETUID, uid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `setgid(gid)` — set group identity.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setgid(gid: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_SETGID, gid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `setreuid(ruid, euid)` — set real and effective user IDs.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setreuid(ruid: u32, euid: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SETREUID, ruid as usize, euid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `setregid(rgid, egid)` — set real and effective group IDs.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setregid(rgid: u32, egid: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SETREGID, rgid as usize, egid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getgroups(size, list)` — get list of supplementary group IDs.
+///
+/// # Safety
+///
+/// `list` must point to a buffer that can hold at least `size` group IDs.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getgroups(size: i32, list: *mut u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_GETGROUPS, size as usize, list as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `setgroups(size, list)` — set list of supplementary group IDs.
+///
+/// # Safety
+///
+/// `list` must point to a buffer containing at least `size` group IDs.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_setgroups(size: usize, list: *const u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SETGROUPS, size, list as usize) };
+    syscall_result(ret).map(|_| ())
 }
 
 // -------------------------------------------------------------------------

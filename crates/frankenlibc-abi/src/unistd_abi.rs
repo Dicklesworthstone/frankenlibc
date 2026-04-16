@@ -636,43 +636,33 @@ pub unsafe extern "C" fn getegid() -> libc::gid_t {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpgid(pid: libc::pid_t) -> libc::pid_t {
-    let rc = unsafe { libc::syscall(libc::SYS_getpgid, pid) };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::ESRCH)) };
-        -1
-    } else {
-        rc as libc::pid_t
+    match syscall::sys_getpgid(pid) {
+        Ok(pgid) => pgid,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpgid(pid: libc::pid_t, pgid: libc::pid_t) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setpgid, pid, pgid) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+    match syscall::sys_setpgid(pid, pgid) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsid(pid: libc::pid_t) -> libc::pid_t {
-    let rc = unsafe { libc::syscall(libc::SYS_getsid, pid) };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::ESRCH)) };
-        -1
-    } else {
-        rc as libc::pid_t
+    match syscall::sys_getsid(pid) {
+        Ok(sid) => sid,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setsid() -> libc::pid_t {
-    let rc = unsafe { libc::syscall(libc::SYS_setsid) };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
-        -1
-    } else {
-        rc as libc::pid_t
+    match syscall::sys_setsid() {
+        Ok(sid) => sid,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
 }
 
@@ -682,58 +672,52 @@ pub unsafe extern "C" fn setsid() -> libc::pid_t {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setuid(uid: libc::uid_t) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setuid, uid) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+    match syscall::sys_setuid(uid) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn seteuid(euid: libc::uid_t) -> c_int {
     // seteuid(euid) == setreuid(-1, euid)
-    let rc = unsafe { libc::syscall(libc::SYS_setreuid, libc::uid_t::MAX, euid) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+    match syscall::sys_setreuid(libc::uid_t::MAX, euid) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setreuid(ruid: libc::uid_t, euid: libc::uid_t) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setreuid, ruid, euid) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+    match syscall::sys_setreuid(ruid, euid) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setgid(gid: libc::gid_t) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setgid, gid) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+    match syscall::sys_setgid(gid) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setegid(egid: libc::gid_t) -> c_int {
     // setegid(egid) == setregid(-1, egid)
-    let rc = unsafe { libc::syscall(libc::SYS_setregid, libc::gid_t::MAX, egid) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+    match syscall::sys_setregid(libc::gid_t::MAX, egid) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setregid(rgid: libc::gid_t, egid: libc::gid_t) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setregid, rgid, egid) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+    match syscall::sys_setregid(rgid, egid) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -742,20 +726,18 @@ pub unsafe extern "C" fn setregid(rgid: libc::gid_t, egid: libc::gid_t) -> c_int
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getgroups(size: c_int, list: *mut libc::gid_t) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_getgroups, size, list) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+    match unsafe { syscall::sys_getgroups(size, list as *mut u32) } {
+        Ok(n) => n,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setgroups(size: usize, list: *const libc::gid_t) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setgroups, size, list) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+    match unsafe { syscall::sys_setgroups(size, list as *const u32) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
