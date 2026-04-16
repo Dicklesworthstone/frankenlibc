@@ -722,6 +722,34 @@ pub const SYS_RECVMSG: usize = 212;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_ACCEPT4: usize = 242;
 
+// Message queue syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MQ_OPEN: usize = 240;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MQ_UNLINK: usize = 241;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MQ_TIMEDSEND: usize = 242;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MQ_TIMEDRECEIVE: usize = 243;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MQ_NOTIFY: usize = 244;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MQ_GETSETATTR: usize = 245;
+
+// Message queue syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MQ_OPEN: usize = 180;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MQ_UNLINK: usize = 181;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MQ_TIMEDSEND: usize = 182;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MQ_TIMEDRECEIVE: usize = 183;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MQ_NOTIFY: usize = 184;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MQ_GETSETATTR: usize = 185;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -3208,6 +3236,122 @@ pub unsafe fn sys_inotify_add_watch(fd: i32, pathname: *const u8, mask: u32) -> 
 #[allow(unsafe_code)]
 pub fn sys_inotify_rm_watch(fd: i32, wd: i32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall2(SYS_INOTIFY_RM_WATCH, fd as usize, wd as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Message queue syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `mq_open(name, oflag, mode, attr)` — open a message queue.
+///
+/// # Safety
+///
+/// `name` must be a valid NUL-terminated string.
+/// `attr` may be null or must point to a valid mq_attr structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mq_open(
+    name: *const u8,
+    oflag: i32,
+    mode: u32,
+    attr: usize,
+) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall4(SYS_MQ_OPEN, name as usize, oflag as usize, mode as usize, attr) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `mq_unlink(name)` — remove a message queue.
+///
+/// # Safety
+///
+/// `name` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mq_unlink(name: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_MQ_UNLINK, name as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mq_timedsend(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout)` — send a message.
+///
+/// # Safety
+///
+/// `msg_ptr` must point to a readable buffer of at least `msg_len` bytes.
+/// `abs_timeout` may be null or must point to a valid timespec.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mq_timedsend(
+    mqdes: i32,
+    msg_ptr: *const u8,
+    msg_len: usize,
+    msg_prio: u32,
+    abs_timeout: usize,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_MQ_TIMEDSEND,
+            mqdes as usize,
+            msg_ptr as usize,
+            msg_len,
+            msg_prio as usize,
+            abs_timeout,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mq_timedreceive(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout)` — receive a message.
+///
+/// # Safety
+///
+/// `msg_ptr` must point to a writable buffer of at least `msg_len` bytes.
+/// `msg_prio` may be null or must point to a valid u32.
+/// `abs_timeout` may be null or must point to a valid timespec.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mq_timedreceive(
+    mqdes: i32,
+    msg_ptr: *mut u8,
+    msg_len: usize,
+    msg_prio: usize,
+    abs_timeout: usize,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_MQ_TIMEDRECEIVE,
+            mqdes as usize,
+            msg_ptr as usize,
+            msg_len,
+            msg_prio,
+            abs_timeout,
+        )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `mq_notify(mqdes, sevp)` — register for message arrival notification.
+///
+/// # Safety
+///
+/// `sevp` may be null or must point to a valid sigevent structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mq_notify(mqdes: i32, sevp: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_MQ_NOTIFY, mqdes as usize, sevp) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mq_getsetattr(mqdes, newattr, oldattr)` — get/set message queue attributes.
+///
+/// # Safety
+///
+/// `newattr` may be null or must point to a valid mq_attr structure.
+/// `oldattr` may be null or must point to a valid mq_attr structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mq_getsetattr(mqdes: i32, newattr: usize, oldattr: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_MQ_GETSETATTR, mqdes as usize, newattr, oldattr) };
     syscall_result(ret).map(|_| ())
 }
 

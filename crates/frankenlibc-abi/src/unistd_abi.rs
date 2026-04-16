@@ -4237,11 +4237,12 @@ pub unsafe extern "C" fn mq_open(name: *const c_char, oflag: c_int, mut args: ..
         (0 as libc::mode_t, std::ptr::null())
     };
 
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_mq_open, name, oflag, mode, attr),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_mq_open(name as *const u8, oflag, mode, attr as usize) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -4258,7 +4259,13 @@ pub unsafe extern "C" fn mq_close(mqdes: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mq_unlink(name: *const c_char) -> c_int {
-    unsafe { syscall_ret_int(libc::syscall(libc::SYS_mq_unlink, name), errno::EINVAL) }
+    match unsafe { syscall::sys_mq_unlink(name as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4268,18 +4275,12 @@ pub unsafe extern "C" fn mq_send(
     msg_len: usize,
     msg_prio: c_uint,
 ) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_mq_timedsend,
-                mqdes,
-                msg_ptr,
-                msg_len,
-                msg_prio,
-                std::ptr::null::<libc::timespec>(),
-            ),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_mq_timedsend(mqdes, msg_ptr as *const u8, msg_len, msg_prio, 0) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -4290,33 +4291,23 @@ pub unsafe extern "C" fn mq_receive(
     msg_len: usize,
     msg_prio: *mut c_uint,
 ) -> isize {
-    unsafe {
-        syscall_ret_isize(
-            libc::syscall(
-                libc::SYS_mq_timedreceive,
-                mqdes,
-                msg_ptr,
-                msg_len,
-                msg_prio,
-                std::ptr::null::<libc::timespec>(),
-            ),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_mq_timedreceive(mqdes, msg_ptr as *mut u8, msg_len, msg_prio as usize, 0) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mq_getattr(mqdes: c_int, attr: *mut c_void) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_mq_getsetattr,
-                mqdes,
-                std::ptr::null::<c_void>(),
-                attr,
-            ),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_mq_getsetattr(mqdes, 0, attr as usize) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -4326,11 +4317,12 @@ pub unsafe extern "C" fn mq_setattr(
     newattr: *const c_void,
     oldattr: *mut c_void,
 ) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_mq_getsetattr, mqdes, newattr, oldattr),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_mq_getsetattr(mqdes, newattr as usize, oldattr as usize) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -4343,20 +4335,13 @@ pub unsafe extern "C" fn mq_timedreceive(
     msg_prio: *mut c_uint,
     abs_timeout: *const libc::timespec,
 ) -> isize {
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_mq_timedreceive,
-            mqdes,
-            msg_ptr,
-            msg_len,
-            msg_prio,
-            abs_timeout,
-        )
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_mq_timedreceive(mqdes, msg_ptr as *mut u8, msg_len, msg_prio as usize, abs_timeout as usize) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as isize
 }
 
 /// `mq_timedsend` — send a message to a queue with timeout.
@@ -4368,29 +4353,24 @@ pub unsafe extern "C" fn mq_timedsend(
     msg_prio: c_uint,
     abs_timeout: *const libc::timespec,
 ) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_mq_timedsend,
-                mqdes,
-                msg_ptr,
-                msg_len,
-                msg_prio,
-                abs_timeout,
-            ),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_mq_timedsend(mqdes, msg_ptr as *const u8, msg_len, msg_prio, abs_timeout as usize) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
 /// `mq_notify` — register for notification when a message arrives.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mq_notify(mqdes: c_int, sevp: *const libc::sigevent) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_mq_notify, mqdes, sevp),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_mq_notify(mqdes, sevp as usize) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
