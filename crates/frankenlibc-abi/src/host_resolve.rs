@@ -16,18 +16,6 @@ static HOST_PTHREAD_CREATE: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_JOIN: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_DETACH: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_EXIT: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_CANCEL: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_SETCANCELSTATE: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_SETCANCELTYPE: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_TESTCANCEL: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_KILL: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_GETCPUCLOCKID: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_GETAFFINITY_NP: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_SETAFFINITY_NP: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_GETTID_NP: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_SETNAME_NP: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_GETNAME_NP: AtomicUsize = AtomicUsize::new(0);
-static HOST_PTHREAD_SIGQUEUE: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_SELF: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_EQUAL: AtomicUsize = AtomicUsize::new(0);
 static HOST_MALLOC: AtomicUsize = AtomicUsize::new(0);
@@ -421,18 +409,6 @@ pub(crate) fn bootstrap_host_symbols() {
         ("pthread_join", &HOST_PTHREAD_JOIN),
         ("pthread_detach", &HOST_PTHREAD_DETACH),
         ("pthread_exit", &HOST_PTHREAD_EXIT),
-        ("pthread_cancel", &HOST_PTHREAD_CANCEL),
-        ("pthread_setcancelstate", &HOST_PTHREAD_SETCANCELSTATE),
-        ("pthread_setcanceltype", &HOST_PTHREAD_SETCANCELTYPE),
-        ("pthread_testcancel", &HOST_PTHREAD_TESTCANCEL),
-        ("pthread_kill", &HOST_PTHREAD_KILL),
-        ("pthread_getcpuclockid", &HOST_PTHREAD_GETCPUCLOCKID),
-        ("pthread_getaffinity_np", &HOST_PTHREAD_GETAFFINITY_NP),
-        ("pthread_setaffinity_np", &HOST_PTHREAD_SETAFFINITY_NP),
-        ("pthread_gettid_np", &HOST_PTHREAD_GETTID_NP),
-        ("pthread_setname_np", &HOST_PTHREAD_SETNAME_NP),
-        ("pthread_getname_np", &HOST_PTHREAD_GETNAME_NP),
-        ("pthread_sigqueue", &HOST_PTHREAD_SIGQUEUE),
         ("pthread_self", &HOST_PTHREAD_SELF),
         ("pthread_equal", &HOST_PTHREAD_EQUAL),
         ("malloc", &HOST_MALLOC),
@@ -500,64 +476,6 @@ pub(crate) fn host_pthread_detach_raw() -> Option<unsafe extern "C" fn(libc::pth
 
 pub(crate) fn host_pthread_exit_raw() -> Option<unsafe extern "C" fn(*mut c_void) -> !> {
     load_host_symbol(&HOST_PTHREAD_EXIT).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_cancel_raw() -> Option<unsafe extern "C" fn(libc::pthread_t) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_CANCEL).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_setcancelstate_raw()
--> Option<unsafe extern "C" fn(c_int, *mut c_int) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_SETCANCELSTATE).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_setcanceltype_raw()
--> Option<unsafe extern "C" fn(c_int, *mut c_int) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_SETCANCELTYPE).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_testcancel_raw() -> Option<unsafe extern "C" fn()> {
-    load_host_symbol(&HOST_PTHREAD_TESTCANCEL).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_kill_raw() -> Option<unsafe extern "C" fn(libc::pthread_t, c_int) -> i32>
-{
-    load_host_symbol(&HOST_PTHREAD_KILL).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_getcpuclockid_raw()
--> Option<unsafe extern "C" fn(libc::pthread_t, *mut libc::clockid_t) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_GETCPUCLOCKID).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_getaffinity_np_raw()
--> Option<unsafe extern "C" fn(libc::pthread_t, usize, *mut libc::cpu_set_t) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_GETAFFINITY_NP).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_setaffinity_np_raw()
--> Option<unsafe extern "C" fn(libc::pthread_t, usize, *const libc::cpu_set_t) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_SETAFFINITY_NP).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_gettid_np_raw()
--> Option<unsafe extern "C" fn(libc::pthread_t) -> libc::pid_t> {
-    load_host_symbol(&HOST_PTHREAD_GETTID_NP).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_setname_np_raw()
--> Option<unsafe extern "C" fn(libc::pthread_t, *const c_char) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_SETNAME_NP).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_getname_np_raw()
--> Option<unsafe extern "C" fn(libc::pthread_t, *mut c_char, usize) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_GETNAME_NP).map(|addr| unsafe { core::mem::transmute(addr) })
-}
-
-pub(crate) fn host_pthread_sigqueue_raw()
--> Option<unsafe extern "C" fn(libc::pthread_t, c_int, libc::sigval) -> i32> {
-    load_host_symbol(&HOST_PTHREAD_SIGQUEUE).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_self_raw() -> Option<unsafe extern "C" fn() -> libc::pthread_t> {
