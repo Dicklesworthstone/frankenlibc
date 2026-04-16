@@ -3103,7 +3103,26 @@ pub unsafe extern "C" fn __cmsg_nxthdr(mhdr: *mut c_void, cmsg: *mut c_void) -> 
     }
     let mhdr = mhdr as *mut libc::msghdr;
     let cmsg = cmsg as *mut libc::cmsghdr;
-    unsafe { libc::CMSG_NXTHDR(mhdr, cmsg) as *mut c_void }
+    // Native CMSG_NXTHDR implementation:
+    // 1. Get current cmsg_len and align to size_t boundary
+    // 2. Calculate next cmsg pointer
+    // 3. Verify it fits within msg_controllen
+    let cmsg_len = unsafe { (*cmsg).cmsg_len };
+    if cmsg_len < core::mem::size_of::<libc::cmsghdr>() {
+        return std::ptr::null_mut();
+    }
+    // CMSG_ALIGN: round up to size_t alignment
+    const ALIGN: usize = core::mem::size_of::<usize>();
+    let aligned_len = (cmsg_len + ALIGN - 1) & !(ALIGN - 1);
+    let next = (cmsg as *mut u8).add(aligned_len) as *mut libc::cmsghdr;
+    // Check if next cmsg header fits within control buffer
+    let control_start = unsafe { (*mhdr).msg_control as *mut u8 };
+    let control_end = control_start.add(unsafe { (*mhdr).msg_controllen });
+    let next_end = (next as *mut u8).add(core::mem::size_of::<libc::cmsghdr>());
+    if next_end > control_end {
+        return std::ptr::null_mut();
+    }
+    next as *mut c_void
 }
 // __connect: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
