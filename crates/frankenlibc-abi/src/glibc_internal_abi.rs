@@ -4333,10 +4333,75 @@ pub unsafe extern "C" fn sprofil(
 }
 
 // Misc POSIX functions
-// adjtime: native — forward to libc
+#[inline]
+fn last_os_errno(default_errno: c_int) -> c_int {
+    std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(default_errno)
+}
+
+#[inline]
+fn timeval_to_offset_micros(tv: libc::timeval) -> Option<c_long> {
+    let micros = i128::from(tv.tv_sec)
+        .checked_mul(1_000_000)?
+        .checked_add(i128::from(tv.tv_usec))?;
+    c_long::try_from(micros).ok()
+}
+
+#[inline]
+fn offset_micros_to_timeval(offset: c_long) -> libc::timeval {
+    libc::timeval {
+        tv_sec: offset.div_euclid(1_000_000) as _,
+        tv_usec: offset.rem_euclid(1_000_000) as _,
+    }
+}
+
+#[inline]
+unsafe fn write_remaining_adjtime(olddelta: *mut c_void) -> Result<(), c_int> {
+    if olddelta.is_null() {
+        return Ok(());
+    }
+    let mut timex: libc::timex = unsafe { std::mem::zeroed() };
+    timex.modes = libc::ADJ_OFFSET_SS_READ as _;
+    let ret = unsafe { libc::syscall(libc::SYS_adjtimex, &mut timex) };
+    if ret < 0 {
+        return Err(last_os_errno(libc::EINVAL));
+    }
+    unsafe {
+        *(olddelta as *mut libc::timeval) = offset_micros_to_timeval(timex.offset as c_long);
+    }
+    Ok(())
+}
+
+// adjtime: native via adjtimex single-shot offset mode
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn adjtime(delta: *const c_void, olddelta: *mut c_void) -> c_int {
-    unsafe { libc::adjtime(delta.cast(), olddelta.cast()) }
+    if let Err(err) = unsafe { write_remaining_adjtime(olddelta) } {
+        unsafe { crate::errno_abi::set_abi_errno(err) };
+        return -1;
+    }
+    if delta.is_null() {
+        return 0;
+    }
+
+    let offset = match timeval_to_offset_micros(unsafe { *(delta as *const libc::timeval) }) {
+        Some(offset) => offset,
+        None => {
+            unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+            return -1;
+        }
+    };
+
+    let mut timex: libc::timex = unsafe { std::mem::zeroed() };
+    timex.modes = libc::ADJ_OFFSET_SINGLESHOT as _;
+    timex.offset = offset as _;
+    let ret = unsafe { libc::syscall(libc::SYS_adjtimex, &mut timex) };
+    if ret < 0 {
+        unsafe { crate::errno_abi::set_abi_errno(last_os_errno(libc::EINVAL)) };
+        -1
+    } else {
+        0
+    }
 }
 
 #[inline]
@@ -4373,6 +4438,27 @@ unsafe fn utimbuf_to_timespecs(times: *const c_void) -> Option<[libc::timespec; 
             tv_nsec: 0,
         },
     ])
+}
+
+#[cfg(test)]
+mod adjtime_abi_tests {
+    use super::{offset_micros_to_timeval, timeval_to_offset_micros};
+
+    #[test]
+    fn timeval_to_offset_micros_handles_signed_microseconds() {
+        let tv = libc::timeval {
+            tv_sec: 1,
+            tv_usec: -250_000,
+        };
+        assert_eq!(timeval_to_offset_micros(tv), Some(750_000));
+    }
+
+    #[test]
+    fn offset_micros_to_timeval_normalizes_negative_offsets() {
+        let tv = offset_micros_to_timeval(-1);
+        assert_eq!(tv.tv_sec, -1);
+        assert_eq!(tv.tv_usec, 999_999);
+    }
 }
 
 // arch_prctl: native syscall

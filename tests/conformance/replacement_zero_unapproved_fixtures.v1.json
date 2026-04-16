@@ -9,18 +9,18 @@
   },
   "fixtures": [
     {
-      "id": "interpose_allow_glibc_internal_abi_adjtime",
+      "id": "interpose_allow_glibc_internal_abi_sethostid",
       "mode": "interpose",
       "module": "glibc_internal_abi",
-      "symbol": "adjtime",
+      "symbol": "sethostid",
       "expected_outcome": "allowed",
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_glibc_internal_abi_adjtime",
+      "id": "replacement_forbid_glibc_internal_abi_sethostid",
       "mode": "replacement",
       "module": "glibc_internal_abi",
-      "symbol": "adjtime",
+      "symbol": "sethostid",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     },
