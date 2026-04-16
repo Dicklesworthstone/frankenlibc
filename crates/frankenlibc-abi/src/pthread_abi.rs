@@ -45,7 +45,6 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
-type HostPthreadSelfFn = unsafe extern "C" fn() -> libc::pthread_t;
 type HostPthreadGetattrFn =
     unsafe extern "C" fn(libc::pthread_t, *mut libc::pthread_attr_t) -> c_int;
 type HostPthreadMutexInitFn =
@@ -207,8 +206,6 @@ static HOST_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static [u8], usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static str, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static HOST_PTHREAD_SELF_PTR: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_CONDATTR_GETCLOCK_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static RESOLVED_PTHREAD_CONDATTR_INIT_PTR: OnceLock<usize> = OnceLock::new();
@@ -270,13 +267,9 @@ fn current_threading_backend() -> u8 {
 
             let resolved = match core_self_tid() {
                 tid if tid > 0 && core_handle_for_tid(tid).is_some() => THREAD_BACKEND_MANAGED,
-                _ => {
-                    if crate::host_resolve::host_pthread_self_raw().is_some() {
-                        THREAD_BACKEND_HOST
-                    } else {
-                        THREAD_BACKEND_MANAGED
-                    }
-                }
+                // Supported host targets always provide pthread_self, so any
+                // non-managed thread in non-forced mode is host-backed.
+                _ => THREAD_BACKEND_HOST,
             };
             backend.set(resolved);
             resolved
@@ -645,14 +638,6 @@ unsafe fn resolved_pthread_attr_setsigmask_np_fn() -> Option<ResolvedPthreadAttr
         )
     }?;
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetsigmaskNpFn>(ptr) })
-}
-
-unsafe fn host_pthread_self_fn() -> Option<HostPthreadSelfFn> {
-    let ptr = unsafe {
-        resolve_cached_host_thread_symbol(&HOST_PTHREAD_SELF_PTR, "pthread_self", b"pthread_self\0")
-    }?;
-    // SAFETY: resolved symbol has pthread_self ABI.
-    Some(unsafe { std::mem::transmute::<usize, HostPthreadSelfFn>(ptr) })
 }
 
 unsafe fn host_pthread_mutex_init_fn() -> Option<HostPthreadMutexInitFn> {
@@ -1831,11 +1816,7 @@ unsafe fn host_pthread_create_with_managed_attr(
 unsafe extern "C" fn host_pthread_start_trampoline(arg: *mut c_void) -> *mut c_void {
     let start_ctx = unsafe { Box::from_raw(arg.cast::<HostThreadStartContext>()) };
     let _ = CURRENT_THREADING_BACKEND.try_with(|backend| backend.set(THREAD_BACKEND_HOST));
-    if let Some(host_self) = unsafe { host_pthread_self_fn() } {
-        let host_thread = unsafe { host_self() };
-        let _ = CURRENT_PTHREAD_SELF_CACHE.try_with(|cache| cache.set(host_thread));
-        remember_host_thread_tid(host_thread, core_self_tid());
-    }
+    let _ = native_pthread_self();
     let start_routine = start_ctx.start_routine;
     let start_arg = start_ctx.arg;
     drop(start_ctx);
