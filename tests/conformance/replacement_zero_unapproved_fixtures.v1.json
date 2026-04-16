@@ -23,22 +23,6 @@
       "symbol": "dlopen",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "interpose_allow_unistd_abi_backtrace",
-      "mode": "interpose",
-      "module": "unistd_abi",
-      "symbol": "backtrace",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_unistd_abi_backtrace_symbols_fd",
-      "mode": "replacement",
-      "module": "unistd_abi",
-      "symbol": "backtrace_symbols_fd",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
     }
   ],
   "required_log_fields": [
@@ -60,12 +44,11 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 4,
-    "interpose_allowed_count": 2,
-    "replacement_forbidden_count": 2,
+    "fixture_count": 2,
+    "interpose_allowed_count": 1,
+    "replacement_forbidden_count": 1,
     "covered_callthrough_modules": [
-      "pthread_abi",
-      "unistd_abi"
+      "pthread_abi"
     ]
   }
 }

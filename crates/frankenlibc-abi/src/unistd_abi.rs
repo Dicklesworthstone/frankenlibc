@@ -11999,13 +11999,47 @@ pub unsafe extern "C" fn readdir64_r(
 // Batch: backtrace — Implemented
 // ===========================================================================
 
+type HostBacktraceFn = unsafe extern "C" fn(*mut *mut c_void, c_int) -> c_int;
+type HostBacktraceSymbolsFn =
+    unsafe extern "C" fn(*const *mut c_void, c_int) -> *mut *mut c_char;
+type HostBacktraceSymbolsFdFn = unsafe extern "C" fn(*const *mut c_void, c_int, c_int);
+
+static HOST_BACKTRACE_FN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+static HOST_BACKTRACE_SYMBOLS_FN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+static HOST_BACKTRACE_SYMBOLS_FD_FN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+unsafe fn host_unistd_symbol(
+    slot: &std::sync::OnceLock<usize>,
+    symbol: &'static str,
+) -> Option<usize> {
+    crate::host_resolve::resolve_host_symbol_cached(slot, symbol)
+}
+
+unsafe fn host_backtrace_fn() -> Option<HostBacktraceFn> {
+    unsafe { host_unistd_symbol(&HOST_BACKTRACE_FN, "backtrace") }
+        .map(|addr| unsafe { std::mem::transmute(addr) })
+}
+
+unsafe fn host_backtrace_symbols_fn() -> Option<HostBacktraceSymbolsFn> {
+    unsafe { host_unistd_symbol(&HOST_BACKTRACE_SYMBOLS_FN, "backtrace_symbols") }
+        .map(|addr| unsafe { std::mem::transmute(addr) })
+}
+
+unsafe fn host_backtrace_symbols_fd_fn() -> Option<HostBacktraceSymbolsFdFn> {
+    unsafe { host_unistd_symbol(&HOST_BACKTRACE_SYMBOLS_FD_FN, "backtrace_symbols_fd") }
+        .map(|addr| unsafe { std::mem::transmute(addr) })
+}
+
 /// `backtrace` — capture stack backtrace.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn backtrace(buffer: *mut *mut c_void, size: c_int) -> c_int {
     if buffer.is_null() || size <= 0 {
         return 0;
     }
-    unsafe { libc::backtrace(buffer, size) }
+    match unsafe { host_backtrace_fn() } {
+        Some(host_backtrace) => unsafe { host_backtrace(buffer, size) },
+        None => 0,
+    }
 }
 
 /// `backtrace_symbols` — convert backtrace addresses to symbol strings.
@@ -12017,8 +12051,10 @@ pub unsafe extern "C" fn backtrace_symbols(
     if buffer.is_null() || size <= 0 {
         return std::ptr::null_mut();
     }
-    // backtrace_symbols returns a malloc'd array of strings
-    unsafe { libc::backtrace_symbols(buffer, size) }
+    match unsafe { host_backtrace_symbols_fn() } {
+        Some(host_backtrace_symbols) => unsafe { host_backtrace_symbols(buffer, size) },
+        None => std::ptr::null_mut(),
+    }
 }
 
 /// `backtrace_symbols_fd` — write backtrace symbols to file descriptor.
@@ -12027,7 +12063,9 @@ pub unsafe extern "C" fn backtrace_symbols_fd(buffer: *const *mut c_void, size: 
     if buffer.is_null() || size <= 0 {
         return;
     }
-    unsafe { libc::backtrace_symbols_fd(buffer, size, fd) };
+    if let Some(host_backtrace_symbols_fd) = unsafe { host_backtrace_symbols_fd_fn() } {
+        unsafe { host_backtrace_symbols_fd(buffer, size, fd) };
+    }
 }
 
 // ===========================================================================
