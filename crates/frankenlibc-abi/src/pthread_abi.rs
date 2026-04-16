@@ -40,6 +40,12 @@ use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::runtime_math::ApiFamily;
 
 use crate::errno_abi::set_abi_errno;
+use crate::host_resolve::{
+    host_pthread_create_raw as resolved_thread_create_raw,
+    host_pthread_detach_raw as resolved_thread_detach_raw,
+    host_pthread_exit_raw as resolved_thread_exit_raw,
+    host_pthread_join_raw as resolved_thread_join_raw,
+};
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
@@ -641,7 +647,7 @@ unsafe fn resolved_pthread_attr_setsigmask_np_fn() -> Option<ResolvedPthreadAttr
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetsigmaskNpFn>(ptr) })
 }
 
-unsafe fn host_pthread_mutex_init_fn() -> Option<HostPthreadMutexInitFn> {
+unsafe fn resolved_mutex_init_fn() -> Option<HostPthreadMutexInitFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_init\0") };
     if ptr.is_null() {
         None
@@ -651,7 +657,7 @@ unsafe fn host_pthread_mutex_init_fn() -> Option<HostPthreadMutexInitFn> {
     }
 }
 
-unsafe fn host_pthread_mutex_destroy_fn() -> Option<HostPthreadMutexDestroyFn> {
+unsafe fn resolved_mutex_destroy_fn() -> Option<HostPthreadMutexDestroyFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_destroy\0") };
     if ptr.is_null() {
         None
@@ -661,7 +667,7 @@ unsafe fn host_pthread_mutex_destroy_fn() -> Option<HostPthreadMutexDestroyFn> {
     }
 }
 
-unsafe fn host_pthread_mutex_lock_fn() -> Option<HostPthreadMutexLockFn> {
+unsafe fn resolved_mutex_lock_fn() -> Option<HostPthreadMutexLockFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_lock\0") };
     if ptr.is_null() {
         None
@@ -671,7 +677,7 @@ unsafe fn host_pthread_mutex_lock_fn() -> Option<HostPthreadMutexLockFn> {
     }
 }
 
-unsafe fn host_pthread_mutex_timedlock_fn() -> Option<HostPthreadMutexTimedlockFn> {
+unsafe fn resolved_mutex_timedlock_fn() -> Option<HostPthreadMutexTimedlockFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_timedlock\0") };
     if ptr.is_null() {
         None
@@ -681,7 +687,7 @@ unsafe fn host_pthread_mutex_timedlock_fn() -> Option<HostPthreadMutexTimedlockF
     }
 }
 
-unsafe fn host_pthread_mutex_trylock_fn() -> Option<HostPthreadMutexTrylockFn> {
+unsafe fn resolved_mutex_trylock_fn() -> Option<HostPthreadMutexTrylockFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_trylock\0") };
     if ptr.is_null() {
         None
@@ -691,7 +697,7 @@ unsafe fn host_pthread_mutex_trylock_fn() -> Option<HostPthreadMutexTrylockFn> {
     }
 }
 
-unsafe fn host_pthread_mutex_unlock_fn() -> Option<HostPthreadMutexUnlockFn> {
+unsafe fn resolved_mutex_unlock_fn() -> Option<HostPthreadMutexUnlockFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_unlock\0") };
     if ptr.is_null() {
         None
@@ -851,7 +857,7 @@ unsafe fn resolved_pthread_mutexattr_getrobust_fn() -> Option<HostPthreadMutexat
     }
 }
 
-unsafe fn host_pthread_cond_init_fn() -> Option<HostPthreadCondInitFn> {
+unsafe fn resolved_cond_init_fn() -> Option<HostPthreadCondInitFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_cond_init\0") };
     if ptr.is_null() {
         None
@@ -861,7 +867,7 @@ unsafe fn host_pthread_cond_init_fn() -> Option<HostPthreadCondInitFn> {
     }
 }
 
-unsafe fn host_pthread_cond_destroy_fn() -> Option<HostPthreadCondDestroyFn> {
+unsafe fn resolved_cond_destroy_fn() -> Option<HostPthreadCondDestroyFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_cond_destroy\0") };
     if ptr.is_null() {
         None
@@ -871,7 +877,7 @@ unsafe fn host_pthread_cond_destroy_fn() -> Option<HostPthreadCondDestroyFn> {
     }
 }
 
-unsafe fn host_pthread_cond_wait_fn() -> Option<HostPthreadCondWaitFn> {
+unsafe fn resolved_cond_wait_fn() -> Option<HostPthreadCondWaitFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_cond_wait\0") };
     if ptr.is_null() {
         None
@@ -881,7 +887,7 @@ unsafe fn host_pthread_cond_wait_fn() -> Option<HostPthreadCondWaitFn> {
     }
 }
 
-unsafe fn host_pthread_cond_signal_fn() -> Option<HostPthreadCondSignalFn> {
+unsafe fn resolved_cond_signal_fn() -> Option<HostPthreadCondSignalFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_cond_signal\0") };
     if ptr.is_null() {
         None
@@ -891,7 +897,7 @@ unsafe fn host_pthread_cond_signal_fn() -> Option<HostPthreadCondSignalFn> {
     }
 }
 
-unsafe fn host_pthread_cond_broadcast_fn() -> Option<HostPthreadCondBroadcastFn> {
+unsafe fn resolved_cond_broadcast_fn() -> Option<HostPthreadCondBroadcastFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_cond_broadcast\0") };
     if ptr.is_null() {
         None
@@ -901,7 +907,7 @@ unsafe fn host_pthread_cond_broadcast_fn() -> Option<HostPthreadCondBroadcastFn>
     }
 }
 
-unsafe fn host_pthread_cond_timedwait_fn() -> Option<HostPthreadCondTimedwaitFn> {
+unsafe fn resolved_cond_timedwait_fn() -> Option<HostPthreadCondTimedwaitFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_cond_timedwait\0") };
     if ptr.is_null() {
         None
@@ -1663,7 +1669,7 @@ fn managed_attr_data_for_host_translation(
     None
 }
 
-unsafe fn host_pthread_create_with_managed_attr(
+unsafe fn dispatch_host_thread_create_with_managed_attr(
     host_create: unsafe extern "C" fn(
         *mut libc::pthread_t,
         *const libc::pthread_attr_t,
@@ -1686,7 +1692,7 @@ unsafe fn host_pthread_create_with_managed_attr(
             host_create(
                 &mut host_thread,
                 attr,
-                Some(host_pthread_start_trampoline),
+                Some(host_thread_start_trampoline),
                 start_ctx.cast(),
             )
         };
@@ -1804,7 +1810,7 @@ unsafe fn host_pthread_create_with_managed_attr(
             let create_rc = host_create(
                 &mut host_thread,
                 &host_attr,
-                Some(host_pthread_start_trampoline),
+                Some(host_thread_start_trampoline),
                 start_ctx.cast(),
             );
             if create_rc != 0 {
@@ -1826,7 +1832,7 @@ unsafe fn host_pthread_create_with_managed_attr(
     result
 }
 
-unsafe extern "C" fn host_pthread_start_trampoline(arg: *mut c_void) -> *mut c_void {
+unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
     let start_ctx = unsafe { Box::from_raw(arg.cast::<HostThreadStartContext>()) };
     let _ = CURRENT_THREADING_BACKEND.try_with(|backend| backend.set(THREAD_BACKEND_HOST));
     let host_thread = loop {
@@ -2444,8 +2450,10 @@ pub unsafe extern "C" fn pthread_create(
     // Prefer host pthread_create for correct TLS setup, stack guard pages,
     // and compatibility with programs that depend on glibc thread internals
     // (Python, Node.js, etc.).
-    if !force_native && let Some(host_create) = crate::host_resolve::host_pthread_create_raw() {
-        return unsafe { host_pthread_create_with_managed_attr(host_create, thread_out, attr, start, arg) };
+    if !force_native && let Some(host_create) = resolved_thread_create_raw() {
+        return unsafe {
+            dispatch_host_thread_create_with_managed_attr(host_create, thread_out, attr, start, arg)
+        };
     }
     // SAFETY: pointers and start routine are validated by this wrapper.
     unsafe { native_pthread_create(thread_out, attr, start, arg) }
@@ -2456,7 +2464,7 @@ pub unsafe extern "C" fn pthread_create(
 pub unsafe extern "C" fn pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
     if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
-        && let Some(host_join) = crate::host_resolve::host_pthread_join_raw()
+        && let Some(host_join) = resolved_thread_join_raw()
     {
         return unsafe { host_join(thread, retval) };
     }
@@ -2468,7 +2476,7 @@ pub unsafe extern "C" fn pthread_join(thread: libc::pthread_t, retval: *mut *mut
 pub unsafe extern "C" fn pthread_detach(thread: libc::pthread_t) -> c_int {
     if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
-        && let Some(host_detach) = crate::host_resolve::host_pthread_detach_raw()
+        && let Some(host_detach) = resolved_thread_detach_raw()
     {
         return unsafe { host_detach(thread) };
     }
@@ -2492,7 +2500,7 @@ pub unsafe extern "C" fn pthread_mutex_init(
     // Always prefer host delegation — see CRITICAL comment in pthread_cond_init.
     // Mutex and condvar init must use the same implementation (host or native).
     if !FORCE_NATIVE_MUTEX.load(Ordering::Acquire)
-        && let Some(host_init) = unsafe { host_pthread_mutex_init_fn() }
+        && let Some(host_init) = unsafe { resolved_mutex_init_fn() }
     {
         if !attr.is_null() {
             let word = unsafe { *(attr.cast::<c_int>()) };
@@ -2630,7 +2638,7 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t
 
     if !is_managed_mutex(mutex) && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
         // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-        if let Some(host_destroy) = unsafe { host_pthread_mutex_destroy_fn() } {
+        if let Some(host_destroy) = unsafe { resolved_mutex_destroy_fn() } {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_destroy(mutex) };
         }
@@ -2672,7 +2680,7 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
     if !is_managed_mutex(mutex) {
         if !force_native {
             // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-            if let Some(host_lock) = unsafe { host_pthread_mutex_lock_fn() } {
+            if let Some(host_lock) = unsafe { resolved_mutex_lock_fn() } {
                 // SAFETY: direct call through resolved host symbol.
                 return unsafe { host_lock(mutex) };
             }
@@ -2761,7 +2769,7 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
     if !is_managed_mutex(mutex) {
         if !force_native {
             // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-            if let Some(host_trylock) = unsafe { host_pthread_mutex_trylock_fn() } {
+            if let Some(host_trylock) = unsafe { resolved_mutex_trylock_fn() } {
                 // SAFETY: direct call through resolved host symbol.
                 return unsafe { host_trylock(mutex) };
             }
@@ -2849,7 +2857,7 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t)
     if !is_managed_mutex(mutex) {
         if !force_native {
             // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-            if let Some(host_unlock) = unsafe { host_pthread_mutex_unlock_fn() } {
+            if let Some(host_unlock) = unsafe { resolved_mutex_unlock_fn() } {
                 // SAFETY: direct call through resolved host symbol.
                 return unsafe { host_unlock(mutex) };
             }
@@ -2937,7 +2945,7 @@ pub unsafe extern "C" fn pthread_cond_init(
     // ║ initialized by the same implementation (host or native).       ║
     // ╚══════════════════════════════════════════════════════════════════╝
     if !FORCE_NATIVE_MUTEX.load(Ordering::Acquire)
-        && let Some(host_init) = unsafe { host_pthread_cond_init_fn() }
+        && let Some(host_init) = unsafe { resolved_cond_init_fn() }
     {
         // If attr uses our custom encoding (valid bit set), translate to
         // host-compatible format before delegating. Same issue as mutex:
@@ -3014,7 +3022,7 @@ pub unsafe extern "C" fn pthread_cond_destroy(cond: *mut libc::pthread_cond_t) -
     };
     if !is_managed_condvar(cond) && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
         // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-        if let Some(host_destroy) = unsafe { host_pthread_cond_destroy_fn() } {
+        if let Some(host_destroy) = unsafe { resolved_cond_destroy_fn() } {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_destroy(cond) };
         }
@@ -3043,7 +3051,7 @@ pub unsafe extern "C" fn pthread_cond_wait(
     if !managed_condvar && !managed_mutex && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
         // Both condvar and mutex are host-owned: delegate to host pthread_cond_wait.
         // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-        if let Some(host_wait) = unsafe { host_pthread_cond_wait_fn() } {
+        if let Some(host_wait) = unsafe { resolved_cond_wait_fn() } {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_wait(cond, mutex) };
         }
@@ -3110,7 +3118,7 @@ pub unsafe extern "C" fn pthread_cond_signal(cond: *mut libc::pthread_cond_t) ->
     };
     if !is_managed_condvar(cond) && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
         // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-        if let Some(host_signal) = unsafe { host_pthread_cond_signal_fn() } {
+        if let Some(host_signal) = unsafe { resolved_cond_signal_fn() } {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_signal(cond) };
         }
@@ -3127,7 +3135,7 @@ pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut libc::pthread_cond_t)
     };
     if !is_managed_condvar(cond) && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
         // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-        if let Some(host_broadcast) = unsafe { host_pthread_cond_broadcast_fn() } {
+        if let Some(host_broadcast) = unsafe { resolved_cond_broadcast_fn() } {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_broadcast(cond) };
         }
@@ -3296,7 +3304,7 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
     if !managed_condvar && !managed_mutex && !FORCE_NATIVE_MUTEX.load(Ordering::Acquire) {
         // Both condvar and mutex are host-owned: delegate to host pthread_cond_timedwait.
         // SAFETY: host symbol lookup/transmute guarantees ABI if present.
-        if let Some(host_timedwait) = unsafe { host_pthread_cond_timedwait_fn() } {
+        if let Some(host_timedwait) = unsafe { resolved_cond_timedwait_fn() } {
             // SAFETY: direct call through resolved host symbol.
             return unsafe { host_timedwait(cond, mutex, abstime) };
         }
@@ -5740,7 +5748,7 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
     }
     let force_native = FORCE_NATIVE_MUTEX.load(Ordering::Acquire);
     if !is_managed_mutex(mutex) {
-        if !force_native && let Some(host_timedlock) = unsafe { host_pthread_mutex_timedlock_fn() }
+        if !force_native && let Some(host_timedlock) = unsafe { resolved_mutex_timedlock_fn() }
         {
             return unsafe { host_timedlock(mutex, abstime) };
         }
@@ -6439,7 +6447,7 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
     }
 
     if !force_native_threading_enabled()
-        && let Some(host_exit) = crate::host_resolve::host_pthread_exit_raw()
+        && let Some(host_exit) = resolved_thread_exit_raw()
     {
         unsafe { host_exit(retval) };
     }

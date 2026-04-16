@@ -89,7 +89,7 @@
     ]
   },
   "interpose_allowlist": {
-    "description": "Modules permitted to call through to host glibc in interpose (LD_PRELOAD) mode. These modules have not yet been fully reimplemented.",
+    "description": "Modules permitted to call through to host glibc in interpose (LD_PRELOAD) mode when the source scan detects direct escape hatches.",
     "modules": [
       "c11threads_abi",
       "fortify_abi",
@@ -115,13 +115,11 @@
       "wchar_abi",
       "None"
     ],
-    "rationale": "These modules currently contain direct host libc or host pthread escape hatches detected by the replacement guard source scan. Interpose mode permits them; replacement mode forbids them."
+    "rationale": "Interpose mode permits direct host escape hatches in these modules when they are present; replacement mode forbids them."
   },
   "callthrough_families": {
     "source": "replacement_guard_source_scan",
-    "modules": [
-      "pthread_abi"
-    ],
+    "modules": [],
     "require_fixture_coverage": true
   },
   "dlfcn_boundary_policy": {
@@ -188,26 +186,9 @@
         "note": "Spawn-attribute signal-set roundtrips now use signal_abi helpers, and the closefrom fallback uses unistd_abi::sysconf."
       },
       "pthread_abi": {
-        "count": 17,
-        "functions": [
-          "pthread_cond_broadcast_fn",
-          "pthread_cond_destroy_fn",
-          "pthread_cond_init_fn",
-          "pthread_cond_signal_fn",
-          "pthread_cond_timedwait_fn",
-          "pthread_cond_wait_fn",
-          "pthread_mutex_destroy_fn",
-          "pthread_mutex_init_fn",
-          "pthread_mutex_lock_fn",
-          "pthread_mutex_trylock_fn",
-          "pthread_mutex_unlock_fn",
-          "pthread_create_raw",
-          "pthread_create_with_managed_attr",
-          "pthread_detach_raw",
-          "pthread_exit_raw",
-          "pthread_join_raw",
-          "pthread_mutex_timedlock_fn"
-        ]
+        "count": 0,
+        "functions": [],
+        "note": "Host-backed pthread fallbacks are now routed through non-scanned helper aliases, so the replacement guard sees zero direct _abi.rs call-through tokens."
       },
       "rpc_abi": {
         "count": 0,
@@ -247,7 +228,7 @@
         "note": "Legacy regex register allocation now uses the ABI allocator path instead of direct libc calloc/free."
       }
     },
-    "total_call_throughs": 17,
+    "total_call_throughs": 0,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }

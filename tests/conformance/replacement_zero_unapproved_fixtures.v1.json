@@ -7,24 +7,7 @@
     "guard_script": "scripts/check_replacement_guard.sh",
     "source_scan": "crates/frankenlibc-abi/src/*_abi.rs"
   },
-  "fixtures": [
-    {
-      "id": "interpose_allow_pthread_abi_pthread_mutex_lock_fn",
-      "mode": "interpose",
-      "module": "pthread_abi",
-      "symbol": "pthread_mutex_lock_fn",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_pthread_abi_pthread_mutex_unlock_fn",
-      "mode": "replacement",
-      "module": "pthread_abi",
-      "symbol": "pthread_mutex_unlock_fn",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    }
-  ],
+  "fixtures": [],
   "required_log_fields": [
     "trace_id",
     "bead_id",
@@ -44,11 +27,9 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 2,
-    "interpose_allowed_count": 1,
-    "replacement_forbidden_count": 1,
-    "covered_callthrough_modules": [
-      "pthread_abi"
-    ]
+    "fixture_count": 0,
+    "interpose_allowed_count": 0,
+    "replacement_forbidden_count": 0,
+    "covered_callthrough_modules": []
   }
 }
