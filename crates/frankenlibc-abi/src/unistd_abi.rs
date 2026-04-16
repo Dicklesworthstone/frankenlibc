@@ -1028,11 +1028,9 @@ pub unsafe extern "C" fn mkdir(path: *const c_char, mode: libc::mode_t) -> c_int
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_mkdirat, libc::AT_FDCWD, path, mode),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_mkdirat(libc::AT_FDCWD, path as *const u8, mode) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1056,11 +1054,9 @@ pub unsafe extern "C" fn chmod(path: *const c_char, mode: libc::mode_t) -> c_int
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_fchmodat, libc::AT_FDCWD, path, mode, 0),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_fchmodat(libc::AT_FDCWD, path as *const u8, mode, 0) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1102,11 +1098,9 @@ pub unsafe extern "C" fn chown(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_fchownat, libc::AT_FDCWD, path, owner, group, 0),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_fchownat(libc::AT_FDCWD, path as *const u8, owner, group, 0) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1149,18 +1143,9 @@ pub unsafe extern "C" fn lchown(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_fchownat,
-                libc::AT_FDCWD,
-                path,
-                owner,
-                group,
-                libc::AT_SYMLINK_NOFOLLOW,
-            ),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_fchownat(libc::AT_FDCWD, path as *const u8, owner, group, libc::AT_SYMLINK_NOFOLLOW as i32) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1430,11 +1415,9 @@ pub unsafe extern "C" fn mkdirat(dirfd: c_int, path: *const c_char, mode: libc::
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_mkdirat, dirfd, path, mode),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_mkdirat(dirfd, path as *const u8, mode) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1490,11 +1473,9 @@ pub unsafe extern "C" fn symlinkat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_symlinkat, target, newdirfd, linkpath),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_symlinkat(target as *const u8, newdirfd, linkpath as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
     rc
@@ -1519,11 +1500,9 @@ pub unsafe extern "C" fn faccessat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_faccessat, dirfd, path, amode, flags),
-            errno::EACCES,
-        )
+    let rc = match unsafe { syscall::sys_faccessat(dirfd, path as *const u8, amode, flags) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1549,11 +1528,9 @@ pub unsafe extern "C" fn fchownat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_fchownat, dirfd, path, owner, group, flags),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_fchownat(dirfd, path as *const u8, owner, group, flags) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -1578,11 +1555,9 @@ pub unsafe extern "C" fn fchmodat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_fchmodat, dirfd, path, mode, flags),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_fchmodat(dirfd, path as *const u8, mode, flags) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
