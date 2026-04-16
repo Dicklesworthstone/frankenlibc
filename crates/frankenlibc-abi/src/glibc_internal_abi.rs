@@ -4412,12 +4412,6 @@ pub unsafe extern "C" fn sprofil(
 }
 
 // Misc POSIX functions
-#[inline]
-fn last_os_errno(default_errno: c_int) -> c_int {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(default_errno)
-}
 
 #[inline]
 fn timeval_to_offset_micros(tv: libc::timeval) -> Option<c_long> {

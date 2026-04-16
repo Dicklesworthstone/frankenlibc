@@ -14,46 +14,6 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 
-#[inline]
-fn errno_from_syscall_failure(ret: libc::c_long, default_errno: c_int) -> c_int {
-    if let Some(host_errno) = std::io::Error::last_os_error().raw_os_error()
-        && host_errno != 0
-    {
-        return host_errno;
-    }
-
-    // Some libc/syscall combinations may surface raw negative errno values
-    // without populating host errno. Recover a deterministic errno in that case.
-    if ret < 0 {
-        let inferred = ret.saturating_neg();
-        if (1..=4095).contains(&inferred) {
-            return inferred as c_int;
-        }
-    }
-
-    default_errno
-}
-
-#[inline]
-unsafe fn syscall_ret_int(ret: libc::c_long) -> c_int {
-    if ret < 0 {
-        unsafe { set_abi_errno(errno_from_syscall_failure(ret, errno::EINVAL)) };
-        -1
-    } else {
-        ret as c_int
-    }
-}
-
-#[inline]
-unsafe fn syscall_ret_size(ret: libc::c_long) -> isize {
-    if ret < 0 {
-        unsafe { set_abi_errno(errno_from_syscall_failure(ret, errno::EINVAL)) };
-        -1
-    } else {
-        ret as isize
-    }
-}
-
 // ---------------------------------------------------------------------------
 // socket
 // ---------------------------------------------------------------------------
