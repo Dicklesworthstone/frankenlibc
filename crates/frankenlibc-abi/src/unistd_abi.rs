@@ -6597,8 +6597,8 @@ pub unsafe extern "C" fn sigqueue(pid: libc::pid_t, sig: c_int, value: libc::sig
 
     // Encode sender identity and queued payload using the Linux siginfo queue layout.
     let info_words = (&mut info as *mut libc::siginfo_t).cast::<u32>();
-    let caller_pid = unsafe { libc::syscall(libc::SYS_getpid) } as u32;
-    let caller_uid = unsafe { libc::syscall(libc::SYS_getuid) } as u32;
+    let caller_pid = syscall::sys_getpid() as u32;
+    let caller_uid = syscall::sys_getuid();
     let value_bits = value.sival_ptr as usize as u64;
     unsafe {
         *info_words.add(3) = caller_pid;
@@ -9570,7 +9570,13 @@ pub unsafe extern "C" fn sysinfo(info: *mut libc::sysinfo) -> c_int {
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    unsafe { syscall_ret_int(libc::syscall(libc::SYS_sysinfo, info), errno::EFAULT) }
+    match unsafe { syscall::sys_sysinfo(info as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -9580,13 +9586,19 @@ pub unsafe extern "C" fn sysinfo(info: *mut libc::sysinfo) -> c_int {
 /// POSIX `getpgrp` — get process group ID of the calling process.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpgrp() -> libc::pid_t {
-    unsafe { libc::syscall(libc::SYS_getpgrp) as libc::pid_t }
+    syscall::sys_getpgrp()
 }
 
 /// BSD `setpgrp` — set process group (equivalent to setpgid(0, 0)).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpgrp() -> c_int {
-    unsafe { syscall_ret_int(libc::syscall(libc::SYS_setpgid, 0, 0), errno::EPERM) }
+    match syscall::sys_setpgid(0, 0) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -9597,25 +9609,24 @@ pub unsafe extern "C" fn setpgrp() -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpriority(which: c_int, who: libc::id_t) -> c_int {
     unsafe { set_abi_errno(0) };
-    let rc = unsafe { libc::syscall(libc::SYS_getpriority, which, who) } as c_int;
-    if rc < 0 {
-        let e = last_host_errno(errno::ESRCH);
-        if e != 0 {
+    match syscall::sys_getpriority(which, who as i32) {
+        Ok(prio) => prio,
+        Err(e) => {
             unsafe { set_abi_errno(e) };
-            return -1;
+            -1
         }
     }
-    20 - rc
 }
 
 /// POSIX `setpriority` — set scheduling priority.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpriority(which: c_int, who: libc::id_t, prio: c_int) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_setpriority, which, who, prio),
-            errno::EPERM,
-        )
+    match syscall::sys_setpriority(which, who as i32, prio) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 

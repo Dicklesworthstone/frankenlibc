@@ -2579,6 +2579,9 @@ pub unsafe extern "C" fn pthread_mutex_init(
     {
         if !attr.is_null() {
             let word = unsafe { *(attr.cast::<c_int>()) };
+            if word == MUTEXATTR_DESTROYED_SENTINEL {
+                return libc::EINVAL;
+            }
             if mutexattr_word_valid(word) {
                 let Some(attr_init) = (unsafe { resolved_pthread_mutexattr_init_fn() }) else {
                     return libc::EINVAL;
@@ -2652,6 +2655,9 @@ pub unsafe extern "C" fn pthread_mutex_init(
         PTHREAD_MUTEX_NORMAL_TYPE
     } else {
         let word = unsafe { *(attr.cast::<c_int>()) };
+        if word == MUTEXATTR_DESTROYED_SENTINEL {
+            return libc::EINVAL;
+        }
         if !mutexattr_word_valid(word) {
             return libc::EINVAL;
         }
@@ -3962,6 +3968,7 @@ const MUTEXATTR_PROTOCOL_SHIFT: u32 = 2;
 const MUTEXATTR_PSHARED_BIT: c_int = 1 << 4;
 const MUTEXATTR_ROBUST_BIT: c_int = 1 << 5;
 const MUTEXATTR_VALID_BIT: c_int = 1 << 6;
+const MUTEXATTR_DESTROYED_SENTINEL: c_int = 0x7fff_ffff;
 const MUTEXATTR_ALLOWED_MASK: c_int = MUTEXATTR_TYPE_MASK
     | MUTEXATTR_PROTOCOL_MASK
     | MUTEXATTR_PSHARED_BIT
@@ -4074,14 +4081,18 @@ pub unsafe extern "C" fn pthread_mutexattr_destroy(attr: *mut libc::pthread_mute
     }
     let word = unsafe { *(attr.cast::<c_int>()) };
     if word != 0
+        && word != MUTEXATTR_DESTROYED_SENTINEL
         && !mutexattr_word_valid(word)
         && let Some(destroy) = unsafe { resolved_pthread_mutexattr_destroy_fn() }
     {
-        return unsafe { destroy(attr) };
+        let rc = unsafe { destroy(attr) };
+        if rc != 0 {
+            return rc;
+        }
     }
     // SAFETY: attr is non-null; caller owns the memory.
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
-    *word = 0;
+    *word = MUTEXATTR_DESTROYED_SENTINEL;
     0
 }
 
