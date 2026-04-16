@@ -10013,21 +10013,22 @@ pub unsafe extern "C" fn epoll_pwait2(
     timeout: *const libc::timespec,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_epoll_pwait2,
+    match unsafe {
+        syscall::sys_epoll_pwait2(
             epfd,
-            events,
+            events as *mut u8,
             maxevents,
-            timeout,
-            sigmask,
+            timeout as *const u8,
+            sigmask as *const u8,
             std::mem::size_of::<libc::c_ulong>(),
-        ) as c_int
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+        )
+    } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -10042,19 +10043,13 @@ pub unsafe extern "C" fn ptrace(
     addr: *mut c_void,
     data: *mut c_void,
 ) -> c_long {
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_ptrace,
-            request as c_long,
-            pid as c_long,
-            addr,
-            data,
-        )
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ESRCH)) };
+    match unsafe { syscall::sys_ptrace(request, pid, addr as usize, data as usize) } {
+        Ok(v) => v as c_long,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `seccomp` — secure computing filter.

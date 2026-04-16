@@ -1235,6 +1235,18 @@ pub const SYS_PROCESS_VM_READV: usize = 270;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PROCESS_VM_WRITEV: usize = 271;
 
+// Additional syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_EPOLL_PWAIT2: usize = 441;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PTRACE: usize = 101;
+
+// Additional syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_EPOLL_PWAIT2: usize = 441;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PTRACE: usize = 117;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -5155,6 +5167,41 @@ pub unsafe fn sys_process_vm_writev(
             riovcnt,
             flags,
         )
+    };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `epoll_pwait2(epfd, events, maxevents, timeout, sigmask)` — wait for epoll events with nanosecond timeout.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_epoll_pwait2(
+    epfd: i32,
+    events: *mut u8,
+    maxevents: i32,
+    timeout: *const u8,
+    sigmask: *const u8,
+    sigsetsize: usize,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_EPOLL_PWAIT2,
+            epfd as usize,
+            events as usize,
+            maxevents as usize,
+            timeout as usize,
+            sigmask as usize,
+            sigsetsize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `ptrace(request, pid, addr, data)` — process trace.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_ptrace(request: i32, pid: i32, addr: usize, data: usize) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall4(SYS_PTRACE, request as usize, pid as usize, addr, data)
     };
     syscall_result(ret).map(|v| v as isize)
 }
