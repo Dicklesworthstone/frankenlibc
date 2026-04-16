@@ -17546,13 +17546,13 @@
     },
     {
       "symbol": "__pthread_mutex_trylock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
     {
       "symbol": "__pthread_mutex_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
