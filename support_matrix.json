@@ -9535,7 +9535,7 @@
     },
     {
       "symbol": "pthread_cancel",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native cooperative cancellation via per-thread registry; sets pending flag; async mode consumes immediately",
@@ -9553,7 +9553,7 @@
     },
     {
       "symbol": "pthread_cond_broadcast",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native futex-backed condvar implementation; requires managed mutex association and returns deterministic errno on invalid state",
@@ -9562,7 +9562,7 @@
     },
     {
       "symbol": "pthread_cond_clockwait",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Clock-aware timed condvar wait",
@@ -9571,7 +9571,7 @@
     },
     {
       "symbol": "pthread_cond_destroy",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native condvar destroy returns EBUSY when waiters are present and clears association on success",
@@ -9580,7 +9580,7 @@
     },
     {
       "symbol": "pthread_cond_init",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native condvar initialization with deterministic default clock and null/attr validation contract",
@@ -9589,7 +9589,7 @@
     },
     {
       "symbol": "pthread_cond_signal",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native futex-backed condvar signal increments sequence and wakes one waiter when present",
@@ -9598,7 +9598,7 @@
     },
     {
       "symbol": "pthread_cond_timedwait",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Timed condvar wait with futex backend.",
@@ -9607,7 +9607,7 @@
     },
     {
       "symbol": "pthread_cond_wait",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native condvar wait with futex choreography; requires managed mutex and enforces association invariants",
@@ -9670,7 +9670,7 @@
     },
     {
       "symbol": "pthread_create",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native clone-backed thread creation via core ThreadHandle; null thread_out/start rejected with EINVAL and non-null attr rejected deterministically",
@@ -9679,7 +9679,7 @@
     },
     {
       "symbol": "pthread_detach",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native detach on managed ThreadHandle registry; unknown or already-consumed thread ids return deterministic ESRCH",
@@ -9698,7 +9698,7 @@
     {
       "symbol": "pthread_exit",
       "header": "<pthread.h>",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "notes": "Delegates to glibc pthread_exit",
       "module": "pthread_abi"
     },
@@ -9815,7 +9815,7 @@
     },
     {
       "symbol": "pthread_mutex_clocklock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Clock-aware timed mutex lock",
@@ -9833,7 +9833,7 @@
     },
     {
       "symbol": "pthread_mutex_destroy",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -9842,7 +9842,7 @@
     },
     {
       "symbol": "pthread_mutex_init",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -9851,7 +9851,7 @@
     },
     {
       "symbol": "pthread_mutex_lock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -9860,7 +9860,7 @@
     },
     {
       "symbol": "pthread_mutex_timedlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Timed mutex lock with abstime deadline",
@@ -9869,7 +9869,7 @@
     },
     {
       "symbol": "pthread_mutex_trylock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -9878,7 +9878,7 @@
     },
     {
       "symbol": "pthread_mutex_unlock",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -10146,7 +10146,7 @@
     },
     {
       "symbol": "pthread_setcancelstate",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native thread-local cancel state (enable/disable); returns EINVAL for invalid state",
