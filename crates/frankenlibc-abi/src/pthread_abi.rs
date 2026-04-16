@@ -51,8 +51,6 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
-type HostPthreadGetattrFn =
-    unsafe extern "C" fn(libc::pthread_t, *mut libc::pthread_attr_t) -> c_int;
 type HostPthreadMutexInitFn =
     unsafe extern "C" fn(*mut libc::pthread_mutex_t, *const libc::pthread_mutexattr_t) -> c_int;
 type HostPthreadMutexDestroyFn = unsafe extern "C" fn(*mut libc::pthread_mutex_t) -> c_int;
@@ -4301,38 +4299,6 @@ pub unsafe extern "C" fn pthread_getattr_np(
 ) -> c_int {
     if attr.is_null() {
         return libc::EINVAL;
-    }
-    let force_native = force_native_threading_enabled();
-    if !force_native
-        && !is_managed_thread_handle(thread)
-        && let Some(host_addr) = crate::host_resolve::resolve_host_symbol_raw("pthread_getattr_np")
-    {
-        let host_getattr: HostPthreadGetattrFn = unsafe { core::mem::transmute(host_addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
-        let mut host_attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() };
-        let rc = unsafe { host_getattr(thread, &mut host_attr) };
-        if rc != 0 {
-            return rc;
-        }
-        let init_rc = unsafe { pthread_attr_init(attr) };
-        if init_rc != 0 {
-            if let Some(attr_destroy) = unsafe { resolved_pthread_attr_destroy_fn() } {
-                let _ = unsafe { attr_destroy(&mut host_attr) };
-            }
-            return init_rc;
-        }
-        let translate_rc = unsafe { populate_managed_attr_from_host_attr(attr, &host_attr) };
-        let destroy_rc = if let Some(attr_destroy) = unsafe { resolved_pthread_attr_destroy_fn() } {
-            unsafe { attr_destroy(&mut host_attr) }
-        } else {
-            0
-        };
-        return if translate_rc != 0 {
-            translate_rc
-        } else if destroy_rc != 0 {
-            destroy_rc
-        } else {
-            0
-        };
     }
 
     // Initialize the attr struct with defaults, then fill in thread-specific info.
