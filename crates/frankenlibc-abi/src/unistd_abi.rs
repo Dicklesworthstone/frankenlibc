@@ -17209,9 +17209,7 @@ pub unsafe extern "C" fn logout(line: *const c_char) -> c_int {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    unsafe {
-        libc::syscall(libc::SYS_clock_gettime, libc::CLOCK_REALTIME, &mut ts);
-    }
+    let _ = unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) };
     entry.ut_tv.tv_sec = ts.tv_sec as i32;
     entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as i32;
 
@@ -17239,7 +17237,7 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
     // If name is non-empty, this is a login (USER_PROCESS), else logout (DEAD_PROCESS)
     let has_name = !name.is_null() && unsafe { *name != 0 };
     entry.ut_type = if has_name { 7 } else { 8 }; // USER_PROCESS or DEAD_PROCESS
-    entry.ut_pid = unsafe { libc::syscall(libc::SYS_getpid) } as i32;
+    entry.ut_pid = syscall::sys_getpid();
 
     // Copy line
     if !line.is_null() {
@@ -17270,7 +17268,7 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
         tv_sec: 0,
         tv_nsec: 0,
     };
-    unsafe { libc::syscall(libc::SYS_clock_gettime, libc::CLOCK_REALTIME, &mut ts) };
+    let _ = unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) };
     entry.ut_tv.tv_sec = ts.tv_sec as i32;
     entry.ut_tv.tv_usec = (ts.tv_nsec / 1000) as i32;
 
