@@ -1962,11 +1962,12 @@ pub unsafe extern "C" fn mknod(path: *const c_char, mode: libc::mode_t, dev: lib
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_mknodat, libc::AT_FDCWD, path, mode, dev),
-            errno::ENOENT,
-        )
+    match unsafe { syscall::sys_mknodat(libc::AT_FDCWD, path as *const u8, mode, dev) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -2013,14 +2014,15 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         libc::_SC_OPEN_MAX => {
             // Try to get from getrlimit.
             let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
-            let rc = unsafe {
-                libc::syscall(libc::SYS_getrlimit, libc::RLIMIT_NOFILE, rlim.as_mut_ptr())
-            };
-            if rc == 0 {
-                let rlim = unsafe { rlim.assume_init() };
-                return rlim.rlim_cur as libc::c_long;
+            match unsafe {
+                syscall::sys_getrlimit(libc::RLIMIT_NOFILE as i32, rlim.as_mut_ptr() as *mut u8)
+            } {
+                Ok(()) => {
+                    let rlim = unsafe { rlim.assume_init() };
+                    rlim.rlim_cur as libc::c_long
+                }
+                Err(_) => 1024,
             }
-            1024
         }
         libc::_SC_HOST_NAME_MAX => 64,
         libc::_SC_LINE_MAX => 2048,
@@ -2028,16 +2030,17 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
             // glibc calculates ARG_MAX as min(rlimit_stack / 4, 3/4 * 128KiB pages).
             // The common result is 2097152 (for 8MB stack) or 3200000 (for >= 12.8MB stack).
             let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
-            let rc = unsafe {
-                libc::syscall(libc::SYS_getrlimit, libc::RLIMIT_STACK, rlim.as_mut_ptr())
-            };
-            if rc == 0 {
-                let rlim = unsafe { rlim.assume_init() };
-                let stack_based = (rlim.rlim_cur / 4) as libc::c_long;
-                let cap = 3200000i64 as libc::c_long;
-                return stack_based.min(cap).max(131072); // at least 128K
+            match unsafe {
+                syscall::sys_getrlimit(libc::RLIMIT_STACK as i32, rlim.as_mut_ptr() as *mut u8)
+            } {
+                Ok(()) => {
+                    let rlim = unsafe { rlim.assume_init() };
+                    let stack_based = (rlim.rlim_cur / 4) as libc::c_long;
+                    let cap = 3200000i64 as libc::c_long;
+                    stack_based.min(cap).max(131072) // at least 128K
+                }
+                Err(_) => 2097152,
             }
-            2097152
         }
         libc::_SC_CHILD_MAX => 32768,
         libc::_SC_IOV_MAX => 1024,
@@ -3199,18 +3202,19 @@ pub unsafe extern "C" fn statx(
         return -1;
     }
 
-    let rc =
-        unsafe { libc::syscall(libc::SYS_statx, dirfd, pathname, flags, mask, statxbuf) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOSYS);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+    match unsafe {
+        syscall::sys_statx(dirfd, pathname as *const u8, flags, mask, statxbuf as *mut u8)
+    } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -6613,11 +6617,12 @@ pub unsafe extern "C" fn sigqueue(pid: libc::pid_t, sig: c_int, value: libc::sig
         }
     }
 
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_rt_sigqueueinfo, pid, sig, &info),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_rt_sigqueueinfo(pid, sig, &info as *const _ as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -9640,14 +9645,13 @@ pub unsafe extern "C" fn setpriority(which: c_int, who: libc::id_t, prio: c_int)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getdtablesize() -> c_int {
     let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
-    let rc = unsafe {
-        libc::syscall(libc::SYS_getrlimit, libc::RLIMIT_NOFILE, rlim.as_mut_ptr()) as c_int
-    };
-    if rc < 0 {
-        return 256;
+    match unsafe { syscall::sys_getrlimit(libc::RLIMIT_NOFILE as i32, rlim.as_mut_ptr() as *mut u8) } {
+        Ok(()) => {
+            let rlim = unsafe { rlim.assume_init() };
+            rlim.rlim_cur.min(c_int::MAX as u64) as c_int
+        }
+        Err(_) => 256,
     }
-    let rlim = unsafe { rlim.assume_init() };
-    rlim.rlim_cur.min(c_int::MAX as u64) as c_int
 }
 
 // ---------------------------------------------------------------------------
@@ -9978,23 +9982,34 @@ pub unsafe extern "C" fn execveat(
     envp: *const *const c_char,
     flags: c_int,
 ) -> c_int {
-    let rc =
-        unsafe { libc::syscall(libc::SYS_execveat, dirfd, pathname, argv, envp, flags) as c_int };
     // execveat only returns on failure (on success, the process image is replaced)
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
+    match unsafe {
+        syscall::sys_execveat(
+            dirfd,
+            pathname as *const u8,
+            argv as *const *const u8,
+            envp as *const *const u8,
+            flags,
+        )
+    } {
+        Ok(()) => 0, // should never reach here
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `pidfd_getfd` — duplicate fd from another process.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pidfd_getfd(pidfd: c_int, targetfd: c_int, flags: c_uint) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_pidfd_getfd, pidfd, targetfd, flags) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EBADF)) };
+    match syscall::sys_pidfd_getfd(pidfd, targetfd, flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `epoll_pwait2` — wait for events with nanosecond timeout.
@@ -10596,11 +10611,13 @@ pub unsafe extern "C" fn remap_file_pages(
 /// Linux `tgkill` — send signal to specific thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tgkill(tgid: c_int, tid: c_int, sig: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_tgkill, tgid, tid, sig) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ESRCH)) };
+    match syscall::sys_tgkill(tgid, tid, sig) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `tkill` — send signal to thread (deprecated, use tgkill).
@@ -15339,11 +15356,12 @@ pub unsafe extern "C" fn mkfifoat(
         return -1;
     }
     // mkfifo is equivalent to mknod with S_IFIFO
-    unsafe {
-        syscall_ret_zero(
-            libc::syscall(libc::SYS_mknodat, dirfd, pathname, mode | libc::S_IFIFO, 0),
-            errno::ENOENT,
-        )
+    match unsafe { syscall::sys_mknodat(dirfd, pathname as *const u8, mode | libc::S_IFIFO, 0) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -15359,11 +15377,12 @@ pub unsafe extern "C" fn mknodat(
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    unsafe {
-        syscall_ret_zero(
-            libc::syscall(libc::SYS_mknodat, dirfd, pathname, mode, dev),
-            errno::ENOENT,
-        )
+    match unsafe { syscall::sys_mknodat(dirfd, pathname as *const u8, mode, dev) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
