@@ -25,6 +25,7 @@ use frankenlibc_abi::unistd_abi::{
     signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf, timer_create, timer_delete,
     timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r, unlockpt,
 };
+use frankenlibc_core::syscall as raw_syscall;
 use std::ffi::CString;
 use std::os::fd::AsRawFd;
 use std::ptr;
@@ -650,16 +651,14 @@ fn sched_priority_bounds_match_kernel_syscalls() {
     let mut compared = 0;
 
     for policy in policies {
-        // SAFETY: direct raw syscall with integer policy argument.
-        let expected_min =
-            unsafe { libc::syscall(libc::SYS_sched_get_priority_min, policy) as libc::c_int };
-        // SAFETY: direct raw syscall with integer policy argument.
-        let expected_max =
-            unsafe { libc::syscall(libc::SYS_sched_get_priority_max, policy) as libc::c_int };
-
-        if expected_min < 0 || expected_max < 0 {
-            continue;
-        }
+        let expected_min = match raw_syscall::sys_sched_get_priority_min(policy) {
+            Ok(priority) => priority,
+            Err(_) => continue,
+        };
+        let expected_max = match raw_syscall::sys_sched_get_priority_max(policy) {
+            Ok(priority) => priority,
+            Err(_) => continue,
+        };
 
         // SAFETY: exported ABI wrappers accept any integer policy.
         let observed_min = unsafe { sched_get_priority_min(policy) };
@@ -718,10 +717,10 @@ fn sched_getscheduler_matches_kernel_syscall() {
     unsafe {
         *__errno_location() = 0;
     }
-    // SAFETY: direct kernel syscall with same arguments for parity check.
-    let expected = unsafe { libc::syscall(libc::SYS_sched_getscheduler, 0) as libc::c_int };
-    // SAFETY: read errno after call.
-    let expected_errno = unsafe { *__errno_location() };
+    let (expected, expected_errno) = match raw_syscall::sys_sched_getscheduler(0) {
+        Ok(policy) => (policy, 0),
+        Err(errno) => (-1, errno),
+    };
 
     assert_eq!(observed, expected);
     assert_eq!(observed_errno, expected_errno);
@@ -745,16 +744,12 @@ fn sched_getparam_matches_kernel_syscall() {
     unsafe {
         *__errno_location() = 0;
     }
-    // SAFETY: direct kernel syscall with same arguments for parity check.
-    let expected = unsafe {
-        libc::syscall(
-            libc::SYS_sched_getparam,
-            0,
-            &mut expected_param as *mut libc::sched_param,
-        ) as libc::c_int
+    let (expected, expected_errno) = match unsafe {
+        raw_syscall::sys_sched_getparam(0, (&mut expected_param as *mut libc::sched_param).cast())
+    } {
+        Ok(()) => (0, 0),
+        Err(errno) => (-1, errno),
     };
-    // SAFETY: read errno after call.
-    let expected_errno = unsafe { *__errno_location() };
 
     assert_eq!(observed, expected);
     assert_eq!(observed_errno, expected_errno);
@@ -826,16 +821,12 @@ fn sched_rr_get_interval_matches_kernel_syscall() {
     unsafe {
         *__errno_location() = 0;
     }
-    // SAFETY: direct kernel syscall with same arguments for parity check.
-    let expected = unsafe {
-        libc::syscall(
-            libc::SYS_sched_rr_get_interval,
-            0,
-            &mut expected_tp as *mut libc::timespec,
-        ) as libc::c_int
+    let (expected, expected_errno) = match unsafe {
+        raw_syscall::sys_sched_rr_get_interval(0, (&mut expected_tp as *mut libc::timespec).cast())
+    } {
+        Ok(()) => (0, 0),
+        Err(errno) => (-1, errno),
     };
-    // SAFETY: read errno after call.
-    let expected_errno = unsafe { *__errno_location() };
 
     assert_eq!(observed, expected);
     assert_eq!(observed_errno, expected_errno);
@@ -1605,10 +1596,7 @@ fn get_nprocs_helpers_match_sysconf_values() {
 fn get_phys_and_avphys_pages_match_sysinfo_projection() {
     let mut info = std::mem::MaybeUninit::<libc::sysinfo>::zeroed();
     // SAFETY: valid writable pointer for kernel sysinfo payload.
-    assert_eq!(
-        unsafe { libc::syscall(libc::SYS_sysinfo, info.as_mut_ptr()) },
-        0
-    );
+    assert_eq!(unsafe { raw_syscall::sys_sysinfo(info.as_mut_ptr().cast()) }, Ok(()));
     // SAFETY: syscall succeeded and initialized `info`.
     let info = unsafe { info.assume_init() };
 
