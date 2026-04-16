@@ -437,7 +437,10 @@ pub unsafe extern "C" fn fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
         return -1;
     }
 
-    let rc = unsafe { syscall_ret_int(libc::syscall(libc::SYS_fstat, fd, buf), errno::EBADF) };
+    let rc = match unsafe { syscall::sys_fstat(fd, buf as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+    };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
 }
@@ -573,7 +576,10 @@ pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
         return -1;
     }
 
-    let rc = unsafe { syscall_ret_int(libc::syscall(libc::SYS_chdir, path), errno::ENOENT) };
+    let rc = match unsafe { syscall::sys_chdir(path as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+    };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
 }
@@ -586,7 +592,10 @@ pub unsafe extern "C" fn fchdir(fd: c_int) -> c_int {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe { syscall_ret_int(libc::syscall(libc::SYS_fchdir, fd), errno::EBADF) };
+    let rc = match syscall::sys_fchdir(fd) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+    };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
 }
@@ -1734,21 +1743,20 @@ pub unsafe extern "C" fn sleep(seconds: u32) -> u32 {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    let rc = unsafe { libc::syscall(libc::SYS_nanosleep, &req, &mut rem) };
-    if rc < 0 {
-        let e = last_host_errno(errno::EINTR);
-        unsafe { set_abi_errno(e) };
-        if e == errno::EINTR {
-            let mut remaining = rem.tv_sec.max(0) as u32;
-            if rem.tv_nsec > 0 {
-                remaining = remaining.saturating_add(1);
+    match unsafe { syscall::sys_nanosleep((&req) as *const _ as *const u8, (&mut rem) as *mut _ as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            if e == errno::EINTR {
+                let mut remaining = rem.tv_sec.max(0) as u32;
+                if rem.tv_nsec > 0 {
+                    remaining = remaining.saturating_add(1);
+                }
+                remaining
+            } else {
+                seconds
             }
-            remaining
-        } else {
-            seconds
         }
-    } else {
-        0
     }
 }
 
@@ -1758,15 +1766,9 @@ pub unsafe extern "C" fn usleep(usec: u32) -> c_int {
         tv_sec: (usec / 1_000_000) as libc::time_t,
         tv_nsec: ((usec % 1_000_000) * 1_000) as libc::c_long,
     };
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_nanosleep,
-                &req,
-                std::ptr::null_mut::<libc::timespec>(),
-            ),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_nanosleep((&req) as *const _ as *const u8, std::ptr::null_mut()) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
 }
 
