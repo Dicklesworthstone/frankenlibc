@@ -494,22 +494,23 @@ fn evaluate_size_class_barrier_from_basis(basis: &[i64; SIZE_CLASS_CERT_DIM]) ->
     // Fixed 4x4 unrolled quadratic form for hot allocator path.
     // Intermediate products can reach ~1e18, fitting in i64, but i128 is safer
     // for the accumulation step.
-    let acc: i128 = i128::from(q[0][0]) * b0 * b0
-        + i128::from(q[0][1]) * b0 * b1
-        + i128::from(q[0][2]) * b0 * b2
-        + i128::from(q[0][3]) * b0 * b3
-        + i128::from(q[1][0]) * b1 * b0
-        + i128::from(q[1][1]) * b1 * b1
-        + i128::from(q[1][2]) * b1 * b2
-        + i128::from(q[1][3]) * b1 * b3
-        + i128::from(q[2][0]) * b2 * b0
-        + i128::from(q[2][1]) * b2 * b1
-        + i128::from(q[2][2]) * b2 * b2
-        + i128::from(q[2][3]) * b2 * b3
-        + i128::from(q[3][0]) * b3 * b0
-        + i128::from(q[3][1]) * b3 * b1
-        + i128::from(q[3][2]) * b3 * b2
-        + i128::from(q[3][3]) * b3 * b3;
+    let mut acc: i128 = 0;
+    acc = acc.saturating_add(i128::from(q[0][0]).saturating_mul(b0).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[0][1]).saturating_mul(b0).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[0][2]).saturating_mul(b0).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[0][3]).saturating_mul(b0).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[1][0]).saturating_mul(b1).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[1][1]).saturating_mul(b1).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[1][2]).saturating_mul(b1).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[1][3]).saturating_mul(b1).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[2][0]).saturating_mul(b2).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[2][1]).saturating_mul(b2).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[2][2]).saturating_mul(b2).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[2][3]).saturating_mul(b2).saturating_mul(b3));
+    acc = acc.saturating_add(i128::from(q[3][0]).saturating_mul(b3).saturating_mul(b0));
+    acc = acc.saturating_add(i128::from(q[3][1]).saturating_mul(b3).saturating_mul(b1));
+    acc = acc.saturating_add(i128::from(q[3][2]).saturating_mul(b3).saturating_mul(b2));
+    acc = acc.saturating_add(i128::from(q[3][3]).saturating_mul(b3).saturating_mul(b3));
 
     let score = (acc / i128::from(SIZE_CLASS_SCORE_SCALE))
         .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
@@ -607,27 +608,42 @@ pub fn evaluate_provenance_barrier(
     let one = 1_000_000i128;
 
     // Risk headroom: positive when risk is below budget.
-    let headroom = i128::from(PROVENANCE_RISK_BUDGET_PPM) - r;
+    let headroom = i128::from(PROVENANCE_RISK_BUDGET_PPM).saturating_sub(r);
 
     // Penalty: risk × bloom_fp × (1 - depth). High risk + bad bloom + fast path → bad.
     // Scale: r * b / 1e6 gives ppm product; * (1-v) / 1e6 gives triple product.
     // BETA is in milli-units, so we multiply by 1000 to get final penalty in ppm.
-    let rb = r * b / one;
-    let penalty_1 = i128::from(BETA_1 * 1000) * rb * (one - v) / (one * one);
+    let rb = r.saturating_mul(b) / one;
+    let one_minus_v = one.saturating_sub(v);
+    let penalty_1 = i128::from(BETA_1.saturating_mul(1000))
+        .saturating_mul(rb)
+        .saturating_mul(one_minus_v)
+        / one.saturating_mul(one);
 
     // Penalty: risk × arena_pressure × (1 - depth). High risk + full arena + fast → bad.
-    let rp = r * p / one;
-    let penalty_2 = i128::from(BETA_2 * 1000) * rp * (one - v) / (one * one);
+    let rp = r.saturating_mul(p) / one;
+    let penalty_2 = i128::from(BETA_2.saturating_mul(1000))
+        .saturating_mul(rp)
+        .saturating_mul(one_minus_v)
+        / one.saturating_mul(one);
 
     // Reward: validation_depth × (1 - bloom_fp). Full validation + good bloom → safe.
-    let reward = i128::from(BETA_3 * 1000) * v * (one - b) / (one * one);
+    let one_minus_b = one.saturating_sub(b);
+    let reward = i128::from(BETA_3.saturating_mul(1000))
+        .saturating_mul(v)
+        .saturating_mul(one_minus_b)
+        / one.saturating_mul(one);
 
     // Direct memory pressure penalty: if arena/headroom pressure is high,
     // force backpressure even when risk-only terms are mild.
     // BETA_4 is already in ppm, so we multiply by (p/one).
-    let penalty_3 = i128::from(BETA_4) * p / one;
+    let penalty_3 = i128::from(BETA_4).saturating_mul(p) / one;
 
-    let final_ppm = headroom - penalty_1 - penalty_2 - penalty_3 + reward;
+    let final_ppm = headroom
+        .saturating_sub(penalty_1)
+        .saturating_sub(penalty_2)
+        .saturating_sub(penalty_3)
+        .saturating_add(reward);
     final_ppm.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
