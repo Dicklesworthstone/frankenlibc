@@ -507,17 +507,14 @@ pub unsafe extern "C" fn access(path: *const c_char, amode: c_int) -> c_int {
     if !unistd_core::valid_access_mode(amode) {
         if mode.heals_enabled() {
             // default to F_OK (existence check) in hardened mode
-            let rc = unsafe {
-                syscall_ret_int(
-                    libc::syscall(
-                        libc::SYS_faccessat,
-                        libc::AT_FDCWD,
-                        path,
-                        unistd_core::F_OK,
-                        0,
-                    ),
-                    errno::EACCES,
-                )
+            let rc = match unsafe {
+                syscall::sys_faccessat(libc::AT_FDCWD, path as *const u8, unistd_core::F_OK, 0)
+            } {
+                Ok(()) => 0,
+                Err(e) => {
+                    unsafe { set_abi_errno(e) };
+                    -1
+                }
             };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
             return rc;
@@ -860,21 +857,25 @@ pub unsafe extern "C" fn link(oldpath: *const c_char, newpath: *const c_char) ->
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_linkat,
-                libc::AT_FDCWD,
-                oldpath,
-                libc::AT_FDCWD,
-                newpath,
-                0,
-            ),
-            errno::ENOENT,
+    match unsafe {
+        syscall::sys_linkat(
+            libc::AT_FDCWD,
+            oldpath as *const u8,
+            libc::AT_FDCWD,
+            newpath as *const u8,
+            0,
         )
-    };
-    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
-    rc
+    } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, true);
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1026,21 +1027,25 @@ pub unsafe extern "C" fn rename(oldpath: *const c_char, newpath: *const c_char) 
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_renameat2,
-                libc::AT_FDCWD,
-                oldpath,
-                libc::AT_FDCWD,
-                newpath,
-                0,
-            ),
-            errno::ENOENT,
+    match unsafe {
+        syscall::sys_renameat2(
+            libc::AT_FDCWD,
+            oldpath as *const u8,
+            libc::AT_FDCWD,
+            newpath as *const u8,
+            0,
         )
-    };
-    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
-    rc
+    } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, true);
+            -1
+        }
+    }
 }
 
 /// POSIX `mkdir` — create a directory.
@@ -8751,17 +8756,13 @@ pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> 
         }
     }
 
-    let ret = unsafe {
-        libc::syscall(
-            libc::SYS_setgroups,
-            groups.len() as i64,
-            groups.as_ptr() as i64,
-        )
-    } as c_int;
-    if ret < 0 {
-        return -1;
+    match unsafe { syscall::sys_setgroups(groups.len(), groups.as_ptr()) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    0
 }
 
 // ---------------------------------------------------------------------------
