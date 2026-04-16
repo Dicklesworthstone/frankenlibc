@@ -423,6 +423,16 @@ pub const SYS_UNLINKAT: usize = 263;
 pub const SYS_WAITID: usize = 247;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SCHED_SETSCHEDULER: usize = 144;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SYMLINKAT: usize = 266;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FACCESSAT: usize = 269;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MKDIRAT: usize = 258;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FCHMODAT: usize = 268;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FCHOWNAT: usize = 260;
 
 // Process management syscalls - aarch64
 #[cfg(target_arch = "aarch64")]
@@ -449,6 +459,16 @@ pub const SYS_UNLINKAT: usize = 35;
 pub const SYS_WAITID: usize = 95;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SCHED_SETSCHEDULER: usize = 119;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SYMLINKAT: usize = 36;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FACCESSAT: usize = 48;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MKDIRAT: usize = 34;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FCHMODAT: usize = 53;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FCHOWNAT: usize = 54;
 
 // Socket syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2321,6 +2341,105 @@ pub unsafe fn sys_sched_setscheduler(pid: i32, policy: i32, param: *const u8) ->
             pid as usize,
             policy as usize,
             param as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `symlinkat(target, newdirfd, linkpath)` — create a symbolic link relative to directory fd.
+///
+/// # Safety
+///
+/// Both pointers must be valid NUL-terminated strings.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u8) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_SYMLINKAT,
+            target as usize,
+            newdirfd as usize,
+            linkpath as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `faccessat(dirfd, pathname, mode, flags)` — check file accessibility.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_faccessat(dirfd: i32, pathname: *const u8, mode: i32, flags: i32) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_FACCESSAT,
+            dirfd as usize,
+            pathname as usize,
+            mode as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mkdirat(dirfd, pathname, mode)` — create a directory relative to directory fd.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mkdirat(dirfd: i32, pathname: *const u8, mode: u32) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_MKDIRAT,
+            dirfd as usize,
+            pathname as usize,
+            mode as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fchmodat(dirfd, pathname, mode, flags)` — change file mode relative to directory fd.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fchmodat(dirfd: i32, pathname: *const u8, mode: u32, flags: i32) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_FCHMODAT,
+            dirfd as usize,
+            pathname as usize,
+            mode as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fchownat(dirfd, pathname, owner, group, flags)` — change file ownership relative to directory fd.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fchownat(dirfd: i32, pathname: *const u8, owner: u32, group: u32, flags: i32) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_FCHOWNAT,
+            dirfd as usize,
+            pathname as usize,
+            owner as usize,
+            group as usize,
+            flags as usize,
         )
     };
     syscall_result(ret).map(|_| ())

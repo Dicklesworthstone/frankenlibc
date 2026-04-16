@@ -519,11 +519,9 @@ pub unsafe extern "C" fn access(path: *const c_char, amode: c_int) -> c_int {
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_faccessat, libc::AT_FDCWD, path, amode, 0),
-            errno::EACCES,
-        )
+    let rc = match unsafe { syscall::sys_faccessat(libc::AT_FDCWD, path as *const u8, amode, 0) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
@@ -876,11 +874,9 @@ pub unsafe extern "C" fn symlink(target: *const c_char, linkpath: *const c_char)
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_symlinkat, target, libc::AT_FDCWD, linkpath),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_symlinkat(target as *const u8, libc::AT_FDCWD, linkpath as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
     rc
