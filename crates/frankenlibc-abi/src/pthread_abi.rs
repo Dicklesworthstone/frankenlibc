@@ -56,7 +56,6 @@ type HostPthreadCreateFn = unsafe extern "C" fn(
 type HostPthreadJoinFn = unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> c_int;
 type HostPthreadDetachFn = unsafe extern "C" fn(libc::pthread_t) -> c_int;
 type HostPthreadSelfFn = unsafe extern "C" fn() -> libc::pthread_t;
-type HostPthreadEqualFn = unsafe extern "C" fn(libc::pthread_t, libc::pthread_t) -> c_int;
 type HostPthreadGetattrFn =
     unsafe extern "C" fn(libc::pthread_t, *mut libc::pthread_attr_t) -> c_int;
 type HostPthreadMutexInitFn =
@@ -218,8 +217,6 @@ static HOST_PTHREAD_JOIN_PTR: std::sync::atomic::AtomicUsize =
 static HOST_PTHREAD_DETACH_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_SELF_PTR: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-static HOST_PTHREAD_EQUAL_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_CONDATTR_GETCLOCK_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
@@ -699,18 +696,6 @@ unsafe fn host_pthread_self_fn() -> Option<HostPthreadSelfFn> {
     Some(unsafe { std::mem::transmute::<usize, HostPthreadSelfFn>(ptr) })
 }
 
-unsafe fn host_pthread_equal_fn() -> Option<HostPthreadEqualFn> {
-    let ptr = unsafe {
-        resolve_cached_host_thread_symbol(
-            &HOST_PTHREAD_EQUAL_PTR,
-            "pthread_equal",
-            b"pthread_equal\0",
-        )
-    }?;
-    // SAFETY: resolved symbol has pthread_equal ABI.
-    Some(unsafe { std::mem::transmute::<usize, HostPthreadEqualFn>(ptr) })
-}
-
 unsafe fn host_pthread_mutex_init_fn() -> Option<HostPthreadMutexInitFn> {
     let ptr = unsafe { resolve_host_symbol(b"pthread_mutex_init\0") };
     if ptr.is_null() {
@@ -1030,7 +1015,6 @@ pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
     crate::host_resolve::bootstrap_host_symbols();
     unsafe {
         let _ = host_pthread_self_fn();
-        let _ = host_pthread_equal_fn();
         let _ = host_pthread_create_fn();
         let _ = host_pthread_join_fn();
         let _ = host_pthread_detach_fn();
@@ -7019,7 +7003,6 @@ pub unsafe extern "C" fn __pthread_unwind_next(_buf: *mut c_void) {
 /// 10 = direct loaded-libc ELF pthread_join
 /// 11 = cached host pthread_join fn
 /// 12 = direct loaded-libc ELF pthread_equal
-/// 13 = cached host pthread_equal fn
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __frankenlibc_host_pthread_probe(kind: c_int) -> usize {
     match kind {
@@ -7047,11 +7030,6 @@ pub unsafe extern "C" fn __frankenlibc_host_pthread_probe(kind: c_int) -> usize 
                 .unwrap_or(0)
         },
         12 => resolve_loaded_libc_symbol_direct("pthread_equal").unwrap_or(0),
-        13 => unsafe {
-            host_pthread_equal_fn()
-                .map(|func| func as usize)
-                .unwrap_or(0)
-        },
         _ => 0,
     }
 }
