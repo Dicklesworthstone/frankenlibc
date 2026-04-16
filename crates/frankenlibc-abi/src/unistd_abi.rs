@@ -8843,8 +8843,9 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
         let mut pos = 0usize;
         loop {
             let mut ch = 0u8;
-            let n = unsafe {
-                libc::syscall(libc::SYS_read, fd as i64, &mut ch as *mut u8 as i64, 1i64)
+            let n = match unsafe { syscall::sys_read(fd, &mut ch as *mut u8, 1) } {
+                Ok(n) => n as isize,
+                Err(_) => -1,
             };
             if n <= 0 || ch == b'\n' || ch == b'\r' {
                 break;
@@ -8860,19 +8861,12 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
 
     // Restore terminal settings
     if saved_ok {
-        unsafe {
-            libc::syscall(
-                libc::SYS_ioctl,
-                fd as i64,
-                TCSETS as i64,
-                termios_buf.as_ptr() as i64,
-            );
-        }
+        let _ = unsafe { syscall::sys_ioctl(fd, TCSETS as usize, termios_buf.as_ptr() as usize) };
         // Print newline since echo was off
-        unsafe { libc::syscall(libc::SYS_write, fd as i64, b"\n".as_ptr() as i64, 1i64) };
+        let _ = unsafe { syscall::sys_write(fd, b"\n".as_ptr(), 1) };
     }
 
-    unsafe { libc::syscall(libc::SYS_close, fd as i64) };
+    let _ = syscall::sys_close(fd);
     result
 }
 
