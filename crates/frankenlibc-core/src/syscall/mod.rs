@@ -1247,6 +1247,41 @@ pub const SYS_EPOLL_PWAIT2: usize = 441;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_PTRACE: usize = 117;
 
+// New mount API (kernel 5.2+) - same numbers on both architectures
+#[cfg(target_arch = "x86_64")]
+pub const SYS_OPEN_TREE: usize = 428;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MOVE_MOUNT: usize = 429;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FSOPEN: usize = 430;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FSCONFIG: usize = 431;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FSMOUNT: usize = 432;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FSPICK: usize = 433;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MOUNT_SETATTR: usize = 442;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RT_SIGRETURN: usize = 15;
+
+#[cfg(target_arch = "aarch64")]
+pub const SYS_OPEN_TREE: usize = 428;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MOVE_MOUNT: usize = 429;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FSOPEN: usize = 430;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FSCONFIG: usize = 431;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FSMOUNT: usize = 432;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FSPICK: usize = 433;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MOUNT_SETATTR: usize = 442;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RT_SIGRETURN: usize = 139;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -5204,6 +5239,121 @@ pub unsafe fn sys_ptrace(request: i32, pid: i32, addr: usize, data: usize) -> Re
         raw::syscall4(SYS_PTRACE, request as usize, pid as usize, addr, data)
     };
     syscall_result(ret).map(|v| v as isize)
+}
+
+/// `open_tree(dirfd, path, flags)` — open/clone a mount tree.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_open_tree(dirfd: i32, path: *const u8, flags: u32) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_OPEN_TREE, dirfd as usize, path as usize, flags as usize)
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `move_mount(from_dirfd, from_path, to_dirfd, to_path, flags)` — move a mount.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_move_mount(
+    from_dirfd: i32,
+    from_path: *const u8,
+    to_dirfd: i32,
+    to_path: *const u8,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_MOVE_MOUNT,
+            from_dirfd as usize,
+            from_path as usize,
+            to_dirfd as usize,
+            to_path as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fsopen(fsname, flags)` — open a filesystem by name.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fsopen(fsname: *const u8, flags: u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_FSOPEN, fsname as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `fsconfig(fd, cmd, key, value, aux)` — configure a filesystem context.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fsconfig(
+    fd: i32,
+    cmd: u32,
+    key: *const u8,
+    value: *const u8,
+    aux: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_FSCONFIG,
+            fd as usize,
+            cmd as usize,
+            key as usize,
+            value as usize,
+            aux as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fsmount(fs_fd, flags, attr_flags)` — create a mount from a filesystem context.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fsmount(fs_fd: i32, flags: u32, attr_flags: u32) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_FSMOUNT, fs_fd as usize, flags as usize, attr_flags as usize)
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `fspick(dirfd, path, flags)` — pick a mount for configuration.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fspick(dirfd: i32, path: *const u8, flags: u32) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_FSPICK, dirfd as usize, path as usize, flags as usize)
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `mount_setattr(dirfd, pathname, flags, uattr, usize)` — set mount attributes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mount_setattr(
+    dirfd: i32,
+    pathname: *const u8,
+    flags: u32,
+    uattr: *mut u8,
+    usize_: usize,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_MOUNT_SETATTR,
+            dirfd as usize,
+            pathname as usize,
+            flags as usize,
+            uattr as usize,
+            usize_,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `rt_sigreturn(scp)` — return from signal handler (kernel internal).
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_rt_sigreturn(scp: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_RT_SIGRETURN, scp as usize) };
+    syscall_result(ret).map(|_| ())
 }
 
 // -------------------------------------------------------------------------

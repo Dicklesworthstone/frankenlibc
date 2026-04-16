@@ -105,36 +105,6 @@ fn runtime_meminfo_pages(field: &str) -> Option<libc::c_long> {
     None
 }
 
-#[inline]
-unsafe fn syscall_ret_int(ret: libc::c_long, default_errno: c_int) -> c_int {
-    if ret < 0 {
-        unsafe { set_abi_errno(last_host_errno(default_errno)) };
-        -1
-    } else {
-        ret as c_int
-    }
-}
-
-#[inline]
-unsafe fn syscall_ret_isize(ret: libc::c_long, default_errno: c_int) -> isize {
-    if ret < 0 {
-        unsafe { set_abi_errno(last_host_errno(default_errno)) };
-        -1
-    } else {
-        ret as isize
-    }
-}
-
-#[inline]
-unsafe fn syscall_ret_zero(ret: libc::c_long, default_errno: c_int) -> c_int {
-    if ret < 0 {
-        unsafe { set_abi_errno(last_host_errno(default_errno)) };
-        -1
-    } else {
-        0
-    }
-}
-
 fn maybe_clamp_io_len(requested: usize, addr: usize, enable_repair: bool) -> (usize, bool) {
     if !enable_repair || requested == 0 || addr == 0 {
         return (requested, false);
@@ -13212,7 +13182,7 @@ pub unsafe extern "C" fn euidaccess(path: *const c_char, mode: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn closefrom(lowfd: c_int) {
     // close_range syscall (kernel 5.9+)
-    let _ = unsafe { syscall::sys_close_range(lowfd as u32, !0u32, 0) };
+    let _ = syscall::sys_close_range(lowfd as u32, !0u32, 0);
 }
 
 /// POSIX `clock_getcpuclockid` — get CPU-time clock for a process.
@@ -16122,8 +16092,13 @@ pub unsafe extern "C" fn fspick(dirfd: c_int, path: *const c_char, flags: c_uint
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn open_tree(dirfd: c_int, path: *const c_char, flags: c_uint) -> c_int {
-    let ret = unsafe { libc::syscall(428i64, dirfd, path, flags) };
-    unsafe { syscall_ret_int(ret, libc::EINVAL) }
+    match unsafe { syscall::sys_open_tree(dirfd, path as *const u8, flags) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -16134,8 +16109,21 @@ pub unsafe extern "C" fn move_mount(
     to_path: *const c_char,
     flags: c_uint,
 ) -> c_int {
-    let ret = unsafe { libc::syscall(429i64, from_dirfd, from_path, to_dirfd, to_path, flags) };
-    unsafe { syscall_ret_zero(ret, libc::EINVAL) }
+    match unsafe {
+        syscall::sys_move_mount(
+            from_dirfd,
+            from_path as *const u8,
+            to_dirfd,
+            to_path as *const u8,
+            flags,
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ===========================================================================
@@ -16169,12 +16157,8 @@ pub unsafe extern "C" fn ntp_gettime(ntv: *mut c_void) -> c_int {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    unsafe {
-        libc::syscall(
-            libc::SYS_clock_gettime,
-            libc::CLOCK_REALTIME as i64,
-            &mut ts,
-        ) as c_int
+    let _ = unsafe {
+        syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8)
     };
     // ntptimeval.time = timeval at offset 0
     let p = ntv as *mut i64;
