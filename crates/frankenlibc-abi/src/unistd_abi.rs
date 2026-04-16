@@ -5225,8 +5225,8 @@ pub unsafe extern "C" fn openpty(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn login_tty(fd: c_int) -> c_int {
     // Create new session
-    if unsafe { libc::syscall(libc::SYS_setsid) } < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+    if syscall::sys_setsid().is_err() {
+        unsafe { set_abi_errno(errno::EPERM) };
         return -1;
     }
 
@@ -9501,11 +9501,13 @@ pub unsafe extern "C" fn process_vm_writev(
 /// Linux `umount` — unmount a filesystem via raw syscall.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn umount(target: *const c_char) -> c_int {
-    let ret = unsafe { libc::syscall(libc::SYS_umount2, target, 0i64) } as c_int;
-    if ret < 0 {
-        return -1;
+    match unsafe { syscall::sys_umount2(target as *const u8, 0) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    0
 }
 
 /// `glob64` — on x86_64, identical to `glob` (LFS transparent).

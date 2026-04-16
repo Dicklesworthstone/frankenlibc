@@ -4105,6 +4105,9 @@ pub unsafe extern "C" fn pthread_mutexattr_settype(
         return libc::EINVAL;
     }
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
     if !mutexattr_word_valid(*word) {
         let Some(settype) = (unsafe { resolved_pthread_mutexattr_settype_fn() }) else {
             return libc::EINVAL;
@@ -4132,6 +4135,9 @@ pub unsafe extern "C" fn pthread_mutexattr_gettype(
         return libc::EINVAL;
     }
     let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
     if !mutexattr_word_valid(word) {
         let Some(gettype) = (unsafe { resolved_pthread_mutexattr_gettype_fn() }) else {
             return libc::EINVAL;
@@ -5661,6 +5667,9 @@ pub unsafe extern "C" fn pthread_mutexattr_getprotocol(
         return libc::EINVAL;
     }
     let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
     if !mutexattr_word_valid(word) {
         let Some(getprotocol) = (unsafe { resolved_pthread_mutexattr_getprotocol_fn() }) else {
             return libc::EINVAL;
@@ -5681,6 +5690,9 @@ pub unsafe extern "C" fn pthread_mutexattr_setprotocol(
         return libc::EINVAL;
     }
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
     if !mutexattr_word_valid(*word) {
         let Some(setprotocol) = (unsafe { resolved_pthread_mutexattr_setprotocol_fn() }) else {
             return libc::EINVAL;
@@ -5709,6 +5721,9 @@ pub unsafe extern "C" fn pthread_mutexattr_getpshared(
         return libc::EINVAL;
     }
     let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
     if !mutexattr_word_valid(word) {
         let Some(getpshared) = (unsafe { resolved_pthread_mutexattr_getpshared_fn() }) else {
             return libc::EINVAL;
@@ -5729,6 +5744,9 @@ pub unsafe extern "C" fn pthread_mutexattr_setpshared(
         return libc::EINVAL;
     }
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
     if !mutexattr_word_valid(*word) {
         let Some(setpshared) = (unsafe { resolved_pthread_mutexattr_setpshared_fn() }) else {
             return libc::EINVAL;
@@ -5757,6 +5775,9 @@ pub unsafe extern "C" fn pthread_mutexattr_getrobust(
         return libc::EINVAL;
     }
     let word = unsafe { *(attr.cast::<c_int>()) };
+    if word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
     if !mutexattr_word_valid(word) {
         let Some(getrobust) = (unsafe { resolved_pthread_mutexattr_getrobust_fn() }) else {
             return libc::EINVAL;
@@ -5777,6 +5798,9 @@ pub unsafe extern "C" fn pthread_mutexattr_setrobust(
         return libc::EINVAL;
     }
     let word = unsafe { &mut *(attr.cast::<c_int>()) };
+    if *word == MUTEXATTR_DESTROYED_SENTINEL {
+        return libc::EINVAL;
+    }
     if !mutexattr_word_valid(*word) {
         let Some(setrobust) = (unsafe { resolved_pthread_mutexattr_setrobust_fn() }) else {
             return libc::EINVAL;
