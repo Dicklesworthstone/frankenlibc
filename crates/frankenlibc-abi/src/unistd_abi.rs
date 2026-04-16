@@ -9133,23 +9133,21 @@ pub unsafe extern "C" fn mount(
     mountflags: std::ffi::c_ulong,
     data: *const c_void,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_mount,
-            source,
-            target,
-            filesystemtype,
-            mountflags,
-            data,
+    match unsafe {
+        syscall::sys_mount(
+            source as *const u8,
+            target as *const u8,
+            filesystemtype as *const u8,
+            mountflags as usize,
+            data as *const u8,
         )
-    } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `umount2` — unmount a filesystem with flags.
@@ -12751,9 +12749,17 @@ pub unsafe extern "C" fn ftok(pathname: *const c_char, proj_id: c_int) -> i32 {
         return -1;
     }
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    let rc =
-        unsafe { libc::syscall(libc::SYS_stat, pathname, &mut st as *mut libc::stat) as c_int };
-    if rc != 0 {
+    // Use newfstatat with AT_FDCWD for stat() equivalent (works on both x86_64 and aarch64)
+    if unsafe {
+        syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            pathname as *const u8,
+            &mut st as *mut libc::stat as *mut u8,
+            0,
+        )
+    }
+    .is_err()
+    {
         return -1;
     }
     // Standard ftok formula: ((proj_id & 0xFF) << 24) | ((st.st_dev & 0xFF) << 16) | (st.st_ino & 0xFFFF)
@@ -13141,13 +13147,19 @@ pub unsafe extern "C" fn fexecve(
     buf[prefix.len()..prefix.len() + fd_bytes.len()].copy_from_slice(fd_bytes);
     // NUL terminate (already 0-initialized)
     let path = buf.as_ptr() as *const c_char;
-    let rc = unsafe { libc::syscall(libc::SYS_execve as c_long, path, argv, envp) as c_int };
-    // execve only returns on failure
-    let e = std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(libc::ENOENT);
-    unsafe { set_abi_errno(e) };
-    rc
+    match unsafe {
+        syscall::sys_execve(
+            path as *const u8,
+            argv as *const *const u8,
+            envp as *const *const u8,
+        )
+    } {
+        Ok(()) => unreachable!("execve only returns on failure"),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `clone` — create child process (raw syscall wrapper).
@@ -17769,7 +17781,13 @@ pub unsafe extern "C" fn __sched_setparam(
     pid: libc::pid_t,
     param: *const libc::sched_param,
 ) -> c_int {
-    unsafe { libc::syscall(libc::SYS_sched_setparam, pid, param) as c_int }
+    match unsafe { syscall::sys_sched_setparam(pid, param as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -17777,7 +17795,13 @@ pub unsafe extern "C" fn __sched_rr_get_interval(
     pid: libc::pid_t,
     tp: *mut libc::timespec,
 ) -> c_int {
-    unsafe { libc::syscall(libc::SYS_sched_rr_get_interval, pid, tp) as c_int }
+    match unsafe { syscall::sys_sched_rr_get_interval(pid, tp as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ── __sig* aliases ──────────────────────────────────────────────────────────

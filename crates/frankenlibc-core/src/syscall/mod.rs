@@ -1211,6 +1211,18 @@ pub const SYS_CLOCK_ADJTIME: usize = 266;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_ADJTIMEX: usize = 171;
 
+// Mount/filesystem syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MOUNT: usize = 165;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CLONE3: usize = 435;
+
+// Mount/filesystem syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MOUNT: usize = 40;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CLONE3: usize = 435;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -4970,7 +4982,7 @@ pub unsafe fn sys_landlock_create_ruleset(attr: *const u8, size: usize, flags: u
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_landlock_add_rule(ruleset_fd: i32, rule_type: i32, rule_attr: *const u8, flags: u32) -> Result<(), i32> {
-    let ret = raw::syscall4(SYS_LANDLOCK_ADD_RULE, ruleset_fd as usize, rule_type as usize, rule_attr as usize, flags as usize);
+    let ret = unsafe { raw::syscall4(SYS_LANDLOCK_ADD_RULE, ruleset_fd as usize, rule_type as usize, rule_attr as usize, flags as usize) };
     syscall_result(ret).map(|_| ())
 }
 
@@ -5060,6 +5072,29 @@ pub unsafe fn sys_clock_adjtime(clk_id: i32, buf: *mut u8) -> Result<i32, i32> {
 pub unsafe fn sys_adjtimex(buf: *mut u8) -> Result<i32, i32> {
     let ret = unsafe { raw::syscall1(SYS_ADJTIMEX, buf as usize) };
     syscall_result(ret).map(|v| v as i32)
+}
+
+/// `mount(source, target, filesystemtype, mountflags, data)` — mount filesystem.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mount(
+    source: *const u8,
+    target: *const u8,
+    filesystemtype: *const u8,
+    mountflags: usize,
+    data: *const u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_MOUNT,
+            source as usize,
+            target as usize,
+            filesystemtype as usize,
+            mountflags,
+            data as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
 }
 
 // -------------------------------------------------------------------------
