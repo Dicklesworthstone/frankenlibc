@@ -54,6 +54,13 @@ STUB_PATTERNS = [
 ]
 # Data symbols (statics, not functions)
 DATA_SYMBOLS = {"stdin", "stdout", "stderr"}
+STATUS_PROMOTION_RANK = {
+    "Stub": 0,
+    "GlibcCallThrough": 1,
+    "WrapsHostLibc": 2,
+    "Implemented": 3,
+    "RawSyscall": 4,
+}
 FN_NAME_PATTERN = re.compile(r'\bfn\s+([A-Za-z_]\w*)\s*\(')
 HOST_RESOLVE_BLOCK_USE_PATTERN = re.compile(
     r'use\s+crate::host_resolve::\{(?P<body>.*?)\};',
@@ -782,6 +789,10 @@ def main():
             if previous_status == current_status:
                 continue
 
+            previous_rank = STATUS_PROMOTION_RANK.get(str(previous_status), -1)
+            current_rank = STATUS_PROMOTION_RANK.get(str(current_status), -1)
+            promotion_requires_evidence = current_rank > previous_rank
+
             linkage = linkage_by_symbol.get(symbol, {})
             strict_fixture = int(linkage.get("strict_count", 0)) > 0
             hardened_fixture = int(linkage.get("hardened_count", 0)) > 0
@@ -793,24 +804,27 @@ def main():
             hardened_pass = conformance_mode_passed(hardened_row)
 
             missing_evidence = []
-            if not strict_fixture:
-                missing_evidence.append("missing_strict_fixture")
-            if not hardened_fixture:
-                missing_evidence.append("missing_hardened_fixture")
-            if not strict_pass:
-                missing_evidence.append("strict_conformance_not_passing")
-            if not hardened_pass:
-                missing_evidence.append("hardened_conformance_not_passing")
+            if promotion_requires_evidence:
+                if not strict_fixture:
+                    missing_evidence.append("missing_strict_fixture")
+                if not hardened_fixture:
+                    missing_evidence.append("missing_hardened_fixture")
+                if not strict_pass:
+                    missing_evidence.append("strict_conformance_not_passing")
+                if not hardened_pass:
+                    missing_evidence.append("hardened_conformance_not_passing")
 
             reclassified_symbols.append({
                 "symbol": symbol,
                 "previous_status": previous_status,
                 "current_status": current_status,
+                "promotion_requires_evidence": promotion_requires_evidence,
                 "strict_fixture_count": int(linkage.get("strict_count", 0)),
                 "hardened_fixture_count": int(linkage.get("hardened_count", 0)),
                 "strict_conformance": strict_row,
                 "hardened_conformance": hardened_row,
-                "conformance_evidence_passed": len(missing_evidence) == 0,
+                "conformance_evidence_passed": (not promotion_requires_evidence)
+                or len(missing_evidence) == 0,
                 "missing_evidence": missing_evidence,
             })
 

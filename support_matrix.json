@@ -9535,7 +9535,7 @@
     },
     {
       "symbol": "pthread_cancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native cooperative cancellation via per-thread registry; sets pending flag; async mode consumes immediately",
@@ -9544,7 +9544,7 @@
     },
     {
       "symbol": "pthread_clockjoin_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Clock-aware timed join (GNU extension)",
@@ -9553,7 +9553,7 @@
     },
     {
       "symbol": "pthread_cond_broadcast",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native futex-backed condvar implementation; requires managed mutex association and returns deterministic errno on invalid state",
@@ -9562,7 +9562,7 @@
     },
     {
       "symbol": "pthread_cond_clockwait",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Clock-aware timed condvar wait",
@@ -9571,7 +9571,7 @@
     },
     {
       "symbol": "pthread_cond_destroy",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native condvar destroy returns EBUSY when waiters are present and clears association on success",
@@ -9580,7 +9580,7 @@
     },
     {
       "symbol": "pthread_cond_init",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native condvar initialization with deterministic default clock and null/attr validation contract",
@@ -9589,7 +9589,7 @@
     },
     {
       "symbol": "pthread_cond_signal",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native futex-backed condvar signal increments sequence and wakes one waiter when present",
@@ -9598,7 +9598,7 @@
     },
     {
       "symbol": "pthread_cond_timedwait",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Timed condvar wait with futex backend.",
@@ -9607,7 +9607,7 @@
     },
     {
       "symbol": "pthread_cond_wait",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native condvar wait with futex choreography; requires managed mutex and enforces association invariants",
@@ -9625,7 +9625,7 @@
     },
     {
       "symbol": "pthread_condattr_getclock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -9670,7 +9670,7 @@
     },
     {
       "symbol": "pthread_create",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native clone-backed thread creation via core ThreadHandle; null thread_out/start rejected with EINVAL and non-null attr rejected deterministically",
@@ -9679,7 +9679,7 @@
     },
     {
       "symbol": "pthread_detach",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native detach on managed ThreadHandle registry; unknown or already-consumed thread ids return deterministic ESRCH",
@@ -9698,7 +9698,7 @@
     {
       "symbol": "pthread_exit",
       "header": "<pthread.h>",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "notes": "Delegates to glibc pthread_exit",
       "module": "pthread_abi"
     },
@@ -9720,7 +9720,7 @@
     },
     {
       "symbol": "pthread_getattr_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Passthrough to glibc pthread_getattr_np",
@@ -9779,7 +9779,7 @@
     },
     {
       "symbol": "pthread_join",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native join on managed ThreadHandle registry with deterministic ESRCH for unknown ids and core join errno propagation",
@@ -9815,7 +9815,7 @@
     },
     {
       "symbol": "pthread_mutex_clocklock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Clock-aware timed mutex lock",
@@ -9833,7 +9833,7 @@
     },
     {
       "symbol": "pthread_mutex_destroy",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -9842,7 +9842,7 @@
     },
     {
       "symbol": "pthread_mutex_init",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -9851,7 +9851,7 @@
     },
     {
       "symbol": "pthread_mutex_lock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -9860,7 +9860,7 @@
     },
     {
       "symbol": "pthread_mutex_timedlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Timed mutex lock with abstime deadline",
@@ -9869,7 +9869,7 @@
     },
     {
       "symbol": "pthread_mutex_trylock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -9878,7 +9878,7 @@
     },
     {
       "symbol": "pthread_mutex_unlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Futex-managed NORMAL mutex core; supports init(NULL attr) and lazy promotion for zero-initialized default mutexes; unsupported attributed/foreign layouts return deterministic EINVAL",
@@ -9887,7 +9887,7 @@
     },
     {
       "symbol": "pthread_mutexattr_destroy",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -9896,7 +9896,7 @@
     },
     {
       "symbol": "pthread_mutexattr_getprotocol",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Get mutex protocol (returns PRIO_NONE)",
@@ -9905,7 +9905,7 @@
     },
     {
       "symbol": "pthread_mutexattr_getpshared",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Get mutex pshared (returns PROCESS_PRIVATE)",
@@ -9914,7 +9914,7 @@
     },
     {
       "symbol": "pthread_mutexattr_getrobust",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Get mutex robust attribute (returns STALLED)",
@@ -9923,7 +9923,7 @@
     },
     {
       "symbol": "pthread_mutexattr_gettype",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -9941,7 +9941,7 @@
     },
     {
       "symbol": "pthread_mutexattr_setprotocol",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Set mutex protocol",
@@ -9950,7 +9950,7 @@
     },
     {
       "symbol": "pthread_mutexattr_setpshared",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Set mutex pshared attribute",
@@ -9959,7 +9959,7 @@
     },
     {
       "symbol": "pthread_mutexattr_setrobust",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Set mutex robust attribute",
@@ -9968,7 +9968,7 @@
     },
     {
       "symbol": "pthread_mutexattr_settype",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Delegates to glibc.",
@@ -10146,7 +10146,7 @@
     },
     {
       "symbol": "pthread_setcancelstate",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native thread-local cancel state (enable/disable); returns EINVAL for invalid state",
@@ -10155,7 +10155,7 @@
     },
     {
       "symbol": "pthread_setcanceltype",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native thread-local cancel type (deferred/async); returns EINVAL for invalid type",
@@ -10263,7 +10263,7 @@
     },
     {
       "symbol": "pthread_testcancel",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "default",
       "strict_semantics": "Native cancellation point; consumes pending cancel if enabled",
@@ -10272,7 +10272,7 @@
     },
     {
       "symbol": "pthread_timedjoin_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Timed thread join (GNU extension)",
@@ -10281,7 +10281,7 @@
     },
     {
       "symbol": "pthread_tryjoin_np",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Non-blocking thread join (GNU extension)",
@@ -17528,37 +17528,37 @@
     },
     {
       "symbol": "__pthread_mutex_destroy",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
     {
       "symbol": "__pthread_mutex_init",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
     {
       "symbol": "__pthread_mutex_lock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
     {
       "symbol": "__pthread_mutex_trylock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
     {
       "symbol": "__pthread_mutex_unlock",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
     {
       "symbol": "__pthread_mutexattr_destroy",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
@@ -17570,7 +17570,7 @@
     },
     {
       "symbol": "__pthread_mutexattr_settype",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "source": "pthread_abi.rs",
       "module": "pthread_abi"
     },
