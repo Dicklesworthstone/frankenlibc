@@ -3062,16 +3062,11 @@ pub unsafe extern "C" fn fallocate(fd: c_int, mode: c_int, offset: i64, len: i64
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_fallocate, fd, mode, offset, len) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOSPC);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, true);
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
-    }
+    let rc = match syscall::sys_fallocate(fd, mode, offset, len) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+    };
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
     rc
 }
 

@@ -458,8 +458,6 @@ pub const SYS_GETPPID: usize = 110;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_GETUID: usize = 102;
 #[cfg(target_arch = "x86_64")]
-pub const SYS_GETEUID: usize = 107;
-#[cfg(target_arch = "x86_64")]
 pub const SYS_GETGID: usize = 104;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_GETPGID: usize = 121;
@@ -536,8 +534,6 @@ pub const SYS_GETPPID: usize = 173;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_GETUID: usize = 174;
 #[cfg(target_arch = "aarch64")]
-pub const SYS_GETEUID: usize = 175;
-#[cfg(target_arch = "aarch64")]
 pub const SYS_GETGID: usize = 176;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_GETPGID: usize = 155;
@@ -553,6 +549,38 @@ pub const SYS_SETREGID: usize = 143;
 pub const SYS_GETGROUPS: usize = 158;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SETGROUPS: usize = 159;
+
+// Additional syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETRANDOM: usize = 318;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_ALARM: usize = 37;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_UNAME: usize = 63;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETRUSAGE: usize = 98;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RENAMEAT2: usize = 316;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETPRIORITY: usize = 140;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETPRIORITY: usize = 141;
+
+// Additional syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETRANDOM: usize = 278;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_ALARM: usize = 0; // Not available on aarch64 - use setitimer instead
+#[cfg(target_arch = "aarch64")]
+pub const SYS_UNAME: usize = 160;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETRUSAGE: usize = 165;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RENAMEAT2: usize = 276;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETPRIORITY: usize = 141;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETPRIORITY: usize = 140;
 
 // Socket syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2656,27 +2684,11 @@ pub fn sys_getuid() -> u32 {
     ret as u32
 }
 
-/// `geteuid()` — get effective user ID.
-#[inline]
-#[allow(unsafe_code)]
-pub fn sys_geteuid() -> u32 {
-    let ret = unsafe { raw::syscall0(SYS_GETEUID) };
-    ret as u32
-}
-
 /// `getgid()` — get real group ID.
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_getgid() -> u32 {
     let ret = unsafe { raw::syscall0(SYS_GETGID) };
-    ret as u32
-}
-
-/// `getegid()` — get effective group ID.
-#[inline]
-#[allow(unsafe_code)]
-pub fn sys_getegid() -> u32 {
-    let ret = unsafe { raw::syscall0(SYS_GETEGID) };
     ret as u32
 }
 
@@ -2686,14 +2698,6 @@ pub fn sys_getegid() -> u32 {
 pub fn sys_getpgid(pid: i32) -> Result<i32, i32> {
     let ret = unsafe { raw::syscall1(SYS_GETPGID, pid as usize) };
     syscall_result(ret).map(|v| v as i32)
-}
-
-/// `setpgid(pid, pgid)` — set process group ID.
-#[inline]
-#[allow(unsafe_code)]
-pub fn sys_setpgid(pid: i32, pgid: i32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall2(SYS_SETPGID, pid as usize, pgid as usize) };
-    syscall_result(ret).map(|_| ())
 }
 
 /// `getsid(pid)` — get session ID.
@@ -2710,22 +2714,6 @@ pub fn sys_getsid(pid: i32) -> Result<i32, i32> {
 pub fn sys_setsid() -> Result<i32, i32> {
     let ret = unsafe { raw::syscall0(SYS_SETSID) };
     syscall_result(ret).map(|v| v as i32)
-}
-
-/// `setuid(uid)` — set user identity.
-#[inline]
-#[allow(unsafe_code)]
-pub fn sys_setuid(uid: u32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall1(SYS_SETUID, uid as usize) };
-    syscall_result(ret).map(|_| ())
-}
-
-/// `setgid(gid)` — set group identity.
-#[inline]
-#[allow(unsafe_code)]
-pub fn sys_setgid(gid: u32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall1(SYS_SETGID, gid as usize) };
-    syscall_result(ret).map(|_| ())
 }
 
 /// `setreuid(ruid, euid)` — set real and effective user IDs.
@@ -2765,6 +2753,100 @@ pub unsafe fn sys_getgroups(size: i32, list: *mut u32) -> Result<i32, i32> {
 #[allow(unsafe_code)]
 pub unsafe fn sys_setgroups(size: usize, list: *const u32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall2(SYS_SETGROUPS, size, list as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getrandom(buf, buflen, flags)` — get random bytes.
+///
+/// # Safety
+///
+/// `buf` must point to a buffer of at least `buflen` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getrandom(buf: *mut u8, buflen: usize, flags: u32) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall3(SYS_GETRANDOM, buf as usize, buflen, flags as usize) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+/// `alarm(seconds)` — set an alarm clock for delivery of SIGALRM.
+#[inline]
+#[allow(unsafe_code)]
+#[cfg(target_arch = "x86_64")]
+pub fn sys_alarm(seconds: u32) -> u32 {
+    let ret = unsafe { raw::syscall1(SYS_ALARM, seconds as usize) };
+    ret as u32
+}
+
+/// `uname(buf)` — get name and information about current kernel.
+///
+/// # Safety
+///
+/// `buf` must point to a valid utsname structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_uname(buf: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_UNAME, buf as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getrusage(who, usage)` — get resource usage.
+///
+/// # Safety
+///
+/// `usage` must point to a valid rusage structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getrusage(who: i32, usage: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_GETRUSAGE, who as usize, usage as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `renameat2(olddirfd, oldpath, newdirfd, newpath, flags)` — rename a file.
+///
+/// # Safety
+///
+/// `oldpath` and `newpath` must be valid NUL-terminated strings.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_renameat2(
+    olddirfd: i32,
+    oldpath: *const u8,
+    newdirfd: i32,
+    newpath: *const u8,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_RENAMEAT2,
+            olddirfd as usize,
+            oldpath as usize,
+            newdirfd as usize,
+            newpath as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getpriority(which, who)` — get program scheduling priority.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_getpriority(which: i32, who: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_GETPRIORITY, which as usize, who as usize) };
+    // getpriority returns 20 - nice value (so 1-40), -1 on error
+    // We need to handle this specially as 20 needs to be subtracted
+    if (ret as isize) < 0 {
+        Err(-(ret as i32))
+    } else {
+        Ok(20 - ret as i32)
+    }
+}
+
+/// `setpriority(which, who, prio)` — set program scheduling priority.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setpriority(which: i32, who: i32, prio: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_SETPRIORITY, which as usize, who as usize, prio as usize) };
     syscall_result(ret).map(|_| ())
 }
 
