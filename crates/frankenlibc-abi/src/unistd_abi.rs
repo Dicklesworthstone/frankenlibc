@@ -7494,26 +7494,22 @@ unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
             let cb = cb_addr as *mut c_void;
 
             let result: i64 = match op {
-                AioOp::Read => unsafe {
-                    libc::syscall(
-                        libc::SYS_pread64,
-                        fd as i64,
-                        buf_addr as i64,
-                        nbytes as i64,
-                        offset,
-                    )
+                AioOp::Read => match unsafe { syscall::sys_pread64(fd, buf_addr as *mut u8, nbytes, offset) } {
+                    Ok(n) => n as i64,
+                    Err(e) => { unsafe { set_abi_errno(e) }; -1 }
                 },
-                AioOp::Write => unsafe {
-                    libc::syscall(
-                        libc::SYS_pwrite64,
-                        fd as i64,
-                        buf_addr as i64,
-                        nbytes as i64,
-                        offset,
-                    )
+                AioOp::Write => match unsafe { syscall::sys_pwrite64(fd, buf_addr as *const u8, nbytes, offset) } {
+                    Ok(n) => n as i64,
+                    Err(e) => { unsafe { set_abi_errno(e) }; -1 }
                 },
-                AioOp::Fsync => unsafe { libc::syscall(libc::SYS_fsync, fd as i64) },
-                AioOp::Fdatasync => unsafe { libc::syscall(libc::SYS_fdatasync, fd as i64) },
+                AioOp::Fsync => match syscall::sys_fsync(fd) {
+                    Ok(()) => 0,
+                    Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+                },
+                AioOp::Fdatasync => match syscall::sys_fdatasync(fd) {
+                    Ok(()) => 0,
+                    Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+                },
             };
 
             if result < 0 {
@@ -11733,7 +11729,10 @@ pub unsafe extern "C" fn fallocate64(fd: c_int, mode: c_int, offset: i64, len: i
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fcntl64(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
     let arg: c_long = unsafe { (&mut args as *mut _ as *mut c_long).read() };
-    unsafe { libc::syscall(libc::SYS_fcntl, fd, cmd, arg) as c_int }
+    match unsafe { syscall::sys_fcntl(fd, cmd, arg as usize) } {
+        Ok(r) => r,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
+    }
 }
 
 /// `preadv64` — LFS alias for `preadv`.
@@ -12724,16 +12723,12 @@ pub unsafe extern "C" fn pututxline(ut: *const libc::utmpx) -> *mut libc::utmpx 
     }
 
     let record_size = std::mem::size_of::<libc::utmpx>();
-    unsafe { libc::syscall(libc::SYS_lseek, fd, 0i64, libc::SEEK_END) };
-    let written = unsafe {
-        libc::syscall(
-            libc::SYS_write as c_long,
-            fd,
-            ut as *const c_void,
-            record_size,
-        )
+    let _ = syscall::sys_lseek(fd, 0, libc::SEEK_END);
+    let written = match unsafe { syscall::sys_write(fd, ut as *const u8, record_size) } {
+        Ok(n) => n as isize,
+        Err(_) => -1,
     };
-    unsafe { libc::syscall(libc::SYS_close as c_long, fd) };
+    let _ = syscall::sys_close(fd);
 
     if written as usize == record_size {
         thread_local! {
