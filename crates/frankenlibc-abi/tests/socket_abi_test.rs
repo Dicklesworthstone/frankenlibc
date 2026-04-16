@@ -11,10 +11,11 @@ use std::ffi::{c_int, c_void};
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::socket_abi;
 use frankenlibc_core::errno;
+use frankenlibc_core::syscall as raw_syscall;
 
-/// Close a file descriptor via libc syscall.
+/// Close a file descriptor via the core syscall veneer.
 unsafe fn close_fd(fd: c_int) {
-    unsafe { libc::syscall(libc::SYS_close, fd) };
+    let _ = raw_syscall::sys_close(fd);
 }
 
 // ---------------------------------------------------------------------------
