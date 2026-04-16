@@ -12,7 +12,6 @@
 
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_void};
-use std::os::raw::c_long;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -4895,7 +4894,7 @@ pub unsafe extern "C" fn freopen(
         if id == STDIN_SENTINEL || id == STDOUT_SENTINEL || id == STDERR_SENTINEL {
             target_fd = old_fd;
         } else if old_fd >= 0 {
-            unsafe { libc::syscall(libc::SYS_close as c_long, old_fd) };
+            let _ = raw_syscall::sys_close(old_fd);
         }
     }
 
@@ -5128,14 +5127,14 @@ pub unsafe extern "C" fn tmpfile() -> *mut c_void {
 
     // Use O_TMPFILE for efficient temporary file creation.
     let fd = unsafe {
-        libc::syscall(
-            libc::SYS_openat,
+        raw_syscall::sys_openat(
             libc::AT_FDCWD,
-            c"/tmp".as_ptr(),
+            c"/tmp".as_ptr() as *const u8,
             libc::O_RDWR | libc::O_TMPFILE | libc::O_EXCL,
-            0o600 as libc::mode_t,
-        ) as c_int
-    };
+            0o600,
+        )
+    }
+    .unwrap_or(-1);
 
     if fd < 0 {
         // Fallback: create a named temp file and unlink it.
@@ -5324,65 +5323,35 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
     // Create pipe: pipe_fds[0] = read end, pipe_fds[1] = write end.
     let mut pipe_fds = [0i32; 2];
     let pipe_flags = if close_on_exec { libc::O_CLOEXEC } else { 0 };
-    let mut ret =
-        unsafe { libc::syscall(libc::SYS_pipe2 as c_long, pipe_fds.as_mut_ptr(), pipe_flags) };
-    if ret < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
+    let pipe_result = unsafe { raw_syscall::sys_pipe2(pipe_fds.as_mut_ptr(), pipe_flags) };
+    if let Err(e) = pipe_result {
         if e != libc::ENOSYS {
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
             return std::ptr::null_mut();
         }
-        // Fallback for kernels without pipe2: use pipe + fcntl(FD_CLOEXEC) if requested.
-        ret = unsafe { libc::syscall(libc::SYS_pipe as c_long, pipe_fds.as_mut_ptr()) };
-        if ret < 0 {
-            let e = std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(errno::EIO);
+        // Fallback for kernels without pipe2: use pipe2(0) + fcntl(FD_CLOEXEC) if requested.
+        if let Err(e) = unsafe { raw_syscall::sys_pipe2(pipe_fds.as_mut_ptr(), 0) } {
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
             return std::ptr::null_mut();
         }
         if close_on_exec {
-            let rc = unsafe {
-                libc::syscall(
-                    libc::SYS_fcntl as c_long,
-                    pipe_fds[0],
-                    libc::F_SETFD,
-                    libc::FD_CLOEXEC,
-                )
-            };
-            if rc < 0 {
-                let e = std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(errno::EIO);
-                unsafe {
-                    libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
-                    libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
-                    set_abi_errno(e);
-                }
+            if let Err(e) = unsafe {
+                raw_syscall::sys_fcntl(pipe_fds[0], libc::F_SETFD, libc::FD_CLOEXEC as usize)
+            } {
+                let _ = raw_syscall::sys_close(pipe_fds[0]);
+                let _ = raw_syscall::sys_close(pipe_fds[1]);
+                unsafe { set_abi_errno(e) };
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
                 return std::ptr::null_mut();
             }
-            let rc = unsafe {
-                libc::syscall(
-                    libc::SYS_fcntl as c_long,
-                    pipe_fds[1],
-                    libc::F_SETFD,
-                    libc::FD_CLOEXEC,
-                )
-            };
-            if rc < 0 {
-                let e = std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(errno::EIO);
-                unsafe {
-                    libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
-                    libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
-                    set_abi_errno(e);
-                }
+            if let Err(e) = unsafe {
+                raw_syscall::sys_fcntl(pipe_fds[1], libc::F_SETFD, libc::FD_CLOEXEC as usize)
+            } {
+                let _ = raw_syscall::sys_close(pipe_fds[0]);
+                let _ = raw_syscall::sys_close(pipe_fds[1]);
+                unsafe { set_abi_errno(e) };
                 runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
                 return std::ptr::null_mut();
             }
@@ -5390,68 +5359,43 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
     }
 
     // Fork via clone(SIGCHLD).
-    let pid = unsafe {
-        libc::syscall(
-            libc::SYS_clone as c_long,
-            libc::SIGCHLD as c_long,
-            0 as c_long,
-            0 as c_long,
-            0 as c_long,
-            0 as c_long,
-        ) as i32
-    };
-
-    if pid < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::ENOMEM);
-        unsafe { set_abi_errno(e) };
-        unsafe {
-            libc::syscall(libc::SYS_close as c_long, pipe_fds[0]);
-            libc::syscall(libc::SYS_close as c_long, pipe_fds[1]);
+    let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
+        Ok(p) => p,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            let _ = raw_syscall::sys_close(pipe_fds[0]);
+            let _ = raw_syscall::sys_close(pipe_fds[1]);
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+            return std::ptr::null_mut();
         }
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
-        return std::ptr::null_mut();
-    }
+    };
 
     if pid == 0 {
         // Child process.
         let child_exit = || -> ! {
-            unsafe { libc::syscall(libc::SYS_exit_group as c_long, 127 as c_long) };
-            loop {
-                unsafe { libc::syscall(libc::SYS_exit as c_long, 127 as c_long) };
-            }
+            raw_syscall::sys_exit_group(127)
         };
 
         if reading {
             // Parent reads from child's stdout: dup write end to stdout.
-            let rc = unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[0]) };
-            if rc < 0 {
+            if raw_syscall::sys_close(pipe_fds[0]).is_err() {
                 child_exit();
             }
-            let rc = unsafe {
-                libc::syscall(libc::SYS_dup2 as c_long, pipe_fds[1], libc::STDOUT_FILENO)
-            };
-            if rc < 0 {
+            if raw_syscall::sys_dup2(pipe_fds[1], libc::STDOUT_FILENO).is_err() {
                 child_exit();
             }
-            let rc = unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[1]) };
-            if rc < 0 {
+            if raw_syscall::sys_close(pipe_fds[1]).is_err() {
                 child_exit();
             }
         } else {
             // Parent writes to child's stdin: dup read end to stdin.
-            let rc = unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[1]) };
-            if rc < 0 {
+            if raw_syscall::sys_close(pipe_fds[1]).is_err() {
                 child_exit();
             }
-            let rc =
-                unsafe { libc::syscall(libc::SYS_dup2 as c_long, pipe_fds[0], libc::STDIN_FILENO) };
-            if rc < 0 {
+            if raw_syscall::sys_dup2(pipe_fds[0], libc::STDIN_FILENO).is_err() {
                 child_exit();
             }
-            let rc = unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[0]) };
-            if rc < 0 {
+            if raw_syscall::sys_close(pipe_fds[0]).is_err() {
                 child_exit();
             }
         }
@@ -5463,18 +5407,22 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
         unsafe extern "C" {
             static mut environ: *mut *mut c_char;
         }
-        unsafe {
-            libc::syscall(libc::SYS_execve as c_long, sh, argv.as_ptr(), environ);
-        }
+        let _ = unsafe {
+            raw_syscall::sys_execve(
+                sh as *const u8,
+                argv.as_ptr() as *const *const u8,
+                environ as *const *const u8,
+            )
+        };
         child_exit();
     }
 
     // Parent: close unused end and wrap the other in a stdio stream.
     let our_fd = if reading {
-        unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[1]) };
+        let _ = raw_syscall::sys_close(pipe_fds[1]);
         pipe_fds[0]
     } else {
-        unsafe { libc::syscall(libc::SYS_close as c_long, pipe_fds[0]) };
+        let _ = raw_syscall::sys_close(pipe_fds[0]);
         pipe_fds[1]
     };
 
@@ -5489,7 +5437,7 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
     let fp = fdopen_native_impl(our_fd, &open_flags);
     if fp.is_null() {
         // fdopen failed (registry full) - close fd and waitpid to reap child.
-        unsafe { libc::syscall(libc::SYS_close as c_long, our_fd) };
+        let _ = raw_syscall::sys_close(our_fd);
         unsafe { crate::process_abi::waitpid(pid, std::ptr::null_mut(), 0) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
         return std::ptr::null_mut();
@@ -5532,23 +5480,13 @@ pub unsafe extern "C" fn pclose(stream: *mut c_void) -> c_int {
     // Wait for child.
     let mut wstatus: c_int = 0;
     loop {
-        let ret = unsafe {
-            libc::syscall(
-                libc::SYS_wait4 as c_long,
-                pid,
-                &mut wstatus as *mut c_int,
-                0,
-                std::ptr::null::<c_void>(),
-            )
-        };
-        if ret == pid as i64 {
-            break;
-        }
-        if ret < 0 {
-            let e = std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(libc::EINTR);
-            if e != libc::EINTR {
+        match unsafe {
+            raw_syscall::sys_wait4(pid, &mut wstatus, 0, std::ptr::null_mut())
+        } {
+            Ok(child_pid) if child_pid == pid => break,
+            Ok(_) => continue,
+            Err(libc::EINTR) => continue,
+            Err(e) => {
                 unsafe { set_abi_errno(e) };
                 return -1;
             }
