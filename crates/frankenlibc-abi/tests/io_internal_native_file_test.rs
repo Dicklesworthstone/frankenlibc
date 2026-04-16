@@ -10,6 +10,7 @@ use frankenlibc_abi::io_internal_abi::{
     NATIVE_FILE_MAGIC, NATIVE_IO_JUMP_T, NativeFile, NativeFileBufMode, NativeFileVtable,
     file_flags, native_stream_registry,
 };
+use frankenlibc_core::syscall as raw_syscall;
 
 #[allow(non_snake_case)]
 #[repr(C)]
@@ -280,7 +281,7 @@ fn native_file_ungetc_buf_stores_byte() {
 
 fn temp_memfd() -> c_int {
     let name = b"vtable_test\0";
-    let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), 0) } as c_int;
+    let fd = unsafe { raw_syscall::sys_memfd_create(name.as_ptr(), 0) }.expect("memfd_create");
     assert!(fd >= 0, "memfd_create failed");
     fd
 }
@@ -416,15 +417,14 @@ fn vtable_flush_writes_buffer() {
     );
     assert!(!f.is_error());
 
-    let seek_pos = unsafe { libc::syscall(libc::SYS_lseek, fd, 0i64, libc::SEEK_SET) };
-    assert_eq!(seek_pos, 0);
+    assert_eq!(raw_syscall::sys_lseek(fd, 0, libc::SEEK_SET), Ok(0));
 
     let mut read_buf = [0u8; 64];
-    let n = unsafe { libc::syscall(libc::SYS_read, fd, read_buf.as_mut_ptr(), 64) };
-    assert_eq!(n, data.len() as i64);
+    let n = unsafe { raw_syscall::sys_read(fd, read_buf.as_mut_ptr(), 64) };
+    assert_eq!(n, Ok(data.len()));
     assert_eq!(&read_buf[..data.len()], data);
 
-    unsafe { libc::syscall(libc::SYS_close, fd) };
+    assert_eq!(raw_syscall::sys_close(fd), Ok(()));
 }
 
 #[test]
@@ -443,20 +443,20 @@ fn vtable_close_flushes_before_closing() {
     let end = unsafe { heap_buf.add(256) };
     f.set_buffer_state(heap_buf, pos, end, 256);
 
-    let verify_fd = unsafe { libc::syscall(libc::SYS_dup, fd) } as c_int;
+    let verify_fd = raw_syscall::sys_dup(fd).expect("dup");
     assert!(verify_fd >= 0);
 
     let rc = unsafe { (vtable.close)(&mut f) };
     assert_eq!(rc, 0);
     assert_eq!(f.fd(), -1);
 
-    unsafe { libc::syscall(libc::SYS_lseek, verify_fd, 0i64, libc::SEEK_SET) };
+    assert_eq!(raw_syscall::sys_lseek(verify_fd, 0, libc::SEEK_SET), Ok(0));
     let mut read_buf = [0u8; 64];
-    let n = unsafe { libc::syscall(libc::SYS_read, verify_fd, read_buf.as_mut_ptr(), 64) };
-    assert_eq!(n, data.len() as i64);
+    let n = unsafe { raw_syscall::sys_read(verify_fd, read_buf.as_mut_ptr(), 64) };
+    assert_eq!(n, Ok(data.len()));
     assert_eq!(&read_buf[..data.len()], data);
 
-    unsafe { libc::syscall(libc::SYS_close, verify_fd) };
+    assert_eq!(raw_syscall::sys_close(verify_fd), Ok(()));
     unsafe { std::alloc::dealloc(heap_buf, layout) };
 }
 
@@ -637,10 +637,10 @@ fn registry_flush_all_flushes_writable_streams() {
     let errors = reg.flush_all();
     assert_eq!(errors, 0, "flush_all should succeed");
 
-    unsafe { libc::syscall(libc::SYS_lseek, fd, 0i64, libc::SEEK_SET) };
+    assert_eq!(raw_syscall::sys_lseek(fd, 0, libc::SEEK_SET), Ok(0));
     let mut read_buf = [0u8; 64];
-    let n = unsafe { libc::syscall(libc::SYS_read, fd, read_buf.as_mut_ptr(), 64) };
-    assert_eq!(n, data.len() as i64);
+    let n = unsafe { raw_syscall::sys_read(fd, read_buf.as_mut_ptr(), 64) };
+    assert_eq!(n, Ok(data.len()));
     assert_eq!(&read_buf[..data.len()], data);
 
     if let Some(stream) = reg.get_mut(slot) {
@@ -652,7 +652,7 @@ fn registry_flush_all_flushes_writable_streams() {
         );
     }
     reg.unregister(slot);
-    unsafe { libc::syscall(libc::SYS_close, fd) };
+    assert_eq!(raw_syscall::sys_close(fd), Ok(()));
     unsafe { std::alloc::dealloc(heap_buf, layout) };
 }
 
