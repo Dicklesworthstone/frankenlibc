@@ -26,8 +26,9 @@ ABI_SRC = REPO_ROOT / "crates" / "frankenlibc-abi" / "src"
 FIXTURE_DIR = REPO_ROOT / "tests" / "conformance" / "fixtures"
 CONFORMANCE_MATRIX_PATH = REPO_ROOT / "tests" / "conformance" / "conformance_matrix.v1.json"
 
-# Patterns indicating host glibc calls
-LIBC_CALL_PATTERN = re.compile(r'\blibc::(\w+)\b')
+# Patterns indicating actual host libc call expressions.
+# Type/constant references like `libc::timex` or `libc::EINVAL` are not calls.
+LIBC_CALL_PATTERN = re.compile(r'\blibc::(\w+)\s*\(')
 # Patterns indicating explicit host delegation inside ABI bodies.
 WRAPS_HOST_LIBC_PATTERN = re.compile(
     r'(host_\w+_fn\s*\(|(?:crate::host_resolve::|host_resolve::)?resolve_host_symbol\w*\s*\()'
@@ -35,7 +36,7 @@ WRAPS_HOST_LIBC_PATTERN = re.compile(
 # Patterns indicating stdio/malloc libc delegation (explicit list per bd-9chy.2).
 WRAPS_LIBC_CALL_PATTERN = re.compile(
     r'\blibc::(?:fopen|fclose|fread|fwrite|fseek|ftell|fflush|setvbuf|ungetc|'
-    r'feof|ferror|clearerr|fileno|getline|getdelim|printf|malloc|free|realloc)\b'
+    r'feof|ferror|clearerr|fileno|getline|getdelim|printf|malloc|free|realloc)\s*\('
 )
 # Patterns indicating raw syscall usage
 SYSCALL_PATTERN = re.compile(
