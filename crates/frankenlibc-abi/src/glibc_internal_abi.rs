@@ -6266,7 +6266,7 @@ pub unsafe extern "C" fn stty(fd: c_int, params: *const c_void) -> c_int {
     }
     -1
 }
-// sysctl: deprecated — forward to libc
+// sysctl: deprecated syscall removed from modern Linux/glibc — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sysctl(
     args: *mut c_int,
@@ -6276,7 +6276,9 @@ pub unsafe extern "C" fn sysctl(
     newval: *mut c_void,
     newlen: SizeT,
 ) -> c_int {
-    unsafe { libc::sysctl(args, nlen, oldval, oldlenp, newval, newlen) }
+    let _ = (args, nlen, oldval, oldlenp, newval, newlen);
+    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
+    -1
 }
 // times: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
