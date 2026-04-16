@@ -2934,21 +2934,14 @@ unsafe fn mkdtemp_inner(template: *mut c_char) -> (*mut c_char, bool) {
         }
 
         // SAFETY: `template` points to a valid candidate pathname.
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_mkdirat,
-                libc::AT_FDCWD,
-                template as *const c_char,
-                0o700,
-            ) as c_int
-        };
-        if rc == 0 {
-            return (template, false);
-        }
-        let err = last_host_errno(errno::EIO);
-        if err != libc::EEXIST {
-            unsafe { set_abi_errno(err) };
-            return (std::ptr::null_mut(), true);
+        match unsafe { syscall::sys_mkdirat(libc::AT_FDCWD, template as *const u8, 0o700) } {
+            Ok(()) => return (template, false),
+            Err(e) => {
+                if e != libc::EEXIST {
+                    unsafe { set_abi_errno(e) };
+                    return (std::ptr::null_mut(), true);
+                }
+            }
         }
     }
 
