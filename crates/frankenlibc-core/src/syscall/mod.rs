@@ -582,6 +582,18 @@ pub const SYS_GETPRIORITY: usize = 141;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SETPRIORITY: usize = 140;
 
+// Misc syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SYNC: usize = 162;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SYNCFS: usize = 306;
+
+// Misc syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SYNC: usize = 81;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SYNCFS: usize = 267;
+
 // Socket syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
 pub const SYS_BIND: usize = 49;
@@ -2847,6 +2859,21 @@ pub fn sys_getpriority(which: i32, who: i32) -> Result<i32, i32> {
 #[allow(unsafe_code)]
 pub fn sys_setpriority(which: i32, who: i32, prio: i32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall3(SYS_SETPRIORITY, which as usize, who as usize, prio as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sync()` — commit filesystem caches to disk.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_sync() {
+    unsafe { raw::syscall0(SYS_SYNC) };
+}
+
+/// `syncfs(fd)` — commit filesystem caches for the filesystem containing fd.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_syncfs(fd: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_SYNCFS, fd as usize) };
     syscall_result(ret).map(|_| ())
 }
 

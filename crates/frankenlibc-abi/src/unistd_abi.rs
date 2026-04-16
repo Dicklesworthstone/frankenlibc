@@ -4956,22 +4956,15 @@ pub unsafe extern "C" fn readahead(fd: c_int, offset: i64, count: usize) -> isiz
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn syncfs(fd: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_syncfs, fd) } as c_int;
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(errno::EBADF),
-            )
-        };
+    match syscall::sys_syncfs(fd) {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sync() {
-    unsafe { libc::syscall(libc::SYS_sync) };
+    syscall::sys_sync();
 }
 
 // ---------------------------------------------------------------------------
