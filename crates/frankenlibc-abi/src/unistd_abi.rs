@@ -468,20 +468,19 @@ pub unsafe extern "C" fn lstat(path: *const c_char, buf: *mut libc::stat) -> c_i
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_newfstatat,
-                libc::AT_FDCWD,
-                path,
-                buf,
-                libc::AT_SYMLINK_NOFOLLOW,
-            ),
-            errno::ENOENT,
-        )
-    };
-    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, rc != 0);
-    rc
+    match unsafe {
+        syscall::sys_newfstatat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, libc::AT_SYMLINK_NOFOLLOW)
+    } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1352,21 +1351,25 @@ pub unsafe extern "C" fn name_to_handle_at(
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_name_to_handle_at,
-                dirfd,
-                path,
-                handle,
-                mount_id,
-                flags,
-            ),
-            errno::ENOENT,
+    match unsafe {
+        syscall::sys_name_to_handle_at(
+            dirfd,
+            path as *const u8,
+            handle as *mut u8,
+            mount_id,
+            flags,
         )
-    };
-    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, rc < 0);
-    rc
+    } {
+        Ok(()) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
+            0
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
+            -1
+        }
+    }
 }
 
 /// Linux `open_by_handle_at` — open by handle returned from `name_to_handle_at`.
@@ -1388,14 +1391,17 @@ pub unsafe extern "C" fn open_by_handle_at(
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_open_by_handle_at, mount_fd, handle, flags),
-            errno::EBADF,
-        )
-    };
-    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc < 0);
-    rc
+    match unsafe { syscall::sys_open_by_handle_at(mount_fd, handle as *const u8, flags) } {
+        Ok(fd) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, false);
+            fd
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, true);
+            -1
+        }
+    }
 }
 
 /// POSIX `fstatat` — get file status relative to a directory file descriptor.
@@ -2971,19 +2977,20 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
     }
 
     let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    let stat_rc = unsafe {
-        libc::syscall(
-            libc::SYS_newfstatat,
+    match unsafe {
+        syscall::sys_newfstatat(
             libc::AT_FDCWD,
-            path,
-            st.as_mut_ptr(),
+            path as *const u8,
+            st.as_mut_ptr() as *mut u8,
             0,
         )
-    };
-    if stat_rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ENOENT)) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        return -1;
+    } {
+        Ok(()) => {}
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
     }
 
     let out = match pathconf_value(name) {
@@ -3449,14 +3456,16 @@ unsafe fn nftw_walk_dir(
     } else {
         0
     };
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_newfstatat,
+    let rc = match unsafe {
+        syscall::sys_newfstatat(
             libc::AT_FDCWD,
-            path,
-            &mut st,
+            path as *const u8,
+            &mut st as *mut libc::stat as *mut u8,
             stat_flags,
-        ) as c_int
+        )
+    } {
+        Ok(()) => 0,
+        Err(_) => -1,
     };
 
     // Compute base offset (last '/' + 1).
@@ -3492,14 +3501,14 @@ unsafe fn nftw_walk_dir(
         // Check if dangling
         let mut target_st: libc::stat = unsafe { std::mem::zeroed() };
         let typeflag = if unsafe {
-            libc::syscall(
-                libc::SYS_newfstatat,
+            syscall::sys_newfstatat(
                 libc::AT_FDCWD,
-                path,
-                &mut target_st,
+                path as *const u8,
+                &mut target_st as *mut libc::stat as *mut u8,
                 0,
-            ) as c_int
-        } != 0
+            )
+        }
+        .is_err()
         {
             NFTW_SLN
         } else {
@@ -3992,7 +4001,7 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: .
 
     // Open the backing file.
     let fd = match unsafe {
-        syscall::sys_openat(libc::AT_FDCWD, path.as_ptr(), oflag | libc::O_RDWR | libc::O_CLOEXEC, mode)
+        syscall::sys_openat(libc::AT_FDCWD, path.as_ptr() as *const u8, oflag | libc::O_RDWR | libc::O_CLOEXEC, mode)
     } {
         Ok(fd) => fd,
         Err(e) => {
@@ -5900,7 +5909,7 @@ pub unsafe extern "C" fn prlimit(
     match unsafe {
         syscall::sys_prlimit64(
             pid,
-            resource,
+            resource as u32,
             new_limit as *const u8,
             old_limit as *mut u8,
         )
@@ -9297,14 +9306,13 @@ pub unsafe extern "C" fn setresgid(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fanotify_init(flags: c_uint, event_f_flags: c_uint) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_fanotify_init, flags, event_f_flags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match syscall::sys_fanotify_init(flags, event_f_flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9315,23 +9323,15 @@ pub unsafe extern "C" fn fanotify_mark(
     dirfd: c_int,
     pathname: *const c_char,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_fanotify_mark,
-            fanotify_fd,
-            flags,
-            mask,
-            dirfd,
-            pathname,
-        )
-    } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe {
+        syscall::sys_fanotify_mark(fanotify_fd, flags, mask, dirfd, pathname as *const u8)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -10050,31 +10050,37 @@ pub unsafe extern "C" fn ptrace(
 /// Linux `seccomp` — secure computing filter.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn seccomp(operation: c_uint, flags: c_uint, args: *mut c_void) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_seccomp, operation, flags, args) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_seccomp(operation, flags, args as *const u8) } {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `capget` — get process capabilities.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn capget(hdrp: *mut c_void, datap: *mut c_void) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_capget, hdrp, datap) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_capget(hdrp as *mut u8, datap as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `capset` — set process capabilities.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn capset(hdrp: *mut c_void, datap: *const c_void) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_capset, hdrp, datap) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EPERM)) };
+    match unsafe { syscall::sys_capset(hdrp as *const u8, datap as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -10112,11 +10118,13 @@ pub unsafe extern "C" fn futex(
 /// Linux `membarrier` — issue memory barriers on a set of threads.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn membarrier(cmd: c_int, flags: c_uint, cpu_id: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_membarrier, cmd, flags, cpu_id) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_membarrier(cmd, flags, cpu_id) {
+        Ok(v) => v,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -10126,31 +10134,37 @@ pub unsafe extern "C" fn membarrier(cmd: c_int, flags: c_uint, cpu_id: c_int) ->
 /// Linux `io_setup` — create asynchronous I/O context.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn io_setup(nr_events: c_uint, ctxp: *mut c_ulong) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_io_setup, nr_events, ctxp) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_io_setup(nr_events, ctxp as *mut usize) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `io_destroy` — destroy asynchronous I/O context.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn io_destroy(ctx_id: c_ulong) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_io_destroy, ctx_id) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_io_destroy(ctx_id as usize) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `io_submit` — submit asynchronous I/O blocks.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn io_submit(ctx_id: c_ulong, nr: c_long, iocbpp: *mut *mut c_void) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_io_submit, ctx_id, nr, iocbpp) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_io_submit(ctx_id as usize, nr, iocbpp as *mut *mut u8) } {
+        Ok(v) => v as c_int,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `io_cancel` — cancel outstanding I/O request.
@@ -10160,11 +10174,13 @@ pub unsafe extern "C" fn io_cancel(
     iocb: *mut c_void,
     result: *mut c_void,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_io_cancel, ctx_id, iocb, result) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_io_cancel(ctx_id as usize, iocb as *mut u8, result as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `io_getevents` — read asynchronous I/O events.
@@ -10176,13 +10192,21 @@ pub unsafe extern "C" fn io_getevents(
     events: *mut c_void,
     timeout: *mut libc::timespec,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(libc::SYS_io_getevents, ctx_id, min_nr, nr, events, timeout) as c_int
-    };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe {
+        syscall::sys_io_getevents(
+            ctx_id as usize,
+            min_nr,
+            nr,
+            events as *mut u8,
+            timeout as *mut u8,
+        )
+    } {
+        Ok(v) => v as c_int,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -10237,21 +10261,25 @@ pub unsafe extern "C" fn tcgetsid(fd: c_int) -> libc::pid_t {
 /// Linux `pkey_alloc` — allocate a protection key.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pkey_alloc(flags: c_uint, access_rights: c_uint) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_pkey_alloc, flags, access_rights) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::ENOSPC)) };
+    match syscall::sys_pkey_alloc(flags, access_rights) {
+        Ok(pkey) => pkey,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `pkey_free` — free a protection key.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pkey_free(pkey: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_pkey_free, pkey) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match syscall::sys_pkey_free(pkey) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `pkey_mprotect` — set memory protection with key.
@@ -10262,11 +10290,13 @@ pub unsafe extern "C" fn pkey_mprotect(
     prot: c_int,
     pkey: c_int,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_pkey_mprotect, addr, len, prot, pkey) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
+    match unsafe { syscall::sys_pkey_mprotect(addr as *mut u8, len, prot, pkey) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ===========================================================================
@@ -12177,16 +12207,15 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
         0
     };
     let stat_result = unsafe {
-        libc::syscall(
-            libc::SYS_newfstatat,
+        syscall::sys_newfstatat(
             libc::AT_FDCWD,
-            path_cstr.as_ptr(),
-            &mut stat_buf,
+            path_cstr.as_ptr() as *const u8,
+            &mut stat_buf as *mut libc::stat as *mut u8,
             fts_stat_flags,
-        ) as c_int
+        )
     };
 
-    let info = if stat_result < 0 {
+    let info = if stat_result.is_err() {
         FTS_NS
     } else {
         let mode = stat_buf.st_mode & libc::S_IFMT;
@@ -12233,7 +12262,7 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
     owned.ftsent.fts_ino = stat_buf.st_ino;
     owned.ftsent.fts_dev = stat_buf.st_dev;
     owned.ftsent.fts_nlink = stat_buf.st_nlink;
-    owned.ftsent.fts_errno = if stat_result < 0 {
+    owned.ftsent.fts_errno = if stat_result.is_err() {
         current_abi_errno()
     } else {
         0

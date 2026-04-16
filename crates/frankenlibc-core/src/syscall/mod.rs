@@ -1011,6 +1011,74 @@ pub const SYS_TKILL: usize = 200;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_TKILL: usize = 130;
 
+// Specialized syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_NAME_TO_HANDLE_AT: usize = 303;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_OPEN_BY_HANDLE_AT: usize = 304;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FANOTIFY_INIT: usize = 300;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FANOTIFY_MARK: usize = 301;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SECCOMP: usize = 317;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CAPGET: usize = 125;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CAPSET: usize = 126;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MEMBARRIER: usize = 324;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IO_SETUP: usize = 206;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IO_DESTROY: usize = 207;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IO_SUBMIT: usize = 209;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IO_CANCEL: usize = 210;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IO_GETEVENTS: usize = 208;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PKEY_ALLOC: usize = 330;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PKEY_FREE: usize = 331;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PKEY_MPROTECT: usize = 329;
+
+// Specialized syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_NAME_TO_HANDLE_AT: usize = 264;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_OPEN_BY_HANDLE_AT: usize = 265;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FANOTIFY_INIT: usize = 262;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FANOTIFY_MARK: usize = 263;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SECCOMP: usize = 277;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CAPGET: usize = 90;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CAPSET: usize = 91;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MEMBARRIER: usize = 283;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IO_SETUP: usize = 0;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IO_DESTROY: usize = 1;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IO_SUBMIT: usize = 2;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IO_CANCEL: usize = 3;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IO_GETEVENTS: usize = 4;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PKEY_ALLOC: usize = 289;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PKEY_FREE: usize = 290;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PKEY_MPROTECT: usize = 288;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -4367,6 +4435,177 @@ pub fn sys_pidfd_getfd(pidfd: i32, targetfd: i32, flags: u32) -> Result<i32, i32
 #[allow(unsafe_code)]
 pub fn sys_brk(addr: usize) -> usize {
     unsafe { raw::syscall1(SYS_BRK, addr) }
+}
+
+// -------------------------------------------------------------------------
+// Specialized syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `name_to_handle_at(dirfd, path, handle, mount_id, flags)` — obtain handle for a pathname.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_name_to_handle_at(
+    dirfd: i32,
+    pathname: *const u8,
+    handle: *mut u8,
+    mount_id: *mut i32,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = raw::syscall5(
+        SYS_NAME_TO_HANDLE_AT,
+        dirfd as usize,
+        pathname as usize,
+        handle as usize,
+        mount_id as usize,
+        flags as usize,
+    );
+    syscall_result(ret).map(|_| ())
+}
+
+/// `open_by_handle_at(mount_fd, handle, flags)` — open by handle returned from name_to_handle_at.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_open_by_handle_at(mount_fd: i32, handle: *const u8, flags: i32) -> Result<i32, i32> {
+    let ret = raw::syscall3(SYS_OPEN_BY_HANDLE_AT, mount_fd as usize, handle as usize, flags as usize);
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `fanotify_init(flags, event_f_flags)` — create and initialize fanotify group.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_fanotify_init(flags: u32, event_f_flags: u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_FANOTIFY_INIT, flags as usize, event_f_flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `fanotify_mark(fanotify_fd, flags, mask, dirfd, pathname)` — add, remove, or modify an fanotify mark.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fanotify_mark(
+    fanotify_fd: i32,
+    flags: u32,
+    mask: u64,
+    dirfd: i32,
+    pathname: *const u8,
+) -> Result<(), i32> {
+    let ret = raw::syscall5(
+        SYS_FANOTIFY_MARK,
+        fanotify_fd as usize,
+        flags as usize,
+        mask as usize,
+        dirfd as usize,
+        pathname as usize,
+    );
+    syscall_result(ret).map(|_| ())
+}
+
+/// `seccomp(operation, flags, args)` — operate on Secure Computing state.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_seccomp(operation: u32, flags: u32, args: *const u8) -> Result<i32, i32> {
+    let ret = raw::syscall3(SYS_SECCOMP, operation as usize, flags as usize, args as usize);
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `capget(hdrp, datap)` — get capabilities of a process.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_capget(hdrp: *mut u8, datap: *mut u8) -> Result<(), i32> {
+    let ret = raw::syscall2(SYS_CAPGET, hdrp as usize, datap as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `capset(hdrp, datap)` — set capabilities of a process.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_capset(hdrp: *const u8, datap: *const u8) -> Result<(), i32> {
+    let ret = raw::syscall2(SYS_CAPSET, hdrp as usize, datap as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `membarrier(cmd, flags, cpu_id)` — issue memory barriers.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_membarrier(cmd: i32, flags: u32, cpu_id: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_MEMBARRIER, cmd as usize, flags as usize, cpu_id as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `io_setup(nr_events, ctxp)` — create an asynchronous I/O context.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_io_setup(nr_events: u32, ctxp: *mut usize) -> Result<(), i32> {
+    let ret = raw::syscall2(SYS_IO_SETUP, nr_events as usize, ctxp as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `io_destroy(ctx_id)` — destroy an asynchronous I/O context.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_io_destroy(ctx_id: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_IO_DESTROY, ctx_id) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `io_submit(ctx_id, nr, iocbpp)` — submit asynchronous I/O blocks.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_io_submit(ctx_id: usize, nr: i64, iocbpp: *mut *mut u8) -> Result<i64, i32> {
+    let ret = raw::syscall3(SYS_IO_SUBMIT, ctx_id, nr as usize, iocbpp as usize);
+    syscall_result(ret).map(|v| v as i64)
+}
+
+/// `io_cancel(ctx_id, iocb, result)` — cancel an outstanding asynchronous I/O operation.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_io_cancel(ctx_id: usize, iocb: *mut u8, result: *mut u8) -> Result<(), i32> {
+    let ret = raw::syscall3(SYS_IO_CANCEL, ctx_id, iocb as usize, result as usize);
+    syscall_result(ret).map(|_| ())
+}
+
+/// `io_getevents(ctx_id, min_nr, nr, events, timeout)` — read asynchronous I/O events.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_io_getevents(
+    ctx_id: usize,
+    min_nr: i64,
+    nr: i64,
+    events: *mut u8,
+    timeout: *mut u8,
+) -> Result<i64, i32> {
+    let ret = raw::syscall5(
+        SYS_IO_GETEVENTS,
+        ctx_id,
+        min_nr as usize,
+        nr as usize,
+        events as usize,
+        timeout as usize,
+    );
+    syscall_result(ret).map(|v| v as i64)
+}
+
+/// `pkey_alloc(flags, access_rights)` — allocate a protection key.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_pkey_alloc(flags: u32, access_rights: u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_PKEY_ALLOC, flags as usize, access_rights as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `pkey_free(pkey)` — free a protection key.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_pkey_free(pkey: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_PKEY_FREE, pkey as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `pkey_mprotect(addr, len, prot, pkey)` — set protection on a region of memory with pkey.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_pkey_mprotect(addr: *mut u8, len: usize, prot: i32, pkey: i32) -> Result<(), i32> {
+    let ret = raw::syscall4(SYS_PKEY_MPROTECT, addr as usize, len, prot as usize, pkey as usize);
+    syscall_result(ret).map(|_| ())
 }
 
 // -------------------------------------------------------------------------
