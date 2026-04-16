@@ -5485,10 +5485,10 @@ pub unsafe extern "C" fn rresvport(port: *mut c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
     let sock_type = libc::SOCK_STREAM;
-    let fd = unsafe { libc::syscall(libc::SYS_socket, af, sock_type, 0) as c_int };
-    if fd < 0 {
-        return -1;
-    }
+    let fd = match raw_syscall::sys_socket(af, sock_type, 0) {
+        Ok(fd) => fd,
+        Err(e) => { unsafe { crate::errno_abi::set_abi_errno(e) }; return -1; }
+    };
     // Start from the provided port, or 1023 if null/0
     let start_port = if port.is_null() {
         1023u16
@@ -5524,7 +5524,7 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
                 }
             }
             _ => {
-                unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
+                let _ = raw_syscall::sys_close(fd);
                 unsafe { crate::errno_abi::set_abi_errno(libc::EAFNOSUPPORT) };
                 return -1;
             }
@@ -5536,7 +5536,7 @@ pub unsafe extern "C" fn rresvport_af(port: *mut c_int, af: c_int) -> c_int {
             return fd;
         }
     }
-    unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
+    let _ = raw_syscall::sys_close(fd);
     unsafe { crate::errno_abi::set_abi_errno(libc::EAGAIN) };
     -1
 }
@@ -5603,7 +5603,7 @@ pub unsafe extern "C" fn scandirat(
     }
     let dir = unsafe { crate::dirent_abi::fdopendir(fd) }.cast::<crate::dirent_abi::DIR>();
     if dir.is_null() {
-        unsafe { libc::syscall(libc::SYS_close, fd) as c_int };
+        let _ = raw_syscall::sys_close(fd);
         return -1;
     }
     // Use scandir-style iteration
