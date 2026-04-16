@@ -30,8 +30,7 @@ CONFORMANCE_MATRIX_PATH = REPO_ROOT / "tests" / "conformance" / "conformance_mat
 LIBC_CALL_PATTERN = re.compile(r'\blibc::(\w+)\b')
 # Patterns indicating explicit host delegation inside ABI bodies.
 WRAPS_HOST_LIBC_PATTERN = re.compile(
-    r'(host_\w+_fn\s*\(|host_resolve::resolve_host_symbol_|'
-    r'crate::host_resolve::resolve_host_symbol_)'
+    r'(host_\w+_fn\s*\(|(?:crate::host_resolve::|host_resolve::)?resolve_host_symbol\w*\s*\()'
 )
 # Patterns indicating stdio/malloc libc delegation (explicit list per bd-9chy.2).
 WRAPS_LIBC_CALL_PATTERN = re.compile(
@@ -55,6 +54,14 @@ STUB_PATTERNS = [
 ]
 # Data symbols (statics, not functions)
 DATA_SYMBOLS = {"stdin", "stdout", "stderr"}
+FN_NAME_PATTERN = re.compile(r'\bfn\s+([A-Za-z_]\w*)\s*\(')
+HOST_RESOLVE_BLOCK_USE_PATTERN = re.compile(
+    r'use\s+crate::host_resolve::\{(?P<body>.*?)\};',
+    re.S,
+)
+HOST_RESOLVE_SINGLE_USE_PATTERN = re.compile(
+    r'use\s+crate::host_resolve::(?P<name>[A-Za-z_]\w*)(?:\s+as\s+(?P<alias>[A-Za-z_]\w*))?\s*;'
+)
 
 
 def load_matrix():
@@ -158,6 +165,77 @@ def read_module_source(module_name):
     return src_path.read_text(encoding="utf-8")
 
 
+def extract_host_resolve_aliases(source):
+    """Return locally visible names imported from crate::host_resolve."""
+    aliases = set()
+
+    for match in HOST_RESOLVE_BLOCK_USE_PATTERN.finditer(source):
+        body = match.group("body")
+        for raw_item in body.split(","):
+            item = raw_item.strip()
+            if not item:
+                continue
+            item = item.split("//", 1)[0].strip()
+            if not item:
+                continue
+            if " as " in item:
+                _orig, alias = item.split(" as ", 1)
+                aliases.add(alias.strip())
+            else:
+                aliases.add(item.strip())
+
+    for match in HOST_RESOLVE_SINGLE_USE_PATTERN.finditer(source):
+        alias = match.group("alias") or match.group("name")
+        aliases.add(alias.strip())
+
+    return aliases
+
+
+def body_calls_any(body, names):
+    """True when body contains a function-style call to any name."""
+    for name in names:
+        if re.search(rf'\b{re.escape(name)}\s*\(', body):
+            return True
+    return False
+
+
+def analyze_module_source(source):
+    """Collect per-module helper metadata used by status classification."""
+    host_resolve_aliases = extract_host_resolve_aliases(source)
+    function_names = []
+    for match in FN_NAME_PATTERN.finditer(source):
+        name = match.group(1)
+        if name not in function_names:
+            function_names.append(name)
+
+    function_bodies = {}
+    for name in function_names:
+        body = extract_function_body(source, name)
+        if body is not None:
+            function_bodies[name] = body
+
+    host_helper_functions = set()
+    changed = True
+    while changed:
+        changed = False
+        for name, body in function_bodies.items():
+            if name in host_helper_functions:
+                continue
+            if (
+                WRAPS_HOST_LIBC_PATTERN.search(body)
+                or WRAPS_LIBC_CALL_PATTERN.search(body)
+                or body_calls_any(body, host_resolve_aliases)
+                or body_calls_any(body, host_helper_functions)
+            ):
+                host_helper_functions.add(name)
+                changed = True
+
+    return {
+        "host_resolve_aliases": host_resolve_aliases,
+        "host_helper_functions": host_helper_functions,
+    }
+
+
 def extract_function_body(source, fn_name):
     """Extract approximate function body for a given fn name.
 
@@ -216,7 +294,7 @@ def is_type_or_constant(name):
     return name in lowercase_types
 
 
-def validate_status(symbol, status, module, source):
+def validate_status(symbol, status, module, source, module_analysis):
     """Validate that a symbol's code matches its declared status.
 
     Returns (is_valid, findings: list of str, warnings: list of str).
@@ -230,8 +308,13 @@ def validate_status(symbol, status, module, source):
 
     findings = []
     warnings = []
+    host_resolve_aliases = module_analysis.get("host_resolve_aliases", set())
+    host_helper_functions = module_analysis.get("host_helper_functions", set())
     wraps_host_libc = bool(
-        WRAPS_HOST_LIBC_PATTERN.search(body) or WRAPS_LIBC_CALL_PATTERN.search(body)
+        WRAPS_HOST_LIBC_PATTERN.search(body)
+        or WRAPS_LIBC_CALL_PATTERN.search(body)
+        or body_calls_any(body, host_resolve_aliases)
+        or body_calls_any(body, host_helper_functions)
     )
 
     if status == "Implemented":
@@ -535,6 +618,7 @@ def main():
 
     # Cache module sources
     module_cache = {}
+    module_analysis_cache = {}
 
     status_results = []
     linkage_results = []
@@ -552,6 +636,11 @@ def main():
 
         if module not in module_cache:
             module_cache[module] = read_module_source(module)
+            module_analysis_cache[module] = (
+                analyze_module_source(module_cache[module])
+                if module_cache[module] is not None
+                else {}
+            )
 
         source = module_cache[module]
         if source is None:
@@ -565,7 +654,13 @@ def main():
             })
             continue
 
-        is_valid, findings, warn_list = validate_status(sym, st, module, source)
+        is_valid, findings, warn_list = validate_status(
+            sym,
+            st,
+            module,
+            source,
+            module_analysis_cache.get(module, {}),
+        )
         warnings += len(warn_list)
         if is_valid:
             status_valid += 1
