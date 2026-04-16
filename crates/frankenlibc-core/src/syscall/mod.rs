@@ -433,6 +433,30 @@ pub const SYS_MKDIRAT: usize = 258;
 pub const SYS_FCHMODAT: usize = 268;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FCHOWNAT: usize = 260;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FCHMOD: usize = 91;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FCHOWN: usize = 93;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_UMASK: usize = 95;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TRUNCATE: usize = 76;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FTRUNCATE: usize = 77;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FLOCK: usize = 73;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LINKAT: usize = 265;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETCWD: usize = 79;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETPPID: usize = 110;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETUID: usize = 102;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETEUID: usize = 107;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETGID: usize = 104;
 
 // Process management syscalls - aarch64
 #[cfg(target_arch = "aarch64")]
@@ -469,6 +493,30 @@ pub const SYS_MKDIRAT: usize = 34;
 pub const SYS_FCHMODAT: usize = 53;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FCHOWNAT: usize = 54;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FCHMOD: usize = 52;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FCHOWN: usize = 55;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_UMASK: usize = 166;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TRUNCATE: usize = 45;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FTRUNCATE: usize = 46;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FLOCK: usize = 32;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LINKAT: usize = 37;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETCWD: usize = 17;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETPPID: usize = 173;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETUID: usize = 174;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETEUID: usize = 175;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETGID: usize = 176;
 
 // Socket syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2443,6 +2491,137 @@ pub unsafe fn sys_fchownat(dirfd: i32, pathname: *const u8, owner: u32, group: u
         )
     };
     syscall_result(ret).map(|_| ())
+}
+
+/// `fchmod(fd, mode)` — change file mode by file descriptor.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fchmod(fd: i32, mode: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_FCHMOD, fd as usize, mode as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fchown(fd, owner, group)` — change file ownership by file descriptor.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fchown(fd: i32, owner: u32, group: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_FCHOWN, fd as usize, owner as usize, group as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `umask(mask)` — set file mode creation mask.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_umask(mask: u32) -> u32 {
+    let ret = unsafe { raw::syscall1(SYS_UMASK, mask as usize) };
+    ret as u32
+}
+
+/// `truncate(path, length)` — truncate a file to a specified length.
+///
+/// # Safety
+///
+/// `path` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_truncate(path: *const u8, length: i64) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_TRUNCATE, path as usize, length as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `ftruncate(fd, length)` — truncate a file to a specified length by fd.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_ftruncate(fd: i32, length: i64) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_FTRUNCATE, fd as usize, length as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `flock(fd, operation)` — apply or remove an advisory lock on a file.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_flock(fd: i32, operation: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_FLOCK, fd as usize, operation as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `linkat(olddirfd, oldpath, newdirfd, newpath, flags)` — create a hard link.
+///
+/// # Safety
+///
+/// `oldpath` and `newpath` must be valid NUL-terminated strings.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_linkat(
+    olddirfd: i32,
+    oldpath: *const u8,
+    newdirfd: i32,
+    newpath: *const u8,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_LINKAT,
+            olddirfd as usize,
+            oldpath as usize,
+            newdirfd as usize,
+            newpath as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getcwd(buf, size)` — get current working directory.
+///
+/// # Safety
+///
+/// `buf` must point to a buffer of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getcwd(buf: *mut u8, size: usize) -> Result<usize, i32> {
+    let ret = unsafe { raw::syscall2(SYS_GETCWD, buf as usize, size) };
+    syscall_result(ret)
+}
+
+/// `getppid()` — get parent process ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_getppid() -> i32 {
+    let ret = unsafe { raw::syscall0(SYS_GETPPID) };
+    ret as i32
+}
+
+/// `getuid()` — get real user ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_getuid() -> u32 {
+    let ret = unsafe { raw::syscall0(SYS_GETUID) };
+    ret as u32
+}
+
+/// `geteuid()` — get effective user ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_geteuid() -> u32 {
+    let ret = unsafe { raw::syscall0(SYS_GETEUID) };
+    ret as u32
+}
+
+/// `getgid()` — get real group ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_getgid() -> u32 {
+    let ret = unsafe { raw::syscall0(SYS_GETGID) };
+    ret as u32
+}
+
+/// `getegid()` — get effective group ID.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_getegid() -> u32 {
+    let ret = unsafe { raw::syscall0(SYS_GETEGID) };
+    ret as u32
 }
 
 // -------------------------------------------------------------------------
