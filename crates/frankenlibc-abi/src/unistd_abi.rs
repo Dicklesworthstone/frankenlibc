@@ -1349,11 +1349,9 @@ pub unsafe extern "C" fn renameat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_renameat2, olddirfd, oldpath, newdirfd, newpath, 0),
-            errno::ENOENT,
-        )
+    let rc = match unsafe { syscall::sys_renameat2(olddirfd, oldpath as *const u8, newdirfd, newpath as *const u8, 0) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 12, rc != 0);
     rc
@@ -1617,11 +1615,9 @@ pub unsafe extern "C" fn getrusage(who: c_int, usage: *mut libc::rusage) -> c_in
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_getrusage, who, usage),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_getrusage(who, usage as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => { unsafe { set_abi_errno(e) }; -1 }
     }
 }
 
@@ -1631,7 +1627,17 @@ pub unsafe extern "C" fn getrusage(who: c_int, usage: *mut libc::rusage) -> c_in
 
 /// POSIX `alarm` — schedule a SIGALRM signal.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(target_arch = "x86_64")]
 pub unsafe extern "C" fn alarm(seconds: u32) -> u32 {
+    syscall::sys_alarm(seconds)
+}
+
+/// POSIX `alarm` — schedule a SIGALRM signal.
+/// On aarch64, alarm is implemented via setitimer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg(target_arch = "aarch64")]
+pub unsafe extern "C" fn alarm(seconds: u32) -> u32 {
+    // Fallback to libc::syscall for aarch64 (alarm is not a direct syscall)
     unsafe { libc::syscall(libc::SYS_alarm, seconds) as u32 }
 }
 
@@ -2823,17 +2829,13 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
 }
 
 #[inline]
-unsafe fn sys_current_nice() -> Result<c_int, c_int> {
-    let raw = unsafe { libc::syscall(libc::SYS_getpriority, libc::PRIO_PROCESS, 0) };
-    if raw < 0 {
-        return Err(last_host_errno(errno::EPERM));
-    }
-    Ok(20_i32.saturating_sub(raw as c_int))
+fn sys_current_nice() -> Result<c_int, c_int> {
+    syscall::sys_getpriority(libc::PRIO_PROCESS, 0)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
-    let current = match unsafe { sys_current_nice() } {
+    let current = match sys_current_nice() {
         Ok(v) => v,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -2842,13 +2844,12 @@ pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
     };
 
     let target = current.saturating_add(inc).clamp(-20, 19);
-    let set_rc = unsafe { libc::syscall(libc::SYS_setpriority, libc::PRIO_PROCESS, 0, target) };
-    if set_rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EPERM)) };
+    if let Err(e) = syscall::sys_setpriority(libc::PRIO_PROCESS, 0, target) {
+        unsafe { set_abi_errno(e) };
         return -1;
     }
 
-    match unsafe { sys_current_nice() } {
+    match sys_current_nice() {
         Ok(v) => v,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -2864,40 +2865,33 @@ pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // SAFETY: fork via raw syscall
-    let pid = unsafe { libc::syscall(libc::SYS_fork) };
-    if pid < 0 {
-        return -1;
-    }
+    let pid = match syscall::sys_clone_fork(0) {
+        Ok(p) => p,
+        Err(_) => return -1,
+    };
     if pid > 0 {
         // Parent: exit immediately
-        unsafe { libc::syscall(libc::SYS_exit_group, 0i64) };
-        return 0;
+        syscall::sys_exit_group(0);
     }
 
     // Child: create new session
-    if unsafe { libc::syscall(libc::SYS_setsid) } < 0 {
+    if syscall::sys_setsid().is_err() {
         return -1;
     }
 
     if nochdir == 0 {
         let root = b"/\0";
-        unsafe {
-            libc::syscall(libc::SYS_chdir, root.as_ptr());
-        };
+        let _ = unsafe { syscall::sys_chdir(root.as_ptr()) };
     }
 
     if noclose == 0 {
         let dev_null = b"/dev/null\0";
-        let fd = unsafe { libc::syscall(libc::SYS_open, dev_null.as_ptr(), libc::O_RDWR, 0i64) }
-            as c_int;
-        if fd >= 0 {
-            unsafe {
-                libc::syscall(libc::SYS_dup2, fd as i64, 0i64); // stdin
-                libc::syscall(libc::SYS_dup2, fd as i64, 1i64); // stdout
-                libc::syscall(libc::SYS_dup2, fd as i64, 2i64); // stderr
-            };
+        if let Ok(fd) = unsafe { syscall::sys_open(dev_null.as_ptr(), libc::O_RDWR, 0) } {
+            let _ = syscall::sys_dup2(fd, 0); // stdin
+            let _ = syscall::sys_dup2(fd, 1); // stdout
+            let _ = syscall::sys_dup2(fd, 2); // stderr
             if fd > 2 {
-                unsafe { libc::syscall(libc::SYS_close, fd as i64) };
+                let _ = syscall::sys_close(fd);
             }
         }
     }
@@ -2999,18 +2993,18 @@ pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uin
         return -1;
     }
 
-    let rc = unsafe { libc::syscall(libc::SYS_getrandom, buf, buflen, flags) };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EIO);
-        unsafe { set_abi_errno(e) };
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-        -1
-    } else {
-        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
-        rc as isize
-    }
+    let rc = match unsafe { syscall::sys_getrandom(buf as *mut u8, buflen, flags) } {
+        Ok(n) => {
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+            n
+        }
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            -1
+        }
+    };
+    rc
 }
 
 // ---------------------------------------------------------------------------
