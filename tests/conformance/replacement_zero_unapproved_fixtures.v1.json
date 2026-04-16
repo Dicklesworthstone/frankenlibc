@@ -33,10 +33,10 @@
       "evidence_source": "replacement_guard_source_scan"
     },
     {
-      "id": "replacement_forbid_unistd_abi_dlsym",
+      "id": "replacement_forbid_unistd_abi_backtrace_symbols_fd",
       "mode": "replacement",
       "module": "unistd_abi",
-      "symbol": "dlsym",
+      "symbol": "backtrace_symbols_fd",
       "expected_outcome": "forbidden",
       "evidence_source": "replacement_guard_source_scan"
     }

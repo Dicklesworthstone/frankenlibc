@@ -13085,7 +13085,7 @@ pub unsafe extern "C" fn clone(
         ...
     ) -> c_int;
     static FUNC: std::sync::LazyLock<Option<CloneFn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { libc::dlsym(libc::RTLD_NEXT, c"clone".as_ptr()) };
+        let sym = unsafe { crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"clone".as_ptr()) };
         if sym.is_null() {
             None
         } else {
