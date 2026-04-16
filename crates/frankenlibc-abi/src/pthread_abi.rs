@@ -220,7 +220,6 @@ static HOST_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static [u8], usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<HashMap<&'static str, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static HOST_LIBC_HANDLE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_CREATE_PTR: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 static HOST_PTHREAD_JOIN_PTR: std::sync::atomic::AtomicUsize =
@@ -420,37 +419,26 @@ unsafe fn resolve_host_symbol_nocache(name: &'static [u8]) -> *mut c_void {
         };
     }
     if ptr.is_null() {
-        // SAFETY: final RTLD_NEXT fallback.
-        ptr = unsafe { libc::dlsym(libc::RTLD_NEXT, name.as_ptr().cast::<libc::c_char>()) };
+        let symbol = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok();
+        if let Some(symbol) = symbol
+            && let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(symbol)
+        {
+            ptr = addr as *mut c_void;
+        }
     }
     ptr
 }
 
-fn host_libc_handle() -> Option<*mut c_void> {
-    let cached = HOST_LIBC_HANDLE.load(Ordering::Acquire);
-    if cached != 0 {
-        return Some(cached as *mut c_void);
-    }
-
-    // SAFETY: loading the process' already-present glibc image by SONAME.
-    let handle = unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        return None;
-    }
-
-    let handle_usize = handle as usize;
-    match HOST_LIBC_HANDLE.compare_exchange(0, handle_usize, Ordering::AcqRel, Ordering::Acquire) {
-        Ok(_) => Some(handle),
-        Err(existing) => Some(existing as *mut c_void),
-    }
-}
-
 unsafe fn resolve_host_symbol_via_libc_handle(name: &'static [u8]) -> *mut c_void {
-    let Some(handle) = host_libc_handle() else {
+    let Some(symbol) = std::str::from_utf8(&name[..name.len().saturating_sub(1)]).ok() else {
         return std::ptr::null_mut();
     };
-    // SAFETY: handle is a valid `dlopen` result and `name` is NUL-terminated.
-    unsafe { libc::dlsym(handle, name.as_ptr().cast::<libc::c_char>()) }
+    if let Some(addr) = resolve_loaded_libc_symbol_direct(symbol) {
+        return addr as *mut c_void;
+    }
+    crate::host_resolve::resolve_host_symbol_raw(symbol)
+        .map(|addr| addr as *mut c_void)
+        .unwrap_or(std::ptr::null_mut())
 }
 
 unsafe fn resolve_host_symbol_with_aliases(names: &[&'static [u8]]) -> *mut c_void {
