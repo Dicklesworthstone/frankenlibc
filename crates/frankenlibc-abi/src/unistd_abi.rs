@@ -1926,11 +1926,13 @@ pub unsafe extern "C" fn setitimer(
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_setitimer, which, new_value, old_value) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+    match unsafe { syscall::sys_setitimer(which, new_value as *const u8, old_value as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// POSIX `getitimer` — get value of an interval timer.
@@ -1940,11 +1942,13 @@ pub unsafe extern "C" fn getitimer(which: c_int, curr_value: *mut libc::itimerva
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    let rc = unsafe { libc::syscall(libc::SYS_getitimer, which, curr_value) as c_int };
-    if rc < 0 {
-        unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
+    match unsafe { syscall::sys_getitimer(which, curr_value as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -5071,41 +5075,32 @@ pub unsafe extern "C" fn fremovexattr(fd: c_int, name: *const c_char) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mincore(addr: *mut c_void, len: usize, vec: *mut u8) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_mincore, addr, len, vec) } as c_int;
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(errno::ENOMEM),
-            )
-        };
+    match unsafe { syscall::sys_mincore(addr as usize, len, vec) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn posix_fadvise(fd: c_int, offset: i64, len: i64, advice: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_fadvise64, fd, offset, len, advice) } as c_int;
-    if rc < 0 {
-        return last_host_errno(errno::EBADF);
+    match syscall::sys_fadvise64(fd, offset, len, advice) {
+        Ok(()) => 0,
+        Err(e) => e,
     }
-    0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn readahead(fd: c_int, offset: i64, count: usize) -> isize {
-    let rc = unsafe { libc::syscall(libc::SYS_readahead, fd, offset, count) };
-    if rc < 0 {
-        unsafe {
-            set_abi_errno(
-                std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(errno::EBADF),
-            )
-        };
+    match syscall::sys_readahead(fd, offset, count) {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as isize
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8269,14 +8264,13 @@ pub unsafe extern "C" fn sendmmsg(
     vlen: c_uint,
     flags: c_int,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_sendmmsg, sockfd, msgvec, vlen, flags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `recvmmsg` — receive multiple messages on a socket.
@@ -8288,15 +8282,13 @@ pub unsafe extern "C" fn recvmmsg(
     flags: c_int,
     timeout: *mut libc::timespec,
 ) -> c_int {
-    let rc =
-        unsafe { libc::syscall(libc::SYS_recvmmsg, sockfd, msgvec, vlen, flags, timeout) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_recvmmsg(sockfd, msgvec as *mut u8, vlen, flags, timeout as usize) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -9047,11 +9039,12 @@ pub unsafe extern "C" fn sethostname(name: *const c_char, len: usize) -> c_int {
         );
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_sethostname, name, len),
-            errno::EPERM,
-        )
+    let rc = match unsafe { syscall::sys_sethostname(name as *const u8, len) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Process,
@@ -9092,11 +9085,12 @@ pub unsafe extern "C" fn setdomainname(name: *const c_char, len: usize) -> c_int
         );
         return -1;
     }
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_setdomainname, name, len),
-            errno::EPERM,
-        )
+    let rc = match unsafe { syscall::sys_setdomainname(name as *const u8, len) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(
         ApiFamily::Process,
@@ -9114,27 +9108,25 @@ pub unsafe extern "C" fn setdomainname(name: *const c_char, len: usize) -> c_int
 /// `setns` — reassociate thread with a namespace.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setns(fd: c_int, nstype: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setns, fd, nstype) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match syscall::sys_setns(fd, nstype) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `unshare` — disassociate parts of process execution context.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn unshare(flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_unshare, flags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match syscall::sys_unshare(flags) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `mount` — mount a filesystem.
@@ -9168,93 +9160,85 @@ pub unsafe extern "C" fn mount(
 /// `umount2` — unmount a filesystem with flags.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn umount2(target: *const c_char, flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_umount2, target, flags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_umount2(target as *const u8, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `chroot` — change root directory.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn chroot(path: *const c_char) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_chroot, path) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_chroot(path as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `pivot_root` — change the root filesystem.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pivot_root(new_root: *const c_char, put_old: *const c_char) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_pivot_root, new_root, put_old) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_pivot_root(new_root as *const u8, put_old as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `acct` — process accounting.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acct(filename: *const c_char) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_acct, filename) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_acct(filename as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `reboot` — reboot or enable/disable Ctrl-Alt-Del.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn reboot(cmd: c_int) -> c_int {
-    let rc =
-        unsafe { libc::syscall(libc::SYS_reboot, 0xfee1dead_u64, 672274793_u64, cmd) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match syscall::sys_reboot(0xfee1dead, 672274793, cmd) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `swapon` — start swapping.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn swapon(path: *const c_char, swapflags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_swapon, path, swapflags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_swapon(path as *const u8, swapflags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// `swapoff` — stop swapping.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn swapoff(path: *const c_char) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_swapoff, path) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_swapoff(path as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -9267,14 +9251,13 @@ pub unsafe extern "C" fn getresuid(
     euid: *mut libc::uid_t,
     suid: *mut libc::uid_t,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_getresuid, ruid, euid, suid) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_getresuid(ruid as *mut u32, euid as *mut u32, suid as *mut u32) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9283,14 +9266,13 @@ pub unsafe extern "C" fn getresgid(
     egid: *mut libc::gid_t,
     sgid: *mut libc::gid_t,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_getresgid, rgid, egid, sgid) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_getresgid(rgid as *mut u32, egid as *mut u32, sgid as *mut u32) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9299,14 +9281,13 @@ pub unsafe extern "C" fn setresuid(
     euid: libc::uid_t,
     suid: libc::uid_t,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setresuid, ruid, euid, suid) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match syscall::sys_setresuid(ruid, euid, suid) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9315,14 +9296,13 @@ pub unsafe extern "C" fn setresgid(
     egid: libc::gid_t,
     sgid: libc::gid_t,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_setresgid, rgid, egid, sgid) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ENOTSUP);
-        unsafe { set_abi_errno(e) };
+    match syscall::sys_setresgid(rgid, egid, sgid) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------

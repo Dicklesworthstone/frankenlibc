@@ -850,6 +850,122 @@ pub const SYS_MSGSND: usize = 189;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_MSGRCV: usize = 188;
 
+// Timer/interval syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETITIMER: usize = 38;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETITIMER: usize = 36;
+
+// Timer/interval syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETITIMER: usize = 103;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETITIMER: usize = 102;
+
+// Memory advisory syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MINCORE: usize = 27;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FADVISE64: usize = 221;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_READAHEAD: usize = 187;
+
+// Memory advisory syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MINCORE: usize = 232;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FADVISE64: usize = 223;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_READAHEAD: usize = 213;
+
+// Multi-message socket syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SENDMMSG: usize = 307;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RECVMMSG: usize = 299;
+
+// Multi-message socket syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SENDMMSG: usize = 269;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RECVMMSG: usize = 243;
+
+// Namespace/container syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETNS: usize = 308;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_UNSHARE: usize = 272;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CHROOT: usize = 161;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PIVOT_ROOT: usize = 155;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_UMOUNT2: usize = 166;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETHOSTNAME: usize = 170;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETDOMAINNAME: usize = 171;
+
+// Namespace/container syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETNS: usize = 268;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_UNSHARE: usize = 97;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CHROOT: usize = 51;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PIVOT_ROOT: usize = 41;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_UMOUNT2: usize = 39;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETHOSTNAME: usize = 161;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETDOMAINNAME: usize = 162;
+
+// Credentials syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETRESUID: usize = 118;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETRESGID: usize = 120;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETRESUID: usize = 117;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETRESGID: usize = 119;
+
+// Credentials syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETRESUID: usize = 148;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETRESGID: usize = 150;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETRESUID: usize = 147;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETRESGID: usize = 149;
+
+// System admin syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_ACCT: usize = 163;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_REBOOT: usize = 169;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SWAPON: usize = 167;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SWAPOFF: usize = 168;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SYSINFO: usize = 99;
+
+// System admin syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_ACCT: usize = 89;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_REBOOT: usize = 142;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SWAPON: usize = 224;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SWAPOFF: usize = 225;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SYSINFO: usize = 179;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -3732,6 +3848,281 @@ pub unsafe fn sys_msgsnd(msqid: i32, msgp: *const u8, msgsz: usize, msgflg: i32)
 pub unsafe fn sys_msgrcv(msqid: i32, msgp: *mut u8, msgsz: usize, msgtyp: isize, msgflg: i32) -> Result<isize, i32> {
     let ret = unsafe { raw::syscall5(SYS_MSGRCV, msqid as usize, msgp as usize, msgsz, msgtyp as usize, msgflg as usize) };
     syscall_result(ret).map(|v| v as isize)
+}
+
+// -------------------------------------------------------------------------
+// Timer/interval syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `setitimer(which, new_value, old_value)` — set interval timer.
+///
+/// # Safety
+///
+/// `new_value` must point to a valid itimerval.
+/// `old_value` may be null or must point to a valid itimerval.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_setitimer(which: i32, new_value: *const u8, old_value: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_SETITIMER, which as usize, new_value as usize, old_value as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getitimer(which, curr_value)` — get interval timer.
+///
+/// # Safety
+///
+/// `curr_value` must point to a valid itimerval.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getitimer(which: i32, curr_value: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_GETITIMER, which as usize, curr_value as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Memory advisory syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `mincore(addr, length, vec)` — determine whether pages are resident.
+///
+/// # Safety
+///
+/// `addr` must be page-aligned.
+/// `vec` must point to a buffer with at least ceil(length/PAGE_SIZE) bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mincore(addr: usize, length: usize, vec: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_MINCORE, addr, length, vec as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fadvise64(fd, offset, len, advice)` — predeclare access pattern for file data.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_fadvise64(fd: i32, offset: i64, len: i64, advice: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall4(SYS_FADVISE64, fd as usize, offset as usize, len as usize, advice as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `readahead(fd, offset, count)` — initiate file readahead.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_readahead(fd: i32, offset: i64, count: usize) -> Result<isize, i32> {
+    let ret = unsafe { raw::syscall3(SYS_READAHEAD, fd as usize, offset as usize, count) };
+    syscall_result(ret).map(|v| v as isize)
+}
+
+// -------------------------------------------------------------------------
+// Multi-message socket syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `sendmmsg(sockfd, msgvec, vlen, flags)` — send multiple messages.
+///
+/// # Safety
+///
+/// `msgvec` must point to a valid array of at least `vlen` mmsghdr structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sendmmsg(sockfd: i32, msgvec: *mut u8, vlen: u32, flags: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall4(SYS_SENDMMSG, sockfd as usize, msgvec as usize, vlen as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `recvmmsg(sockfd, msgvec, vlen, flags, timeout)` — receive multiple messages.
+///
+/// # Safety
+///
+/// `msgvec` must point to a valid array of at least `vlen` mmsghdr structures.
+/// `timeout` may be null or must point to a valid timespec.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_recvmmsg(sockfd: i32, msgvec: *mut u8, vlen: u32, flags: i32, timeout: usize) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall5(SYS_RECVMMSG, sockfd as usize, msgvec as usize, vlen as usize, flags as usize, timeout) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+// -------------------------------------------------------------------------
+// Namespace/container syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `setns(fd, nstype)` — reassociate with a namespace.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setns(fd: i32, nstype: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SETNS, fd as usize, nstype as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `unshare(flags)` — disassociate parts of the process execution context.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_unshare(flags: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_UNSHARE, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `chroot(path)` — change root directory.
+///
+/// # Safety
+///
+/// `path` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_chroot(path: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_CHROOT, path as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `pivot_root(new_root, put_old)` — change root filesystem.
+///
+/// # Safety
+///
+/// Both pointers must be valid NUL-terminated strings.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_pivot_root(new_root: *const u8, put_old: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_PIVOT_ROOT, new_root as usize, put_old as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `umount2(target, flags)` — unmount filesystem.
+///
+/// # Safety
+///
+/// `target` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_umount2(target: *const u8, flags: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_UMOUNT2, target as usize, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sethostname(name, len)` — set hostname.
+///
+/// # Safety
+///
+/// `name` must point to at least `len` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sethostname(name: *const u8, len: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SETHOSTNAME, name as usize, len) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `setdomainname(name, len)` — set NIS domain name.
+///
+/// # Safety
+///
+/// `name` must point to at least `len` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_setdomainname(name: *const u8, len: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SETDOMAINNAME, name as usize, len) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Credentials syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `getresuid(ruid, euid, suid)` — get real, effective, and saved user IDs.
+///
+/// # Safety
+///
+/// All pointers must be valid writable locations for uid_t.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getresuid(ruid: *mut u32, euid: *mut u32, suid: *mut u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_GETRESUID, ruid as usize, euid as usize, suid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getresgid(rgid, egid, sgid)` — get real, effective, and saved group IDs.
+///
+/// # Safety
+///
+/// All pointers must be valid writable locations for gid_t.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getresgid(rgid: *mut u32, egid: *mut u32, sgid: *mut u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_GETRESGID, rgid as usize, egid as usize, sgid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `setresuid(ruid, euid, suid)` — set real, effective, and saved user IDs.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setresuid(ruid: u32, euid: u32, suid: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_SETRESUID, ruid as usize, euid as usize, suid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `setresgid(rgid, egid, sgid)` — set real, effective, and saved group IDs.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_setresgid(rgid: u32, egid: u32, sgid: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_SETRESGID, rgid as usize, egid as usize, sgid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// System admin syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `acct(filename)` — switch process accounting on or off.
+///
+/// # Safety
+///
+/// `filename` may be null or must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_acct(filename: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_ACCT, filename as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `reboot(magic, magic2, cmd)` — reboot or enable/disable Ctrl-Alt-Del.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_reboot(magic: u32, magic2: u32, cmd: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_REBOOT, magic as usize, magic2 as usize, cmd as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `swapon(path, swapflags)` — enable swap area.
+///
+/// # Safety
+///
+/// `path` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_swapon(path: *const u8, swapflags: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SWAPON, path as usize, swapflags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `swapoff(path)` — disable swap area.
+///
+/// # Safety
+///
+/// `path` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_swapoff(path: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_SWAPOFF, path as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sysinfo(info)` — return system information.
+///
+/// # Safety
+///
+/// `info` must point to a valid sysinfo structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sysinfo(info: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_SYSINFO, info as usize) };
+    syscall_result(ret).map(|_| ())
 }
 
 // -------------------------------------------------------------------------
