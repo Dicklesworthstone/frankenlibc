@@ -4363,11 +4363,6 @@ fn current_cancel_key() -> usize {
     native_pthread_self() as usize
 }
 
-fn current_thread_is_managed() -> bool {
-    let tid = core_self_tid();
-    tid > 0 && core_handle_for_tid(tid).is_some()
-}
-
 fn cancellation_pending(thread_key: usize) -> bool {
     CANCEL_PENDING_REGISTRY
         .lock()
