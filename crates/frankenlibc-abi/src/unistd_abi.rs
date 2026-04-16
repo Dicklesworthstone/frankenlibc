@@ -2031,16 +2031,9 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
             // Read from /sys/devices/system/cpu/online or fallback.
             // Simple approach: use SYS_sched_getaffinity to count CPUs.
             let mut mask = [0u8; 512]; // 4096 CPUs max (supports large NUMA systems)
-            let rc = unsafe {
-                libc::syscall(
-                    libc::SYS_sched_getaffinity,
-                    0,
-                    mask.len(),
-                    mask.as_mut_ptr(),
-                )
-            };
-            if rc > 0 {
-                let n = mask[..rc as usize]
+            let rc = unsafe { syscall::sys_sched_getaffinity(0, mask.len(), mask.as_mut_ptr()) };
+            if let Ok(bytes) = rc {
+                let n = mask[..bytes as usize]
                     .iter()
                     .map(|b| b.count_ones() as libc::c_long)
                     .sum();
@@ -13219,14 +13212,7 @@ pub unsafe extern "C" fn euidaccess(path: *const c_char, mode: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn closefrom(lowfd: c_int) {
     // close_range syscall (kernel 5.9+)
-    let _ = unsafe {
-        libc::syscall(
-            libc::SYS_close_range,
-            lowfd as c_long,
-            !0u32 as c_long,
-            0 as c_long,
-        )
-    };
+    let _ = unsafe { syscall::sys_close_range(lowfd as u32, !0u32, 0) };
 }
 
 /// POSIX `clock_getcpuclockid` — get CPU-time clock for a process.
@@ -13254,17 +13240,7 @@ pub unsafe extern "C" fn clock_getcpuclockid(
         tv_sec: 0,
         tv_nsec: 0,
     };
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_clock_getres as c_long,
-            cid,
-            &mut ts as *mut libc::timespec,
-        )
-    };
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(libc::ESRCH);
+    if let Err(e) = unsafe { syscall::sys_clock_getres(cid as i32, (&mut ts as *mut libc::timespec).cast()) } {
         return if e == libc::EINVAL { libc::ESRCH } else { e };
     }
     unsafe { *clock_id = cid };
@@ -15630,9 +15606,21 @@ pub unsafe extern "C" fn mount_setattr(
     uattr: *mut c_void,
     usize_: usize,
 ) -> c_int {
-    // SYS_mount_setattr = 442 on x86_64
-    let ret = unsafe { libc::syscall(442i64, dirfd, pathname, flags, uattr, usize_) };
-    unsafe { syscall_ret_zero(ret, libc::EINVAL) }
+    match unsafe {
+        syscall::sys_mount_setattr(
+            dirfd,
+            pathname as *const u8,
+            flags,
+            uattr as *mut u8,
+            usize_,
+        )
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// `signalfd4` — create file descriptor for signal delivery (with flags).
@@ -15640,10 +15628,15 @@ pub unsafe extern "C" fn mount_setattr(
 /// This is the underlying syscall; `signalfd` with flags calls this.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn signalfd4(fd: c_int, mask: *const c_void, flags: c_int) -> c_int {
-    // SYS_signalfd4 = 289 on x86_64
-    let mask_size: usize = 8; // sizeof(sigset_t) kernel version = 8 bytes
-    let ret = unsafe { libc::syscall(289i64, fd, mask, mask_size, flags) };
-    unsafe { syscall_ret_int(ret, libc::EINVAL) }
+    match unsafe {
+        syscall::sys_signalfd4(fd, mask as *const u8, std::mem::size_of::<u64>(), flags)
+    } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ===========================================================================
@@ -15856,20 +15849,19 @@ pub unsafe extern "C" fn getutmpx(_u: *const c_void, _ux: *mut c_void) {
 pub unsafe extern "C" fn sigblock(mask: c_int) -> c_int {
     let mut old_set: u64 = 0;
     let new_set = mask as u64;
-    let ret = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigprocmask,
+    match unsafe {
+        syscall::sys_rt_sigprocmask(
             libc::SIG_BLOCK,
-            &new_set as *const u64,
-            &mut old_set as *mut u64,
-            8usize, // sizeof(sigset_t)
+            (&new_set as *const u64).cast(),
+            (&mut old_set as *mut u64).cast(),
+            std::mem::size_of::<u64>(),
         )
-    };
-    if ret < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
-        -1
-    } else {
-        old_set as c_int
+    } {
+        Ok(()) => old_set as c_int,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -15884,20 +15876,19 @@ pub unsafe extern "C" fn siggetmask() -> c_int {
 pub unsafe extern "C" fn sigsetmask(mask: c_int) -> c_int {
     let mut old_set: u64 = 0;
     let new_set = mask as u64;
-    let ret = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigprocmask,
+    match unsafe {
+        syscall::sys_rt_sigprocmask(
             libc::SIG_SETMASK,
-            &new_set as *const u64,
-            &mut old_set as *mut u64,
-            8usize,
+            (&new_set as *const u64).cast(),
+            (&mut old_set as *mut u64).cast(),
+            std::mem::size_of::<u64>(),
         )
-    };
-    if ret < 0 {
-        unsafe { set_abi_errno(last_host_errno(libc::EINVAL)) };
-        -1
-    } else {
-        old_set as c_int
+    } {
+        Ok(()) => old_set as c_int,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -15924,14 +15915,19 @@ pub unsafe extern "C" fn sigpause(sig: c_int) -> c_int {
 
     // BSD sigpause: get current mask, unblock sig, then suspend.
     let mut mask: u64 = 0;
-    unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigprocmask,
+    match unsafe {
+        syscall::sys_rt_sigprocmask(
             libc::SIG_BLOCK,
-            std::ptr::null::<u64>(),
-            &mut mask as *mut u64,
-            8usize,
-        );
+            std::ptr::null(),
+            (&mut mask as *mut u64).cast(),
+            std::mem::size_of::<u64>(),
+        )
+    } {
+        Ok(()) => {}
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return -1;
+        }
     }
     // Clear the bit for sig
     mask &= !(1u64 << (sig as u64 - 1));
@@ -15973,15 +15969,13 @@ pub unsafe extern "C" fn sigstack(ss: *const c_void, oss: *mut c_void) -> c_int 
     // If caller wants the old stack, query via sigaltstack first.
     if !oss.is_null() {
         let mut old_alt: libc::stack_t = unsafe { std::mem::zeroed() };
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_sigaltstack,
-                std::ptr::null::<libc::stack_t>(),
-                &mut old_alt as *mut libc::stack_t,
+        if let Err(e) = unsafe {
+            syscall::sys_sigaltstack(
+                std::ptr::null(),
+                (&mut old_alt as *mut libc::stack_t).cast(),
             )
-        };
-        if rc < 0 {
-            unsafe { set_abi_errno(libc::EINVAL) };
+        } {
+            unsafe { set_abi_errno(e) };
             return -1;
         }
         // Fill legacy struct sigstack: { ss_sp, ss_onstack }
@@ -16006,15 +16000,13 @@ pub unsafe extern "C" fn sigstack(ss: *const c_void, oss: *mut c_void) -> c_int 
         new_alt.ss_size = libc::SIGSTKSZ;
         new_alt.ss_flags = if onstack != 0 { libc::SS_DISABLE } else { 0 };
 
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_sigaltstack,
-                &new_alt as *const libc::stack_t,
-                std::ptr::null::<libc::stack_t>(),
+        if let Err(e) = unsafe {
+            syscall::sys_sigaltstack(
+                (&new_alt as *const libc::stack_t).cast(),
+                std::ptr::null_mut(),
             )
-        };
-        if rc < 0 {
-            unsafe { set_abi_errno(libc::EINVAL) };
+        } {
+            unsafe { set_abi_errno(e) };
             return -1;
         }
     }
@@ -16025,9 +16017,13 @@ pub unsafe extern "C" fn sigstack(ss: *const c_void, oss: *mut c_void) -> c_int 
 /// `sigreturn` — return from signal handler (kernel does this, not userspace).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigreturn(_scp: *mut c_void) -> c_int {
-    // SYS_rt_sigreturn = 15 on x86_64
-    let ret = unsafe { libc::syscall(15i64, _scp) };
-    unsafe { syscall_ret_zero(ret, libc::EFAULT) }
+    match unsafe { syscall::sys_rt_sigreturn(_scp as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// `ssignal` — software signal (legacy SVR2 interface).
@@ -16074,14 +16070,24 @@ pub unsafe extern "C" fn sigset(sig: c_int, disp: libc::sighandler_t) -> libc::s
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fsopen(fsname: *const c_char, flags: c_uint) -> c_int {
-    let ret = unsafe { libc::syscall(430i64, fsname, flags) };
-    unsafe { syscall_ret_int(ret, libc::EINVAL) }
+    match unsafe { syscall::sys_fsopen(fsname as *const u8, flags) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fsmount(fs_fd: c_int, flags: c_uint, attr_flags: c_uint) -> c_int {
-    let ret = unsafe { libc::syscall(432i64, fs_fd, flags, attr_flags) };
-    unsafe { syscall_ret_int(ret, libc::EINVAL) }
+    match unsafe { syscall::sys_fsmount(fs_fd, flags, attr_flags) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -16092,14 +16098,26 @@ pub unsafe extern "C" fn fsconfig(
     value: *const c_void,
     aux: c_int,
 ) -> c_int {
-    let ret = unsafe { libc::syscall(431i64, fs_fd, cmd, key, value, aux) };
-    unsafe { syscall_ret_zero(ret, libc::EINVAL) }
+    match unsafe {
+        syscall::sys_fsconfig(fs_fd, cmd, key as *const u8, value as *const u8, aux)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fspick(dirfd: c_int, path: *const c_char, flags: c_uint) -> c_int {
-    let ret = unsafe { libc::syscall(433i64, dirfd, path, flags) };
-    unsafe { syscall_ret_int(ret, libc::EINVAL) }
+    match unsafe { syscall::sys_fspick(dirfd, path as *const u8, flags) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -16850,11 +16868,17 @@ pub unsafe extern "C" fn _Fork() -> c_int {
     let _pipeline_guard =
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
 
-    let ret = unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) };
+    let ret = syscall::sys_clone_fork(libc::SIGCHLD as usize);
 
     drop(_pipeline_guard);
 
-    unsafe { syscall_ret_int(ret, libc::EAGAIN) }
+    match ret {
+        Ok(pid) => pid,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ===========================================================================
