@@ -4901,40 +4901,37 @@ pub unsafe extern "C" fn wordfree(pwordexp: *mut c_void) {
 /// Linux `signalfd4` — create a file descriptor for signals.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn signalfd(fd: c_int, mask: *const c_void, flags: c_int) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_signalfd4, fd, mask, 8usize, flags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_signalfd4(fd, mask as *const u8, 8, flags) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `close_range` — close a range of file descriptors.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn close_range(first: c_uint, last: c_uint, flags: c_uint) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_close_range, first, last, flags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match syscall::sys_close_range(first, last, flags) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `pidfd_open` — obtain a file descriptor that refers to a process.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pidfd_open(pid: libc::pid_t, flags: c_uint) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, flags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match syscall::sys_pidfd_open(pid, flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 /// Linux `pidfd_send_signal` — send a signal via a process file descriptor.
@@ -4945,15 +4942,13 @@ pub unsafe extern "C" fn pidfd_send_signal(
     info: *const c_void,
     flags: c_uint,
 ) -> c_int {
-    let rc =
-        unsafe { libc::syscall(libc::SYS_pidfd_send_signal, pidfd, sig, info, flags) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_pidfd_send_signal(pidfd, sig, info as usize, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -7412,11 +7407,12 @@ pub unsafe extern "C" fn timer_create(
     sevp: *mut c_void,
     timerid: *mut c_void,
 ) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_timer_create, clockid, sevp, timerid),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_timer_create(clockid, sevp as usize, timerid as *mut i32) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -7427,17 +7423,12 @@ pub unsafe extern "C" fn timer_settime(
     new_value: *const c_void,
     old_value: *mut c_void,
 ) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(
-                libc::SYS_timer_settime,
-                timerid,
-                flags,
-                new_value,
-                old_value,
-            ),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_timer_settime(timerid as i32, flags, new_value as *const u8, old_value as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -7463,11 +7454,12 @@ pub unsafe extern "C" fn timer_gettime(timerid: *mut c_void, curr_value: *mut c_
         return -1;
     }
 
-    let rc = unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_timer_gettime, timerid, curr_value),
-            errno::EINVAL,
-        )
+    let rc = match unsafe { syscall::sys_timer_gettime(timerid as i32, curr_value as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
     runtime_policy::observe(ApiFamily::Time, decision.profile, 5, rc < 0);
     rc
@@ -7475,21 +7467,23 @@ pub unsafe extern "C" fn timer_gettime(timerid: *mut c_void, curr_value: *mut c_
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timer_delete(timerid: *mut c_void) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_timer_delete, timerid),
-            errno::EINVAL,
-        )
+    match syscall::sys_timer_delete(timerid as i32) {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn timer_getoverrun(timerid: *mut c_void) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_timer_getoverrun, timerid),
-            errno::EINVAL,
-        )
+    match syscall::sys_timer_getoverrun(timerid as i32) {
+        Ok(count) => count,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 

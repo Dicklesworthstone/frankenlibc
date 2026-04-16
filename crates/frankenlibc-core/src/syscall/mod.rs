@@ -762,6 +762,46 @@ pub const SYS_MQ_NOTIFY: usize = 184;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_MQ_GETSETATTR: usize = 185;
 
+// Signal/pidfd syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SIGNALFD4: usize = 289;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PIDFD_OPEN: usize = 434;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_PIDFD_SEND_SIGNAL: usize = 424;
+
+// Signal/pidfd syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SIGNALFD4: usize = 74;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PIDFD_OPEN: usize = 434;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_PIDFD_SEND_SIGNAL: usize = 424;
+
+// Timer syscalls - x86_64
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TIMER_CREATE: usize = 222;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TIMER_SETTIME: usize = 223;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TIMER_GETTIME: usize = 224;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TIMER_GETOVERRUN: usize = 225;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_TIMER_DELETE: usize = 226;
+
+// Timer syscalls - aarch64
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TIMER_CREATE: usize = 107;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TIMER_SETTIME: usize = 110;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TIMER_GETTIME: usize = 108;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TIMER_GETOVERRUN: usize = 109;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_TIMER_DELETE: usize = 111;
+
 // -------------------------------------------------------------------------
 // Error handling
 // -------------------------------------------------------------------------
@@ -3416,6 +3456,113 @@ pub unsafe fn sys_mq_notify(mqdes: i32, sevp: usize) -> Result<(), i32> {
 #[allow(unsafe_code)]
 pub unsafe fn sys_mq_getsetattr(mqdes: i32, newattr: usize, oldattr: usize) -> Result<(), i32> {
     let ret = unsafe { raw::syscall3(SYS_MQ_GETSETATTR, mqdes as usize, newattr, oldattr) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Signal/pidfd syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `signalfd4(fd, mask, sizemask, flags)` — create/update a signal file descriptor.
+///
+/// # Safety
+///
+/// `mask` must point to a valid sigset_t of `sizemask` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_signalfd4(fd: i32, mask: *const u8, sizemask: usize, flags: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall4(SYS_SIGNALFD4, fd as usize, mask as usize, sizemask, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `pidfd_open(pid, flags)` — obtain a file descriptor for a process.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_pidfd_open(pid: i32, flags: u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_PIDFD_OPEN, pid as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `pidfd_send_signal(pidfd, sig, info, flags)` — send a signal to a process via pidfd.
+///
+/// # Safety
+///
+/// `info` may be null or must point to a valid siginfo_t.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_pidfd_send_signal(pidfd: i32, sig: i32, info: usize, flags: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall4(SYS_PIDFD_SEND_SIGNAL, pidfd as usize, sig as usize, info, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+// -------------------------------------------------------------------------
+// Timer syscall wrappers
+// -------------------------------------------------------------------------
+
+/// `timer_create(clockid, sevp, timerid)` — create a POSIX per-process timer.
+///
+/// # Safety
+///
+/// `sevp` may be null or must point to a valid sigevent.
+/// `timerid` must point to a valid timer_t.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_timer_create(clockid: i32, sevp: usize, timerid: *mut i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_TIMER_CREATE, clockid as usize, sevp, timerid as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `timer_settime(timerid, flags, new_value, old_value)` — arm/disarm a POSIX timer.
+///
+/// # Safety
+///
+/// `new_value` must point to a valid itimerspec.
+/// `old_value` may be null or must point to a valid itimerspec.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_timer_settime(
+    timerid: i32,
+    flags: i32,
+    new_value: *const u8,
+    old_value: *mut u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_TIMER_SETTIME,
+            timerid as usize,
+            flags as usize,
+            new_value as usize,
+            old_value as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `timer_gettime(timerid, curr_value)` — get remaining time of a POSIX timer.
+///
+/// # Safety
+///
+/// `curr_value` must point to a valid itimerspec.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_timer_gettime(timerid: i32, curr_value: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_TIMER_GETTIME, timerid as usize, curr_value as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `timer_getoverrun(timerid)` — get overrun count for a POSIX timer.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_timer_getoverrun(timerid: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_TIMER_GETOVERRUN, timerid as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `timer_delete(timerid)` — delete a POSIX timer.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_timer_delete(timerid: i32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall1(SYS_TIMER_DELETE, timerid as usize) };
     syscall_result(ret).map(|_| ())
 }
 
