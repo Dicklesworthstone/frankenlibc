@@ -28,6 +28,7 @@ type SSizeT = isize;
 const GCONV_OK: c_int = 0;
 const GCONV_NOCONV: c_int = -1;
 const ICONV_ERROR_VALUE: usize = usize::MAX;
+const HOSTID_PATH: &[u8] = b"/etc/hostid\0";
 
 // ==========================================================================
 // Native math helpers
@@ -5968,11 +5969,84 @@ pub unsafe extern "C" fn setfsgid(fsgid: c_uint) -> c_int {
 pub unsafe extern "C" fn setfsuid(fsuid: c_uint) -> c_int {
     unsafe { libc::syscall(libc::SYS_setfsuid, fsuid as c_ulong) as c_int }
 }
-// sethostid: native syscall
+
+#[inline]
+fn hostid_to_i32(hostid: c_long) -> Result<i32, c_int> {
+    i32::try_from(hostid).map_err(|_| libc::EOVERFLOW)
+}
+
+unsafe fn write_hostid_file(hostid: i32) -> Result<(), c_int> {
+    let fd = unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            HOSTID_PATH.as_ptr(),
+            libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC,
+            0o644,
+        )
+    }?;
+
+    let hostid_bytes = hostid.to_ne_bytes();
+    let mut written = 0usize;
+    while written < hostid_bytes.len() {
+        match unsafe {
+            raw_syscall::sys_write(
+                fd,
+                hostid_bytes[written..].as_ptr(),
+                hostid_bytes.len() - written,
+            )
+        } {
+            Ok(0) => {
+                let _ = raw_syscall::sys_close(fd);
+                return Err(libc::EIO);
+            }
+            Ok(count) => written += count,
+            Err(err) => {
+                let _ = raw_syscall::sys_close(fd);
+                return Err(err);
+            }
+        }
+    }
+
+    raw_syscall::sys_close(fd)
+}
+
+// sethostid: native via /etc/hostid file, matching Linux glibc behavior
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sethostid(hostid: c_long) -> c_int {
-    unsafe { libc::sethostid(hostid) }
+    let hostid = match hostid_to_i32(hostid) {
+        Ok(hostid) => hostid,
+        Err(err) => {
+            unsafe { crate::errno_abi::set_abi_errno(err) };
+            return -1;
+        }
+    };
+
+    match unsafe { write_hostid_file(hostid) } {
+        Ok(()) => 0,
+        Err(err) => {
+            unsafe { crate::errno_abi::set_abi_errno(err) };
+            -1
+        }
+    }
 }
+
+#[cfg(test)]
+mod hostid_abi_tests {
+    use super::hostid_to_i32;
+
+    #[test]
+    fn hostid_to_i32_accepts_signed_32_bit_values() {
+        assert_eq!(hostid_to_i32(0x7fff_ffff), Ok(0x7fff_ffff));
+        assert_eq!(hostid_to_i32(-0x8000_0000), Ok(-0x8000_0000));
+    }
+
+    #[test]
+    fn hostid_to_i32_rejects_out_of_range_values() {
+        assert_eq!(hostid_to_i32(0x1_0000_0000), Err(libc::EOVERFLOW));
+        assert_eq!(hostid_to_i32(-0x8000_0001), Err(libc::EOVERFLOW));
+    }
+}
+
 // setipv4sourcefilter: set multicast source filter via setsockopt(IP_MSFILTER)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setipv4sourcefilter(

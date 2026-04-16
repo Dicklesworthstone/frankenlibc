@@ -120,7 +120,6 @@
   "callthrough_families": {
     "source": "replacement_guard_source_scan",
     "modules": [
-      "glibc_internal_abi",
       "pthread_abi",
       "unistd_abi"
     ],
@@ -172,10 +171,8 @@
         "functions": []
       },
       "glibc_internal_abi": {
-        "count": 1,
-        "functions": [
-          "sethostid"
-        ]
+        "count": 0,
+        "functions": []
       },
       "io_internal_abi": {
         "count": 0,
@@ -321,7 +318,7 @@
         "note": "Legacy regex register allocation now uses the ABI allocator path instead of direct libc calloc/free."
       }
     },
-    "total_call_throughs": 127,
+    "total_call_throughs": 126,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }

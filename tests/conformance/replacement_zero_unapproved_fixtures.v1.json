@@ -9,22 +9,6 @@
   },
   "fixtures": [
     {
-      "id": "interpose_allow_glibc_internal_abi_sethostid",
-      "mode": "interpose",
-      "module": "glibc_internal_abi",
-      "symbol": "sethostid",
-      "expected_outcome": "allowed",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
-      "id": "replacement_forbid_glibc_internal_abi_sethostid",
-      "mode": "replacement",
-      "module": "glibc_internal_abi",
-      "symbol": "sethostid",
-      "expected_outcome": "forbidden",
-      "evidence_source": "replacement_guard_source_scan"
-    },
-    {
       "id": "interpose_allow_pthread_abi_dlsym",
       "mode": "interpose",
       "module": "pthread_abi",
@@ -76,11 +60,10 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 6,
-    "interpose_allowed_count": 3,
-    "replacement_forbidden_count": 3,
+    "fixture_count": 4,
+    "interpose_allowed_count": 2,
+    "replacement_forbidden_count": 2,
     "covered_callthrough_modules": [
-      "glibc_internal_abi",
       "pthread_abi",
       "unistd_abi"
     ]
