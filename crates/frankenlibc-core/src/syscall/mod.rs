@@ -3387,6 +3387,10 @@ pub unsafe fn sys_fchownat(dirfd: i32, pathname: *const u8, owner: u32, group: u
 }
 
 /// `fchmod(fd, mode)` — change file mode by file descriptor.
+///
+/// # Safety
+///
+/// No memory safety requirements. The fd validity is a runtime concern.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_fchmod(fd: i32, mode: u32) -> Result<(), i32> {
@@ -3395,6 +3399,10 @@ pub unsafe fn sys_fchmod(fd: i32, mode: u32) -> Result<(), i32> {
 }
 
 /// `fchown(fd, owner, group)` — change file ownership by file descriptor.
+///
+/// # Safety
+///
+/// No memory safety requirements. The fd validity is a runtime concern.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_fchown(fd: i32, owner: u32, group: u32) -> Result<(), i32> {
@@ -3423,6 +3431,10 @@ pub unsafe fn sys_truncate(path: *const u8, length: i64) -> Result<(), i32> {
 }
 
 /// `ftruncate(fd, length)` — truncate a file to a specified length by fd.
+///
+/// # Safety
+///
+/// No memory safety requirements. The fd validity is a runtime concern.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_ftruncate(fd: i32, length: i64) -> Result<(), i32> {
@@ -3431,6 +3443,10 @@ pub unsafe fn sys_ftruncate(fd: i32, length: i64) -> Result<(), i32> {
 }
 
 /// `flock(fd, operation)` — apply or remove an advisory lock on a file.
+///
+/// # Safety
+///
+/// No memory safety requirements. The fd validity is a runtime concern.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_flock(fd: i32, operation: i32) -> Result<(), i32> {
@@ -4729,6 +4745,11 @@ pub fn sys_brk(addr: usize) -> usize {
 // -------------------------------------------------------------------------
 
 /// `name_to_handle_at(dirfd, path, handle, mount_id, flags)` — obtain handle for a pathname.
+///
+/// # Safety
+///
+/// `pathname` must be a valid null-terminated C string. `handle` and `mount_id`
+/// must point to valid writable memory.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_name_to_handle_at(
@@ -4752,6 +4773,10 @@ pub unsafe fn sys_name_to_handle_at(
 }
 
 /// `open_by_handle_at(mount_fd, handle, flags)` — open by handle returned from name_to_handle_at.
+///
+/// # Safety
+///
+/// `handle` must point to a valid file_handle structure.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_open_by_handle_at(mount_fd: i32, handle: *const u8, flags: i32) -> Result<i32, i32> {
@@ -4768,6 +4793,10 @@ pub fn sys_fanotify_init(flags: u32, event_f_flags: u32) -> Result<i32, i32> {
 }
 
 /// `fanotify_mark(fanotify_fd, flags, mask, dirfd, pathname)` — add, remove, or modify an fanotify mark.
+///
+/// # Safety
+///
+/// `pathname` must be a valid null-terminated C string or null.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_fanotify_mark(
@@ -4791,6 +4820,10 @@ pub unsafe fn sys_fanotify_mark(
 }
 
 /// `seccomp(operation, flags, args)` — operate on Secure Computing state.
+///
+/// # Safety
+///
+/// `args` must point to a valid seccomp filter structure when required by the operation.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_seccomp(operation: u32, flags: u32, args: *const u8) -> Result<i32, i32> {
@@ -4799,6 +4832,10 @@ pub unsafe fn sys_seccomp(operation: u32, flags: u32, args: *const u8) -> Result
 }
 
 /// `capget(hdrp, datap)` — get capabilities of a process.
+///
+/// # Safety
+///
+/// `hdrp` and `datap` must point to valid capability structures.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_capget(hdrp: *mut u8, datap: *mut u8) -> Result<(), i32> {
@@ -4807,6 +4844,10 @@ pub unsafe fn sys_capget(hdrp: *mut u8, datap: *mut u8) -> Result<(), i32> {
 }
 
 /// `capset(hdrp, datap)` — set capabilities of a process.
+///
+/// # Safety
+///
+/// `hdrp` and `datap` must point to valid capability structures.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_capset(hdrp: *const u8, datap: *const u8) -> Result<(), i32> {
@@ -4823,6 +4864,10 @@ pub fn sys_membarrier(cmd: i32, flags: u32, cpu_id: i32) -> Result<i32, i32> {
 }
 
 /// `io_setup(nr_events, ctxp)` — create an asynchronous I/O context.
+///
+/// # Safety
+///
+/// `ctxp` must point to a valid writable location for the context id.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_io_setup(nr_events: u32, ctxp: *mut usize) -> Result<(), i32> {
@@ -4839,6 +4884,10 @@ pub fn sys_io_destroy(ctx_id: usize) -> Result<(), i32> {
 }
 
 /// `io_submit(ctx_id, nr, iocbpp)` — submit asynchronous I/O blocks.
+///
+/// # Safety
+///
+/// `iocbpp` must point to an array of `nr` valid iocb pointers.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_io_submit(ctx_id: usize, nr: i64, iocbpp: *mut *mut u8) -> Result<i64, i32> {
@@ -4847,6 +4896,10 @@ pub unsafe fn sys_io_submit(ctx_id: usize, nr: i64, iocbpp: *mut *mut u8) -> Res
 }
 
 /// `io_cancel(ctx_id, iocb, result)` — cancel an outstanding asynchronous I/O operation.
+///
+/// # Safety
+///
+/// `iocb` and `result` must point to valid structures.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_io_cancel(ctx_id: usize, iocb: *mut u8, result: *mut u8) -> Result<(), i32> {
@@ -4855,6 +4908,11 @@ pub unsafe fn sys_io_cancel(ctx_id: usize, iocb: *mut u8, result: *mut u8) -> Re
 }
 
 /// `io_getevents(ctx_id, min_nr, nr, events, timeout)` — read asynchronous I/O events.
+///
+/// # Safety
+///
+/// `events` must point to an array of at least `nr` io_event structures.
+/// `timeout` must be a valid timespec pointer or null.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_io_getevents(
@@ -4894,6 +4952,10 @@ pub fn sys_pkey_free(pkey: i32) -> Result<(), i32> {
 }
 
 /// `pkey_mprotect(addr, len, prot, pkey)` — set protection on a region of memory with pkey.
+///
+/// # Safety
+///
+/// `addr` must be page-aligned and the range must be valid mapped memory.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_pkey_mprotect(addr: *mut u8, len: usize, prot: i32, pkey: i32) -> Result<(), i32> {
@@ -4906,6 +4968,10 @@ pub unsafe fn sys_pkey_mprotect(addr: *mut u8, len: usize, prot: i32, pkey: i32)
 // -------------------------------------------------------------------------
 
 /// `io_uring_setup(entries, params)` — setup an io_uring instance.
+///
+/// # Safety
+///
+/// `params` must point to a valid io_uring_params structure.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_io_uring_setup(entries: u32, params: *mut u8) -> Result<i32, i32> {
@@ -4914,6 +4980,10 @@ pub unsafe fn sys_io_uring_setup(entries: u32, params: *mut u8) -> Result<i32, i
 }
 
 /// `io_uring_enter(fd, to_submit, min_complete, flags, sig)` — enter an io_uring instance.
+///
+/// # Safety
+///
+/// `sig` must be a valid sigset pointer or null.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_io_uring_enter(
@@ -5551,6 +5621,10 @@ pub unsafe fn sys_modify_ldt(func: i32, ptr: *mut u8, bytecount: usize) -> Resul
 }
 
 /// `uselib(library)` — load a shared library. x86_64 only (deprecated).
+///
+/// # Safety
+///
+/// `library` must be a valid null-terminated C string.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[allow(unsafe_code)]
@@ -5560,6 +5634,11 @@ pub unsafe fn sys_uselib(library: *const u8) -> Result<(), i32> {
 }
 
 /// `futimesat(dirfd, pathname, tv)` — change file timestamps relative to directory. x86_64 only.
+///
+/// # Safety
+///
+/// `pathname` must be a valid null-terminated C string. `tv` must point to a valid
+/// array of two `timeval` structures or be null.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[allow(unsafe_code)]
@@ -5588,6 +5667,10 @@ pub fn sys_ioperm(from: usize, num: usize, turn_on: i32) -> Result<(), i32> {
 }
 
 /// `syslog(type, bufp, len)` — read/clear kernel log buffer.
+///
+/// # Safety
+///
+/// `bufp` must point to a writable region of at least `len` bytes when reading.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_syslog(typ: i32, bufp: *mut u8, len: i32) -> Result<i32, i32> {

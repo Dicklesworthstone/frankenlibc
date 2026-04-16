@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, c_int, c_void};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
 use frankenlibc_core::elf::Elf64Header;
@@ -188,6 +188,7 @@ struct ManagedThreadRecord {
 struct HostThreadStartContext {
     start_routine: StartRoutine,
     arg: *mut c_void,
+    host_thread: AtomicUsize,
 }
 
 static THREAD_HANDLE_REGISTRY: LazyLock<Mutex<HashMap<usize, ManagedThreadRecord>>> =
@@ -1213,15 +1214,6 @@ fn native_pthread_self() -> libc::pthread_t {
         return cached_self;
     }
 
-    if current_threading_backend() == THREAD_BACKEND_HOST
-        && let Some(host_self) = crate::host_resolve::host_pthread_self_raw()
-    {
-        let host_thread = unsafe { host_self() };
-        let _ = CURRENT_PTHREAD_SELF_CACHE.try_with(|cache| cache.set(host_thread));
-        remember_host_thread_tid(host_thread, core_self_tid());
-        return host_thread;
-    }
-
     let tid = core_self_tid();
     if tid > 0 {
         // Use the TLS table to resolve our own ThreadHandle in O(1) time
@@ -1683,11 +1675,16 @@ unsafe fn host_pthread_create_with_managed_attr(
     start_routine: StartRoutine,
     arg: *mut c_void,
 ) -> c_int {
-    let start_ctx = Box::into_raw(Box::new(HostThreadStartContext { start_routine, arg }));
     let Some(data_ptr) = managed_attr_data_for_host_translation(attr) else {
+        let start_ctx = Box::into_raw(Box::new(HostThreadStartContext {
+            start_routine,
+            arg,
+            host_thread: AtomicUsize::new(0),
+        }));
+        let mut host_thread: libc::pthread_t = 0;
         let rc = unsafe {
             host_create(
-                thread_out,
+                &mut host_thread,
                 attr,
                 Some(host_pthread_start_trampoline),
                 start_ctx.cast(),
@@ -1695,11 +1692,15 @@ unsafe fn host_pthread_create_with_managed_attr(
         };
         if rc != 0 {
             drop(unsafe { Box::from_raw(start_ctx) });
+        } else {
+            // SAFETY: pthread_create validated `thread_out` as writable before dispatch.
+            unsafe { *thread_out = host_thread };
+            // SAFETY: `start_ctx` remains owned by the child trampoline.
+            unsafe { (*start_ctx).host_thread.store(host_thread as usize, Ordering::Release) };
         }
         return rc;
     };
     if data_ptr.is_null() {
-        drop(unsafe { Box::from_raw(start_ctx) });
         return libc::EINVAL;
     }
 
@@ -1793,13 +1794,28 @@ unsafe fn host_pthread_create_with_managed_attr(
     }
 
     let result = if rc == 0 {
+        let start_ctx = Box::into_raw(Box::new(HostThreadStartContext {
+            start_routine,
+            arg,
+            host_thread: AtomicUsize::new(0),
+        }));
+        let mut host_thread: libc::pthread_t = 0;
         unsafe {
-            host_create(
-                thread_out,
+            let create_rc = host_create(
+                &mut host_thread,
                 &host_attr,
                 Some(host_pthread_start_trampoline),
                 start_ctx.cast(),
-            )
+            );
+            if create_rc != 0 {
+                drop(Box::from_raw(start_ctx));
+            } else {
+                *thread_out = host_thread;
+                (*start_ctx)
+                    .host_thread
+                    .store(host_thread as usize, Ordering::Release);
+            }
+            create_rc
         }
     } else {
         rc
@@ -1807,16 +1823,21 @@ unsafe fn host_pthread_create_with_managed_attr(
     if let Some(attr_destroy) = unsafe { resolved_pthread_attr_destroy_fn() } {
         let _ = unsafe { attr_destroy(&mut host_attr) };
     }
-    if result != 0 {
-        drop(unsafe { Box::from_raw(start_ctx) });
-    }
     result
 }
 
 unsafe extern "C" fn host_pthread_start_trampoline(arg: *mut c_void) -> *mut c_void {
     let start_ctx = unsafe { Box::from_raw(arg.cast::<HostThreadStartContext>()) };
     let _ = CURRENT_THREADING_BACKEND.try_with(|backend| backend.set(THREAD_BACKEND_HOST));
-    let _ = native_pthread_self();
+    let host_thread = loop {
+        let raw = start_ctx.host_thread.load(Ordering::Acquire);
+        if raw != 0 {
+            break raw as libc::pthread_t;
+        }
+        core::hint::spin_loop();
+    };
+    let _ = CURRENT_PTHREAD_SELF_CACHE.try_with(|cache| cache.set(host_thread));
+    remember_host_thread_tid(host_thread, core_self_tid());
     let start_routine = start_ctx.start_routine;
     let start_arg = start_ctx.arg;
     drop(start_ctx);
