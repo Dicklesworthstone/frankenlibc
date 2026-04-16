@@ -3583,15 +3583,13 @@ pub unsafe extern "C" fn sched_getaffinity(
     cpusetsize: usize,
     mask: *mut c_void,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_sched_getaffinity, pid, cpusetsize, mask) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
-        return -1;
+    match unsafe { syscall::sys_sched_getaffinity(pid, cpusetsize, mask as *mut u8) } {
+        Ok(_) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    0
 }
 
 /// Linux `sched_setaffinity` — set CPU affinity mask.
@@ -3601,14 +3599,13 @@ pub unsafe extern "C" fn sched_setaffinity(
     cpusetsize: usize,
     mask: *const c_void,
 ) -> c_int {
-    let rc = unsafe { libc::syscall(libc::SYS_sched_setaffinity, pid, cpusetsize, mask) } as c_int;
-    if rc < 0 {
-        let e = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(errno::EINVAL);
-        unsafe { set_abi_errno(e) };
+    match unsafe { syscall::sys_sched_setaffinity(pid, cpusetsize, mask as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc
 }
 
 // ---------------------------------------------------------------------------
@@ -4380,11 +4377,12 @@ pub unsafe extern "C" fn mq_notify(mqdes: c_int, sevp: *const libc::sigevent) ->
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_getscheduler(pid: libc::pid_t) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_sched_getscheduler, pid),
-            errno::EINVAL,
-        )
+    match syscall::sys_sched_getscheduler(pid) {
+        Ok(policy) => policy,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -4394,51 +4392,56 @@ pub unsafe extern "C" fn sched_setscheduler(
     policy: c_int,
     param: *const c_void,
 ) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_sched_setscheduler, pid, policy, param),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_sched_setscheduler(pid, policy, param as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_getparam(pid: libc::pid_t, param: *mut c_void) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_sched_getparam, pid, param),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_sched_getparam(pid, param as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_setparam(pid: libc::pid_t, param: *const c_void) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_sched_setparam, pid, param),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_sched_setparam(pid, param as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_get_priority_min(policy: c_int) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_sched_get_priority_min, policy),
-            errno::EINVAL,
-        )
+    match syscall::sys_sched_get_priority_min(policy) {
+        Ok(prio) => prio,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_sched_get_priority_max, policy),
-            errno::EINVAL,
-        )
+    match syscall::sys_sched_get_priority_max(policy) {
+        Ok(prio) => prio,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 
@@ -8286,11 +8289,12 @@ pub unsafe extern "C" fn recvmmsg(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sched_rr_get_interval(pid: libc::pid_t, tp: *mut libc::timespec) -> c_int {
-    unsafe {
-        syscall_ret_int(
-            libc::syscall(libc::SYS_sched_rr_get_interval, pid, tp),
-            errno::EINVAL,
-        )
+    match unsafe { syscall::sys_sched_rr_get_interval(pid, tp as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
 }
 

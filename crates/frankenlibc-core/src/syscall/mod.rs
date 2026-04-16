@@ -177,6 +177,12 @@ pub const SYS_GETTID: usize = 186;
 pub const SYS_SCHED_GET_PRIORITY_MAX: usize = 146;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SCHED_GET_PRIORITY_MIN: usize = 147;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_RR_GET_INTERVAL: usize = 148;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_SETAFFINITY: usize = 203;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SCHED_GETAFFINITY: usize = 204;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -321,6 +327,12 @@ pub const SYS_GETTID: usize = 178;
 pub const SYS_SCHED_GET_PRIORITY_MAX: usize = 125;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SCHED_GET_PRIORITY_MIN: usize = 126;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_RR_GET_INTERVAL: usize = 127;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_SETAFFINITY: usize = 122;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SCHED_GETAFFINITY: usize = 123;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2628,6 +2640,58 @@ pub unsafe fn sys_sched_setscheduler(pid: i32, policy: i32, param: *const u8) ->
 #[allow(unsafe_code)]
 pub fn sys_sched_getscheduler(pid: i32) -> Result<i32, i32> {
     let ret = unsafe { raw::syscall1(SYS_SCHED_GETSCHEDULER, pid as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `sched_get_priority_max(policy)` — get maximum priority for scheduling policy.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_sched_get_priority_max(policy: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_SCHED_GET_PRIORITY_MAX, policy as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `sched_get_priority_min(policy)` — get minimum priority for scheduling policy.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_sched_get_priority_min(policy: i32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_SCHED_GET_PRIORITY_MIN, policy as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `sched_rr_get_interval(pid, tp)` — get SCHED_RR time quantum.
+///
+/// # Safety
+///
+/// `tp` must point to a valid timespec structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sched_rr_get_interval(pid: i32, tp: *mut u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SCHED_RR_GET_INTERVAL, pid as usize, tp as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sched_setaffinity(pid, cpusetsize, mask)` — set CPU affinity mask.
+///
+/// # Safety
+///
+/// `mask` must point to a valid cpu_set_t of at least `cpusetsize` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sched_setaffinity(pid: i32, cpusetsize: usize, mask: *const u8) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_SCHED_SETAFFINITY, pid as usize, cpusetsize, mask as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `sched_getaffinity(pid, cpusetsize, mask)` — get CPU affinity mask.
+///
+/// # Safety
+///
+/// `mask` must point to a writable buffer of at least `cpusetsize` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sched_getaffinity(pid: i32, cpusetsize: usize, mask: *mut u8) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_SCHED_GETAFFINITY, pid as usize, cpusetsize, mask as usize) };
     syscall_result(ret).map(|v| v as i32)
 }
 
