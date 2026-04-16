@@ -9544,11 +9544,11 @@
     },
     {
       "symbol": "pthread_clockjoin_np",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Clock-aware timed join (GNU extension)",
-      "hardened_semantics": "Clock join with validation",
+      "strict_semantics": "Managed-thread clock-aware timed join with CLOCK_REALTIME/CLOCK_MONOTONIC deadline conversion and deterministic ESRCH/EINVAL handling for consumed handles.",
+      "hardened_semantics": "Same native deadline conversion and deterministic managed-thread error contract.",
       "default_stub": false
     },
     {
@@ -9779,7 +9779,7 @@
     },
     {
       "symbol": "pthread_join",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "strict_hotpath",
       "strict_semantics": "Native join on managed ThreadHandle registry with deterministic ESRCH for unknown ids and core join errno propagation",
@@ -10272,20 +10272,20 @@
     },
     {
       "symbol": "pthread_timedjoin_np",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Timed thread join (GNU extension)",
-      "hardened_semantics": "Timed join with timeout validation",
+      "strict_semantics": "Managed-thread timed join with realtime abstime validation, futex-based timeout, and deterministic ESRCH/EINVAL/EDEADLK handling.",
+      "hardened_semantics": "Same native futex timeout path with deterministic validation and timeout contract.",
       "default_stub": false
     },
     {
       "symbol": "pthread_tryjoin_np",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "pthread_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Non-blocking thread join (GNU extension)",
-      "hardened_semantics": "Non-blocking join attempt",
+      "strict_semantics": "Managed-thread non-blocking join that returns EBUSY until the target reaches FINISHED and then performs the native join.",
+      "hardened_semantics": "Same native FINISHED-state check and deterministic managed-thread errno contract.",
       "default_stub": false
     },
     {
