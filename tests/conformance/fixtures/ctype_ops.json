@@ -3,6 +3,7 @@
   "family": "ctype",
   "captured_at": "2026-02-13T00:00:00Z",
   "description": "Character classification and conversion functions — POSIX.1-2017 / C11 ctype.h",
+  "spec_reference": "POSIX.1-2017 ctype.h, ISO C11 7.4",
   "cases": [
     {
       "name": "isalpha_uppercase_A",
