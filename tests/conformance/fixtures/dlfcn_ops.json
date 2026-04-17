@@ -3,6 +3,7 @@
   "family": "dlfcn_ops",
   "captured_at": "2026-02-13T00:00:00Z",
   "description": "Mode-specific parity fixtures for dynamic linking operations (dlopen, dlsym, dlclose, dlerror). All GlibcCallThrough. Strict: host-glibc parity. Hardened: null handle safety.",
+  "spec_reference": "POSIX dlopen, dlsym, dlclose, dlerror",
   "cases": [
     {
       "name": "dlopen_self_strict",
