@@ -2,6 +2,8 @@
   "version": "v1",
   "family": "iconv/phase1",
   "captured_at": "2026-02-11T00:00:00Z",
+  "description": "Phase 1 iconv fixtures covering conversion, open, and close behavior across strict and hardened modes.",
+  "spec_reference": "POSIX iconv_open, iconv, iconv_close",
   "cases": [
     {
       "name": "strict_utf8_to_utf16le_basic",
