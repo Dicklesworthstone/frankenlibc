@@ -13,6 +13,7 @@ arbitrary = { version = "1", features = ["derive"] }
 frankenlibc-membrane = { path = "../frankenlibc-membrane" }
 frankenlibc-core = { path = "../frankenlibc-core" }
 frankenlibc-abi = { path = "../frankenlibc-abi" }
+libc = "0.2"
 
 [[bin]]
 name = "fuzz_string"
@@ -75,6 +76,11 @@ path = "fuzz_targets/fuzz_inet.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_locale"
+path = "fuzz_targets/fuzz_locale.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_iconv"
 path = "fuzz_targets/fuzz_iconv.rs"
 doc = false
@@ -97,6 +103,11 @@ doc = false
 [[bin]]
 name = "fuzz_runtime_math"
 path = "fuzz_targets/fuzz_runtime_math.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_elf_loader"
+path = "fuzz_targets/fuzz_elf_loader.rs"
 doc = false
 
 [workspace]

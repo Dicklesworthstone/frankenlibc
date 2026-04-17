@@ -1,22 +1,25 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.5",
-  "generated_at": "2026-03-25T19:36:38Z",
+  "generated_at": "2026-04-16T22:53:06Z",
   "summary": {
-    "total_targets": 17,
-    "functional_targets": 17,
+    "total_targets": 19,
+    "functional_targets": 19,
     "stub_targets": 0,
-    "checks_passed": 85,
-    "checks_total": 85,
+    "checks_passed": 95,
+    "checks_total": 95,
     "quality_score_pct": 100.0,
-    "total_seed_corpus": 115,
-    "total_dict_entries": 146,
+    "total_seed_corpus": 126,
+    "total_dict_entries": 164,
     "cwe_coverage": [
       "CWE-120",
       "CWE-122",
       "CWE-125",
       "CWE-131",
       "CWE-134",
+      "CWE-170",
+      "CWE-190",
+      "CWE-20",
       "CWE-415",
       "CWE-416",
       "CWE-476",
@@ -27,10 +30,12 @@
       "CWE-825",
       "CWE-835"
     ],
-    "unique_cwes": 14,
+    "unique_cwes": 17,
     "domains_covered": [
       "abi-entrypoint",
       "allocator",
+      "loader",
+      "locale",
       "membrane",
       "runtime-kernel"
     ]
@@ -61,6 +66,8 @@
     "domains": {
       "abi-entrypoint": "Fuzz exported C ABI symbols (string, printf, stdlib)",
       "allocator": "Fuzz malloc/free/realloc sequences and edge cases",
+      "loader": "Fuzz ELF object parsing, symbol lookup, and relocation machinery",
+      "locale": "Fuzz locale categories, langinfo selectors, and C-locale stateful APIs",
       "membrane": "Fuzz TSM validation pipeline with arbitrary inputs",
       "runtime-math": "Fuzz math library functions (future)"
     }
@@ -149,6 +156,52 @@
       "lines": 99
     },
     {
+      "target": "fuzz_elf_loader",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_elf_loader.rs",
+      "domain": "loader",
+      "category": "elf-parser-relocations",
+      "description": "ELF header/table parsing and relocation application fuzzing",
+      "priority": "high",
+      "cwe_coverage": [
+        "CWE-20",
+        "CWE-125",
+        "CWE-190",
+        "CWE-787"
+      ],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 601
+    },
+    {
       "target": "fuzz_iconv",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_iconv.rs",
       "domain": "unknown",
@@ -231,6 +284,51 @@
       "lines": 202
     },
     {
+      "target": "fuzz_locale",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_locale.rs",
+      "domain": "locale",
+      "category": "locale-api",
+      "description": "Locale category/name parsing and C-locale ABI semantics fuzzing",
+      "priority": "high",
+      "cwe_coverage": [
+        "CWE-20",
+        "CWE-170",
+        "CWE-476"
+      ],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 326
+    },
+    {
       "target": "fuzz_malloc",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_malloc.rs",
       "domain": "allocator",
@@ -274,7 +372,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 342
+      "lines": 390
     },
     {
       "target": "fuzz_math",
@@ -404,7 +502,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 267
+      "lines": 574
     },
     {
       "target": "fuzz_pwd_grp",
@@ -527,7 +625,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 150
+      "lines": 156
     },
     {
       "target": "fuzz_resolver",
@@ -871,6 +969,38 @@
         "reproducible": true
       },
       {
+        "target": "fuzz_elf_loader",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-b11272286b8f",
+            "size_bytes": 60,
+            "sha256_prefix": "b11272286b8f"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-145922b3ec8d",
+            "size_bytes": 29,
+            "sha256_prefix": "145922b3ec8d"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-7afa5d2d557a",
+            "size_bytes": 4,
+            "sha256_prefix": "7afa5d2d557a"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-9c8d6d976fd1",
+            "size_bytes": 54,
+            "sha256_prefix": "9c8d6d976fd1"
+          }
+        ],
+        "count": 4,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
         "target": "fuzz_iconv",
         "seeds": [
           {
@@ -967,6 +1097,56 @@
           }
         ],
         "count": 9,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
+        "target": "fuzz_locale",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-b3e90047b83d",
+            "size_bytes": 1,
+            "sha256_prefix": "b3e90047b83d"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-414bcf6bbc04",
+            "size_bytes": 5,
+            "sha256_prefix": "414bcf6bbc04"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-f90be6a71580",
+            "size_bytes": 0,
+            "sha256_prefix": "f90be6a71580"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-53f51c9521b7",
+            "size_bytes": 11,
+            "sha256_prefix": "53f51c9521b7"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-517b9bdddfba",
+            "size_bytes": 8,
+            "sha256_prefix": "517b9bdddfba"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-88e72fad0b5d",
+            "size_bytes": 17,
+            "sha256_prefix": "88e72fad0b5d"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-1b5dddddb0a7",
+            "size_bytes": 28,
+            "sha256_prefix": "1b5dddddb0a7"
+          }
+        ],
+        "count": 7,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -1655,6 +1835,23 @@
         "format": "libfuzzer"
       },
       {
+        "target": "fuzz_elf_loader",
+        "entries": [
+          "\"ELF\"",
+          "\"PT_LOAD\"",
+          "\"PT_DYNAMIC\"",
+          "\".dynsym\"",
+          "\".dynstr\"",
+          "\".rela.dyn\"",
+          "\"R_X86_64_RELATIVE\"",
+          "\"R_X86_64_JUMP_SLOT\"",
+          "\"malloc\"",
+          "\"GLIBC_2.2.5\""
+        ],
+        "count": 10,
+        "format": "libfuzzer"
+      },
+      {
         "target": "fuzz_iconv",
         "entries": [
           "\"\\x00\"",
@@ -1686,6 +1883,21 @@
           "\"/etc/passwd\""
         ],
         "count": 10,
+        "format": "libfuzzer"
+      },
+      {
+        "target": "fuzz_locale",
+        "entries": [
+          "\"C\"",
+          "\"POSIX\"",
+          "\"en_US.UTF-8\"",
+          "\"messages\"",
+          "\"/usr/share/locale\"",
+          "\"CODESET\"",
+          "\"RADIXCHAR\"",
+          "\"LC_ALL\""
+        ],
+        "count": 8,
         "format": "libfuzzer"
       },
       {
@@ -1888,10 +2100,10 @@
     ]
   },
   "quality_checklist": {
-    "convention_compliance": "85/85 checks passed",
-    "implementation_coverage": "17/17 targets functional",
-    "corpus_seeded": "17/17 targets with seeds",
-    "dictionary_created": "17/17 targets with dictionaries",
-    "cwe_mapping": "14 CWEs covered across targets"
+    "convention_compliance": "95/95 checks passed",
+    "implementation_coverage": "19/19 targets functional",
+    "corpus_seeded": "19/19 targets with seeds",
+    "dictionary_created": "19/19 targets with dictionaries",
+    "cwe_mapping": "17 CWEs covered across targets"
   }
 }

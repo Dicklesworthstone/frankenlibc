@@ -56,11 +56,25 @@ TARGET_DOMAINS = {
         "cwe_coverage": ["CWE-134", "CWE-787"],
         "priority": "high",
     },
+    "fuzz_locale": {
+        "domain": "locale",
+        "category": "locale-api",
+        "description": "Locale category/name parsing and C-locale ABI semantics fuzzing",
+        "cwe_coverage": ["CWE-20", "CWE-170", "CWE-476"],
+        "priority": "high",
+    },
     "fuzz_runtime_math": {
         "domain": "runtime-kernel",
         "category": "controller-transitions",
         "description": "Runtime math decision and observation transition fuzzing",
         "cwe_coverage": ["CWE-670", "CWE-682", "CWE-835"],
+        "priority": "high",
+    },
+    "fuzz_elf_loader": {
+        "domain": "loader",
+        "category": "elf-parser-relocations",
+        "description": "ELF header/table parsing and relocation application fuzzing",
+        "cwe_coverage": ["CWE-20", "CWE-125", "CWE-190", "CWE-787"],
         "priority": "high",
     },
 }
@@ -163,6 +177,19 @@ def generate_printf_seeds():
     return seeds
 
 
+def generate_locale_seeds():
+    """Deterministic seed corpus for locale parsing and ABI state transitions."""
+    seeds = []
+    seeds.append(b"C")
+    seeds.append(b"POSIX")
+    seeds.append(b"")
+    seeds.append(b"en_US.UTF-8")
+    seeds.append(b"messages")
+    seeds.append(b"/usr/share/locale")
+    seeds.append(b"C:messages:/usr/share/locale")
+    return seeds
+
+
 def generate_runtime_math_seeds():
     """Deterministic seed corpus for runtime math transitions."""
     seeds = []
@@ -178,6 +205,7 @@ SEED_GENERATORS = {
     "fuzz_malloc": generate_malloc_seeds,
     "fuzz_membrane": generate_membrane_seeds,
     "fuzz_printf": generate_printf_seeds,
+    "fuzz_locale": generate_locale_seeds,
     "fuzz_runtime_math": generate_runtime_math_seeds,
 }
 
@@ -201,9 +229,31 @@ DICTIONARIES = {
         '"%d"', '"%s"', '"%f"', '"%p"', '"%x"', '"%n"',
         '"%10d"', '"%.5f"', '"%*d"', '"%1$d"', '"%%"',
     ],
+    "fuzz_locale": [
+        '"C"',
+        '"POSIX"',
+        '"en_US.UTF-8"',
+        '"messages"',
+        '"/usr/share/locale"',
+        '"CODESET"',
+        '"RADIXCHAR"',
+        '"LC_ALL"',
+    ],
     "fuzz_runtime_math": [
         '"strict"', '"hardened"', '"off"',
         '"allocator"', '"resolver"', '"locale"', '"runtime-math"',
+    ],
+    "fuzz_elf_loader": [
+        '"ELF"',
+        '"PT_LOAD"',
+        '"PT_DYNAMIC"',
+        '".dynsym"',
+        '".dynstr"',
+        '".rela.dyn"',
+        '"R_X86_64_RELATIVE"',
+        '"R_X86_64_JUMP_SLOT"',
+        '"malloc"',
+        '"GLIBC_2.2.5"',
     ],
 }
 
@@ -438,6 +488,8 @@ def main():
         "domains": {
             "abi-entrypoint": "Fuzz exported C ABI symbols (string, printf, stdlib)",
             "allocator": "Fuzz malloc/free/realloc sequences and edge cases",
+            "loader": "Fuzz ELF object parsing, symbol lookup, and relocation machinery",
+            "locale": "Fuzz locale categories, langinfo selectors, and C-locale stateful APIs",
             "membrane": "Fuzz TSM validation pipeline with arbitrary inputs",
             "runtime-math": "Fuzz math library functions (future)",
         },
