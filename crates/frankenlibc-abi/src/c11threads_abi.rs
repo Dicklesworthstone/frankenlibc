@@ -174,12 +174,14 @@ pub unsafe extern "C" fn thrd_sleep(
     if duration.is_null() {
         return -2;
     }
-    match unsafe {
-        raw_syscall::sys_nanosleep(duration as *const u8, remaining as *mut u8)
-    } {
+    match unsafe { raw_syscall::sys_nanosleep(duration as *const u8, remaining as *mut u8) } {
         Ok(()) => 0,
         Err(e) => {
-            if e == libc::EINTR { -1 } else { -2 }
+            if e == libc::EINTR {
+                -1
+            } else {
+                -2
+            }
         }
     }
 }

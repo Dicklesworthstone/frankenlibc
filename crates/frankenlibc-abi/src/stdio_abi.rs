@@ -897,9 +897,10 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
     // Create StdioStream and set initial offset for append mode.
     let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
     if open_flags.append
-        && let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END) {
-            stream.set_offset(end_off);
-        }
+        && let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END)
+    {
+        stream.set_offset(end_off);
+    }
 
     // Register in the StdioStream registry.
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
@@ -1018,10 +1019,14 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
     }
 
     // Close the fd (don't close stdin/stdout/stderr sentinel fds).
-    if fd >= 0 && id != STDIN_SENTINEL && id != STDOUT_SENTINEL && id != STDERR_SENTINEL
-        && raw_syscall::sys_close(fd).is_err() {
-            adverse = true;
-        }
+    if fd >= 0
+        && id != STDIN_SENTINEL
+        && id != STDOUT_SENTINEL
+        && id != STDERR_SENTINEL
+        && raw_syscall::sys_close(fd).is_err()
+    {
+        adverse = true;
+    }
 
     if adverse { libc::EOF } else { 0 }
 }
@@ -4964,10 +4969,11 @@ pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
     if errno_val == errno::EISDIR
         && let Ok(()) = unsafe {
             raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, libc::AT_REMOVEDIR)
-        } {
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
-            return 0;
         }
+    {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+        return 0;
+    }
 
     let final_errno = std::io::Error::last_os_error()
         .raw_os_error()
@@ -5369,9 +5375,7 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
 
     if pid == 0 {
         // Child process.
-        let child_exit = || -> ! {
-            raw_syscall::sys_exit_group(127)
-        };
+        let child_exit = || -> ! { raw_syscall::sys_exit_group(127) };
 
         if reading {
             // Parent reads from child's stdout: dup write end to stdout.
@@ -5477,9 +5481,7 @@ pub unsafe extern "C" fn pclose(stream: *mut c_void) -> c_int {
     // Wait for child.
     let mut wstatus: c_int = 0;
     loop {
-        match unsafe {
-            raw_syscall::sys_wait4(pid, &mut wstatus, 0, std::ptr::null_mut())
-        } {
+        match unsafe { raw_syscall::sys_wait4(pid, &mut wstatus, 0, std::ptr::null_mut()) } {
             Ok(child_pid) if child_pid == pid => break,
             Ok(_) => continue,
             Err(libc::EINTR) => continue,

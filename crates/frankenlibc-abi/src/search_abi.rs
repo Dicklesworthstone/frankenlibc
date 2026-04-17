@@ -106,6 +106,9 @@ impl HashTable {
                 return std::ptr::null_mut();
             }
             if Self::keys_equal(slot.key, item.key) {
+                if action == Action::ENTER {
+                    slot.data = item.data;
+                }
                 return slot as *mut HashSlot as *mut Entry;
             }
         }

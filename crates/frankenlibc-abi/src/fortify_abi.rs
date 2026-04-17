@@ -1104,7 +1104,8 @@ pub unsafe extern "C" fn __openat_2(dirfd: c_int, path: *const c_char, oflag: c_
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __openat64_2(dirfd: c_int, path: *const c_char, oflag: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_openat(dirfd, path as *const u8, oflag | libc::O_LARGEFILE, 0) } {
+    match unsafe { raw_syscall::sys_openat(dirfd, path as *const u8, oflag | libc::O_LARGEFILE, 0) }
+    {
         Ok(fd) => fd,
         Err(e) => {
             unsafe { crate::errno_abi::set_abi_errno(e) };

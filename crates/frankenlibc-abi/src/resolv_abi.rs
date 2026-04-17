@@ -596,7 +596,9 @@ fn udp_dns_query(
             tv_sec: 0,
             tv_nsec: 0,
         };
-        let _ = unsafe { raw_syscall::sys_clock_gettime(libc::CLOCK_MONOTONIC, &mut ts as *mut _ as *mut u8) };
+        let _ = unsafe {
+            raw_syscall::sys_clock_gettime(libc::CLOCK_MONOTONIC, &mut ts as *mut _ as *mut u8)
+        };
         h ^ (ts.tv_nsec as u16)
     };
 

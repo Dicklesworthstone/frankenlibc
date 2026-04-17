@@ -1596,7 +1596,10 @@ fn get_nprocs_helpers_match_sysconf_values() {
 fn get_phys_and_avphys_pages_match_sysinfo_projection() {
     let mut info = std::mem::MaybeUninit::<libc::sysinfo>::zeroed();
     // SAFETY: valid writable pointer for kernel sysinfo payload.
-    assert_eq!(unsafe { raw_syscall::sys_sysinfo(info.as_mut_ptr().cast()) }, Ok(()));
+    assert_eq!(
+        unsafe { raw_syscall::sys_sysinfo(info.as_mut_ptr().cast()) },
+        Ok(())
+    );
     // SAFETY: syscall succeeded and initialized `info`.
     let info = unsafe { info.assume_init() };
 

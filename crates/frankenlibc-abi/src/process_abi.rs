@@ -288,9 +288,7 @@ pub unsafe extern "C" fn waitpid(
         options
     };
 
-    let rc = unsafe {
-        raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
-    };
+    let rc = unsafe { raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut()) };
 
     match rc {
         Ok(child_pid) => {
@@ -351,9 +349,7 @@ pub unsafe extern "C" fn wait4(
         return -1;
     }
 
-    let rc = unsafe {
-        raw_syscall::sys_wait4(pid, wstatus, options, rusage as *mut u8)
-    };
+    let rc = unsafe { raw_syscall::sys_wait4(pid, wstatus, options, rusage as *mut u8) };
 
     match rc {
         Ok(child_pid) => {
@@ -959,9 +955,10 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
     let flags = attr.flags as c_int;
 
     if flags & libc::POSIX_SPAWN_SETPGROUP != 0
-        && let Err(e) = raw_syscall::sys_setpgid(0, attr.pgroup) {
-            return e;
-        }
+        && let Err(e) = raw_syscall::sys_setpgid(0, attr.pgroup)
+    {
+        return e;
+    }
 
     if flags & libc::POSIX_SPAWN_SETSIGMASK != 0 {
         let mut sigset: libc::sigset_t = unsafe { std::mem::zeroed() };
@@ -995,9 +992,10 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
                         std::ptr::null_mut(),
                         8, // kernel _NSIG / 8 (NOT sizeof(sigset_t))
                     )
-                } {
-                    return e;
                 }
+            {
+                return e;
+            }
         }
     }
 
@@ -1019,9 +1017,9 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
         let param = libc::sched_param {
             sched_priority: attr.schedparam_priority,
         };
-        if let Err(e) = unsafe {
-            raw_syscall::sys_sched_setparam(0, &param as *const _ as *const u8)
-        } {
+        if let Err(e) =
+            unsafe { raw_syscall::sys_sched_setparam(0, &param as *const _ as *const u8) }
+        {
             return e;
         }
     }
@@ -1040,12 +1038,7 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
     if attr.has_cgroup {
         let cgroup_name = b"cgroup.procs\0";
         let fd = match unsafe {
-            raw_syscall::sys_openat(
-                attr.cgroup_fd,
-                cgroup_name.as_ptr(),
-                libc::O_WRONLY,
-                0,
-            )
+            raw_syscall::sys_openat(attr.cgroup_fd, cgroup_name.as_ptr(), libc::O_WRONLY, 0)
         } {
             Ok(f) => f,
             Err(e) => return e,
@@ -1123,9 +1116,9 @@ unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
             SpawnFileAction::TcSetPgrp(fd) => {
                 const TIOCSPGRP: usize = 0x5410;
                 let pgrp = raw_syscall::sys_getpgrp();
-                if let Err(e) = unsafe {
-                    raw_syscall::sys_ioctl(*fd, TIOCSPGRP, &pgrp as *const i32 as usize)
-                } {
+                if let Err(e) =
+                    unsafe { raw_syscall::sys_ioctl(*fd, TIOCSPGRP, &pgrp as *const i32 as usize) }
+                {
                     return e;
                 }
             }
@@ -1140,9 +1133,8 @@ unsafe fn child_spawn_fail(err_fd: c_int, err: c_int) -> ! {
     let mut written = 0usize;
     while written < std::mem::size_of::<c_int>() {
         let ptr = (&mut to_write as *mut c_int as *mut u8).wrapping_add(written);
-        let rc = unsafe {
-            raw_syscall::sys_write(err_fd, ptr, std::mem::size_of::<c_int>() - written)
-        };
+        let rc =
+            unsafe { raw_syscall::sys_write(err_fd, ptr, std::mem::size_of::<c_int>() - written) };
         match rc {
             Ok(n) if n > 0 => written += n,
             _ => break,

@@ -2116,24 +2116,21 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
 
     match read_mutex_type(mutex) {
         PTHREAD_MUTEX_RECURSIVE_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
+            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else { return libc::EINVAL; };
+            let owner = unsafe { &*owner_ptr };
+            let count = unsafe { &*count_ptr };
             let self_tid = core_self_tid();
+
             // Check if we already own this mutex.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
-                    // We already own it — increment the recursion count.
-                    if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-                        // SAFETY: alignment checked.
-                        let count = unsafe { &*count_ptr };
-                        let cur = count.load(Ordering::Relaxed);
-                        if cur == u32::MAX {
-                            return libc::EAGAIN; // overflow guard
-                        }
-                        count.store(cur + 1, Ordering::Release);
-                        return 0;
-                    }
+            if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
+                // We already own it — increment the recursion count.
+                let cur = count.load(Ordering::Relaxed);
+                if cur == u32::MAX {
+                    return libc::EAGAIN; // overflow guard
                 }
+                count.store(cur + 1, Ordering::Release);
+                return 0;
             }
             // Not the owner (or first acquisition) — acquire the underlying lock.
             let rc = futex_lock_normal(word);
@@ -2141,27 +2138,18 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
                 return rc;
             }
             // We now own the mutex — record ownership.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                owner.store(self_tid, Ordering::Release);
-            }
-            if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let count = unsafe { &*count_ptr };
-                count.store(1, Ordering::Release);
-            }
+            owner.store(self_tid, Ordering::Release);
+            count.store(1, Ordering::Release);
             0
         }
         PTHREAD_MUTEX_ERRORCHECK_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
+            let owner = unsafe { &*owner_ptr };
             let self_tid = core_self_tid();
+
             // If we already own it, return EDEADLK.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
-                    return libc::EDEADLK;
-                }
+            if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
+                return libc::EDEADLK;
             }
             // Acquire the lock.
             let rc = futex_lock_normal(word);
@@ -2169,11 +2157,7 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
                 return rc;
             }
             // Record ownership.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                owner.store(self_tid, Ordering::Release);
-            }
+            owner.store(self_tid, Ordering::Release);
             0
         }
         _ => {
@@ -2197,24 +2181,21 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
 
     match read_mutex_type(mutex) {
         PTHREAD_MUTEX_RECURSIVE_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
+            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else { return libc::EINVAL; };
+            let owner = unsafe { &*owner_ptr };
+            let count = unsafe { &*count_ptr };
             let self_tid = core_self_tid();
+
             // Check if we already own this mutex.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
-                    // Already own it — increment recursion count.
-                    if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-                        // SAFETY: alignment checked.
-                        let count = unsafe { &*count_ptr };
-                        let cur = count.load(Ordering::Relaxed);
-                        if cur == u32::MAX {
-                            return libc::EAGAIN;
-                        }
-                        count.store(cur + 1, Ordering::Release);
-                        return 0;
-                    }
+            if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
+                // Already own it — increment recursion count.
+                let cur = count.load(Ordering::Relaxed);
+                if cur == u32::MAX {
+                    return libc::EAGAIN;
                 }
+                count.store(cur + 1, Ordering::Release);
+                return 0;
             }
             // Try to acquire.
             let rc = futex_trylock_normal(word);
@@ -2222,38 +2203,25 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
                 return rc;
             }
             // Record ownership.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                owner.store(self_tid, Ordering::Release);
-            }
-            if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let count = unsafe { &*count_ptr };
-                count.store(1, Ordering::Release);
-            }
+            owner.store(self_tid, Ordering::Release);
+            count.store(1, Ordering::Release);
             0
         }
         PTHREAD_MUTEX_ERRORCHECK_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
+            let owner = unsafe { &*owner_ptr };
             let self_tid = core_self_tid();
-            // If we already own it, return EDEADLK for trylock too.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
-                    return libc::EBUSY;
-                }
+
+            // If we already own it, return EBUSY for trylock.
+            if owner.load(Ordering::Acquire) == self_tid && self_tid != MUTEX_NO_OWNER {
+                return libc::EBUSY;
             }
             let rc = futex_trylock_normal(word);
             if rc != 0 {
                 return rc;
             }
             // Record ownership.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                owner.store(self_tid, Ordering::Release);
-            }
+            owner.store(self_tid, Ordering::Release);
             0
         }
         _ => {
@@ -2277,47 +2245,43 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t)
 
     match read_mutex_type(mutex) {
         PTHREAD_MUTEX_RECURSIVE_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
+            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else { return libc::EINVAL; };
+            let owner = unsafe { &*owner_ptr };
+            let count = unsafe { &*count_ptr };
             let self_tid = core_self_tid();
+
             // Verify ownership.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
-                    return libc::EPERM;
-                }
+            if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
+                return libc::EPERM;
             }
+
             // Decrement lock count.
-            if let Some(count_ptr) = mutex_lock_count_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let count = unsafe { &*count_ptr };
-                let cur = count.load(Ordering::Relaxed);
-                if cur > 1 {
-                    count.store(cur - 1, Ordering::Release);
-                    return 0; // still held recursively
-                }
-                // count == 1 (or 0 for robustness): release fully.
-                count.store(0, Ordering::Release);
+            let cur = count.load(Ordering::Relaxed);
+            if cur > 1 {
+                count.store(cur - 1, Ordering::Release);
+                return 0; // still held recursively
             }
+            // count == 1 (or 0 for robustness): release fully.
+            count.store(0, Ordering::Release);
+            
             // Clear ownership before releasing the underlying lock.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                owner.store(MUTEX_NO_OWNER, Ordering::Release);
-            }
+            owner.store(MUTEX_NO_OWNER, Ordering::Release);
+            
             futex_unlock_normal(word)
         }
         PTHREAD_MUTEX_ERRORCHECK_TYPE => {
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
+            let owner = unsafe { &*owner_ptr };
             let self_tid = core_self_tid();
+
             // Verify ownership — non-owner unlock returns EPERM.
-            if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-                // SAFETY: alignment checked.
-                let owner = unsafe { &*owner_ptr };
-                if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
-                    return libc::EPERM;
-                }
-                // Clear ownership.
-                owner.store(MUTEX_NO_OWNER, Ordering::Release);
+            if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
+                return libc::EPERM;
             }
+            // Clear ownership.
+            owner.store(MUTEX_NO_OWNER, Ordering::Release);
+            
             futex_unlock_normal(word)
         }
         _ => {

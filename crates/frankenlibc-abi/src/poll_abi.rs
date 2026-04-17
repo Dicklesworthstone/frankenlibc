@@ -495,12 +495,7 @@ pub unsafe extern "C" fn timerfd_settime(
         return -1;
     }
     match unsafe {
-        raw_syscall::sys_timerfd_settime(
-            fd,
-            flags,
-            new_value as *const u8,
-            old_value as *mut u8,
-        )
+        raw_syscall::sys_timerfd_settime(fd, flags, new_value as *const u8, old_value as *mut u8)
     } {
         Ok(()) => 0,
         Err(e) => {
@@ -565,7 +560,13 @@ pub unsafe extern "C" fn prctl(
     arg4: libc::c_ulong,
     arg5: libc::c_ulong,
 ) -> c_int {
-    match raw_syscall::sys_prctl(option, arg2 as usize, arg3 as usize, arg4 as usize, arg5 as usize) {
+    match raw_syscall::sys_prctl(
+        option,
+        arg2 as usize,
+        arg3 as usize,
+        arg4 as usize,
+        arg5 as usize,
+    ) {
         Ok(rc) => rc,
         Err(e) => {
             unsafe { set_abi_errno(e) };

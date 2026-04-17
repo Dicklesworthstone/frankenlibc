@@ -3306,8 +3306,13 @@ pub unsafe extern "C" fn __gettimeofday(tv: *mut c_void, _tz: *mut c_void) -> c_
     if tv.is_null() {
         return 0;
     }
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    match unsafe { raw_syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) } {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    match unsafe {
+        raw_syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8)
+    } {
         Ok(()) => {
             let tvp = tv as *mut libc::timeval;
             unsafe {
@@ -3791,7 +3796,14 @@ pub unsafe extern "C" fn __xmknod(
     dev: *mut c_void,
 ) -> c_int {
     let _ = ver;
-    match unsafe { raw_syscall::sys_mknodat(libc::AT_FDCWD, pathname as *const u8, mode, *(dev.cast::<u64>())) } {
+    match unsafe {
+        raw_syscall::sys_mknodat(
+            libc::AT_FDCWD,
+            pathname as *const u8,
+            mode,
+            *(dev.cast::<u64>()),
+        )
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -3809,7 +3821,9 @@ pub unsafe extern "C" fn __xmknodat(
     dev: *mut c_void,
 ) -> c_int {
     let _ = ver;
-    match unsafe { raw_syscall::sys_mknodat(dirfd, pathname as *const u8, mode, *(dev.cast::<u64>())) } {
+    match unsafe {
+        raw_syscall::sys_mknodat(dirfd, pathname as *const u8, mode, *(dev.cast::<u64>()))
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -4461,7 +4475,8 @@ unsafe fn write_remaining_adjtime(olddelta: *mut c_void) -> Result<(), c_int> {
     match unsafe { raw_syscall::sys_adjtimex(&mut timex as *mut _ as *mut u8) } {
         Ok(_) => {
             unsafe {
-                *(olddelta as *mut libc::timeval) = offset_micros_to_timeval(timex.offset as c_long);
+                *(olddelta as *mut libc::timeval) =
+                    offset_micros_to_timeval(timex.offset as c_long);
             }
             Ok(())
         }
@@ -4881,7 +4896,9 @@ pub unsafe extern "C" fn ftime(tp: *mut c_void) -> c_int {
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
     if unsafe {
         raw_syscall::sys_clock_gettime(libc::CLOCK_REALTIME, (&mut ts) as *mut _ as *mut u8)
-    }.is_err() {
+    }
+    .is_err()
+    {
         return -1;
     }
     // struct timeb layout: time_t(8), millitm(u16), timezone(i16), dstflag(i16)
@@ -5161,7 +5178,13 @@ pub unsafe extern "C" fn init_module(
     len: c_ulong,
     param_values: *const c_char,
 ) -> c_int {
-    match unsafe { raw_syscall::sys_init_module(module_image as *const u8, len as usize, param_values as *const u8) } {
+    match unsafe {
+        raw_syscall::sys_init_module(
+            module_image as *const u8,
+            len as usize,
+            param_values as *const u8,
+        )
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5308,7 +5331,14 @@ pub unsafe extern "C" fn klogctl(typ: c_int, bufp: *mut c_char, len: c_int) -> c
 // lchmod: native — fchmodat with AT_SYMLINK_NOFOLLOW
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lchmod(pathname: *const c_char, mode: c_uint) -> c_int {
-    match unsafe { raw_syscall::sys_fchmodat(libc::AT_FDCWD, pathname as *const u8, mode, libc::AT_SYMLINK_NOFOLLOW) } {
+    match unsafe {
+        raw_syscall::sys_fchmodat(
+            libc::AT_FDCWD,
+            pathname as *const u8,
+            mode,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -6103,7 +6133,11 @@ pub unsafe extern "C" fn sem_clockwait(
         let ts = abstime as *const libc::timespec;
         let futex_op = libc::FUTEX_WAIT_BITSET
             | (libc::FUTEX_CLOCK_REALTIME
-                * (if clockid == libc::CLOCK_REALTIME { 1 } else { 0 }));
+                * (if clockid == libc::CLOCK_REALTIME {
+                    1
+                } else {
+                    0
+                }));
         if let Err(err) = unsafe {
             raw_syscall::sys_futex(
                 sem_val as *mut u32,
@@ -7120,7 +7154,9 @@ pub unsafe extern "C" fn __ftello64(stream: *mut c_void) -> i64 {
 /// `__getrlimit` — internal getrlimit alias.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __getrlimit(resource: c_int, rlim: *mut c_void) -> c_int {
-    match unsafe { raw_syscall::sys_prlimit64(0, resource as u32, std::ptr::null(), rlim as *mut u8) } {
+    match unsafe {
+        raw_syscall::sys_prlimit64(0, resource as u32, std::ptr::null(), rlim as *mut u8)
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -7180,7 +7216,9 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        let _ = unsafe { raw_syscall::sys_clock_gettime(libc::CLOCK_MONOTONIC, &mut ts as *mut _ as *mut u8) };
+        let _ = unsafe {
+            raw_syscall::sys_clock_gettime(libc::CLOCK_MONOTONIC, &mut ts as *mut _ as *mut u8)
+        };
         let mut seed = ts.tv_nsec as u64 ^ ts.tv_sec as u64;
         for b in &mut rand_bytes {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -7193,7 +7231,16 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
     }
     // Check that the file doesn't exist (per mktemp spec)
     let mut statbuf: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { raw_syscall::sys_newfstatat(libc::AT_FDCWD, template as *const u8, &mut statbuf as *mut _ as *mut u8, 0) }.is_ok() {
+    if unsafe {
+        raw_syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            template as *const u8,
+            &mut statbuf as *mut _ as *mut u8,
+            0,
+        )
+    }
+    .is_ok()
+    {
         // File exists — set first byte to 0 and return error
         unsafe {
             *template = 0;
@@ -8675,7 +8722,16 @@ pub unsafe extern "C" fn __file_change_detection_for_path(
     }
     let fcd = result as *mut FileChangeDetection;
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { raw_syscall::sys_newfstatat(libc::AT_FDCWD, path as *const u8, &mut st as *mut _ as *mut u8, 0) }.is_err() {
+    if unsafe {
+        raw_syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            path as *const u8,
+            &mut st as *mut _ as *mut u8,
+            0,
+        )
+    }
+    .is_err()
+    {
         // stat failed — zero out the detection struct
         unsafe { std::ptr::write_bytes(fcd, 0, 1) };
         return 0;
@@ -9218,7 +9274,8 @@ pub unsafe extern "C" fn __libc_msgrcv(
     msgtyp: c_long,
     msgflg: c_int,
 ) -> isize {
-    match unsafe { raw_syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg) } {
+    match unsafe { raw_syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg) }
+    {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };

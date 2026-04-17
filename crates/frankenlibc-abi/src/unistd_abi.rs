@@ -382,9 +382,7 @@ pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut libc::stat) -> c_in
         return -1;
     }
 
-    match unsafe {
-        syscall::sys_newfstatat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, 0)
-    } {
+    match unsafe { syscall::sys_newfstatat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, 0) } {
         Ok(()) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
             0
@@ -439,7 +437,12 @@ pub unsafe extern "C" fn lstat(path: *const c_char, buf: *mut libc::stat) -> c_i
     }
 
     match unsafe {
-        syscall::sys_newfstatat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, libc::AT_SYMLINK_NOFOLLOW)
+        syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            path as *const u8,
+            buf as *mut u8,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
     } {
         Ok(()) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
@@ -1322,13 +1325,7 @@ pub unsafe extern "C" fn name_to_handle_at(
     }
 
     match unsafe {
-        syscall::sys_name_to_handle_at(
-            dirfd,
-            path as *const u8,
-            handle as *mut u8,
-            mount_id,
-            flags,
-        )
+        syscall::sys_name_to_handle_at(dirfd, path as *const u8, handle as *mut u8, mount_id, flags)
     } {
         Ok(()) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
@@ -1791,12 +1788,24 @@ pub unsafe extern "C" fn alarm(seconds: u32) -> u32 {
 pub unsafe extern "C" fn alarm(seconds: u32) -> u32 {
     // aarch64 doesn't have SYS_alarm, use setitimer instead
     let new_value = libc::itimerval {
-        it_interval: libc::timeval { tv_sec: 0, tv_usec: 0 },
-        it_value: libc::timeval { tv_sec: seconds as i64, tv_usec: 0 },
+        it_interval: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+        it_value: libc::timeval {
+            tv_sec: seconds as i64,
+            tv_usec: 0,
+        },
     };
     let mut old_value = libc::itimerval {
-        it_interval: libc::timeval { tv_sec: 0, tv_usec: 0 },
-        it_value: libc::timeval { tv_sec: 0, tv_usec: 0 },
+        it_interval: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+        it_value: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
     };
     match unsafe {
         syscall::sys_setitimer(
@@ -2544,9 +2553,8 @@ fn syslog_send(priority: c_int, message: &[u8]) {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    let _ = unsafe {
-        syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut tv as *mut _ as *mut u8)
-    };
+    let _ =
+        unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut tv as *mut _ as *mut u8) };
     let epoch = tv.tv_sec;
     let secs_in_day = epoch % 86400;
     let hour = secs_in_day / 3600;
@@ -3156,7 +3164,6 @@ pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uin
         return -1;
     }
 
-    
     match unsafe { syscall::sys_getrandom(buf as *mut u8, buflen, flags) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
@@ -3191,7 +3198,13 @@ pub unsafe extern "C" fn statx(
     }
 
     match unsafe {
-        syscall::sys_statx(dirfd, pathname as *const u8, flags, mask, statxbuf as *mut u8)
+        syscall::sys_statx(
+            dirfd,
+            pathname as *const u8,
+            flags,
+            mask,
+            statxbuf as *mut u8,
+        )
     } {
         Ok(()) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
@@ -3274,7 +3287,12 @@ unsafe fn ftw_walk_dir(
 
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     let stat_ok = unsafe {
-        syscall::sys_newfstatat(libc::AT_FDCWD, path as *const u8, &mut st as *mut _ as *mut u8, 0)
+        syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            path as *const u8,
+            &mut st as *mut _ as *mut u8,
+            0,
+        )
     };
     if stat_ok.is_err() {
         return unsafe { func(path, &st, FTW_NS) };
@@ -3960,7 +3978,12 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: .
 
     // Open the backing file.
     let fd = match unsafe {
-        syscall::sys_openat(libc::AT_FDCWD, path.as_ptr() as *const u8, oflag | libc::O_RDWR | libc::O_CLOEXEC, mode)
+        syscall::sys_openat(
+            libc::AT_FDCWD,
+            path.as_ptr() as *const u8,
+            oflag | libc::O_RDWR | libc::O_CLOEXEC,
+            mode,
+        )
     } {
         Ok(fd) => fd,
         Err(e) => {
@@ -4287,7 +4310,9 @@ pub unsafe extern "C" fn mq_receive(
     msg_len: usize,
     msg_prio: *mut c_uint,
 ) -> isize {
-    match unsafe { syscall::sys_mq_timedreceive(mqdes, msg_ptr as *mut u8, msg_len, msg_prio as usize, 0) } {
+    match unsafe {
+        syscall::sys_mq_timedreceive(mqdes, msg_ptr as *mut u8, msg_len, msg_prio as usize, 0)
+    } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -4331,7 +4356,15 @@ pub unsafe extern "C" fn mq_timedreceive(
     msg_prio: *mut c_uint,
     abs_timeout: *const libc::timespec,
 ) -> isize {
-    match unsafe { syscall::sys_mq_timedreceive(mqdes, msg_ptr as *mut u8, msg_len, msg_prio as usize, abs_timeout as usize) } {
+    match unsafe {
+        syscall::sys_mq_timedreceive(
+            mqdes,
+            msg_ptr as *mut u8,
+            msg_len,
+            msg_prio as usize,
+            abs_timeout as usize,
+        )
+    } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -4349,7 +4382,15 @@ pub unsafe extern "C" fn mq_timedsend(
     msg_prio: c_uint,
     abs_timeout: *const libc::timespec,
 ) -> c_int {
-    match unsafe { syscall::sys_mq_timedsend(mqdes, msg_ptr as *const u8, msg_len, msg_prio, abs_timeout as usize) } {
+    match unsafe {
+        syscall::sys_mq_timedsend(
+            mqdes,
+            msg_ptr as *const u8,
+            msg_len,
+            msg_prio,
+            abs_timeout as usize,
+        )
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -4961,7 +5002,9 @@ pub unsafe extern "C" fn getxattr(
     value: *mut c_void,
     size: usize,
 ) -> isize {
-    match unsafe { syscall::sys_getxattr(path as *const u8, name as *const u8, value as *mut u8, size) } {
+    match unsafe {
+        syscall::sys_getxattr(path as *const u8, name as *const u8, value as *mut u8, size)
+    } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -4978,7 +5021,15 @@ pub unsafe extern "C" fn setxattr(
     size: usize,
     flags: c_int,
 ) -> c_int {
-    match unsafe { syscall::sys_setxattr(path as *const u8, name as *const u8, value as *const u8, size, flags) } {
+    match unsafe {
+        syscall::sys_setxattr(
+            path as *const u8,
+            name as *const u8,
+            value as *const u8,
+            size,
+            flags,
+        )
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5033,7 +5084,8 @@ pub unsafe extern "C" fn fsetxattr(
     size: usize,
     flags: c_int,
 ) -> c_int {
-    match unsafe { syscall::sys_fsetxattr(fd, name as *const u8, value as *const u8, size, flags) } {
+    match unsafe { syscall::sys_fsetxattr(fd, name as *const u8, value as *const u8, size, flags) }
+    {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5177,22 +5229,22 @@ pub unsafe extern "C" fn openpty(
 
     // Apply terminal attributes if provided
     if !termp.is_null()
-        && unsafe { syscall::sys_ioctl(slave, libc::TCSETS as usize, termp as usize) }.is_err() {
-            unsafe { set_abi_errno(errno::EBADF) };
-            let _ = syscall::sys_close(master);
-            let _ = syscall::sys_close(slave);
-            return -1;
-        }
+        && unsafe { syscall::sys_ioctl(slave, libc::TCSETS as usize, termp as usize) }.is_err()
+    {
+        unsafe { set_abi_errno(errno::EBADF) };
+        let _ = syscall::sys_close(master);
+        let _ = syscall::sys_close(slave);
+        return -1;
+    }
 
     // Apply window size if provided
     const TIOCSWINSZ: usize = 0x5414;
-    if !winp.is_null()
-        && unsafe { syscall::sys_ioctl(slave, TIOCSWINSZ, winp as usize) }.is_err() {
-            unsafe { set_abi_errno(errno::EBADF) };
-            let _ = syscall::sys_close(master);
-            let _ = syscall::sys_close(slave);
-            return -1;
-        }
+    if !winp.is_null() && unsafe { syscall::sys_ioctl(slave, TIOCSWINSZ, winp as usize) }.is_err() {
+        unsafe { set_abi_errno(errno::EBADF) };
+        let _ = syscall::sys_close(master);
+        let _ = syscall::sys_close(slave);
+        return -1;
+    }
 
     // Copy slave name if buffer provided
     if !name.is_null() {
@@ -5804,7 +5856,9 @@ pub unsafe extern "C" fn lgetxattr(
     value: *mut c_void,
     size: usize,
 ) -> isize {
-    match unsafe { syscall::sys_lgetxattr(path as *const u8, name as *const u8, value as *mut u8, size) } {
+    match unsafe {
+        syscall::sys_lgetxattr(path as *const u8, name as *const u8, value as *mut u8, size)
+    } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5821,7 +5875,15 @@ pub unsafe extern "C" fn lsetxattr(
     size: usize,
     flags: c_int,
 ) -> c_int {
-    match unsafe { syscall::sys_lsetxattr(path as *const u8, name as *const u8, value as *const u8, size, flags) } {
+    match unsafe {
+        syscall::sys_lsetxattr(
+            path as *const u8,
+            name as *const u8,
+            value as *const u8,
+            size,
+            flags,
+        )
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -6561,7 +6623,9 @@ pub unsafe extern "C" fn msgrcv(
         return -1;
     }
 
-    let rc = match unsafe { syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg) } {
+    let rc = match unsafe {
+        syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg)
+    } {
         Ok(n) => n as libc::ssize_t,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -6743,7 +6807,11 @@ fn rta_align(len: usize) -> usize {
 /// Send a netlink dump request and collect all response data.
 fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
     // Create netlink socket
-    let fd = match syscall::sys_socket(libc::AF_NETLINK, libc::SOCK_RAW | libc::SOCK_CLOEXEC, libc::NETLINK_ROUTE) {
+    let fd = match syscall::sys_socket(
+        libc::AF_NETLINK,
+        libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+        libc::NETLINK_ROUTE,
+    ) {
         Ok(fd) => fd,
         Err(_) => return Err(errno::ENOBUFS),
     };
@@ -6774,9 +6842,7 @@ fn netlink_dump(msg_type: u16, family: u8) -> Result<Vec<u8>, c_int> {
     }
 
     // Send
-    if unsafe {
-        syscall::sys_sendto(fd, buf.as_ptr(), msg_len, 0, std::ptr::null(), 0)
-    }.is_err() {
+    if unsafe { syscall::sys_sendto(fd, buf.as_ptr(), msg_len, 0, std::ptr::null(), 0) }.is_err() {
         let _ = syscall::sys_close(fd);
         return Err(errno::EIO);
     }
@@ -7418,7 +7484,14 @@ pub unsafe extern "C" fn timer_settime(
     new_value: *const c_void,
     old_value: *mut c_void,
 ) -> c_int {
-    match unsafe { syscall::sys_timer_settime(timerid as i32, flags, new_value as *const u8, old_value as *mut u8) } {
+    match unsafe {
+        syscall::sys_timer_settime(
+            timerid as i32,
+            flags,
+            new_value as *const u8,
+            old_value as *mut u8,
+        )
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -8260,7 +8333,8 @@ pub unsafe extern "C" fn recvmmsg(
     flags: c_int,
     timeout: *mut libc::timespec,
 ) -> c_int {
-    match unsafe { syscall::sys_recvmmsg(sockfd, msgvec as *mut u8, vlen, flags, timeout as usize) } {
+    match unsafe { syscall::sys_recvmmsg(sockfd, msgvec as *mut u8, vlen, flags, timeout as usize) }
+    {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -8906,9 +8980,8 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
     const TCSETS: usize = 0x5402;
     const ECHO_FLAG: u32 = 0o10; // ECHO in termios c_lflag
     let mut termios_buf = [0u8; 60]; // struct termios size on Linux
-    let saved_ok = unsafe {
-        syscall::sys_ioctl(fd, TCGETS, termios_buf.as_mut_ptr() as usize)
-    }.is_ok();
+    let saved_ok =
+        unsafe { syscall::sys_ioctl(fd, TCGETS, termios_buf.as_mut_ptr() as usize) }.is_ok();
 
     if saved_ok {
         let mut modified = termios_buf;
@@ -9589,7 +9662,9 @@ pub unsafe extern "C" fn setpriority(which: c_int, who: libc::id_t, prio: c_int)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getdtablesize() -> c_int {
     let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
-    match unsafe { syscall::sys_getrlimit(libc::RLIMIT_NOFILE as i32, rlim.as_mut_ptr() as *mut u8) } {
+    match unsafe {
+        syscall::sys_getrlimit(libc::RLIMIT_NOFILE as i32, rlim.as_mut_ptr() as *mut u8)
+    } {
         Ok(()) => {
             let rlim = unsafe { rlim.assume_init() };
             rlim.rlim_cur.min(c_int::MAX as u64) as c_int
@@ -10683,7 +10758,9 @@ pub unsafe extern "C" fn perf_event_open(
     group_fd: c_int,
     flags: c_ulong,
 ) -> c_int {
-    match unsafe { syscall::sys_perf_event_open(attr as *const u8, pid, cpu, group_fd, flags as u32) } {
+    match unsafe {
+        syscall::sys_perf_event_open(attr as *const u8, pid, cpu, group_fd, flags as u32)
+    } {
         Ok(fd) => fd,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -12005,8 +12082,7 @@ pub unsafe extern "C" fn readdir64_r(
 // ===========================================================================
 
 type HostBacktraceFn = unsafe extern "C" fn(*mut *mut c_void, c_int) -> c_int;
-type HostBacktraceSymbolsFn =
-    unsafe extern "C" fn(*const *mut c_void, c_int) -> *mut *mut c_char;
+type HostBacktraceSymbolsFn = unsafe extern "C" fn(*const *mut c_void, c_int) -> *mut *mut c_char;
 type HostBacktraceSymbolsFdFn = unsafe extern "C" fn(*const *mut c_void, c_int, c_int);
 
 static HOST_BACKTRACE_FN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -12635,8 +12711,7 @@ pub unsafe extern "C" fn gethostbyname2_r(
         ai_next: std::ptr::null_mut(),
     };
     let mut res: *mut libc::addrinfo = std::ptr::null_mut();
-    let rc =
-        unsafe { crate::resolv_abi::getaddrinfo(name, std::ptr::null(), &hints, &mut res) };
+    let rc = unsafe { crate::resolv_abi::getaddrinfo(name, std::ptr::null(), &hints, &mut res) };
     if rc != 0 {
         unsafe {
             *result = std::ptr::null_mut();
@@ -13200,7 +13275,9 @@ pub unsafe extern "C" fn clock_getcpuclockid(
         tv_sec: 0,
         tv_nsec: 0,
     };
-    if let Err(e) = unsafe { syscall::sys_clock_getres(cid as i32, (&mut ts as *mut libc::timespec).cast()) } {
+    if let Err(e) =
+        unsafe { syscall::sys_clock_getres(cid as i32, (&mut ts as *mut libc::timespec).cast()) }
+    {
         return if e == libc::EINVAL { libc::ESRCH } else { e };
     }
     unsafe { *clock_id = cid };
@@ -14532,7 +14609,11 @@ pub unsafe extern "C" fn fgetspent(stream: *mut c_void) -> *mut libc::spwd {
     let mut line_buf = [0u8; 1024];
     loop {
         let line_ptr = unsafe {
-            crate::stdio_abi::fgets(line_buf.as_mut_ptr().cast(), line_buf.len() as c_int, stream)
+            crate::stdio_abi::fgets(
+                line_buf.as_mut_ptr().cast(),
+                line_buf.len() as c_int,
+                stream,
+            )
         };
         if line_ptr.is_null() {
             return std::ptr::null_mut();
@@ -15480,7 +15561,8 @@ pub unsafe extern "C" fn semtimedop(
     nsops: usize,
     timeout: *const libc::timespec,
 ) -> c_int {
-    match unsafe { syscall::sys_semtimedop(semid, sops as *const u8, nsops, timeout as *const u8) } {
+    match unsafe { syscall::sys_semtimedop(semid, sops as *const u8, nsops, timeout as *const u8) }
+    {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -16058,9 +16140,7 @@ pub unsafe extern "C" fn fsconfig(
     value: *const c_void,
     aux: c_int,
 ) -> c_int {
-    match unsafe {
-        syscall::sys_fsconfig(fs_fd, cmd, key as *const u8, value as *const u8, aux)
-    } {
+    match unsafe { syscall::sys_fsconfig(fs_fd, cmd, key as *const u8, value as *const u8, aux) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -16147,9 +16227,8 @@ pub unsafe extern "C" fn ntp_gettime(ntv: *mut c_void) -> c_int {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    let _ = unsafe {
-        syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8)
-    };
+    let _ =
+        unsafe { syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut ts as *mut _ as *mut u8) };
     // ntptimeval.time = timeval at offset 0
     let p = ntv as *mut i64;
     unsafe {

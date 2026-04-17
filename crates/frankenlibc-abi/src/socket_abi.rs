@@ -180,13 +180,14 @@ pub unsafe extern "C" fn connect(
         return -1;
     }
 
-    let (rc, adverse) = match unsafe { raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen) } {
-        Ok(()) => (0, false),
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            (-1, true)
-        }
-    };
+    let (rc, adverse) =
+        match unsafe { raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen) } {
+            Ok(()) => (0, false),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                (-1, true)
+            }
+        };
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 15, adverse);
     rc
 }
@@ -227,14 +228,7 @@ pub unsafe extern "C" fn send(
     }
 
     let (rc, adverse) = match unsafe {
-        raw_syscall::sys_sendto(
-            sockfd,
-            buf as *const u8,
-            len,
-            flags,
-            std::ptr::null(),
-            0,
-        )
+        raw_syscall::sys_sendto(sockfd, buf as *const u8, len, flags, std::ptr::null(), 0)
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -489,13 +483,7 @@ pub unsafe extern "C" fn setsockopt(
     }
 
     let (rc, adverse) = match unsafe {
-        raw_syscall::sys_setsockopt(
-            sockfd,
-            level,
-            optname,
-            optval as *const u8,
-            optlen as usize,
-        )
+        raw_syscall::sys_setsockopt(sockfd, level, optname, optval as *const u8, optlen as usize)
     } {
         Ok(()) => (0, false),
         Err(e) => {
@@ -528,13 +516,7 @@ pub unsafe extern "C" fn getsockopt(
     }
 
     let (rc, adverse) = match unsafe {
-        raw_syscall::sys_getsockopt(
-            sockfd,
-            level,
-            optname,
-            optval as *mut u8,
-            optlen,
-        )
+        raw_syscall::sys_getsockopt(sockfd, level, optname, optval as *mut u8, optlen)
     } {
         Ok(()) => (0, false),
         Err(e) => {
@@ -564,13 +546,14 @@ pub unsafe extern "C" fn getpeername(
         return -1;
     }
 
-    let (rc, adverse) = match unsafe { raw_syscall::sys_getpeername(sockfd, addr as *mut u8, addrlen) } {
-        Ok(()) => (0, false),
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            (-1, true)
-        }
-    };
+    let (rc, adverse) =
+        match unsafe { raw_syscall::sys_getpeername(sockfd, addr as *mut u8, addrlen) } {
+            Ok(()) => (0, false),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                (-1, true)
+            }
+        };
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 8, adverse);
     rc
 }
@@ -593,13 +576,14 @@ pub unsafe extern "C" fn getsockname(
         return -1;
     }
 
-    let (rc, adverse) = match unsafe { raw_syscall::sys_getsockname(sockfd, addr as *mut u8, addrlen) } {
-        Ok(()) => (0, false),
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            (-1, true)
-        }
-    };
+    let (rc, adverse) =
+        match unsafe { raw_syscall::sys_getsockname(sockfd, addr as *mut u8, addrlen) } {
+            Ok(()) => (0, false),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                (-1, true)
+            }
+        };
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 8, adverse);
     rc
 }
@@ -640,15 +624,14 @@ pub unsafe extern "C" fn socketpair(
         return -1;
     }
 
-    let (rc, adverse) = match unsafe {
-        raw_syscall::sys_socketpair(domain, sock_type, protocol, sv)
-    } {
-        Ok(()) => (0, false),
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            (-1, true)
-        }
-    };
+    let (rc, adverse) =
+        match unsafe { raw_syscall::sys_socketpair(domain, sock_type, protocol, sv) } {
+            Ok(()) => (0, false),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                (-1, true)
+            }
+        };
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 10, adverse);
     rc
 }
@@ -732,15 +715,14 @@ pub unsafe extern "C" fn accept4(
         return -1;
     }
 
-    let (rc, adverse) = match unsafe {
-        raw_syscall::sys_accept4(sockfd, addr as *mut u8, addrlen, flags)
-    } {
-        Ok(fd) => (fd, false),
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            (-1, true)
-        }
-    };
+    let (rc, adverse) =
+        match unsafe { raw_syscall::sys_accept4(sockfd, addr as *mut u8, addrlen, flags) } {
+            Ok(fd) => (fd, false),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                (-1, true)
+            }
+        };
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 15, adverse);
     rc
 }

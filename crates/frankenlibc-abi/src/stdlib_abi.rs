@@ -1494,12 +1494,7 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
     let mut wstatus: c_int = 0;
     loop {
         let ret = unsafe {
-            raw_syscall::sys_wait4(
-                pid,
-                &mut wstatus as *mut c_int,
-                0,
-                core::ptr::null_mut(),
-            )
+            raw_syscall::sys_wait4(pid, &mut wstatus as *mut c_int, 0, core::ptr::null_mut())
         };
         match ret {
             Ok(waited_pid) if waited_pid == pid => break,

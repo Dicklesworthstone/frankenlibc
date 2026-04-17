@@ -95,7 +95,7 @@ fn hash_global_api() {
 
     unsafe { hdestroy() };
 
-    // --- overwrite: inserting existing key returns existing entry ---
+    // --- overwrite: inserting existing key returns existing entry with replaced data ---
     unsafe { hcreate(16) };
 
     let key = CString::new("overwrite_key").unwrap();
@@ -113,8 +113,8 @@ fn hash_global_api() {
     };
     let r2 = unsafe { hsearch(item2, Action::ENTER) };
     assert!(!r2.is_null());
-    // POSIX: ENTER with existing key returns existing entry (data unchanged)
-    assert_eq!(unsafe { (*r2).data } as usize, 100);
+    // POSIX: ENTER with existing key returns existing entry and replaces data.
+    assert_eq!(unsafe { (*r2).data } as usize, 200);
 
     unsafe { hdestroy() };
 }
@@ -594,6 +594,32 @@ fn hash_reentrant_filled_tracks_unique_entries() {
         htab_filled(&htab),
         1,
         "duplicate ENTER should return existing entry without changing filled"
+    );
+    assert_eq!(
+        unsafe { (*result).data } as usize,
+        123,
+        "filled accounting should not change the stored payload"
+    );
+
+    let updated = Entry {
+        key: key.as_ptr() as *mut _,
+        data: 456usize as *mut c_void,
+    };
+    result = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { hsearch_r(updated, Action::ENTER, &mut result, &mut htab) },
+        1
+    );
+    assert!(!result.is_null());
+    assert_eq!(
+        htab_filled(&htab),
+        1,
+        "replacing data for an existing key must not change filled"
+    );
+    assert_eq!(
+        unsafe { (*result).data } as usize,
+        456,
+        "duplicate ENTER should replace the stored payload"
     );
 
     unsafe { hdestroy_r(&mut htab) };

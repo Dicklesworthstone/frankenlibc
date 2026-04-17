@@ -337,12 +337,7 @@ pub unsafe extern "C" fn clock_nanosleep(
 
     // clock_nanosleep returns the error number directly (not via errno).
     let result = match unsafe {
-        raw_syscall::sys_clock_nanosleep(
-            clock_id,
-            flags,
-            req as *const u8,
-            rem as *mut u8,
-        )
+        raw_syscall::sys_clock_nanosleep(clock_id, flags, req as *const u8, rem as *mut u8)
     } {
         Ok(()) => 0,
         Err(e) => e, // Return error code directly, not via errno
@@ -945,9 +940,8 @@ pub unsafe extern "C" fn timespec_getres(ts: *mut libc::timespec, base: c_int) -
         runtime_policy::observe(ApiFamily::Time, decision.profile, 5, false);
         return base;
     }
-    let result = match unsafe {
-        raw_syscall::sys_clock_getres(libc::CLOCK_REALTIME, ts as *mut u8)
-    } {
+    let result = match unsafe { raw_syscall::sys_clock_getres(libc::CLOCK_REALTIME, ts as *mut u8) }
+    {
         Ok(()) => base,
         Err(_) => 0,
     };

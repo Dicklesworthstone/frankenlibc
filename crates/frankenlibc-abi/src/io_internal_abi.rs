@@ -1088,7 +1088,7 @@ unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
     let pending = unsafe { pos.offset_from(base) } as usize;
     let mut written = 0usize;
     while written < pending {
-            let ret = unsafe {
+        let ret = unsafe {
             raw_syscall::sys_write(fd, base.add(written) as *const u8, pending - written)
         };
         match ret {
@@ -2331,7 +2331,7 @@ pub unsafe extern "C" fn _IO_file_open(
     };
     let fp = unsafe { stdio_abi::fdopen(fd, mode.as_ptr()) };
     if fp.is_null() {
-            let _ = raw_syscall::sys_close(fd);
+        let _ = raw_syscall::sys_close(fd);
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
     } else {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
