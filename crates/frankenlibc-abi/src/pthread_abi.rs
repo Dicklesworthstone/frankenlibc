@@ -2116,8 +2116,12 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
 
     match read_mutex_type(mutex) {
         PTHREAD_MUTEX_RECURSIVE_TYPE => {
-            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
-            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else { return libc::EINVAL; };
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+                return libc::EINVAL;
+            };
             let owner = unsafe { &*owner_ptr };
             let count = unsafe { &*count_ptr };
             let self_tid = core_self_tid();
@@ -2143,7 +2147,9 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -
             0
         }
         PTHREAD_MUTEX_ERRORCHECK_TYPE => {
-            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
             let owner = unsafe { &*owner_ptr };
             let self_tid = core_self_tid();
 
@@ -2181,8 +2187,12 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
 
     match read_mutex_type(mutex) {
         PTHREAD_MUTEX_RECURSIVE_TYPE => {
-            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
-            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else { return libc::EINVAL; };
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+                return libc::EINVAL;
+            };
             let owner = unsafe { &*owner_ptr };
             let count = unsafe { &*count_ptr };
             let self_tid = core_self_tid();
@@ -2208,7 +2218,9 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
             0
         }
         PTHREAD_MUTEX_ERRORCHECK_TYPE => {
-            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
             let owner = unsafe { &*owner_ptr };
             let self_tid = core_self_tid();
 
@@ -2245,8 +2257,12 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t)
 
     match read_mutex_type(mutex) {
         PTHREAD_MUTEX_RECURSIVE_TYPE => {
-            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
-            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else { return libc::EINVAL; };
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
+            let Some(count_ptr) = mutex_lock_count_ptr(mutex) else {
+                return libc::EINVAL;
+            };
             let owner = unsafe { &*owner_ptr };
             let count = unsafe { &*count_ptr };
             let self_tid = core_self_tid();
@@ -2264,14 +2280,16 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t)
             }
             // count == 1 (or 0 for robustness): release fully.
             count.store(0, Ordering::Release);
-            
+
             // Clear ownership before releasing the underlying lock.
             owner.store(MUTEX_NO_OWNER, Ordering::Release);
-            
+
             futex_unlock_normal(word)
         }
         PTHREAD_MUTEX_ERRORCHECK_TYPE => {
-            let Some(owner_ptr) = mutex_owner_ptr(mutex) else { return libc::EINVAL; };
+            let Some(owner_ptr) = mutex_owner_ptr(mutex) else {
+                return libc::EINVAL;
+            };
             let owner = unsafe { &*owner_ptr };
             let self_tid = core_self_tid();
 
@@ -2281,7 +2299,7 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t)
             }
             // Clear ownership.
             owner.store(MUTEX_NO_OWNER, Ordering::Release);
-            
+
             futex_unlock_normal(word)
         }
         _ => {
