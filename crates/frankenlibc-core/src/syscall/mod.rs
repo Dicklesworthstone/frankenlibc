@@ -1413,9 +1413,7 @@ pub unsafe fn sys_write(fd: i32, buf: *const u8, count: usize) -> Result<usize, 
 #[allow(unsafe_code)]
 pub unsafe fn sys_open(pathname: *const u8, flags: i32, mode: u32) -> Result<i32, i32> {
     // SAFETY: caller guarantees pathname is a valid C string.
-    let ret = unsafe {
-        raw::syscall3(SYS_OPEN, pathname as usize, flags as usize, mode as usize)
-    };
+    let ret = unsafe { raw::syscall3(SYS_OPEN, pathname as usize, flags as usize, mode as usize) };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -1907,9 +1905,8 @@ pub fn sys_listen(sockfd: i32, backlog: i32) -> Result<(), i32> {
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_accept(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<i32, i32> {
-    let ret = unsafe {
-        raw::syscall3(SYS_ACCEPT, sockfd as usize, addr as usize, addrlen as usize)
-    };
+    let ret =
+        unsafe { raw::syscall3(SYS_ACCEPT, sockfd as usize, addr as usize, addrlen as usize) };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -1947,7 +1944,12 @@ pub unsafe fn sys_accept4(
 #[allow(unsafe_code)]
 pub unsafe fn sys_connect(sockfd: i32, addr: *const u8, addrlen: u32) -> Result<(), i32> {
     let ret = unsafe {
-        raw::syscall3(SYS_CONNECT, sockfd as usize, addr as usize, addrlen as usize)
+        raw::syscall3(
+            SYS_CONNECT,
+            sockfd as usize,
+            addr as usize,
+            addrlen as usize,
+        )
     };
     syscall_result(ret).map(|_| ())
 }
@@ -1996,7 +1998,12 @@ pub unsafe fn sys_getsockopt(
 #[allow(unsafe_code)]
 pub unsafe fn sys_getpeername(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<(), i32> {
     let ret = unsafe {
-        raw::syscall3(SYS_GETPEERNAME, sockfd as usize, addr as usize, addrlen as usize)
+        raw::syscall3(
+            SYS_GETPEERNAME,
+            sockfd as usize,
+            addr as usize,
+            addrlen as usize,
+        )
     };
     syscall_result(ret).map(|_| ())
 }
@@ -2010,7 +2017,12 @@ pub unsafe fn sys_getpeername(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> 
 #[allow(unsafe_code)]
 pub unsafe fn sys_getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<(), i32> {
     let ret = unsafe {
-        raw::syscall3(SYS_GETSOCKNAME, sockfd as usize, addr as usize, addrlen as usize)
+        raw::syscall3(
+            SYS_GETSOCKNAME,
+            sockfd as usize,
+            addr as usize,
+            addrlen as usize,
+        )
     };
     syscall_result(ret).map(|_| ())
 }
@@ -2048,9 +2060,7 @@ pub unsafe fn sys_socketpair(
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_sendmsg(sockfd: i32, msg: *const u8, flags: i32) -> Result<isize, i32> {
-    let ret = unsafe {
-        raw::syscall3(SYS_SENDMSG, sockfd as usize, msg as usize, flags as usize)
-    };
+    let ret = unsafe { raw::syscall3(SYS_SENDMSG, sockfd as usize, msg as usize, flags as usize) };
     syscall_result(ret).map(|v| v as isize)
 }
 
@@ -2062,9 +2072,7 @@ pub unsafe fn sys_sendmsg(sockfd: i32, msg: *const u8, flags: i32) -> Result<isi
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_recvmsg(sockfd: i32, msg: *mut u8, flags: i32) -> Result<isize, i32> {
-    let ret = unsafe {
-        raw::syscall3(SYS_RECVMSG, sockfd as usize, msg as usize, flags as usize)
-    };
+    let ret = unsafe { raw::syscall3(SYS_RECVMSG, sockfd as usize, msg as usize, flags as usize) };
     syscall_result(ret).map(|v| v as isize)
 }
 
@@ -2511,7 +2519,13 @@ pub unsafe fn sys_vmsplice(
     flags: u32,
 ) -> Result<isize, i32> {
     let ret = unsafe {
-        raw::syscall4(SYS_VMSPLICE, fd as usize, iov as usize, nr_segs, flags as usize)
+        raw::syscall4(
+            SYS_VMSPLICE,
+            fd as usize,
+            iov as usize,
+            nr_segs,
+            flags as usize,
+        )
     };
     syscall_result(ret).map(|v| v as isize)
 }
@@ -2563,9 +2577,7 @@ pub unsafe fn sys_execve(
     argv: *const *const u8,
     envp: *const *const u8,
 ) -> Result<(), i32> {
-    let ret = unsafe {
-        raw::syscall3(SYS_EXECVE, pathname as usize, argv as usize, envp as usize)
-    };
+    let ret = unsafe { raw::syscall3(SYS_EXECVE, pathname as usize, argv as usize, envp as usize) };
     syscall_result(ret).map(|_| ())
 }
 
@@ -3059,17 +3071,14 @@ pub unsafe fn sys_timerfd_gettime(fd: i32, curr_value: *mut u8) -> Result<(), i3
 /// `prctl(option, arg2, arg3, arg4, arg5)` — operations on a process.
 #[inline]
 #[allow(unsafe_code)]
-pub fn sys_prctl(option: i32, arg2: usize, arg3: usize, arg4: usize, arg5: usize) -> Result<i32, i32> {
-    let ret = unsafe {
-        raw::syscall5(
-            SYS_PRCTL,
-            option as usize,
-            arg2,
-            arg3,
-            arg4,
-            arg5,
-        )
-    };
+pub fn sys_prctl(
+    option: i32,
+    arg2: usize,
+    arg3: usize,
+    arg4: usize,
+    arg5: usize,
+) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall5(SYS_PRCTL, option as usize, arg2, arg3, arg4, arg5) };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -3141,7 +3150,14 @@ pub fn sys_fchdir(fd: i32) -> Result<(), i32> {
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_close_range(first: u32, last: u32, flags: u32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall3(SYS_CLOSE_RANGE, first as usize, last as usize, flags as usize) };
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_CLOSE_RANGE,
+            first as usize,
+            last as usize,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -3177,7 +3193,14 @@ pub unsafe fn sys_sched_getparam(pid: i32, param: *mut u8) -> Result<(), i32> {
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_unlinkat(dirfd: i32, pathname: *const u8, flags: i32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall3(SYS_UNLINKAT, dirfd as usize, pathname as usize, flags as usize) };
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_UNLINKAT,
+            dirfd as usize,
+            pathname as usize,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -3270,8 +3293,19 @@ pub unsafe fn sys_sched_rr_get_interval(pid: i32, tp: *mut u8) -> Result<(), i32
 /// `mask` must point to a valid cpu_set_t of at least `cpusetsize` bytes.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_sched_setaffinity(pid: i32, cpusetsize: usize, mask: *const u8) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall3(SYS_SCHED_SETAFFINITY, pid as usize, cpusetsize, mask as usize) };
+pub unsafe fn sys_sched_setaffinity(
+    pid: i32,
+    cpusetsize: usize,
+    mask: *const u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_SCHED_SETAFFINITY,
+            pid as usize,
+            cpusetsize,
+            mask as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -3282,8 +3316,19 @@ pub unsafe fn sys_sched_setaffinity(pid: i32, cpusetsize: usize, mask: *const u8
 /// `mask` must point to a writable buffer of at least `cpusetsize` bytes.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_sched_getaffinity(pid: i32, cpusetsize: usize, mask: *mut u8) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall3(SYS_SCHED_GETAFFINITY, pid as usize, cpusetsize, mask as usize) };
+pub unsafe fn sys_sched_getaffinity(
+    pid: i32,
+    cpusetsize: usize,
+    mask: *mut u8,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_SCHED_GETAFFINITY,
+            pid as usize,
+            cpusetsize,
+            mask as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -3294,7 +3339,11 @@ pub unsafe fn sys_sched_getaffinity(pid: i32, cpusetsize: usize, mask: *mut u8) 
 /// Both pointers must be valid NUL-terminated strings.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u8) -> Result<(), i32> {
+pub unsafe fn sys_symlinkat(
+    target: *const u8,
+    newdirfd: i32,
+    linkpath: *const u8,
+) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall3(
             SYS_SYMLINKAT,
@@ -3313,7 +3362,12 @@ pub unsafe fn sys_symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u
 /// `pathname` must be a valid NUL-terminated string.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_faccessat(dirfd: i32, pathname: *const u8, mode: i32, flags: i32) -> Result<(), i32> {
+pub unsafe fn sys_faccessat(
+    dirfd: i32,
+    pathname: *const u8,
+    mode: i32,
+    flags: i32,
+) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall4(
             SYS_FACCESSAT,
@@ -3352,7 +3406,12 @@ pub unsafe fn sys_mkdirat(dirfd: i32, pathname: *const u8, mode: u32) -> Result<
 /// `pathname` must be a valid NUL-terminated string.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_fchmodat(dirfd: i32, pathname: *const u8, mode: u32, flags: i32) -> Result<(), i32> {
+pub unsafe fn sys_fchmodat(
+    dirfd: i32,
+    pathname: *const u8,
+    mode: u32,
+    flags: i32,
+) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall4(
             SYS_FCHMODAT,
@@ -3372,7 +3431,13 @@ pub unsafe fn sys_fchmodat(dirfd: i32, pathname: *const u8, mode: u32, flags: i3
 /// `pathname` must be a valid NUL-terminated string.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_fchownat(dirfd: i32, pathname: *const u8, owner: u32, group: u32, flags: i32) -> Result<(), i32> {
+pub unsafe fn sys_fchownat(
+    dirfd: i32,
+    pathname: *const u8,
+    owner: u32,
+    group: u32,
+    flags: i32,
+) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall5(
             SYS_FCHOWNAT,
@@ -3671,7 +3736,8 @@ pub fn sys_getpriority(which: i32, who: i32) -> Result<i32, i32> {
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_setpriority(which: i32, who: i32, prio: i32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall3(SYS_SETPRIORITY, which as usize, who as usize, prio as usize) };
+    let ret =
+        unsafe { raw::syscall3(SYS_SETPRIORITY, which as usize, who as usize, prio as usize) };
     syscall_result(ret).map(|_| ())
 }
 
@@ -3708,7 +3774,15 @@ pub unsafe fn sys_getxattr(
     value: *mut u8,
     size: usize,
 ) -> Result<isize, i32> {
-    let ret = unsafe { raw::syscall4(SYS_GETXATTR, path as usize, name as usize, value as usize, size) };
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_GETXATTR,
+            path as usize,
+            name as usize,
+            value as usize,
+            size,
+        )
+    };
     syscall_result(ret).map(|v| v as isize)
 }
 
@@ -3726,7 +3800,15 @@ pub unsafe fn sys_lgetxattr(
     value: *mut u8,
     size: usize,
 ) -> Result<isize, i32> {
-    let ret = unsafe { raw::syscall4(SYS_LGETXATTR, path as usize, name as usize, value as usize, size) };
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_LGETXATTR,
+            path as usize,
+            name as usize,
+            value as usize,
+            size,
+        )
+    };
     syscall_result(ret).map(|v| v as isize)
 }
 
@@ -3744,7 +3826,15 @@ pub unsafe fn sys_fgetxattr(
     value: *mut u8,
     size: usize,
 ) -> Result<isize, i32> {
-    let ret = unsafe { raw::syscall4(SYS_FGETXATTR, fd as usize, name as usize, value as usize, size) };
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_FGETXATTR,
+            fd as usize,
+            name as usize,
+            value as usize,
+            size,
+        )
+    };
     syscall_result(ret).map(|v| v as isize)
 }
 
@@ -3763,7 +3853,16 @@ pub unsafe fn sys_setxattr(
     size: usize,
     flags: i32,
 ) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall5(SYS_SETXATTR, path as usize, name as usize, value as usize, size, flags as usize) };
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_SETXATTR,
+            path as usize,
+            name as usize,
+            value as usize,
+            size,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -3782,7 +3881,16 @@ pub unsafe fn sys_lsetxattr(
     size: usize,
     flags: i32,
 ) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall5(SYS_LSETXATTR, path as usize, name as usize, value as usize, size, flags as usize) };
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_LSETXATTR,
+            path as usize,
+            name as usize,
+            value as usize,
+            size,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -3801,7 +3909,16 @@ pub unsafe fn sys_fsetxattr(
     size: usize,
     flags: i32,
 ) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall5(SYS_FSETXATTR, fd as usize, name as usize, value as usize, size, flags as usize) };
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_FSETXATTR,
+            fd as usize,
+            name as usize,
+            value as usize,
+            size,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -3899,7 +4016,14 @@ pub fn sys_inotify_init1(flags: i32) -> Result<i32, i32> {
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_inotify_add_watch(fd: i32, pathname: *const u8, mask: u32) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall3(SYS_INOTIFY_ADD_WATCH, fd as usize, pathname as usize, mask as usize) };
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_INOTIFY_ADD_WATCH,
+            fd as usize,
+            pathname as usize,
+            mask as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -3923,13 +4047,16 @@ pub fn sys_inotify_rm_watch(fd: i32, wd: i32) -> Result<(), i32> {
 /// `attr` may be null or must point to a valid mq_attr structure.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_mq_open(
-    name: *const u8,
-    oflag: i32,
-    mode: u32,
-    attr: usize,
-) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall4(SYS_MQ_OPEN, name as usize, oflag as usize, mode as usize, attr) };
+pub unsafe fn sys_mq_open(name: *const u8, oflag: i32, mode: u32, attr: usize) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_MQ_OPEN,
+            name as usize,
+            oflag as usize,
+            mode as usize,
+            attr,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -4038,8 +4165,21 @@ pub unsafe fn sys_mq_getsetattr(mqdes: i32, newattr: usize, oldattr: usize) -> R
 /// `mask` must point to a valid sigset_t of `sizemask` bytes.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_signalfd4(fd: i32, mask: *const u8, sizemask: usize, flags: i32) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall4(SYS_SIGNALFD4, fd as usize, mask as usize, sizemask, flags as usize) };
+pub unsafe fn sys_signalfd4(
+    fd: i32,
+    mask: *const u8,
+    sizemask: usize,
+    flags: i32,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_SIGNALFD4,
+            fd as usize,
+            mask as usize,
+            sizemask,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -4058,8 +4198,21 @@ pub fn sys_pidfd_open(pid: i32, flags: u32) -> Result<i32, i32> {
 /// `info` may be null or must point to a valid siginfo_t.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_pidfd_send_signal(pidfd: i32, sig: i32, info: usize, flags: u32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall4(SYS_PIDFD_SEND_SIGNAL, pidfd as usize, sig as usize, info, flags as usize) };
+pub unsafe fn sys_pidfd_send_signal(
+    pidfd: i32,
+    sig: i32,
+    info: usize,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_PIDFD_SEND_SIGNAL,
+            pidfd as usize,
+            sig as usize,
+            info,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -4194,7 +4347,15 @@ pub fn sys_semget(key: i32, nsems: i32, semflg: i32) -> Result<i32, i32> {
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_semctl(semid: i32, semnum: i32, cmd: i32, arg: usize) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall4(SYS_SEMCTL, semid as usize, semnum as usize, cmd as usize, arg) };
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_SEMCTL,
+            semid as usize,
+            semnum as usize,
+            cmd as usize,
+            arg,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -4237,8 +4398,21 @@ pub unsafe fn sys_msgctl(msqid: i32, cmd: i32, buf: *mut u8) -> Result<i32, i32>
 /// `msgp` must point to a valid msgbuf structure with at least `msgsz` bytes of data.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_msgsnd(msqid: i32, msgp: *const u8, msgsz: usize, msgflg: i32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall4(SYS_MSGSND, msqid as usize, msgp as usize, msgsz, msgflg as usize) };
+pub unsafe fn sys_msgsnd(
+    msqid: i32,
+    msgp: *const u8,
+    msgsz: usize,
+    msgflg: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_MSGSND,
+            msqid as usize,
+            msgp as usize,
+            msgsz,
+            msgflg as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -4249,8 +4423,23 @@ pub unsafe fn sys_msgsnd(msqid: i32, msgp: *const u8, msgsz: usize, msgflg: i32)
 /// `msgp` must point to a writable msgbuf with space for at least `msgsz` bytes.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_msgrcv(msqid: i32, msgp: *mut u8, msgsz: usize, msgtyp: isize, msgflg: i32) -> Result<isize, i32> {
-    let ret = unsafe { raw::syscall5(SYS_MSGRCV, msqid as usize, msgp as usize, msgsz, msgtyp as usize, msgflg as usize) };
+pub unsafe fn sys_msgrcv(
+    msqid: i32,
+    msgp: *mut u8,
+    msgsz: usize,
+    msgtyp: isize,
+    msgflg: i32,
+) -> Result<isize, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_MSGRCV,
+            msqid as usize,
+            msgp as usize,
+            msgsz,
+            msgtyp as usize,
+            msgflg as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as isize)
 }
 
@@ -4266,8 +4455,19 @@ pub unsafe fn sys_msgrcv(msqid: i32, msgp: *mut u8, msgsz: usize, msgtyp: isize,
 /// `old_value` may be null or must point to a valid itimerval.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_setitimer(which: i32, new_value: *const u8, old_value: *mut u8) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall3(SYS_SETITIMER, which as usize, new_value as usize, old_value as usize) };
+pub unsafe fn sys_setitimer(
+    which: i32,
+    new_value: *const u8,
+    old_value: *mut u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_SETITIMER,
+            which as usize,
+            new_value as usize,
+            old_value as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -4304,7 +4504,15 @@ pub unsafe fn sys_mincore(addr: usize, length: usize, vec: *mut u8) -> Result<()
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_fadvise64(fd: i32, offset: i64, len: i64, advice: i32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall4(SYS_FADVISE64, fd as usize, offset as usize, len as usize, advice as usize) };
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_FADVISE64,
+            fd as usize,
+            offset as usize,
+            len as usize,
+            advice as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -4327,8 +4535,21 @@ pub fn sys_readahead(fd: i32, offset: i64, count: usize) -> Result<isize, i32> {
 /// `msgvec` must point to a valid array of at least `vlen` mmsghdr structures.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_sendmmsg(sockfd: i32, msgvec: *mut u8, vlen: u32, flags: i32) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall4(SYS_SENDMMSG, sockfd as usize, msgvec as usize, vlen as usize, flags as usize) };
+pub unsafe fn sys_sendmmsg(
+    sockfd: i32,
+    msgvec: *mut u8,
+    vlen: u32,
+    flags: i32,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_SENDMMSG,
+            sockfd as usize,
+            msgvec as usize,
+            vlen as usize,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -4340,8 +4561,23 @@ pub unsafe fn sys_sendmmsg(sockfd: i32, msgvec: *mut u8, vlen: u32, flags: i32) 
 /// `timeout` may be null or must point to a valid timespec.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_recvmmsg(sockfd: i32, msgvec: *mut u8, vlen: u32, flags: i32, timeout: usize) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall5(SYS_RECVMMSG, sockfd as usize, msgvec as usize, vlen as usize, flags as usize, timeout) };
+pub unsafe fn sys_recvmmsg(
+    sockfd: i32,
+    msgvec: *mut u8,
+    vlen: u32,
+    flags: i32,
+    timeout: usize,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_RECVMMSG,
+            sockfd as usize,
+            msgvec as usize,
+            vlen as usize,
+            flags as usize,
+            timeout,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -4584,7 +4820,14 @@ pub fn sys_tkill(tid: i32, sig: i32) -> Result<(), i32> {
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_rt_sigqueueinfo(tgid: i32, sig: i32, uinfo: *const u8) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall3(SYS_RT_SIGQUEUEINFO, tgid as usize, sig as usize, uinfo as usize) };
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_RT_SIGQUEUEINFO,
+            tgid as usize,
+            sig as usize,
+            uinfo as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -4595,8 +4838,21 @@ pub unsafe fn sys_rt_sigqueueinfo(tgid: i32, sig: i32, uinfo: *const u8) -> Resu
 /// `uinfo` must point to a valid siginfo_t structure.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_rt_tgsigqueueinfo(tgid: i32, tid: i32, sig: i32, uinfo: *const u8) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall4(SYS_RT_TGSIGQUEUEINFO, tgid as usize, tid as usize, sig as usize, uinfo as usize) };
+pub unsafe fn sys_rt_tgsigqueueinfo(
+    tgid: i32,
+    tid: i32,
+    sig: i32,
+    uinfo: *const u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_RT_TGSIGQUEUEINFO,
+            tgid as usize,
+            tid as usize,
+            sig as usize,
+            uinfo as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -4722,7 +4978,14 @@ pub unsafe fn sys_execveat(
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_pidfd_getfd(pidfd: i32, targetfd: i32, flags: u32) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall3(SYS_PIDFD_GETFD, pidfd as usize, targetfd as usize, flags as usize) };
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_PIDFD_GETFD,
+            pidfd as usize,
+            targetfd as usize,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -4779,8 +5042,19 @@ pub unsafe fn sys_name_to_handle_at(
 /// `handle` must point to a valid file_handle structure.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_open_by_handle_at(mount_fd: i32, handle: *const u8, flags: i32) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall3(SYS_OPEN_BY_HANDLE_AT, mount_fd as usize, handle as usize, flags as usize) };
+pub unsafe fn sys_open_by_handle_at(
+    mount_fd: i32,
+    handle: *const u8,
+    flags: i32,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_OPEN_BY_HANDLE_AT,
+            mount_fd as usize,
+            handle as usize,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -4827,7 +5101,14 @@ pub unsafe fn sys_fanotify_mark(
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_seccomp(operation: u32, flags: u32, args: *const u8) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall3(SYS_SECCOMP, operation as usize, flags as usize, args as usize) };
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_SECCOMP,
+            operation as usize,
+            flags as usize,
+            args as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -4859,7 +5140,14 @@ pub unsafe fn sys_capset(hdrp: *const u8, datap: *const u8) -> Result<(), i32> {
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_membarrier(cmd: i32, flags: u32, cpu_id: i32) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall3(SYS_MEMBARRIER, cmd as usize, flags as usize, cpu_id as usize) };
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_MEMBARRIER,
+            cmd as usize,
+            flags as usize,
+            cpu_id as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -4958,8 +5246,21 @@ pub fn sys_pkey_free(pkey: i32) -> Result<(), i32> {
 /// `addr` must be page-aligned and the range must be valid mapped memory.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_pkey_mprotect(addr: *mut u8, len: usize, prot: i32, pkey: i32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall4(SYS_PKEY_MPROTECT, addr as usize, len, prot as usize, pkey as usize) };
+pub unsafe fn sys_pkey_mprotect(
+    addr: *mut u8,
+    len: usize,
+    prot: i32,
+    pkey: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_PKEY_MPROTECT,
+            addr as usize,
+            len,
+            prot as usize,
+            pkey as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -5015,9 +5316,20 @@ pub unsafe fn sys_io_uring_enter(
 /// `arg` must point to valid data appropriate for the opcode.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_io_uring_register(fd: i32, opcode: u32, arg: *const u8, nr_args: u32) -> Result<i32, i32> {
+pub unsafe fn sys_io_uring_register(
+    fd: i32,
+    opcode: u32,
+    arg: *const u8,
+    nr_args: u32,
+) -> Result<i32, i32> {
     let ret = unsafe {
-        raw::syscall4(SYS_IO_URING_REGISTER, fd as usize, opcode as usize, arg as usize, nr_args as usize)
+        raw::syscall4(
+            SYS_IO_URING_REGISTER,
+            fd as usize,
+            opcode as usize,
+            arg as usize,
+            nr_args as usize,
+        )
     };
     syscall_result(ret).map(|v| v as i32)
 }
@@ -5031,7 +5343,14 @@ pub unsafe fn sys_io_uring_register(fd: i32, opcode: u32, arg: *const u8, nr_arg
 #[allow(unsafe_code)]
 pub fn sys_kcmp(pid1: i32, pid2: i32, type_: i32, idx1: u64, idx2: u64) -> Result<i32, i32> {
     let ret = unsafe {
-        raw::syscall5(SYS_KCMP, pid1 as usize, pid2 as usize, type_ as usize, idx1 as usize, idx2 as usize)
+        raw::syscall5(
+            SYS_KCMP,
+            pid1 as usize,
+            pid2 as usize,
+            type_ as usize,
+            idx1 as usize,
+            idx2 as usize,
+        )
     };
     syscall_result(ret).map(|v| v as i32)
 }
@@ -5040,7 +5359,14 @@ pub fn sys_kcmp(pid1: i32, pid2: i32, type_: i32, idx1: u64, idx2: u64) -> Resul
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_ioprio_set(which: i32, who: i32, ioprio: i32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall3(SYS_IOPRIO_SET, which as usize, who as usize, ioprio as usize) };
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_IOPRIO_SET,
+            which as usize,
+            who as usize,
+            ioprio as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -5065,7 +5391,13 @@ pub fn sys_userfaultfd(flags: i32) -> Result<i32, i32> {
 #[allow(unsafe_code)]
 pub fn sys_sync_file_range(fd: i32, offset: i64, nbytes: i64, flags: u32) -> Result<(), i32> {
     let ret = unsafe {
-        raw::syscall4(SYS_SYNC_FILE_RANGE, fd as usize, offset as usize, nbytes as usize, flags as usize)
+        raw::syscall4(
+            SYS_SYNC_FILE_RANGE,
+            fd as usize,
+            offset as usize,
+            nbytes as usize,
+            flags as usize,
+        )
     };
     syscall_result(ret).map(|_| ())
 }
@@ -5077,9 +5409,22 @@ pub fn sys_sync_file_range(fd: i32, offset: i64, nbytes: i64, flags: u32) -> Res
 /// `addr` must be page-aligned and point to a valid mapped region.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_remap_file_pages(addr: *mut u8, size: usize, prot: i32, pgoff: usize, flags: i32) -> Result<(), i32> {
+pub unsafe fn sys_remap_file_pages(
+    addr: *mut u8,
+    size: usize,
+    prot: i32,
+    pgoff: usize,
+    flags: i32,
+) -> Result<(), i32> {
     let ret = unsafe {
-        raw::syscall5(SYS_REMAP_FILE_PAGES, addr as usize, size, prot as usize, pgoff, flags as usize)
+        raw::syscall5(
+            SYS_REMAP_FILE_PAGES,
+            addr as usize,
+            size,
+            prot as usize,
+            pgoff,
+            flags as usize,
+        )
     };
     syscall_result(ret).map(|_| ())
 }
@@ -5092,7 +5437,14 @@ pub unsafe fn sys_remap_file_pages(addr: *mut u8, size: usize, prot: i32, pgoff:
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_sched_setattr(pid: i32, attr: *const u8, flags: u32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall3(SYS_SCHED_SETATTR, pid as usize, attr as usize, flags as usize) };
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_SCHED_SETATTR,
+            pid as usize,
+            attr as usize,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -5105,7 +5457,13 @@ pub unsafe fn sys_sched_setattr(pid: i32, attr: *const u8, flags: u32) -> Result
 #[allow(unsafe_code)]
 pub unsafe fn sys_sched_getattr(pid: i32, attr: *mut u8, size: u32, flags: u32) -> Result<(), i32> {
     let ret = unsafe {
-        raw::syscall4(SYS_SCHED_GETATTR, pid as usize, attr as usize, size as usize, flags as usize)
+        raw::syscall4(
+            SYS_SCHED_GETATTR,
+            pid as usize,
+            attr as usize,
+            size as usize,
+            flags as usize,
+        )
     };
     syscall_result(ret).map(|_| ())
 }
@@ -5117,8 +5475,21 @@ pub unsafe fn sys_sched_getattr(pid: i32, attr: *mut u8, size: u32, flags: u32) 
 /// `special` must be a valid null-terminated path. `addr` must point to valid quota data.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_quotactl(cmd: i32, special: *const u8, id: i32, addr: *mut u8) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall4(SYS_QUOTACTL, cmd as usize, special as usize, id as usize, addr as usize) };
+pub unsafe fn sys_quotactl(
+    cmd: i32,
+    special: *const u8,
+    id: i32,
+    addr: *mut u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_QUOTACTL,
+            cmd as usize,
+            special as usize,
+            id as usize,
+            addr as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -5218,7 +5589,14 @@ pub unsafe fn sys_request_key(
 #[allow(unsafe_code)]
 pub fn sys_keyctl(operation: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> Result<i64, i32> {
     let ret = unsafe {
-        raw::syscall5(SYS_KEYCTL, operation as usize, arg2 as usize, arg3 as usize, arg4 as usize, arg5 as usize)
+        raw::syscall5(
+            SYS_KEYCTL,
+            operation as usize,
+            arg2 as usize,
+            arg3 as usize,
+            arg4 as usize,
+            arg5 as usize,
+        )
     };
     syscall_result(ret).map(|v| v as i64)
 }
@@ -5254,8 +5632,19 @@ pub unsafe fn sys_fstatfs(fd: i32, buf: *mut u8) -> Result<(), i32> {
 /// `attr` must point to a valid landlock_ruleset_attr structure or be null.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_landlock_create_ruleset(attr: *const u8, size: usize, flags: u32) -> Result<i32, i32> {
-    let ret = unsafe { raw::syscall3(SYS_LANDLOCK_CREATE_RULESET, attr as usize, size, flags as usize) };
+pub unsafe fn sys_landlock_create_ruleset(
+    attr: *const u8,
+    size: usize,
+    flags: u32,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_LANDLOCK_CREATE_RULESET,
+            attr as usize,
+            size,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -5266,8 +5655,21 @@ pub unsafe fn sys_landlock_create_ruleset(attr: *const u8, size: usize, flags: u
 /// `rule_attr` must point to a valid rule attribute structure appropriate for `rule_type`.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_landlock_add_rule(ruleset_fd: i32, rule_type: i32, rule_attr: *const u8, flags: u32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall4(SYS_LANDLOCK_ADD_RULE, ruleset_fd as usize, rule_type as usize, rule_attr as usize, flags as usize) };
+pub unsafe fn sys_landlock_add_rule(
+    ruleset_fd: i32,
+    rule_type: i32,
+    rule_attr: *const u8,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_LANDLOCK_ADD_RULE,
+            ruleset_fd as usize,
+            rule_type as usize,
+            rule_attr as usize,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -5275,7 +5677,13 @@ pub unsafe fn sys_landlock_add_rule(ruleset_fd: i32, rule_type: i32, rule_attr: 
 #[inline]
 #[allow(unsafe_code)]
 pub fn sys_landlock_restrict_self(ruleset_fd: i32, flags: u32) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall2(SYS_LANDLOCK_RESTRICT_SELF, ruleset_fd as usize, flags as usize) };
+    let ret = unsafe {
+        raw::syscall2(
+            SYS_LANDLOCK_RESTRICT_SELF,
+            ruleset_fd as usize,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -5339,7 +5747,15 @@ pub unsafe fn sys_semtimedop(
     nsops: usize,
     timeout: *const u8,
 ) -> Result<(), i32> {
-    let ret = unsafe { raw::syscall4(SYS_SEMTIMEDOP, semid as usize, sops as usize, nsops, timeout as usize) };
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_SEMTIMEDOP,
+            semid as usize,
+            sops as usize,
+            nsops,
+            timeout as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
@@ -5501,9 +5917,7 @@ pub unsafe fn sys_epoll_pwait2(
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_ptrace(request: i32, pid: i32, addr: usize, data: usize) -> Result<isize, i32> {
-    let ret = unsafe {
-        raw::syscall4(SYS_PTRACE, request as usize, pid as usize, addr, data)
-    };
+    let ret = unsafe { raw::syscall4(SYS_PTRACE, request as usize, pid as usize, addr, data) };
     syscall_result(ret).map(|v| v as isize)
 }
 
@@ -5515,9 +5929,8 @@ pub unsafe fn sys_ptrace(request: i32, pid: i32, addr: usize, data: usize) -> Re
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_open_tree(dirfd: i32, path: *const u8, flags: u32) -> Result<i32, i32> {
-    let ret = unsafe {
-        raw::syscall3(SYS_OPEN_TREE, dirfd as usize, path as usize, flags as usize)
-    };
+    let ret =
+        unsafe { raw::syscall3(SYS_OPEN_TREE, dirfd as usize, path as usize, flags as usize) };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -5596,7 +6009,12 @@ pub unsafe fn sys_fsconfig(
 #[allow(unsafe_code)]
 pub unsafe fn sys_fsmount(fs_fd: i32, flags: u32, attr_flags: u32) -> Result<i32, i32> {
     let ret = unsafe {
-        raw::syscall3(SYS_FSMOUNT, fs_fd as usize, flags as usize, attr_flags as usize)
+        raw::syscall3(
+            SYS_FSMOUNT,
+            fs_fd as usize,
+            flags as usize,
+            attr_flags as usize,
+        )
     };
     syscall_result(ret).map(|v| v as i32)
 }
@@ -5609,9 +6027,7 @@ pub unsafe fn sys_fsmount(fs_fd: i32, flags: u32, attr_flags: u32) -> Result<i32
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_fspick(dirfd: i32, path: *const u8, flags: u32) -> Result<i32, i32> {
-    let ret = unsafe {
-        raw::syscall3(SYS_FSPICK, dirfd as usize, path as usize, flags as usize)
-    };
+    let ret = unsafe { raw::syscall3(SYS_FSPICK, dirfd as usize, path as usize, flags as usize) };
     syscall_result(ret).map(|v| v as i32)
 }
 
@@ -5693,7 +6109,12 @@ pub unsafe fn sys_init_module(
     param_values: *const u8,
 ) -> Result<(), i32> {
     let ret = unsafe {
-        raw::syscall3(SYS_INIT_MODULE, module_image as usize, len, param_values as usize)
+        raw::syscall3(
+            SYS_INIT_MODULE,
+            module_image as usize,
+            len,
+            param_values as usize,
+        )
     };
     syscall_result(ret).map(|_| ())
 }
@@ -5792,7 +6213,12 @@ pub unsafe fn sys_uselib(library: *const u8) -> Result<(), i32> {
 #[allow(unsafe_code)]
 pub unsafe fn sys_futimesat(dirfd: i32, pathname: *const u8, tv: *const u8) -> Result<(), i32> {
     let ret = unsafe {
-        raw::syscall3(SYS_FUTIMESAT, dirfd as usize, pathname as usize, tv as usize)
+        raw::syscall3(
+            SYS_FUTIMESAT,
+            dirfd as usize,
+            pathname as usize,
+            tv as usize,
+        )
     };
     syscall_result(ret).map(|_| ())
 }

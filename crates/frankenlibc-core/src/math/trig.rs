@@ -68,6 +68,7 @@ pub fn atanh(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::f64::consts::{PI, TAU};
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
 
@@ -83,6 +84,11 @@ mod tests {
             failure_persistence: None,
             ..ProptestConfig::default()
         }
+    }
+
+    fn approx_eq(lhs: f64, rhs: f64, abs_tol: f64, rel_tol: f64) -> bool {
+        let diff = (lhs - rhs).abs();
+        diff <= abs_tol.max(rel_tol * lhs.abs().max(rhs.abs()))
     }
 
     #[test]
@@ -123,7 +129,54 @@ mod tests {
         #[test]
         fn prop_sin_asin_round_trip(x in -1.0f64..1.0f64) {
             let round_trip = sin(asin(x));
-            prop_assert!((round_trip - x).abs() <= 1e-11);
+            prop_assert!(approx_eq(round_trip, x, 1e-12, 1e-11));
+        }
+
+        #[test]
+        fn prop_cos_acos_round_trip(x in -1.0f64..1.0f64) {
+            let round_trip = cos(acos(x));
+            prop_assert!(approx_eq(round_trip, x, 1e-12, 1e-11));
+        }
+
+        #[test]
+        fn prop_sin_has_tau_periodicity(x in -100.0f64..100.0f64) {
+            let shifted = sin(x + TAU);
+            let base = sin(x);
+            prop_assert!(approx_eq(shifted, base, 1e-12, 1e-11));
+        }
+
+        #[test]
+        fn prop_cos_has_tau_periodicity(x in -100.0f64..100.0f64) {
+            let shifted = cos(x + TAU);
+            let base = cos(x);
+            prop_assert!(approx_eq(shifted, base, 1e-12, 1e-11));
+        }
+
+        #[test]
+        fn prop_tan_has_pi_periodicity_away_from_poles(x in -1.25f64..1.25f64) {
+            let shifted = tan(x + PI);
+            let base = tan(x);
+            prop_assert!(approx_eq(shifted, base, 1e-12, 1e-11));
+        }
+
+        #[test]
+        fn prop_sin_cos_satisfy_pythagorean_identity(x in -100.0f64..100.0f64) {
+            let s = sin(x);
+            let c = cos(x);
+            prop_assert!(approx_eq(s.mul_add(s, c * c), 1.0, 1e-12, 1e-10));
+        }
+
+        #[test]
+        fn prop_atan2_is_invariant_under_positive_scaling(
+            y in -1_000.0f64..1_000.0f64,
+            x in -1_000.0f64..1_000.0f64,
+            scale in 0.125f64..8.0f64
+        ) {
+            prop_assume!(x.abs() > 1e-9 || y.abs() > 1e-9);
+
+            let base = atan2(y, x);
+            let scaled = atan2(y * scale, x * scale);
+            prop_assert!(approx_eq(scaled, base, 1e-12, 1e-11));
         }
 
         #[test]
