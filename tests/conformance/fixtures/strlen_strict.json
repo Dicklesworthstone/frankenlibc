@@ -2,6 +2,8 @@
   "version": "v1",
   "family": "string/strlen",
   "captured_at": "2026-02-08T00:00:00Z",
+  "description": "Strict strlen fixtures covering empty, single-byte, and multi-byte NUL-terminated strings.",
+  "spec_reference": "POSIX.1-2017 strlen",
   "cases": [
     {
       "name": "empty_string",

@@ -3,6 +3,7 @@
   "family": "pwd_ops",
   "captured_at": "2026-02-13T00:00:00Z",
   "description": "Mode-specific parity fixtures for password database operations (getpwnam, getpwuid, getpwent, setpwent, endpwent, getpwnam_r, getpwuid_r). All Implemented. Strict: host-glibc parity. Hardened: missing user fallback.",
+  "spec_reference": "POSIX.1-2017 pwd.h",
   "cases": [
     {
       "name": "getpwnam_root_strict",

@@ -2,6 +2,8 @@
   "version": "v1",
   "family": "string/memcpy",
   "captured_at": "2026-02-08T00:00:00Z",
+  "description": "Strict memcpy fixtures covering full, partial, zero-length, and single-byte copies.",
+  "spec_reference": "POSIX.1-2017 memcpy",
   "cases": [
     {
       "name": "copy_full_8",

@@ -3,6 +3,7 @@
   "family": "stdio_file_ops",
   "captured_at": "2026-02-13T00:00:00Z",
   "description": "Mode-specific parity fixtures for stdio file operations (fopen, fclose, fread, fwrite, fgets, fputs, fseek, ftell, fflush). Strict: host-glibc parity. Hardened: invalid mode repair, buffering fallbacks.",
+  "spec_reference": "C11 7.21 / POSIX.1-2017 stdio",
   "cases": [
     {
       "name": "fopen_valid_mode_strict",

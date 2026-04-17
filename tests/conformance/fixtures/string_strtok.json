@@ -3,6 +3,7 @@
   "family": "string/strtok",
   "captured_at": "2026-02-13T00:00:00Z",
   "description": "POSIX strtok/strtok_r — string tokenization (first-token extraction)",
+  "spec_reference": "POSIX.1-2017 strtok, strtok_r",
   "cases": [
     {
       "name": "strtok_basic_first",
