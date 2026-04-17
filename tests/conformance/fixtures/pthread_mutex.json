@@ -3,6 +3,7 @@
   "family": "pthread/mutex",
   "captured_at": "2026-02-13T00:00:00Z",
   "description": "POSIX mutex operations — POSIX.1-2017 pthread.h. Tests NORMAL mutex type.",
+  "spec_reference": "POSIX.1-2017 pthread_mutex_init, pthread_mutex_destroy, pthread_mutex_lock, pthread_mutex_trylock, pthread_mutex_unlock",
   "cases": [
     {
       "name": "mutex_init_default",

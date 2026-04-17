@@ -2,6 +2,8 @@
   "version": "v1",
   "family": "stdlib/sort",
   "captured_at": "2026-02-09T00:00:00Z",
+  "description": "Mode-specific parity fixtures for ISO C stdlib sort and search operations (qsort, bsearch) over byte arrays.",
+  "spec_reference": "ISO C qsort, bsearch",
   "cases": [
     {
       "name": "qsort_int",

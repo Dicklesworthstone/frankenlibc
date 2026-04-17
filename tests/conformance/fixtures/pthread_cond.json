@@ -3,6 +3,7 @@
   "family": "pthread/cond",
   "captured_at": "2026-02-13T17:55:00Z",
   "description": "POSIX condition variable APIs: pthread_cond_init, pthread_cond_destroy, pthread_cond_wait, pthread_cond_timedwait, pthread_cond_signal, pthread_cond_broadcast — POSIX.1-2017 pthread.h",
+  "spec_reference": "POSIX.1-2017 pthread_cond_init, pthread_cond_destroy, pthread_cond_wait, pthread_cond_timedwait, pthread_cond_signal, pthread_cond_broadcast",
   "cases": [
     {
       "name": "init_default_attr",

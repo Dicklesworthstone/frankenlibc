@@ -148,23 +148,69 @@
   "binary_fixtures": [
     {
       "name": "libc_so_parsing",
-      "description": "Parse system libc.so.6 to validate header parsing against real binaries",
-      "path": "/lib/x86_64-linux-gnu/libc.so.6",
-      "assertions": [
-        { "field": "class", "expected": "Class64" },
-        { "field": "data", "expected": "LittleEndian" },
-        { "field": "machine", "expected": "X86_64" },
-        { "field": "type", "expected": "SharedObject" }
-      ]
+      "description": "Parse system libc.so.6 and compare the Rust loader to readelf on stable ELF64 invariants",
+      "paths": [
+        "/lib/x86_64-linux-gnu/libc.so.6",
+        "/lib64/libc.so.6",
+        "/usr/lib/x86_64-linux-gnu/libc.so.6",
+        "/usr/lib64/libc.so.6"
+      ],
+      "assertions": {
+        "class": "Elf64",
+        "data": "Lsb",
+        "machine": "X86_64",
+        "type": "Dyn",
+        "min_program_headers": 8,
+        "min_load_segments": 2,
+        "require_dynamic_segment": true,
+        "expect_relro": true,
+        "min_dynamic_symbols": 1000,
+        "required_symbols": ["malloc", "free", "printf"]
+      }
     },
     {
       "name": "libm_so_parsing",
-      "description": "Parse system libm.so.6 to validate symbol table parsing",
-      "path": "/lib/x86_64-linux-gnu/libm.so.6",
-      "assertions": [
-        { "field": "class", "expected": "Class64" },
-        { "field": "has_dynsym", "expected": true }
-      ]
+      "description": "Parse system libm.so.6 and verify dynamic symbol coverage against readelf",
+      "paths": [
+        "/lib/x86_64-linux-gnu/libm.so.6",
+        "/lib64/libm.so.6",
+        "/usr/lib/x86_64-linux-gnu/libm.so.6",
+        "/usr/lib64/libm.so.6"
+      ],
+      "assertions": {
+        "class": "Elf64",
+        "data": "Lsb",
+        "machine": "X86_64",
+        "type": "Dyn",
+        "min_program_headers": 8,
+        "min_load_segments": 2,
+        "require_dynamic_segment": true,
+        "expect_relro": true,
+        "min_dynamic_symbols": 500,
+        "required_symbols": ["sin", "cos", "sqrt"]
+      }
+    },
+    {
+      "name": "ldso_so_parsing",
+      "description": "Parse the dynamic loader itself and verify loader-private symbols stay visible to the Rust parser",
+      "paths": [
+        "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "/lib64/ld-linux-x86-64.so.2",
+        "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+        "/usr/lib64/ld-linux-x86-64.so.2"
+      ],
+      "assertions": {
+        "class": "Elf64",
+        "data": "Lsb",
+        "machine": "X86_64",
+        "type": "Dyn",
+        "min_program_headers": 8,
+        "min_load_segments": 2,
+        "require_dynamic_segment": true,
+        "expect_relro": true,
+        "min_dynamic_symbols": 20,
+        "required_symbols": ["_dl_allocate_tls", "_dl_deallocate_tls", "_rtld_global"]
+      }
     }
   ]
 }

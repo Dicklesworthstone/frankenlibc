@@ -3,6 +3,7 @@
   "family": "inet",
   "captured_at": "2026-02-13T00:00:00Z",
   "description": "Network address functions — POSIX.1-2017 arpa/inet.h + netinet/in.h byte-order macros",
+  "spec_reference": "POSIX.1-2017 htons, htonl, ntohs, ntohl, inet_addr, inet_pton, inet_ntop",
   "cases": [
     {
       "name": "htons_80",

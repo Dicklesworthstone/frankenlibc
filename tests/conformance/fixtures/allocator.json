@@ -2,6 +2,8 @@
   "version": "v1",
   "family": "allocator",
   "captured_at": "2026-02-09T00:00:00Z",
+  "description": "Mode-specific parity fixtures for POSIX memory allocation operations (malloc, calloc, free, realloc).",
+  "spec_reference": "POSIX malloc, calloc, free, realloc",
   "cases": [
     {
       "name": "malloc_basic",

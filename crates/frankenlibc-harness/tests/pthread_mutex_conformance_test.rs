@@ -5,6 +5,7 @@
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -45,12 +46,78 @@ struct FixtureCase {
     notes: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct MatrixCaseEnvelope {
+    kind: String,
+    #[serde(default)]
+    run: Option<DifferentialExecution>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DifferentialExecution {
+    impl_output: String,
+    host_parity: bool,
+}
+
 fn load_fixture(name: &str) -> FixtureFile {
     let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
     serde_json::from_str(&content)
         .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+}
+
+fn execute_case_via_harness(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_harness"))
+        .arg("conformance-matrix-case")
+        .arg("--function")
+        .arg(function)
+        .arg("--mode")
+        .arg(mode)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("failed to spawn harness subprocess: {err}"))?;
+
+    let payload =
+        serde_json::to_vec(inputs).map_err(|err| format!("failed to serialize inputs: {err}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(&payload)
+            .map_err(|err| format!("failed to write subprocess stdin: {err}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("failed to wait on harness subprocess: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "harness subprocess exited with status {:?}: {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    let envelope: MatrixCaseEnvelope = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("invalid harness subprocess payload: {err}"))?;
+    match envelope.kind.as_str() {
+        "ok" => envelope
+            .run
+            .ok_or_else(|| String::from("missing run payload from harness subprocess")),
+        "error" => Err(envelope
+            .error
+            .unwrap_or_else(|| String::from("missing error payload from harness subprocess"))),
+        other => Err(format!("unknown harness subprocess payload kind: {other}")),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,6 +136,14 @@ fn pthread_mutex_fixture_valid_schema() {
 
     assert_eq!(fixture.version, "v1");
     assert_eq!(fixture.family, "pthread/mutex");
+    assert!(
+        !fixture.description.is_empty(),
+        "fixture should describe its scope"
+    );
+    assert!(
+        !fixture.spec_reference.is_empty(),
+        "fixture should include top-level spec reference"
+    );
     assert!(!fixture.cases.is_empty(), "Must have test cases");
 
     for case in &fixture.cases {
@@ -215,8 +290,8 @@ fn pthread_mutex_function_distribution() {
         match case.function.as_str() {
             "pthread_mutex_init" => init_count += 1,
             "pthread_mutex_lock" => lock_count += 1,
-            "pthread_mutex_trylock" => trylock_count += 1,
-            "pthread_mutex_unlock" => unlock_count += 1,
+            "pthread_mutex_trylock" | "__pthread_mutex_trylock" => trylock_count += 1,
+            "pthread_mutex_unlock" | "__pthread_mutex_unlock" => unlock_count += 1,
             "pthread_mutex_destroy" => destroy_count += 1,
             f => panic!("Unexpected function in fixture: {}", f),
         }
@@ -313,6 +388,111 @@ fn pthread_mutex_has_posix_references() {
             "Case {} spec_section should reference POSIX: {}",
             case.name,
             case.spec_section
+        );
+    }
+}
+
+#[test]
+fn pthread_mutex_covers_alias_symbols() {
+    let fixture = load_fixture("pthread_mutex");
+    let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
+
+    for pattern in ["alias_mutex_trylock", "alias_mutex_unlock"] {
+        assert!(
+            case_names.iter().any(|name| name.contains(pattern)),
+            "Missing alias-symbol coverage for {}",
+            pattern
+        );
+    }
+}
+
+#[test]
+fn pthread_mutex_fixture_executes_via_isolated_harness() {
+    let fixture = load_fixture("pthread_mutex");
+
+    for case in fixture.cases {
+        let expected_output = case
+            .expected_output
+            .as_deref()
+            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({mode}) failed to execute through harness: {err}",
+                        case.name
+                    )
+                });
+            assert_eq!(
+                result.impl_output, expected_output,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert!(
+                result.host_parity,
+                "executor reported parity failure for {} ({mode})",
+                case.name
+            );
+        }
+    }
+}
+
+#[test]
+fn pthread_mutex_alias_symbols_match_canonical_behavior() {
+    let fixture = load_fixture("pthread_mutex");
+
+    let canonical_trylock = fixture
+        .cases
+        .iter()
+        .find(|case| case.name == "mutex_trylock_unlocked")
+        .unwrap_or_else(|| panic!("missing canonical trylock case"));
+    let alias_trylock = fixture
+        .cases
+        .iter()
+        .find(|case| case.name == "alias_mutex_trylock_unlocked")
+        .unwrap_or_else(|| panic!("missing alias trylock case"));
+    let canonical_unlock = fixture
+        .cases
+        .iter()
+        .find(|case| case.name == "mutex_unlock")
+        .unwrap_or_else(|| panic!("missing canonical unlock case"));
+    let alias_unlock = fixture
+        .cases
+        .iter()
+        .find(|case| case.name == "alias_mutex_unlock")
+        .unwrap_or_else(|| panic!("missing alias unlock case"));
+
+    for mode in ["strict", "hardened"] {
+        let canonical_trylock_result =
+            execute_case_via_harness(&canonical_trylock.function, &canonical_trylock.inputs, mode)
+                .unwrap_or_else(|err| {
+                    panic!("canonical trylock case failed in {mode}: {err}");
+                });
+        let alias_trylock_result =
+            execute_case_via_harness(&alias_trylock.function, &alias_trylock.inputs, mode)
+                .unwrap_or_else(|err| panic!("alias trylock case failed in {mode}: {err}"));
+        assert_eq!(
+            alias_trylock_result.impl_output, canonical_trylock_result.impl_output,
+            "alias trylock output drifted from canonical symbol in {mode}"
+        );
+
+        let canonical_unlock_result =
+            execute_case_via_harness(&canonical_unlock.function, &canonical_unlock.inputs, mode)
+                .unwrap_or_else(|err| {
+                    panic!("canonical unlock case failed in {mode}: {err}");
+                });
+        let alias_unlock_result =
+            execute_case_via_harness(&alias_unlock.function, &alias_unlock.inputs, mode)
+                .unwrap_or_else(|err| panic!("alias unlock case failed in {mode}: {err}"));
+        assert_eq!(
+            alias_unlock_result.impl_output, canonical_unlock_result.impl_output,
+            "alias unlock output drifted from canonical symbol in {mode}"
         );
     }
 }

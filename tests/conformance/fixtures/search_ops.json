@@ -1,0 +1,136 @@
+{
+  "version": "v1",
+  "family": "search/ops",
+  "captured_at": "2026-04-16T00:00:00Z",
+  "description": "POSIX and XSI search.h operations validated against host glibc and frankenlibc ABI search entrypoints.",
+  "spec_reference": "POSIX.1-2017 search.h; X/Open System Interfaces for insque/remque",
+  "cases": [
+    {
+      "name": "hsearch_replace_existing_data",
+      "function": "hsearch",
+      "spec_section": "POSIX.1-2017 hsearch",
+      "inputs": {
+        "scenario": "replace_existing",
+        "table_capacity": 8,
+        "key": "alpha",
+        "first_data": 111,
+        "second_data": 222
+      },
+      "expected_output": "ENTER:1:111|ENTER:1:222|FIND:1:222",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "hsearch_find_missing_key",
+      "function": "hsearch",
+      "spec_section": "POSIX.1-2017 hsearch",
+      "inputs": {
+        "scenario": "find_missing",
+        "table_capacity": 8,
+        "key": "missing"
+      },
+      "expected_output": "FIND:0:NULL",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "hsearch_r_replace_existing_data",
+      "function": "hsearch_r",
+      "spec_section": "POSIX.1-2017 hsearch_r",
+      "inputs": {
+        "scenario": "replace_existing",
+        "table_capacity": 8,
+        "key": "beta",
+        "first_data": 7,
+        "second_data": 9
+      },
+      "expected_output": "ENTER:1:7|ENTER:1:9|FIND:1:9|FILLED:1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "tsearch_insert_and_find",
+      "function": "tsearch",
+      "spec_section": "POSIX.1-2017 tsearch",
+      "inputs": {
+        "keys": [10, 5, 15],
+        "find": [5, 99]
+      },
+      "expected_output": "ROOT:10|FIND:5=1|FIND:99=0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "tdelete_removes_leaf",
+      "function": "tdelete",
+      "spec_section": "POSIX.1-2017 tdelete",
+      "inputs": {
+        "keys": [10, 5, 15],
+        "delete": 5,
+        "find_after": [5, 10, 15]
+      },
+      "expected_output": "DELETE:5=1|FIND:5=0|FIND:10=1|FIND:15=1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "twalk_visit_sequence",
+      "function": "twalk",
+      "spec_section": "POSIX.1-2017 twalk",
+      "inputs": {
+        "keys": [10, 5, 15]
+      },
+      "expected_output": "10:preorder:0|5:leaf:1|10:postorder:0|15:leaf:1|10:endorder:0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "lfind_existing_index",
+      "function": "lfind",
+      "spec_section": "POSIX.1-2017 lfind",
+      "inputs": {
+        "base": [4, 8, 15, 16],
+        "key": 15
+      },
+      "expected_output": "INDEX:2",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "lsearch_appends_missing",
+      "function": "lsearch",
+      "spec_section": "POSIX.1-2017 lsearch",
+      "inputs": {
+        "base": [4, 8, 15],
+        "capacity": 4,
+        "key": 16
+      },
+      "expected_output": "INDEX:3|NEL:4|ARRAY:[4, 8, 15, 16]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "insque_builds_chain",
+      "function": "insque",
+      "spec_section": "XSI insque",
+      "inputs": {
+        "values": [1, 2, 3]
+      },
+      "expected_output": "1(prev=NULL,next=2)|2(prev=1,next=3)|3(prev=2,next=NULL)",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "remque_middle_detaches_node",
+      "function": "remque",
+      "spec_section": "XSI remque",
+      "inputs": {
+        "values": [1, 2, 3],
+        "remove": 2
+      },
+      "expected_output": "1(prev=NULL,next=3)|2(prev=NULL,next=NULL)|3(prev=1,next=NULL)",
+      "expected_errno": 0,
+      "mode": "both"
+    }
+  ]
+}

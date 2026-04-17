@@ -2,6 +2,8 @@
   "version": "v1",
   "family": "stdlib/numeric",
   "captured_at": "2026-02-09T00:00:00Z",
+  "description": "Mode-specific parity fixtures for POSIX/C numeric conversion operations (atoi, atol, strtol, strtoul).",
+  "spec_reference": "POSIX atoi, atol, strtol, strtoul",
   "cases": [
     {
       "name": "atoi_basic",
