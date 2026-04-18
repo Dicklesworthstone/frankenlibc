@@ -553,6 +553,11 @@ pub fn execute_fixture_case(
         "cfgetospeed" => execute_cfgetospeed_case(inputs, mode),
         "cfsetispeed" => execute_cfsetispeed_case(inputs, mode),
         "cfsetospeed" => execute_cfsetospeed_case(inputs, mode),
+        // regex/glob ops
+        "regcomp" => execute_regcomp_case(inputs, mode),
+        "regexec" => execute_regexec_case(inputs, mode),
+        "fnmatch" => execute_fnmatch_case(inputs, mode),
+        "glob" => execute_glob_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9345,6 +9350,119 @@ fn execute_cfsetospeed_case(
     };
     let mut termios: libc::termios = unsafe { std::mem::zeroed() };
     let result = unsafe { frankenlibc_abi::termios_abi::cfsetospeed(&mut termios, speed) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// regex_glob_ops conformance executors (bd-p390)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_regcomp_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let pattern = parse_string(inputs, "pattern")?;
+    let cflags_str = inputs.get("cflags").and_then(|v| v.as_str()).unwrap_or("");
+    let cflags = if cflags_str.contains("REG_EXTENDED") { libc::REG_EXTENDED } else { 0 };
+    let pattern_c = std::ffi::CString::new(pattern).map_err(|_| "pattern contains NUL")?;
+    let mut preg: libc::regex_t = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        frankenlibc_abi::string_abi::regcomp(
+            &mut preg as *mut _ as *mut c_void,
+            pattern_c.as_ptr(),
+            cflags,
+        )
+    };
+    if result == 0 {
+        unsafe { libc::regfree(&mut preg) };
+    }
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_regexec_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let pattern = inputs.get("compiled_regex").and_then(|v| v.as_str()).unwrap_or(".*");
+    let string = parse_string(inputs, "string")?;
+    let pattern_c = std::ffi::CString::new(pattern).map_err(|_| "pattern contains NUL")?;
+    let string_c = std::ffi::CString::new(string).map_err(|_| "string contains NUL")?;
+    let mut preg: libc::regex_t = unsafe { std::mem::zeroed() };
+    let comp_result = unsafe {
+        frankenlibc_abi::string_abi::regcomp(
+            &mut preg as *mut _ as *mut c_void,
+            pattern_c.as_ptr(),
+            libc::REG_EXTENDED,
+        )
+    };
+    if comp_result != 0 {
+        return Ok(non_host_execution("REGCOMP_FAILED".to_string()));
+    }
+    let exec_result = unsafe {
+        frankenlibc_abi::string_abi::regexec(
+            &preg as *const _ as *const c_void,
+            string_c.as_ptr(),
+            0,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    unsafe { libc::regfree(&mut preg) };
+    let impl_output = if exec_result == 0 {
+        "0".to_string()
+    } else if exec_result == libc::REG_NOMATCH {
+        "REG_NOMATCH".to_string()
+    } else {
+        format!("{exec_result}")
+    };
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_fnmatch_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let pattern = parse_string(inputs, "pattern")?;
+    let string = parse_string(inputs, "string")?;
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    let pattern_c = std::ffi::CString::new(pattern).map_err(|_| "pattern contains NUL")?;
+    let string_c = std::ffi::CString::new(string).map_err(|_| "string contains NUL")?;
+    let result = unsafe {
+        frankenlibc_abi::string_abi::fnmatch(pattern_c.as_ptr(), string_c.as_ptr(), flags)
+    };
+    let impl_output = if result == 0 {
+        "0".to_string()
+    } else if result == libc::FNM_NOMATCH {
+        "FNM_NOMATCH".to_string()
+    } else {
+        format!("{result}")
+    };
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_glob_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let pattern = parse_string(inputs, "pattern")?;
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    let pattern_c = std::ffi::CString::new(pattern).map_err(|_| "pattern contains NUL")?;
+    let mut pglob: libc::glob_t = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        frankenlibc_abi::string_abi::glob(
+            pattern_c.as_ptr(),
+            flags,
+            None,
+            &mut pglob as *mut _ as *mut c_void,
+        )
+    };
+    if result == 0 {
+        unsafe { libc::globfree(&mut pglob) };
+    }
     Ok(non_host_execution(format!("{result}")))
 }
 
