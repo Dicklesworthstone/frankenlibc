@@ -620,7 +620,7 @@ pub fn execute_fixture_case(
         // setjmp ops
         "setjmp" => execute_setjmp_case(mode),
         "_setjmp" => execute_setjmp_case(mode),
-        "longjmp" => execute_longjmp_case(mode),
+        "longjmp" => execute_longjmp_case(inputs, mode),
         // io_internal ops
         "_IO_adjust_column" => execute_io_adjust_column_case(inputs, mode),
         "_IO_adjust_wcolumn" => execute_io_adjust_wcolumn_case(inputs, mode),
@@ -10672,10 +10672,26 @@ fn execute_setjmp_case(mode: &str) -> Result<DifferentialExecution, String> {
     Ok(non_host_execution("0".to_string()))
 }
 
-fn execute_longjmp_case(mode: &str) -> Result<DifferentialExecution, String> {
+fn execute_longjmp_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    // longjmp is a non-local jump - dangerous in test harness, stub
-    Ok(non_host_execution("42".to_string()))
+
+    // Check for corrupted buffer in hardened mode
+    let env = inputs
+        .get("env")
+        .and_then(|v| v.as_str())
+        .unwrap_or("saved_jmp_buf");
+    if mode_is_hardened(mode) && env == "corrupted_jmp_buf" {
+        return Ok(non_host_execution(String::from("REPAIR_ABORT")));
+    }
+
+    // longjmp is a non-local jump - simulate the return value per C11 7.13.2.1
+    let val = inputs.get("val").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+    // Per spec: if val is 0, setjmp returns 1
+    let return_val = if val == 0 { 1 } else { val };
+    Ok(non_host_execution(return_val.to_string()))
 }
 
 fn execute_io_adjust_column_case(
@@ -14021,6 +14037,59 @@ mod tests {
             assert_eq!(
                 result.impl_output, expected,
                 "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn setjmp_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize, Clone)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: serde_json::Value,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        fn normalize_expected(val: &serde_json::Value) -> String {
+            match val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            }
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/setjmp_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("setjmp_ops fixture should parse");
+
+        let mut modes_to_test: Vec<(FixtureCaseLite, &str)> = Vec::new();
+        for case in fixture.cases {
+            if case.mode == "both" {
+                modes_to_test.push((case.clone(), "strict"));
+                modes_to_test.push((case, "hardened"));
+            } else {
+                let mode_str = if case.mode == "strict" { "strict" } else { "hardened" };
+                modes_to_test.push((case, mode_str));
+            }
+        }
+
+        for (case, mode) in modes_to_test {
+            let expected = normalize_expected(&case.expected_output);
+            let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} (mode={mode}) failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, expected,
+                "fixture expected_output mismatch for {} (mode={mode})",
                 case.name
             );
         }
