@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-08T03:20:19Z",
+  "generated_at": "2026-04-17T23:40:34Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -27,8 +27,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "c1373d9a4106d619aa3c10e1d47f0bd09d282c1fec3d55486db666a340012b37",
-      "size_bytes": 940259,
+      "sha256": "90f926aa7c7306e70ede53e46344d0fd8ddd99e4968df9059d204cf54330cee3",
+      "size_bytes": 941324,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -200,8 +200,8 @@
       "kind": "manifest",
       "required": true,
       "critical": true,
-      "sha256": "b1001c17a5b3a1d97b0df41da454ccaf78b161fc8892a592fe078b823f4fdb82",
-      "size_bytes": 12241,
+      "sha256": "010986108042545014423d900ba398a6f07d128fce736f5296f92a22d52471a7",
+      "size_bytes": 12925,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -210,8 +210,8 @@
   "integrity_index": {
     "support_matrix": {
       "path": "support_matrix.json",
-      "sha256": "c1373d9a4106d619aa3c10e1d47f0bd09d282c1fec3d55486db666a340012b37",
-      "size_bytes": 940259
+      "sha256": "90f926aa7c7306e70ede53e46344d0fd8ddd99e4968df9059d204cf54330cee3",
+      "size_bytes": 941324
     },
     "reality_report": {
       "path": "tests/conformance/reality_report.v1.json",
@@ -275,8 +275,8 @@
     },
     "closure_contract": {
       "path": "tests/conformance/closure_contract.v1.json",
-      "sha256": "b1001c17a5b3a1d97b0df41da454ccaf78b161fc8892a592fe078b823f4fdb82",
-      "size_bytes": 12241
+      "sha256": "010986108042545014423d900ba398a6f07d128fce736f5296f92a22d52471a7",
+      "size_bytes": 12925
     }
   },
   "release_notes_hook": {
@@ -288,118 +288,89 @@
     },
     "entries": [
       {
-        "id": "bd-1rf",
-        "title": "NSS phase-1: files backend for passwd/group/hosts lookups",
+        "id": "bd-ng5t",
+        "title": "Execute pwd_ops fixture through isolated harness",
         "issue_type": "task",
         "priority": 2,
-        "closed_at": "2026-04-07T23:04:42.014246039Z",
-        "closed_by": "ubuntu",
-        "labels": [
-          "critique",
-          "nss",
-          "resolver"
-        ],
-        "close_reason": "Delivered or tracked as future work."
-      },
-      {
-        "id": "bd-3bg",
-        "title": "Iconvdata pipeline: minimal codec tables + deterministic build/generation flow",
-        "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-07T23:04:41.667428937Z",
-        "closed_by": "ubuntu",
-        "labels": [
-          "critique",
-          "iconv",
-          "tooling"
-        ],
-        "close_reason": "Delivered or tracked as future work."
-      },
-      {
-        "id": "bd-byd9",
-        "title": "EPIC: Flat Combining for Contended State [Score 6.0, section 14.2]",
-        "issue_type": "epic",
-        "priority": 2,
-        "closed_at": "2026-04-07T23:04:41.325362824Z",
+        "closed_at": "2026-04-17T02:46:09.517310844Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "Delivered or tracked as future work."
+        "close_reason": "Upgraded pwd_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
       },
       {
-        "id": "bd-1gg",
-        "title": "EPIC: Multi-Architecture Support (aarch64)",
-        "issue_type": "epic",
-        "priority": 1,
-        "closed_at": "2026-04-07T23:04:40.980937417Z",
-        "closed_by": "ubuntu",
-        "labels": [
-          "arch",
-          "multiplatform"
-        ],
-        "close_reason": "Delivered or tracked as future work."
-      },
-      {
-        "id": "bd-2tt4",
-        "title": "Release: process and artifact publishing",
+        "id": "bd-jucr",
+        "title": "Execute stdio_file_ops fixture through isolated harness",
         "issue_type": "task",
-        "priority": 1,
-        "closed_at": "2026-04-07T23:04:40.630382462Z",
+        "priority": 2,
+        "closed_at": "2026-04-17T01:01:34.104663411Z",
         "closed_by": "ubuntu",
-        "labels": [
-          "process",
-          "release"
-        ],
-        "close_reason": "Delivered or tracked as future work."
+        "labels": [],
+        "close_reason": "Upgraded stdio_file_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
       },
       {
-        "id": "bd-1gg.3",
-        "title": "aarch64 bring-up: raw syscall veneer + TLS/control primitive obligations",
+        "id": "bd-6omr",
+        "title": "Execute memcpy_strict fixture through isolated harness",
         "issue_type": "task",
-        "priority": 1,
-        "closed_at": "2026-04-07T23:04:40.286721552Z",
+        "priority": 2,
+        "closed_at": "2026-04-17T00:53:20.884896522Z",
         "closed_by": "ubuntu",
-        "labels": [
-          "aarch64",
-          "arch",
-          "syscall"
-        ],
-        "close_reason": "Delivered or tracked as future work."
+        "labels": [],
+        "close_reason": "Upgraded memcpy_strict conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
       },
       {
-        "id": "bd-1gg.4",
-        "title": "aarch64 conformance/perf matrix + architecture regression gating",
+        "id": "bd-otvz",
+        "title": "Execute strlen_strict fixture through isolated harness",
         "issue_type": "task",
-        "priority": 1,
-        "closed_at": "2026-04-07T23:04:39.946762337Z",
+        "priority": 2,
+        "closed_at": "2026-04-17T00:44:29.251492016Z",
         "closed_by": "ubuntu",
-        "labels": [
-          "arch",
-          "conformance",
-          "perf"
-        ],
-        "close_reason": "Delivered or tracked as future work."
+        "labels": [],
+        "close_reason": "Upgraded strlen_strict conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
       },
       {
-        "id": "bd-26xb.10",
-        "title": "Idea 10: Spec-Hole Detector from Gap/Failure Mining",
+        "id": "bd-4fqz",
+        "title": "Execute string_strtok fixture through isolated harness",
         "issue_type": "task",
-        "priority": 1,
-        "closed_at": "2026-04-07T23:04:39.607344096Z",
+        "priority": 2,
+        "closed_at": "2026-04-17T00:37:23.998288768Z",
         "closed_by": "ubuntu",
-        "labels": [
-          "accretive",
-          "apollo-value",
-          "execution",
-          "feature-parity",
-          "gap-closure",
-          "idea-wizard"
-        ],
-        "close_reason": "Delivered or tracked as future work."
+        "labels": [],
+        "close_reason": "Upgraded string_strtok conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+      },
+      {
+        "id": "bd-yecy",
+        "title": "Execute ctype_ops fixture through isolated harness",
+        "issue_type": "task",
+        "priority": 2,
+        "closed_at": "2026-04-17T00:31:16.048625797Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "Upgraded ctype_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+      },
+      {
+        "id": "bd-j6jk",
+        "title": "Execute iconv_phase1 fixture through isolated harness",
+        "issue_type": "task",
+        "priority": 2,
+        "closed_at": "2026-04-17T00:21:37.264821072Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "Upgraded iconv_phase1 conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+      },
+      {
+        "id": "bd-tpnv",
+        "title": "Execute dlfcn_ops fixture through isolated harness",
+        "issue_type": "task",
+        "priority": 2,
+        "closed_at": "2026-04-17T00:12:22.104109338Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "Upgraded dlfcn_ops conformance coverage to execute each fixture case through the isolated harness subprocess path and added fixture metadata assertions."
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-1rf` NSS phase-1: files backend for passwd/group/hosts lookups (task, closed 2026-04-07T23:04:42.014246039Z)\n  Delivered or tracked as future work.\n- `bd-3bg` Iconvdata pipeline: minimal codec tables + deterministic build/generation flow (task, closed 2026-04-07T23:04:41.667428937Z)\n  Delivered or tracked as future work.\n- `bd-byd9` EPIC: Flat Combining for Contended State [Score 6.0, section 14.2] (epic, closed 2026-04-07T23:04:41.325362824Z)\n  Delivered or tracked as future work.\n- `bd-1gg` EPIC: Multi-Architecture Support (aarch64) (epic, closed 2026-04-07T23:04:40.980937417Z)\n  Delivered or tracked as future work.\n- `bd-2tt4` Release: process and artifact publishing (task, closed 2026-04-07T23:04:40.630382462Z)\n  Delivered or tracked as future work.\n- `bd-1gg.3` aarch64 bring-up: raw syscall veneer + TLS/control primitive obligations (task, closed 2026-04-07T23:04:40.286721552Z)\n  Delivered or tracked as future work.\n- `bd-1gg.4` aarch64 conformance/perf matrix + architecture regression gating (task, closed 2026-04-07T23:04:39.946762337Z)\n  Delivered or tracked as future work.\n- `bd-26xb.10` Idea 10: Spec-Hole Detector from Gap/Failure Mining (task, closed 2026-04-07T23:04:39.607344096Z)\n  Delivered or tracked as future work.",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-ng5t` Execute pwd_ops fixture through isolated harness (task, closed 2026-04-17T02:46:09.517310844Z)\n  Upgraded pwd_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-jucr` Execute stdio_file_ops fixture through isolated harness (task, closed 2026-04-17T01:01:34.104663411Z)\n  Upgraded stdio_file_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-6omr` Execute memcpy_strict fixture through isolated harness (task, closed 2026-04-17T00:53:20.884896522Z)\n  Upgraded memcpy_strict conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-otvz` Execute strlen_strict fixture through isolated harness (task, closed 2026-04-17T00:44:29.251492016Z)\n  Upgraded strlen_strict conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-4fqz` Execute string_strtok fixture through isolated harness (task, closed 2026-04-17T00:37:23.998288768Z)\n  Upgraded string_strtok conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-yecy` Execute ctype_ops fixture through isolated harness (task, closed 2026-04-17T00:31:16.048625797Z)\n  Upgraded ctype_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-j6jk` Execute iconv_phase1 fixture through isolated harness (task, closed 2026-04-17T00:21:37.264821072Z)\n  Upgraded iconv_phase1 conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-tpnv` Execute dlfcn_ops fixture through isolated harness (task, closed 2026-04-17T00:12:22.104109338Z)\n  Upgraded dlfcn_ops conformance coverage to execute each fixture case through the isolated harness subprocess path and added fixture metadata assertions.",
     "summary": {
-      "closed_total": 613,
+      "closed_total": 639,
       "selected": 8,
       "invalid_rows": 0
     }
