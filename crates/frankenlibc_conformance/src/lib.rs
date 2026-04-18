@@ -9384,7 +9384,7 @@ fn execute_regcomp_case(
         )
     };
     if result == 0 {
-        unsafe { libc::regfree(&mut preg) };
+        unsafe { frankenlibc_abi::string_abi::regfree(&mut preg as *mut _ as *mut c_void) };
     }
     Ok(non_host_execution(format!("{result}")))
 }
@@ -9418,7 +9418,7 @@ fn execute_regexec_case(
             0,
         )
     };
-    unsafe { libc::regfree(&mut preg) };
+    unsafe { frankenlibc_abi::string_abi::regfree(&mut preg as *mut _ as *mut c_void) };
     let impl_output = if exec_result == 0 {
         "0".to_string()
     } else if exec_result == libc::REG_NOMATCH {
@@ -9470,7 +9470,7 @@ fn execute_glob_case(
         )
     };
     if result == 0 {
-        unsafe { libc::globfree(&mut pglob) };
+        unsafe { frankenlibc_abi::string_abi::globfree(&mut pglob as *mut _ as *mut c_void) };
     }
     Ok(non_host_execution(format!("{result}")))
 }
