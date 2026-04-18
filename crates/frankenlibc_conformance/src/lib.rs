@@ -13702,4 +13702,88 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn memory_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: serde_json::Value,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        fn normalize_expected(val: &serde_json::Value) -> String {
+            match val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            }
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/memory_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("memory_ops fixture should parse");
+
+        for case in fixture.cases {
+            let expected = normalize_expected(&case.expected_output);
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, expected,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn regex_glob_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: serde_json::Value,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        fn normalize_expected(val: &serde_json::Value) -> String {
+            match val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            }
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/regex_glob_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("regex_glob_ops fixture should parse");
+
+        for case in fixture.cases {
+            let expected = normalize_expected(&case.expected_output);
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, expected,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
+    }
 }
