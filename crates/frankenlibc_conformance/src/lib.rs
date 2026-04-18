@@ -558,6 +558,11 @@ pub fn execute_fixture_case(
         "regexec" => execute_regexec_case(inputs, mode),
         "fnmatch" => execute_fnmatch_case(inputs, mode),
         "glob" => execute_glob_case(inputs, mode),
+        // time ops
+        "time" => execute_time_case(mode),
+        "clock" => execute_clock_case(mode),
+        "clock_gettime" => execute_clock_gettime_case(inputs, mode),
+        "localtime_r" => execute_localtime_r_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9464,6 +9469,49 @@ fn execute_glob_case(
         unsafe { libc::globfree(&mut pglob) };
     }
     Ok(non_host_execution(format!("{result}")))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// time_ops conformance executors (bd-y1f9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_time_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let result = unsafe { frankenlibc_abi::time_abi::time(std::ptr::null_mut()) };
+    let impl_output = if result > 0 { "POSITIVE_INT" } else { &format!("{result}") };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_clock_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let result = unsafe { frankenlibc_abi::time_abi::clock() };
+    let impl_output = if result >= 0 { "NON_NEGATIVE" } else { &format!("{result}") };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_clock_gettime_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let clk_id = parse_i32(inputs, "clk_id")?;
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let result = unsafe { frankenlibc_abi::time_abi::clock_gettime(clk_id, &mut ts) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_localtime_r_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let time_val = inputs.get("time").and_then(|v| v.as_i64()).unwrap_or(0);
+    let mut tm_result: libc::tm = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        frankenlibc_abi::time_abi::localtime_r(&time_val, &mut tm_result)
+    };
+    let impl_output = if result.is_null() { "NULL" } else { "TM_STRUCT" };
+    Ok(non_host_execution(impl_output.to_string()))
 }
 
 #[cfg(test)]
