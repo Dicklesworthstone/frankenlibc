@@ -440,6 +440,7 @@ pub fn execute_fixture_case(
         "fclose" => execute_fclose_case(inputs, mode),
         "fprintf" => execute_fprintf_case(inputs, mode),
         "snprintf" => execute_snprintf_case(inputs, mode),
+        "sprintf" => execute_sprintf_case(inputs, mode),
         "fread" => execute_fread_case(inputs, mode),
         "fwrite" => execute_fwrite_case(inputs, mode),
         "fseek" => execute_fseek_case(inputs, mode),
@@ -2720,6 +2721,48 @@ fn execute_snprintf_case(
         let host_output = render_c_buffer(&host_buf, size);
         let host_parity = host_output == impl_output;
         let note = (!host_parity).then(|| String::from("strict snprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_sprintf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format).map_err(|_| String::from("format contains interior NUL"))?;
+    let args = parse_printf_args(inputs)?;
+
+    const SPRINTF_BUF_SIZE: usize = 4096;
+    let mut impl_buf = vec![0 as c_char; SPRINTF_BUF_SIZE];
+    let _ = run_impl_snprintf(impl_buf.as_mut_ptr(), SPRINTF_BUF_SIZE, format_c.as_ptr(), &args)?;
+    let impl_output = render_c_buffer(&impl_buf, SPRINTF_BUF_SIZE);
+
+    if strict {
+        let mut host_buf = vec![0 as c_char; SPRINTF_BUF_SIZE];
+        let _ = run_host_snprintf(host_buf.as_mut_ptr(), SPRINTF_BUF_SIZE, format_c.as_ptr(), &args)?;
+        let host_output = render_c_buffer(&host_buf, SPRINTF_BUF_SIZE);
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict sprintf host parity mismatch"));
         return Ok(DifferentialExecution {
             host_output,
             impl_output,
