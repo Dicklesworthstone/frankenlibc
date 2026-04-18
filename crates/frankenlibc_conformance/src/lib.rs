@@ -11025,6 +11025,49 @@ mod tests {
     }
 
     #[test]
+    fn errno_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: Option<String>,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/errno_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("errno_ops fixture should parse");
+
+        for case in fixture.cases {
+            let Some(expected) = case.expected_output.clone() else {
+                continue;
+            };
+            let modes: Vec<&str> = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} (mode={mode}) failed to execute: {err}", case.name)
+                    });
+                assert_eq!(
+                    result.impl_output, expected,
+                    "fixture expected_output mismatch for {} (mode={mode})",
+                    case.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn pthread_cond_fixture_cases_match_execute_fixture_case() {
         #[derive(Deserialize)]
         struct FixtureCaseLite {
