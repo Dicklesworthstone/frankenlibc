@@ -12,6 +12,8 @@ struct CallThroughSite {
     source_kind: &'static str,
 }
 
+type SourceScanExceptions = BTreeMap<String, BTreeMap<String, BTreeSet<String>>>;
+
 #[derive(Debug, Clone, Copy)]
 struct StartupContractSpec {
     checkpoint: &'static str,
@@ -443,30 +445,128 @@ fn extract_libc_call(fragment: &str) -> Option<&str> {
     }
 }
 
-fn scan_call_throughs(abi_src: &Path) -> Vec<CallThroughSite> {
+fn load_source_scan_exceptions(profile: &Value) -> SourceScanExceptions {
+    let mut exceptions = SourceScanExceptions::new();
+    let rows = profile
+        .pointer("/detection_rules/source_scan_exceptions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for row in rows {
+        let Some(module) = row.get("module").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(function) = row.get("function").and_then(Value::as_str) else {
+            continue;
+        };
+        let symbols = row
+            .get("symbols")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        if symbols.is_empty() {
+            continue;
+        }
+        exceptions
+            .entry(module.to_owned())
+            .or_default()
+            .entry(function.to_owned())
+            .or_default()
+            .extend(symbols);
+    }
+    exceptions
+}
+
+fn extract_function_name(line: &str) -> Option<String> {
+    let fn_pos = line.find("fn ")?;
+    let after = &line[fn_pos + 3..];
+    let end = after
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        .count();
+    if end == 0 {
+        None
+    } else {
+        Some(after[..end].to_owned())
+    }
+}
+
+fn count_braces(line: &str) -> isize {
+    line.bytes().fold(0isize, |depth, byte| match byte {
+        b'{' => depth + 1,
+        b'}' => depth - 1,
+        _ => depth,
+    })
+}
+
+fn is_source_scan_exception(
+    module: &str,
+    current_fn: Option<&str>,
+    symbol: &str,
+    exceptions: &SourceScanExceptions,
+) -> bool {
+    current_fn
+        .and_then(|function| exceptions.get(module)?.get(function))
+        .is_some_and(|symbols| symbols.contains(symbol))
+}
+
+fn scan_call_throughs(abi_src: &Path, profile: &Value) -> Vec<CallThroughSite> {
     let mut modules = fs::read_dir(abi_src)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", abi_src.display())) // ubs:ignore — build.rs must hard-fail on missing ABI sources
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("_abi.rs"))
+        })
         .collect::<Vec<_>>();
     modules.sort();
 
+    let exceptions = load_source_scan_exceptions(profile);
     let mut sites = Vec::new();
     for module_path in modules {
         let module_name = module_path
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default()
+            .trim_end_matches(".rs")
             .to_owned();
         let content = fs::read_to_string(&module_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", module_path.display())); // ubs:ignore — build.rs must hard-fail on unreadable ABI sources
 
+        let mut brace_depth = 0isize;
+        let mut pending_fn: Option<String> = None;
+        let mut current_fn: Option<String> = None;
+        let mut current_fn_base_depth = 0isize;
         for (lineno, line) in content.lines().enumerate() {
             let trimmed = line.trim();
+            if !trimmed.starts_with("//")
+                && let Some(fn_name) = extract_function_name(line)
+            {
+                pending_fn = Some(fn_name);
+            }
+            let new_brace_depth = if trimmed.starts_with("//") {
+                brace_depth
+            } else {
+                brace_depth + count_braces(line)
+            };
+            if current_fn.is_none()
+                && let Some(fn_name) = pending_fn.as_ref()
+                && new_brace_depth > brace_depth
+            {
+                current_fn = Some(fn_name.clone());
+                current_fn_base_depth = brace_depth;
+                pending_fn = None;
+            }
             if trimmed.starts_with("//") {
+                brace_depth = new_brace_depth;
                 continue;
             }
+            let active_fn = current_fn.as_deref();
 
             let mut libc_search_from = 0;
             while let Some(pos) = line[libc_search_from..].find("libc::") {
@@ -474,6 +574,7 @@ fn scan_call_throughs(abi_src: &Path) -> Vec<CallThroughSite> {
                 let after = &line[abs_pos + "libc::".len()..];
                 if let Some(function) = extract_libc_call(after)
                     && function != "syscall"
+                    && !is_source_scan_exception(&module_name, active_fn, function, &exceptions)
                 {
                     sites.push(CallThroughSite {
                         module: module_name.clone(),
@@ -486,6 +587,10 @@ fn scan_call_throughs(abi_src: &Path) -> Vec<CallThroughSite> {
             }
 
             if trimmed.contains("fn host_pthread_") {
+                if current_fn.is_some() && new_brace_depth <= current_fn_base_depth {
+                    current_fn = None;
+                }
+                brace_depth = new_brace_depth;
                 continue;
             }
             let mut host_search_from = 0;
@@ -518,6 +623,10 @@ fn scan_call_throughs(abi_src: &Path) -> Vec<CallThroughSite> {
                 }
                 host_search_from = abs_pos + "host_pthread_".len();
             }
+            if current_fn.is_some() && new_brace_depth <= current_fn_base_depth {
+                current_fn = None;
+            }
+            brace_depth = new_brace_depth;
         }
     }
 
@@ -611,7 +720,10 @@ fn standalone_policy_diagnostics(root: &Path) -> Vec<String> {
         ));
     }
 
-    let callthrough_sites = scan_call_throughs(&root.join("crates/frankenlibc-abi/src"));
+    let callthrough_sites = scan_call_throughs(
+        &root.join("crates/frankenlibc-abi/src"),
+        &replacement_profile,
+    );
     if !callthrough_sites.is_empty() {
         let mut modules = BTreeSet::new();
         for site in &callthrough_sites {

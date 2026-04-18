@@ -12,16 +12,16 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
 use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
-use std::sync::atomic::{AtomicI8, Ordering};
-
-use std::collections::HashMap;
+use std::sync::atomic::{AtomicI8, AtomicU64, Ordering};
 
 use crate::runtime_policy;
 use crate::stdio_abi;
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::bloom::PointerBloomFilter;
+use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use parking_lot::ReentrantMutex;
 
@@ -1420,6 +1420,12 @@ static NATIVE_FILE_BLOOM: std::sync::LazyLock<PointerBloomFilter> =
 static FOREIGN_ADOPTION_MAP: std::sync::LazyLock<Mutex<HashMap<usize, usize>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+const STDIO_EVIDENCE_LOG_CAPACITY: usize = 256;
+static STDIO_EVIDENCE_LOG_SEQ: AtomicU64 = AtomicU64::new(0);
+static STDIO_EVIDENCE_LOG_DROP_COUNT: AtomicU64 = AtomicU64::new(0);
+static STDIO_EVIDENCE_LOGS: std::sync::LazyLock<Mutex<VecDeque<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(VecDeque::new()));
+
 /// Offset of `_fileno` field in glibc's `_IO_FILE` struct (glibc 2.34, x86_64).
 ///
 /// This is the ONLY field we read from a foreign FILE* during adoption.
@@ -1460,6 +1466,110 @@ pub fn lookup_adopted_foreign(foreign_ptr: *mut c_void) -> Option<usize> {
     map.get(&(foreign_ptr as usize)).copied()
 }
 
+fn stdio_runtime_mode_label() -> &'static str {
+    match runtime_policy::mode() {
+        SafetyLevel::Strict => "strict",
+        SafetyLevel::Hardened => "hardened",
+        SafetyLevel::Off => "off",
+    }
+}
+
+fn stdio_timestamp_unix_ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .min(u64::MAX as u128) as u64
+}
+
+fn stdio_trace_id(seq: u64) -> String {
+    format!("00000000-0000-0000-0000-{seq:012x}")
+}
+
+fn push_stdio_evidence_log(line: String) {
+    if let Ok(mut logs) = STDIO_EVIDENCE_LOGS.lock() {
+        if logs.len() >= STDIO_EVIDENCE_LOG_CAPACITY {
+            let _ = logs.pop_front();
+            STDIO_EVIDENCE_LOG_DROP_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        logs.push_back(line);
+    }
+}
+
+fn log_foreign_file_adopted(
+    foreign_fp: *mut c_void,
+    native_ptr: *mut NativeFile,
+    fd: c_int,
+    elapsed_ns: u64,
+) {
+    let seq = STDIO_EVIDENCE_LOG_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    let pid = std::process::id();
+    let tid = raw_syscall::sys_gettid().max(0) as u32;
+    let timestamp_unix_ns = stdio_timestamp_unix_ns();
+    let mode = stdio_runtime_mode_label();
+    let fp_hex = format!("0x{:x}", foreign_fp as usize);
+    let native_hex = format!("0x{:x}", native_ptr as usize);
+    let trace_id = stdio_trace_id(seq);
+    let line = format!(
+        "{{\"schema_version\":1,\"timestamp_unix_ns\":{timestamp_unix_ns},\"process\":{{\"pid\":{pid},\"tid\":{tid}}},\"mode\":\"{mode}\",\"event_kind\":\"foreign_adoption\",\"function\":\"adopt_foreign_file\",\"fp_hex\":\"{fp_hex}\",\"fp_origin\":\"foreign\",\"fd\":{fd},\"params\":{{}},\"result\":{{\"return_value\":\"{native_hex}\",\"errno\":0,\"elapsed_ns\":{elapsed_ns}}},\"membrane_stages\":{{\"total_ns\":{elapsed_ns}}},\"healing_action\":null,\"evidence_ring_seq\":{seq},\"trace_id\":\"{trace_id}\"}}"
+    );
+    push_stdio_evidence_log(line);
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+#[must_use]
+fn export_stdio_evidence_jsonl() -> String {
+    STDIO_EVIDENCE_LOGS
+        .lock()
+        .ok()
+        .map(|logs| logs.iter().cloned().collect::<Vec<_>>().join("\n"))
+        .unwrap_or_default()
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn clear_stdio_evidence_log() {
+    if let Ok(mut logs) = STDIO_EVIDENCE_LOGS.lock() {
+        logs.clear();
+    }
+    STDIO_EVIDENCE_LOG_SEQ.store(0, Ordering::Relaxed);
+    STDIO_EVIDENCE_LOG_DROP_COUNT.store(0, Ordering::Relaxed);
+}
+
+#[cfg(feature = "conformance-testing")]
+pub mod conformance_testing {
+    use std::sync::atomic::Ordering;
+
+    #[must_use]
+    pub fn export_stdio_evidence_jsonl() -> String {
+        super::export_stdio_evidence_jsonl()
+    }
+
+    pub fn clear_stdio_evidence_log() {
+        super::clear_stdio_evidence_log();
+    }
+
+    #[must_use]
+    pub fn dropped_stdio_evidence_events() -> u64 {
+        super::STDIO_EVIDENCE_LOG_DROP_COUNT.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn emit_foreign_adoption_via_host_tmpfile() -> String {
+        super::clear_stdio_evidence_log();
+
+        // Use guarded stdio_abi functions instead of direct libc calls
+        unsafe {
+            let stream = super::stdio_abi::tmpfile();
+            if stream.is_null() {
+                return String::new();
+            }
+            let jsonl = super::export_stdio_evidence_jsonl();
+            let _ = super::stdio_abi::fclose(stream);
+            jsonl
+        }
+    }
+}
+
 /// Adopt a foreign FILE* into our native registry.
 ///
 /// Extracts the fd from the foreign FILE* at offset 0x70 (_fileno), creates a
@@ -1475,6 +1585,7 @@ pub unsafe fn adopt_foreign_file(foreign_fp: *mut c_void) -> *mut NativeFile {
     if foreign_fp.is_null() {
         return ptr::null_mut();
     }
+    let start = std::time::Instant::now();
 
     // Check if already adopted
     if let Some(slot) = lookup_adopted_foreign(foreign_fp) {
@@ -1537,9 +1648,8 @@ pub unsafe fn adopt_foreign_file(foreign_fp: *mut c_void) -> *mut NativeFile {
             .unwrap_or_else(|e| e.into_inner());
         map.insert(foreign_fp as usize, slot);
     }
-
-    // TODO: Emit FOREIGN_FILE_ADOPTED evidence record (bd-9chy.4)
-    // evidence_ring::emit(EvidenceRecord::ForeignFileAdopted { foreign_fp, native_ptr, fd, slot });
+    let elapsed_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+    log_foreign_file_adopted(foreign_fp, native_ptr, fd, elapsed_ns);
 
     native_ptr
 }

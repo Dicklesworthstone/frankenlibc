@@ -20,9 +20,11 @@ use frankenlibc_abi::glibc_internal_abi::getdate_err;
 use frankenlibc_abi::glibc_internal_abi::setaliasent as abi_setaliasent;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
-    access, alarm, chdir, chmod, chown, close, creat, eaccess, endaliasent, ether_line, euidaccess,
-    faccessat, fchmod, fchown, fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock,
-    fstat, fsync, ftruncate, gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname,
+    FTSENT as AbiFtsEnt, access, alarm, chdir, chmod, chown, close, creat, eaccess, endaliasent,
+    ether_line, euidaccess, faccessat, fchmod, fchown, fdatasync, fgetgrent_r, fgetpwent_r,
+    fgetspent, fgetspent_r, flock, fstat, fsync, ftruncate, fts_children as abi_fts_children,
+    fts_close as abi_fts_close, fts_open as abi_fts_open, fts_read as abi_fts_read,
+    fts_set as abi_fts_set, gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname,
     getaliasbyname_r, getaliasent, getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid,
     getfsent, getfsfile, getfsspec, getgid, gethostbyname2, gethostbyname2_r, gethostent_r,
     gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid,
@@ -33,7 +35,8 @@ use frankenlibc_abi::unistd_abi::{
     process_vm_writev, read, readlink, rename, rmdir, semctl, semop, setfsent, sethostent,
     setnetent, setnetgrent, setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset,
     sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname,
-    unlink, updwtmp, updwtmpx, usleep, utmpname, write,
+    unlink, updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree,
+    write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -123,6 +126,359 @@ fn isatty_regular_file_sets_enotty_like_host() {
         err == libc::ENOTTY || err == libc::EINVAL,
         "non-terminal fd should report ENOTTY-compatible errno, got {err}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// fts_* parity tests
+// ---------------------------------------------------------------------------
+
+const TEST_FTS_PHYSICAL: c_int = 0x0010;
+const TEST_FTS_NAMEONLY: c_int = 0x0100;
+const TEST_FTS_AGAIN: c_int = 1;
+const TEST_FTS_FOLLOW: c_int = 2;
+const TEST_FTS_SKIP: c_int = 4;
+const TEST_FTS_DP: u16 = 6;
+
+unsafe extern "C" {
+    fn fts_open(
+        path_argv: *const *mut c_char,
+        options: c_int,
+        compar: Option<
+            unsafe extern "C" fn(*const *const AbiFtsEnt, *const *const AbiFtsEnt) -> c_int,
+        >,
+    ) -> *mut c_void;
+    fn fts_read(ftsp: *mut c_void) -> *mut AbiFtsEnt;
+    fn fts_children(ftsp: *mut c_void, instr: c_int) -> *mut AbiFtsEnt;
+    fn fts_set(ftsp: *mut c_void, f: *mut AbiFtsEnt, instr: c_int) -> c_int;
+    fn fts_close(ftsp: *mut c_void) -> c_int;
+}
+
+fn temp_path_buf(tag: &str) -> std::path::PathBuf {
+    use std::os::unix::ffi::OsStringExt;
+
+    let path = temp_path(tag);
+    std::path::PathBuf::from(std::ffi::OsString::from_vec(path.into_bytes()))
+}
+
+fn make_fts_argv(paths: &[std::path::PathBuf]) -> (Vec<CString>, Vec<*mut c_char>) {
+    let roots = paths
+        .iter()
+        .map(|path| CString::new(path.as_os_str().as_bytes()).unwrap())
+        .collect::<Vec<_>>();
+    let mut argv = roots
+        .iter()
+        .map(|path| path.as_ptr() as *mut c_char)
+        .collect::<Vec<_>>();
+    argv.push(std::ptr::null_mut());
+    (roots, argv)
+}
+
+fn clear_errno() {
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+}
+
+fn fts_names(mut entry: *mut AbiFtsEnt) -> Vec<String> {
+    let mut names = Vec::new();
+    while !entry.is_null() {
+        names.push(
+            unsafe { std::ffi::CStr::from_ptr((*entry).fts_name.as_ptr()) }
+                .to_string_lossy()
+                .into_owned(),
+        );
+        entry = unsafe { (*entry).fts_link };
+    }
+    names
+}
+
+fn fts_path(entry: *mut AbiFtsEnt) -> String {
+    unsafe { std::ffi::CStr::from_ptr((*entry).fts_path) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[test]
+fn fts_open_zero_mode_and_empty_roots_match_host_behavior() {
+    let root = temp_path_buf("fts_open");
+    std::fs::create_dir_all(&root).unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        clear_errno();
+        let host = fts_open(argv.as_ptr(), 0, None);
+        let host_errno = errno_value();
+
+        clear_errno();
+        let abi = abi_fts_open(argv.as_ptr() as *const *const c_char, 0, None);
+        let abi_errno = errno_value();
+
+        assert_eq!(abi.is_null(), host.is_null());
+        assert_eq!(abi_errno, host_errno, "zero-mode errno should match host");
+        if !host.is_null() {
+            assert_eq!(fts_close(host), 0);
+        }
+        if !abi.is_null() {
+            assert_eq!(abi_fts_close(abi), 0);
+        }
+    }
+
+    let empty = CString::new("").unwrap();
+    let empty_argv = [empty.as_ptr() as *mut c_char, std::ptr::null_mut()];
+    unsafe {
+        clear_errno();
+        let host = fts_open(empty_argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let host_errno = errno_value();
+
+        clear_errno();
+        let abi = abi_fts_open(
+            empty_argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let abi_errno = errno_value();
+
+        assert!(host.is_null());
+        assert!(abi.is_null());
+        assert_eq!(abi_errno, host_errno, "empty-root errno should match host");
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn fts_children_before_first_read_matches_host_root_listing() {
+    let dir_root = temp_path_buf("fts_roots_dir");
+    let file_root = temp_path_buf("fts_roots_file");
+    std::fs::create_dir_all(&dir_root).unwrap();
+    std::fs::write(&file_root, b"root").unwrap();
+    let (_roots, argv) = make_fts_argv(&[dir_root.clone(), file_root.clone()]);
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        assert!(!host.is_null());
+        assert!(!abi.is_null());
+
+        let host_names = fts_names(fts_children(host, 0));
+        let abi_names = fts_names(abi_fts_children(abi, 0));
+        assert_eq!(abi_names, host_names);
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_dir_all(&dir_root);
+    let _ = std::fs::remove_file(&file_root);
+}
+
+#[test]
+fn fts_children_directory_listing_and_nameonly_match_host() {
+    let root = temp_path_buf("fts_children_dir");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("file.txt"), b"file").unwrap();
+    std::os::unix::fs::symlink(root.join("file.txt"), root.join("link.txt")).unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+
+        let host_root = fts_read(host);
+        let abi_root = abi_fts_read(abi);
+        assert!(!host_root.is_null());
+        assert!(!abi_root.is_null());
+
+        let host_names = fts_names(fts_children(host, 0));
+        let abi_names = fts_names(abi_fts_children(abi, 0));
+        assert_eq!(abi_names, host_names);
+
+        let host_repeat = fts_names(fts_children(host, 0));
+        let abi_repeat = fts_names(abi_fts_children(abi, 0));
+        assert_eq!(abi_repeat, host_repeat);
+
+        let host_nameonly = fts_names(fts_children(host, TEST_FTS_NAMEONLY));
+        let abi_nameonly = fts_names(abi_fts_children(abi, TEST_FTS_NAMEONLY));
+        assert_eq!(abi_nameonly, host_nameonly);
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn fts_children_on_nondirectory_matches_host_null_semantics() {
+    let root = temp_path_buf("fts_children_file");
+    std::fs::write(&root, b"plain").unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        assert!(!fts_read(host).is_null());
+        assert!(!abi_fts_read(abi).is_null());
+
+        clear_errno();
+        let host_children = fts_children(host, 0);
+        let host_errno = errno_value();
+
+        clear_errno();
+        let abi_children = abi_fts_children(abi, 0);
+        let abi_errno = errno_value();
+
+        assert!(host_children.is_null());
+        assert!(abi_children.is_null());
+        assert_eq!(abi_errno, host_errno);
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_file(&root);
+}
+
+#[test]
+fn fts_set_again_on_file_root_matches_host() {
+    let root = temp_path_buf("fts_again");
+    std::fs::write(&root, b"again").unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let host_entry = fts_read(host);
+        let abi_entry = abi_fts_read(abi);
+        assert!(!host_entry.is_null());
+        assert!(!abi_entry.is_null());
+
+        assert_eq!(fts_set(host, host_entry, TEST_FTS_AGAIN), 0);
+        assert_eq!(abi_fts_set(abi, abi_entry, TEST_FTS_AGAIN), 0);
+
+        let host_again = fts_read(host);
+        let abi_again = abi_fts_read(abi);
+        assert!(!host_again.is_null());
+        assert!(!abi_again.is_null());
+        assert_eq!((*abi_again).fts_info, (*host_again).fts_info);
+        assert_eq!(fts_path(abi_again), fts_path(host_again));
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_file(&root);
+}
+
+#[test]
+fn fts_set_follow_on_current_symlink_matches_host() {
+    let root = temp_path_buf("fts_follow_link");
+    let target = temp_path_buf("fts_follow_target");
+    std::fs::write(&target, b"target").unwrap();
+    std::os::unix::fs::symlink(&target, &root).unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let host_symlink = fts_read(host);
+        let abi_symlink = abi_fts_read(abi);
+        assert!(!host_symlink.is_null());
+        assert!(!abi_symlink.is_null());
+
+        assert_eq!(fts_set(host, host_symlink, TEST_FTS_FOLLOW), 0);
+        assert_eq!(abi_fts_set(abi, abi_symlink, TEST_FTS_FOLLOW), 0);
+
+        let host_followed = fts_read(host);
+        let abi_followed = abi_fts_read(abi);
+        assert!(!host_followed.is_null());
+        assert!(!abi_followed.is_null());
+        assert_eq!((*abi_followed).fts_info, (*host_followed).fts_info);
+        assert_eq!(fts_path(abi_followed), fts_path(host_followed));
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_file(&root);
+    let _ = std::fs::remove_file(&target);
+}
+
+#[test]
+fn fts_set_skip_matches_host_and_invalid_instr_sets_einval() {
+    let root = temp_path_buf("fts_skip");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("child.txt"), b"child").unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    unsafe {
+        let invalid = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let invalid_root = abi_fts_read(invalid);
+        assert!(!invalid_root.is_null());
+
+        clear_errno();
+        let abi_invalid = abi_fts_set(invalid, invalid_root, 999);
+        let abi_invalid_errno = errno_value();
+        assert_eq!(abi_invalid, -1);
+        assert_eq!(abi_invalid_errno, libc::EINVAL);
+        assert_eq!(abi_fts_close(invalid), 0);
+
+        let host = fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let abi = abi_fts_open(
+            argv.as_ptr() as *const *const c_char,
+            TEST_FTS_PHYSICAL,
+            None,
+        );
+        let host_root = fts_read(host);
+        let abi_root = abi_fts_read(abi);
+        assert!(!host_root.is_null());
+        assert!(!abi_root.is_null());
+
+        assert_eq!(fts_set(host, host_root, TEST_FTS_SKIP), 0);
+        assert_eq!(abi_fts_set(abi, abi_root, TEST_FTS_SKIP), 0);
+
+        let host_next = fts_read(host);
+        let abi_next = abi_fts_read(abi);
+        assert!(!host_next.is_null());
+        assert!(!abi_next.is_null());
+        assert_eq!((*abi_next).fts_info, (*host_next).fts_info);
+        assert_eq!((*abi_next).fts_info, TEST_FTS_DP);
+        assert_eq!(fts_path(abi_next), fts_path(host_next));
+
+        let host_end = fts_read(host);
+        let abi_end = abi_fts_read(abi);
+        assert!(host_end.is_null());
+        assert!(abi_end.is_null());
+
+        assert_eq!(fts_close(host), 0);
+        assert_eq!(abi_fts_close(abi), 0);
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 // ---------------------------------------------------------------------------
@@ -463,6 +819,72 @@ unsafe fn load_host_symbol(name: &str) -> Option<*mut c_void> {
     if ptr.is_null() { None } else { Some(ptr) }
 }
 
+type WordexpFn = unsafe extern "C" fn(*const c_char, *mut c_void, c_int) -> c_int;
+type WordfreeFn = unsafe extern "C" fn(*mut c_void);
+
+const TEST_WRDE_NOCMD: c_int = 1 << 2;
+const TEST_WRDE_UNDEF: c_int = 1 << 5;
+
+#[repr(C)]
+struct WordexpBuf {
+    we_wordc: usize,
+    we_wordv: *mut *mut c_char,
+    we_offs: usize,
+}
+
+unsafe fn load_host_wordexp_symbols() -> Option<(WordexpFn, WordfreeFn)> {
+    let wordexp_ptr = unsafe { load_host_symbol("wordexp") }?;
+    let wordfree_ptr = unsafe { load_host_symbol("wordfree") }?;
+    Some(unsafe {
+        (
+            std::mem::transmute::<*mut c_void, WordexpFn>(wordexp_ptr),
+            std::mem::transmute::<*mut c_void, WordfreeFn>(wordfree_ptr),
+        )
+    })
+}
+
+unsafe fn collect_wordexp_words(buf: &WordexpBuf) -> Vec<String> {
+    let mut words = Vec::new();
+    if buf.we_wordv.is_null() {
+        return words;
+    }
+    for idx in 0..buf.we_wordc {
+        let word_ptr = unsafe { *buf.we_wordv.add(buf.we_offs + idx) };
+        if word_ptr.is_null() {
+            continue;
+        }
+        words.push(
+            unsafe { std::ffi::CStr::from_ptr(word_ptr) }
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    words
+}
+
+unsafe fn run_wordexp_case(
+    wordexp_fn: WordexpFn,
+    wordfree_fn: WordfreeFn,
+    input: &CString,
+    flags: c_int,
+) -> (c_int, Vec<String>) {
+    let mut buf = WordexpBuf {
+        we_wordc: 0,
+        we_wordv: std::ptr::null_mut(),
+        we_offs: 0,
+    };
+    let rc = unsafe { wordexp_fn(input.as_ptr(), (&mut buf as *mut WordexpBuf).cast(), flags) };
+    let words = if rc == 0 {
+        unsafe { collect_wordexp_words(&buf) }
+    } else {
+        Vec::new()
+    };
+    if !buf.we_wordv.is_null() {
+        unsafe { wordfree_fn((&mut buf as *mut WordexpBuf).cast()) };
+    }
+    (rc, words)
+}
+
 #[test]
 fn fgetpwent_reads_etc_passwd() {
     let path = b"/etc/passwd\0";
@@ -500,6 +922,70 @@ fn fgetpwent_reads_etc_passwd() {
     );
 
     unsafe { fclose(stream) };
+}
+
+#[test]
+fn wordexp_badchars_respect_quote_and_escape_context_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for (input, flags) in [
+        ("'a;b'", 0),
+        ("\"a;b\"", 0),
+        ("a\\;b", 0),
+        ("(", 0),
+        ("{", 0),
+    ] {
+        let input = CString::new(input).unwrap();
+        let host = unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, flags) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, flags) };
+        assert_eq!(abi, host, "wordexp mismatch for input {:?}", input);
+    }
+}
+
+#[test]
+fn wordexp_nocmd_respects_quote_context_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for input in ["'$(echo hi)'", "'`echo hi`'", "\"$(echo hi)\""] {
+        let input = CString::new(input).unwrap();
+        let host =
+            unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, TEST_WRDE_NOCMD) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, TEST_WRDE_NOCMD) };
+        assert_eq!(
+            abi, host,
+            "wordexp WRDE_NOCMD mismatch for input {:?}",
+            input
+        );
+    }
+}
+
+#[test]
+fn wordexp_undef_respects_single_and_double_quote_context_like_host() {
+    let Some((host_wordexp, host_wordfree)) = (unsafe { load_host_wordexp_symbols() }) else {
+        return;
+    };
+
+    for input in [
+        "'$FRANKENLIBC_WORDEXP_UNSET_42'",
+        "\"$FRANKENLIBC_WORDEXP_UNSET_42\"",
+    ] {
+        unsafe {
+            libc::unsetenv(c"FRANKENLIBC_WORDEXP_UNSET_42".as_ptr());
+        }
+        let input = CString::new(input).unwrap();
+        let host =
+            unsafe { run_wordexp_case(host_wordexp, host_wordfree, &input, TEST_WRDE_UNDEF) };
+        let abi = unsafe { run_wordexp_case(abi_wordexp, abi_wordfree, &input, TEST_WRDE_UNDEF) };
+        assert_eq!(
+            abi, host,
+            "wordexp WRDE_UNDEF mismatch for input {:?}",
+            input
+        );
+    }
 }
 
 #[test]

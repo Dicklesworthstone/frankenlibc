@@ -664,8 +664,13 @@ pub unsafe extern "C" fn raise(signum: c_int) -> c_int {
         return -1;
     }
 
+    // Linux/glibc `raise(3)` targets the calling thread, not an arbitrary
+    // process thread. Using tgkill keeps delivery synchronous enough for
+    // same-thread handler expectations and matches host behavior under the
+    // multithreaded test harness.
     let pid = syscall::sys_getpid();
-    let rc = match raw_syscall::sys_kill(pid, signum) {
+    let tid = raw_syscall::sys_gettid();
+    let rc = match raw_syscall::sys_tgkill(pid, tid, signum) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

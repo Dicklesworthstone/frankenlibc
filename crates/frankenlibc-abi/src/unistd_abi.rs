@@ -4517,30 +4517,118 @@ struct WordexpT {
     we_offs: usize,
 }
 
-/// Check if the input contains command substitution patterns.
-fn has_command_substitution(s: &[u8]) -> bool {
+struct WordexpSyntaxScan {
+    has_bad_char: bool,
+    has_command_substitution: bool,
+}
+
+/// Scan `wordexp` input while honoring shell quoting and escaping context.
+fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
+    let mut scan = WordexpSyntaxScan {
+        has_bad_char: false,
+        has_command_substitution: false,
+    };
     let mut i = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut escaped = false;
+    let mut parameter_brace_depth = 0usize;
+
     while i < s.len() {
-        if s[i] == b'`' {
-            return true;
+        let byte = s[i];
+        if escaped {
+            escaped = false;
+            i += 1;
+            continue;
         }
-        if s[i] == b'$' && i + 1 < s.len() && s[i + 1] == b'(' {
-            return true;
+        if in_single_quote {
+            if byte == b'\'' {
+                in_single_quote = false;
+            }
+            i += 1;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            i += 1;
+            continue;
+        }
+        if byte == b'\'' && !in_double_quote {
+            in_single_quote = true;
+            i += 1;
+            continue;
+        }
+        if in_double_quote {
+            if byte == b'"' {
+                in_double_quote = false;
+                i += 1;
+                continue;
+            }
+            if byte == b'`' {
+                scan.has_command_substitution = true;
+                return scan;
+            }
+            if byte == b'$' && i + 1 < s.len() {
+                match s[i + 1] {
+                    b'(' => {
+                        scan.has_command_substitution = true;
+                        return scan;
+                    }
+                    b'{' => {
+                        parameter_brace_depth += 1;
+                        i += 2;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            if parameter_brace_depth > 0 && byte == b'}' {
+                parameter_brace_depth -= 1;
+            }
+            i += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_double_quote = !in_double_quote;
+            i += 1;
+            continue;
+        }
+        if byte == b'`' {
+            scan.has_command_substitution = true;
+            return scan;
+        }
+        if byte == b'$' && i + 1 < s.len() {
+            match s[i + 1] {
+                b'(' => {
+                    scan.has_command_substitution = true;
+                    return scan;
+                }
+                b'{' => {
+                    parameter_brace_depth += 1;
+                    i += 2;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        if parameter_brace_depth > 0 {
+            if byte == b'}' {
+                parameter_brace_depth -= 1;
+            }
+            i += 1;
+            continue;
+        }
+        if matches!(
+            byte,
+            b'|' | b'&' | b';' | b'<' | b'>' | b'\n' | b'(' | b')' | b'{' | b'}'
+        ) {
+            scan.has_bad_char = true;
+            return scan;
         }
         i += 1;
     }
-    false
-}
 
-/// Check for unquoted special characters that POSIX says are errors.
-fn has_bad_chars(s: &[u8]) -> bool {
-    for &b in s {
-        if b == b'|' || b == b'&' || b == b';' || b == b'<' || b == b'>' || b == b'\n' {
-            return true;
-        }
-        // Opening paren/brace without $ are bad chars
-    }
-    false
+    scan
 }
 
 /// Perform tilde expansion on a word.
@@ -4669,13 +4757,15 @@ pub unsafe extern "C" fn wordexp(
 
     let input_bytes = input.as_bytes();
 
+    let syntax_scan = scan_wordexp_syntax(input_bytes);
+
     // Check for bad characters
-    if has_bad_chars(input_bytes) {
+    if syntax_scan.has_bad_char {
         return WRDE_BADCHAR;
     }
 
     // Check for command substitution
-    if has_command_substitution(input_bytes) {
+    if syntax_scan.has_command_substitution {
         if (flags & WRDE_NOCMD) != 0 {
             return WRDE_CMDSUB;
         }
@@ -12172,33 +12262,62 @@ pub unsafe extern "C" fn bind_textdomain_codeset(
 // Batch: FTS (file tree walk) — Implemented
 // ===========================================================================
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 /// Internal FTS stream state.
 struct FtsStream {
-    /// Stack of directories to visit.
+    /// FIFO traversal queue. Directory children are pushed to the front so each
+    /// root is exhausted before the next root begins.
     queue: VecDeque<FtsEntryInternal>,
-    /// Current entry (returned to caller).
+    /// Root paths passed to fts_open for the pre-read fts_children() case.
+    roots: Vec<std::path::PathBuf>,
+    /// Current entry returned to the caller.
     current: Option<FtsEntryOwned>,
+    /// Cached child list returned by the most recent fts_children() call.
+    children_cache: Vec<FtsEntryOwned>,
     /// Options bitmask.
     options: c_int,
+    /// Deferred revisit triggered by fts_set(..., FTS_AGAIN/FOLLOW).
+    pending_revisit: Option<FtsEntryInternal>,
+    /// Deferred directory expansion. Children (and postorder revisit) are
+    /// inserted on the next fts_read() after the preorder return.
+    pending_children: Option<FtsEntryInternal>,
+    /// One-shot controls installed via fts_set() on entries returned by
+    /// fts_children().
+    pending_controls: HashMap<std::path::PathBuf, u16>,
+    /// Whether fts_read() has been called at least once.
+    started: bool,
     /// Comparison function (reserved for future use).
     _compar: Option<unsafe extern "C" fn(*const *const FTSENT, *const *const FTSENT) -> c_int>,
 }
 
 /// Internal entry representation.
+#[derive(Clone)]
 struct FtsEntryInternal {
     path: std::path::PathBuf,
     level: i16,
+    follow_symlink: bool,
+    instr: u16,
+    visit: FtsVisit,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FtsVisit {
+    Preorder,
+    Postorder,
 }
 
 /// Owned FTSENT for returning to caller.
-/// Stored as Box so its address is stable across fts_read calls.
+/// The name is stored inline in a boxed flexible-array payload so callers can
+/// treat `fts_name` exactly like glibc's trailing storage.
 struct FtsEntryOwned {
-    ftsent: FTSENT,
-    path_buf: std::ffi::CString,
-    name_buf: std::ffi::CString,
-    stat_buf: libc::stat,
+    raw: Box<[u8]>,
+    path: std::path::PathBuf,
+    _path_buf: CString,
+    _stat_buf: Box<libc::stat>,
+    level: i16,
+    follow_symlink: bool,
+    visit: FtsVisit,
 }
 
 unsafe impl Send for FtsEntryOwned {}
@@ -12232,13 +12351,332 @@ pub struct FTSENT {
 
 // FTS_* info constants
 const FTS_D: u16 = 1; // preorder directory
+const FTS_DNR: u16 = 4; // unreadable directory
+const FTS_DP: u16 = 6; // postorder directory
 const FTS_F: u16 = 8; // regular file
+const FTS_NSOK: u16 = 11; // no stat requested
 const FTS_SL: u16 = 12; // symlink
+const FTS_SLNONE: u16 = 13; // broken symlink
 const FTS_DEFAULT: u16 = 3; // anything else
 const FTS_NS: u16 = 10; // no stat info
 
 // FTS option flags
+const FTS_COMFOLLOW: c_int = 0x0001;
+const FTS_LOGICAL: c_int = 0x0002;
+const FTS_NOSTAT: c_int = 0x0008;
 const FTS_PHYSICAL: c_int = 0x0010;
+const FTS_OPTIONMASK: c_int = 0x00ff;
+
+// fts_children() option
+const FTS_NAMEONLY: c_int = 0x0100;
+
+// fts_set() instructions
+const FTS_AGAIN: u16 = 1;
+const FTS_FOLLOW: u16 = 2;
+const FTS_NOINSTR: u16 = 3;
+const FTS_SKIP: u16 = 4;
+
+fn fts_path_bytes(path: &std::path::Path) -> &[u8] {
+    use std::os::unix::ffi::OsStrExt;
+
+    path.as_os_str().as_bytes()
+}
+
+fn fts_path_to_cstring(path: &std::path::Path) -> Result<CString, c_int> {
+    CString::new(fts_path_bytes(path)).map_err(|_| errno::EINVAL)
+}
+
+fn fts_name_bytes(path: &std::path::Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+
+    path.file_name()
+        .map(|name| name.as_bytes().to_vec())
+        .filter(|bytes| !bytes.is_empty())
+        .unwrap_or_else(|| fts_path_bytes(path).to_vec())
+}
+
+fn fts_controlled_entry(control: u16, mut entry: FtsEntryInternal) -> FtsEntryInternal {
+    match control {
+        FTS_FOLLOW => {
+            entry.follow_symlink = true;
+            entry.instr = FTS_FOLLOW;
+        }
+        FTS_SKIP => {
+            entry.instr = FTS_SKIP;
+        }
+        _ => {
+            entry.instr = FTS_NOINSTR;
+        }
+    }
+    entry
+}
+
+fn fts_stat_entry(
+    path: &std::path::Path,
+    options: c_int,
+    follow_symlink: bool,
+) -> (libc::stat, u16, c_int) {
+    let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
+    if options & FTS_NOSTAT != 0 {
+        return (stat_buf, FTS_NSOK, 0);
+    }
+
+    let path_cstr = match fts_path_to_cstring(path) {
+        Ok(path_cstr) => path_cstr,
+        Err(err) => return (stat_buf, FTS_NS, err),
+    };
+
+    let primary_flags = if follow_symlink {
+        0
+    } else if options & FTS_PHYSICAL != 0 {
+        libc::AT_SYMLINK_NOFOLLOW
+    } else {
+        0
+    };
+
+    let primary = unsafe {
+        syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            path_cstr.as_ptr() as *const u8,
+            &mut stat_buf as *mut libc::stat as *mut u8,
+            primary_flags,
+        )
+    };
+
+    if primary.is_ok() {
+        let file_type = stat_buf.st_mode & libc::S_IFMT;
+        let info = if file_type == libc::S_IFDIR {
+            FTS_D
+        } else if file_type == libc::S_IFREG {
+            FTS_F
+        } else if file_type == libc::S_IFLNK {
+            FTS_SL
+        } else {
+            FTS_DEFAULT
+        };
+        return (stat_buf, info, 0);
+    }
+
+    let stat_errno = primary.err().unwrap_or(errno::EIO);
+    if !follow_symlink && options & FTS_PHYSICAL == 0 {
+        let mut lstat_buf: libc::stat = unsafe { std::mem::zeroed() };
+        let lstat_result = unsafe {
+            syscall::sys_newfstatat(
+                libc::AT_FDCWD,
+                path_cstr.as_ptr() as *const u8,
+                &mut lstat_buf as *mut libc::stat as *mut u8,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if lstat_result.is_ok() && (lstat_buf.st_mode & libc::S_IFMT) == libc::S_IFLNK {
+            return (lstat_buf, FTS_SLNONE, 0);
+        }
+    }
+
+    (stat_buf, FTS_NS, stat_errno)
+}
+
+impl FtsEntryOwned {
+    fn new(
+        entry: &FtsEntryInternal,
+        options: c_int,
+        parent: *mut FTSENT,
+        name_only: bool,
+    ) -> Result<Self, c_int> {
+        let path_buf = fts_path_to_cstring(&entry.path)?;
+        let name = if entry.level == 0 {
+            fts_path_bytes(&entry.path).to_vec()
+        } else {
+            fts_name_bytes(&entry.path)
+        };
+        let mut inline_name = name;
+        inline_name.push(0);
+
+        let extra_name_bytes = inline_name.len().saturating_sub(1);
+        let total_size = std::mem::size_of::<FTSENT>() + extra_name_bytes;
+        let mut raw = vec![0u8; total_size].into_boxed_slice();
+        let raw_ptr = raw.as_mut_ptr() as *mut FTSENT;
+
+        let (stat_value, mut info, stat_errno) = if entry.visit == FtsVisit::Postorder {
+            let (stat_value, _info, stat_errno) =
+                fts_stat_entry(&entry.path, options, entry.follow_symlink);
+            (stat_value, FTS_DP, stat_errno)
+        } else {
+            fts_stat_entry(&entry.path, options, entry.follow_symlink)
+        };
+
+        if name_only {
+            info = FTS_NSOK;
+        }
+
+        let mut stat_buf = Box::new(stat_value);
+
+        unsafe {
+            (*raw_ptr).fts_parent = parent;
+            (*raw_ptr).fts_path = path_buf.as_ptr() as *mut c_char;
+            (*raw_ptr).fts_accpath = (*raw_ptr).fts_path;
+            (*raw_ptr).fts_pathlen = path_buf.as_bytes().len() as u16;
+            (*raw_ptr).fts_namelen = inline_name.len().saturating_sub(1) as u16;
+            (*raw_ptr).fts_level = entry.level;
+            (*raw_ptr).fts_info = info;
+            (*raw_ptr).fts_instr = if entry.instr == 0 {
+                FTS_NOINSTR
+            } else {
+                entry.instr
+            };
+            (*raw_ptr).fts_errno = stat_errno;
+            (*raw_ptr).fts_ino = stat_buf.st_ino;
+            (*raw_ptr).fts_dev = stat_buf.st_dev;
+            (*raw_ptr).fts_nlink = stat_buf.st_nlink;
+            (*raw_ptr).fts_statp = if name_only {
+                std::ptr::null_mut()
+            } else {
+                &mut *stat_buf
+            };
+            std::ptr::copy_nonoverlapping(
+                inline_name.as_ptr(),
+                (*raw_ptr).fts_name.as_mut_ptr() as *mut u8,
+                inline_name.len(),
+            );
+        }
+
+        Ok(Self {
+            raw,
+            path: entry.path.clone(),
+            _path_buf: path_buf,
+            _stat_buf: stat_buf,
+            level: entry.level,
+            follow_symlink: entry.follow_symlink,
+            visit: entry.visit,
+        })
+    }
+
+    fn entry(&self) -> &FTSENT {
+        unsafe { &*(self.raw.as_ptr() as *const FTSENT) }
+    }
+
+    fn entry_mut(&mut self) -> &mut FTSENT {
+        unsafe { &mut *(self.raw.as_mut_ptr() as *mut FTSENT) }
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut FTSENT {
+        self.entry_mut() as *mut FTSENT
+    }
+
+    fn as_ptr(&self) -> *const FTSENT {
+        self.entry() as *const FTSENT
+    }
+
+    fn same_ptr(&self, ptr: *mut FTSENT) -> bool {
+        std::ptr::eq(self.as_ptr(), ptr as *const FTSENT)
+    }
+
+    fn internal(&self) -> FtsEntryInternal {
+        FtsEntryInternal {
+            path: self.path.clone(),
+            level: self.level,
+            follow_symlink: self.follow_symlink,
+            instr: self.entry().fts_instr,
+            visit: self.visit,
+        }
+    }
+}
+
+fn fts_read_dir_paths(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>, c_int> {
+    let mut paths = Vec::new();
+    let entries =
+        std::fs::read_dir(path).map_err(|err| err.raw_os_error().unwrap_or(errno::EIO))?;
+    for child in entries {
+        let child = child.map_err(|err| err.raw_os_error().unwrap_or(errno::EIO))?;
+        paths.push(child.path());
+    }
+    Ok(paths)
+}
+
+fn fts_expand_pending_children(stream: &mut FtsStream) {
+    let Some(dir_entry) = stream.pending_children.take() else {
+        return;
+    };
+
+    let postorder = FtsEntryInternal {
+        path: dir_entry.path.clone(),
+        level: dir_entry.level,
+        follow_symlink: dir_entry.follow_symlink,
+        instr: FTS_NOINSTR,
+        visit: FtsVisit::Postorder,
+    };
+    stream.queue.push_front(postorder);
+
+    if dir_entry.instr == FTS_SKIP {
+        return;
+    }
+
+    let children = match fts_read_dir_paths(&dir_entry.path) {
+        Ok(children) => children,
+        Err(err) => {
+            if let Some(current) = stream.current.as_mut()
+                && current.path == dir_entry.path
+                && current.visit == FtsVisit::Preorder
+            {
+                current.entry_mut().fts_info = FTS_DNR;
+                current.entry_mut().fts_errno = err;
+            }
+            unsafe { set_abi_errno(err) };
+            return;
+        }
+    };
+
+    for child in children.into_iter().rev() {
+        let control = stream
+            .pending_controls
+            .remove(&child)
+            .unwrap_or(FTS_NOINSTR);
+        stream.queue.push_front(fts_controlled_entry(
+            control,
+            FtsEntryInternal {
+                path: child,
+                level: dir_entry.level + 1,
+                follow_symlink: false,
+                instr: FTS_NOINSTR,
+                visit: FtsVisit::Preorder,
+            },
+        ));
+    }
+}
+
+fn fts_build_children_list(
+    stream: &mut FtsStream,
+    entries: Vec<FtsEntryInternal>,
+    parent: *mut FTSENT,
+    name_only: bool,
+) -> *mut FTSENT {
+    stream.children_cache.clear();
+    for entry in entries {
+        match FtsEntryOwned::new(&entry, stream.options, parent, name_only) {
+            Ok(owned) => stream.children_cache.push(owned),
+            Err(err) => {
+                unsafe { set_abi_errno(err) };
+                stream.children_cache.clear();
+                return std::ptr::null_mut();
+            }
+        }
+    }
+
+    for index in 0..stream.children_cache.len() {
+        let next = if index + 1 < stream.children_cache.len() {
+            stream.children_cache[index + 1].as_mut_ptr()
+        } else {
+            std::ptr::null_mut()
+        };
+        stream.children_cache[index].entry_mut().fts_link = next;
+    }
+
+    stream
+        .children_cache
+        .first_mut()
+        .map(FtsEntryOwned::as_mut_ptr)
+        .unwrap_or(std::ptr::null_mut())
+}
 
 /// `fts_open` — open a file hierarchy for traversal.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -12248,10 +12686,18 @@ pub unsafe extern "C" fn fts_open(
     compar: Option<unsafe extern "C" fn(*const *const FTSENT, *const *const FTSENT) -> c_int>,
 ) -> *mut c_void {
     if path_argv.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    if options & !FTS_OPTIONMASK != 0 || (options & FTS_PHYSICAL != 0 && options & FTS_LOGICAL != 0)
+    {
+        unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     }
 
     let mut queue = VecDeque::new();
+    let mut roots = Vec::new();
 
     // Collect initial paths
     let mut i = 0;
@@ -12261,19 +12707,39 @@ pub unsafe extern "C" fn fts_open(
             break;
         }
         let cstr = unsafe { CStr::from_ptr(path_ptr) };
-        if let Ok(s) = cstr.to_str() {
-            queue.push_back(FtsEntryInternal {
-                path: std::path::PathBuf::from(s),
-                level: 0,
-            });
+        if cstr.to_bytes().is_empty() {
+            unsafe { set_abi_errno(0) };
+            return std::ptr::null_mut();
         }
+        use std::os::unix::ffi::OsStringExt;
+        let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(cstr.to_bytes().to_vec()));
+        let follow_root = options & FTS_COMFOLLOW != 0;
+        roots.push(path.clone());
+        queue.push_back(FtsEntryInternal {
+            path,
+            level: 0,
+            follow_symlink: follow_root,
+            instr: FTS_NOINSTR,
+            visit: FtsVisit::Preorder,
+        });
         i += 1;
+    }
+
+    if roots.is_empty() {
+        unsafe { set_abi_errno(errno::ENOENT) };
+        return std::ptr::null_mut();
     }
 
     let stream = Box::new(FtsStream {
         queue,
+        roots,
         current: None,
+        children_cache: Vec::new(),
         options,
+        pending_revisit: None,
+        pending_children: None,
+        pending_controls: HashMap::new(),
+        started: false,
         _compar: compar,
     });
 
@@ -12284,113 +12750,211 @@ pub unsafe extern "C" fn fts_open(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
     if ftsp.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
     }
     let stream = unsafe { &mut *(ftsp as *mut FtsStream) };
+    stream.started = true;
 
-    let entry = match stream.queue.pop_front() {
+    if stream.pending_revisit.is_none() {
+        fts_expand_pending_children(stream);
+    }
+
+    let entry = match stream
+        .pending_revisit
+        .take()
+        .or_else(|| stream.queue.pop_front())
+    {
         Some(e) => e,
-        None => return std::ptr::null_mut(),
+        None => {
+            unsafe { set_abi_errno(0) };
+            return std::ptr::null_mut();
+        }
     };
-
-    // Stat the entry
-    let path_cstr = match std::ffi::CString::new(entry.path.to_string_lossy().as_bytes()) {
-        Ok(c) => c,
-        Err(_) => return std::ptr::null_mut(),
-    };
-
-    let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
-    let fts_stat_flags = if stream.options & FTS_PHYSICAL != 0 {
-        libc::AT_SYMLINK_NOFOLLOW
-    } else {
-        0
-    };
-    let stat_result = unsafe {
-        syscall::sys_newfstatat(
-            libc::AT_FDCWD,
-            path_cstr.as_ptr() as *const u8,
-            &mut stat_buf as *mut libc::stat as *mut u8,
-            fts_stat_flags,
-        )
-    };
-
-    let info = if stat_result.is_err() {
-        FTS_NS
-    } else {
-        let mode = stat_buf.st_mode & libc::S_IFMT;
-        if mode == libc::S_IFDIR {
-            // Enqueue children
-            if let Ok(entries) = std::fs::read_dir(&entry.path) {
-                for child in entries.flatten() {
-                    stream.queue.push_back(FtsEntryInternal {
-                        path: child.path(),
-                        level: entry.level + 1,
-                    });
-                }
+    let parent = stream
+        .current
+        .as_mut()
+        .and_then(|current| {
+            if current.level + 1 == entry.level && current.visit == FtsVisit::Preorder {
+                Some(current.as_mut_ptr())
+            } else {
+                None
             }
-            FTS_D
-        } else if mode == libc::S_IFREG {
-            FTS_F
-        } else if mode == libc::S_IFLNK {
-            FTS_SL
-        } else {
-            FTS_DEFAULT
+        })
+        .unwrap_or(std::ptr::null_mut());
+
+    let owned = match FtsEntryOwned::new(&entry, stream.options, parent, false) {
+        Ok(owned) => owned,
+        Err(err) => {
+            unsafe { set_abi_errno(err) };
+            return std::ptr::null_mut();
         }
     };
 
-    let name = entry
-        .path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let name_cstr = std::ffi::CString::new(name.as_bytes()).unwrap_or_default();
-
-    let mut owned = FtsEntryOwned {
-        ftsent: unsafe { std::mem::zeroed() },
-        path_buf: path_cstr,
-        name_buf: name_cstr,
-        stat_buf,
-    };
-
-    owned.ftsent.fts_path = owned.path_buf.as_ptr() as *mut c_char;
-    owned.ftsent.fts_accpath = owned.ftsent.fts_path;
-    owned.ftsent.fts_pathlen = owned.path_buf.as_bytes().len() as u16;
-    owned.ftsent.fts_namelen = owned.name_buf.as_bytes().len() as u16;
-    owned.ftsent.fts_level = entry.level;
-    owned.ftsent.fts_info = info;
-    owned.ftsent.fts_ino = stat_buf.st_ino;
-    owned.ftsent.fts_dev = stat_buf.st_dev;
-    owned.ftsent.fts_nlink = stat_buf.st_nlink;
-    owned.ftsent.fts_errno = if stat_result.is_err() {
-        current_abi_errno()
-    } else {
-        0
-    };
-
     stream.current = Some(owned);
-
-    // Fix up self-referential pointer after move
-    if let Some(current) = stream.current.as_mut() {
-        current.ftsent.fts_statp = &mut current.stat_buf;
-        current.ftsent.fts_path = current.path_buf.as_ptr() as *mut c_char;
-        current.ftsent.fts_accpath = current.ftsent.fts_path;
-        &mut current.ftsent as *mut FTSENT
+    if entry.visit == FtsVisit::Preorder {
+        if stream
+            .current
+            .as_ref()
+            .is_some_and(|current| current.entry().fts_info == FTS_D)
+        {
+            stream.pending_children = Some(entry);
+        } else {
+            stream.pending_children = None;
+        }
     } else {
-        std::ptr::null_mut()
+        stream.pending_children = None;
     }
+
+    stream
+        .current
+        .as_mut()
+        .map(FtsEntryOwned::as_mut_ptr)
+        .unwrap_or(std::ptr::null_mut())
 }
 
 /// `fts_children` — return linked list of entries in current directory.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fts_children(_ftsp: *mut c_void, _options: c_int) -> *mut FTSENT {
-    // Simplified: return NULL (caller can use fts_read instead)
-    std::ptr::null_mut()
+pub unsafe extern "C" fn fts_children(ftsp: *mut c_void, options: c_int) -> *mut FTSENT {
+    if ftsp.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    if options != 0 && options != FTS_NAMEONLY {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+
+    let stream = unsafe { &mut *(ftsp as *mut FtsStream) };
+    let name_only = options == FTS_NAMEONLY;
+
+    if !stream.started {
+        let roots = stream
+            .roots
+            .iter()
+            .cloned()
+            .map(|path| FtsEntryInternal {
+                path,
+                level: 0,
+                follow_symlink: stream.options & FTS_COMFOLLOW != 0,
+                instr: FTS_NOINSTR,
+                visit: FtsVisit::Preorder,
+            })
+            .collect();
+        return fts_build_children_list(stream, roots, std::ptr::null_mut(), name_only);
+    }
+
+    let (parent, current_path, current_level) = {
+        let Some(current) = stream.current.as_mut() else {
+            unsafe { set_abi_errno(0) };
+            return std::ptr::null_mut();
+        };
+        if current.visit != FtsVisit::Preorder || current.entry().fts_info != FTS_D {
+            unsafe { set_abi_errno(0) };
+            return std::ptr::null_mut();
+        }
+        (current.as_mut_ptr(), current.path.clone(), current.level)
+    };
+
+    let child_paths = match fts_read_dir_paths(&current_path) {
+        Ok(paths) => paths,
+        Err(err) => {
+            unsafe { set_abi_errno(err) };
+            return std::ptr::null_mut();
+        }
+    };
+    if child_paths.is_empty() {
+        unsafe { set_abi_errno(0) };
+        return std::ptr::null_mut();
+    }
+
+    let children = child_paths
+        .into_iter()
+        .map(|path| FtsEntryInternal {
+            path,
+            level: current_level + 1,
+            follow_symlink: false,
+            instr: FTS_NOINSTR,
+            visit: FtsVisit::Preorder,
+        })
+        .collect();
+    fts_build_children_list(stream, children, parent, name_only)
 }
 
 /// `fts_set` — set instruction for next fts_read return.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fts_set(_ftsp: *mut c_void, _f: *mut FTSENT, _instr: c_int) -> c_int {
-    0 // success
+pub unsafe extern "C" fn fts_set(ftsp: *mut c_void, f: *mut FTSENT, instr: c_int) -> c_int {
+    if ftsp.is_null() || f.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    let normalized_instr = match instr {
+        0 => FTS_NOINSTR,
+        value if value == FTS_AGAIN as c_int => FTS_AGAIN,
+        value if value == FTS_FOLLOW as c_int => FTS_FOLLOW,
+        value if value == FTS_SKIP as c_int => FTS_SKIP,
+        _ => {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+    };
+
+    let stream = unsafe { &mut *(ftsp as *mut FtsStream) };
+
+    if let Some(current) = stream.current.as_mut()
+        && current.same_ptr(f)
+    {
+        current.entry_mut().fts_instr = normalized_instr;
+        match normalized_instr {
+            FTS_NOINSTR => return 0,
+            FTS_AGAIN => {
+                stream.pending_revisit = Some(current.internal());
+                return 0;
+            }
+            FTS_FOLLOW => {
+                current.follow_symlink = true;
+                stream.pending_revisit = Some(FtsEntryInternal {
+                    path: current.path.clone(),
+                    level: current.level,
+                    follow_symlink: true,
+                    instr: FTS_FOLLOW,
+                    visit: current.visit,
+                });
+                return 0;
+            }
+            FTS_SKIP => {
+                if let Some(pending) = stream.pending_children.as_mut()
+                    && pending.path == current.path
+                {
+                    pending.instr = FTS_SKIP;
+                }
+                return 0;
+            }
+            _ => {}
+        }
+    }
+
+    for child in &mut stream.children_cache {
+        if child.same_ptr(f) {
+            child.entry_mut().fts_instr = normalized_instr;
+            if normalized_instr == FTS_AGAIN {
+                unsafe { set_abi_errno(errno::EINVAL) };
+                return -1;
+            }
+            if normalized_instr == FTS_NOINSTR {
+                stream.pending_controls.remove(&child.path);
+            } else {
+                stream
+                    .pending_controls
+                    .insert(child.path.clone(), normalized_instr);
+            }
+            return 0;
+        }
+    }
+
+    unsafe { set_abi_errno(errno::EINVAL) };
+    -1
 }
 
 /// `fts_close` — close an FTS stream.
