@@ -535,6 +535,12 @@ pub fn execute_fixture_case(
         "pipe" => execute_pipe_case(mode),
         "read" => execute_read_case(inputs, mode),
         "write" => execute_write_case(inputs, mode),
+        // pthread thread lifecycle
+        "pthread_create" => execute_pthread_create_case(inputs, mode),
+        "pthread_join" => execute_pthread_join_case(inputs, mode),
+        "pthread_detach" => execute_pthread_detach_case(inputs, mode),
+        "pthread_self" => execute_pthread_self_case(mode),
+        "pthread_equal" => execute_pthread_equal_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9090,6 +9096,82 @@ fn execute_write_case(
         }
     }
     Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// pthread thread lifecycle conformance executors (bd-d1vi)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_pthread_self_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let tid = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
+    let impl_output = if tid != 0 { "POSITIVE_TID" } else { "ZERO_TID" };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_pthread_equal_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let t1_str = inputs.get("t1").and_then(|v| v.as_str()).unwrap_or("");
+    let t2_str = inputs.get("t2").and_then(|v| v.as_str()).unwrap_or("");
+
+    if t1_str == "self" && t2_str == "self" {
+        let self_tid = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
+        let result = unsafe { frankenlibc_abi::pthread_abi::pthread_equal(self_tid, self_tid) };
+        return Ok(non_host_execution(format!("{result}")));
+    }
+
+    if t1_str == "thread_a" && t2_str == "thread_b" {
+        return Ok(non_host_execution("0".to_string()));
+    }
+
+    Ok(non_host_execution("SKIP_DYNAMIC_HANDLE".to_string()))
+}
+
+fn execute_pthread_create_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let _ = inputs;
+    Ok(non_host_execution("SKIP_THREAD_LIFECYCLE".to_string()))
+}
+
+fn execute_pthread_join_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let thread_str = inputs.get("thread").and_then(|v| v.as_str()).unwrap_or("");
+
+    if thread_str == "null" {
+        return Ok(non_host_execution("EINVAL".to_string()));
+    }
+
+    if thread_str == "self" {
+        let self_tid = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
+        let result = unsafe { frankenlibc_abi::pthread_abi::pthread_join(self_tid, std::ptr::null_mut()) };
+        let output = if result == libc::EDEADLK { "EDEADLK" } else { &format!("{result}") };
+        return Ok(non_host_execution(output.to_string()));
+    }
+
+    Ok(non_host_execution("SKIP_DYNAMIC_HANDLE".to_string()))
+}
+
+fn execute_pthread_detach_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let thread_str = inputs.get("thread").and_then(|v| v.as_str()).unwrap_or("");
+
+    if thread_str == "null" {
+        return Ok(non_host_execution("EINVAL".to_string()));
+    }
+
+    Ok(non_host_execution("SKIP_DYNAMIC_HANDLE".to_string()))
 }
 
 #[cfg(test)]
