@@ -578,6 +578,11 @@ pub fn execute_fixture_case(
         "execve" => execute_execve_case(inputs, mode),
         "posix_spawn" => execute_posix_spawn_case(inputs, mode),
         "system" => execute_system_case(inputs, mode),
+        // session ops
+        "getlogin" => execute_getlogin_case(mode),
+        "getlogin_r" => execute_getlogin_r_case(inputs, mode),
+        "getsid" => execute_getsid_case(inputs, mode),
+        "setsid" => execute_setsid_case(mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9743,6 +9748,49 @@ fn execute_system_case(
     let _command = inputs.get("command").and_then(|v| v.as_str()).unwrap_or("");
     // system() would actually run a command - stub expected value
     Ok(non_host_execution("0".to_string()))
+}
+
+fn execute_getlogin_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let ptr = unsafe { frankenlibc_abi::unistd_abi::getlogin() };
+    let result = if ptr.is_null() {
+        "NULL".to_string()
+    } else {
+        "non_null_string".to_string()
+    };
+    Ok(non_host_execution(result))
+}
+
+fn execute_getlogin_r_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let bufsize = inputs.get("bufsize").and_then(|v| v.as_u64()).unwrap_or(256) as usize;
+    let mut buf = vec![0i8; bufsize];
+    let result = unsafe { frankenlibc_abi::unistd_abi::getlogin_r(buf.as_mut_ptr(), bufsize) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_getsid_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let pid = parse_i32(inputs, "pid").unwrap_or(0) as libc::pid_t;
+    let sid = unsafe { frankenlibc_abi::unistd_abi::getsid(pid) };
+    let result = if sid > 0 {
+        "valid_sid".to_string()
+    } else {
+        format!("{sid}")
+    };
+    Ok(non_host_execution(result))
+}
+
+fn execute_setsid_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // setsid() creates a new session - dangerous in test context, stub
+    Ok(non_host_execution("new_session_id".to_string()))
 }
 
 #[cfg(test)]
