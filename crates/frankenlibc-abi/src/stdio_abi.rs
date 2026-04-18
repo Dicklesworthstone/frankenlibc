@@ -308,6 +308,8 @@ impl StreamRegistry {
 }
 
 fn registry() -> &'static Mutex<StreamRegistry> {
+    ensure_host_libio_exit_safe();
+
     use std::sync::atomic::{AtomicPtr, Ordering};
     static PTR: AtomicPtr<Mutex<StreamRegistry>> = AtomicPtr::new(std::ptr::null_mut());
     static INIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -892,6 +894,13 @@ pub static IO_2_1_STDOUT: AtomicPtr<c_void> = AtomicPtr::new(STDOUT_SENTINEL as 
 pub static IO_2_1_STDERR: AtomicPtr<c_void> = AtomicPtr::new(STDERR_SENTINEL as *mut c_void);
 
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
+static HOST_LIBIO_EXIT_PATCHED: AtomicBool = AtomicBool::new(false);
+
+fn ensure_host_libio_exit_safe() {
+    if !HOST_LIBIO_EXIT_PATCHED.swap(true, Ordering::AcqRel) {
+        unsafe { io_internal_abi::bootstrap_host_libio_exports() };
+    }
+}
 
 /// Internal stream id for stdin-backed scanf helpers.
 #[inline]
@@ -914,6 +923,8 @@ fn active_stdout_stream() -> *mut c_void {
 
 /// Publish FrankenLibC-owned stdio globals and mark host stdio delegation ready.
 pub(crate) fn init_host_stdio_streams() {
+    ensure_host_libio_exit_safe();
+
     let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
     let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
     let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
