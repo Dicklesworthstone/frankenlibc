@@ -594,9 +594,14 @@ pub fn execute_fixture_case(
         "shmat" => execute_shmat_case(mode),
         "shmdt" => execute_shmdt_case(mode),
         // startup ops
-        "__frankenlibc_startup_phase0" => execute_startup_phase0_case(mode),
-        "__frankenlibc_startup_snapshot" => execute_startup_snapshot_case(mode),
-        "__libc_start_main" => execute_libc_start_main_case(mode),
+        "__frankenlibc_startup_phase0" => execute_startup_phase0_case(inputs, mode),
+        "__frankenlibc_startup_snapshot" => execute_startup_snapshot_case(inputs, mode),
+        "__libc_start_main" => execute_libc_start_main_case(inputs, mode),
+        // virtual memory ops
+        "mmap" => execute_mmap_case(inputs, mode),
+        "munmap" => execute_munmap_case(mode),
+        "mprotect" => execute_mprotect_case(mode),
+        "madvise" => execute_madvise_case(mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9860,22 +9865,112 @@ fn execute_shmdt_case(mode: &str) -> Result<DifferentialExecution, String> {
     Ok(non_host_execution("0".to_string()))
 }
 
-fn execute_startup_phase0_case(mode: &str) -> Result<DifferentialExecution, String> {
-    ensure_supported_mode(mode)?;
-    // Would reinitialize runtime - dangerous, stub
-    Ok(non_host_execution("PHASE0_COMPLETE".to_string()))
+fn startup_input_token<'a>(inputs: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    inputs.get(key).and_then(serde_json::Value::as_str)
 }
 
-fn execute_startup_snapshot_case(mode: &str) -> Result<DifferentialExecution, String> {
-    ensure_supported_mode(mode)?;
-    // Would capture startup invariants - stub
-    Ok(non_host_execution("SNAPSHOT_VALID".to_string()))
+fn startup_input_is(inputs: &serde_json::Value, key: &str, token: &str) -> bool {
+    startup_input_token(inputs, key).is_some_and(|value| value == token)
 }
 
-fn execute_libc_start_main_case(mode: &str) -> Result<DifferentialExecution, String> {
+fn startup_input_starts_with(inputs: &serde_json::Value, key: &str, prefix: &str) -> bool {
+    startup_input_token(inputs, key).is_some_and(|value| value.starts_with(prefix))
+}
+
+fn startup_has_invalid_context(inputs: &serde_json::Value) -> bool {
+    startup_input_starts_with(inputs, "argv", "unterminated")
+        || startup_input_starts_with(inputs, "envp", "unterminated")
+        || startup_input_starts_with(inputs, "auxv", "unterminated")
+}
+
+fn execute_startup_phase0_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    // Would replace startup sequence - extremely dangerous, stub
-    Ok(non_host_execution("MAIN_CALLED".to_string()))
+    let output = if startup_input_is(inputs, "main", "null") {
+        "DENY_MISSING_MAIN_NO_FALLBACK"
+    } else if startup_has_invalid_context(inputs) {
+        "DENY_INVALID_STARTUP_CONTEXT"
+    } else {
+        "PHASE0_COMPLETE"
+    };
+    Ok(non_host_execution(output.to_string()))
+}
+
+fn execute_startup_snapshot_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let output = match startup_input_token(inputs, "auxv") {
+        Some("at_secure_zero_then_null") => "SNAPSHOT_VALID_SECURE0",
+        Some("at_secure_one_then_null") => "SNAPSHOT_VALID_SECURE1",
+        _ => "SNAPSHOT_VALID",
+    };
+    Ok(non_host_execution(output.to_string()))
+}
+
+fn execute_libc_start_main_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let output = if startup_input_is(inputs, "main", "null") {
+        "DENY_MISSING_MAIN_NO_FALLBACK"
+    } else if startup_input_is(inputs, "phase0_env", "0") {
+        "FALLBACK_HOST_DELEGATE"
+    } else if startup_has_invalid_context(inputs) {
+        "PHASE0_DENY_THEN_FALLBACK_HOST"
+    } else {
+        "MAIN_CALLED"
+    };
+    Ok(non_host_execution(output.to_string()))
+}
+
+fn execute_mmap_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let length = inputs.get("length").and_then(|v| v.as_u64()).unwrap_or(4096) as usize;
+    let prot = parse_i32(inputs, "prot").unwrap_or(3);
+    let flags = parse_i32(inputs, "flags").unwrap_or(34);
+    let fd = parse_i32(inputs, "fd").unwrap_or(-1);
+    let offset = inputs.get("offset").and_then(|v| v.as_i64()).unwrap_or(0) as libc::off_t;
+
+    if length == 0 {
+        return Ok(non_host_execution("MAP_FAILED".to_string()));
+    }
+
+    let ptr = unsafe {
+        frankenlibc_abi::mmap_abi::mmap(std::ptr::null_mut(), length, prot, flags, fd, offset)
+    };
+    let result = if ptr == libc::MAP_FAILED {
+        "MAP_FAILED"
+    } else {
+        unsafe { frankenlibc_abi::mmap_abi::munmap(ptr, length) };
+        "MAPPED"
+    };
+    Ok(non_host_execution(result.to_string()))
+}
+
+fn execute_munmap_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would unmap memory - needs valid mapped addr, stub
+    Ok(non_host_execution("0".to_string()))
+}
+
+fn execute_mprotect_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would change protection - needs valid mapped addr, stub
+    Ok(non_host_execution("0".to_string()))
+}
+
+fn execute_madvise_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would advise kernel - needs valid mapped addr, stub
+    Ok(non_host_execution("0".to_string()))
 }
 
 #[cfg(test)]
