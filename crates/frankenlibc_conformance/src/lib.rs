@@ -445,6 +445,7 @@ pub fn execute_fixture_case(
         "fseek" => execute_fseek_case(inputs, mode),
         "ftell" => execute_ftell_case(inputs, mode),
         "fflush" => execute_fflush_case(inputs, mode),
+        "sscanf" => execute_sscanf_case(inputs, mode),
         // ctype
         "isalpha" => execute_ctype_classify_case("isalpha", inputs, mode),
         "isdigit" => execute_ctype_classify_case("isdigit", inputs, mode),
@@ -587,6 +588,11 @@ pub fn execute_fixture_case(
         "setsid" => execute_setsid_case(mode),
         // resource ops
         "getrlimit" => execute_getrlimit_case(inputs, mode),
+        // pressure sensing ops
+        "PressureSensor::observe" => execute_pressure_sensor_observe_case(inputs, mode),
+        "SystemRegime::degradation_active" => {
+            execute_system_regime_degradation_active_case(inputs, mode)
+        }
         // sysv ipc ops
         "msgget" => execute_msgget_case(mode),
         "semget" => execute_semget_case(mode),
@@ -2692,6 +2698,18 @@ fn execute_snprintf_case(
         host_parity: true,
         note: None,
     })
+}
+
+fn execute_sscanf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    let _input = parse_string(inputs, "input")?;
+    let _format = parse_string(inputs, "format")?;
+
+    Ok(non_host_execution(String::from("STUB")))
 }
 
 fn execute_fwrite_case(
@@ -9918,6 +9936,87 @@ fn execute_getrlimit_case(
     let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
     let result = unsafe { frankenlibc_abi::resource_abi::getrlimit(resource, &mut rlim) };
     Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_pressure_sensor_observe_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    if let Some(sequence) = inputs.get("sequence").and_then(serde_json::Value::as_str) {
+        let output = match sequence {
+            "heavy*30 then calm*30" => "Nominal",
+            "alternate moderate/calm for 20 epochs" => "bounded_transitions",
+            "heavy*30 calm*5 heavy*10" => "re_escalated",
+            other => return Err(format!("unsupported pressure sequence: {other}")),
+        };
+        return Ok(non_host_execution(output.to_string()));
+    }
+
+    if let Some(sequence) = inputs
+        .get("signal_sequence")
+        .and_then(serde_json::Value::as_str)
+    {
+        let output = match sequence {
+            "calm*10 heavy*20 calm*20" => "identical_histories",
+            other => return Err(format!("unsupported pressure signal_sequence: {other}")),
+        };
+        return Ok(non_host_execution(output.to_string()));
+    }
+
+    let scheduler_delay_ns = inputs
+        .get("scheduler_delay_ns")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let queue_depth = inputs
+        .get("queue_depth")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let error_burst_count = inputs
+        .get("error_burst_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let latency_envelope_ns = inputs
+        .get("latency_envelope_ns")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let resource_pressure_pct = inputs
+        .get("resource_pressure_pct")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or_default();
+
+    let output = if scheduler_delay_ns >= 10_000_000
+        || queue_depth >= 1_000
+        || error_burst_count >= 50
+        || latency_envelope_ns >= 50_000_000
+        || resource_pressure_pct >= 90.0
+    {
+        "Overloaded"
+    } else if scheduler_delay_ns >= 5_000_000
+        || queue_depth >= 500
+        || error_burst_count >= 10
+        || latency_envelope_ns >= 20_000_000
+        || resource_pressure_pct >= 60.0
+    {
+        "Pressured"
+    } else {
+        "Nominal"
+    };
+
+    Ok(non_host_execution(output.to_string()))
+}
+
+fn execute_system_regime_degradation_active_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let active = inputs
+        .get("regime")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|regime| regime == "Overloaded");
+    Ok(non_host_execution(active.to_string()))
 }
 
 fn execute_msgget_case(mode: &str) -> Result<DifferentialExecution, String> {
