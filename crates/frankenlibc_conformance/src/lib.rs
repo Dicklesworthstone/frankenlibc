@@ -12002,6 +12002,9 @@ mod tests {
         }
     }
 
+    // NOTE: io_internal_ops.json uses NULL_PTR expected format but executor returns "NULL" -
+    // would need normalizing comparison to test
+
     #[test]
     fn execute_getpwnam_hardened_missing_user_returns_null() {
         let inputs = serde_json::json!({
