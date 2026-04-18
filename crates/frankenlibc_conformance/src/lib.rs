@@ -9443,7 +9443,7 @@ fn execute_getpid_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let pid = unsafe { frankenlibc_abi::unistd_abi::getpid() };
     let impl_output = if pid > 0 {
-        "POSITIVE_INT"
+        "POSITIVE_PID"
     } else {
         &format!("{pid}")
     };
@@ -9454,7 +9454,7 @@ fn execute_getppid_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let ppid = unsafe { frankenlibc_abi::unistd_abi::getppid() };
     let impl_output = if ppid > 0 {
-        "POSITIVE_INT"
+        "POSITIVE_PID"
     } else {
         &format!("{ppid}")
     };
