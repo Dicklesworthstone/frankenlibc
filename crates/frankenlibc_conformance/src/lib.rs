@@ -12165,6 +12165,9 @@ mod tests {
         }
     }
 
+    // NOTE: time_ops.json uses placeholder outputs (POSITIVE_INT, NON_NEGATIVE, TM_STRUCT)
+    // but executor returns placeholders unchanged - functions not yet implemented in executor
+
     #[test]
     fn execute_getpwnam_hardened_missing_user_returns_null() {
         let inputs = serde_json::json!({
