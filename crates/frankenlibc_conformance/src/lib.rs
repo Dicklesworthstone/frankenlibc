@@ -563,6 +563,10 @@ pub fn execute_fixture_case(
         "clock" => execute_clock_case(mode),
         "clock_gettime" => execute_clock_gettime_case(inputs, mode),
         "localtime_r" => execute_localtime_r_case(inputs, mode),
+        // dirent ops
+        "opendir" => execute_opendir_case(inputs, mode),
+        "readdir" => execute_readdir_case(inputs, mode),
+        "closedir" => execute_closedir_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9512,6 +9516,69 @@ fn execute_localtime_r_case(
     };
     let impl_output = if result.is_null() { "NULL" } else { "TM_STRUCT" };
     Ok(non_host_execution(impl_output.to_string()))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// dirent_ops conformance executors (bd-ihl3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_opendir_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let name = parse_string(inputs, "name")?;
+    let name_c = std::ffi::CString::new(name).map_err(|_| "name contains NUL")?;
+    let dirp = unsafe { frankenlibc_abi::dirent_abi::opendir(name_c.as_ptr()) };
+    let impl_output = if dirp.is_null() {
+        "NULL".to_string()
+    } else {
+        unsafe { frankenlibc_abi::dirent_abi::closedir(dirp) };
+        "DIR_PTR".to_string()
+    };
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_readdir_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let dirp_str = inputs.get("dirp").and_then(|v| v.as_str()).unwrap_or("");
+
+    if dirp_str == "valid_root_dir" {
+        let root_c = std::ffi::CString::new("/").unwrap();
+        let dirp = unsafe { frankenlibc_abi::dirent_abi::opendir(root_c.as_ptr()) };
+        if dirp.is_null() {
+            return Ok(non_host_execution("OPENDIR_FAILED".to_string()));
+        }
+        let entry = unsafe { frankenlibc_abi::dirent_abi::readdir(dirp) };
+        unsafe { frankenlibc_abi::dirent_abi::closedir(dirp) };
+        let impl_output = if entry.is_null() { "NULL" } else { "DIRENT_PTR" };
+        return Ok(non_host_execution(impl_output.to_string()));
+    }
+
+    Ok(non_host_execution("SKIP_DYNAMIC_HANDLE".to_string()))
+}
+
+fn execute_closedir_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let dirp_str = inputs.get("dirp").and_then(|v| v.as_str()).unwrap_or("");
+
+    if dirp_str == "valid_dir" {
+        let root_c = std::ffi::CString::new("/").unwrap();
+        let dirp = unsafe { frankenlibc_abi::dirent_abi::opendir(root_c.as_ptr()) };
+        if dirp.is_null() {
+            return Ok(non_host_execution("OPENDIR_FAILED".to_string()));
+        }
+        let result = unsafe { frankenlibc_abi::dirent_abi::closedir(dirp) };
+        return Ok(non_host_execution(format!("{result}")));
+    }
+
+    Ok(non_host_execution("SKIP_DYNAMIC_HANDLE".to_string()))
 }
 
 #[cfg(test)]
