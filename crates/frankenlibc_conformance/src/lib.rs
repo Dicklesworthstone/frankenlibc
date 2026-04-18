@@ -13786,4 +13786,57 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn io_internal_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize, Clone)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: serde_json::Value,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        fn normalize_expected(val: &serde_json::Value) -> String {
+            match val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            }
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/io_internal_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("io_internal_ops fixture should parse");
+
+        let mut modes_to_test: Vec<(FixtureCaseLite, &str)> = Vec::new();
+        for case in fixture.cases {
+            if case.mode == "both" {
+                modes_to_test.push((case.clone(), "strict"));
+                modes_to_test.push((case, "hardened"));
+            } else {
+                let mode_str = if case.mode == "strict" { "strict" } else { "hardened" };
+                modes_to_test.push((case, mode_str));
+            }
+        }
+
+        for (case, mode) in modes_to_test {
+            let expected = normalize_expected(&case.expected_output);
+            let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} (mode={mode}) failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, expected,
+                "fixture expected_output mismatch for {} (mode={mode})",
+                case.name
+            );
+        }
+    }
 }
