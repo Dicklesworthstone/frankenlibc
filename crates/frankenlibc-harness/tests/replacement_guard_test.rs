@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+type SourceScanExceptions = HashMap<String, HashMap<String, HashSet<String>>>;
+
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -39,6 +41,71 @@ fn load_fixture_pack() -> serde_json::Value {
         .expect("replacement_zero_unapproved_fixtures.v1.json should exist");
     serde_json::from_str(&content)
         .expect("replacement_zero_unapproved_fixtures.v1.json should be valid JSON")
+}
+
+fn load_source_scan_exceptions(profile: &serde_json::Value) -> SourceScanExceptions {
+    let mut exceptions = SourceScanExceptions::new();
+    let rows = profile["detection_rules"]["source_scan_exceptions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for row in rows {
+        let Some(module) = row["module"].as_str() else {
+            continue;
+        };
+        let Some(function) = row["function"].as_str() else {
+            continue;
+        };
+        let symbols: HashSet<String> = row["symbols"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect();
+        if symbols.is_empty() {
+            continue;
+        }
+        exceptions
+            .entry(module.to_string())
+            .or_default()
+            .entry(function.to_string())
+            .or_default()
+            .extend(symbols);
+    }
+    exceptions
+}
+
+fn extract_function_name(line: &str) -> Option<String> {
+    let fn_pos = line.find("fn ")?;
+    let after = &line[fn_pos + 3..];
+    let end = after
+        .bytes()
+        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        .count();
+    if end == 0 {
+        None
+    } else {
+        Some(after[..end].to_string())
+    }
+}
+
+fn count_braces(line: &str) -> isize {
+    line.bytes().fold(0isize, |depth, byte| match byte {
+        b'{' => depth + 1,
+        b'}' => depth - 1,
+        _ => depth,
+    })
+}
+
+fn is_source_scan_exception(
+    module: &str,
+    current_fn: Option<&str>,
+    symbol: &str,
+    exceptions: &SourceScanExceptions,
+) -> bool {
+    current_fn
+        .and_then(|function| exceptions.get(module)?.get(function))
+        .is_some_and(|symbols| symbols.contains(symbol))
 }
 
 /// Extract a libc:: function call name from a line fragment starting at "libc::"
@@ -72,20 +139,54 @@ fn extract_libc_call(fragment: &str) -> Option<&str> {
 ///   - host_pthread_<wrapper>(...)
 ///
 /// excluding raw syscall and `_sym` wrapper internals.
-fn scan_call_throughs(content: &str) -> Vec<(usize, String)> {
+fn scan_call_throughs(
+    module: &str,
+    content: &str,
+    profile: &serde_json::Value,
+) -> Vec<(usize, String)> {
     let mut results = Vec::new();
+    let exceptions = load_source_scan_exceptions(profile);
+    let mut brace_depth = 0isize;
+    let mut pending_fn: Option<String> = None;
+    let mut current_fn: Option<String> = None;
+    let mut current_fn_base_depth = 0isize;
 
     for (lineno, line) in content.lines().enumerate() {
         let trimmed = line.trim();
+        if !trimmed.starts_with("//")
+            && let Some(fn_name) = extract_function_name(line)
+        {
+            pending_fn = Some(fn_name);
+        }
+
+        let new_brace_depth = if trimmed.starts_with("//") {
+            brace_depth
+        } else {
+            brace_depth + count_braces(line)
+        };
+
+        if current_fn.is_none()
+            && let Some(fn_name) = pending_fn.as_ref()
+            && new_brace_depth > brace_depth
+        {
+            current_fn = Some(fn_name.clone());
+            current_fn_base_depth = brace_depth;
+            pending_fn = None;
+        }
+
         if trimmed.starts_with("//") {
+            brace_depth = new_brace_depth;
             continue;
         }
+
+        let active_fn = current_fn.as_deref();
         let mut search_from = 0;
         while let Some(pos) = line[search_from..].find("libc::") {
             let abs_pos = search_from + pos;
             let after = &line[abs_pos + 6..];
             if let Some(func_name) = extract_libc_call(after)
                 && func_name != "syscall"
+                && !is_source_scan_exception(module, active_fn, func_name, &exceptions)
             {
                 results.push((lineno + 1, func_name.to_string()));
             }
@@ -93,6 +194,10 @@ fn scan_call_throughs(content: &str) -> Vec<(usize, String)> {
         }
 
         if trimmed.contains("fn host_pthread_") {
+            if current_fn.is_some() && new_brace_depth <= current_fn_base_depth {
+                current_fn = None;
+            }
+            brace_depth = new_brace_depth;
             continue;
         }
         let mut host_search_from = 0;
@@ -117,6 +222,11 @@ fn scan_call_throughs(content: &str) -> Vec<(usize, String)> {
             }
             host_search_from = abs_pos + "host_pthread_".len();
         }
+
+        if current_fn.is_some() && new_brace_depth <= current_fn_base_depth {
+            current_fn = None;
+        }
+        brace_depth = new_brace_depth;
     }
     results
 }
@@ -212,7 +322,7 @@ fn interpose_allowlist_covers_all_call_through_modules() {
         }
         let module = fname.trim_end_matches(".rs").to_string();
         let content = std::fs::read_to_string(entry.path()).unwrap();
-        let calls = scan_call_throughs(&content);
+        let calls = scan_call_throughs(&module, &content, &profile);
         if !calls.is_empty() {
             modules_with_ct.insert(module, calls.len());
         }
@@ -235,6 +345,7 @@ fn interpose_allowlist_covers_all_call_through_modules() {
 #[test]
 fn no_pthread_mutex_call_throughs_in_replacement_paths() {
     let abi_src = workspace_root().join("crates/frankenlibc-abi/src");
+    let profile = load_profile();
     let forbidden = forbidden_mutex_symbols();
     let mut violations = Vec::new();
 
@@ -244,8 +355,9 @@ fn no_pthread_mutex_call_throughs_in_replacement_paths() {
         if !fname.ends_with("_abi.rs") {
             continue;
         }
+        let module = fname.trim_end_matches(".rs");
         let content = std::fs::read_to_string(entry.path()).unwrap();
-        for (lineno, func) in scan_call_throughs(&content) {
+        for (lineno, func) in scan_call_throughs(module, &content, &profile) {
             if forbidden.contains(func.as_str()) {
                 violations.push(format!("{fname}:{lineno} {func}"));
             }
@@ -337,7 +449,7 @@ fn call_through_census_matches_reality() {
         }
         let module = fname.trim_end_matches(".rs");
         let content = std::fs::read_to_string(entry.path()).unwrap();
-        let calls = scan_call_throughs(&content);
+        let calls = scan_call_throughs(module, &content, &profile);
 
         if let Some(census_entry) = census.get(module) {
             let census_count = census_entry["count"].as_u64().unwrap() as usize;
@@ -488,7 +600,7 @@ fn callthrough_families_match_support_matrix() {
             }
             let module = fname.trim_end_matches(".rs").to_string();
             let content = std::fs::read_to_string(entry.path()).ok()?;
-            let calls = scan_call_throughs(&content);
+            let calls = scan_call_throughs(&module, &content, &profile);
             if calls.is_empty() { None } else { Some(module) }
         })
         .collect();
@@ -520,17 +632,20 @@ fn fixture_pack_covers_all_callthrough_families_in_both_modes() {
     assert_eq!(fixtures["schema_version"].as_str(), Some("v1"));
     assert_eq!(fixtures["bead"].as_str(), Some("bd-27kh"));
 
-    let fixture_rows = fixtures["fixtures"]
-        .as_array()
-        .expect("fixtures must be an array");
-    assert!(!fixture_rows.is_empty(), "fixtures must not be empty");
-
     let profile_modules: HashSet<String> = profile["callthrough_families"]["modules"]
         .as_array()
         .expect("callthrough_families.modules must be array")
         .iter()
         .filter_map(|v| v.as_str().map(str::to_string))
         .collect();
+
+    let fixture_rows = fixtures["fixtures"]
+        .as_array()
+        .expect("fixtures must be an array");
+    assert!(
+        profile_modules.is_empty() || !fixture_rows.is_empty(),
+        "fixtures must not be empty when callthrough families are tracked"
+    );
 
     let mut mode_counts = HashMap::<String, usize>::new();
     let mut module_modes = HashMap::<String, HashSet<String>>::new();

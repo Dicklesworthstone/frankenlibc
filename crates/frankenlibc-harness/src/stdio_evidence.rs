@@ -447,4 +447,53 @@ mod tests {
             "trace_id must be preserved through serialization"
         );
     }
+
+    #[test]
+    fn foreign_adoption_evidence_from_abi_log_parses_end_to_end() {
+        frankenlibc_abi::io_internal_abi::conformance_testing::clear_stdio_evidence_log();
+
+        let jsonl =
+            frankenlibc_abi::io_internal_abi::conformance_testing::emit_foreign_adoption_via_host_tmpfile();
+        assert!(
+            !jsonl.trim().is_empty(),
+            "stdio evidence log should contain a row"
+        );
+
+        let mut rows = StdioEvidenceIterator::new(Cursor::new(jsonl.as_bytes()));
+        let row = rows
+            .next()
+            .expect("one row expected")
+            .expect("row must parse");
+
+        assert_eq!(row.schema_version, SCHEMA_VERSION);
+        assert_eq!(row.event_kind, StdioEventKind::ForeignAdoption);
+        assert_eq!(row.function, "adopt_foreign_file");
+        assert_eq!(row.fp_origin, FpOrigin::Foreign);
+        assert!(
+            row.fp_hex.starts_with("0x"),
+            "foreign pointer should be hex"
+        );
+        assert!(row.fd >= 0, "foreign adoption should extract a live fd");
+        assert_eq!(row.result.errno, 0);
+        assert!(
+            row.mode == "strict" || row.mode == "hardened" || row.mode == "off",
+            "unexpected mode label: {}",
+            row.mode
+        );
+        assert!(
+            !row.result.return_value.is_empty(),
+            "foreign adoption should record the adopted native pointer"
+        );
+        assert!(
+            row.membrane_stages.total_ns.is_some(),
+            "foreign adoption rows should record total_ns"
+        );
+        assert!(row.trace_id.contains('-'), "trace_id should be UUID-shaped");
+        assert!(
+            rows.next().is_none(),
+            "bounded ABI slice should emit exactly one stdio adoption row"
+        );
+
+        frankenlibc_abi::io_internal_abi::conformance_testing::clear_stdio_evidence_log();
+    }
 }

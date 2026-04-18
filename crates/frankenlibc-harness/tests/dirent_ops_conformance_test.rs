@@ -172,7 +172,7 @@ fn dirent_ops_function_distribution() {
             "opendir" => opendir_count += 1,
             "readdir" | "readdir_r" => readdir_count += 1,
             "closedir" => closedir_count += 1,
-            "rewinddir" | "seekdir" | "telldir" | "scandir" | "fdopendir" => {}
+            "rewinddir" | "seekdir" | "telldir" | "scandir" | "fdopendir" | "dirfd" => {}
             f => panic!("Unexpected function in fixture: {}", f),
         }
     }

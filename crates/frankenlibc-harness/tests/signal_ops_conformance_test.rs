@@ -1,6 +1,6 @@
 //! Signal operations conformance test suite.
 //!
-//! Validates POSIX signal APIs: kill, raise, sigaction, signal.
+//! Validates POSIX/System V signal APIs: kill, raise, sigaction, ssignal, gsignal.
 //! Run: cargo test -p frankenlibc-harness --test signal_ops_conformance_test
 
 use frankenlibc_fixture_exec::execute_fixture_case;
@@ -129,6 +129,20 @@ fn signal_ops_covers_sigaction() {
     );
 }
 
+#[test]
+fn signal_ops_covers_legacy_sysv_signals() {
+    let fixture = load_fixture("signal_ops");
+    let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
+
+    for pattern in ["ssignal", "gsignal"] {
+        assert!(
+            case_names.iter().any(|name| name.contains(pattern)),
+            "Missing test coverage for legacy signal pattern: {}",
+            pattern
+        );
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Error code validation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -165,6 +179,8 @@ fn signal_ops_function_distribution() {
     let fixture = load_fixture("signal_ops");
 
     let mut raise_count = 0;
+    let mut ssignal_count = 0;
+    let mut gsignal_count = 0;
     let mut kill_count = 0;
     let mut sigaction_count = 0;
     let mut signal_count = 0;
@@ -172,9 +188,12 @@ fn signal_ops_function_distribution() {
     for case in &fixture.cases {
         match case.function.as_str() {
             "raise" => raise_count += 1,
+            "ssignal" => ssignal_count += 1,
+            "gsignal" => gsignal_count += 1,
             "kill" => kill_count += 1,
             "sigaction" => sigaction_count += 1,
             "signal" => signal_count += 1,
+            "sigemptyset" | "sigfillset" | "sigaddset" | "sigdelset" | "sigismember" => {}
             f => panic!("Unexpected function in fixture: {}", f),
         }
     }
@@ -184,6 +203,16 @@ fn signal_ops_function_distribution() {
         raise_count >= 1,
         "raise needs test cases (have {})",
         raise_count
+    );
+    assert!(
+        ssignal_count >= 2,
+        "ssignal needs test cases (have {})",
+        ssignal_count
+    );
+    assert!(
+        gsignal_count >= 2,
+        "gsignal needs test cases (have {})",
+        gsignal_count
     );
     assert!(
         kill_count >= 2,
@@ -197,8 +226,8 @@ fn signal_ops_function_distribution() {
     );
 
     eprintln!(
-        "signal_ops coverage: raise={}, kill={}, sigaction={}, signal={}",
-        raise_count, kill_count, sigaction_count, signal_count
+        "signal_ops coverage: raise={}, ssignal={}, gsignal={}, kill={}, sigaction={}, signal={}",
+        raise_count, ssignal_count, gsignal_count, kill_count, sigaction_count, signal_count
     );
 }
 
