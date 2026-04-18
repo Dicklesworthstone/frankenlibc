@@ -11167,6 +11167,49 @@ mod tests {
         }
     }
 
+    // NOTE: pthread_thread.json requires actual thread lifecycle operations that
+    // return SKIP_THREAD_LIFECYCLE in the fixture executor - cannot be tested here
+
+    #[test]
+    fn pthread_tls_keys_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/pthread_tls_keys.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("pthread_tls_keys fixture should parse");
+
+        for case in fixture.cases {
+            let modes = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                    });
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "fixture expected_output mismatch for {} ({mode})",
+                    case.name
+                );
+            }
+        }
+    }
+
     #[test]
     fn startup_ops_fixture_cases_match_execute_fixture_case() {
         #[derive(Deserialize)]
@@ -11755,6 +11798,86 @@ mod tests {
                         case.name
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn stdlib_conversion_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/stdlib_conversion.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("stdlib_conversion fixture should parse");
+
+        for case in fixture.cases {
+            let modes = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                    });
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "fixture expected_output mismatch for {} ({mode})",
+                    case.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn string_strtok_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/string_strtok.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("string_strtok fixture should parse");
+
+        for case in fixture.cases {
+            let modes = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                    });
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "fixture expected_output mismatch for {} ({mode})",
+                    case.name
+                );
             }
         }
     }
