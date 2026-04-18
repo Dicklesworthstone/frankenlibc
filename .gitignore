@@ -150,3 +150,15 @@ storage.sqlite3-wal.corrupt-*
 
 # csplit scratch output at repo root
 /xx[0-9][0-9]
+
+# Agent scratch git diff/log/show captures and man-page dumps
+.git-*.txt
+.git_*.txt
+.gemini_*.txt
+.man-*.txt
+.man_*.txt
+.run_diff.sh
+git_recent.txt
+git_log.txt
+git_log_*.txt
+git_show_*.txt
