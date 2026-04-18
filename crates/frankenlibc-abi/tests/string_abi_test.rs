@@ -1187,7 +1187,7 @@ fn argz_replace_updates_replace_count_and_contents() {
     );
 
     unsafe {
-        libc::free(argz.cast());
+        frankenlibc_abi::malloc_abi::free(argz.cast());
     }
 }
 
@@ -1251,7 +1251,7 @@ fn argz_create_sep_discards_empty_segments_like_glibc() {
                 "input={input:?}"
             );
             unsafe {
-                libc::free(argz.cast());
+                frankenlibc_abi::malloc_abi::free(argz.cast());
             }
         }
     }
@@ -1292,7 +1292,7 @@ fn argz_add_sep_discards_empty_segments_and_keeps_terminal_empty() {
     assert_eq!(argz_len, 10);
 
     unsafe {
-        libc::free(argz.cast());
+        frankenlibc_abi::malloc_abi::free(argz.cast());
     }
 }
 
@@ -1318,7 +1318,7 @@ fn argz_next_matches_glibc_for_interior_and_foreign_pointers() {
     assert!(foreign_next.is_null());
 
     unsafe {
-        libc::free(argz.cast());
+        frankenlibc_abi::malloc_abi::free(argz.cast());
     }
 }
 
