@@ -12169,6 +12169,46 @@ mod tests {
     // but executor returns placeholders unchanged - functions not yet implemented in executor
 
     #[test]
+    fn socket_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/socket_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("socket_ops fixture should parse");
+
+        for case in fixture.cases {
+            let modes = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                    });
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "fixture expected_output mismatch for {} ({mode})",
+                    case.name
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unistd_ops_fixture_cases_match_execute_fixture_case() {
         #[derive(Deserialize)]
         struct FixtureCaseLite {
