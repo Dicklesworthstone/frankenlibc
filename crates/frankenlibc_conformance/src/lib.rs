@@ -570,6 +570,10 @@ pub fn execute_fixture_case(
         // poll ops
         "poll" => execute_poll_case(inputs, mode),
         "select" => execute_select_case(inputs, mode),
+        // signal ops
+        "raise" => execute_raise_case(inputs, mode),
+        "kill" => execute_kill_case(inputs, mode),
+        "sigaction" => execute_sigaction_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
