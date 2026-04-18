@@ -139,6 +139,123 @@
       "expected_output": "items=2;data=[0, 0]",
       "expected_errno": 0,
       "mode": "hardened"
+    },
+    {
+      "name": "fgetc_devzero_strict",
+      "function": "fgetc",
+      "spec_section": "C11 7.21.7.1 fgetc",
+      "inputs": { "stream": "devzero" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetc_devnull_read_strict",
+      "function": "fgetc",
+      "spec_section": "C11 7.21.7.1 fgetc",
+      "inputs": { "stream": "devnull_read" },
+      "expected_output": "EOF",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fputc_devnull_strict",
+      "function": "fputc",
+      "spec_section": "C11 7.21.7.3 fputc",
+      "inputs": { "stream": "devnull", "c": 65 },
+      "expected_output": "65",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fputc_devnull_zero_strict",
+      "function": "fputc",
+      "spec_section": "C11 7.21.7.3 fputc",
+      "inputs": { "stream": "devnull", "c": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "feof_devnull_read_no_read_strict",
+      "function": "feof",
+      "spec_section": "C11 7.21.10.2 feof",
+      "inputs": { "stream": "devnull_read", "read_to_eof": false },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "feof_devnull_read_after_eof_strict",
+      "function": "feof",
+      "spec_section": "C11 7.21.10.2 feof",
+      "inputs": { "stream": "devnull_read", "read_to_eof": true },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ferror_devnull_no_error_strict",
+      "function": "ferror",
+      "spec_section": "C11 7.21.10.3 ferror",
+      "inputs": { "stream": "devnull" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fileno_devnull_strict",
+      "function": "fileno",
+      "spec_section": "POSIX.1-2017 fileno",
+      "inputs": { "stream": "devnull" },
+      "expected_output": "VALID_FD",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fileno_devzero_strict",
+      "function": "fileno",
+      "spec_section": "POSIX.1-2017 fileno",
+      "inputs": { "stream": "devzero" },
+      "expected_output": "VALID_FD",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fgetc_devzero_hardened",
+      "function": "fgetc",
+      "spec_section": "C11 7.21.7.1 fgetc",
+      "inputs": { "stream": "devzero" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fputc_devnull_hardened",
+      "function": "fputc",
+      "spec_section": "C11 7.21.7.3 fputc",
+      "inputs": { "stream": "devnull", "c": 88 },
+      "expected_output": "88",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ferror_devzero_hardened",
+      "function": "ferror",
+      "spec_section": "C11 7.21.10.3 ferror",
+      "inputs": { "stream": "devzero" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fileno_devnull_hardened",
+      "function": "fileno",
+      "spec_section": "POSIX.1-2017 fileno",
+      "inputs": { "stream": "devnull" },
+      "expected_output": "VALID_FD",
+      "expected_errno": 0,
+      "mode": "hardened"
     }
   ]
 }

@@ -1,43 +1,449 @@
 {
   "version": "v1",
   "family": "string/wide",
-  "captured_at": "2026-02-09T00:00:00Z",
+  "captured_at": "2026-04-18T00:00:00Z",
+  "description": "Wide character string and memory operations conformance tests per ISO C11 7.29",
+  "spec_reference": "ISO/IEC 9899:2011 Section 7.29 (Extended multibyte and wide character utilities)",
   "cases": [
     {
       "name": "wcslen_basic",
       "function": "wcslen",
-      "spec_section": "ISO C wcslen",
+      "spec_section": "C11 7.29.4.6.1 wcslen",
       "inputs": { "s": [65, 66, 67, 0] },
       "expected_output": "3",
       "expected_errno": 0,
-      "mode": "strict"
+      "mode": "both"
+    },
+    {
+      "name": "wcslen_empty",
+      "function": "wcslen",
+      "spec_section": "C11 7.29.4.6.1 wcslen",
+      "inputs": { "s": [0] },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcslen_unicode",
+      "function": "wcslen",
+      "spec_section": "C11 7.29.4.6.1 wcslen",
+      "inputs": { "s": [20320, 22909, 0] },
+      "expected_output": "2",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Chinese: 你好 (U+4F60 U+597D)"
     },
     {
       "name": "wcscmp_equal",
       "function": "wcscmp",
-      "spec_section": "ISO C wcscmp",
+      "spec_section": "C11 7.29.4.4.1 wcscmp",
       "inputs": { "s1": [65, 66, 0], "s2": [65, 66, 0] },
       "expected_output": "0",
       "expected_errno": 0,
-      "mode": "strict"
+      "mode": "both"
     },
     {
       "name": "wcscmp_less",
       "function": "wcscmp",
-      "spec_section": "ISO C wcscmp",
+      "spec_section": "C11 7.29.4.4.1 wcscmp",
       "inputs": { "s1": [65, 0], "s2": [66, 0] },
       "expected_output": "-1",
       "expected_errno": 0,
-      "mode": "strict"
+      "mode": "both"
+    },
+    {
+      "name": "wcscmp_greater",
+      "function": "wcscmp",
+      "spec_section": "C11 7.29.4.4.1 wcscmp",
+      "inputs": { "s1": [67, 0], "s2": [66, 0] },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcscmp_prefix",
+      "function": "wcscmp",
+      "spec_section": "C11 7.29.4.4.1 wcscmp",
+      "inputs": { "s1": [65, 66, 0], "s2": [65, 66, 67, 0] },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsncmp_equal_n",
+      "function": "wcsncmp",
+      "spec_section": "C11 7.29.4.4.2 wcsncmp",
+      "inputs": { "s1": [65, 66, 67, 0], "s2": [65, 66, 88, 0], "n": 2 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsncmp_diff_at_n",
+      "function": "wcsncmp",
+      "spec_section": "C11 7.29.4.4.2 wcsncmp",
+      "inputs": { "s1": [65, 66, 67, 0], "s2": [65, 66, 88, 0], "n": 3 },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsncmp_zero_n",
+      "function": "wcsncmp",
+      "spec_section": "C11 7.29.4.4.2 wcsncmp",
+      "inputs": { "s1": [65, 0], "s2": [90, 0], "n": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
     },
     {
       "name": "wcscpy_basic",
       "function": "wcscpy",
-      "spec_section": "ISO C wcscpy",
+      "spec_section": "C11 7.29.4.2.1 wcscpy",
       "inputs": { "src": [65, 66, 67, 0], "dst_len": 8 },
       "expected_output": "[65, 66, 67, 0, 0, 0, 0, 0]",
       "expected_errno": 0,
-      "mode": "strict"
+      "mode": "both"
+    },
+    {
+      "name": "wcscpy_empty",
+      "function": "wcscpy",
+      "spec_section": "C11 7.29.4.2.1 wcscpy",
+      "inputs": { "src": [0], "dst_len": 4 },
+      "expected_output": "[0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsncpy_basic",
+      "function": "wcsncpy",
+      "spec_section": "C11 7.29.4.2.2 wcsncpy",
+      "inputs": { "src": [65, 66, 67, 0], "n": 4, "dst_len": 8 },
+      "expected_output": "[65, 66, 67, 0, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsncpy_truncate",
+      "function": "wcsncpy",
+      "spec_section": "C11 7.29.4.2.2 wcsncpy",
+      "inputs": { "src": [65, 66, 67, 68, 0], "n": 2, "dst_len": 4 },
+      "expected_output": "[65, 66, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Truncates without null terminator when n < strlen"
+    },
+    {
+      "name": "wcsncpy_pad",
+      "function": "wcsncpy",
+      "spec_section": "C11 7.29.4.2.2 wcsncpy",
+      "inputs": { "src": [65, 0], "n": 4, "dst_len": 8 },
+      "expected_output": "[65, 0, 0, 0, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Pads with null when n > strlen"
+    },
+    {
+      "name": "wcscat_basic",
+      "function": "wcscat",
+      "spec_section": "C11 7.29.4.3.1 wcscat",
+      "inputs": { "dst_init": [65, 66, 0], "src": [67, 68, 0], "dst_cap": 8 },
+      "expected_output": "[65, 66, 67, 68, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcscat_empty_src",
+      "function": "wcscat",
+      "spec_section": "C11 7.29.4.3.1 wcscat",
+      "inputs": { "dst_init": [65, 66, 0], "src": [0], "dst_cap": 8 },
+      "expected_output": "[65, 66, 0, 0, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcscat_empty_dst",
+      "function": "wcscat",
+      "spec_section": "C11 7.29.4.3.1 wcscat",
+      "inputs": { "dst_init": [0], "src": [65, 66, 0], "dst_cap": 8 },
+      "expected_output": "[65, 66, 0, 0, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsncat_basic",
+      "function": "wcsncat",
+      "spec_section": "C11 7.29.4.3.2 wcsncat",
+      "inputs": { "dst": [65, 0, 0, 0, 0, 0], "src": [66, 67, 68, 0], "n": 2 },
+      "expected_output": "[65, 66, 67, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsncat_zero_n",
+      "function": "wcsncat",
+      "spec_section": "C11 7.29.4.3.2 wcsncat",
+      "inputs": { "dst": [65, 66, 0, 0], "src": [67, 68, 0], "n": 0 },
+      "expected_output": "[65, 66, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcschr_found",
+      "function": "wcschr",
+      "spec_section": "C11 7.29.4.5.1 wcschr",
+      "inputs": { "s": [65, 66, 67, 68, 0], "c": 67 },
+      "expected_output": "Some(2)",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Returns offset of first match"
+    },
+    {
+      "name": "wcschr_not_found",
+      "function": "wcschr",
+      "spec_section": "C11 7.29.4.5.1 wcschr",
+      "inputs": { "s": [65, 66, 67, 0], "c": 90 },
+      "expected_output": "None",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcschr_null_char",
+      "function": "wcschr",
+      "spec_section": "C11 7.29.4.5.1 wcschr",
+      "inputs": { "s": [65, 66, 67, 0], "c": 0 },
+      "expected_output": "Some(3)",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Finding null terminator is valid"
+    },
+    {
+      "name": "wcsrchr_found",
+      "function": "wcsrchr",
+      "spec_section": "C11 7.29.4.5.4 wcsrchr",
+      "inputs": { "s": [65, 66, 65, 67, 0], "c": 65 },
+      "expected_output": "Some(2)",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Returns offset of last match"
+    },
+    {
+      "name": "wcsrchr_not_found",
+      "function": "wcsrchr",
+      "spec_section": "C11 7.29.4.5.4 wcsrchr",
+      "inputs": { "s": [65, 66, 67, 0], "c": 90 },
+      "expected_output": "None",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsstr_found",
+      "function": "wcsstr",
+      "spec_section": "C11 7.29.4.5.7 wcsstr",
+      "inputs": { "haystack": [65, 66, 67, 68, 69, 0], "needle": [67, 68, 0] },
+      "expected_output": "Some(2)",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsstr_not_found",
+      "function": "wcsstr",
+      "spec_section": "C11 7.29.4.5.7 wcsstr",
+      "inputs": { "haystack": [65, 66, 67, 0], "needle": [88, 89, 0] },
+      "expected_output": "None",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsstr_empty_needle",
+      "function": "wcsstr",
+      "spec_section": "C11 7.29.4.5.7 wcsstr",
+      "inputs": { "haystack": [65, 66, 67, 0], "needle": [0] },
+      "expected_output": "Some(0)",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Empty needle matches at start"
+    },
+    {
+      "name": "wcsspn_all_match",
+      "function": "wcsspn",
+      "spec_section": "C11 7.29.4.5.5 wcsspn",
+      "inputs": { "s": [65, 66, 65, 0], "accept": [65, 66, 0] },
+      "expected_output": "3",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsspn_partial",
+      "function": "wcsspn",
+      "spec_section": "C11 7.29.4.5.5 wcsspn",
+      "inputs": { "s": [65, 66, 67, 68, 0], "accept": [65, 66, 0] },
+      "expected_output": "2",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcsspn_none",
+      "function": "wcsspn",
+      "spec_section": "C11 7.29.4.5.5 wcsspn",
+      "inputs": { "s": [67, 68, 0], "accept": [65, 66, 0] },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcscspn_found",
+      "function": "wcscspn",
+      "spec_section": "C11 7.29.4.5.2 wcscspn",
+      "inputs": { "s": [65, 66, 67, 68, 0], "reject": [67, 68, 0] },
+      "expected_output": "2",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcscspn_none",
+      "function": "wcscspn",
+      "spec_section": "C11 7.29.4.5.2 wcscspn",
+      "inputs": { "s": [65, 66, 0], "reject": [67, 68, 0] },
+      "expected_output": "2",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcspbrk_found",
+      "function": "wcspbrk",
+      "spec_section": "C11 7.29.4.5.3 wcspbrk",
+      "inputs": { "s": [65, 66, 67, 68, 0], "accept": [67, 90, 0] },
+      "expected_output": "2",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wcspbrk_not_found",
+      "function": "wcspbrk",
+      "spec_section": "C11 7.29.4.5.3 wcspbrk",
+      "inputs": { "s": [65, 66, 0], "accept": [88, 89, 0] },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemcpy_basic",
+      "function": "wmemcpy",
+      "spec_section": "C11 7.29.4.2.3 wmemcpy",
+      "inputs": { "src": [65, 66, 67, 68], "n": 4, "dst_len": 8 },
+      "expected_output": "[65, 66, 67, 68, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemcpy_partial",
+      "function": "wmemcpy",
+      "spec_section": "C11 7.29.4.2.3 wmemcpy",
+      "inputs": { "src": [65, 66, 67, 68], "n": 2, "dst_len": 4 },
+      "expected_output": "[65, 66, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemcpy_zero",
+      "function": "wmemcpy",
+      "spec_section": "C11 7.29.4.2.3 wmemcpy",
+      "inputs": { "src": [65, 66, 67, 68], "n": 0, "dst_len": 4 },
+      "expected_output": "[0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemmove_basic",
+      "function": "wmemmove",
+      "spec_section": "C11 7.29.4.2.4 wmemmove",
+      "inputs": { "src": [65, 66, 67, 68], "n": 4, "dst_len": 8 },
+      "expected_output": "[65, 66, 67, 68, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemset_basic",
+      "function": "wmemset",
+      "spec_section": "C11 7.29.4.6.2 wmemset",
+      "inputs": { "c": 65, "n": 4, "dst_len": 8 },
+      "expected_output": "[65, 65, 65, 65, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemset_zero",
+      "function": "wmemset",
+      "spec_section": "C11 7.29.4.6.2 wmemset",
+      "inputs": { "c": 0, "n": 3, "dst_len": 8 },
+      "expected_output": "[0, 0, 0, 0, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemcmp_equal",
+      "function": "wmemcmp",
+      "spec_section": "C11 7.29.4.4.3 wmemcmp",
+      "inputs": { "s1": [65, 66, 67], "s2": [65, 66, 67], "n": 3 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemcmp_less",
+      "function": "wmemcmp",
+      "spec_section": "C11 7.29.4.4.3 wmemcmp",
+      "inputs": { "s1": [65, 66, 67], "s2": [65, 66, 68], "n": 3 },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemcmp_greater",
+      "function": "wmemcmp",
+      "spec_section": "C11 7.29.4.4.3 wmemcmp",
+      "inputs": { "s1": [65, 66, 68], "s2": [65, 66, 67], "n": 3 },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemcmp_zero_n",
+      "function": "wmemcmp",
+      "spec_section": "C11 7.29.4.4.3 wmemcmp",
+      "inputs": { "s1": [65], "s2": [90], "n": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemchr_found",
+      "function": "wmemchr",
+      "spec_section": "C11 7.29.4.5.8 wmemchr",
+      "inputs": { "s": [65, 66, 67, 68], "c": 67, "n": 4 },
+      "expected_output": "Some(2)",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemchr_not_found",
+      "function": "wmemchr",
+      "spec_section": "C11 7.29.4.5.8 wmemchr",
+      "inputs": { "s": [65, 66, 67, 68], "c": 90, "n": 4 },
+      "expected_output": "None",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "wmemchr_limited",
+      "function": "wmemchr",
+      "spec_section": "C11 7.29.4.5.8 wmemchr",
+      "inputs": { "s": [65, 66, 67, 68], "c": 68, "n": 2 },
+      "expected_output": "None",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Character exists but beyond n limit"
     }
   ]
 }

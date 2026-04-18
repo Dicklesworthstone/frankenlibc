@@ -86,7 +86,8 @@
       "libc::nfds_t",
       "libc::speed_t",
       "libc::iovec"
-    ]
+    ],
+    "source_scan_exceptions": []
   },
   "interpose_allowlist": {
     "description": "Modules permitted to call through to host glibc in interpose (LD_PRELOAD) mode when the source scan detects direct escape hatches.",

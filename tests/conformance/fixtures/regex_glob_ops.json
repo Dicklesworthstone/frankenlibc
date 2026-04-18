@@ -2,7 +2,7 @@
   "version": "v1",
   "family": "regex_glob_ops",
   "captured_at": "2026-02-13T00:00:00Z",
-  "description": "Mode-specific parity fixtures for pattern matching (regex, glob, fnmatch). Strict: standard POSIX semantics. Hardened: complexity-bounded execution.",
+  "description": "Mode-specific parity fixtures for pattern matching and shell-style expansion (regex, glob, fnmatch, wordexp). Strict: standard POSIX semantics. Hardened: complexity-bounded execution.",
   "cases": [
     {
       "name": "regcomp_basic_strict",
@@ -83,6 +83,36 @@
       "expected_errno": 0,
       "mode": "hardened",
       "note": "Hardened: glob with result count limit to prevent resource exhaustion"
+    },
+    {
+      "name": "wordexp_quoted_semicolon_both",
+      "function": "wordexp",
+      "spec_section": "POSIX wordexp(3)",
+      "inputs": { "words": "\"a;b\"", "flags": 0 },
+      "expected_output": { "rc": 0, "words": ["a;b"] },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Quoted shell separators are literal words, not WRDE_BADCHAR."
+    },
+    {
+      "name": "wordexp_nocmd_single_quoted_literal_both",
+      "function": "wordexp",
+      "spec_section": "POSIX wordexp(3)",
+      "inputs": { "words": "'$(echo hi)'", "flags": 4 },
+      "expected_output": { "rc": 0, "words": ["$(echo hi)"] },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "WRDE_NOCMD should not reject command-substitution syntax inside single quotes."
+    },
+    {
+      "name": "wordexp_undef_double_quoted_variable_both",
+      "function": "wordexp",
+      "spec_section": "POSIX wordexp(3)",
+      "inputs": { "words": "\"$FRANKENLIBC_WORDEXP_UNSET_42\"", "flags": 32 },
+      "expected_output": { "rc": 3, "words": [] },
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "WRDE_UNDEF should reject undefined variables that remain expandable inside double quotes."
     }
   ]
 }

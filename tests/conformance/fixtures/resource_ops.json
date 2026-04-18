@@ -51,6 +51,66 @@
       "expected_output": "-1",
       "expected_errno": 22,
       "mode": "hardened"
+    },
+    {
+      "name": "getrlimit_cpu_strict",
+      "function": "getrlimit",
+      "spec_section": "POSIX getrlimit",
+      "inputs": { "resource": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "RLIMIT_CPU"
+    },
+    {
+      "name": "getrlimit_fsize_strict",
+      "function": "getrlimit",
+      "spec_section": "POSIX getrlimit",
+      "inputs": { "resource": 1 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "RLIMIT_FSIZE"
+    },
+    {
+      "name": "getrlimit_data_strict",
+      "function": "getrlimit",
+      "spec_section": "POSIX getrlimit",
+      "inputs": { "resource": 2 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "RLIMIT_DATA"
+    },
+    {
+      "name": "getrlimit_core_strict",
+      "function": "getrlimit",
+      "spec_section": "POSIX getrlimit",
+      "inputs": { "resource": 4 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "RLIMIT_CORE"
+    },
+    {
+      "name": "getrlimit_as_strict",
+      "function": "getrlimit",
+      "spec_section": "POSIX getrlimit",
+      "inputs": { "resource": 9 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "RLIMIT_AS (address space)"
+    },
+    {
+      "name": "getrlimit_cpu_hardened",
+      "function": "getrlimit",
+      "spec_section": "POSIX getrlimit",
+      "inputs": { "resource": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "RLIMIT_CPU"
     }
   ]
 }

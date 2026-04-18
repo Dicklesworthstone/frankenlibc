@@ -2,7 +2,7 @@
   "version": "v1",
   "family": "signal_ops",
   "captured_at": "2026-02-13T00:00:00Z",
-  "description": "Mode-specific parity fixtures for signal operations (kill, raise, sigaction, signal). All RawSyscall. Strict: host-kernel parity. Hardened: invalid signal number clamping.",
+  "description": "Mode-specific parity fixtures for signal operations (kill, raise, sigaction, ssignal, gsignal). Strict mode matches host behavior; hardened mode preserves legacy signal semantics for valid and invalid inputs.",
   "cases": [
     {
       "name": "raise_zero_strict",
@@ -45,6 +45,46 @@
       "note": "Query current SIGINT handler without setting"
     },
     {
+      "name": "ssignal_install_sigusr1_both",
+      "function": "ssignal",
+      "spec_section": "System V ssignal",
+      "inputs": { "sig": 10 },
+      "expected_output": "INSTALLED:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Installing a SIGUSR1 handler should succeed in both modes"
+    },
+    {
+      "name": "ssignal_invalid_signal_both",
+      "function": "ssignal",
+      "spec_section": "System V ssignal",
+      "inputs": { "sig": 1024 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Invalid signals should return SIG_ERR and set EINVAL"
+    },
+    {
+      "name": "gsignal_sigusr1_delivery_both",
+      "function": "gsignal",
+      "spec_section": "System V gsignal",
+      "inputs": { "sig": 10, "preinstall": "ssignal" },
+      "expected_output": "0:10:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "gsignal should deliver SIGUSR1 to a handler installed by ssignal"
+    },
+    {
+      "name": "gsignal_invalid_signal_both",
+      "function": "gsignal",
+      "spec_section": "System V gsignal",
+      "inputs": { "sig": 1024 },
+      "expected_output": "-1:0:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Invalid signals should fail like raise and leave the handler hit counter untouched"
+    },
+    {
       "name": "raise_zero_hardened",
       "function": "raise",
       "spec_section": "POSIX raise",
@@ -62,6 +102,144 @@
       "expected_errno": 22,
       "mode": "hardened",
       "note": "Invalid signal rejected in hardened mode too"
+    },
+    {
+      "name": "sigemptyset_basic_strict",
+      "function": "sigemptyset",
+      "spec_section": "POSIX sigemptyset",
+      "inputs": {},
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Initialize empty signal set"
+    },
+    {
+      "name": "sigfillset_basic_strict",
+      "function": "sigfillset",
+      "spec_section": "POSIX sigfillset",
+      "inputs": {},
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Initialize full signal set"
+    },
+    {
+      "name": "sigaddset_sigint_strict",
+      "function": "sigaddset",
+      "spec_section": "POSIX sigaddset",
+      "inputs": { "signum": 2 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Add SIGINT to empty set"
+    },
+    {
+      "name": "sigaddset_sigterm_strict",
+      "function": "sigaddset",
+      "spec_section": "POSIX sigaddset",
+      "inputs": { "signum": 15 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Add SIGTERM to empty set"
+    },
+    {
+      "name": "sigaddset_invalid_strict",
+      "function": "sigaddset",
+      "spec_section": "POSIX sigaddset",
+      "inputs": { "signum": 999 },
+      "expected_output": "-1",
+      "expected_errno": 22,
+      "mode": "strict",
+      "note": "Invalid signal number returns EINVAL"
+    },
+    {
+      "name": "sigdelset_sigint_strict",
+      "function": "sigdelset",
+      "spec_section": "POSIX sigdelset",
+      "inputs": { "signum": 2 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Remove SIGINT from full set"
+    },
+    {
+      "name": "sigdelset_invalid_strict",
+      "function": "sigdelset",
+      "spec_section": "POSIX sigdelset",
+      "inputs": { "signum": 999 },
+      "expected_output": "-1",
+      "expected_errno": 22,
+      "mode": "strict",
+      "note": "Invalid signal number returns EINVAL"
+    },
+    {
+      "name": "sigismember_empty_set_strict",
+      "function": "sigismember",
+      "spec_section": "POSIX sigismember",
+      "inputs": { "signum": 2, "filled": false },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "SIGINT not in empty set"
+    },
+    {
+      "name": "sigismember_full_set_strict",
+      "function": "sigismember",
+      "spec_section": "POSIX sigismember",
+      "inputs": { "signum": 2, "filled": true },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "SIGINT in full set"
+    },
+    {
+      "name": "sigismember_invalid_strict",
+      "function": "sigismember",
+      "spec_section": "POSIX sigismember",
+      "inputs": { "signum": 999, "filled": false },
+      "expected_output": "-1",
+      "expected_errno": 22,
+      "mode": "strict",
+      "note": "Invalid signal number returns EINVAL"
+    },
+    {
+      "name": "sigemptyset_basic_hardened",
+      "function": "sigemptyset",
+      "spec_section": "POSIX sigemptyset",
+      "inputs": {},
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigfillset_basic_hardened",
+      "function": "sigfillset",
+      "spec_section": "POSIX sigfillset",
+      "inputs": {},
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "sigaddset_sigusr1_hardened",
+      "function": "sigaddset",
+      "spec_section": "POSIX sigaddset",
+      "inputs": { "signum": 10 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "Add SIGUSR1 to empty set"
+    },
+    {
+      "name": "sigismember_full_hardened",
+      "function": "sigismember",
+      "spec_section": "POSIX sigismember",
+      "inputs": { "signum": 15, "filled": true },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "SIGTERM in full set"
     }
   ]
 }

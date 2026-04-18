@@ -40,6 +40,53 @@
       "expected_output": "[42]",
       "expected_errno": 0,
       "mode": "strict"
+    },
+    {
+      "name": "copy_high_bytes_strict",
+      "function": "memcpy",
+      "spec_section": "POSIX.1-2017 memcpy",
+      "inputs": { "src": [128, 200, 255, 0, 127], "dst_len": 5, "n": 5 },
+      "expected_output": "[128, 200, 255, 0, 127]",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "High byte values including 255 and embedded NUL"
+    },
+    {
+      "name": "copy_larger_16_strict",
+      "function": "memcpy",
+      "spec_section": "POSIX.1-2017 memcpy",
+      "inputs": { "src": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], "dst_len": 16, "n": 16 },
+      "expected_output": "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "16-byte copy for alignment testing"
+    },
+    {
+      "name": "copy_full_8_hardened",
+      "function": "memcpy",
+      "spec_section": "POSIX.1-2017 memcpy",
+      "inputs": { "src": [65, 66, 67, 68, 69, 70, 71, 72], "dst_len": 8, "n": 8 },
+      "expected_output": "[65, 66, 67, 68, 69, 70, 71, 72]",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "copy_zero_hardened",
+      "function": "memcpy",
+      "spec_section": "POSIX.1-2017 memcpy",
+      "inputs": { "src": [65, 66, 67, 68], "dst_len": 4, "n": 0 },
+      "expected_output": "[0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "copy_single_byte_hardened",
+      "function": "memcpy",
+      "spec_section": "POSIX.1-2017 memcpy",
+      "inputs": { "src": [99], "dst_len": 1, "n": 1 },
+      "expected_output": "[99]",
+      "expected_errno": 0,
+      "mode": "hardened"
     }
   ]
 }

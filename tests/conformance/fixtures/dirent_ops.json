@@ -60,6 +60,73 @@
       "expected_output": "NULL",
       "expected_errno": 2,
       "mode": "hardened"
+    },
+    {
+      "name": "rewinddir_valid_strict",
+      "function": "rewinddir",
+      "spec_section": "POSIX rewinddir",
+      "inputs": { "dirp": "valid_dir" },
+      "expected_output": "OK",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Rewind directory stream to beginning"
+    },
+    {
+      "name": "telldir_valid_strict",
+      "function": "telldir",
+      "spec_section": "POSIX telldir",
+      "inputs": { "dirp": "valid_dir" },
+      "expected_output": "VALID_POS",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Get current position in directory stream"
+    },
+    {
+      "name": "seekdir_zero_strict",
+      "function": "seekdir",
+      "spec_section": "POSIX seekdir",
+      "inputs": { "dirp": "valid_dir", "loc": 0 },
+      "expected_output": "OK",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Seek to position 0 in directory stream"
+    },
+    {
+      "name": "dirfd_valid_strict",
+      "function": "dirfd",
+      "spec_section": "POSIX dirfd",
+      "inputs": { "dirp": "valid_dir" },
+      "expected_output": "VALID_FD",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "Get file descriptor from DIR*"
+    },
+    {
+      "name": "rewinddir_valid_hardened",
+      "function": "rewinddir",
+      "spec_section": "POSIX rewinddir",
+      "inputs": { "dirp": "valid_dir" },
+      "expected_output": "OK",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "telldir_valid_hardened",
+      "function": "telldir",
+      "spec_section": "POSIX telldir",
+      "inputs": { "dirp": "valid_dir" },
+      "expected_output": "VALID_POS",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "dirfd_valid_hardened",
+      "function": "dirfd",
+      "spec_section": "POSIX dirfd",
+      "inputs": { "dirp": "valid_dir" },
+      "expected_output": "VALID_FD",
+      "expected_errno": 0,
+      "mode": "hardened"
     }
   ]
 }

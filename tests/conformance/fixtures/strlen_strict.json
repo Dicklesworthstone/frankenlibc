@@ -31,6 +31,63 @@
       "expected_output": "1",
       "expected_errno": 0,
       "mode": "strict"
+    },
+    {
+      "name": "high_bytes_strict",
+      "function": "strlen",
+      "spec_section": "POSIX.1-2017 strlen",
+      "inputs": { "s": [128, 200, 255, 0] },
+      "expected_output": "3",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "High byte values (128-255) are counted normally"
+    },
+    {
+      "name": "longer_string_strict",
+      "function": "strlen",
+      "spec_section": "POSIX.1-2017 strlen",
+      "inputs": { "s": [84, 104, 105, 115, 32, 105, 115, 32, 97, 32, 116, 101, 115, 116, 0] },
+      "expected_output": "14",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "This is a test"
+    },
+    {
+      "name": "embedded_high_byte_strict",
+      "function": "strlen",
+      "spec_section": "POSIX.1-2017 strlen",
+      "inputs": { "s": [65, 66, 255, 67, 68, 0] },
+      "expected_output": "5",
+      "expected_errno": 0,
+      "mode": "strict",
+      "note": "High byte 255 in middle is not NUL"
+    },
+    {
+      "name": "empty_string_hardened",
+      "function": "strlen",
+      "spec_section": "POSIX.1-2017 strlen",
+      "inputs": { "s": [0] },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "hello_hardened",
+      "function": "strlen",
+      "spec_section": "POSIX.1-2017 strlen",
+      "inputs": { "s": [72, 101, 108, 108, 111, 0] },
+      "expected_output": "5",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "high_bytes_hardened",
+      "function": "strlen",
+      "spec_section": "POSIX.1-2017 strlen",
+      "inputs": { "s": [128, 200, 255, 0] },
+      "expected_output": "3",
+      "expected_errno": 0,
+      "mode": "hardened"
     }
   ]
 }

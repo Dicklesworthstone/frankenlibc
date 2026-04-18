@@ -86,6 +86,7 @@ with open(support_path) as f:
 
 allowlist = set(profile['interpose_allowlist']['modules'])
 mutex_symbols = set(profile.get('replacement_forbidden', {}).get('mutex_symbols', []))
+source_scan_exceptions = profile.get('detection_rules', {}).get('source_scan_exceptions', [])
 support_rows = support_matrix.get('symbols', [])
 support_by_symbol = {}
 for row in support_rows:
@@ -96,6 +97,27 @@ for row in support_rows:
 
 call_through_re = re.compile(r'libc::([a-z_][a-z0-9_]*)\s*\(')
 host_pthread_re = re.compile(r'host_pthread_([a-z_][a-z0-9_]*)\s*\(')
+function_re = re.compile(r'\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(')
+
+exception_lookup = defaultdict(lambda: defaultdict(set))
+for row in source_scan_exceptions:
+    module = str(row.get('module', ''))
+    function = str(row.get('function', ''))
+    symbols = {
+        str(symbol)
+        for symbol in row.get('symbols', [])
+        if isinstance(symbol, str) and symbol
+    }
+    if module and function and symbols:
+        exception_lookup[module][function].update(symbols)
+
+def count_braces(line):
+    return line.count('{') - line.count('}')
+
+def is_source_scan_exception(module, current_fn, symbol):
+    if not current_fn:
+        return False
+    return symbol in exception_lookup.get(module, {}).get(current_fn, set())
 
 violations = []
 mutex_violations = []
@@ -114,13 +136,29 @@ for fname in sorted(os.listdir(abi_src)):
         lines = f.readlines()
 
     module_calls = []
+    brace_depth = 0
+    pending_fn = None
+    current_fn = None
+    current_fn_base_depth = 0
     for lineno, line in enumerate(lines, 1):
         stripped = line.strip()
+        if not stripped.startswith('//'):
+            fn_match = function_re.search(line)
+            if fn_match:
+                pending_fn = fn_match.group(1)
+        new_brace_depth = brace_depth if stripped.startswith('//') else brace_depth + count_braces(line)
+        if current_fn is None and pending_fn is not None and new_brace_depth > brace_depth:
+            current_fn = pending_fn
+            current_fn_base_depth = brace_depth
+            pending_fn = None
         if stripped.startswith('//'):
+            brace_depth = new_brace_depth
             continue
         for m in call_through_re.finditer(line):
             func_name = m.group(1)
             if func_name == 'syscall':
+                continue
+            if is_source_scan_exception(module, current_fn, func_name):
                 continue
             module_calls.append({
                 'line': lineno,
@@ -129,6 +167,9 @@ for fname in sorted(os.listdir(abi_src)):
                 'context': stripped[:120],
             })
         if 'fn host_pthread_' in stripped:
+            if current_fn is not None and new_brace_depth <= current_fn_base_depth:
+                current_fn = None
+            brace_depth = new_brace_depth
             continue
         for m in host_pthread_re.finditer(line):
             wrapped = m.group(1)
@@ -140,6 +181,9 @@ for fname in sorted(os.listdir(abi_src)):
                 'source': 'host_pthread',
                 'context': stripped[:120],
             })
+        if current_fn is not None and new_brace_depth <= current_fn_base_depth:
+            current_fn = None
+        brace_depth = new_brace_depth
 
     if module_calls:
         module_counts[module] = len(module_calls)

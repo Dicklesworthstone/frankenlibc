@@ -8,8 +8,8 @@ Generated: 2026-04-18
 | Metric | Count |
 |--------|-------|
 | Total fixture files | 55 |
-| Fixtures with unit tests | 49 |
-| Fixtures pending coverage | 6 |
+| Fixtures with unit tests | 50 |
+| Fixtures pending coverage | 5 |
 | Unit test pass rate | 100% |
 
 ## Fixture Coverage Matrix
@@ -67,15 +67,15 @@ Generated: 2026-04-18
 | loader_edges | loader_edges_fixture_cases_match | PASS |
 | spawn_exec_ops | spawn_exec_ops_fixture_cases_match | PASS |
 | sysv_ipc_ops | sysv_ipc_ops_fixture_cases_match | PASS |
+| scanf_conformance | scanf_conformance_fixture_cases_match | PARTIAL (74/106) |
 
-### Pending Coverage (6 fixtures)
+### Pending Coverage (5 fixtures)
 
 | Fixture | Blocker | Notes |
 |---------|---------|-------|
 | printf_conformance | Complex schema | Uses expected_output_pattern/expected_output_bytes variants |
 | pthread_thread | STUB executor | Thread lifecycle operations stubbed |
 | resolver | Network dependent | DNS resolution requires network |
-| scanf_conformance | STUB executor | sscanf executor returns "STUB" |
 | setjmp_nested_edges | Integration format | Uses program_scenarios (requires C binary execution) |
 | termios_ops | Environment dependent | Terminal I/O varies by environment |
 
