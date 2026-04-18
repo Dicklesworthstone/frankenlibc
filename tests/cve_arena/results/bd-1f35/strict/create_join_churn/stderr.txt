@@ -1,4 +1,12 @@
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-129920eebdb36648)
+     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-67b2de910c78a662)
+error: test failed, to rerun pass `-p frankenlibc-abi --test pthread_thread_lifecycle_test`
+
+Caused by:
+  process didn't exit successfully: `/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-67b2de910c78a662 pthread_equal_reflexive_and_distinct_threads_not_equal --exact --nocapture --test-threads=1` (signal: 11, SIGSEGV: invalid memory reference)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-129920eebdb36648)
+     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-67b2de910c78a662)
+error: test failed, to rerun pass `-p frankenlibc-abi --test pthread_thread_lifecycle_test`
+
+Caused by:
+  process didn't exit successfully: `/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-67b2de910c78a662 pthread_equal_reflexive_and_distinct_threads_not_equal --exact --nocapture --test-threads=1` (signal: 11, SIGSEGV: invalid memory reference)
