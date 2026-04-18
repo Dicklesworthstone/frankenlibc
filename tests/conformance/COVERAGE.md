@@ -8,8 +8,8 @@ Generated: 2026-04-18
 | Metric | Count |
 |--------|-------|
 | Total fixture files | 55 |
-| Fixtures with unit tests | 46 |
-| Fixtures pending coverage | 9 |
+| Fixtures with unit tests | 49 |
+| Fixtures pending coverage | 6 |
 | Unit test pass rate | 100% |
 
 ## Fixture Coverage Matrix
@@ -64,28 +64,20 @@ Generated: 2026-04-18
 | wide_memory | wide_memory_fixture_cases_match | PASS |
 | wide_string | wide_string_fixture_cases_match | PASS |
 | wide_string_ops | wide_string_ops_fixture_cases_match | PASS |
+| loader_edges | loader_edges_fixture_cases_match | PASS |
+| spawn_exec_ops | spawn_exec_ops_fixture_cases_match | PASS |
+| sysv_ipc_ops | sysv_ipc_ops_fixture_cases_match | PASS |
 
-### Pending Coverage (9 fixtures)
+### Pending Coverage (6 fixtures)
 
 | Fixture | Blocker | Notes |
 |---------|---------|-------|
-| loader_edges | Ready | dlopen/dlsym/dlclose edge cases - executors exist |
 | printf_conformance | Complex schema | Uses expected_output_pattern/expected_output_bytes variants |
 | pthread_thread | STUB executor | Thread lifecycle operations stubbed |
 | resolver | Network dependent | DNS resolution requires network |
 | scanf_conformance | STUB executor | sscanf executor returns "STUB" |
 | setjmp_nested_edges | Integration format | Uses program_scenarios (requires C binary execution) |
-| spawn_exec_ops | Ready | posix_spawn/execve/system - executors exist |
-| sysv_ipc_ops | Ready | semget/shmget/msgget - executors exist |
 | termios_ops | Environment dependent | Terminal I/O varies by environment |
-
-### Ready for Implementation
-
-These fixtures have working executors and can be added when lib.rs is available:
-
-1. **sysv_ipc_ops** - Tests semget, semop, semctl, shmget, shmat, shmdt, msgget
-2. **loader_edges** - Tests dlopen, dlsym, dlclose, dladdr, dlinfo edge cases  
-3. **spawn_exec_ops** - Tests posix_spawn, system, execve, execvp operations
 
 ## Test Commands
 
@@ -102,12 +94,6 @@ cargo test -p frankenlibc-harness --test <fixture>_conformance_test
 
 ## Coverage Gaps Analysis
 
-### High Priority (working executors, blocked by file reservation)
-
-- sysv_ipc_ops (9 cases)
-- loader_edges (7 cases)
-- spawn_exec_ops (already added in latest session)
-
 ### Medium Priority (needs executor work)
 
 - printf_conformance - needs pattern matching in test harness
@@ -119,17 +105,6 @@ cargo test -p frankenlibc-harness --test <fixture>_conformance_test
 - resolver - requires network mocking or real DNS
 - termios_ops - requires terminal emulation
 - pthread_thread - requires thread lifecycle implementation
-
-## Pending Changes
-
-The following fixture tests have been validated (49 tests pass) but are blocked
-by file reservation on `crates/frankenlibc_conformance/src/lib.rs`:
-
-- spawn_exec_ops_fixture_cases_match_execute_fixture_case
-- sysv_ipc_ops_fixture_cases_match_execute_fixture_case  
-- loader_edges_fixture_cases_match_execute_fixture_case
-
-These will be committed when the reservation is released.
 
 ## Related Documents
 
