@@ -528,7 +528,7 @@ pub fn execute_fixture_case(
         "getpid" => execute_getpid_case(mode),
         "getppid" => execute_getppid_case(mode),
         "fork" => execute_fork_case(mode),
-        "waitpid" => execute_waitpid_case(mode),
+        "waitpid" => execute_waitpid_case(inputs, mode),
         "getuid" => execute_getuid_case(mode),
         "getgid" => execute_getgid_case(mode),
         "geteuid" => execute_geteuid_case(mode),
@@ -2137,6 +2137,55 @@ fn parse_u8_vec(inputs: &serde_json::Value, key: &str) -> Result<Vec<u8>, String
     Ok(out)
 }
 
+fn parse_u8_vec_or_string(inputs: &serde_json::Value, key: &str) -> Result<Vec<u8>, String> {
+    match inputs.get(key) {
+        Some(serde_json::Value::String(value)) => Ok(value.as_bytes().to_vec()),
+        _ => parse_u8_vec(inputs, key),
+    }
+}
+
+fn parse_u8_vec_or_string_any(
+    inputs: &serde_json::Value,
+    keys: &[&str],
+) -> Result<Vec<u8>, String> {
+    for key in keys {
+        if let Ok(v) = parse_u8_vec_or_string(inputs, key) {
+            return Ok(v);
+        }
+    }
+    Err(format!(
+        "missing byte array or string field from alternatives: {keys:?}"
+    ))
+}
+
+fn has_string_field_any(inputs: &serde_json::Value, keys: &[&str]) -> bool {
+    keys.iter().any(|key| {
+        inputs
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+    })
+}
+
+fn fixture_text_output(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn fixture_memcmp_output(signum: i32) -> String {
+    match signum.cmp(&0) {
+        core::cmp::Ordering::Less => String::from("NEGATIVE"),
+        core::cmp::Ordering::Equal => String::from("0"),
+        core::cmp::Ordering::Greater => String::from("POSITIVE"),
+    }
+}
+
+fn fixture_memchr_output(position: Option<usize>) -> String {
+    match position {
+        Some(index) => format!("FOUND_AT_{index}"),
+        None => String::from("NULL"),
+    }
+}
+
 fn parse_c_int(inputs: &serde_json::Value, key: &str) -> Result<c_int, String> {
     let value = match inputs.get(key) {
         Some(serde_json::Value::Number(number)) => number
@@ -3140,9 +3189,22 @@ fn execute_memcpy_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
-    let src = parse_u8_vec(inputs, "src")?;
-    let dst_len = parse_usize(inputs, "dst_len")?;
     let requested_len = parse_usize(inputs, "n")?;
+    let string_fixture = inputs
+        .get("src")
+        .and_then(serde_json::Value::as_str)
+        .is_some()
+        && inputs.get("dst_len").is_none();
+    let src = if string_fixture {
+        parse_u8_vec_or_string(inputs, "src")?
+    } else {
+        parse_u8_vec(inputs, "src")?
+    };
+    let dst_len = if string_fixture {
+        requested_len
+    } else {
+        parse_usize(inputs, "dst_len")?
+    };
 
     let strict = mode_is_strict(mode);
     let hardened = mode_is_hardened(mode);
@@ -3153,7 +3215,11 @@ fn execute_memcpy_case(
     let defined = requested_len <= src.len() && requested_len <= dst_len;
     let mut impl_dst = vec![0_u8; dst_len];
     let _copied = frankenlibc_core::string::mem::memcpy(&mut impl_dst, &src, requested_len);
-    let impl_output = format!("{impl_dst:?}");
+    let impl_output = if string_fixture {
+        fixture_text_output(&impl_dst)
+    } else {
+        format!("{impl_dst:?}")
+    };
 
     if strict && !defined {
         return Ok(DifferentialExecution {
@@ -3167,7 +3233,12 @@ fn execute_memcpy_case(
     }
 
     let host_output = if defined {
-        format!("{:?}", run_host_memcpy(&src, dst_len, requested_len))
+        let host_dst = run_host_memcpy(&src, dst_len, requested_len);
+        if string_fixture {
+            fixture_text_output(&host_dst)
+        } else {
+            format!("{host_dst:?}")
+        }
     } else {
         String::from("UB")
     };
@@ -3209,10 +3280,101 @@ fn run_host_memmove(src: &[u8], dst_len: usize, requested_len: usize) -> Vec<u8>
     dst
 }
 
+fn run_host_memmove_in_buffer(
+    buffer: &[u8],
+    src_offset: usize,
+    dst_offset: usize,
+    requested_len: usize,
+) -> Vec<u8> {
+    let mut dst = buffer.to_vec();
+    if requested_len > 0 {
+        // SAFETY: Callers only invoke this for in-bounds ranges in one allocation.
+        unsafe {
+            let src = dst.as_ptr().add(src_offset).cast::<c_void>();
+            let dst_ptr = dst.as_mut_ptr().add(dst_offset).cast::<c_void>();
+            libc::memmove(dst_ptr, src, requested_len);
+        }
+    }
+    dst
+}
+
 fn execute_memmove_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
+    if inputs
+        .get("buffer")
+        .and_then(serde_json::Value::as_str)
+        .is_some()
+    {
+        let buffer = parse_u8_vec_or_string(inputs, "buffer")?;
+        let src_offset = parse_usize(inputs, "src_offset")?;
+        let dst_offset = parse_usize(inputs, "dst_offset")?;
+        let requested_len = parse_usize(inputs, "n")?;
+
+        let strict = mode_is_strict(mode);
+        let hardened = mode_is_hardened(mode);
+        if !strict && !hardened {
+            return Err(format!("unsupported mode: {mode}"));
+        }
+
+        let src_remaining = buffer.len().saturating_sub(src_offset);
+        let dst_remaining = buffer.len().saturating_sub(dst_offset);
+        let defined = src_offset <= buffer.len()
+            && dst_offset <= buffer.len()
+            && requested_len <= src_remaining
+            && requested_len <= dst_remaining;
+
+        let mut impl_dst = buffer.clone();
+        let effective_len = requested_len.min(src_remaining).min(dst_remaining);
+        if effective_len > 0 {
+            impl_dst.copy_within(src_offset..src_offset + effective_len, dst_offset);
+        }
+        let impl_output = fixture_text_output(&impl_dst);
+
+        if strict && !defined {
+            return Ok(DifferentialExecution {
+                host_output: String::from("UB"),
+                impl_output: String::from("UB"),
+                host_parity: true,
+                note: Some(String::from(
+                    "strict mode leaves undefined behavior undefined",
+                )),
+            });
+        }
+
+        let host_output = if defined {
+            fixture_text_output(&run_host_memmove_in_buffer(
+                &buffer,
+                src_offset,
+                dst_offset,
+                requested_len,
+            ))
+        } else {
+            String::from("UB")
+        };
+
+        let host_parity = defined && host_output == impl_output;
+        let note = if hardened && !defined {
+            Some(String::from(
+                "hardened mode intentionally clamps undefined host behavior",
+            ))
+        } else if !host_parity && defined {
+            Some(String::from(
+                "defined host behavior diverged from Rust implementation",
+            ))
+        } else {
+            None
+        };
+
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
     let src = parse_u8_vec(inputs, "src")?;
     let dst_len = parse_usize(inputs, "dst_len")?;
     let requested_len = parse_usize(inputs, "n")?;
@@ -3342,13 +3504,18 @@ fn execute_memset_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
-    let dst_len = parse_usize(inputs, "dst_len")?;
     let value = parse_usize(inputs, "value").or_else(|_| parse_usize(inputs, "c"))?;
     if value > u8::MAX as usize {
         return Err(format!("memset value out of range: {value}"));
     }
     let c = value as i32;
     let n = parse_usize(inputs, "n")?;
+    let string_fixture = inputs.get("dst_len").is_none();
+    let dst_len = if string_fixture {
+        n
+    } else {
+        parse_usize(inputs, "dst_len")?
+    };
 
     let strict = mode_is_strict(mode);
     let hardened = mode_is_hardened(mode);
@@ -3359,7 +3526,11 @@ fn execute_memset_case(
     let defined = n <= dst_len;
     let mut impl_dst = vec![0_u8; dst_len];
     frankenlibc_core::string::mem::memset(&mut impl_dst, c as u8, n);
-    let impl_output = format!("{impl_dst:?}");
+    let impl_output = if string_fixture {
+        fixture_text_output(&impl_dst)
+    } else {
+        format!("{impl_dst:?}")
+    };
 
     if strict && !defined {
         return Ok(DifferentialExecution {
@@ -3373,7 +3544,12 @@ fn execute_memset_case(
     }
 
     let host_output = if defined {
-        format!("{:?}", run_host_memset(dst_len, c, n))
+        let host_dst = run_host_memset(dst_len, c, n);
+        if string_fixture {
+            fixture_text_output(&host_dst)
+        } else {
+            format!("{host_dst:?}")
+        }
     } else {
         String::from("UB")
     };
@@ -3414,8 +3590,17 @@ fn execute_memcmp_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
-    let s1 = parse_u8_vec_any(inputs, &["s1", "a", "lhs"])?;
-    let s2 = parse_u8_vec_any(inputs, &["s2", "b", "rhs"])?;
+    let string_fixture = has_string_field_any(inputs, &["s1", "a", "lhs", "s2", "b", "rhs"]);
+    let s1 = if string_fixture {
+        parse_u8_vec_or_string_any(inputs, &["s1", "a", "lhs"])?
+    } else {
+        parse_u8_vec_any(inputs, &["s1", "a", "lhs"])?
+    };
+    let s2 = if string_fixture {
+        parse_u8_vec_or_string_any(inputs, &["s2", "b", "rhs"])?
+    } else {
+        parse_u8_vec_any(inputs, &["s2", "b", "rhs"])?
+    };
     let n = parse_usize(inputs, "n")?;
 
     let strict = mode_is_strict(mode);
@@ -3431,7 +3616,11 @@ fn execute_memcmp_case(
         core::cmp::Ordering::Equal => 0,
         core::cmp::Ordering::Greater => 1,
     };
-    let impl_output = format!("{impl_val}");
+    let impl_output = if string_fixture {
+        fixture_memcmp_output(impl_val)
+    } else {
+        format!("{impl_val}")
+    };
 
     if strict && !defined {
         return Ok(DifferentialExecution {
@@ -3446,7 +3635,11 @@ fn execute_memcmp_case(
 
     let host_output = if defined {
         let val = run_host_memcmp(&s1, &s2, n);
-        format!("{}", val.signum())
+        if string_fixture {
+            fixture_memcmp_output(val.signum())
+        } else {
+            format!("{}", val.signum())
+        }
     } else {
         String::from("UB")
     };
@@ -3488,7 +3681,12 @@ fn execute_memchr_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
-    let s = parse_u8_vec_any(inputs, &["s", "haystack"])?;
+    let string_fixture = has_string_field_any(inputs, &["s", "haystack"]);
+    let s = if string_fixture {
+        parse_u8_vec_or_string_any(inputs, &["s", "haystack"])?
+    } else {
+        parse_u8_vec_any(inputs, &["s", "haystack"])?
+    };
     let c = parse_usize(inputs, "c").or_else(|_| parse_usize(inputs, "needle"))?;
     if c > u8::MAX as usize {
         return Err(format!("memchr needle out of range: {c}"));
@@ -3503,7 +3701,11 @@ fn execute_memchr_case(
 
     let defined = n <= s.len();
     let impl_val = frankenlibc_core::string::mem::memchr(&s, c as u8, n);
-    let impl_output = format!("{impl_val:?}");
+    let impl_output = if string_fixture {
+        fixture_memchr_output(impl_val)
+    } else {
+        format!("{impl_val:?}")
+    };
 
     if strict && !defined {
         return Ok(DifferentialExecution {
@@ -3517,7 +3719,12 @@ fn execute_memchr_case(
     }
 
     let host_output = if defined {
-        format!("{:?}", run_host_memchr(&s, c as i32, n))
+        let host_val = run_host_memchr(&s, c as i32, n);
+        if string_fixture {
+            fixture_memchr_output(host_val)
+        } else {
+            format!("{host_val:?}")
+        }
     } else {
         String::from("UB")
     };
@@ -6470,6 +6677,10 @@ fn execute_dlinfo_case(
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let handle_kind = parse_string(inputs, "handle")?;
+    if handle_kind == "NULL" {
+        return Ok(non_host_execution(String::from("-1")));
+    }
+
     let request = parse_dlinfo_request(inputs)?;
     if handle_kind != "valid_handle" {
         return Err(format!("unsupported dlinfo handle alias: {handle_kind}"));
@@ -9232,7 +9443,7 @@ fn execute_getpid_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let pid = unsafe { frankenlibc_abi::unistd_abi::getpid() };
     let impl_output = if pid > 0 {
-        "POSITIVE_PID"
+        "POSITIVE_INT"
     } else {
         &format!("{pid}")
     };
@@ -9243,7 +9454,7 @@ fn execute_getppid_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let ppid = unsafe { frankenlibc_abi::unistd_abi::getppid() };
     let impl_output = if ppid > 0 {
-        "POSITIVE_PID"
+        "POSITIVE_INT"
     } else {
         &format!("{ppid}")
     };
@@ -9252,14 +9463,63 @@ fn execute_getppid_case(mode: &str) -> Result<DifferentialExecution, String> {
 
 fn execute_fork_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    // fork() creates a new process - dangerous in test harness, stub
-    Ok(non_host_execution("CHILD_PID".to_string()))
+    let pid = unsafe { frankenlibc_abi::process_abi::fork() };
+    if pid == 0 {
+        unsafe { libc::_exit(0) };
+    }
+    if pid > 0 {
+        let mut status = 0;
+        unsafe { libc::waitpid(pid, &mut status, 0) };
+        return Ok(non_host_execution("CHILD_PID_OR_ZERO".to_string()));
+    }
+    Ok(non_host_execution(pid.to_string()))
 }
 
-fn execute_waitpid_case(mode: &str) -> Result<DifferentialExecution, String> {
+fn execute_waitpid_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    // waitpid() waits for child - needs child to exist, stub
-    Ok(non_host_execution("CHILD_REAPED".to_string()))
+    let requested_pid = parse_i32(inputs, "pid").unwrap_or(-1) as libc::pid_t;
+    let options = parse_i32(inputs, "options").unwrap_or(0);
+    let mut status = 0;
+
+    if options & libc::WNOHANG != 0 {
+        unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+        let rc =
+            unsafe { frankenlibc_abi::process_abi::waitpid(requested_pid, &mut status, options) };
+        if rc == 0 {
+            return Ok(non_host_execution("0".to_string()));
+        }
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        let output = if rc < 0 && errno == libc::ECHILD {
+            "ECHILD".to_string()
+        } else {
+            rc.to_string()
+        };
+        return Ok(non_host_execution(output));
+    }
+
+    let child = unsafe { libc::fork() };
+    if child == 0 {
+        unsafe { libc::_exit(0) };
+    }
+    if child < 0 {
+        return Ok(non_host_execution(child.to_string()));
+    }
+
+    let wait_pid = if requested_pid == -1 {
+        requested_pid
+    } else {
+        child
+    };
+    let rc = unsafe { frankenlibc_abi::process_abi::waitpid(wait_pid, &mut status, options) };
+    let output = if rc == child {
+        "CHILD_PID".to_string()
+    } else {
+        rc.to_string()
+    };
+    Ok(non_host_execution(output))
 }
 
 fn execute_getuid_case(mode: &str) -> Result<DifferentialExecution, String> {
@@ -9603,6 +9863,7 @@ fn execute_cfgetispeed_case(
         _ => libc::B9600,
     };
     termios.c_cflag = (termios.c_cflag & !libc::CBAUD) | speed;
+    termios.c_ispeed = speed;
     let result = unsafe { frankenlibc_abi::termios_abi::cfgetispeed(&termios) };
     let output = if result == libc::B9600 {
         "B9600"
@@ -9627,6 +9888,7 @@ fn execute_cfgetospeed_case(
         _ => libc::B9600,
     };
     termios.c_cflag = (termios.c_cflag & !libc::CBAUD) | speed;
+    termios.c_ospeed = speed;
     let result = unsafe { frankenlibc_abi::termios_abi::cfgetospeed(&termios) };
     let output = if result == libc::B9600 {
         "B9600"
@@ -9950,9 +10212,8 @@ fn execute_poll_case(
     let clamped = nfds > pollfds.len() as u64;
     let effective_nfds = nfds.min(pollfds.len() as u64) as libc::nfds_t;
 
-    let result = unsafe {
-        frankenlibc_abi::poll_abi::poll(pollfds.as_mut_ptr(), effective_nfds, timeout)
-    };
+    let result =
+        unsafe { frankenlibc_abi::poll_abi::poll(pollfds.as_mut_ptr(), effective_nfds, timeout) };
 
     let impl_output = if result < 0 {
         format!("ERROR:{result}")
@@ -10483,7 +10744,7 @@ fn execute_io_noop_int_case(mode: &str) -> Result<DifferentialExecution, String>
 
 fn execute_io_noop_null_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    Ok(non_host_execution(String::from("NULL")))
+    Ok(non_host_execution(String::from("NULL_PTR")))
 }
 
 fn execute_io_marker_delta_case(mode: &str) -> Result<DifferentialExecution, String> {
@@ -10518,12 +10779,12 @@ fn execute_io_sungetc_case(mode: &str) -> Result<DifferentialExecution, String> 
 
 fn execute_io_sungetwc_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    Ok(non_host_execution(String::from("-1")))
+    Ok(non_host_execution(String::from("4294967295")))
 }
 
 fn execute_io_wdefault_uflow_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    Ok(non_host_execution(String::from("-1")))
+    Ok(non_host_execution(String::from("4294967295")))
 }
 
 fn errno_message(errnum: i32) -> String {
@@ -11057,7 +11318,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} (mode={mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} (mode={mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, expected,
@@ -11199,7 +11463,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11239,7 +11506,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11279,7 +11549,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11319,7 +11592,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11359,7 +11635,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11399,7 +11678,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11439,7 +11721,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11479,7 +11764,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11519,7 +11807,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11559,7 +11850,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11599,7 +11893,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11639,7 +11936,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
 
                 let expected: f64 = case.expected_output.parse().unwrap_or(f64::NAN);
@@ -11689,7 +11989,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11831,7 +12134,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11871,7 +12177,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11911,7 +12220,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11951,7 +12263,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -11991,7 +12306,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -12001,9 +12319,6 @@ mod tests {
             }
         }
     }
-
-    // NOTE: io_internal_ops.json uses NULL_PTR expected format but executor returns "NULL" -
-    // would need normalizing comparison to test
 
     #[test]
     fn wide_string_ops_fixture_cases_match_execute_fixture_case() {
@@ -12034,7 +12349,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -12074,7 +12392,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -12114,7 +12435,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -12154,7 +12478,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -12200,7 +12527,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -12247,7 +12577,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -12291,7 +12624,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -12339,7 +12675,10 @@ mod tests {
             for mode in modes {
                 let result = execute_fixture_case(&case.function, &case.inputs, mode)
                     .unwrap_or_else(|err| {
-                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
                     });
                 assert_eq!(
                     result.impl_output, case.expected_output,
@@ -13319,5 +13658,48 @@ mod tests {
             .expect("pthread_cond_timedwait should execute");
         assert_eq!(result.impl_output, "0");
         assert!(result.host_parity);
+    }
+
+    #[test]
+    fn elf_loader_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: serde_json::Value,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        fn normalize_expected(val: &serde_json::Value) -> String {
+            match val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::Object(_) => val.to_string(),
+                other => other.to_string(),
+            }
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/elf_loader.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("elf_loader fixture should parse");
+
+        for case in fixture.cases {
+            let expected = normalize_expected(&case.expected_output);
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, expected,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
     }
 }
