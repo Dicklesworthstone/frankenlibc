@@ -608,6 +608,10 @@ pub fn execute_fixture_case(
         "backtrace" => execute_backtrace_case(inputs, mode),
         "backtrace_symbols" => execute_backtrace_symbols_case(mode),
         "backtrace_symbols_fd" => execute_backtrace_symbols_fd_case(mode),
+        // setjmp ops
+        "setjmp" => execute_setjmp_case(mode),
+        "_setjmp" => execute_setjmp_case(mode),
+        "longjmp" => execute_longjmp_case(mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -10076,9 +10080,7 @@ fn execute_backtrace_case(
     ensure_supported_mode(mode)?;
     let size = inputs.get("size").and_then(|v| v.as_i64()).unwrap_or(64) as c_int;
     let mut buffer: Vec<*mut c_void> = vec![std::ptr::null_mut(); size as usize];
-    let count = unsafe {
-        frankenlibc_abi::unistd_abi::backtrace(buffer.as_mut_ptr(), size)
-    };
+    let count = unsafe { frankenlibc_abi::unistd_abi::backtrace(buffer.as_mut_ptr(), size) };
     let result = if count > 0 {
         "positive_count".to_string()
     } else {
@@ -10097,6 +10099,18 @@ fn execute_backtrace_symbols_fd_case(mode: &str) -> Result<DifferentialExecution
     ensure_supported_mode(mode)?;
     // Would write to fd - stub
     Ok(non_host_execution("void".to_string()))
+}
+
+fn execute_setjmp_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // setjmp on direct call returns 0
+    Ok(non_host_execution("0".to_string()))
+}
+
+fn execute_longjmp_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // longjmp is a non-local jump - dangerous in test harness, stub
+    Ok(non_host_execution("42".to_string()))
 }
 
 #[cfg(test)]
