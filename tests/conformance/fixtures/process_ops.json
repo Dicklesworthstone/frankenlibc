@@ -9,7 +9,7 @@
       "function": "getpid",
       "spec_section": "POSIX getpid",
       "inputs": {},
-      "expected_output": "POSITIVE_INT",
+      "expected_output": "POSITIVE_PID",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -18,7 +18,7 @@
       "function": "getppid",
       "spec_section": "POSIX getppid",
       "inputs": {},
-      "expected_output": "POSITIVE_INT",
+      "expected_output": "POSITIVE_PID",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -45,17 +45,17 @@
       "function": "waitpid",
       "spec_section": "POSIX waitpid",
       "inputs": { "pid": -1, "options": 1 },
-      "expected_output": "0",
-      "expected_errno": 0,
+      "expected_output": "ECHILD",
+      "expected_errno": 10,
       "mode": "strict",
-      "note": "WNOHANG with no waitable child returns 0"
+      "note": "WNOHANG returns 0 only when children exist but have not changed state; with no waitable child it fails with ECHILD"
     },
     {
       "name": "getpid_positive_hardened",
       "function": "getpid",
       "spec_section": "POSIX getpid",
       "inputs": {},
-      "expected_output": "POSITIVE_INT",
+      "expected_output": "POSITIVE_PID",
       "expected_errno": 0,
       "mode": "hardened"
     },

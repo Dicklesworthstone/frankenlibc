@@ -9714,8 +9714,55 @@ fn execute_pthread_create_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let _ = inputs;
-    Ok(non_host_execution("SKIP_THREAD_LIFECYCLE".to_string()))
+    let _guard = ThreadingForceNativeGuard::new();
+    let start_routine = inputs
+        .get("start_routine")
+        .and_then(|value| value.as_str())
+        .unwrap_or("echo_arg");
+    if start_routine != "echo_arg" {
+        return Err(format!(
+            "unsupported pthread_create start_routine '{start_routine}'"
+        ));
+    }
+
+    let count = inputs
+        .get("count")
+        .and_then(|value| value.as_u64())
+        .map(usize::try_from)
+        .transpose()
+        .map_err(|_| String::from("pthread_create count out of range"))?
+        .unwrap_or(1);
+    let sleep_ms = inputs
+        .get("arg")
+        .and_then(|value| value.as_u64())
+        .map(usize::try_from)
+        .transpose()
+        .map_err(|_| String::from("pthread_create arg out of range"))?
+        .unwrap_or(0);
+
+    let mut threads = Vec::with_capacity(count);
+    for _ in 0..count {
+        match create_managed_pthread(sleep_ms) {
+            Ok(thread) => threads.push(thread),
+            Err(err) => {
+                for thread in threads {
+                    let _ = join_managed_pthread(thread);
+                }
+                return Err(err);
+            }
+        }
+    }
+
+    let mut impl_output = String::from("0");
+    for thread in threads {
+        let rc =
+            unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, std::ptr::null_mut()) };
+        if rc != 0 && impl_output == "0" {
+            impl_output = format_pthread_status(rc);
+        }
+    }
+
+    Ok(non_host_execution(impl_output))
 }
 
 fn execute_pthread_join_case(
@@ -9723,6 +9770,7 @@ fn execute_pthread_join_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
+    let _guard = ThreadingForceNativeGuard::new();
     let thread_str = inputs.get("thread").and_then(|v| v.as_str()).unwrap_or("");
 
     if thread_str == "null" {
@@ -9733,12 +9781,30 @@ fn execute_pthread_join_case(
         let self_tid = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
         let result =
             unsafe { frankenlibc_abi::pthread_abi::pthread_join(self_tid, std::ptr::null_mut()) };
-        let output = if result == libc::EDEADLK {
-            "EDEADLK"
-        } else {
-            &format!("{result}")
-        };
-        return Ok(non_host_execution(output.to_string()));
+        return Ok(non_host_execution(format_pthread_status(result)));
+    }
+
+    if thread_str == "valid_handle" {
+        let expected_retval = inputs
+            .get("retval_expected")
+            .and_then(|value| value.as_u64())
+            .map(usize::try_from)
+            .transpose()
+            .map_err(|_| String::from("pthread_join retval_expected out of range"))?
+            .unwrap_or(0);
+        let thread = create_managed_pthread(expected_retval)?;
+        let mut retval = std::ptr::null_mut();
+        let rc = unsafe { frankenlibc_abi::pthread_abi::pthread_join(thread, &mut retval) };
+        if rc != 0 {
+            return Ok(non_host_execution(format_pthread_status(rc)));
+        }
+        let actual_retval = retval as usize;
+        if actual_retval == expected_retval {
+            return Ok(non_host_execution(String::from("0")));
+        }
+        return Ok(non_host_execution(format!(
+            "RETVAL_MISMATCH:{actual_retval}"
+        )));
     }
 
     Ok(non_host_execution("SKIP_DYNAMIC_HANDLE".to_string()))
@@ -9749,10 +9815,32 @@ fn execute_pthread_detach_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
+    let _guard = ThreadingForceNativeGuard::new();
     let thread_str = inputs.get("thread").and_then(|v| v.as_str()).unwrap_or("");
 
     if thread_str == "null" {
         return Ok(non_host_execution("EINVAL".to_string()));
+    }
+
+    if thread_str == "valid_running_handle" {
+        let thread = create_managed_pthread(150)?;
+        let rc = unsafe { frankenlibc_abi::pthread_abi::pthread_detach(thread) };
+        if rc != 0 {
+            let _ = join_managed_pthread(thread);
+            return Ok(non_host_execution(format_pthread_status(rc)));
+        }
+        wait_for_detached_pthread_exit(thread)?;
+        return Ok(non_host_execution(format_pthread_status(rc)));
+    }
+
+    if thread_str == "valid_finished_handle" {
+        let thread = create_managed_pthread(0)?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let rc = unsafe { frankenlibc_abi::pthread_abi::pthread_detach(thread) };
+        if rc != 0 {
+            let _ = join_managed_pthread(thread);
+        }
+        return Ok(non_host_execution(format_pthread_status(rc)));
     }
 
     Ok(non_host_execution("SKIP_DYNAMIC_HANDLE".to_string()))
@@ -14090,6 +14178,48 @@ mod tests {
             assert_eq!(
                 result.impl_output, expected,
                 "fixture expected_output mismatch for {} (mode={mode})",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn process_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: serde_json::Value,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        fn normalize_expected(val: &serde_json::Value) -> String {
+            match val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            }
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/process_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("process_ops fixture should parse");
+
+        for case in fixture.cases {
+            let expected = normalize_expected(&case.expected_output);
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, expected,
+                "fixture expected_output mismatch for {}",
                 case.name
             );
         }
