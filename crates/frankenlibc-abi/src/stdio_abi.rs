@@ -626,6 +626,151 @@ fn stream_exists(id: usize) -> bool {
     reg.streams.contains_key(&id)
 }
 
+unsafe fn write_bytes_without_runtime_policy(
+    id: usize,
+    stream: *mut c_void,
+    bytes: &[u8],
+) -> usize {
+    if bytes.is_empty() {
+        return 0;
+    }
+
+    if is_cookie_stream(id) {
+        if !stream_exists(id) {
+            return 0;
+        }
+
+        let mut written_total = 0usize;
+        while written_total < bytes.len() {
+            let rc = unsafe {
+                cookie_stream_write(
+                    id,
+                    bytes[written_total..].as_ptr(),
+                    bytes.len().saturating_sub(written_total),
+                )
+            };
+            let errno_val = if rc < 0 {
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            } else {
+                0
+            };
+            match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                StreamPolicyAction::Retry => continue,
+                StreamPolicyAction::Yield | StreamPolicyAction::Escalate => break,
+                StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+            }
+            if rc <= 0 {
+                break;
+            }
+            let advanced = (rc as usize).min(bytes.len() - written_total);
+            if advanced == 0 {
+                break;
+            }
+            written_total += advanced;
+        }
+
+        let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(stream_obj) = reg.streams.get_mut(&id) {
+            let delta = written_total.min(i64::MAX as usize) as i64;
+            stream_obj.set_offset(stream_obj.offset().saturating_add(delta));
+            if written_total < bytes.len() {
+                stream_obj.set_error();
+            }
+        }
+        return written_total;
+    }
+
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(stream_obj) = reg.streams.get_mut(&id) else {
+        drop(reg);
+        if let Some(host_fwrite) = unsafe { host_fwrite_fn() } {
+            let written = unsafe { host_fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) };
+            if written == 0 {
+                unsafe { sync_host_errno(0) };
+            } else {
+                mark_host_io_started(stream);
+            }
+            return written.min(bytes.len());
+        }
+        return 0;
+    };
+
+    if stream_obj.is_mem_backed() {
+        let written = stream_obj.mem_write(bytes);
+        if written > 0 {
+            let start = stream_obj.offset().saturating_sub(written as i64);
+            if start >= 0 {
+                unsafe { sync_fmemopen_write(id, start as usize, &bytes[..written]) };
+            }
+        }
+        if written < bytes.len() {
+            stream_obj.set_error();
+        }
+        return written;
+    }
+
+    let write_result = match stream_obj.buffer_write(bytes) {
+        Some(result) => result,
+        None => return 0,
+    };
+    let flushed_from_buffer = write_result.flushed_from_buffer;
+    let total_written = if write_result.flush_needed {
+        let fd = stream_obj.fd();
+        let mut written = 0usize;
+        let mut success = true;
+        while written < write_result.flush_data.len() {
+            let rc = unsafe {
+                sys_write_fd(
+                    fd,
+                    write_result.flush_data[written..].as_ptr().cast(),
+                    write_result.flush_data.len() - written,
+                )
+            };
+            let errno_val = if rc < 0 {
+                std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+            } else {
+                0
+            };
+            match stream_policy_action(StreamPolicyState::Write, rc, errno_val) {
+                StreamPolicyAction::Retry => continue,
+                StreamPolicyAction::Yield | StreamPolicyAction::Escalate => {
+                    success = false;
+                    break;
+                }
+                StreamPolicyAction::Flush | StreamPolicyAction::Buffer => {}
+            }
+            if rc == 0 {
+                success = false;
+                break;
+            }
+            written += rc as usize;
+        }
+
+        if success {
+            let flushed_new = write_result
+                .flush_data
+                .len()
+                .saturating_sub(flushed_from_buffer);
+            write_result.buffered.saturating_add(flushed_new)
+        } else {
+            stream_obj.set_error();
+            stream_obj.mark_flushed();
+            let flushed_new = written.saturating_sub(flushed_from_buffer);
+            if flushed_new > 0 {
+                stream_obj.set_offset(stream_obj.offset().saturating_add(flushed_new as i64));
+            }
+            return flushed_new;
+        }
+    } else {
+        write_result.buffered
+    };
+
+    if total_written > 0 {
+        stream_obj.set_offset(stream_obj.offset().saturating_add(total_written as i64));
+    }
+    total_written
+}
+
 /// Flush a stream's pending write data to its fd. Returns true on success.
 unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
     let len = stream.pending_flush().len();
@@ -1251,13 +1396,23 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     let id = canonical_stream_id(stream);
+    let byte = c as u8;
+    if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
+        let bytes = [byte];
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, &bytes) };
+        return if written == 1 {
+            byte as c_int
+        } else {
+            libc::EOF
+        };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("fputc");
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 1, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
         return libc::EOF;
     }
-
-    let byte = c as u8;
 
     if is_cookie_stream(id) {
         if !stream_exists(id) {
@@ -1565,6 +1720,14 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
     }
 
     let id = canonical_stream_id(stream);
+    if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
+        return if written == bytes.len() { 0 } else { libc::EOF };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("fputs");
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         id,
@@ -1929,13 +2092,18 @@ pub unsafe extern "C" fn fwrite(
     }
 
     let id = canonical_stream_id(stream);
+    let src = unsafe { std::slice::from_raw_parts(ptr as *const u8, total) };
+    if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
+        let written = unsafe { write_bytes_without_runtime_policy(id, stream, src) };
+        return written.checked_div(size).unwrap_or(0);
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("fwrite");
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, total, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return 0;
     }
-
-    let src = unsafe { std::slice::from_raw_parts(ptr as *const u8, total) };
 
     if is_cookie_stream(id) {
         if !stream_exists(id) {
@@ -2494,6 +2662,23 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
         return libc::EOF;
     }
 
+    if runtime_policy::bootstrap_passthrough_active() || !runtime_policy::mode().heals_enabled() {
+        let (len, _) = unsafe { scan_c_str_len(s, None) };
+        let stdout_ptr = active_stdout_stream();
+        let stdout_id = canonical_stream_id(stdout_ptr);
+        let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len) };
+        let body_written =
+            unsafe { write_bytes_without_runtime_policy(stdout_id, stdout_ptr, bytes) };
+        let newline_written = body_written == bytes.len()
+            && unsafe { write_bytes_without_runtime_policy(stdout_id, stdout_ptr, b"\n") } == 1;
+        return if body_written == bytes.len() && newline_written {
+            0
+        } else {
+            libc::EOF
+        };
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("puts");
     let (mode, decision) = runtime_policy::decide(ApiFamily::Stdio, s as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);

@@ -854,6 +854,36 @@ fn snprintf_records_ffi_pcc_gate_when_runtime_ready() {
 }
 
 #[test]
+fn strict_hot_stdio_writes_skip_runtime_policy_gate() {
+    signal_runtime_ready_for_tests();
+
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    let _ = take_last_decision_gate_for_tests();
+    assert_eq!(unsafe { fputc(b'X' as c_int, stream) }, b'X' as c_int);
+    assert_eq!(take_last_decision_gate_for_tests(), None);
+
+    let _ = take_last_decision_gate_for_tests();
+    assert_eq!(unsafe { fputs(c"YZ".as_ptr(), stream) }, 0);
+    assert_eq!(take_last_decision_gate_for_tests(), None);
+
+    let bulk = b"bulk";
+    let _ = take_last_decision_gate_for_tests();
+    assert_eq!(
+        unsafe { fwrite(bulk.as_ptr().cast(), 1, bulk.len(), stream) },
+        bulk.len()
+    );
+    assert_eq!(take_last_decision_gate_for_tests(), None);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let _ = take_last_decision_gate_for_tests();
+    assert_eq!(unsafe { puts(c"".as_ptr()) }, 0);
+    assert_eq!(take_last_decision_gate_for_tests(), None);
+}
+
+#[test]
 fn snprintf_supports_positional_value_reordering() {
     let mut buf = [0_i8; 64];
 
