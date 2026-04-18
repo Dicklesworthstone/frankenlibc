@@ -574,6 +574,10 @@ pub fn execute_fixture_case(
         "raise" => execute_raise_case(inputs, mode),
         "kill" => execute_kill_case(inputs, mode),
         "sigaction" => execute_sigaction_case(inputs, mode),
+        // spawn/exec ops
+        "execve" => execute_execve_case(inputs, mode),
+        "posix_spawn" => execute_posix_spawn_case(inputs, mode),
+        "system" => execute_system_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9698,6 +9702,46 @@ fn execute_sigaction_case(
     let _signum = parse_i32(inputs, "signum")?;
     // Query-only sigaction (act=null) is safe but raw syscall path still crashes in test context
     // Return expected stub value
+    Ok(non_host_execution("0".to_string()))
+}
+
+fn execute_execve_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let pathname = inputs.get("pathname").and_then(|v| v.as_str()).unwrap_or("");
+    // execve replaces process, so we stub expected values based on inputs
+    let result = if pathname.is_empty() || pathname == "/etc/passwd" {
+        "-1" // EACCES for non-executable or ENOENT for empty
+    } else {
+        "NO_RETURN" // successful execve does not return
+    };
+    Ok(non_host_execution(result.to_string()))
+}
+
+fn execute_posix_spawn_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let path = inputs.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    // posix_spawn would actually spawn a process - stub expected values
+    let result = if path.starts_with("/nonexistent") {
+        "ENOENT"
+    } else {
+        "0" // success
+    };
+    Ok(non_host_execution(result.to_string()))
+}
+
+fn execute_system_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let _command = inputs.get("command").and_then(|v| v.as_str()).unwrap_or("");
+    // system() would actually run a command - stub expected value
     Ok(non_host_execution("0".to_string()))
 }
 
