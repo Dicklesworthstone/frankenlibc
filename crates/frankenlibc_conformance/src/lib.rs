@@ -14277,4 +14277,37 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn spawn_exec_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite { name: String, function: String, inputs: serde_json::Value, expected_output: serde_json::Value, mode: String }
+        #[derive(Deserialize)]
+        struct FixtureSetLite { cases: Vec<FixtureCaseLite> }
+        fn normalize(v: &serde_json::Value) -> String { match v { serde_json::Value::String(s) => s.clone(), serde_json::Value::Number(n) => n.to_string(), o => o.to_string() } }
+        let fixture: FixtureSetLite = serde_json::from_str(include_str!("../../../tests/conformance/fixtures/spawn_exec_ops.json")).unwrap();
+        for c in fixture.cases { let exp = normalize(&c.expected_output); let r = execute_fixture_case(&c.function, &c.inputs, &c.mode).unwrap(); assert_eq!(r.impl_output, exp, "{}", c.name); }
+    }
+
+    #[test]
+    fn sysv_ipc_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite { name: String, function: String, inputs: serde_json::Value, expected_output: serde_json::Value, mode: String }
+        #[derive(Deserialize)]
+        struct FixtureSetLite { cases: Vec<FixtureCaseLite> }
+        fn normalize(v: &serde_json::Value) -> String { match v { serde_json::Value::String(s) => s.clone(), serde_json::Value::Number(n) => n.to_string(), o => o.to_string() } }
+        let fixture: FixtureSetLite = serde_json::from_str(include_str!("../../../tests/conformance/fixtures/sysv_ipc_ops.json")).unwrap();
+        for c in fixture.cases { let exp = normalize(&c.expected_output); let r = execute_fixture_case(&c.function, &c.inputs, &c.mode).unwrap(); assert_eq!(r.impl_output, exp, "{}", c.name); }
+    }
+
+    #[test]
+    fn loader_edges_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite { name: String, function: String, inputs: serde_json::Value, expected_output: serde_json::Value, mode: String }
+        #[derive(Deserialize)]
+        struct FixtureSetLite { cases: Vec<FixtureCaseLite> }
+        fn normalize(v: &serde_json::Value) -> String { match v { serde_json::Value::String(s) => s.clone(), serde_json::Value::Number(n) => n.to_string(), o => o.to_string() } }
+        let fixture: FixtureSetLite = serde_json::from_str(include_str!("../../../tests/conformance/fixtures/loader_edges.json")).unwrap();
+        for c in fixture.cases { let exp = normalize(&c.expected_output); let r = execute_fixture_case(&c.function, &c.inputs, &c.mode).unwrap(); assert_eq!(r.impl_output, exp, "{}", c.name); }
+    }
 }
