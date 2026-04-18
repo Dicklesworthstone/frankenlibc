@@ -6,6 +6,8 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+use frankenlibc_fixture_exec::execute_fixture_case;
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -51,6 +53,15 @@ fn load_fixture(name: &str) -> FixtureFile {
         .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
 }
 
+fn expected_output_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        other => other.to_string(),
+    }
+}
+
 #[test]
 fn pressure_sensing_fixture_exists() {
     let path = repo_root().join("tests/conformance/fixtures/pressure_sensing.json");
@@ -66,6 +77,11 @@ fn pressure_sensing_fixture_valid_schema() {
     for case in &fixture.cases {
         assert!(!case.name.is_empty(), "Case name must not be empty");
         assert!(!case.function.is_empty(), "Function must not be empty");
+        assert!(
+            case.expected_output.is_some(),
+            "Case {} must have expected_output",
+            case.name
+        );
     }
 }
 
@@ -175,5 +191,46 @@ fn pressure_sensing_has_spec_references() {
             case.name,
             case.spec_section
         );
+    }
+}
+
+#[test]
+fn pressure_sensing_fixture_cases_match_execute_fixture_case() {
+    let fixture = load_fixture("pressure_sensing");
+
+    for case in &fixture.cases {
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result =
+                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({mode}) failed to execute: {err}",
+                        case.name
+                    )
+                });
+            let expected = expected_output_text(
+                case.expected_output
+                    .as_ref()
+                    .expect("pressure_sensing cases must have expected_output"),
+            );
+            assert_eq!(
+                result.impl_output, expected,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert_eq!(
+                result.host_output, "SKIP",
+                "pressure_sensing executor must stay isolated from host-specific load signals"
+            );
+            assert!(
+                result.host_parity,
+                "pressure_sensing symbolic execution should mark fixture contract parity"
+            );
+        }
     }
 }

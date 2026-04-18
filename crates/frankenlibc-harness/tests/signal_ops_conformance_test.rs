@@ -3,6 +3,7 @@
 //! Validates POSIX signal APIs: kill, raise, sigaction, signal.
 //! Run: cargo test -p frankenlibc-harness --test signal_ops_conformance_test
 
+use frankenlibc_fixture_exec::execute_fixture_case;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -237,6 +238,43 @@ fn signal_ops_case_count_stable() {
     );
 
     eprintln!("signal_ops fixture has {} test cases", fixture.cases.len());
+}
+
+#[test]
+fn signal_ops_fixture_cases_match_execute_fixture_case() {
+    let fixture = load_fixture("signal_ops");
+
+    for case in &fixture.cases {
+        let expected_output = case
+            .expected_output
+            .as_deref()
+            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result =
+                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({mode}) failed to execute: {err}",
+                        case.name
+                    )
+                });
+            assert_eq!(
+                result.impl_output, expected_output,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert!(
+                result.host_parity,
+                "executor reported parity failure for {} ({mode})",
+                case.name
+            );
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

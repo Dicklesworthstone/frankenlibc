@@ -4,6 +4,7 @@
 //! wcschr, wcsstr, wcsncmp, wcsrchr.
 //! Run: cargo test -p frankenlibc-harness --test wide_string_ops_conformance_test
 
+use frankenlibc_fixture_exec::execute_fixture_case;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -186,5 +187,44 @@ fn wide_string_ops_error_codes_valid() {
             "Case {} has unexpected errno {} (wide string functions don't set errno)",
             case.name, case.expected_errno
         );
+    }
+}
+
+#[test]
+fn wide_string_ops_fixture_cases_match_execute_fixture_case() {
+    let fixture = load_fixture("wide_string_ops");
+
+    for case in &fixture.cases {
+        let expected_output = case
+            .expected_output
+            .as_deref()
+            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result =
+                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({mode}) failed to execute: {err}",
+                        case.name
+                    )
+                });
+            assert_eq!(
+                result.impl_output, expected_output,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert!(
+                result.host_parity || result.host_output == "UB",
+                "defined host behavior diverged for {} ({mode}): host={}, impl={}",
+                case.name,
+                result.host_output,
+                result.impl_output
+            );
+        }
     }
 }

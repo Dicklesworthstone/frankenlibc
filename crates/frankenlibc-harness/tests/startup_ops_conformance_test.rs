@@ -7,6 +7,8 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+use frankenlibc_fixture_exec::execute_fixture_case;
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -191,5 +193,45 @@ fn startup_ops_error_codes_valid() {
             case.expected_errno,
             valid_errno_values
         );
+    }
+}
+
+#[test]
+fn startup_ops_fixture_cases_match_execute_fixture_case() {
+    let fixture = load_fixture("startup_ops");
+
+    for case in &fixture.cases {
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result =
+                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({mode}) failed to execute: {err}",
+                        case.name
+                    )
+                });
+            let expected = case
+                .expected_output
+                .as_deref()
+                .expect("startup_ops cases must have expected_output");
+            assert_eq!(
+                result.impl_output, expected,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert_eq!(
+                result.host_output, "SKIP",
+                "startup_ops executor must stay isolated from real process startup"
+            );
+            assert!(
+                result.host_parity,
+                "startup_ops symbolic execution should mark fixture contract parity"
+            );
+        }
     }
 }

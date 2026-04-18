@@ -6,6 +6,8 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+use frankenlibc_fixture_exec::execute_fixture_case;
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -54,6 +56,14 @@ fn load_fixture(name: &str) -> FixtureFile {
         .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
 }
 
+fn expected_contract_text(case: &FixtureCase) -> String {
+    case.expected_output.clone().unwrap_or_else(|| {
+        case.expected_return
+            .expect("errno_ops cases must have expected_output or expected_return")
+            .to_string()
+    })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture structure validation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,6 +88,11 @@ fn errno_ops_fixture_valid_schema() {
         assert!(
             !case.spec_section.is_empty(),
             "Spec section must not be empty"
+        );
+        assert!(
+            case.expected_output.is_some() || case.expected_return.is_some(),
+            "Case {} must have expected_output or expected_return",
+            case.name
         );
     }
 }
@@ -319,5 +334,42 @@ fn errno_ops_has_spec_references() {
             "Case {} must have a spec_section",
             case.name
         );
+    }
+}
+
+#[test]
+fn errno_ops_fixture_cases_match_execute_fixture_case() {
+    let fixture = load_fixture("errno_ops");
+
+    for case in &fixture.cases {
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result =
+                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({mode}) failed to execute: {err}",
+                        case.name
+                    )
+                });
+            assert_eq!(
+                result.impl_output,
+                expected_contract_text(case),
+                "fixture contract mismatch for {} ({mode})",
+                case.name
+            );
+            assert_eq!(
+                result.host_output, "SKIP",
+                "errno_ops executor should stay deterministic instead of mutating host errno/stderr"
+            );
+            assert!(
+                result.host_parity,
+                "errno_ops symbolic execution should mark fixture contract parity"
+            );
+        }
     }
 }

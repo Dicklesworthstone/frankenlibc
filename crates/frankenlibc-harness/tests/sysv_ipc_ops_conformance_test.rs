@@ -3,6 +3,7 @@
 //! Validates POSIX System V IPC functions: semget, semop, semctl, shmget, shmat, shmdt, msgget.
 //! Run: cargo test -p frankenlibc-harness --test sysv_ipc_ops_conformance_test
 
+use frankenlibc_fixture_exec::execute_fixture_case;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -49,6 +50,21 @@ fn load_fixture(name: &str) -> FixtureFile {
         .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
     serde_json::from_str(&content)
         .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
+}
+
+fn expected_output_text(case: &FixtureCase) -> String {
+    match case
+        .expected_output
+        .as_ref()
+        .unwrap_or_else(|| panic!("case {} missing expected_output", case.name))
+    {
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Number(value) => value.to_string(),
+        other => panic!(
+            "case {} has unsupported expected_output value: {}",
+            case.name, other
+        ),
+    }
 }
 
 #[test]
@@ -190,5 +206,39 @@ fn sysv_ipc_ops_error_codes_valid() {
             case.expected_errno,
             valid_errno_values
         );
+    }
+}
+
+#[test]
+fn sysv_ipc_ops_fixture_cases_match_execute_fixture_case() {
+    let fixture = load_fixture("sysv_ipc_ops");
+
+    for case in &fixture.cases {
+        let expected_output = expected_output_text(case);
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result =
+                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({mode}) failed to execute: {err}",
+                        case.name
+                    )
+                });
+            assert_eq!(
+                result.impl_output, expected_output,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert!(
+                result.host_parity,
+                "executor reported parity failure for {} ({mode})",
+                case.name
+            );
+        }
     }
 }
