@@ -13892,4 +13892,53 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn time_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize, Clone)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: serde_json::Value,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        fn normalize_expected(val: &serde_json::Value) -> String {
+            match val {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            }
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/time_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("time_ops fixture should parse");
+
+        for case in fixture.cases {
+            let expected = normalize_expected(&case.expected_output);
+            let modes: Vec<&str> = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} (mode={mode}) failed to execute: {err}", case.name)
+                    });
+                assert_eq!(
+                    result.impl_output, expected,
+                    "fixture expected_output mismatch for {} (mode={mode})",
+                    case.name
+                );
+            }
+        }
+    }
 }
