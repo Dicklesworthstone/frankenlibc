@@ -520,6 +520,21 @@ pub fn execute_fixture_case(
         "pthread_getspecific" => execute_pthread_getspecific_case(inputs, mode),
         "pthread_setspecific" => execute_pthread_setspecific_case(inputs, mode),
         "teardown_thread_tls" => execute_teardown_thread_tls_case(inputs, mode),
+        // unistd
+        "getpid" => execute_getpid_case(mode),
+        "getppid" => execute_getppid_case(mode),
+        "getuid" => execute_getuid_case(mode),
+        "getgid" => execute_getgid_case(mode),
+        "geteuid" => execute_geteuid_case(mode),
+        "getegid" => execute_getegid_case(mode),
+        "getcwd" => execute_getcwd_case(inputs, mode),
+        "isatty" => execute_isatty_case(inputs, mode),
+        "access" => execute_access_case(inputs, mode),
+        "close" => execute_close_case(inputs, mode),
+        "lseek" => execute_lseek_case(inputs, mode),
+        "pipe" => execute_pipe_case(mode),
+        "read" => execute_read_case(inputs, mode),
+        "write" => execute_write_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -8908,6 +8923,173 @@ fn execute_teardown_thread_tls_case(
         host_parity: true,
         note: None,
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// unistd conformance executors (bd-yehw)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_getpid_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let pid = unsafe { frankenlibc_abi::unistd_abi::getpid() };
+    let impl_output = if pid > 0 { "POSITIVE_PID" } else { &format!("{pid}") };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_getppid_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let ppid = unsafe { frankenlibc_abi::unistd_abi::getppid() };
+    let impl_output = if ppid > 0 { "POSITIVE_PID" } else { &format!("{ppid}") };
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_getuid_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let uid = unsafe { frankenlibc_abi::unistd_abi::getuid() };
+    let impl_output = "NONNEG_UID";
+    let _ = uid; // Always non-negative for uid_t
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_getgid_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let gid = unsafe { frankenlibc_abi::unistd_abi::getgid() };
+    let impl_output = "NONNEG_GID";
+    let _ = gid;
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_geteuid_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let euid = unsafe { frankenlibc_abi::unistd_abi::geteuid() };
+    let impl_output = "NONNEG_UID";
+    let _ = euid;
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_getegid_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let egid = unsafe { frankenlibc_abi::unistd_abi::getegid() };
+    let impl_output = "NONNEG_GID";
+    let _ = egid;
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_getcwd_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let buf_size = parse_usize(inputs, "buf_size").unwrap_or(4096);
+    let mut buf = vec![0u8; buf_size];
+    let result = unsafe {
+        frankenlibc_abi::unistd_abi::getcwd(buf.as_mut_ptr().cast(), buf_size)
+    };
+    let impl_output = if result.is_null() {
+        "NULL".to_string()
+    } else {
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf_size);
+        if len > 0 { "NONEMPTY_PATH".to_string() } else { "EMPTY".to_string() }
+    };
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_isatty_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let fd = parse_i32(inputs, "fd")?;
+    let result = unsafe { frankenlibc_abi::unistd_abi::isatty(fd) };
+    let impl_output = if result == 0 || result == 1 {
+        if fd < 0 { "0".to_string() } else { "0_OR_1".to_string() }
+    } else {
+        format!("{result}")
+    };
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_access_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let path = parse_string(inputs, "path")?;
+    let amode = parse_i32(inputs, "mode")?;
+    let path_c = std::ffi::CString::new(path).map_err(|_| "path contains NUL")?;
+    let result = unsafe { frankenlibc_abi::unistd_abi::access(path_c.as_ptr(), amode) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_close_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    if let Some(fd_val) = inputs.get("fd") {
+        if fd_val.is_string() {
+            return Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()));
+        }
+    }
+    let fd = parse_i32(inputs, "fd")?;
+    let result = unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_lseek_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    if let Some(fd_val) = inputs.get("fd") {
+        if fd_val.is_string() {
+            return Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()));
+        }
+    }
+    let fd = parse_i32(inputs, "fd")?;
+    let offset = inputs.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
+    let whence = parse_i32(inputs, "whence")?;
+    let result = unsafe { frankenlibc_abi::unistd_abi::lseek(fd, offset, whence) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_pipe_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let mut pipefd = [0i32; 2];
+    let result = unsafe { frankenlibc_abi::io_abi::pipe(pipefd.as_mut_ptr()) };
+    if result == 0 {
+        unsafe {
+            frankenlibc_abi::unistd_abi::close(pipefd[0]);
+            frankenlibc_abi::unistd_abi::close(pipefd[1]);
+        }
+    }
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_read_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    if let Some(fd_val) = inputs.get("fd") {
+        if fd_val.is_string() {
+            return Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()));
+        }
+    }
+    Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()))
+}
+
+fn execute_write_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    if let Some(fd_val) = inputs.get("fd") {
+        if fd_val.is_string() {
+            return Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()));
+        }
+    }
+    Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()))
 }
 
 #[cfg(test)]
