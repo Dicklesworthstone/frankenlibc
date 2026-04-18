@@ -1022,6 +1022,20 @@ pub unsafe extern "C" fn sigaltstack(
     ss: *const libc::stack_t,
     old_ss: *mut libc::stack_t,
 ) -> c_int {
+    // Fast path for SS_DISABLE during cleanup: skip all TLS-touching policy code
+    // to avoid potential corruption during thread/process exit. This is critical
+    // for avoiding crashes when Rust's runtime disables the signal stack.
+    let is_disable = !ss.is_null() && unsafe { (*ss).ss_flags } & libc::SS_DISABLE != 0;
+    if is_disable {
+        return match unsafe { raw_syscall::sys_sigaltstack(ss as *const u8, old_ss as *mut u8) } {
+            Ok(()) => 0,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
+    }
+
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, ss as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
