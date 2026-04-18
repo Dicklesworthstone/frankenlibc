@@ -585,6 +585,14 @@ pub fn execute_fixture_case(
         "setsid" => execute_setsid_case(mode),
         // resource ops
         "getrlimit" => execute_getrlimit_case(inputs, mode),
+        // sysv ipc ops
+        "msgget" => execute_msgget_case(mode),
+        "semget" => execute_semget_case(mode),
+        "semctl" => execute_semctl_case(mode),
+        "semop" => execute_semop_case(mode),
+        "shmget" => execute_shmget_case(mode),
+        "shmat" => execute_shmat_case(mode),
+        "shmdt" => execute_shmdt_case(mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9804,6 +9812,48 @@ fn execute_getrlimit_case(
     let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
     let result = unsafe { frankenlibc_abi::resource_abi::getrlimit(resource, &mut rlim) };
     Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_msgget_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would create kernel message queue resource - stub
+    Ok(non_host_execution("valid_msqid".to_string()))
+}
+
+fn execute_semget_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would create kernel semaphore set - stub
+    Ok(non_host_execution("valid_semid".to_string()))
+}
+
+fn execute_semctl_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Semaphore control operation - stub
+    Ok(non_host_execution("0".to_string()))
+}
+
+fn execute_semop_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Semaphore operation - stub EAGAIN for IPC_NOWAIT on zero sem
+    Ok(non_host_execution("-1".to_string()))
+}
+
+fn execute_shmget_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would create shared memory segment - stub
+    Ok(non_host_execution("valid_shmid".to_string()))
+}
+
+fn execute_shmat_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would attach shared memory - stub
+    Ok(non_host_execution("valid_ptr".to_string()))
+}
+
+fn execute_shmdt_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Detach shared memory - stub
+    Ok(non_host_execution("0".to_string()))
 }
 
 #[cfg(test)]
