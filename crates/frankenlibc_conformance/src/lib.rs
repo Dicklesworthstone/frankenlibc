@@ -9947,18 +9947,19 @@ fn execute_poll_case(
         })
         .collect();
 
+    let clamped = nfds > pollfds.len() as u64;
+    let effective_nfds = nfds.min(pollfds.len() as u64) as libc::nfds_t;
+
     let result = unsafe {
-        frankenlibc_abi::poll_abi::poll(
-            pollfds.as_mut_ptr(),
-            nfds.min(pollfds.len() as u64) as libc::nfds_t,
-            timeout,
-        )
+        frankenlibc_abi::poll_abi::poll(pollfds.as_mut_ptr(), effective_nfds, timeout)
     };
 
     let impl_output = if result < 0 {
         format!("ERROR:{result}")
     } else if pollfds.iter().any(|pfd| pfd.revents & libc::POLLNVAL != 0) {
         "POLLNVAL".to_string()
+    } else if clamped && mode == "hardened" {
+        "POLL_CLAMPED".to_string()
     } else {
         "POLL_RETURNED".to_string()
     };
@@ -11130,6 +11131,209 @@ mod tests {
                 "fixture expected_output mismatch for {}",
                 case.name
             );
+        }
+    }
+
+    #[test]
+    fn poll_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/poll_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("poll_ops fixture should parse");
+
+        for case in fixture.cases {
+            let result = execute_fixture_case(&case.function, &case.inputs, &case.mode)
+                .unwrap_or_else(|err| {
+                    panic!("fixture case {} failed to execute: {err}", case.name)
+                });
+            assert_eq!(
+                result.impl_output, case.expected_output,
+                "fixture expected_output mismatch for {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn search_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/search_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("search_ops fixture should parse");
+
+        for case in fixture.cases {
+            let modes = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                    });
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "fixture expected_output mismatch for {} ({mode})",
+                    case.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn inet_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/inet_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("inet_ops fixture should parse");
+
+        for case in fixture.cases {
+            let modes = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                    });
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "fixture expected_output mismatch for {} ({mode})",
+                    case.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn math_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/math_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("math_ops fixture should parse");
+
+        for case in fixture.cases {
+            let modes = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                    });
+
+                let expected: f64 = case.expected_output.parse().unwrap_or(f64::NAN);
+                let actual: f64 = result.impl_output.parse().unwrap_or(f64::NAN);
+                let matches = if expected.is_nan() && actual.is_nan() {
+                    true
+                } else if expected.is_infinite() && actual.is_infinite() {
+                    expected.signum() == actual.signum()
+                } else {
+                    (expected - actual).abs() < 1e-12
+                };
+                assert!(
+                    matches,
+                    "fixture expected_output mismatch for {} ({mode}): expected {} got {}",
+                    case.name, case.expected_output, result.impl_output
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ctype_ops_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/ctype_ops.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("ctype_ops fixture should parse");
+
+        for case in fixture.cases {
+            let modes = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!("fixture case {} ({mode}) failed to execute: {err}", case.name)
+                    });
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "fixture expected_output mismatch for {} ({mode})",
+                    case.name
+                );
+            }
         }
     }
 

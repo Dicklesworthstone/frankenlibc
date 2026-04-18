@@ -29,10 +29,10 @@
       "function": "poll",
       "spec_section": "POSIX poll",
       "inputs": { "fds": [{"fd": -1, "events": 1}], "nfds": 1, "timeout": 0 },
-      "expected_output": "POLLNVAL",
+      "expected_output": "POLL_RETURNED",
       "expected_errno": 0,
       "mode": "strict",
-      "note": "Invalid fd returns POLLNVAL in revents"
+      "note": "fd=-1 is silently ignored by Linux poll (revents=0, no POLLNVAL)"
     },
     {
       "name": "select_zero_timeout_strict",
