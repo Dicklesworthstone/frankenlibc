@@ -567,6 +567,9 @@ pub fn execute_fixture_case(
         "opendir" => execute_opendir_case(inputs, mode),
         "readdir" => execute_readdir_case(inputs, mode),
         "closedir" => execute_closedir_case(inputs, mode),
+        // poll ops
+        "poll" => execute_poll_case(inputs, mode),
+        "select" => execute_select_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9579,6 +9582,74 @@ fn execute_closedir_case(
     }
 
     Ok(non_host_execution("SKIP_DYNAMIC_HANDLE".to_string()))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// poll_ops conformance executors (bd-co1f)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_poll_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let fds_json = inputs.get("fds").cloned().unwrap_or(serde_json::json!([]));
+    let fds_array = fds_json.as_array().ok_or("fds must be an array")?;
+    let nfds = inputs.get("nfds").and_then(|v| v.as_u64()).unwrap_or(fds_array.len() as u64);
+    let timeout = inputs.get("timeout").and_then(|v| v.as_i64()).unwrap_or(0) as c_int;
+
+    if fds_array.is_empty() {
+        let result = unsafe { frankenlibc_abi::poll_abi::poll(std::ptr::null_mut(), 0, timeout) };
+        return Ok(non_host_execution(format!("{result}")));
+    }
+
+    let mut pollfds: Vec<libc::pollfd> = fds_array
+        .iter()
+        .map(|fd_obj| libc::pollfd {
+            fd: fd_obj.get("fd").and_then(|v| v.as_i64()).unwrap_or(-1) as c_int,
+            events: fd_obj.get("events").and_then(|v| v.as_i64()).unwrap_or(0) as i16,
+            revents: 0,
+        })
+        .collect();
+
+    let result = unsafe {
+        frankenlibc_abi::poll_abi::poll(
+            pollfds.as_mut_ptr(),
+            nfds.min(pollfds.len() as u64) as libc::nfds_t,
+            timeout,
+        )
+    };
+
+    let impl_output = if result < 0 {
+        format!("ERROR:{result}")
+    } else if pollfds.iter().any(|pfd| pfd.revents & libc::POLLNVAL != 0) {
+        "POLLNVAL".to_string()
+    } else {
+        "POLL_RETURNED".to_string()
+    };
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_select_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let nfds = parse_i32(inputs, "nfds").unwrap_or(0);
+    let timeout_sec = inputs.get("timeout_sec").and_then(|v| v.as_i64()).unwrap_or(0);
+    let timeout_usec = inputs.get("timeout_usec").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    let mut tv = libc::timeval {
+        tv_sec: timeout_sec as libc::time_t,
+        tv_usec: timeout_usec as libc::suseconds_t,
+    };
+
+    let result = unsafe {
+        libc::select(nfds, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), &mut tv)
+    };
+
+    Ok(non_host_execution(format!("{result}")))
 }
 
 #[cfg(test)]
