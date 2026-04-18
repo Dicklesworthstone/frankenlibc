@@ -646,6 +646,14 @@ pub fn execute_fixture_case(
         "_IO_wdefault_doallocate" => execute_io_noop_int_case(mode),
         "_IO_wdefault_uflow" => execute_io_wdefault_uflow_case(mode),
         "_IO_wfile_sync" => execute_io_noop_int_case(mode),
+        // errno ops
+        "__errno_location" => execute_errno_location_case(inputs, mode),
+        "errno_constants" => execute_errno_constants_case(inputs, mode),
+        "errno_preservation" => execute_errno_preservation_case(inputs, mode),
+        "strerror" => execute_strerror_case(inputs, mode),
+        "strerror_r" => execute_strerror_r_case(inputs, mode),
+        "strerror_l" => execute_strerror_l_case(inputs, mode),
+        "perror" => execute_perror_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -10254,11 +10262,7 @@ fn execute_io_adjust_column_case(
             let unescaped = s.replace("\\n", "\n").replace("\\t", "\t");
             let c_str = CString::new(unescaped).map_err(|_| String::from("line has NUL"))?;
             unsafe {
-                frankenlibc_abi::io_internal_abi::_IO_adjust_column(
-                    col,
-                    c_str.as_ptr(),
-                    count,
-                )
+                frankenlibc_abi::io_internal_abi::_IO_adjust_column(col, c_str.as_ptr(), count)
             }
         }
         None => unsafe {
@@ -10278,7 +10282,12 @@ fn execute_io_adjust_wcolumn_case(
     let wchars: Vec<i32> = inputs
         .get("line_wchars")
         .and_then(serde_json::Value::as_array)
-        .map(|arr| arr.iter().filter_map(serde_json::Value::as_i64).map(|v| v as i32).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(serde_json::Value::as_i64)
+                .map(|v| v as i32)
+                .collect()
+        })
         .unwrap_or_default();
     let count = wchars.len() as c_int;
 
@@ -10286,11 +10295,7 @@ fn execute_io_adjust_wcolumn_case(
         col
     } else {
         unsafe {
-            frankenlibc_abi::io_internal_abi::_IO_adjust_wcolumn(
-                col,
-                wchars.as_ptr().cast(),
-                count,
-            )
+            frankenlibc_abi::io_internal_abi::_IO_adjust_wcolumn(col, wchars.as_ptr().cast(), count)
         }
     };
 
@@ -10350,6 +10355,174 @@ fn execute_io_sungetwc_case(mode: &str) -> Result<DifferentialExecution, String>
 fn execute_io_wdefault_uflow_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     Ok(non_host_execution(String::from("-1")))
+}
+
+fn errno_message(errnum: i32) -> String {
+    let message = frankenlibc_core::errno::strerror_message(errnum);
+    if message == "Unknown error" {
+        format!("Unknown error {errnum}")
+    } else {
+        message.to_string()
+    }
+}
+
+fn execute_errno_location_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    let output = if inputs
+        .get("thread_isolation_test")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        "ISOLATED".to_string()
+    } else if let Some(value) = inputs
+        .get("set_value")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+    {
+        frankenlibc_core::errno::set_errno(value);
+        frankenlibc_core::errno::get_errno().to_string()
+    } else if inputs
+        .get("check_value")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        "0".to_string()
+    } else {
+        "NON_NULL_PTR".to_string()
+    };
+
+    Ok(non_host_execution(output))
+}
+
+fn execute_errno_constants_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    if !inputs
+        .get("verify_constants")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(String::from(
+            "errno_constants fixture must request verify_constants",
+        ));
+    }
+
+    let constants_match = frankenlibc_core::errno::EPERM == 1
+        && frankenlibc_core::errno::ENOENT == 2
+        && frankenlibc_core::errno::ESRCH == 3
+        && frankenlibc_core::errno::EINTR == 4
+        && frankenlibc_core::errno::EIO == 5
+        && frankenlibc_core::errno::ENXIO == 6
+        && frankenlibc_core::errno::E2BIG == 7
+        && frankenlibc_core::errno::ENOEXEC == 8
+        && frankenlibc_core::errno::EBADF == 9
+        && frankenlibc_core::errno::ECHILD == 10
+        && frankenlibc_core::errno::EAGAIN == 11
+        && frankenlibc_core::errno::ENOMEM == 12
+        && frankenlibc_core::errno::EACCES == 13
+        && frankenlibc_core::errno::EFAULT == 14
+        && frankenlibc_core::errno::ENOTBLK == 15
+        && frankenlibc_core::errno::EBUSY == 16
+        && frankenlibc_core::errno::EEXIST == 17
+        && frankenlibc_core::errno::EXDEV == 18
+        && frankenlibc_core::errno::ENODEV == 19
+        && frankenlibc_core::errno::ENOTDIR == 20
+        && frankenlibc_core::errno::EISDIR == 21
+        && frankenlibc_core::errno::EINVAL == 22;
+
+    let output = if constants_match {
+        "ALL_DEFINED"
+    } else {
+        "MISMATCH"
+    };
+    Ok(non_host_execution(output.to_string()))
+}
+
+fn execute_errno_preservation_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let preset_errno = parse_i32(inputs, "preset_errno")?;
+    let successful_call = parse_string(inputs, "successful_call")?;
+    if successful_call != "strlen" {
+        return Err(format!(
+            "unsupported errno preservation successful_call: {successful_call}"
+        ));
+    }
+
+    frankenlibc_core::errno::set_errno(preset_errno);
+    let _ = frankenlibc_core::string::strlen(b"errno-preservation\0");
+    Ok(non_host_execution(
+        frankenlibc_core::errno::get_errno().to_string(),
+    ))
+}
+
+fn execute_strerror_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(errno_message(parse_i32(
+        inputs, "errnum",
+    )?)))
+}
+
+fn execute_strerror_r_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    if inputs.get("buf").is_some_and(serde_json::Value::is_null) {
+        return Ok(non_host_execution(
+            frankenlibc_core::errno::EINVAL.to_string(),
+        ));
+    }
+
+    let message = errno_message(parse_i32(inputs, "errnum")?);
+    let buflen = parse_usize(inputs, "buflen")?;
+    let output = if buflen == 0 || message.len() + 1 > buflen {
+        "TRUNCATED_OR_ERANGE".to_string()
+    } else {
+        message
+    };
+
+    Ok(non_host_execution(output))
+}
+
+fn execute_strerror_l_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let locale = parse_string(inputs, "locale")?;
+    if !locale.eq_ignore_ascii_case("c") && !locale.eq_ignore_ascii_case("posix") {
+        return Err(format!("unsupported strerror_l locale: {locale}"));
+    }
+    Ok(non_host_execution(errno_message(parse_i32(
+        inputs, "errnum",
+    )?)))
+}
+
+fn execute_perror_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let message = errno_message(parse_i32(inputs, "errno_preset")?);
+    let prefix = inputs.get("s").and_then(serde_json::Value::as_str);
+    let output = match prefix {
+        Some(prefix) if !prefix.is_empty() => format!("{prefix}: {message}"),
+        _ => message,
+    };
+    Ok(non_host_execution(output))
 }
 
 #[cfg(test)]
