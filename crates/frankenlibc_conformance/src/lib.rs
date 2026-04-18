@@ -12168,6 +12168,9 @@ mod tests {
     // NOTE: time_ops.json uses placeholder outputs (POSITIVE_INT, NON_NEGATIVE, TM_STRUCT)
     // but executor returns placeholders unchanged - functions not yet implemented in executor
 
+    // NOTE: termios_ops.json uses flexible placeholders (0_OR_ENOTTY) but executor
+    // returns actual results (-1) - format mismatch
+
     #[test]
     fn socket_ops_fixture_cases_match_execute_fixture_case() {
         #[derive(Deserialize)]
