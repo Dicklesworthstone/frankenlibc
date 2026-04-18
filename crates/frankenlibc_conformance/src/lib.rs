@@ -541,6 +541,12 @@ pub fn execute_fixture_case(
         "pthread_detach" => execute_pthread_detach_case(inputs, mode),
         "pthread_self" => execute_pthread_self_case(mode),
         "pthread_equal" => execute_pthread_equal_case(inputs, mode),
+        // socket ops
+        "socket" => execute_socket_case(inputs, mode),
+        "bind" => execute_bind_case(inputs, mode),
+        "listen" => execute_listen_case(inputs, mode),
+        "shutdown" => execute_shutdown_case(inputs, mode),
+        "getsockname" => execute_getsockname_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9172,6 +9178,80 @@ fn execute_pthread_detach_case(
     }
 
     Ok(non_host_execution("SKIP_DYNAMIC_HANDLE".to_string()))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// socket_ops conformance executors (bd-856p)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_socket_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let domain = parse_i32(inputs, "domain")?;
+    let sock_type = parse_i32(inputs, "type")?;
+    let protocol = parse_i32(inputs, "protocol").unwrap_or(0);
+    let fd = unsafe { frankenlibc_abi::socket_abi::socket(domain, sock_type, protocol) };
+    let impl_output = if fd >= 0 {
+        unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+        "FD_POSITIVE".to_string()
+    } else {
+        "-1".to_string()
+    };
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_bind_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let result = unsafe {
+        frankenlibc_abi::socket_abi::bind(sockfd, std::ptr::null(), 0)
+    };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_listen_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let backlog = parse_i32(inputs, "backlog").unwrap_or(5);
+    let result = unsafe { frankenlibc_abi::socket_abi::listen(sockfd, backlog) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_shutdown_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let how = parse_i32(inputs, "how").unwrap_or(2);
+    let result = unsafe { frankenlibc_abi::socket_abi::shutdown(sockfd, how) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_getsockname_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let sockfd = parse_i32(inputs, "sockfd")?;
+    let mut addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut addrlen: u32 = std::mem::size_of::<libc::sockaddr_storage>() as u32;
+    let result = unsafe {
+        frankenlibc_abi::socket_abi::getsockname(
+            sockfd,
+            &mut addr as *mut _ as *mut libc::sockaddr,
+            &mut addrlen,
+        )
+    };
+    Ok(non_host_execution(format!("{result}")))
 }
 
 #[cfg(test)]
