@@ -118,6 +118,33 @@ fn string_ops_covers_concat_functions() {
 }
 
 #[test]
+fn string_ops_covers_strl_functions() {
+    let fixture = load_fixture("string_ops");
+
+    for function in ["strlcpy", "strlcat"] {
+        assert!(
+            fixture
+                .cases
+                .iter()
+                .any(|case| case.function == function && case.mode == "strict"),
+            "Missing strict fixture coverage for {function}"
+        );
+        assert!(
+            fixture.cases.iter().any(|case| {
+                case.function == function
+                    && case.mode == "hardened"
+                    && case.name.contains("dst_bound")
+                    && case
+                        .expected_output
+                        .as_deref()
+                        .is_some_and(|output| output.contains("repair=TruncateWithNull"))
+            }),
+            "Missing hardened destination-bound repair fixture coverage for {function}"
+        );
+    }
+}
+
+#[test]
 fn string_ops_covers_compare_functions() {
     let fixture = load_fixture("string_ops");
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();

@@ -649,6 +649,30 @@ fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
     heals_enabled || matches!(action, MembraneAction::Repair(_))
 }
 
+#[inline]
+fn clamp_destination_size_for_repair(
+    requested: usize,
+    dst_remaining: Option<usize>,
+    repair: bool,
+) -> (usize, bool) {
+    if !repair {
+        return (requested, false);
+    }
+    match dst_remaining {
+        Some(bound) if bound < requested => (bound, true),
+        _ => (requested, false),
+    }
+}
+
+#[doc(hidden)]
+pub fn clamp_destination_size_for_tests(
+    requested: usize,
+    dst_remaining: Option<usize>,
+    repair: bool,
+) -> (usize, bool) {
+    clamp_destination_size_for_repair(requested, dst_remaining, repair)
+}
+
 fn record_truncation(requested: usize, truncated: usize) {
     global_healing_policy().record(&HealingAction::TruncateWithNull {
         requested,
@@ -4470,15 +4494,24 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: 
     } else {
         None
     };
+    let dst_bound = if repair {
+        known_remaining(dst as usize)
+    } else {
+        None
+    };
+    let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
+    if dst_clamped {
+        record_truncation(dstsize, dst_limit);
+    }
 
     // SAFETY: bounded scan.
     let (result, span) = unsafe {
         let (src_len, src_terminated) = scan_c_string(src, src_bound);
         let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
         let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
-        let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dstsize);
+        let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dst_limit);
         let r = frankenlibc_core::string::str::strlcpy(dst_slice, src_slice);
-        (r, src_len.max(dstsize))
+        (r, src_len.max(dst_limit))
     };
 
     record_string_stage_outcome(
@@ -4491,7 +4524,7 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: 
         ApiFamily::StringMemory,
         decision.profile,
         runtime_policy::scaled_cost(7, span),
-        src_bound.is_some(),
+        src_bound.is_some() || dst_clamped,
     );
     result
 }
@@ -4561,15 +4594,24 @@ pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: 
     } else {
         None
     };
+    let dst_bound = if repair {
+        known_remaining(dst as usize)
+    } else {
+        None
+    };
+    let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
+    if dst_clamped {
+        record_truncation(dstsize, dst_limit);
+    }
 
     // SAFETY: bounded scan.
     let (result, span) = unsafe {
         let (src_len, src_terminated) = scan_c_string(src, src_bound);
         let src_slice_len = if src_terminated { src_len + 1 } else { src_len };
         let src_slice = std::slice::from_raw_parts(src.cast::<u8>(), src_slice_len);
-        let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dstsize);
+        let dst_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), dst_limit);
         let r = frankenlibc_core::string::str::strlcat(dst_slice, src_slice);
-        (r, src_len + dstsize)
+        (r, src_len + dst_limit)
     };
 
     record_string_stage_outcome(
@@ -4582,7 +4624,7 @@ pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: 
         ApiFamily::StringMemory,
         decision.profile,
         runtime_policy::scaled_cost(7, span),
-        src_bound.is_some(),
+        src_bound.is_some() || dst_clamped,
     );
     result
 }

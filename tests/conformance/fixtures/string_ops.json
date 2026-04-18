@@ -17,6 +17,11 @@
     
     { "name": "strict_strcat_basic", "function": "strcat", "spec_section": "POSIX strcat", "inputs": { "dst_init": [65, 0], "src": [66, 0], "dst_cap": 5 }, "expected_output": "[65, 66, 0, 0, 0]", "expected_errno": 0, "mode": "strict" },
     { "name": "hardened_strcat_overflow", "function": "strcat", "spec_section": "TSM hardened strcat", "inputs": { "dst_init": [65, 0], "src": [66, 67, 0], "dst_cap": 3 }, "expected_output": "[65, 66, 0]", "expected_errno": 0, "mode": "hardened" },
+
+    { "name": "strict_strlcpy_truncates_with_nul", "function": "strlcpy", "spec_section": "BSD strlcpy", "inputs": { "src": [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0], "dst_len": 6, "dstsize": 6 }, "expected_output": "return=11,dst=[104, 101, 108, 108, 111, 0]", "expected_errno": 0, "mode": "strict" },
+    { "name": "strict_strlcat_truncates_with_nul", "function": "strlcat", "spec_section": "BSD strlcat", "inputs": { "dst_init": [104, 101, 108, 108, 111, 0, 0, 0, 0, 0], "src": [32, 119, 111, 114, 108, 100, 0], "dstsize": 10 }, "expected_output": "return=11,dst=[104, 101, 108, 108, 111, 32, 119, 111, 114, 0]", "expected_errno": 0, "mode": "strict" },
+    { "name": "hardened_strlcpy_dst_bound_clamps_requested_size", "function": "strlcpy", "spec_section": "TSM hardened strlcpy destination bounds", "inputs": { "src": [97, 98, 99, 100, 0], "dst_alloc_len": 4, "requested_dstsize": 8 }, "expected_output": "return=4,dst=[97, 98, 99, 0],repair=TruncateWithNull", "expected_errno": 0, "mode": "hardened" },
+    { "name": "hardened_strlcat_dst_bound_clamps_requested_size", "function": "strlcat", "spec_section": "TSM hardened strlcat destination bounds", "inputs": { "dst_init": [97, 0, 0, 0], "src": [98, 99, 100, 0], "dst_alloc_len": 4, "requested_dstsize": 8 }, "expected_output": "return=4,dst=[97, 98, 99, 0],repair=TruncateWithNull", "expected_errno": 0, "mode": "hardened" },
     
     { "name": "strict_strcmp_equal", "function": "strcmp", "spec_section": "POSIX strcmp", "inputs": { "s1": [65, 0], "s2": [65, 0] }, "expected_output": "0", "expected_errno": 0, "mode": "strict" },
     

@@ -805,6 +805,26 @@ fn strlcat_appends_with_truncation() {
     assert_eq!(s.to_bytes(), b"hello wor"); // truncated
 }
 
+#[test]
+fn strl_destination_bound_clamps_only_in_repair_mode() {
+    assert_eq!(
+        clamp_destination_size_for_tests(12, Some(5), true),
+        (5, true)
+    );
+    assert_eq!(
+        clamp_destination_size_for_tests(12, Some(12), true),
+        (12, false)
+    );
+    assert_eq!(
+        clamp_destination_size_for_tests(12, Some(5), false),
+        (12, false)
+    );
+    assert_eq!(
+        clamp_destination_size_for_tests(12, None, true),
+        (12, false)
+    );
+}
+
 // ===========================================================================
 // strverscmp
 // ===========================================================================
