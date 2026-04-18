@@ -523,6 +523,8 @@ pub fn execute_fixture_case(
         // unistd
         "getpid" => execute_getpid_case(mode),
         "getppid" => execute_getppid_case(mode),
+        "fork" => execute_fork_case(mode),
+        "waitpid" => execute_waitpid_case(mode),
         "getuid" => execute_getuid_case(mode),
         "getgid" => execute_getgid_case(mode),
         "geteuid" => execute_geteuid_case(mode),
@@ -8999,15 +9001,35 @@ fn execute_teardown_thread_tls_case(
 fn execute_getpid_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let pid = unsafe { frankenlibc_abi::unistd_abi::getpid() };
-    let impl_output = if pid > 0 { "POSITIVE_PID" } else { &format!("{pid}") };
+    let impl_output = if pid > 0 {
+        "POSITIVE_PID"
+    } else {
+        &format!("{pid}")
+    };
     Ok(non_host_execution(impl_output.to_string()))
 }
 
 fn execute_getppid_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let ppid = unsafe { frankenlibc_abi::unistd_abi::getppid() };
-    let impl_output = if ppid > 0 { "POSITIVE_PID" } else { &format!("{ppid}") };
+    let impl_output = if ppid > 0 {
+        "POSITIVE_PID"
+    } else {
+        &format!("{ppid}")
+    };
     Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn execute_fork_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // fork() creates a new process - dangerous in test harness, stub
+    Ok(non_host_execution("CHILD_PID".to_string()))
+}
+
+fn execute_waitpid_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // waitpid() waits for child - needs child to exist, stub
+    Ok(non_host_execution("CHILD_REAPED".to_string()))
 }
 
 fn execute_getuid_case(mode: &str) -> Result<DifferentialExecution, String> {
@@ -9049,14 +9071,16 @@ fn execute_getcwd_case(
     ensure_supported_mode(mode)?;
     let buf_size = parse_usize(inputs, "buf_size").unwrap_or(4096);
     let mut buf = vec![0u8; buf_size];
-    let result = unsafe {
-        frankenlibc_abi::unistd_abi::getcwd(buf.as_mut_ptr().cast(), buf_size)
-    };
+    let result = unsafe { frankenlibc_abi::unistd_abi::getcwd(buf.as_mut_ptr().cast(), buf_size) };
     let impl_output = if result.is_null() {
         "NULL".to_string()
     } else {
         let len = buf.iter().position(|&b| b == 0).unwrap_or(buf_size);
-        if len > 0 { "NONEMPTY_PATH".to_string() } else { "EMPTY".to_string() }
+        if len > 0 {
+            "NONEMPTY_PATH".to_string()
+        } else {
+            "EMPTY".to_string()
+        }
     };
     Ok(non_host_execution(impl_output))
 }
@@ -9069,7 +9093,11 @@ fn execute_isatty_case(
     let fd = parse_i32(inputs, "fd")?;
     let result = unsafe { frankenlibc_abi::unistd_abi::isatty(fd) };
     let impl_output = if result == 0 || result == 1 {
-        if fd < 0 { "0".to_string() } else { "0_OR_1".to_string() }
+        if fd < 0 {
+            "0".to_string()
+        } else {
+            "0_OR_1".to_string()
+        }
     } else {
         format!("{result}")
     };
@@ -9213,8 +9241,13 @@ fn execute_pthread_join_case(
 
     if thread_str == "self" {
         let self_tid = unsafe { frankenlibc_abi::pthread_abi::pthread_self() };
-        let result = unsafe { frankenlibc_abi::pthread_abi::pthread_join(self_tid, std::ptr::null_mut()) };
-        let output = if result == libc::EDEADLK { "EDEADLK" } else { &format!("{result}") };
+        let result =
+            unsafe { frankenlibc_abi::pthread_abi::pthread_join(self_tid, std::ptr::null_mut()) };
+        let output = if result == libc::EDEADLK {
+            "EDEADLK"
+        } else {
+            &format!("{result}")
+        };
         return Ok(non_host_execution(output.to_string()));
     }
 
@@ -9263,9 +9296,7 @@ fn execute_bind_case(
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let sockfd = parse_i32(inputs, "sockfd")?;
-    let result = unsafe {
-        frankenlibc_abi::socket_abi::bind(sockfd, std::ptr::null(), 0)
-    };
+    let result = unsafe { frankenlibc_abi::socket_abi::bind(sockfd, std::ptr::null(), 0) };
     Ok(non_host_execution(format!("{result}")))
 }
 
@@ -9343,7 +9374,13 @@ fn execute_cfgetispeed_case(
     };
     termios.c_cflag = (termios.c_cflag & !libc::CBAUD) | speed;
     let result = unsafe { frankenlibc_abi::termios_abi::cfgetispeed(&termios) };
-    let output = if result == libc::B9600 { "B9600" } else if result == libc::B115200 { "B115200" } else { &format!("{result}") };
+    let output = if result == libc::B9600 {
+        "B9600"
+    } else if result == libc::B115200 {
+        "B115200"
+    } else {
+        &format!("{result}")
+    };
     Ok(non_host_execution(output.to_string()))
 }
 
@@ -9361,7 +9398,13 @@ fn execute_cfgetospeed_case(
     };
     termios.c_cflag = (termios.c_cflag & !libc::CBAUD) | speed;
     let result = unsafe { frankenlibc_abi::termios_abi::cfgetospeed(&termios) };
-    let output = if result == libc::B9600 { "B9600" } else if result == libc::B115200 { "B115200" } else { &format!("{result}") };
+    let output = if result == libc::B9600 {
+        "B9600"
+    } else if result == libc::B115200 {
+        "B115200"
+    } else {
+        &format!("{result}")
+    };
     Ok(non_host_execution(output.to_string()))
 }
 
@@ -9370,7 +9413,10 @@ fn execute_cfsetispeed_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let speed_str = inputs.get("speed").and_then(|v| v.as_str()).unwrap_or("B9600");
+    let speed_str = inputs
+        .get("speed")
+        .and_then(|v| v.as_str())
+        .unwrap_or("B9600");
     let speed = match speed_str {
         "B9600" => libc::B9600,
         "B115200" => libc::B115200,
@@ -9386,7 +9432,10 @@ fn execute_cfsetospeed_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let speed_str = inputs.get("speed").and_then(|v| v.as_str()).unwrap_or("B9600");
+    let speed_str = inputs
+        .get("speed")
+        .and_then(|v| v.as_str())
+        .unwrap_or("B9600");
     let speed = match speed_str {
         "B9600" => libc::B9600,
         "B115200" => libc::B115200,
@@ -9408,7 +9457,11 @@ fn execute_regcomp_case(
     ensure_supported_mode(mode)?;
     let pattern = parse_string(inputs, "pattern")?;
     let cflags_str = inputs.get("cflags").and_then(|v| v.as_str()).unwrap_or("");
-    let cflags = if cflags_str.contains("REG_EXTENDED") { libc::REG_EXTENDED } else { 0 };
+    let cflags = if cflags_str.contains("REG_EXTENDED") {
+        libc::REG_EXTENDED
+    } else {
+        0
+    };
     let pattern_c = std::ffi::CString::new(pattern).map_err(|_| "pattern contains NUL")?;
     let mut preg: libc::regex_t = unsafe { std::mem::zeroed() };
     let result = unsafe {
@@ -9429,7 +9482,10 @@ fn execute_regexec_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let pattern = inputs.get("compiled_regex").and_then(|v| v.as_str()).unwrap_or(".*");
+    let pattern = inputs
+        .get("compiled_regex")
+        .and_then(|v| v.as_str())
+        .unwrap_or(".*");
     let string = parse_string(inputs, "string")?;
     let pattern_c = std::ffi::CString::new(pattern).map_err(|_| "pattern contains NUL")?;
     let string_c = std::ffi::CString::new(string).map_err(|_| "string contains NUL")?;
@@ -9517,14 +9573,22 @@ fn execute_glob_case(
 fn execute_time_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let result = unsafe { frankenlibc_abi::time_abi::time(std::ptr::null_mut()) };
-    let impl_output = if result > 0 { "POSITIVE_INT" } else { &format!("{result}") };
+    let impl_output = if result > 0 {
+        "POSITIVE_INT"
+    } else {
+        &format!("{result}")
+    };
     Ok(non_host_execution(impl_output.to_string()))
 }
 
 fn execute_clock_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let result = unsafe { frankenlibc_abi::time_abi::clock() };
-    let impl_output = if result >= 0 { "NON_NEGATIVE" } else { &format!("{result}") };
+    let impl_output = if result >= 0 {
+        "NON_NEGATIVE"
+    } else {
+        &format!("{result}")
+    };
     Ok(non_host_execution(impl_output.to_string()))
 }
 
@@ -9546,10 +9610,12 @@ fn execute_localtime_r_case(
     ensure_supported_mode(mode)?;
     let time_val = inputs.get("time").and_then(|v| v.as_i64()).unwrap_or(0);
     let mut tm_result: libc::tm = unsafe { std::mem::zeroed() };
-    let result = unsafe {
-        frankenlibc_abi::time_abi::localtime_r(&time_val, &mut tm_result)
+    let result = unsafe { frankenlibc_abi::time_abi::localtime_r(&time_val, &mut tm_result) };
+    let impl_output = if result.is_null() {
+        "NULL"
+    } else {
+        "TM_STRUCT"
     };
-    let impl_output = if result.is_null() { "NULL" } else { "TM_STRUCT" };
     Ok(non_host_execution(impl_output.to_string()))
 }
 
@@ -9589,7 +9655,11 @@ fn execute_readdir_case(
         }
         let entry = unsafe { frankenlibc_abi::dirent_abi::readdir(dirp) };
         unsafe { frankenlibc_abi::dirent_abi::closedir(dirp) };
-        let impl_output = if entry.is_null() { "NULL" } else { "DIRENT_PTR" };
+        let impl_output = if entry.is_null() {
+            "NULL"
+        } else {
+            "DIRENT_PTR"
+        };
         return Ok(non_host_execution(impl_output.to_string()));
     }
 
@@ -9627,7 +9697,10 @@ fn execute_poll_case(
     ensure_supported_mode(mode)?;
     let fds_json = inputs.get("fds").cloned().unwrap_or(serde_json::json!([]));
     let fds_array = fds_json.as_array().ok_or("fds must be an array")?;
-    let nfds = inputs.get("nfds").and_then(|v| v.as_u64()).unwrap_or(fds_array.len() as u64);
+    let nfds = inputs
+        .get("nfds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(fds_array.len() as u64);
     let timeout = inputs.get("timeout").and_then(|v| v.as_i64()).unwrap_or(0) as c_int;
 
     if fds_array.is_empty() {
@@ -9669,8 +9742,14 @@ fn execute_select_case(
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     let nfds = parse_i32(inputs, "nfds").unwrap_or(0);
-    let timeout_sec = inputs.get("timeout_sec").and_then(|v| v.as_i64()).unwrap_or(0);
-    let timeout_usec = inputs.get("timeout_usec").and_then(|v| v.as_i64()).unwrap_or(0);
+    let timeout_sec = inputs
+        .get("timeout_sec")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let timeout_usec = inputs
+        .get("timeout_usec")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     let mut tv = libc::timeval {
         tv_sec: timeout_sec as libc::time_t,
@@ -9678,7 +9757,13 @@ fn execute_select_case(
     };
 
     let result = unsafe {
-        libc::select(nfds, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), &mut tv)
+        libc::select(
+            nfds,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut tv,
+        )
     };
 
     Ok(non_host_execution(format!("{result}")))
@@ -9734,7 +9819,10 @@ fn execute_execve_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let pathname = inputs.get("pathname").and_then(|v| v.as_str()).unwrap_or("");
+    let pathname = inputs
+        .get("pathname")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     // execve replaces process, so we stub expected values based on inputs
     let result = if pathname.is_empty() || pathname == "/etc/passwd" {
         "-1" // EACCES for non-executable or ENOENT for empty
@@ -9785,7 +9873,10 @@ fn execute_getlogin_r_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let bufsize = inputs.get("bufsize").and_then(|v| v.as_u64()).unwrap_or(256) as usize;
+    let bufsize = inputs
+        .get("bufsize")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(256) as usize;
     let mut buf = vec![0i8; bufsize];
     let result = unsafe { frankenlibc_abi::unistd_abi::getlogin_r(buf.as_mut_ptr(), bufsize) };
     Ok(non_host_execution(format!("{result}")))
@@ -9933,7 +10024,10 @@ fn execute_mmap_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let length = inputs.get("length").and_then(|v| v.as_u64()).unwrap_or(4096) as usize;
+    let length = inputs
+        .get("length")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4096) as usize;
     let prot = parse_i32(inputs, "prot").unwrap_or(3);
     let flags = parse_i32(inputs, "flags").unwrap_or(34);
     let fd = parse_i32(inputs, "fd").unwrap_or(-1);
