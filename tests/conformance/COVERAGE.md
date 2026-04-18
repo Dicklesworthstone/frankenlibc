@@ -96,7 +96,12 @@ cargo test -p frankenlibc-harness --test <fixture>_conformance_test
 
 ### Medium Priority (needs executor work)
 
-- printf_conformance - needs pattern matching in test harness
+- printf_conformance - multiple blockers discovered:
+  - Executor lacks float argument support (PrintfArg only has Int/Str)
+  - Executor lacks 64-bit integer support (%lld, %j, %t cases fail)
+  - Negative width via * causes incorrect output (implementation bug)
+  - Some inputs trigger SIGSEGV (needs investigation)
+  - Uses expected_output_pattern/expected_output_bytes variants (schema issue)
 - scanf_conformance - needs sscanf executor implementation
 
 ### Low Priority (structural blockers)
