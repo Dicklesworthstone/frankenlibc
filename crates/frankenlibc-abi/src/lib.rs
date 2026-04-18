@@ -34,6 +34,9 @@ pub mod htm_fast_path;
 mod membrane_state;
 mod runtime_policy;
 
+#[cfg(feature = "conformance-testing")]
+pub use runtime_policy::conformance_testing;
+
 // Bootstrap ABI modules (Phase 1 - implemented)
 // Gated behind cfg(not(test)) because these modules export #[no_mangle] symbols
 // (malloc, free, memcpy, strlen, ...) that would shadow the system allocator and

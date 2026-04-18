@@ -364,6 +364,8 @@ pub fn execute_fixture_case(
         "strncpy" => execute_strncpy_case(inputs, mode),
         "strcat" => execute_strcat_case(inputs, mode),
         "strncat" => execute_strncat_case(inputs, mode),
+        "strlcpy" => execute_strlcpy_case(inputs, mode),
+        "strlcat" => execute_strlcat_case(inputs, mode),
         "strchr" => execute_strchr_case(inputs, mode),
         "strrchr" => execute_strrchr_case(inputs, mode),
         "strstr" => execute_strstr_case(inputs, mode),
@@ -2754,12 +2756,22 @@ fn execute_sprintf_case(
 
     const SPRINTF_BUF_SIZE: usize = 4096;
     let mut impl_buf = vec![0 as c_char; SPRINTF_BUF_SIZE];
-    let _ = run_impl_snprintf(impl_buf.as_mut_ptr(), SPRINTF_BUF_SIZE, format_c.as_ptr(), &args)?;
+    let _ = run_impl_snprintf(
+        impl_buf.as_mut_ptr(),
+        SPRINTF_BUF_SIZE,
+        format_c.as_ptr(),
+        &args,
+    )?;
     let impl_output = render_c_buffer(&impl_buf, SPRINTF_BUF_SIZE);
 
     if strict {
         let mut host_buf = vec![0 as c_char; SPRINTF_BUF_SIZE];
-        let _ = run_host_snprintf(host_buf.as_mut_ptr(), SPRINTF_BUF_SIZE, format_c.as_ptr(), &args)?;
+        let _ = run_host_snprintf(
+            host_buf.as_mut_ptr(),
+            SPRINTF_BUF_SIZE,
+            format_c.as_ptr(),
+            &args,
+        )?;
         let host_output = render_c_buffer(&host_buf, SPRINTF_BUF_SIZE);
         let host_parity = host_output == impl_output;
         let note = (!host_parity).then(|| String::from("strict sprintf host parity mismatch"));
@@ -4015,6 +4027,119 @@ fn execute_strncat_case(
         } else {
             None
         },
+    })
+}
+
+fn format_strl_output(return_value: usize, dst: &[u8], repair: bool) -> String {
+    let suffix = if repair {
+        ",repair=TruncateWithNull"
+    } else {
+        ""
+    };
+    format!("return={return_value},dst={dst:?}{suffix}")
+}
+
+fn execute_strlcpy_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let src = parse_u8_vec(inputs, "src")?;
+    let dst_len = parse_usize_any(inputs, &["dst_len", "dst_alloc_len"])?;
+    let requested_dstsize = parse_usize_any(inputs, &["dstsize", "requested_dstsize"])?;
+
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let defined = src.contains(&0) && requested_dstsize <= dst_len;
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let effective_dstsize = requested_dstsize.min(dst_len);
+    let repair = hardened && requested_dstsize > dst_len;
+    let mut impl_dst = vec![0_u8; dst_len];
+    let return_value =
+        frankenlibc_core::string::str::strlcpy(&mut impl_dst[..effective_dstsize], &src);
+    let impl_output = format_strl_output(return_value, &impl_dst, repair);
+
+    Ok(DifferentialExecution {
+        host_output: if defined {
+            String::from("SKIP")
+        } else {
+            String::from("UB")
+        },
+        impl_output,
+        host_parity: true,
+        note: Some(if repair {
+            String::from("hardened mode clamps requested dstsize to allocation length")
+        } else {
+            String::from("strlcpy host execution is represented by the fixture contract")
+        }),
+    })
+}
+
+fn execute_strlcat_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let dst_init = parse_u8_vec(inputs, "dst_init")?;
+    let src = parse_u8_vec(inputs, "src")?;
+    let requested_dstsize = parse_usize_any(inputs, &["dstsize", "requested_dstsize"])?;
+    let dst_len = parse_usize_any(inputs, &["dst_cap", "dst_alloc_len"]).unwrap_or(dst_init.len());
+
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let defined = dst_init.contains(&0)
+        && src.contains(&0)
+        && dst_init.len() <= dst_len
+        && requested_dstsize <= dst_len;
+    if strict && !defined {
+        return Ok(DifferentialExecution {
+            host_output: String::from("UB"),
+            impl_output: String::from("UB"),
+            host_parity: true,
+            note: Some(String::from(
+                "strict mode leaves undefined behavior undefined",
+            )),
+        });
+    }
+
+    let effective_dstsize = requested_dstsize.min(dst_len);
+    let repair = hardened && requested_dstsize > dst_len;
+    let mut impl_dst = vec![0_u8; dst_len];
+    let copy_len = dst_init.len().min(dst_len);
+    impl_dst[..copy_len].copy_from_slice(&dst_init[..copy_len]);
+    let return_value =
+        frankenlibc_core::string::str::strlcat(&mut impl_dst[..effective_dstsize], &src);
+    let impl_output = format_strl_output(return_value, &impl_dst, repair);
+
+    Ok(DifferentialExecution {
+        host_output: if defined {
+            String::from("SKIP")
+        } else {
+            String::from("UB")
+        },
+        impl_output,
+        host_parity: true,
+        note: Some(if repair {
+            String::from("hardened mode clamps requested dstsize to allocation length")
+        } else {
+            String::from("strlcat host execution is represented by the fixture contract")
+        }),
     })
 }
 
@@ -11283,6 +11408,7 @@ mod tests {
 
     #[test]
     fn execute_dlclose_case_hardened_double_close_exposes_host_divergence() {
+        let _mode_guard = frankenlibc_abi::conformance_testing::set_hardened_mode();
         let result = execute_fixture_case(
             "dlclose",
             &serde_json::json!({

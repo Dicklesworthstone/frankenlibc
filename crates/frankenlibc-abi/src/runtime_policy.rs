@@ -1548,6 +1548,68 @@ pub(crate) fn scaled_cost(base_ns: u64, bytes: usize) -> u64 {
     base_ns.saturating_add(((bytes as u64).saturating_add(63) / 64).min(8192))
 }
 
+#[cfg(feature = "conformance-testing")]
+pub mod conformance_testing {
+    //! Public helpers for conformance tests to control runtime mode.
+    //!
+    //! These are gated behind the `conformance-testing` feature and should
+    //! only be used in test contexts.
+
+    use super::{MODE_HARDENED, MODE_STATE, MODE_STRICT, MODE_THREAD_LOCAL_CACHE, MODE_UNRESOLVED};
+    use std::sync::atomic::Ordering as AtomicOrdering;
+
+    pub struct ModeGuard {
+        previous_state: u8,
+        previous_tls: u8,
+    }
+
+    impl Drop for ModeGuard {
+        fn drop(&mut self) {
+            MODE_STATE.store(self.previous_state, AtomicOrdering::SeqCst);
+            let _ = MODE_THREAD_LOCAL_CACHE.try_with(|cache| cache.set(self.previous_tls));
+        }
+    }
+
+    pub fn set_hardened_mode() -> ModeGuard {
+        let previous_tls = MODE_THREAD_LOCAL_CACHE
+            .try_with(|cache| {
+                let prev = cache.get();
+                cache.set(MODE_UNRESOLVED);
+                prev
+            })
+            .unwrap_or(MODE_UNRESOLVED);
+        let previous_state = MODE_STATE.swap(MODE_HARDENED, AtomicOrdering::SeqCst);
+        ModeGuard {
+            previous_state,
+            previous_tls,
+        }
+    }
+
+    pub fn set_strict_mode() -> ModeGuard {
+        let previous_tls = MODE_THREAD_LOCAL_CACHE
+            .try_with(|cache| {
+                let prev = cache.get();
+                cache.set(MODE_UNRESOLVED);
+                prev
+            })
+            .unwrap_or(MODE_UNRESOLVED);
+        let previous_state = MODE_STATE.swap(MODE_STRICT, AtomicOrdering::SeqCst);
+        ModeGuard {
+            previous_state,
+            previous_tls,
+        }
+    }
+
+    pub fn current_mode_debug() -> &'static str {
+        let mode = super::mode();
+        if mode.heals_enabled() {
+            "hardened"
+        } else {
+            "strict"
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

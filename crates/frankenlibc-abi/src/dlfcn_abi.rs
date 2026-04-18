@@ -552,6 +552,10 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
             if rc == 0 {
                 clear_dlerror();
             } else {
+                if runtime_policy::mode().heals_enabled() {
+                    clear_dlerror();
+                    return 0;
+                }
                 set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
             }
             return rc;
@@ -596,7 +600,12 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
         if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlclose") {
             let host_dlclose: DlcloseFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
             let rc = unsafe { host_dlclose(handle) };
-            runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, rc != 0);
+            let adverse = rc != 0;
+            runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
+            if adverse && runtime_policy::mode().heals_enabled() {
+                clear_dlerror();
+                return 0;
+            }
             return rc;
         }
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
@@ -611,6 +620,10 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
     }
     runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
+    if adverse && runtime_policy::mode().heals_enabled() {
+        clear_dlerror();
+        return 0;
+    }
     rc
 }
 

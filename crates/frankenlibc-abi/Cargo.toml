@@ -15,6 +15,7 @@ unsafe_code = "allow"
 [features]
 default = []
 standalone = []
+conformance-testing = []
 
 [dependencies]
 frankenlibc-membrane = { workspace = true }
