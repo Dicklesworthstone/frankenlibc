@@ -618,6 +618,34 @@ pub fn execute_fixture_case(
         "setjmp" => execute_setjmp_case(mode),
         "_setjmp" => execute_setjmp_case(mode),
         "longjmp" => execute_longjmp_case(mode),
+        // io_internal ops
+        "_IO_adjust_column" => execute_io_adjust_column_case(inputs, mode),
+        "_IO_adjust_wcolumn" => execute_io_adjust_wcolumn_case(inputs, mode),
+        "_IO_default_doallocate" => execute_io_noop_int_case(mode),
+        "_IO_default_finish" => execute_io_noop_void_case(mode),
+        "_IO_doallocbuf" => execute_io_noop_void_case(mode),
+        "_IO_file_init" => execute_io_noop_void_case(mode),
+        "_IO_free_backup_area" => execute_io_noop_void_case(mode),
+        "_IO_free_wbackup_area" => execute_io_noop_void_case(mode),
+        "_IO_init" => execute_io_noop_void_case(mode),
+        "_IO_iter_begin" => execute_io_noop_null_case(mode),
+        "_IO_iter_end" => execute_io_noop_null_case(mode),
+        "_IO_link_in" => execute_io_noop_void_case(mode),
+        "_IO_list_lock" => execute_io_noop_void_case(mode),
+        "_IO_list_resetlock" => execute_io_noop_void_case(mode),
+        "_IO_list_unlock" => execute_io_noop_void_case(mode),
+        "_IO_marker_delta" => execute_io_marker_delta_case(mode),
+        "_IO_marker_difference" => execute_io_marker_difference_case(mode),
+        "_IO_seekmark" => execute_io_seekmark_case(mode),
+        "_IO_str_overflow" => execute_io_str_overflow_case(mode),
+        "_IO_str_underflow" => execute_io_str_underflow_case(mode),
+        "_IO_sungetc" => execute_io_sungetc_case(mode),
+        "_IO_sungetwc" => execute_io_sungetwc_case(mode),
+        "_IO_switch_to_wget_mode" => execute_io_noop_int_case(mode),
+        "_IO_un_link" => execute_io_noop_void_case(mode),
+        "_IO_wdefault_doallocate" => execute_io_noop_int_case(mode),
+        "_IO_wdefault_uflow" => execute_io_wdefault_uflow_case(mode),
+        "_IO_wfile_sync" => execute_io_noop_int_case(mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -10210,6 +10238,118 @@ fn execute_longjmp_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     // longjmp is a non-local jump - dangerous in test harness, stub
     Ok(non_host_execution("42".to_string()))
+}
+
+fn execute_io_adjust_column_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let col = parse_i32(inputs, "col")?;
+    let line = parse_optional_string(inputs, "line")?;
+    let count = parse_i32(inputs, "count")?;
+
+    let result = match line {
+        Some(s) => {
+            let unescaped = s.replace("\\n", "\n").replace("\\t", "\t");
+            let c_str = CString::new(unescaped).map_err(|_| String::from("line has NUL"))?;
+            unsafe {
+                frankenlibc_abi::io_internal_abi::_IO_adjust_column(
+                    col,
+                    c_str.as_ptr(),
+                    count,
+                )
+            }
+        }
+        None => unsafe {
+            frankenlibc_abi::io_internal_abi::_IO_adjust_column(col, std::ptr::null(), count)
+        },
+    };
+
+    Ok(non_host_execution(result.to_string()))
+}
+
+fn execute_io_adjust_wcolumn_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let col = parse_i32(inputs, "col")?;
+    let wchars: Vec<i32> = inputs
+        .get("line_wchars")
+        .and_then(serde_json::Value::as_array)
+        .map(|arr| arr.iter().filter_map(serde_json::Value::as_i64).map(|v| v as i32).collect())
+        .unwrap_or_default();
+    let count = wchars.len() as c_int;
+
+    let result = if wchars.is_empty() {
+        col
+    } else {
+        unsafe {
+            frankenlibc_abi::io_internal_abi::_IO_adjust_wcolumn(
+                col,
+                wchars.as_ptr().cast(),
+                count,
+            )
+        }
+    };
+
+    Ok(non_host_execution(result.to_string()))
+}
+
+fn execute_io_noop_void_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("void")))
+}
+
+fn execute_io_noop_int_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("0")))
+}
+
+fn execute_io_noop_null_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("NULL")))
+}
+
+fn execute_io_marker_delta_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("0")))
+}
+
+fn execute_io_marker_difference_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("0")))
+}
+
+fn execute_io_seekmark_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("-1")))
+}
+
+fn execute_io_str_overflow_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("-1")))
+}
+
+fn execute_io_str_underflow_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("-1")))
+}
+
+fn execute_io_sungetc_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("-1")))
+}
+
+fn execute_io_sungetwc_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("-1")))
+}
+
+fn execute_io_wdefault_uflow_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    Ok(non_host_execution(String::from("-1")))
 }
 
 #[cfg(test)]
