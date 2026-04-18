@@ -583,6 +583,8 @@ pub fn execute_fixture_case(
         "getlogin_r" => execute_getlogin_r_case(inputs, mode),
         "getsid" => execute_getsid_case(inputs, mode),
         "setsid" => execute_setsid_case(mode),
+        // resource ops
+        "getrlimit" => execute_getrlimit_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9791,6 +9793,17 @@ fn execute_setsid_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     // setsid() creates a new session - dangerous in test context, stub
     Ok(non_host_execution("new_session_id".to_string()))
+}
+
+fn execute_getrlimit_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let resource = parse_i32(inputs, "resource")?;
+    let mut rlim: libc::rlimit = unsafe { std::mem::zeroed() };
+    let result = unsafe { frankenlibc_abi::resource_abi::getrlimit(resource, &mut rlim) };
+    Ok(non_host_execution(format!("{result}")))
 }
 
 #[cfg(test)]
