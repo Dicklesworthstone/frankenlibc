@@ -547,6 +547,12 @@ pub fn execute_fixture_case(
         "listen" => execute_listen_case(inputs, mode),
         "shutdown" => execute_shutdown_case(inputs, mode),
         "getsockname" => execute_getsockname_case(inputs, mode),
+        // termios ops
+        "tcgetattr" => execute_tcgetattr_case(inputs, mode),
+        "cfgetispeed" => execute_cfgetispeed_case(inputs, mode),
+        "cfgetospeed" => execute_cfgetospeed_case(inputs, mode),
+        "cfsetispeed" => execute_cfsetispeed_case(inputs, mode),
+        "cfsetospeed" => execute_cfsetospeed_case(inputs, mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9251,6 +9257,94 @@ fn execute_getsockname_case(
             &mut addrlen,
         )
     };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// termios_ops conformance executors (bd-p838)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn execute_tcgetattr_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let fd = parse_i32(inputs, "fd")?;
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    let result = unsafe { frankenlibc_abi::termios_abi::tcgetattr(fd, &mut termios) };
+    let impl_output = if result == 0 {
+        "0_OR_ENOTTY".to_string()
+    } else {
+        format!("{result}")
+    };
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_cfgetispeed_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let termios_str = inputs.get("termios").and_then(|v| v.as_str()).unwrap_or("");
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    let speed = match termios_str {
+        "B9600" => libc::B9600,
+        "B115200" => libc::B115200,
+        _ => libc::B9600,
+    };
+    termios.c_cflag = (termios.c_cflag & !libc::CBAUD) | speed;
+    let result = unsafe { frankenlibc_abi::termios_abi::cfgetispeed(&termios) };
+    let output = if result == libc::B9600 { "B9600" } else if result == libc::B115200 { "B115200" } else { &format!("{result}") };
+    Ok(non_host_execution(output.to_string()))
+}
+
+fn execute_cfgetospeed_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let termios_str = inputs.get("termios").and_then(|v| v.as_str()).unwrap_or("");
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    let speed = match termios_str {
+        "B9600" => libc::B9600,
+        "B115200" => libc::B115200,
+        _ => libc::B9600,
+    };
+    termios.c_cflag = (termios.c_cflag & !libc::CBAUD) | speed;
+    let result = unsafe { frankenlibc_abi::termios_abi::cfgetospeed(&termios) };
+    let output = if result == libc::B9600 { "B9600" } else if result == libc::B115200 { "B115200" } else { &format!("{result}") };
+    Ok(non_host_execution(output.to_string()))
+}
+
+fn execute_cfsetispeed_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let speed_str = inputs.get("speed").and_then(|v| v.as_str()).unwrap_or("B9600");
+    let speed = match speed_str {
+        "B9600" => libc::B9600,
+        "B115200" => libc::B115200,
+        _ => libc::B9600,
+    };
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    let result = unsafe { frankenlibc_abi::termios_abi::cfsetispeed(&mut termios, speed) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_cfsetospeed_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let speed_str = inputs.get("speed").and_then(|v| v.as_str()).unwrap_or("B9600");
+    let speed = match speed_str {
+        "B9600" => libc::B9600,
+        "B115200" => libc::B115200,
+        _ => libc::B9600,
+    };
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    let result = unsafe { frankenlibc_abi::termios_abi::cfsetospeed(&mut termios, speed) };
     Ok(non_host_execution(format!("{result}")))
 }
 
