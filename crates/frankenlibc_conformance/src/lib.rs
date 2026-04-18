@@ -1,7 +1,7 @@
 //! Conformance and parity tooling for frankenlibc.
 
 use std::cell::RefCell;
-use std::ffi::{CString, c_char, c_int, c_long, c_void};
+use std::ffi::{CString, c_char, c_double, c_int, c_long, c_longlong, c_void};
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
@@ -2394,6 +2394,8 @@ fn mode_is_hardened(mode: &str) -> bool {
 #[derive(Debug)]
 enum PrintfArg {
     Int(c_int),
+    Long(c_longlong),
+    Double(c_double),
     Str(CString),
 }
 
@@ -2404,17 +2406,38 @@ fn parse_printf_args(inputs: &serde_json::Value) -> Result<Vec<PrintfArg>, Strin
 
     let mut args = Vec::with_capacity(values.len());
     for value in values {
+        if let Some(f) = value.as_f64() {
+            if f.fract() != 0.0 || f.abs() > i64::MAX as f64 {
+                args.push(PrintfArg::Double(f));
+                continue;
+            }
+        }
+
         if let Some(int_value) = value
             .as_i64()
             .or_else(|| value.as_u64().and_then(|v| i64::try_from(v).ok()))
         {
-            let narrowed = i32::try_from(int_value)
-                .map_err(|_| format!("printf int out of range: {int_value}"))?;
-            args.push(PrintfArg::Int(narrowed));
+            if let Ok(narrowed) = i32::try_from(int_value) {
+                args.push(PrintfArg::Int(narrowed));
+            } else {
+                args.push(PrintfArg::Long(int_value as c_longlong));
+            }
             continue;
         }
 
         if let Some(text) = value.as_str() {
+            if text.eq_ignore_ascii_case("inf") || text.eq_ignore_ascii_case("+inf") {
+                args.push(PrintfArg::Double(f64::INFINITY));
+                continue;
+            }
+            if text.eq_ignore_ascii_case("-inf") {
+                args.push(PrintfArg::Double(f64::NEG_INFINITY));
+                continue;
+            }
+            if text.eq_ignore_ascii_case("nan") {
+                args.push(PrintfArg::Double(f64::NAN));
+                continue;
+            }
             let c_text = CString::new(text)
                 .map_err(|_| String::from("printf string argument contains interior NUL"))?;
             args.push(PrintfArg::Str(c_text));
@@ -2464,6 +2487,12 @@ fn run_impl_snprintf(
         [PrintfArg::Int(a0)] => unsafe {
             frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0)
         },
+        [PrintfArg::Long(a0)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0)
+        },
+        [PrintfArg::Double(a0)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0)
+        },
         [PrintfArg::Str(a0)] => unsafe {
             frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, a0.as_ptr())
         },
@@ -2481,8 +2510,8 @@ fn run_impl_snprintf(
         },
         _ => {
             return Err(format!(
-                "unsupported snprintf arg signature length {}",
-                args.len()
+                "unsupported snprintf arg combination: {:?}",
+                args
             ));
         }
     };
@@ -2498,6 +2527,8 @@ fn run_host_snprintf(
     let rc = match args {
         [] => unsafe { libc::snprintf(dst, size, fmt) },
         [PrintfArg::Int(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
+        [PrintfArg::Long(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
+        [PrintfArg::Double(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
         [PrintfArg::Str(a0)] => unsafe { libc::snprintf(dst, size, fmt, a0.as_ptr()) },
         [PrintfArg::Int(a0), PrintfArg::Int(a1)] => unsafe {
             libc::snprintf(dst, size, fmt, *a0, *a1)
@@ -2513,8 +2544,8 @@ fn run_host_snprintf(
         },
         _ => {
             return Err(format!(
-                "unsupported snprintf arg signature length {}",
-                args.len()
+                "unsupported snprintf arg combination: {:?}",
+                args
             ));
         }
     };
@@ -2529,6 +2560,8 @@ fn run_impl_fprintf(
     let rc = match args {
         [] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt) },
         [PrintfArg::Int(a0)] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0) },
+        [PrintfArg::Long(a0)] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0) },
+        [PrintfArg::Double(a0)] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0) },
         [PrintfArg::Str(a0)] => unsafe {
             frankenlibc_abi::stdio_abi::fprintf(stream, fmt, a0.as_ptr())
         },
@@ -2546,8 +2579,8 @@ fn run_impl_fprintf(
         },
         _ => {
             return Err(format!(
-                "unsupported fprintf arg signature length {}",
-                args.len()
+                "unsupported fprintf arg combination: {:?}",
+                args
             ));
         }
     };
@@ -2562,6 +2595,8 @@ fn run_host_fprintf(
     let rc = match args {
         [] => unsafe { libc::fprintf(stream, fmt) },
         [PrintfArg::Int(a0)] => unsafe { libc::fprintf(stream, fmt, *a0) },
+        [PrintfArg::Long(a0)] => unsafe { libc::fprintf(stream, fmt, *a0) },
+        [PrintfArg::Double(a0)] => unsafe { libc::fprintf(stream, fmt, *a0) },
         [PrintfArg::Str(a0)] => unsafe { libc::fprintf(stream, fmt, a0.as_ptr()) },
         [PrintfArg::Int(a0), PrintfArg::Int(a1)] => unsafe { libc::fprintf(stream, fmt, *a0, *a1) },
         [PrintfArg::Int(a0), PrintfArg::Str(a1)] => unsafe {
@@ -2575,8 +2610,8 @@ fn run_host_fprintf(
         },
         _ => {
             return Err(format!(
-                "unsupported fprintf arg signature length {}",
-                args.len()
+                "unsupported fprintf arg combination: {:?}",
+                args
             ));
         }
     };
