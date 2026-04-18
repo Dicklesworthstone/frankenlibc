@@ -120,6 +120,17 @@ cargo test -p frankenlibc-harness --test <fixture>_conformance_test
 - termios_ops - requires terminal emulation
 - pthread_thread - requires thread lifecycle implementation
 
+## Pending Changes
+
+The following fixture tests have been validated (49 tests pass) but are blocked
+by file reservation on `crates/frankenlibc_conformance/src/lib.rs`:
+
+- spawn_exec_ops_fixture_cases_match_execute_fixture_case
+- sysv_ipc_ops_fixture_cases_match_execute_fixture_case  
+- loader_edges_fixture_cases_match_execute_fixture_case
+
+These will be committed when the reservation is released.
+
 ## Related Documents
 
 - [DISCREPANCIES.md](DISCREPANCIES.md) - Known conformance divergences
