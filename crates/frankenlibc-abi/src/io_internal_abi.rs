@@ -1869,15 +1869,35 @@ pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
     __imbue: trampoline_imbue,
 };
 
-/// Legacy bootstrap hook — now a no-op (bd-zh1y.3.4).
+/// Bootstrap hook: patch glibc's internal `_IO_list_all` to prevent exit crash.
 ///
-/// Previously resolved host glibc's `_IO_list_all`, `_IO_file_jumps`, and
-/// `_IO_wfile_jumps` symbols. With native FILE struct, vtable, and stream
-/// registry in place, host interop is no longer needed for these symbols.
+/// When LD_PRELOAD interposes stdio, glibc's exit path (`_IO_flush_all_lockp`)
+/// still iterates glibc's own internal `_IO_list_all`. Without this patch,
+/// binaries without COPY relocations for `_IO_list_all` crash during exit
+/// because glibc's list contains FILE structures with invalid vtables.
 ///
-/// Kept as a no-op for ABI compatibility with startup_abi.rs callers.
+/// This function uses `dlvsym(RTLD_NEXT)` to find glibc's `_IO_list_all` and
+/// sets it to NULL, preventing glibc from iterating invalid structures.
+/// Our own `_IO_list_all` (exported via `#[no_mangle]`) handles all stdio
+/// stream tracking for binaries that do have COPY relocations.
 pub(crate) unsafe fn bootstrap_host_libio_exports() {
-    // No-op: native stdio owns all _IO_* symbols now.
+    let symbol = b"_IO_list_all\0";
+    let version = b"GLIBC_2.2.5\0";
+
+    // SAFETY: dlvsym_next bypasses our interposed dlvsym to find glibc's symbol.
+    let ptr = unsafe {
+        crate::dlfcn_abi::dlvsym_next(
+            symbol.as_ptr().cast::<c_char>(),
+            version.as_ptr().cast::<c_char>(),
+        )
+    };
+
+    if !ptr.is_null() {
+        // ptr is the address of glibc's _IO_list_all variable (a FILE*).
+        // Set it to NULL to prevent glibc's exit handler from iterating.
+        let glibc_list_ptr = ptr as *mut *mut c_void;
+        unsafe { *glibc_list_ptr = ptr::null_mut() };
+    }
 }
 
 /// Accessor: return our native `_IO_list_all` pointer.
