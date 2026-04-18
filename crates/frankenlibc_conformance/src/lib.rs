@@ -9656,6 +9656,40 @@ fn execute_select_case(
     Ok(non_host_execution(format!("{result}")))
 }
 
+fn execute_raise_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let sig = parse_i32(inputs, "sig")?;
+    let result = unsafe { frankenlibc_abi::signal_abi::raise(sig) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_kill_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let pid = parse_i32(inputs, "pid")? as libc::pid_t;
+    let sig = parse_i32(inputs, "sig")?;
+    let result = unsafe { frankenlibc_abi::signal_abi::kill(pid, sig) };
+    Ok(non_host_execution(format!("{result}")))
+}
+
+fn execute_sigaction_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let signum = parse_i32(inputs, "signum")?;
+    let mut oldact: libc::sigaction = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        frankenlibc_abi::signal_abi::sigaction(signum, std::ptr::null(), &mut oldact)
+    };
+    Ok(non_host_execution(format!("{result}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

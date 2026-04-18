@@ -55,6 +55,19 @@ pub mod math_abi;
 pub mod startup_helpers;
 pub mod stdbit_abi;
 
+#[cfg(all(not(test), target_os = "linux"))]
+#[used]
+#[unsafe(link_section = ".init_array")]
+static FRANKENLIBC_ABI_INIT_ARRAY: extern "C" fn() = frankenlibc_abi_process_init;
+
+#[cfg(all(not(test), target_os = "linux"))]
+extern "C" fn frankenlibc_abi_process_init() {
+    // SAFETY: this runs during process initialization before user code. It only
+    // patches the host glibc libio exit list so our exported _IO symbols cannot
+    // make glibc flush FrankenLibC stand-ins as native FILE objects at exit.
+    unsafe { io_internal_abi::bootstrap_host_libio_exports() };
+}
+
 // Phase 2+ ABI modules — call libc syscalls, gated to prevent symbol recursion in tests
 #[cfg(not(test))]
 pub mod c11threads_abi;
