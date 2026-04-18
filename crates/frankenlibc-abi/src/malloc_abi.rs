@@ -90,7 +90,9 @@ static BUMP_HEAP: BumpHeap = BumpHeap(std::cell::UnsafeCell::new([0u8; BUMP_SIZE
 /// Uses the native host-resolution path with the same bump fallback and
 /// reentry protection as the public allocator entrypoints.
 pub(crate) unsafe fn raw_alloc(size: usize) -> *mut c_void {
-    unsafe { native_libc_malloc(size) }
+    let ptr = unsafe { native_libc_malloc(size) };
+    fallback_insert(ptr);
+    ptr
 }
 
 /// Raw free for internally-allocated memory.
@@ -98,6 +100,7 @@ pub(crate) unsafe fn raw_alloc(size: usize) -> *mut c_void {
 /// Uses the native host-resolution free path so internal allocations stay on
 /// the same ownership model as `raw_alloc`.
 pub(crate) unsafe fn raw_free(ptr: *mut c_void) {
+    let _ = fallback_remove(ptr);
     unsafe { native_libc_free(ptr) }
 }
 
