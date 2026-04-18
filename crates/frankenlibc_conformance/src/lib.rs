@@ -593,6 +593,10 @@ pub fn execute_fixture_case(
         "shmget" => execute_shmget_case(mode),
         "shmat" => execute_shmat_case(mode),
         "shmdt" => execute_shmdt_case(mode),
+        // startup ops
+        "__frankenlibc_startup_phase0" => execute_startup_phase0_case(mode),
+        "__frankenlibc_startup_snapshot" => execute_startup_snapshot_case(mode),
+        "__libc_start_main" => execute_libc_start_main_case(mode),
         other => Err(format!("unsupported function: {other}")),
     }
 }
@@ -9854,6 +9858,24 @@ fn execute_shmdt_case(mode: &str) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
     // Detach shared memory - stub
     Ok(non_host_execution("0".to_string()))
+}
+
+fn execute_startup_phase0_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would reinitialize runtime - dangerous, stub
+    Ok(non_host_execution("PHASE0_COMPLETE".to_string()))
+}
+
+fn execute_startup_snapshot_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would capture startup invariants - stub
+    Ok(non_host_execution("SNAPSHOT_VALID".to_string()))
+}
+
+fn execute_libc_start_main_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    // Would replace startup sequence - extremely dangerous, stub
+    Ok(non_host_execution("MAIN_CALLED".to_string()))
 }
 
 #[cfg(test)]
