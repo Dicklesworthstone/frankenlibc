@@ -4611,10 +4611,8 @@ fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
                 _ => {}
             }
         }
-        if parameter_brace_depth > 0 {
-            if byte == b'}' {
-                parameter_brace_depth -= 1;
-            }
+        if parameter_brace_depth > 0 && byte == b'}' {
+            parameter_brace_depth -= 1;
             i += 1;
             continue;
         }

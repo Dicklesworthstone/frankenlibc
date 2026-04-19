@@ -3002,7 +3002,14 @@ fn count_scanf_specs(format: &str) -> usize {
             if chars.peek() == Some(&'%') {
                 chars.next();
             } else if chars.peek() == Some(&'*') {
-                while chars.next().is_some_and(|c| !c.is_alphabetic() && c != '[') {}
+                while let Some(sc) = chars.next() {
+                    if sc == '[' {
+                        while chars.next().is_some_and(|c| c != ']') {}
+                        break;
+                    } else if sc.is_alphabetic() {
+                        break;
+                    }
+                }
             } else {
                 while chars
                     .peek()
@@ -3029,7 +3036,14 @@ fn detect_scanf_type(format: &str) -> Vec<(char, usize, bool)> {
                 continue;
             }
             if chars.peek() == Some(&'*') {
-                while chars.next().is_some_and(|c| !c.is_alphabetic() && c != '[') {}
+                while let Some(sc) = chars.next() {
+                    if sc == '[' {
+                        while chars.next().is_some_and(|c| c != ']') {}
+                        break;
+                    } else if sc.is_alphabetic() {
+                        break;
+                    }
+                }
                 continue;
             }
             let mut width = 0usize;
