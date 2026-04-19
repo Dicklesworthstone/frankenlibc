@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::fs;
 use std::path::Path;
 use std::ptr;
@@ -10,6 +10,7 @@ static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
 
 const PASSWD_ENV: &str = "FRANKENLIBC_PASSWD_PATH";
 const GROUP_ENV: &str = "FRANKENLIBC_GROUP_PATH";
+const HOSTS_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 
 fn temp_path(prefix: &str) -> std::path::PathBuf {
     let seq = TEST_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -51,6 +52,19 @@ unsafe fn group_members(ptr: *mut libc::group) -> Vec<String> {
         idx += 1;
     }
     out
+}
+
+unsafe fn hostent_name(ptr: *mut c_void) -> String {
+    let hostent = unsafe { &*(ptr as *const libc::hostent) };
+    let c = unsafe { CStr::from_ptr(hostent.h_name) };
+    c.to_string_lossy().into_owned()
+}
+
+unsafe fn hostent_ipv4(ptr: *mut c_void) -> [u8; 4] {
+    let hostent = unsafe { &*(ptr as *const libc::hostent) };
+    let first_addr_ptr = unsafe { *hostent.h_addr_list };
+    let octets = unsafe { std::slice::from_raw_parts(first_addr_ptr.cast::<u8>(), 4) };
+    [octets[0], octets[1], octets[2], octets[3]]
 }
 
 #[test]
@@ -439,6 +453,83 @@ fn group_concurrent_lookup_coherence_under_file_churn() {
         // SAFETY: integration tests serialize env mutation via TEST_LOCK.
         std::env::remove_var(GROUP_ENV);
     }
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn hosts_cache_refreshes_forward_lookup_after_file_change() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = temp_path("hosts-cache-forward");
+    let variant_a: &[u8] = b"203.0.113.10 app app-old\n";
+    let variant_b: &[u8] = b"198.51.100.7 app app-new\n";
+
+    write_file(&path, variant_a);
+    // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+    unsafe { std::env::set_var(HOSTS_ENV, &path) };
+
+    let name = CString::new("app").expect("literal has no interior NUL");
+    let first = unsafe { frankenlibc_abi::resolv_abi::gethostbyname(name.as_ptr()) };
+    assert!(!first.is_null(), "first hosts lookup should succeed");
+    assert_eq!(unsafe { hostent_ipv4(first) }, [203, 0, 113, 10]);
+
+    atomic_replace(&path, variant_b);
+
+    let second = unsafe { frankenlibc_abi::resolv_abi::gethostbyname(name.as_ptr()) };
+    assert!(
+        !second.is_null(),
+        "hosts cache should refresh after file change"
+    );
+    assert_eq!(unsafe { hostent_ipv4(second) }, [198, 51, 100, 7]);
+
+    // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+    unsafe { std::env::remove_var(HOSTS_ENV) };
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn hosts_cache_refreshes_reverse_lookup_after_file_change() {
+    let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = temp_path("hosts-cache-reverse");
+    let variant_a: &[u8] = b"203.0.113.42 app-old alias-old\n";
+    let variant_b: &[u8] = b"203.0.113.42 app-new alias-new\n";
+
+    write_file(&path, variant_a);
+    // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+    unsafe { std::env::set_var(HOSTS_ENV, &path) };
+
+    let addr = libc::in_addr {
+        s_addr: u32::from_ne_bytes([203, 0, 113, 42]),
+    };
+    let first = unsafe {
+        frankenlibc_abi::resolv_abi::gethostbyaddr(
+            (&addr as *const libc::in_addr).cast::<c_void>(),
+            std::mem::size_of::<libc::in_addr>() as libc::socklen_t,
+            libc::AF_INET,
+        )
+    };
+    assert!(
+        !first.is_null(),
+        "first reverse hosts lookup should succeed"
+    );
+    assert_eq!(unsafe { hostent_name(first) }, "app-old");
+
+    atomic_replace(&path, variant_b);
+
+    let second = unsafe {
+        frankenlibc_abi::resolv_abi::gethostbyaddr(
+            (&addr as *const libc::in_addr).cast::<c_void>(),
+            std::mem::size_of::<libc::in_addr>() as libc::socklen_t,
+            libc::AF_INET,
+        )
+    };
+    assert!(
+        !second.is_null(),
+        "reverse hosts cache should refresh after file change"
+    );
+    assert_eq!(unsafe { hostent_name(second) }, "app-new");
+
+    // SAFETY: integration tests serialize env mutation via TEST_LOCK.
+    unsafe { std::env::remove_var(HOSTS_ENV) };
     let _ = fs::remove_file(&path);
 }
 

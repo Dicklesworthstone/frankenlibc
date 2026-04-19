@@ -13,8 +13,10 @@ use std::cell::RefCell;
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::mem::{align_of, size_of};
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::path::PathBuf;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::ptr;
+use std::time::UNIX_EPOCH;
 
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
@@ -104,6 +106,147 @@ pub fn dns_metrics_snapshot() -> DnsMetricsSnapshot {
 const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileFingerprint {
+    len: u64,
+    modified_ns: u128,
+    inode: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct BackendCacheMetrics {
+    hits: u64,
+    misses: u64,
+    reloads: u64,
+    invalidations: u64,
+}
+
+struct BackendFileCache {
+    default_path: &'static str,
+    env_key: &'static str,
+    source_path: PathBuf,
+    file_cache: Option<Vec<u8>>,
+    cache_fingerprint: Option<FileFingerprint>,
+    cache_generation: u64,
+    cache_metrics: BackendCacheMetrics,
+    last_io_error: Option<c_int>,
+}
+
+impl BackendFileCache {
+    fn new(default_path: &'static str, env_key: &'static str) -> Self {
+        Self {
+            default_path,
+            env_key,
+            source_path: configured_backend_path(default_path, env_key),
+            file_cache: None,
+            cache_fingerprint: None,
+            cache_generation: 0,
+            cache_metrics: BackendCacheMetrics::default(),
+            last_io_error: None,
+        }
+    }
+
+    fn configured_source_path(&self) -> PathBuf {
+        configured_backend_path(self.default_path, self.env_key)
+    }
+
+    fn refresh_source_path_from_env(&mut self) {
+        let configured = self.configured_source_path();
+        if configured == self.source_path {
+            return;
+        }
+
+        self.source_path = configured;
+        if self.file_cache.is_some() {
+            self.cache_metrics.invalidations += 1;
+        }
+        self.file_cache = None;
+        self.cache_fingerprint = None;
+        self.last_io_error = None;
+    }
+
+    fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
+        let metadata = std::fs::metadata(path).ok()?;
+        let modified_ns = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |duration| duration.as_nanos());
+
+        Some(FileFingerprint {
+            len: metadata.len(),
+            modified_ns,
+            inode: metadata.ino(),
+        })
+    }
+
+    fn refresh_cache(&mut self) {
+        self.refresh_source_path_from_env();
+        let current_fp = Self::file_fingerprint(&self.source_path);
+
+        if let (Some(_), Some(cached_fp), Some(now_fp)) =
+            (&self.file_cache, self.cache_fingerprint, current_fp)
+            && cached_fp == now_fp
+        {
+            self.cache_metrics.hits += 1;
+            self.last_io_error = None;
+            return;
+        }
+
+        self.cache_metrics.misses += 1;
+
+        match std::fs::read(&self.source_path) {
+            Ok(bytes) => {
+                let next_fp = Self::file_fingerprint(&self.source_path)
+                    .or(current_fp)
+                    .unwrap_or(FileFingerprint {
+                        len: bytes.len() as u64,
+                        modified_ns: 0,
+                        inode: 0,
+                    });
+                let had_cache = self.file_cache.is_some();
+
+                self.file_cache = Some(bytes);
+                self.cache_fingerprint = Some(next_fp);
+                self.cache_generation = self.cache_generation.wrapping_add(1);
+                self.cache_metrics.reloads += 1;
+                self.last_io_error = None;
+
+                if had_cache {
+                    self.cache_metrics.invalidations += 1;
+                }
+            }
+            Err(err) => {
+                if self.file_cache.is_some() {
+                    self.cache_metrics.invalidations += 1;
+                }
+                self.file_cache = None;
+                self.cache_fingerprint = None;
+                self.last_io_error =
+                    Some(err.raw_os_error().unwrap_or(frankenlibc_core::errno::EIO));
+            }
+        }
+    }
+
+    fn read_snapshot(&mut self) -> std::io::Result<Vec<u8>> {
+        self.refresh_cache();
+        match &self.file_cache {
+            Some(bytes) => Ok(bytes.clone()),
+            None => Err(std::io::Error::from_raw_os_error(
+                self.last_io_error
+                    .unwrap_or(frankenlibc_core::errno::ENOENT),
+            )),
+        }
+    }
+}
+
+thread_local! {
+    static HOSTS_BACKEND_TLS: RefCell<BackendFileCache> =
+        RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV));
+    static SERVICES_BACKEND_TLS: RefCell<BackendFileCache> =
+        RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV));
+}
+
 fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
     std::env::var_os(env_key)
         .filter(|value| !value.is_empty())
@@ -112,11 +255,11 @@ fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
 }
 
 fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
-    std::fs::read(configured_backend_path(HOSTS_PATH, HOSTS_PATH_ENV))
+    HOSTS_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
 }
 
 fn read_services_backend() -> std::io::Result<Vec<u8>> {
-    std::fs::read(configured_backend_path(SERVICES_PATH, SERVICES_PATH_ENV))
+    SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
 }
 
 #[inline]
