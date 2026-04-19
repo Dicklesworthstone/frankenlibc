@@ -639,6 +639,7 @@ pub fn execute_fixture_case(
         "select" => execute_select_case(inputs, mode),
         // signal ops
         "raise" => execute_raise_case(inputs, mode),
+        "signal" => execute_signal_case(inputs, mode),
         "ssignal" => execute_ssignal_case(inputs, mode),
         "gsignal" => execute_gsignal_case(inputs, mode),
         "kill" => execute_kill_case(inputs, mode),
@@ -11605,6 +11606,58 @@ fn execute_raise_case(
     Ok(non_host_execution(format!("{result}")))
 }
 
+fn execute_signal_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let sig = parse_i32(inputs, "sig")?;
+
+    HOST_SIGNAL_HIT.store(0, Ordering::SeqCst);
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_prev =
+        unsafe { libc::signal(sig, host_record_sigusr1 as *const () as libc::sighandler_t) };
+    let host_errno = unsafe { *libc::__errno_location() };
+    let host_output = if host_prev == libc::SIG_ERR {
+        format!("SIG_ERR:{host_errno}")
+    } else {
+        format!("INSTALLED:{host_errno}")
+    };
+    reset_host_signal_handler(sig);
+
+    IMPL_SIGNAL_HIT.store(0, Ordering::SeqCst);
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+    }
+    let impl_prev = unsafe {
+        frankenlibc_abi::signal_abi::signal(
+            sig,
+            impl_record_sigusr1 as *const () as libc::sighandler_t,
+        )
+    };
+    let impl_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    let impl_output = if impl_prev == libc::SIG_ERR {
+        format!("SIG_ERR:{impl_errno}")
+    } else {
+        format!("INSTALLED:{impl_errno}")
+    };
+    reset_impl_signal_handler(sig);
+
+    Ok(DifferentialExecution {
+        host_parity: host_output == impl_output,
+        host_output,
+        impl_output,
+        note: None,
+    })
+}
+
 fn execute_ssignal_case(
     inputs: &serde_json::Value,
     mode: &str,
@@ -16158,5 +16211,48 @@ mod tests {
             passed >= 10,
             "scanf_conformance: expected at least 10 passing, got {passed}"
         );
+    }
+
+    #[test]
+    fn pthread_thread_fixture_cases_match_execute_fixture_case() {
+        #[derive(Deserialize)]
+        struct FixtureCaseLite {
+            name: String,
+            function: String,
+            inputs: serde_json::Value,
+            expected_output: String,
+            mode: String,
+        }
+
+        #[derive(Deserialize)]
+        struct FixtureSetLite {
+            cases: Vec<FixtureCaseLite>,
+        }
+
+        let raw = include_str!("../../../tests/conformance/fixtures/pthread_thread.json");
+        let fixture: FixtureSetLite =
+            serde_json::from_str(raw).expect("pthread_thread fixture should parse");
+
+        for case in fixture.cases {
+            let modes = if case.mode == "both" {
+                vec!["strict", "hardened"]
+            } else {
+                vec![case.mode.as_str()]
+            };
+            for mode in modes {
+                let result = execute_fixture_case(&case.function, &case.inputs, mode)
+                    .unwrap_or_else(|err| {
+                        panic!(
+                            "fixture case {} ({mode}) failed to execute: {err}",
+                            case.name
+                        )
+                    });
+                assert_eq!(
+                    result.impl_output, case.expected_output,
+                    "fixture expected_output mismatch for {} ({mode})",
+                    case.name
+                );
+            }
+        }
     }
 }
