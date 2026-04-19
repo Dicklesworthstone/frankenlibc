@@ -34,7 +34,10 @@ mod x86_64_tests {
     const SEEK_END: i32 = 2;
 
     const EBADF: i32 = 9;
+    const EFAULT: i32 = 14;
     const EINVAL: i32 = 22;
+    const ENOSYS: i32 = 38;
+    const EPERM: i32 = 1;
 
     // -----------------------------------------------------------------
     // 1. getpid correctness
@@ -279,6 +282,7 @@ mod x86_64_tests {
         assert_eq!(SYS_GETPID, 39);
         assert_eq!(SYS_GETTID, 186);
         assert_eq!(SYS_CLONE, 56);
+        assert_eq!(SYS_CLONE3, 435);
         assert_eq!(SYS_EXIT_GROUP, 231);
         assert_eq!(SYS_OPENAT, 257);
         assert_eq!(SYS_FUTEX, 202);
@@ -325,6 +329,7 @@ mod x86_64_tests {
         let _: fn(i32) -> ! = sys_exit_thread;
         let _: unsafe fn(usize, usize, *mut i32, *mut i32, usize) -> Result<i32, i32> =
             sys_clone_thread;
+        let _: unsafe fn(*const CloneArgs, usize) -> Result<i32, i32> = sys_clone3;
         let _: unsafe fn(i32, *mut u8, usize, i64) -> Result<usize, i32> = sys_pread64;
         let _: unsafe fn(i32, *const u8, usize, i64) -> Result<usize, i32> = sys_pwrite64;
     }
@@ -360,6 +365,26 @@ mod x86_64_tests {
             )
         };
         assert_eq!(result, Ok(0), "futex wake with no waiters should return 0");
+    }
+
+    #[test]
+    fn clone3_zero_size_rejected_or_unavailable() {
+        let err =
+            unsafe { sys_clone3(core::ptr::null(), 0) }.expect_err("clone3(null, 0) must fail");
+        assert!(
+            matches!(err, EINVAL | ENOSYS | EPERM),
+            "expected EINVAL/ENOSYS/EPERM, got {err}"
+        );
+    }
+
+    #[test]
+    fn clone3_null_args_with_struct_size_faults_or_unavailable() {
+        let err = unsafe { sys_clone3(core::ptr::null(), core::mem::size_of::<CloneArgs>()) }
+            .expect_err("clone3(null, sizeof(CloneArgs)) must fail");
+        assert!(
+            matches!(err, EFAULT | ENOSYS | EPERM),
+            "expected EFAULT/ENOSYS/EPERM, got {err}"
+        );
     }
 }
 
@@ -554,6 +579,7 @@ mod aarch64_tests {
         assert_eq!(SYS_GETPID, 172);
         assert_eq!(SYS_GETTID, 178);
         assert_eq!(SYS_CLONE, 220);
+        assert_eq!(SYS_CLONE3, 435);
         assert_eq!(SYS_EXIT_GROUP, 94);
         assert_eq!(SYS_FUTEX, 98);
         assert_eq!(SYS_PIPE2, 59);
@@ -591,6 +617,7 @@ mod aarch64_tests {
         let _: fn(i32) -> ! = sys_exit_thread;
         let _: unsafe fn(usize, usize, *mut i32, *mut i32, usize) -> Result<i32, i32> =
             sys_clone_thread;
+        let _: unsafe fn(*const CloneArgs, usize) -> Result<i32, i32> = sys_clone3;
         let _: unsafe fn(i32, *mut u8, usize, i64) -> Result<usize, i32> = sys_pread64;
         let _: unsafe fn(i32, *const u8, usize, i64) -> Result<usize, i32> = sys_pwrite64;
     }

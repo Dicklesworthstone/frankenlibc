@@ -31,6 +31,23 @@ mod raw;
 
 pub use raw::*;
 
+/// Linux `clone3` argument block (`struct clone_args`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CloneArgs {
+    pub flags: u64,
+    pub pidfd: u64,
+    pub child_tid: u64,
+    pub parent_tid: u64,
+    pub exit_signal: u64,
+    pub stack: u64,
+    pub stack_size: u64,
+    pub tls: u64,
+    pub set_tid: u64,
+    pub set_tid_size: u64,
+    pub cgroup: u64,
+}
+
 // -------------------------------------------------------------------------
 // Syscall number constants (Linux)
 // -------------------------------------------------------------------------
@@ -2638,6 +2655,20 @@ pub unsafe fn sys_utimensat(
 pub fn sys_clone_fork(flags: usize) -> Result<i32, i32> {
     // Simple clone for fork: flags=SIGCHLD, stack=0, no other args
     let ret = unsafe { raw::syscall2(SYS_CLONE, flags, 0) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `clone3(args, size)` — create a child process or thread using Linux clone3.
+///
+/// # Safety
+///
+/// `args` must be null or point to a valid `CloneArgs` block of at least `size`
+/// bytes. A successful call returns in both the parent and child, so callers
+/// must be prepared to handle both control-flow paths.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_clone3(args: *const CloneArgs, size: usize) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall2(SYS_CLONE3, args as usize, size) };
     syscall_result(ret).map(|v| v as i32)
 }
 
