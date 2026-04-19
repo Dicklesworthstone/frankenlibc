@@ -756,6 +756,28 @@ fn remember_host_thread_tid(thread: libc::pthread_t, tid: i32) {
         .insert(thread as usize, tid);
 }
 
+fn wait_for_host_thread_registration(thread: libc::pthread_t) {
+    if thread == 0 {
+        return;
+    }
+
+    let thread_key = thread as usize;
+    // Host-backed lifecycle helpers like pthread_gettid_np/pthread_cancel can
+    // run immediately after pthread_create returns. Wait until the child
+    // trampoline publishes its kernel TID into the registry so those entry
+    // points see a coherent live-thread view.
+    for _ in 0..256 {
+        if HOST_THREAD_TID_REGISTRY
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&thread_key)
+        {
+            return;
+        }
+        raw_syscall::sys_sched_yield();
+    }
+}
+
 fn resolve_registered_host_thread_tid(thread: libc::pthread_t) -> Option<i32> {
     let thread_key = thread as usize;
     let tid = HOST_THREAD_TID_REGISTRY
@@ -1216,6 +1238,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
                     .host_thread
                     .store(host_thread as usize, Ordering::Release)
             };
+            wait_for_host_thread_registration(host_thread);
         }
         return rc;
     };
@@ -1341,6 +1364,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
                 (*start_ctx)
                     .host_thread
                     .store(host_thread as usize, Ordering::Release);
+                wait_for_host_thread_registration(host_thread);
             }
             create_rc
         }
@@ -5542,6 +5566,26 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
 /// Native implementation using the Linux kernel per-thread CPUCLOCK formula:
 /// `clockid = (~tid << 3) | 6`
 /// (`CPUCLOCK_SCHED | CPUCLOCK_PERTHREAD_MASK` for thread CPU time).
+#[inline]
+fn thread_cpuclock_id_from_tid(tid: i32) -> libc::clockid_t {
+    ((!tid as libc::clockid_t) << 3) | 6
+}
+
+#[inline]
+fn validate_thread_cpuclockid(clockid: libc::clockid_t) -> Result<(), c_int> {
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    match unsafe {
+        raw_syscall::sys_clock_getres(clockid, &mut ts as *mut libc::timespec as *mut u8)
+    } {
+        Ok(()) => Ok(()),
+        Err(errno) => Err(if errno == libc::EINVAL {
+            libc::ESRCH
+        } else {
+            errno
+        }),
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_getcpuclockid(
     thread: libc::pthread_t,
@@ -5552,17 +5596,9 @@ pub unsafe extern "C" fn pthread_getcpuclockid(
     }
     match resolve_thread_tid(thread) {
         Some(tid) => {
-            // Linux per-thread CPUCLOCK formula:
-            // (~tid << 3) | (CPUCLOCK_SCHED(2) | CPUCLOCK_PERTHREAD_MASK(4))
-            let cid: libc::clockid_t = (!tid as libc::clockid_t) << 3 | 6;
-            // Validate that the clock is usable via clock_getres.
-            let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-            if unsafe {
-                raw_syscall::sys_clock_getres(cid, &mut ts as *mut libc::timespec as *mut u8)
-            }
-            .is_err()
-            {
-                return libc::ESRCH;
+            let cid = thread_cpuclock_id_from_tid(tid);
+            if let Err(errno) = validate_thread_cpuclockid(cid) {
+                return errno;
             }
             unsafe { *clockid = cid };
             0

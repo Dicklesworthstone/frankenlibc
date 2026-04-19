@@ -9740,8 +9740,11 @@
       "symbol": "pthread_getcpuclockid",
       "header": "<pthread.h>",
       "status": "Implemented",
-      "notes": "Delegates to glibc pthread_getcpuclockid",
-      "module": "pthread_abi"
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Native Linux per-thread CPU clock lookup via kernel clockid formula + raw clock_getres validation; returns ESRCH for stale thread ids",
+      "hardened_semantics": "Same native per-thread CPU clock lookup with deterministic errno propagation for unusable thread clock ids",
+      "default_stub": false
     },
     {
       "symbol": "pthread_getname_np",

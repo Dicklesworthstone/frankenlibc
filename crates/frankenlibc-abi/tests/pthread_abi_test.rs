@@ -3224,7 +3224,6 @@ fn gettid_np_returns_tid_for_live_thread() {
             tid > 0,
             "gettid_np(thread) should return a positive tid for a live thread, got {tid}"
         );
-
         assert_eq!(pthread_cancel(thr), 0);
         assert_eq!(pthread_join(thr, ptr::null_mut()), 0);
     }
@@ -3695,6 +3694,22 @@ fn getcpuclockid_returns_valid_clock() {
 }
 
 #[test]
+fn getcpuclockid_matches_kernel_formula_for_self() {
+    unsafe {
+        let self_id = pthread_self();
+        let self_tid = libc::syscall(libc::SYS_gettid) as libc::pid_t;
+        let expected = ((!self_tid as libc::clockid_t) << 3) | 6;
+        let mut clock_id: libc::clockid_t = 0;
+
+        assert_eq!(pthread_getcpuclockid(self_id, &mut clock_id), 0);
+        assert_eq!(
+            clock_id, expected,
+            "pthread_getcpuclockid(self) should use the Linux per-thread CPU clock formula"
+        );
+    }
+}
+
+#[test]
 fn getcpuclockid_returns_valid_clock_for_live_thread() {
     unsafe {
         let mut thr: libc::pthread_t = 0;
@@ -3708,7 +3723,6 @@ fn getcpuclockid_returns_valid_clock_for_live_thread() {
             0
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
-
         let mut clock_id: libc::clockid_t = 0;
         assert_eq!(
             pthread_getcpuclockid(thr, &mut clock_id),
