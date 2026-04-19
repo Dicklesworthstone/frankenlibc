@@ -2,7 +2,7 @@
   "version": "v1",
   "family": "signal_ops",
   "captured_at": "2026-02-13T00:00:00Z",
-  "description": "Mode-specific parity fixtures for signal operations (kill, raise, sigaction, ssignal, gsignal). Strict mode matches host behavior; hardened mode preserves legacy signal semantics for valid and invalid inputs.",
+  "description": "Mode-specific parity fixtures for signal operations (kill, raise, signal, sigaction, ssignal, gsignal). Strict mode matches host behavior; hardened mode preserves legacy signal semantics for valid and invalid inputs.",
   "cases": [
     {
       "name": "raise_zero_strict",
@@ -23,6 +23,26 @@
       "expected_errno": 0,
       "mode": "strict",
       "note": "Signal 0 to own process group"
+    },
+    {
+      "name": "signal_install_sigusr1_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 10 },
+      "expected_output": "INSTALLED:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Installing a SIGUSR1 handler via signal() should succeed in both modes"
+    },
+    {
+      "name": "signal_invalid_signal_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 1024 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Invalid signals should return SIG_ERR and set EINVAL"
     },
     {
       "name": "kill_invalid_signal_strict",

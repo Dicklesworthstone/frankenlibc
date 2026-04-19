@@ -130,6 +130,20 @@ fn signal_ops_covers_sigaction() {
 }
 
 #[test]
+fn signal_ops_covers_signal() {
+    let fixture = load_fixture("signal_ops");
+    let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
+
+    for pattern in ["signal_install", "signal_invalid"] {
+        assert!(
+            case_names.iter().any(|name| name.contains(pattern)),
+            "Missing test coverage for signal pattern: {}",
+            pattern
+        );
+    }
+}
+
+#[test]
 fn signal_ops_covers_legacy_sysv_signals() {
     let fixture = load_fixture("signal_ops");
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
@@ -223,6 +237,11 @@ fn signal_ops_function_distribution() {
         sigaction_count >= 1,
         "sigaction needs test cases (have {})",
         sigaction_count
+    );
+    assert!(
+        signal_count >= 2,
+        "signal needs test cases (have {})",
+        signal_count
     );
 
     eprintln!(
