@@ -1100,6 +1100,12 @@ fn timerfd_create_with_cloexec() {
         0,
         "timerfd_create should apply close-on-exec"
     );
+    let status_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    assert_eq!(
+        status_flags & libc::O_NONBLOCK,
+        0,
+        "timerfd_create with TFD_CLOEXEC alone should not set nonblocking mode"
+    );
     unsafe { close(fd) };
 }
 
