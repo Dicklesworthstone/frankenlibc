@@ -683,6 +683,30 @@ fn condattr_setclock_getclock() {
 }
 
 #[test]
+fn condattr_setclock_rejects_invalid_clock_without_mutation() {
+    unsafe {
+        let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
+        pthread_condattr_init(&mut attr);
+
+        let mut original_clock: libc::clockid_t = -1;
+        assert_eq!(pthread_condattr_getclock(&attr, &mut original_clock), 0);
+        assert_eq!(original_clock, libc::CLOCK_REALTIME);
+
+        assert_eq!(pthread_condattr_setclock(&mut attr, -1), libc::EINVAL);
+
+        let mut current_clock: libc::clockid_t = -1;
+        assert_eq!(pthread_condattr_getclock(&attr, &mut current_clock), 0);
+        assert_eq!(
+            current_clock,
+            libc::CLOCK_REALTIME,
+            "failed setclock should not corrupt the stored condattr clock"
+        );
+
+        pthread_condattr_destroy(&mut attr);
+    }
+}
+
+#[test]
 fn condattr_getpshared() {
     unsafe {
         let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
