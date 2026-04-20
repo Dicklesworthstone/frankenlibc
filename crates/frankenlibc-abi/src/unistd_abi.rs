@@ -10782,7 +10782,7 @@ pub unsafe extern "C" fn sched_setattr(
     attr: *mut c_void,
     flags: c_uint,
 ) -> c_int {
-    match unsafe { syscall::sys_sched_setattr(pid, attr as *const u8, flags) } {
+    match unsafe { syscall::sys_sched_setattr(pid, attr as *const syscall::SchedAttr, flags) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

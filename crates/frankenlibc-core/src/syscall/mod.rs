@@ -58,6 +58,22 @@ pub struct FutexWaitV {
     pub reserved: u32,
 }
 
+/// Linux `sched_attr` block used by `sched_setattr(2)` / `sched_getattr(2)`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SchedAttr {
+    pub size: u32,
+    pub sched_policy: u32,
+    pub sched_flags: u64,
+    pub sched_nice: i32,
+    pub sched_priority: u32,
+    pub sched_runtime: u64,
+    pub sched_deadline: u64,
+    pub sched_period: u64,
+    pub sched_util_min: u32,
+    pub sched_util_max: u32,
+}
+
 // -------------------------------------------------------------------------
 // Syscall number constants (Linux)
 // -------------------------------------------------------------------------
@@ -5543,7 +5559,7 @@ pub unsafe fn sys_remap_file_pages(
 /// `attr` must point to a valid sched_attr structure.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_sched_setattr(pid: i32, attr: *const u8, flags: u32) -> Result<(), i32> {
+pub unsafe fn sys_sched_setattr(pid: i32, attr: *const SchedAttr, flags: u32) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall3(
             SYS_SCHED_SETATTR,

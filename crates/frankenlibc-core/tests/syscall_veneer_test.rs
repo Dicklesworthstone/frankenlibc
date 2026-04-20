@@ -39,6 +39,7 @@ mod x86_64_tests {
     const ENOSYS: i32 = 38;
     const EPERM: i32 = 1;
     const MPOL_BIND: i32 = 2;
+    const SCHED_DEADLINE: u32 = 6;
 
     // -----------------------------------------------------------------
     // 1. getpid correctness
@@ -290,6 +291,7 @@ mod x86_64_tests {
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 238);
+        assert_eq!(SYS_SCHED_SETATTR, 314);
         assert_eq!(SYS_PIPE2, 293);
         assert_eq!(SYS_SET_TID_ADDRESS, 218);
     }
@@ -318,6 +320,7 @@ mod x86_64_tests {
             sys_futex_waitv;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
+        let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;
         let _: unsafe fn(*mut i32, i32) -> Result<(), i32> = sys_pipe2;
@@ -430,6 +433,34 @@ mod x86_64_tests {
         assert!(
             matches!(err, EINVAL | ENOSYS),
             "expected EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn sched_setattr_null_attr_faults_or_unavailable() {
+        let err = unsafe { sys_sched_setattr(0, core::ptr::null(), 0) }
+            .expect_err("sched_setattr(self, null, 0) must fail");
+        assert!(
+            matches!(err, EFAULT | EINVAL | ENOSYS),
+            "expected EFAULT/EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn sched_setattr_deadline_invalid_parameters_rejected_or_unavailable() {
+        let attr = SchedAttr {
+            size: core::mem::size_of::<SchedAttr>() as u32,
+            sched_policy: SCHED_DEADLINE,
+            sched_runtime: 0,
+            sched_deadline: 0,
+            sched_period: 0,
+            ..SchedAttr::default()
+        };
+        let err = unsafe { sys_sched_setattr(0, &attr, 0) }
+            .expect_err("sched_setattr(self, invalid deadline attr, 0) must fail");
+        assert!(
+            matches!(err, EINVAL | ENOSYS | EPERM),
+            "expected EINVAL/ENOSYS/EPERM, got {err}"
         );
     }
 
@@ -651,6 +682,7 @@ mod aarch64_tests {
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 237);
+        assert_eq!(SYS_SCHED_SETATTR, 274);
         assert_eq!(SYS_PIPE2, 59);
         assert_eq!(SYS_SET_TID_ADDRESS, 96);
     }
@@ -671,6 +703,7 @@ mod aarch64_tests {
             sys_futex_waitv;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
+        let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;
         let _: unsafe fn(*mut i32, i32) -> Result<(), i32> = sys_pipe2;
