@@ -260,6 +260,96 @@
       "expected_errno": 0,
       "mode": "hardened",
       "note": "SIGTERM in full set"
+    },
+    {
+      "name": "signal_install_sigkill_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 9 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "SIGKILL (9) cannot be caught; signal() must return SIG_ERR and set EINVAL in every mode"
+    },
+    {
+      "name": "signal_install_sigstop_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 19 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "SIGSTOP (19, x86_64/aarch64) cannot be caught; signal() must return SIG_ERR and set EINVAL"
+    },
+    {
+      "name": "signal_install_negative_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": -1 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Negative signal numbers fall below the valid range; signal() returns SIG_ERR/EINVAL"
+    },
+    {
+      "name": "signal_install_zero_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 0 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "The null signal number 0 is not valid for handler installation; returns SIG_ERR/EINVAL"
+    },
+    {
+      "name": "signal_install_sigterm_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 15 },
+      "expected_output": "INSTALLED:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "SIGTERM (15) handler installation succeeds and preserves errno in strict and hardened modes"
+    },
+    {
+      "name": "signal_install_sighup_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 1 },
+      "expected_output": "INSTALLED:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Lower-boundary valid signal SIGHUP (1) installs successfully"
+    },
+    {
+      "name": "signal_install_sigusr2_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 12 },
+      "expected_output": "INSTALLED:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Installing a SIGUSR2 (12) handler succeeds symmetric to SIGUSR1 coverage"
+    },
+    {
+      "name": "signal_install_sigrtmax_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 64 },
+      "expected_output": "INSTALLED:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Upper-boundary valid signal SIGRTMAX (64) installs successfully (NSIG-1 on Linux)"
+    },
+    {
+      "name": "signal_install_above_max_both",
+      "function": "signal",
+      "spec_section": "POSIX signal",
+      "inputs": { "sig": 65 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Signal 65 is one past SIGRTMAX/_NSIG; signal() rejects with EINVAL"
     }
   ]
 }
