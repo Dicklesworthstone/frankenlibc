@@ -573,6 +573,56 @@ fn getaddrinfo_ai_addrconfig_returns_noname_when_all_families_filtered() {
     );
 }
 
+#[test]
+fn getaddrinfo_null_node_ai_addrconfig_filters_unspecified_to_ipv4() {
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        |_| {
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_null_node_ai_addrconfig_returns_noname_without_nonloopback_families() {
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nlo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        |_| {
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(res.is_null());
+        },
+    );
+}
+
 // ===========================================================================
 // getnameinfo
 // ===========================================================================

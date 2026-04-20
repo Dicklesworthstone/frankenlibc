@@ -1048,6 +1048,7 @@ pub unsafe extern "C" fn getaddrinfo(
     let host_text = node_cstr.and_then(|c| c.to_str().ok());
 
     let mut nodes = Vec::new();
+    let mut addrconfig_filter_eligible = host_text.is_none();
 
     match host_text {
         Some(text) => {
@@ -1115,29 +1116,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 }
             }
 
-            if (flags & libc::AI_ADDRCONFIG) != 0
-                && !numeric_host
-                && let Some(state) = read_addrconfig_state_snapshot()
-            {
-                let unfiltered = nodes.len();
-                nodes.retain(|node| {
-                    if node.is_null() {
-                        return true;
-                    }
-                    // SAFETY: non-null nodes were allocated as libc::addrinfo-compatible records.
-                    state.supports_family(unsafe { (**node).ai_family })
-                });
-                if nodes.is_empty() && unfiltered != 0 {
-                    record_resolver_stage_outcome(
-                        &ordering,
-                        aligned,
-                        recent_page,
-                        Some(stage_index(&ordering, CheckStage::Bounds)),
-                    );
-                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                    return libc::EAI_NONAME;
-                }
-            }
+            addrconfig_filter_eligible = !numeric_host;
         }
         None => match family {
             libc::AF_INET6 => {
@@ -1151,6 +1130,30 @@ pub unsafe extern "C" fn getaddrinfo(
                 nodes.push(unsafe { build_addrinfo_v6(Ipv6Addr::UNSPECIFIED, port, hints_ref) });
             }
         },
+    }
+
+    if (flags & libc::AI_ADDRCONFIG) != 0
+        && addrconfig_filter_eligible
+        && let Some(state) = read_addrconfig_state_snapshot()
+    {
+        let unfiltered = nodes.len();
+        nodes.retain(|node| {
+            if node.is_null() {
+                return true;
+            }
+            // SAFETY: non-null nodes were allocated as libc::addrinfo-compatible records.
+            state.supports_family(unsafe { (**node).ai_family })
+        });
+        if nodes.is_empty() && unfiltered != 0 {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_NONAME;
+        }
     }
 
     // Chain the nodes together.
