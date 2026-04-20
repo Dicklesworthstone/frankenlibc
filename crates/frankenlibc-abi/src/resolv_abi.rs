@@ -33,6 +33,8 @@ const HOST_NOT_FOUND_ERRNO: c_int = 1;
 const NO_RECOVERY_ERRNO: c_int = 3;
 const HOSTS_PATH: &str = "/etc/hosts";
 const SERVICES_PATH: &str = "/etc/services";
+const PROC_NET_ROUTE_PATH: &str = "/proc/net/route";
+const PROC_NET_IF_INET6_PATH: &str = "/proc/net/if_inet6";
 
 // ---------------------------------------------------------------------------
 // DNS Evidence Metrics (bd-1y7)
@@ -105,6 +107,8 @@ pub fn dns_metrics_snapshot() -> DnsMetricsSnapshot {
 }
 const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
+const PROC_NET_ROUTE_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_ROUTE_PATH";
+const PROC_NET_IF_INET6_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_IF_INET6_PATH";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileFingerprint {
@@ -245,6 +249,10 @@ thread_local! {
         RefCell::new(BackendFileCache::new(HOSTS_PATH, HOSTS_PATH_ENV));
     static SERVICES_BACKEND_TLS: RefCell<BackendFileCache> =
         RefCell::new(BackendFileCache::new(SERVICES_PATH, SERVICES_PATH_ENV));
+    static PROC_NET_ROUTE_TLS: RefCell<BackendFileCache> =
+        RefCell::new(BackendFileCache::new(PROC_NET_ROUTE_PATH, PROC_NET_ROUTE_PATH_ENV));
+    static PROC_NET_IF_INET6_TLS: RefCell<BackendFileCache> =
+        RefCell::new(BackendFileCache::new(PROC_NET_IF_INET6_PATH, PROC_NET_IF_INET6_PATH_ENV));
 }
 
 fn configured_backend_path(default_path: &str, env_key: &str) -> PathBuf {
@@ -260,6 +268,14 @@ fn read_hosts_backend() -> std::io::Result<Vec<u8>> {
 
 fn read_services_backend() -> std::io::Result<Vec<u8>> {
     SERVICES_BACKEND_TLS.with(|cell| cell.borrow_mut().read_snapshot())
+}
+
+fn read_addrconfig_state_snapshot() -> Option<frankenlibc_core::resolv::AddrConfigState> {
+    let route = PROC_NET_ROUTE_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+    let if_inet6 = PROC_NET_IF_INET6_TLS.with(|cell| cell.borrow_mut().read_snapshot().ok())?;
+    Some(frankenlibc_core::resolv::addrconfig_state_from_procfs(
+        &route, &if_inet6,
+    ))
 }
 
 #[inline]
@@ -1027,6 +1043,7 @@ pub unsafe extern "C" fn getaddrinfo(
         }
     };
 
+    let flags = hints_ref.map(|h| h.ai_flags).unwrap_or(0);
     let family = hints_ref.map(|h| h.ai_family).unwrap_or(libc::AF_UNSPEC);
     let host_text = node_cstr.and_then(|c| c.to_str().ok());
 
@@ -1034,9 +1051,12 @@ pub unsafe extern "C" fn getaddrinfo(
 
     match host_text {
         Some(text) => {
+            let mut numeric_host = false;
             if let Ok(v4) = text.parse::<Ipv4Addr>() {
+                numeric_host = true;
                 nodes.push(unsafe { build_addrinfo_v4(v4, port, hints_ref) });
             } else if let Ok(v6) = text.parse::<Ipv6Addr>() {
+                numeric_host = true;
                 nodes.push(unsafe { build_addrinfo_v6(v6, port, hints_ref) });
             } else {
                 // Check /etc/hosts for all matches (subset only)
@@ -1092,6 +1112,30 @@ pub unsafe extern "C" fn getaddrinfo(
                         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
                         return libc::EAI_NONAME;
                     }
+                }
+            }
+
+            if (flags & libc::AI_ADDRCONFIG) != 0
+                && !numeric_host
+                && let Some(state) = read_addrconfig_state_snapshot()
+            {
+                let unfiltered = nodes.len();
+                nodes.retain(|node| {
+                    if node.is_null() {
+                        return true;
+                    }
+                    // SAFETY: non-null nodes were allocated as libc::addrinfo-compatible records.
+                    state.supports_family(unsafe { (**node).ai_family })
+                });
+                if nodes.is_empty() && unfiltered != 0 {
+                    record_resolver_stage_outcome(
+                        &ordering,
+                        aligned,
+                        recent_page,
+                        Some(stage_index(&ordering, CheckStage::Bounds)),
+                    );
+                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                    return libc::EAI_NONAME;
                 }
             }
         }

@@ -19,6 +19,8 @@ const NO_RECOVERY_ERRNO: i32 = 3;
 const HOST_NOT_FOUND_ERRNO: i32 = 1;
 const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
+const PROC_NET_ROUTE_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_ROUTE_PATH";
+const PROC_NET_IF_INET6_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_IF_INET6_PATH";
 
 static RESOLVER_FIXTURE_SEQ: AtomicU64 = AtomicU64::new(0);
 static RESOLVER_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -26,6 +28,8 @@ static RESOLVER_ENV_LOCK: Mutex<()> = Mutex::new(());
 struct ResolverFixturePaths {
     hosts: std::path::PathBuf,
     services: std::path::PathBuf,
+    route: std::path::PathBuf,
+    if_inet6: std::path::PathBuf,
 }
 
 struct ResolverEnvGuard;
@@ -36,6 +40,8 @@ impl Drop for ResolverEnvGuard {
         unsafe {
             std::env::remove_var(HOSTS_PATH_ENV);
             std::env::remove_var(SERVICES_PATH_ENV);
+            std::env::remove_var(PROC_NET_ROUTE_PATH_ENV);
+            std::env::remove_var(PROC_NET_IF_INET6_PATH_ENV);
         }
     }
 }
@@ -58,10 +64,22 @@ fn with_resolver_backends<T>(
     services: Option<&[u8]>,
     f: impl FnOnce(&ResolverFixturePaths) -> T,
 ) -> T {
+    with_resolver_backends_and_addrconfig(hosts, services, None, None, f)
+}
+
+fn with_resolver_backends_and_addrconfig<T>(
+    hosts: Option<&[u8]>,
+    services: Option<&[u8]>,
+    route: Option<&[u8]>,
+    if_inet6: Option<&[u8]>,
+    f: impl FnOnce(&ResolverFixturePaths) -> T,
+) -> T {
     let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let paths = ResolverFixturePaths {
         hosts: temp_resolver_path("hosts"),
         services: temp_resolver_path("services"),
+        route: temp_resolver_path("route"),
+        if_inet6: temp_resolver_path("if-inet6"),
     };
     let _env_guard = ResolverEnvGuard;
 
@@ -75,8 +93,29 @@ fn with_resolver_backends<T>(
         // SAFETY: serialized by RESOLVER_ENV_LOCK.
         unsafe { std::env::set_var(SERVICES_PATH_ENV, &paths.services) };
     }
+    if let Some(content) = route {
+        std::fs::write(&paths.route, content).expect("write temp route fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(PROC_NET_ROUTE_PATH_ENV, &paths.route) };
+    }
+    if let Some(content) = if_inet6 {
+        std::fs::write(&paths.if_inet6, content).expect("write temp if_inet6 fixture");
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var(PROC_NET_IF_INET6_PATH_ENV, &paths.if_inet6) };
+    }
 
     f(&paths)
+}
+
+unsafe fn collect_addrinfo_families(mut node: *mut libc::addrinfo) -> Vec<c_int> {
+    let mut families = Vec::new();
+    while !node.is_null() {
+        // SAFETY: caller provides a valid addrinfo chain returned by getaddrinfo.
+        let ai = unsafe { &*node };
+        families.push(ai.ai_family);
+        node = ai.ai_next;
+    }
+    families
 }
 
 fn services_alias_fixture() -> Option<(CString, CString, u16)> {
@@ -417,6 +456,119 @@ fn getaddrinfo_uses_overridden_hosts_backend() {
             assert_eq!(sin.sin_addr.s_addr, u32::from_ne_bytes([203, 0, 113, 10]));
 
             unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_filters_dual_stack_hosts_to_ipv4() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        |paths| {
+            assert!(paths.route.exists());
+            assert!(paths.if_inet6.exists());
+
+            let node = CString::new("dual-stack").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_filters_dual_stack_hosts_to_ipv6() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"203.0.113.10 dual-stack\n2001:db8::10 dual-stack\n"),
+        None,
+        Some(b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nlo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n"),
+        Some(b"fe800000000000000000000000000001 02 40 20 80   eth0\n"),
+        |_| {
+            let node = CString::new("dual-stack").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET6]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_numeric_ipv6_bypasses_filter() {
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        |_| {
+            let node = CString::new("::1").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET6]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_ai_addrconfig_returns_noname_when_all_families_filtered() {
+    with_resolver_backends_and_addrconfig(
+        Some(b"2001:db8::10 v6-only\n"),
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"00000000000000000000000000000001 01 80 10 80       lo\n"),
+        |_| {
+            let node = CString::new("v6-only").unwrap();
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc = unsafe {
+                resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res)
+            };
+            assert_eq!(rc, libc::EAI_NONAME);
+            assert!(res.is_null());
         },
     );
 }

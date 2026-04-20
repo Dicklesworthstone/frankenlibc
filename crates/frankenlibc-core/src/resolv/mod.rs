@@ -291,7 +291,10 @@ pub fn parse_proc_net_if_inet6_has_ipv6(content: &[u8]) -> bool {
 
 /// Derive `AI_ADDRCONFIG` state from Linux procfs snapshots.
 #[must_use]
-pub fn addrconfig_state_from_procfs(route_content: &[u8], if_inet6_content: &[u8]) -> AddrConfigState {
+pub fn addrconfig_state_from_procfs(
+    route_content: &[u8],
+    if_inet6_content: &[u8],
+) -> AddrConfigState {
     AddrConfigState {
         has_ipv4: parse_proc_net_route_has_ipv4(route_content),
         has_ipv6: parse_proc_net_if_inet6_has_ipv6(if_inet6_content),
@@ -728,6 +731,57 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].ai_family, AF_INET);
         assert_eq!(result[0].ai_addr, [10, 8, 0, 7]);
+    }
+
+    #[test]
+    fn parse_proc_net_route_requires_non_loopback_up_route() {
+        let only_loopback =
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\nlo\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n";
+        assert!(!parse_proc_net_route_has_ipv4(only_loopback));
+
+        let non_loopback =
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n";
+        assert!(parse_proc_net_route_has_ipv4(non_loopback));
+    }
+
+    #[test]
+    fn parse_proc_net_if_inet6_ignores_loopback() {
+        let only_loopback = b"00000000000000000000000000000001 01 80 10 80       lo\n";
+        assert!(!parse_proc_net_if_inet6_has_ipv6(only_loopback));
+
+        let non_loopback = b"fe800000000000000000000000000001 02 40 20 80   eth0\n";
+        assert!(parse_proc_net_if_inet6_has_ipv6(non_loopback));
+    }
+
+    #[test]
+    fn apply_addrconfig_filter_retains_supported_families() {
+        let mut results = vec![
+            AddrInfo {
+                ai_family: AF_INET,
+                ai_socktype: 0,
+                ai_protocol: 0,
+                ai_addr: vec![127, 0, 0, 1],
+                ai_canonname: None,
+            },
+            AddrInfo {
+                ai_family: AF_INET6,
+                ai_socktype: 0,
+                ai_protocol: 0,
+                ai_addr: Ipv6Addr::LOCALHOST.octets().to_vec(),
+                ai_canonname: None,
+            },
+        ];
+
+        apply_addrconfig_filter(
+            &mut results,
+            AddrConfigState {
+                has_ipv4: true,
+                has_ipv6: false,
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].ai_family, AF_INET);
     }
 
     #[test]
