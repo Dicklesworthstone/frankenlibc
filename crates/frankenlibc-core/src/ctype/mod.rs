@@ -353,4 +353,203 @@ mod tests {
             prop_assert_eq!(to_ascii(masked), masked);
         }
     }
+
+    // -----------------------------------------------------------------
+    // POSIX.1-2017 §7.3 ctype conformance tables (bd-xkc6)
+    // -----------------------------------------------------------------
+    //
+    // Spec source: IEEE Std 1003.1-2017 Vol 1 §7.3 (Character sets,
+    // character type classification, and case mapping).
+    //
+    // Each case exercises a single character-class predicate with an
+    // explicit POSIX clause citation. A reviewer can audit conformance
+    // by cross-referencing spec_ref against the §7.3 entry.
+    //
+    // Scope is the POSIX "C" locale per §7.3.1 — implementations MUST
+    // produce exactly the sets listed below for that locale; other
+    // locales are out of scope for this module.
+
+    #[derive(Debug)]
+    struct ClassifyCase {
+        id: &'static str,
+        spec_ref: &'static str,
+        predicate: fn(u8) -> bool,
+        in_class: &'static [u8],
+        out_of_class: &'static [u8],
+    }
+
+    const CTYPE_CLASSIFY_TABLE: &[ClassifyCase] = &[
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISDIGIT-001",
+            // "isdigit() shall test whether a character is a decimal-
+            //  digit character, which in the C locale is '0' through '9'."
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 isdigit — LC_CTYPE(C) decimal digits",
+            predicate: is_digit,
+            in_class: b"0123456789",
+            out_of_class: b"/:abcdef ABCDEF\t\n\0\x7f",
+        },
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISUPPER-001",
+            // "isupper() shall test whether a character is an upper-
+            //  case letter, which in the C locale is 'A' through 'Z'."
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 isupper — LC_CTYPE(C) uppercase letters",
+            predicate: is_upper,
+            in_class: b"ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            out_of_class: b"abcdefghijklmnopqrstuvwxyz0123456789@[\\]^_`",
+        },
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISLOWER-001",
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 islower — LC_CTYPE(C) lowercase letters",
+            predicate: is_lower,
+            in_class: b"abcdefghijklmnopqrstuvwxyz",
+            out_of_class: b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@[\\]^_`",
+        },
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISALPHA-001",
+            // "isalpha() shall test whether a character is a letter,
+            //  which in the C locale is any of 'A'..'Z' or 'a'..'z'."
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 isalpha — LC_CTYPE(C) letters",
+            predicate: is_alpha,
+            in_class: b"AaBbYyZz",
+            out_of_class: b"0123456789 \t\n!@#",
+        },
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISXDIGIT-001",
+            // "isxdigit() shall test for any hexadecimal-digit
+            //  character, in the C locale '0'..'9', 'A'..'F', 'a'..'f'."
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 isxdigit — LC_CTYPE(C) hex digits",
+            predicate: is_xdigit,
+            in_class: b"0123456789abcdefABCDEF",
+            out_of_class: b"gGhHxXyYzZ!@ ",
+        },
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISSPACE-001",
+            // "isspace() shall test for any character that is a
+            //  standard white-space character: space, form-feed ('\f'),
+            //  newline ('\n'), carriage return ('\r'), horizontal tab
+            //  ('\t'), vertical tab ('\v')."
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 isspace — standard whitespace (C locale)",
+            predicate: is_space,
+            in_class: b" \t\n\r\x0b\x0c",
+            out_of_class: b"aA0!.:/,\x00\x7f",
+        },
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISBLANK-001",
+            // "isblank() shall test for any character that is a
+            //  standard blank character. The C locale standard blanks
+            //  are space and horizontal tab."
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 isblank — space and tab only (C locale)",
+            predicate: is_blank,
+            in_class: b" \t",
+            out_of_class: b"\n\r\x0b\x0c0aA!",
+        },
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISCNTRL-001",
+            // "iscntrl() shall test for any control character (a
+            //  non-printing character). In the C locale these are the
+            //  characters in <0x00..0x1f> plus <0x7f> (DEL)."
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 iscntrl — control chars (C locale)",
+            predicate: is_cntrl,
+            in_class: b"\x00\x01\x07\x1f\x7f",
+            out_of_class: b" !@0AaZz~",
+        },
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISPRINT-001",
+            // "isprint() shall test for any printing character
+            //  including space. In the C locale these are the
+            //  characters in <0x20..0x7e>."
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 isprint — printing chars including space",
+            predicate: is_print,
+            in_class: b" !0@AaZz~",
+            out_of_class: b"\x00\x01\x1f\x7f\x80",
+        },
+        ClassifyCase {
+            id: "POSIX-CTYPE-ISPUNCT-001",
+            // "ispunct() shall test for any printing character that
+            //  is one of a locale-specific set of punctuation
+            //  characters for which neither isalnum() nor isspace() is
+            //  true."
+            spec_ref: "IEEE 1003.1-2017 §7.3.1 ispunct — printing non-alnum non-space",
+            predicate: is_punct,
+            in_class: b"!#$%&()*+,-./:;<=>?@[]^_`{|}~",
+            out_of_class: b"0Aa \t\x00\x7f",
+        },
+    ];
+
+    #[test]
+    fn posix_ctype_classification_conformance_table() {
+        let mut fails = Vec::new();
+        for case in CTYPE_CLASSIFY_TABLE {
+            for &c in case.in_class {
+                if !(case.predicate)(c) {
+                    fails.push(format!(
+                        "{} [{}]: predicate rejected required member 0x{:02x}",
+                        case.id, case.spec_ref, c
+                    ));
+                }
+            }
+            for &c in case.out_of_class {
+                if (case.predicate)(c) {
+                    fails.push(format!(
+                        "{} [{}]: predicate accepted non-member 0x{:02x}",
+                        case.id, case.spec_ref, c
+                    ));
+                }
+            }
+        }
+        assert!(
+            fails.is_empty(),
+            "POSIX §7.3.1 ctype classification failures:\n  {}",
+            fails.join("\n  ")
+        );
+    }
+
+    // ---- Case mapping (POSIX §7.3.2) ----
+
+    #[test]
+    fn posix_ctype_case_mapping_conformance_table() {
+        // POSIX.1-2017 §7.3.2 — tolower(): "If the argument is a
+        // character for which isupper() is true, it shall return the
+        // corresponding lowercase letter. All other arguments shall be
+        // returned unchanged."
+        for upper in b'A'..=b'Z' {
+            let expected_lower = upper + (b'a' - b'A');
+            assert_eq!(
+                to_lower(upper),
+                expected_lower,
+                "POSIX §7.3.2 tolower('{}') must yield '{}'",
+                upper as char,
+                expected_lower as char,
+            );
+        }
+
+        // Symmetric: toupper() on lowercase letters.
+        for lower in b'a'..=b'z' {
+            let expected_upper = lower - (b'a' - b'A');
+            assert_eq!(
+                to_upper(lower),
+                expected_upper,
+                "POSIX §7.3.2 toupper('{}') must yield '{}'",
+                lower as char,
+                expected_upper as char,
+            );
+        }
+
+        // "All other arguments shall be returned unchanged." — sweep
+        // every byte outside the alpha ranges and assert identity.
+        for c in 0u8..=255u8 {
+            if !is_upper(c) {
+                assert_eq!(
+                    to_lower(c), c,
+                    "POSIX §7.3.2 tolower(0x{c:02x}) must be identity on non-upper"
+                );
+            }
+            if !is_lower(c) {
+                assert_eq!(
+                    to_upper(c), c,
+                    "POSIX §7.3.2 toupper(0x{c:02x}) must be identity on non-lower"
+                );
+            }
+        }
+    }
 }
