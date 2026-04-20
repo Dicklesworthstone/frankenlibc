@@ -7,7 +7,7 @@
 
 #![allow(unsafe_code)]
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::io::AsRawFd;
@@ -2615,6 +2615,44 @@ fn gethostbyname2_r_missing_host_returns_zero_with_null_result() {
     assert_eq!(rc, 0);
     assert!(result.is_null(), "missing host should yield NULL result");
     assert_eq!(h_errno, 1);
+}
+
+#[test]
+fn gethostbyname2_r_ipv6_localhost_packs_result_into_caller_buffer() {
+    let name = CString::new("localhost").unwrap();
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result: *mut libc::hostent = std::ptr::null_mut();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostbyname2_r(
+            name.as_ptr(),
+            libc::AF_INET6,
+            (&mut hostent as *mut libc::hostent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(result, &mut hostent as *mut libc::hostent);
+    assert_eq!(h_errno, 0);
+    assert_eq!(hostent.h_addrtype, libc::AF_INET6);
+    assert_eq!(hostent.h_length, 16);
+    assert_eq!(hostent.h_name, buf.as_mut_ptr());
+    let resolved_name = unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes();
+    assert_eq!(resolved_name, b"localhost");
+    assert!(!hostent.h_addr_list.is_null());
+    assert!(!unsafe { *hostent.h_addr_list }.is_null());
+    let first_addr = unsafe { *hostent.h_addr_list } as *const libc::in6_addr;
+    assert_eq!(
+        unsafe { (*first_addr).s6_addr },
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+    );
+    assert!(!hostent.h_aliases.is_null());
+    assert!(unsafe { (*hostent.h_aliases).is_null() });
 }
 
 #[test]

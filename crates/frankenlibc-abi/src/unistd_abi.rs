@@ -13275,8 +13275,25 @@ pub unsafe extern "C" fn gethostbyname2_r(
     // Fill result_buf from first addrinfo result
     if !res.is_null() {
         let ai = unsafe { &*res };
-        let addr_len: usize = if af == libc::AF_INET { 4 } else { 16 };
-        let needed = addr_len + std::mem::size_of::<*mut c_char>() * 2;
+        let addr_len: usize = if ai.ai_family == libc::AF_INET { 4 } else { 16 };
+        let name_bytes = if !ai.ai_canonname.is_null() {
+            unsafe { CStr::from_ptr(ai.ai_canonname) }.to_bytes()
+        } else {
+            unsafe { CStr::from_ptr(name) }.to_bytes()
+        };
+        let ptr_size = core::mem::size_of::<*mut c_char>();
+        let addr_align = if ai.ai_family == libc::AF_INET {
+            core::mem::align_of::<libc::in_addr>()
+        } else {
+            core::mem::align_of::<libc::in6_addr>()
+        };
+        let name_end = name_bytes.len() + 1;
+        let addr_off = (name_end + (addr_align - 1)) & !(addr_align - 1);
+        let addr_end = addr_off + addr_len;
+        let list_off = (addr_end + (ptr_size - 1)) & !(ptr_size - 1);
+        let addr_list_off = list_off;
+        let alias_list_off = addr_list_off + 2 * ptr_size;
+        let needed = alias_list_off + ptr_size;
         if buflen < needed {
             unsafe {
                 crate::resolv_abi::freeaddrinfo(res);
@@ -13286,7 +13303,11 @@ pub unsafe extern "C" fn gethostbyname2_r(
             return libc::ERANGE;
         }
         unsafe {
-            // Copy address into buf
+            let buf_u8 = buf as *mut u8;
+            std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), buf_u8, name_bytes.len());
+            *buf_u8.add(name_bytes.len()) = 0;
+
+            // Copy address into caller buffer after the packed hostname.
             let addr_ptr = if af == libc::AF_INET {
                 let sa = ai.ai_addr as *const libc::sockaddr_in;
                 &(*sa).sin_addr as *const _ as *const u8
@@ -13294,20 +13315,18 @@ pub unsafe extern "C" fn gethostbyname2_r(
                 let sa = ai.ai_addr as *const libc::sockaddr_in6;
                 &(*sa).sin6_addr as *const _ as *const u8
             };
-            std::ptr::copy_nonoverlapping(addr_ptr, buf as *mut u8, addr_len);
+            std::ptr::copy_nonoverlapping(addr_ptr, buf_u8.add(addr_off), addr_len);
 
-            // Set up address list in buf after the address
-            let addr_list_ptr = buf.add(addr_len) as *mut *mut c_char;
-            *addr_list_ptr = buf;
+            // Set up address and alias lists inside the caller buffer.
+            let addr_list_ptr = buf_u8.add(addr_list_off) as *mut *mut c_char;
+            *addr_list_ptr = buf_u8.add(addr_off) as *mut c_char;
             *addr_list_ptr.add(1) = std::ptr::null_mut();
+            let alias_list_ptr = buf_u8.add(alias_list_off) as *mut *mut c_char;
+            *alias_list_ptr = std::ptr::null_mut();
 
-            (*result_buf).h_name = if !ai.ai_canonname.is_null() {
-                ai.ai_canonname
-            } else {
-                name as *mut c_char
-            };
-            (*result_buf).h_aliases = std::ptr::null_mut();
-            (*result_buf).h_addrtype = af;
+            (*result_buf).h_name = buf;
+            (*result_buf).h_aliases = alias_list_ptr;
+            (*result_buf).h_addrtype = ai.ai_family;
             (*result_buf).h_length = addr_len as c_int;
             (*result_buf).h_addr_list = addr_list_ptr;
 
