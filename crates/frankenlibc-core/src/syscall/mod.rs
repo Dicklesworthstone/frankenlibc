@@ -302,6 +302,10 @@ pub const SIGEV_THREAD_ID: i32 = 4;
 pub const WSTOPPED: i32 = 1 << 1;
 /// `WEXITED` asks `waitid(2)` to report children that exited or were terminated.
 pub const WEXITED: i32 = 1 << 2;
+/// `FUTEX_WAIT_BITSET` waits only when the futex word matches and a waiter mask overlaps.
+pub const FUTEX_WAIT_BITSET: i32 = 9;
+/// `FUTEX_BITSET_MATCH_ANY` wakes any `FUTEX_WAIT_BITSET` waiter regardless of bit selection.
+pub const FUTEX_BITSET_MATCH_ANY: u32 = u32::MAX;
 /// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.
 pub const TFD_NONBLOCK: i32 = 0o4000;
 /// `TFD_CLOEXEC` requests close-on-exec on the new timerfd descriptor.
@@ -1854,6 +1858,33 @@ pub unsafe fn sys_futex(
         )
     };
     syscall_result(ret).map(|v| v as isize)
+}
+
+/// `futex(FUTEX_WAIT_BITSET)` — wait while `*uaddr == expected` and the wait bitset matches.
+///
+/// # Safety
+///
+/// `uaddr` must point to a valid aligned `u32`. `timeout` may be null or must
+/// point to a valid `timespec`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_futex_wait_bitset(
+    uaddr: *const u32,
+    expected: u32,
+    timeout: *const Timespec,
+    bitset: u32,
+) -> Result<(), i32> {
+    unsafe {
+        sys_futex(
+            uaddr,
+            FUTEX_WAIT_BITSET,
+            expected,
+            timeout as usize,
+            0,
+            bitset,
+        )
+    }
+    .map(|_| ())
 }
 
 /// `futex_waitv(waiters, nr_futexes, flags, timeout, clockid)` — wait on multiple futexes.

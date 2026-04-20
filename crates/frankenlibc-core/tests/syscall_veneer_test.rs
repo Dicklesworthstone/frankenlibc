@@ -329,6 +329,8 @@ mod x86_64_tests {
         assert_eq!(SYS_RECVFROM, 45);
         assert_eq!(SYS_FUTEX, 202);
         assert_eq!(SYS_FUTEX_WAITV, 449);
+        assert_eq!(FUTEX_WAIT_BITSET, 9);
+        assert_eq!(FUTEX_BITSET_MATCH_ANY, u32::MAX);
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 238);
         assert_eq!(SYS_GET_MEMPOLICY, 239);
@@ -432,6 +434,8 @@ mod x86_64_tests {
             sys_timer_create_sigevent;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
+        let _: unsafe fn(*const u32, u32, *const Timespec, u32) -> Result<(), i32> =
+            sys_futex_wait_bitset;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
@@ -509,6 +513,30 @@ mod x86_64_tests {
             )
         };
         assert_eq!(result, Ok(0), "futex wake with no waiters should return 0");
+    }
+
+    #[test]
+    fn futex_wait_bitset_value_mismatch_returns_eagain() {
+        let futex_word: u32 = 1;
+        let err = unsafe {
+            sys_futex_wait_bitset(
+                &futex_word as *const u32,
+                0,
+                core::ptr::null(),
+                FUTEX_BITSET_MATCH_ANY,
+            )
+        }
+        .expect_err("FUTEX_WAIT_BITSET with a mismatched value must fail immediately");
+        assert_eq!(err, EAGAIN);
+    }
+
+    #[test]
+    fn futex_wait_bitset_zero_mask_is_invalid() {
+        let futex_word: u32 = 0;
+        let err =
+            unsafe { sys_futex_wait_bitset(&futex_word as *const u32, 0, core::ptr::null(), 0) }
+                .expect_err("FUTEX_WAIT_BITSET with a zero bitset must fail");
+        assert_eq!(err, EINVAL);
     }
 
     #[test]
@@ -1608,6 +1636,8 @@ mod aarch64_tests {
         assert_eq!(SYS_RECVFROM, 207);
         assert_eq!(SYS_FUTEX, 98);
         assert_eq!(SYS_FUTEX_WAITV, 449);
+        assert_eq!(FUTEX_WAIT_BITSET, 9);
+        assert_eq!(FUTEX_BITSET_MATCH_ANY, u32::MAX);
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 237);
         assert_eq!(SYS_GET_MEMPOLICY, 236);
@@ -1703,6 +1733,8 @@ mod aarch64_tests {
             sys_timer_create_sigevent;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
+        let _: unsafe fn(*const u32, u32, *const Timespec, u32) -> Result<(), i32> =
+            sys_futex_wait_bitset;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
