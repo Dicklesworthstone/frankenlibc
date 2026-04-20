@@ -22,6 +22,7 @@ mod x86_64_tests {
     const O_RDWR: i32 = 2;
     const O_CREAT: i32 = 0o100;
     const O_EXCL: i32 = 0o200;
+    const O_NONBLOCK: i32 = 0o4000;
     const O_CLOEXEC: i32 = 0o2000000;
     const AT_FDCWD: i32 = -100;
 
@@ -294,9 +295,14 @@ mod x86_64_tests {
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 238);
         assert_eq!(SYS_GET_MEMPOLICY, 239);
+        assert_eq!(SYS_USERFAULTFD, 323);
         assert_eq!(SYS_SCHED_SETATTR, 314);
         assert_eq!(SYS_PIPE2, 293);
         assert_eq!(SYS_SET_TID_ADDRESS, 218);
+        assert_eq!(UFFDIO_API, 0xc018aa3f);
+        assert_eq!(UFFD_API, 0xAA);
+        assert_eq!(UFFD_FEATURE_SIGBUS, 1 << 7);
+        assert_eq!(core::mem::size_of::<UffdApi>(), 24);
     }
 
     // -----------------------------------------------------------------
@@ -325,6 +331,8 @@ mod x86_64_tests {
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
             sys_get_mempolicy;
+        let _: fn(i32) -> Result<i32, i32> = sys_userfaultfd;
+        let _: unsafe fn(i32, *mut UffdApi) -> Result<(), i32> = sys_userfaultfd_api;
         let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;
@@ -445,13 +453,7 @@ mod x86_64_tests {
     fn get_mempolicy_mode_query_supported_or_unavailable() {
         let mut mode = -1;
         match unsafe {
-            sys_get_mempolicy(
-                &mut mode,
-                core::ptr::null_mut(),
-                0,
-                core::ptr::null(),
-                0,
-            )
+            sys_get_mempolicy(&mut mode, core::ptr::null_mut(), 0, core::ptr::null(), 0)
         } {
             Ok(()) => assert!(
                 (0..=7).contains(&mode),
@@ -485,10 +487,8 @@ mod x86_64_tests {
     fn get_mempolicy_addrless_query_rejects_nonnull_addr_or_unavailable() {
         let mut mode = 0;
         let byte = 0u8;
-        let err = unsafe {
-            sys_get_mempolicy(&mut mode, core::ptr::null_mut(), 0, &byte, 0)
-        }
-        .expect_err("get_mempolicy(flags=0, non-null addr) must fail");
+        let err = unsafe { sys_get_mempolicy(&mut mode, core::ptr::null_mut(), 0, &byte, 0) }
+            .expect_err("get_mempolicy(flags=0, non-null addr) must fail");
         assert!(
             matches!(err, EINVAL | ENOSYS),
             "expected EINVAL/ENOSYS, got {err}"
@@ -511,6 +511,55 @@ mod x86_64_tests {
         assert!(
             matches!(err, EINVAL | ENOSYS),
             "expected EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn userfaultfd_api_negotiates_sigbus_or_reports_unavailable() {
+        let fd = match sys_userfaultfd(O_CLOEXEC | O_NONBLOCK) {
+            Ok(fd) => fd,
+            Err(ENOSYS | EPERM) => return,
+            Err(err) => panic!("expected userfaultfd or ENOSYS/EPERM, got {err}"),
+        };
+
+        let mut api = UffdApi {
+            api: UFFD_API,
+            features: UFFD_FEATURE_SIGBUS,
+            ioctls: 0,
+        };
+        let result = unsafe { sys_userfaultfd_api(fd, &mut api) };
+        sys_close(fd).expect("close userfaultfd");
+
+        match result {
+            Ok(()) => {
+                assert_eq!(api.api, UFFD_API);
+                assert_ne!(
+                    api.features & UFFD_FEATURE_SIGBUS,
+                    0,
+                    "kernel handshake should preserve requested SIGBUS feature"
+                );
+                assert_ne!(api.ioctls, 0, "kernel should report non-empty uffd ioctls");
+            }
+            Err(EINVAL) => {}
+            Err(err) => panic!("expected success or EINVAL for unsupported feature, got {err}"),
+        }
+    }
+
+    #[test]
+    fn userfaultfd_api_null_pointer_faults_or_unavailable() {
+        let fd = match sys_userfaultfd(O_CLOEXEC | O_NONBLOCK) {
+            Ok(fd) => fd,
+            Err(ENOSYS | EPERM) => return,
+            Err(err) => panic!("expected userfaultfd or ENOSYS/EPERM, got {err}"),
+        };
+
+        let err = unsafe { sys_userfaultfd_api(fd, core::ptr::null_mut()) }
+            .expect_err("userfaultfd_api(null) must fail");
+        sys_close(fd).expect("close userfaultfd");
+
+        assert!(
+            matches!(err, EFAULT | EINVAL),
+            "expected EFAULT/EINVAL, got {err}"
         );
     }
 
@@ -761,9 +810,14 @@ mod aarch64_tests {
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 237);
         assert_eq!(SYS_GET_MEMPOLICY, 236);
+        assert_eq!(SYS_USERFAULTFD, 282);
         assert_eq!(SYS_SCHED_SETATTR, 274);
         assert_eq!(SYS_PIPE2, 59);
         assert_eq!(SYS_SET_TID_ADDRESS, 96);
+        assert_eq!(UFFDIO_API, 0xc018aa3f);
+        assert_eq!(UFFD_API, 0xAA);
+        assert_eq!(UFFD_FEATURE_SIGBUS, 1 << 7);
+        assert_eq!(core::mem::size_of::<UffdApi>(), 24);
     }
 
     #[test]
@@ -784,6 +838,8 @@ mod aarch64_tests {
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
             sys_get_mempolicy;
+        let _: fn(i32) -> Result<i32, i32> = sys_userfaultfd;
+        let _: unsafe fn(i32, *mut UffdApi) -> Result<(), i32> = sys_userfaultfd_api;
         let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;

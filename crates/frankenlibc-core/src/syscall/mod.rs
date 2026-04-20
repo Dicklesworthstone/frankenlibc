@@ -74,6 +74,46 @@ pub struct SchedAttr {
     pub sched_util_max: u32,
 }
 
+/// Linux `uffdio_api` handshake block used by `userfaultfd(2)` setup.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UffdApi {
+    pub api: u64,
+    pub features: u64,
+    pub ioctls: u64,
+}
+
+const IOC_NRBITS: usize = 8;
+const IOC_TYPEBITS: usize = 8;
+const IOC_SIZEBITS: usize = 14;
+
+const IOC_NRSHIFT: usize = 0;
+const IOC_TYPESHIFT: usize = IOC_NRSHIFT + IOC_NRBITS;
+const IOC_SIZESHIFT: usize = IOC_TYPESHIFT + IOC_TYPEBITS;
+const IOC_DIRSHIFT: usize = IOC_SIZESHIFT + IOC_SIZEBITS;
+
+const IOC_WRITE: usize = 1;
+const IOC_READ: usize = 2;
+
+const fn ioc(dir: usize, ty: usize, nr: usize, size: usize) -> usize {
+    (dir << IOC_DIRSHIFT) | (ty << IOC_TYPESHIFT) | (nr << IOC_NRSHIFT) | (size << IOC_SIZESHIFT)
+}
+
+/// `UFFDIO_API` request code used with `ioctl(2)` on a `userfaultfd` descriptor.
+pub const UFFDIO_API: usize = ioc(
+    IOC_READ | IOC_WRITE,
+    0xAA,
+    0x3F,
+    core::mem::size_of::<UffdApi>(),
+);
+
+/// `UFFD_API` version tag required by the kernel's userfaultfd API handshake.
+pub const UFFD_API: u64 = 0xAA;
+/// `UFFD_FEATURE_SIGBUS` requests SIGBUS delivery instead of page-fault events.
+pub const UFFD_FEATURE_SIGBUS: u64 = 1 << 7;
+/// `UFFD_USER_MODE_ONLY` restricts registration to user-originated faults.
+pub const UFFD_USER_MODE_ONLY: i32 = 1;
+
 // -------------------------------------------------------------------------
 // Syscall number constants (Linux)
 // -------------------------------------------------------------------------
@@ -5539,6 +5579,17 @@ pub fn sys_ioprio_get(which: i32, who: i32) -> Result<i32, i32> {
 pub fn sys_userfaultfd(flags: i32) -> Result<i32, i32> {
     let ret = unsafe { raw::syscall1(SYS_USERFAULTFD, flags as usize) };
     syscall_result(ret).map(|v| v as i32)
+}
+
+/// `ioctl(fd, UFFDIO_API, api)` — negotiate the userfaultfd API and feature set.
+///
+/// # Safety
+///
+/// `api` must point to a valid writable `uffdio_api` structure.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_userfaultfd_api(fd: i32, api: *mut UffdApi) -> Result<(), i32> {
+    unsafe { sys_ioctl(fd, UFFDIO_API, api as usize) }.map(|_| ())
 }
 
 /// `sync_file_range(fd, offset, nbytes, flags)` — sync a file segment with disk.
