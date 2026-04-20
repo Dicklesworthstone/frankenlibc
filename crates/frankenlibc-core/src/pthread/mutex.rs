@@ -781,6 +781,117 @@ mod tests {
         },
     ];
 
+    // -----------------------------------------------------------------
+    // POSIX.1-2017 conformance table: pthread_mutex_destroy (bd-u8qy)
+    // -----------------------------------------------------------------
+    //
+    // Spec source: IEEE Std 1003.1-2017 §pthread_mutex_destroy.
+    // Key clauses:
+    //   • "It shall be safe to destroy an initialized mutex that is
+    //      unlocked." — destroy of Unlocked succeeds.
+    //   • "Attempting to destroy a locked mutex ... results in
+    //      undefined behavior." — FrankenLibC returns EBUSY as a safe
+    //      mechanical fallback (aligned with glibc PTHREAD_MUTEX_ROBUST).
+    //   • "The results ... are undefined if ... the mutex is not
+    //      initialized." — EINVAL on Uninitialized/Destroyed.
+
+    struct DestroyConformanceCase {
+        id: &'static str,
+        posix_ref: &'static str,
+        kind: i32,
+        state: MutexContractState,
+        expected_next: MutexContractState,
+        expected_errno: i32,
+    }
+
+    const DESTROY_CONFORMANCE_TABLE: &[DestroyConformanceCase] = &[
+        DestroyConformanceCase {
+            id: "POSIX-MUTEX-DESTROY-001",
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_destroy ¶Description",
+            kind: PTHREAD_MUTEX_NORMAL,
+            state: MutexContractState::Unlocked,
+            expected_next: MutexContractState::Destroyed,
+            expected_errno: 0,
+        },
+        DestroyConformanceCase {
+            id: "POSIX-MUTEX-DESTROY-002",
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_destroy ¶Description (RECURSIVE)",
+            kind: PTHREAD_MUTEX_RECURSIVE,
+            state: MutexContractState::Unlocked,
+            expected_next: MutexContractState::Destroyed,
+            expected_errno: 0,
+        },
+        DestroyConformanceCase {
+            id: "POSIX-MUTEX-DESTROY-003",
+            // Destroy of mutex locked by another thread: UB by POSIX,
+            //  EBUSY as FrankenLibC's deterministic safe fallback.
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_destroy ¶Errors/EBUSY (mechanical fallback)",
+            kind: PTHREAD_MUTEX_NORMAL,
+            state: MutexContractState::LockedByOther,
+            expected_next: MutexContractState::LockedByOther,
+            expected_errno: errno::EBUSY,
+        },
+        DestroyConformanceCase {
+            id: "POSIX-MUTEX-DESTROY-004",
+            // Destroy of self-locked mutex: also EBUSY — the caller holds
+            //  the lock and must unlock before destroy.
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_destroy ¶Errors/EBUSY (mechanical fallback)",
+            kind: PTHREAD_MUTEX_ERRORCHECK,
+            state: MutexContractState::LockedBySelf,
+            expected_next: MutexContractState::LockedBySelf,
+            expected_errno: errno::EBUSY,
+        },
+        DestroyConformanceCase {
+            id: "POSIX-MUTEX-DESTROY-005",
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_destroy ¶Errors/EINVAL",
+            kind: PTHREAD_MUTEX_NORMAL,
+            state: MutexContractState::Uninitialized,
+            expected_next: MutexContractState::Uninitialized,
+            expected_errno: errno::EINVAL,
+        },
+        DestroyConformanceCase {
+            id: "POSIX-MUTEX-DESTROY-006",
+            // Double-destroy: POSIX leaves behavior undefined; FrankenLibC
+            //  mechanically rejects with EINVAL so the caller cannot
+            //  reference freed kernel state.
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_destroy ¶Errors/EINVAL (double-destroy)",
+            kind: PTHREAD_MUTEX_NORMAL,
+            state: MutexContractState::Destroyed,
+            expected_next: MutexContractState::Destroyed,
+            expected_errno: errno::EINVAL,
+        },
+    ];
+
+    #[test]
+    fn posix_mutex_destroy_conformance_table() {
+        let mut fails = Vec::new();
+        for case in DESTROY_CONFORMANCE_TABLE {
+            let outcome =
+                mutex_contract_transition(case.kind, case.state, MutexContractOp::Destroy);
+            if outcome.next != case.expected_next || outcome.errno != case.expected_errno {
+                fails.push(format!(
+                    "{} [{}]: expected next={:?}/errno={} got next={:?}/errno={}",
+                    case.id,
+                    case.posix_ref,
+                    case.expected_next,
+                    case.expected_errno,
+                    outcome.next,
+                    outcome.errno,
+                ));
+            }
+            assert!(
+                !outcome.blocks,
+                "{}: destroy must never block (POSIX §pthread_mutex_destroy)",
+                case.id
+            );
+        }
+        assert!(
+            fails.is_empty(),
+            "POSIX mutex-destroy conformance failures:\n  {}",
+            fails.join("\n  ")
+        );
+    }
+
     #[test]
     fn posix_mutex_unlock_conformance_table() {
         let mut fails = Vec::new();
