@@ -230,6 +230,8 @@ pub const SYS_SCHED_SETAFFINITY: usize = 203;
 pub const SYS_SCHED_GETAFFINITY: usize = 204;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SET_MEMPOLICY: usize = 238;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GET_MEMPOLICY: usize = 239;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -384,6 +386,8 @@ pub const SYS_SCHED_SETAFFINITY: usize = 122;
 pub const SYS_SCHED_GETAFFINITY: usize = 123;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SET_MEMPOLICY: usize = 237;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GET_MEMPOLICY: usize = 236;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -3778,6 +3782,34 @@ pub unsafe fn sys_set_mempolicy(
 ) -> Result<(), i32> {
     let ret =
         unsafe { raw::syscall3(SYS_SET_MEMPOLICY, mode as usize, nodemask as usize, maxnode) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `get_mempolicy(mode, nodemask, maxnode, addr, flags)` — query NUMA memory policy.
+///
+/// # Safety
+///
+/// `mode` and `nodemask` must be null or valid writable pointers for the requested query shape.
+/// When `flags` includes `MPOL_F_ADDR`, `addr` must point into the caller's address space.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_get_mempolicy(
+    mode: *mut i32,
+    nodemask: *mut usize,
+    maxnode: usize,
+    addr: *const u8,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_GET_MEMPOLICY,
+            mode as usize,
+            nodemask as usize,
+            maxnode,
+            addr as usize,
+            flags as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 

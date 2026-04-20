@@ -39,6 +39,8 @@ mod x86_64_tests {
     const ENOSYS: i32 = 38;
     const EPERM: i32 = 1;
     const MPOL_BIND: i32 = 2;
+    const MPOL_F_NODE: u32 = 1;
+    const MPOL_F_ADDR: u32 = 1 << 1;
     const SCHED_DEADLINE: u32 = 6;
 
     // -----------------------------------------------------------------
@@ -291,6 +293,7 @@ mod x86_64_tests {
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 238);
+        assert_eq!(SYS_GET_MEMPOLICY, 239);
         assert_eq!(SYS_SCHED_SETATTR, 314);
         assert_eq!(SYS_PIPE2, 293);
         assert_eq!(SYS_SET_TID_ADDRESS, 218);
@@ -320,6 +323,8 @@ mod x86_64_tests {
             sys_futex_waitv;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
+        let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
+            sys_get_mempolicy;
         let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;
@@ -430,6 +435,79 @@ mod x86_64_tests {
     fn set_mempolicy_bind_requires_nodemask_or_unavailable() {
         let err = unsafe { sys_set_mempolicy(MPOL_BIND, core::ptr::null(), 0) }
             .expect_err("set_mempolicy(MPOL_BIND, null, 0) must fail");
+        assert!(
+            matches!(err, EINVAL | ENOSYS),
+            "expected EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn get_mempolicy_mode_query_supported_or_unavailable() {
+        let mut mode = -1;
+        match unsafe {
+            sys_get_mempolicy(
+                &mut mode,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null(),
+                0,
+            )
+        } {
+            Ok(()) => assert!(
+                (0..=7).contains(&mode),
+                "expected policy mode in kernel range, got {mode}"
+            ),
+            Err(ENOSYS) => {}
+            Err(err) => panic!("expected success or ENOSYS, got {err}"),
+        }
+    }
+
+    #[test]
+    fn get_mempolicy_addr_flag_requires_addr_or_unavailable() {
+        let mut mode = 0;
+        let err = unsafe {
+            sys_get_mempolicy(
+                &mut mode,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null(),
+                MPOL_F_ADDR,
+            )
+        }
+        .expect_err("get_mempolicy(MPOL_F_ADDR, null addr) must fail");
+        assert!(
+            matches!(err, EFAULT | EINVAL | ENOSYS),
+            "expected EFAULT/EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn get_mempolicy_addrless_query_rejects_nonnull_addr_or_unavailable() {
+        let mut mode = 0;
+        let byte = 0u8;
+        let err = unsafe {
+            sys_get_mempolicy(&mut mode, core::ptr::null_mut(), 0, &byte, 0)
+        }
+        .expect_err("get_mempolicy(flags=0, non-null addr) must fail");
+        assert!(
+            matches!(err, EINVAL | ENOSYS),
+            "expected EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn get_mempolicy_node_flag_without_interleave_rejected_or_unavailable() {
+        let mut mode = 0;
+        let err = unsafe {
+            sys_get_mempolicy(
+                &mut mode,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null(),
+                MPOL_F_NODE,
+            )
+        }
+        .expect_err("get_mempolicy(MPOL_F_NODE) should fail for default policy");
         assert!(
             matches!(err, EINVAL | ENOSYS),
             "expected EINVAL/ENOSYS, got {err}"
@@ -682,6 +760,7 @@ mod aarch64_tests {
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 237);
+        assert_eq!(SYS_GET_MEMPOLICY, 236);
         assert_eq!(SYS_SCHED_SETATTR, 274);
         assert_eq!(SYS_PIPE2, 59);
         assert_eq!(SYS_SET_TID_ADDRESS, 96);
@@ -703,6 +782,8 @@ mod aarch64_tests {
             sys_futex_waitv;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
+        let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
+            sys_get_mempolicy;
         let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;
