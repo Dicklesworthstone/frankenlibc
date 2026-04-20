@@ -1094,6 +1094,12 @@ fn timerfd_create_with_cloexec() {
     use frankenlibc_abi::poll_abi::timerfd_create;
     let fd = unsafe { timerfd_create(libc::CLOCK_MONOTONIC, libc::TFD_CLOEXEC) };
     assert!(fd >= 0, "timerfd_create with TFD_CLOEXEC should succeed");
+    let fd_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    assert_ne!(
+        fd_flags & libc::FD_CLOEXEC,
+        0,
+        "timerfd_create should apply close-on-exec"
+    );
     unsafe { close(fd) };
 }
 

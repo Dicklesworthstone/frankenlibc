@@ -730,6 +730,82 @@ mod x86_64_tests {
         );
     }
 
+    /// Kernel ABI layout freeze for io_uring structs (bd-13n0).
+    ///
+    /// Field offsets and struct sizes must exactly match the layout the
+    /// kernel consumes via SYS_io_uring_setup's `struct io_uring_params`
+    /// out-parameter (Linux `include/uapi/linux/io_uring.h`). Any field
+    /// reorder, padding regression, or accidental alignment change would
+    /// silently corrupt kernel interop — this test fails loudly instead.
+    #[test]
+    fn io_uring_struct_layout_matches_kernel_abi() {
+        use core::mem::offset_of;
+
+        // struct io_sqring_offsets — 40 bytes, 8 × u32 + 1 × u64
+        assert_eq!(offset_of!(IoUringSqringOffsets, head), 0);
+        assert_eq!(offset_of!(IoUringSqringOffsets, tail), 4);
+        assert_eq!(offset_of!(IoUringSqringOffsets, ring_mask), 8);
+        assert_eq!(offset_of!(IoUringSqringOffsets, ring_entries), 12);
+        assert_eq!(offset_of!(IoUringSqringOffsets, flags), 16);
+        assert_eq!(offset_of!(IoUringSqringOffsets, dropped), 20);
+        assert_eq!(offset_of!(IoUringSqringOffsets, array), 24);
+        assert_eq!(offset_of!(IoUringSqringOffsets, resv1), 28);
+        assert_eq!(offset_of!(IoUringSqringOffsets, resv2), 32);
+
+        // struct io_cqring_offsets — same 40-byte shape with different
+        // field names (the overflow/cqes pair replaces dropped/array).
+        assert_eq!(offset_of!(IoUringCqringOffsets, head), 0);
+        assert_eq!(offset_of!(IoUringCqringOffsets, tail), 4);
+        assert_eq!(offset_of!(IoUringCqringOffsets, ring_mask), 8);
+        assert_eq!(offset_of!(IoUringCqringOffsets, ring_entries), 12);
+        assert_eq!(offset_of!(IoUringCqringOffsets, overflow), 16);
+        assert_eq!(offset_of!(IoUringCqringOffsets, cqes), 20);
+        assert_eq!(offset_of!(IoUringCqringOffsets, flags), 24);
+        assert_eq!(offset_of!(IoUringCqringOffsets, resv1), 28);
+        assert_eq!(offset_of!(IoUringCqringOffsets, resv2), 32);
+
+        // struct io_uring_params — the big top-level layout.
+        // Fields 0..28 are 7 × u32, then resv[3] (12 bytes) brings us
+        // to offset 40 where sq_off starts. cq_off starts at offset 80.
+        assert_eq!(offset_of!(IoUringParams, sq_entries), 0);
+        assert_eq!(offset_of!(IoUringParams, cq_entries), 4);
+        assert_eq!(offset_of!(IoUringParams, flags), 8);
+        assert_eq!(offset_of!(IoUringParams, sq_thread_cpu), 12);
+        assert_eq!(offset_of!(IoUringParams, sq_thread_idle), 16);
+        assert_eq!(offset_of!(IoUringParams, features), 20);
+        assert_eq!(offset_of!(IoUringParams, wq_fd), 24);
+        assert_eq!(offset_of!(IoUringParams, resv), 28);
+        assert_eq!(
+            offset_of!(IoUringParams, sq_off),
+            40,
+            "sq_off must start right after resv[3]"
+        );
+        assert_eq!(
+            offset_of!(IoUringParams, cq_off),
+            80,
+            "cq_off must start right after sq_off (40 + 40)"
+        );
+    }
+
+    /// io_uring_enter flag bits (bd-13n0).
+    ///
+    /// These bit positions are part of the kernel ABI and must never
+    /// drift. Freeze them against the constants the kernel expects in
+    /// `enum io_uring_enter_flag`.
+    #[test]
+    fn io_uring_enter_flag_bits_match_kernel_abi() {
+        // IORING_ENTER_GETEVENTS = (1U << 0)
+        assert_eq!(IORING_ENTER_GETEVENTS, 1 << 0);
+        // IORING_ENTER_SQ_WAKEUP = (1U << 1)
+        assert_eq!(IORING_ENTER_SQ_WAKEUP, 1 << 1);
+        // The two flags must be distinct bits.
+        assert_eq!(
+            IORING_ENTER_GETEVENTS & IORING_ENTER_SQ_WAKEUP,
+            0,
+            "GETEVENTS and SQ_WAKEUP must occupy different bits"
+        );
+    }
+
     #[test]
     fn io_uring_setup_zero_entries_rejected_or_unavailable() {
         let mut params = IoUringParams::default();
@@ -1681,6 +1757,28 @@ mod x86_64_tests {
         assert_eq!(
             expirations, 1,
             "one-shot timer should report exactly one expiration"
+        );
+
+        sys_close(fd).expect("close timerfd");
+    }
+
+    #[test]
+    fn timerfd_create_applies_cloexec_and_nonblock_flags() {
+        let fd = sys_timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)
+            .expect("timerfd_create");
+
+        let fd_flags = unsafe { sys_fcntl(fd, F_GETFD, 0) }.expect("fcntl(F_GETFD)");
+        assert_ne!(
+            fd_flags & FD_CLOEXEC,
+            0,
+            "timerfd_create should apply close-on-exec"
+        );
+
+        let status_flags = unsafe { sys_fcntl(fd, F_GETFL, 0) }.expect("fcntl(F_GETFL)");
+        assert_ne!(
+            status_flags & O_NONBLOCK,
+            0,
+            "timerfd_create should apply nonblocking mode"
         );
 
         sys_close(fd).expect("close timerfd");
