@@ -473,6 +473,67 @@ mod tests {
             prop_assert!(!outcome.blocks);
         }
 
+        /// Metamorphic (invertive): Lock→Unlock roundtrip from Unlocked
+        /// returns to Unlocked, errno=0, non-blocking — for every valid kind.
+        ///
+        /// Catches: state-mutation bugs that leave the contract machine in
+        /// LockedByOther or Destroyed, spurious EPERM/EBUSY on clean unlock,
+        /// and lost-kind regressions in the LockedBySelf→Unlocked arrow.
+        #[test]
+        fn prop_lock_unlock_roundtrip_is_identity(kind in prop_oneof![
+            Just(PTHREAD_MUTEX_NORMAL),
+            Just(PTHREAD_MUTEX_RECURSIVE),
+            Just(PTHREAD_MUTEX_ERRORCHECK),
+        ]) {
+            let lock = mutex_contract_transition(
+                kind,
+                MutexContractState::Unlocked,
+                MutexContractOp::Lock,
+            );
+            prop_assert_eq!(lock.next, MutexContractState::LockedBySelf);
+            prop_assert_eq!(lock.errno, 0);
+            prop_assert!(!lock.blocks, "Lock on Unlocked must not block");
+
+            let unlock = mutex_contract_transition(
+                kind,
+                lock.next,
+                MutexContractOp::Unlock,
+            );
+            prop_assert_eq!(unlock.next, MutexContractState::Unlocked);
+            prop_assert_eq!(unlock.errno, 0);
+            prop_assert!(!unlock.blocks);
+        }
+
+        /// Metamorphic (invertive): TryLock→Unlock roundtrip mirrors Lock→Unlock.
+        ///
+        /// Independent of prop_lock_unlock_roundtrip_is_identity because TryLock
+        /// and Lock reach LockedBySelf via different arms of the state machine
+        /// and a refactor could silently diverge the two acquisition paths.
+        #[test]
+        fn prop_trylock_unlock_roundtrip_is_identity(kind in prop_oneof![
+            Just(PTHREAD_MUTEX_NORMAL),
+            Just(PTHREAD_MUTEX_RECURSIVE),
+            Just(PTHREAD_MUTEX_ERRORCHECK),
+        ]) {
+            let try_ = mutex_contract_transition(
+                kind,
+                MutexContractState::Unlocked,
+                MutexContractOp::TryLock,
+            );
+            prop_assert_eq!(try_.next, MutexContractState::LockedBySelf);
+            prop_assert_eq!(try_.errno, 0);
+            prop_assert!(!try_.blocks);
+
+            let unlock = mutex_contract_transition(
+                kind,
+                try_.next,
+                MutexContractOp::Unlock,
+            );
+            prop_assert_eq!(unlock.next, MutexContractState::Unlocked);
+            prop_assert_eq!(unlock.errno, 0);
+            prop_assert!(!unlock.blocks);
+        }
+
         /// Metamorphic: TryLock must never block, for any (kind, state).
         ///
         /// POSIX contract: pthread_mutex_trylock returns immediately with either
