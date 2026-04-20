@@ -187,6 +187,8 @@ pub const SYS_PWRITEV: usize = 296;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_MEMFD_CREATE: usize = 319;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_MEMFD_SECRET: usize = 447;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_COPY_FILE_RANGE: usize = 326;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_PREADV2: usize = 327;
@@ -336,6 +338,8 @@ pub const SYS_TEE: usize = 77;
 pub const SYS_DUP3: usize = 24;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_MEMFD_CREATE: usize = 279;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MEMFD_SECRET: usize = 447;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_COPY_FILE_RANGE: usize = 285;
 #[cfg(target_arch = "aarch64")]
@@ -2597,6 +2601,14 @@ pub unsafe fn sys_vmsplice(
 #[allow(unsafe_code)]
 pub unsafe fn sys_memfd_create(name: *const u8, flags: u32) -> Result<i32, i32> {
     let ret = unsafe { raw::syscall2(SYS_MEMFD_CREATE, name as usize, flags as usize) };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `memfd_secret(flags)` — create an anonymous secret-memory file descriptor.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_memfd_secret(flags: u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall1(SYS_MEMFD_SECRET, flags as usize) };
     syscall_result(ret).map(|v| v as i32)
 }
 

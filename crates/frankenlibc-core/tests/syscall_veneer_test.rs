@@ -287,6 +287,7 @@ mod x86_64_tests {
         assert_eq!(SYS_OPENAT, 257);
         assert_eq!(SYS_FUTEX, 202);
         assert_eq!(SYS_FUTEX_WAITV, 449);
+        assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_PIPE2, 293);
         assert_eq!(SYS_SET_TID_ADDRESS, 218);
     }
@@ -313,6 +314,7 @@ mod x86_64_tests {
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
+        let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;
         let _: unsafe fn(*mut i32, i32) -> Result<(), i32> = sys_pipe2;
@@ -387,6 +389,24 @@ mod x86_64_tests {
         assert!(
             matches!(err, EFAULT | EINVAL | ENOSYS),
             "expected EFAULT/EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn memfd_secret_supported_or_unavailable() {
+        match sys_memfd_secret(0) {
+            Ok(fd) => sys_close(fd).expect("close memfd_secret fd"),
+            Err(ENOSYS) => {}
+            Err(err) => panic!("expected success or ENOSYS, got {err}"),
+        }
+    }
+
+    #[test]
+    fn memfd_secret_invalid_flags_rejected_or_unavailable() {
+        let err = sys_memfd_secret(u32::MAX).expect_err("memfd_secret(all-bits-set) must fail");
+        assert!(
+            matches!(err, EINVAL | ENOSYS),
+            "expected EINVAL/ENOSYS, got {err}"
         );
     }
 
@@ -606,6 +626,7 @@ mod aarch64_tests {
         assert_eq!(SYS_EXIT_GROUP, 94);
         assert_eq!(SYS_FUTEX, 98);
         assert_eq!(SYS_FUTEX_WAITV, 449);
+        assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_PIPE2, 59);
         assert_eq!(SYS_SET_TID_ADDRESS, 96);
     }
@@ -624,6 +645,7 @@ mod aarch64_tests {
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
+        let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;
         let _: unsafe fn(*mut i32, i32) -> Result<(), i32> = sys_pipe2;
