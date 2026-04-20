@@ -41,6 +41,24 @@ pub const AF_UNSPEC: i32 = 0;
 pub const AF_INET: i32 = 2;
 pub const AF_INET6: i32 = 10;
 
+/// Snapshot of the locally configured address families used by `AI_ADDRCONFIG`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AddrConfigState {
+    pub has_ipv4: bool,
+    pub has_ipv6: bool,
+}
+
+impl AddrConfigState {
+    #[must_use]
+    pub fn supports_family(self, family: i32) -> bool {
+        match family {
+            AF_INET => self.has_ipv4,
+            AF_INET6 => self.has_ipv6,
+            _ => true,
+        }
+    }
+}
+
 /// Parsed `/etc/services` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceEntry {
@@ -211,6 +229,78 @@ fn addrinfo_from_text_address(
         });
     }
     None
+}
+
+/// Parse `/proc/net/route` content and report whether a non-loopback IPv4 route exists.
+#[must_use]
+pub fn parse_proc_net_route_has_ipv4(content: &[u8]) -> bool {
+    for line in content.split(|&b| b == b'\n').skip(1) {
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|field| !field.is_empty());
+        let Some(iface) = fields.next() else {
+            continue;
+        };
+        let _destination = fields.next();
+        let _gateway = fields.next();
+        let Some(flags) = fields.next() else {
+            continue;
+        };
+
+        if iface == b"lo" {
+            continue;
+        }
+
+        let Ok(flags) = core::str::from_utf8(flags)
+            .ok()
+            .and_then(|field| u32::from_str_radix(field, 16).ok())
+            .ok_or(())
+        else {
+            continue;
+        };
+        if (flags & 0x1) != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Parse `/proc/net/if_inet6` content and report whether a non-loopback IPv6 address exists.
+#[must_use]
+pub fn parse_proc_net_if_inet6_has_ipv6(content: &[u8]) -> bool {
+    for line in content.split(|&b| b == b'\n') {
+        let mut fields = line
+            .split(|&b| b == b' ' || b == b'\t')
+            .filter(|field| !field.is_empty());
+        let Some(_addr) = fields.next() else {
+            continue;
+        };
+        let _ifindex = fields.next();
+        let _prefix_len = fields.next();
+        let _scope = fields.next();
+        let _flags = fields.next();
+        let Some(iface) = fields.next() else {
+            continue;
+        };
+        if iface != b"lo" {
+            return true;
+        }
+    }
+    false
+}
+
+/// Derive `AI_ADDRCONFIG` state from Linux procfs snapshots.
+#[must_use]
+pub fn addrconfig_state_from_procfs(route_content: &[u8], if_inet6_content: &[u8]) -> AddrConfigState {
+    AddrConfigState {
+        has_ipv4: parse_proc_net_route_has_ipv4(route_content),
+        has_ipv6: parse_proc_net_if_inet6_has_ipv6(if_inet6_content),
+    }
+}
+
+/// Retain only address families permitted by the current `AI_ADDRCONFIG` state.
+pub fn apply_addrconfig_filter(results: &mut Vec<AddrInfo>, state: AddrConfigState) {
+    results.retain(|info| state.supports_family(info.ai_family));
 }
 
 /// Resolves a hostname and/or service name to a list of addresses.
