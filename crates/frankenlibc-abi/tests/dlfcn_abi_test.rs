@@ -373,3 +373,68 @@ fn dlopen_empty_string_returns_null_or_main() {
         unsafe { dlclose(handle) };
     }
 }
+
+#[test]
+fn main_program_handle_sees_rtld_global_symbols() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    let main_handle = unsafe { dlopen(std::ptr::null(), libc::RTLD_NOW) };
+    assert!(!main_handle.is_null(), "dlopen(NULL) should succeed");
+
+    let candidates = [
+        ("libm.so.6", "cos"),
+        ("libutil.so.1", "forkpty"),
+        ("libuuid.so.1", "uuid_generate"),
+        ("libresolv.so.2", "res_ninit"),
+        ("libz.so.1", "inflate"),
+    ];
+
+    for (library, symbol) in candidates {
+        let lib_name = CString::new(library).unwrap();
+        let sym_name = CString::new(symbol).unwrap();
+
+        let before = unsafe { dlsym(main_handle, sym_name.as_ptr()) };
+        if !before.is_null() {
+            continue;
+        }
+
+        let local_handle = unsafe { dlopen(lib_name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        if local_handle.is_null() {
+            let _ = unsafe { dlerror() };
+            continue;
+        }
+
+        let local_sym = unsafe { dlsym(local_handle, sym_name.as_ptr()) };
+        let local_from_main = unsafe { dlsym(main_handle, sym_name.as_ptr()) };
+        unsafe { dlclose(local_handle) };
+        if local_sym.is_null() || !local_from_main.is_null() {
+            continue;
+        }
+
+        let global_handle =
+            unsafe { dlopen(lib_name.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
+        assert!(
+            !global_handle.is_null(),
+            "RTLD_GLOBAL load should succeed for candidate {library}"
+        );
+
+        let global_sym = unsafe { dlsym(global_handle, sym_name.as_ptr()) };
+        assert!(
+            !global_sym.is_null(),
+            "RTLD_GLOBAL handle should resolve {symbol} from {library}"
+        );
+
+        let promoted = unsafe { dlsym(main_handle, sym_name.as_ptr()) };
+        assert!(
+            !promoted.is_null(),
+            "main-program handle should see {symbol} after RTLD_GLOBAL load of {library}"
+        );
+
+        unsafe {
+            dlclose(global_handle);
+            dlclose(main_handle);
+        }
+        return;
+    }
+
+    unsafe { dlclose(main_handle) };
+}

@@ -149,6 +149,29 @@ unsafe fn host_dlvsym(
     Some(unsafe { host_dlvsym(handle, symbol, version) })
 }
 
+unsafe fn resolve_main_program_symbol(symbol: *const c_char, symbol_name: &[u8]) -> *mut c_void {
+    let native = resolve_exported_symbol(symbol_name);
+    if !native.is_null() {
+        return native;
+    }
+    unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol) }.unwrap_or(std::ptr::null_mut())
+}
+
+unsafe fn resolve_main_program_versioned_symbol(
+    symbol: *const c_char,
+    version: *const c_char,
+    symbol_name: &[u8],
+    version_name: &[u8],
+) -> *mut c_void {
+    if version_supported(version_name) {
+        let native = resolve_exported_symbol(symbol_name);
+        if !native.is_null() {
+            return native;
+        }
+    }
+    unsafe { host_dlvsym(libc::RTLD_DEFAULT, symbol, version) }.unwrap_or(std::ptr::null_mut())
+}
+
 fn open_main_program_handle() -> *mut c_void {
     MAIN_PROGRAM_REFS.fetch_add(1, Ordering::Relaxed);
     main_program_handle()
@@ -317,7 +340,7 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             return sym;
         }
         let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
-        let sym = resolve_exported_symbol(symbol_name);
+        let sym = unsafe { resolve_main_program_symbol(symbol, symbol_name) };
         if sym.is_null() {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
         } else {
@@ -395,8 +418,7 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
     }
 
     clear_dlerror();
-
-    let sym = resolve_exported_symbol(symbol_name);
+    let sym = unsafe { resolve_main_program_symbol(symbol, symbol_name) };
 
     let adverse = sym.is_null();
     if adverse {
@@ -437,17 +459,15 @@ pub unsafe extern "C" fn dlvsym(
         }
         let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
         let version_name = unsafe { CStr::from_ptr(version) }.to_bytes();
-        return if version_supported(version_name) {
-            let sym = resolve_exported_symbol(symbol_name);
-            if sym.is_null() {
-                set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
-            } else {
-                clear_dlerror();
-            }
-            sym
-        } else {
+        let sym = unsafe {
+            resolve_main_program_versioned_symbol(symbol, version, symbol_name, version_name)
+        };
+        return if sym.is_null() {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
             std::ptr::null_mut()
+        } else {
+            clear_dlerror();
+            sym
         };
     }
 
@@ -520,10 +540,8 @@ pub unsafe extern "C" fn dlvsym(
     }
 
     clear_dlerror();
-    let sym = if version_supported(version_name) {
-        resolve_exported_symbol(symbol_name)
-    } else {
-        std::ptr::null_mut()
+    let sym = unsafe {
+        resolve_main_program_versioned_symbol(symbol, version, symbol_name, version_name)
     };
     let adverse = sym.is_null();
     if adverse {
