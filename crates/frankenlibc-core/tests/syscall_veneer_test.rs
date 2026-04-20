@@ -298,18 +298,23 @@ mod x86_64_tests {
         assert_eq!(SYS_GET_MEMPOLICY, 239);
         assert_eq!(SYS_USERFAULTFD, 323);
         assert_eq!(SYS_TIMERFD_SETTIME, 286);
+        assert_eq!(SYS_CAPSET, 126);
         assert_eq!(SYS_SCHED_SETATTR, 314);
         assert_eq!(SYS_PIPE2, 293);
         assert_eq!(SYS_SET_TID_ADDRESS, 218);
         assert_eq!(UFFDIO_API, 0xc018aa3f);
         assert_eq!(UFFD_API, 0xAA);
         assert_eq!(UFFD_FEATURE_SIGBUS, 1 << 7);
+        assert_eq!(LINUX_CAPABILITY_VERSION_3, 0x2008_0522);
+        assert_eq!(LINUX_CAPABILITY_U32S_3, 2);
         assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
         assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
+        assert_eq!(core::mem::size_of::<CapUserHeader>(), 8);
+        assert_eq!(core::mem::size_of::<CapUserData>(), 12);
         assert_eq!(core::mem::size_of::<UffdApi>(), 24);
     }
 
@@ -345,6 +350,11 @@ mod x86_64_tests {
             sys_timerfd_settime_spec;
         let _: unsafe fn(i32, *mut u8) -> Result<(), i32> = sys_timerfd_gettime;
         let _: unsafe fn(i32, *mut ItimerSpec) -> Result<(), i32> = sys_timerfd_gettime_spec;
+        let _: unsafe fn(*mut u8, *mut u8) -> Result<(), i32> = sys_capget;
+        let _: unsafe fn(*mut CapUserHeader, *mut CapUserData) -> Result<(), i32> = sys_capget_data;
+        let _: unsafe fn(*const u8, *const u8) -> Result<(), i32> = sys_capset;
+        let _: unsafe fn(*const CapUserHeader, *const CapUserData) -> Result<(), i32> =
+            sys_capset_data;
         let _: fn(i32) -> Result<i32, i32> = sys_userfaultfd;
         let _: unsafe fn(i32, *mut UffdApi) -> Result<(), i32> = sys_userfaultfd_api;
         let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;
@@ -645,6 +655,40 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn capget_invalid_version_reports_preferred_v3() {
+        let mut header = CapUserHeader { version: 0, pid: 0 };
+        match unsafe { sys_capget_data(&mut header, core::ptr::null_mut()) } {
+            Ok(()) => {}
+            Err(EINVAL) => {}
+            Err(err) => panic!("expected capget probe success or EINVAL, got {err}"),
+        }
+        assert_eq!(header.version, LINUX_CAPABILITY_VERSION_3);
+    }
+
+    #[test]
+    fn capset_roundtrips_current_thread_capability_bitmap() {
+        let mut header = CapUserHeader {
+            version: LINUX_CAPABILITY_VERSION_3,
+            pid: 0,
+        };
+        let mut before = [CapUserData::default(); LINUX_CAPABILITY_U32S_3];
+        unsafe { sys_capget_data(&mut header, before.as_mut_ptr()) }.expect("capget before");
+        assert_eq!(header.version, LINUX_CAPABILITY_VERSION_3);
+
+        unsafe { sys_capset_data(&header, before.as_ptr()) }.expect("capset same bitmap");
+
+        let mut after_header = CapUserHeader {
+            version: LINUX_CAPABILITY_VERSION_3,
+            pid: 0,
+        };
+        let mut after = [CapUserData::default(); LINUX_CAPABILITY_U32S_3];
+        unsafe { sys_capget_data(&mut after_header, after.as_mut_ptr()) }.expect("capget after");
+
+        assert_eq!(after_header.version, LINUX_CAPABILITY_VERSION_3);
+        assert_eq!(after, before, "capability bitmap should remain unchanged");
+    }
+
+    #[test]
     fn sched_setattr_null_attr_faults_or_unavailable() {
         let err = unsafe { sys_sched_setattr(0, core::ptr::null(), 0) }
             .expect_err("sched_setattr(self, null, 0) must fail");
@@ -893,18 +937,23 @@ mod aarch64_tests {
         assert_eq!(SYS_GET_MEMPOLICY, 236);
         assert_eq!(SYS_USERFAULTFD, 282);
         assert_eq!(SYS_TIMERFD_SETTIME, 86);
+        assert_eq!(SYS_CAPSET, 91);
         assert_eq!(SYS_SCHED_SETATTR, 274);
         assert_eq!(SYS_PIPE2, 59);
         assert_eq!(SYS_SET_TID_ADDRESS, 96);
         assert_eq!(UFFDIO_API, 0xc018aa3f);
         assert_eq!(UFFD_API, 0xAA);
         assert_eq!(UFFD_FEATURE_SIGBUS, 1 << 7);
+        assert_eq!(LINUX_CAPABILITY_VERSION_3, 0x2008_0522);
+        assert_eq!(LINUX_CAPABILITY_U32S_3, 2);
         assert_eq!(TFD_NONBLOCK, 0o4000);
         assert_eq!(TFD_CLOEXEC, 0o2000000);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
         assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
+        assert_eq!(core::mem::size_of::<CapUserHeader>(), 8);
+        assert_eq!(core::mem::size_of::<CapUserData>(), 12);
         assert_eq!(core::mem::size_of::<UffdApi>(), 24);
     }
 
@@ -932,6 +981,11 @@ mod aarch64_tests {
             sys_timerfd_settime_spec;
         let _: unsafe fn(i32, *mut u8) -> Result<(), i32> = sys_timerfd_gettime;
         let _: unsafe fn(i32, *mut ItimerSpec) -> Result<(), i32> = sys_timerfd_gettime_spec;
+        let _: unsafe fn(*mut u8, *mut u8) -> Result<(), i32> = sys_capget;
+        let _: unsafe fn(*mut CapUserHeader, *mut CapUserData) -> Result<(), i32> = sys_capget_data;
+        let _: unsafe fn(*const u8, *const u8) -> Result<(), i32> = sys_capset;
+        let _: unsafe fn(*const CapUserHeader, *const CapUserData) -> Result<(), i32> =
+            sys_capset_data;
         let _: fn(i32) -> Result<i32, i32> = sys_userfaultfd;
         let _: unsafe fn(i32, *mut UffdApi) -> Result<(), i32> = sys_userfaultfd_api;
         let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;

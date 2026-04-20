@@ -90,6 +90,23 @@ pub struct ItimerSpec {
     pub it_value: Timespec,
 }
 
+/// Linux capability syscall header (`struct __user_cap_header_struct`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CapUserHeader {
+    pub version: u32,
+    pub pid: i32,
+}
+
+/// Linux capability syscall word triplet (`struct __user_cap_data_struct`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CapUserData {
+    pub effective: u32,
+    pub permitted: u32,
+    pub inheritable: u32,
+}
+
 /// Linux `uffdio_api` handshake block used by `userfaultfd(2)` setup.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -129,6 +146,10 @@ pub const UFFD_API: u64 = 0xAA;
 pub const UFFD_FEATURE_SIGBUS: u64 = 1 << 7;
 /// `UFFD_USER_MODE_ONLY` restricts registration to user-originated faults.
 pub const UFFD_USER_MODE_ONLY: i32 = 1;
+/// `_LINUX_CAPABILITY_VERSION_3` requests the modern 64-bit capability layout.
+pub const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+/// `_LINUX_CAPABILITY_U32S_3` reports two `u32` words per capability set.
+pub const LINUX_CAPABILITY_U32S_3: usize = 2;
 /// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.
 pub const TFD_NONBLOCK: i32 = 0o4000;
 /// `TFD_CLOEXEC` requests close-on-exec on the new timerfd descriptor.
@@ -5370,6 +5391,20 @@ pub unsafe fn sys_capget(hdrp: *mut u8, datap: *mut u8) -> Result<(), i32> {
     syscall_result(ret).map(|_| ())
 }
 
+/// `capget(hdrp, datap)` — typed Linux capability fetch helper.
+///
+/// # Safety
+///
+/// `hdrp` must be valid. `datap` may be null for version probing or point to writable capability words.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_capget_data(
+    hdrp: *mut CapUserHeader,
+    datap: *mut CapUserData,
+) -> Result<(), i32> {
+    unsafe { sys_capget(hdrp.cast::<u8>(), datap.cast::<u8>()) }
+}
+
 /// `capset(hdrp, datap)` — set capabilities of a process.
 ///
 /// # Safety
@@ -5380,6 +5415,20 @@ pub unsafe fn sys_capget(hdrp: *mut u8, datap: *mut u8) -> Result<(), i32> {
 pub unsafe fn sys_capset(hdrp: *const u8, datap: *const u8) -> Result<(), i32> {
     let ret = unsafe { raw::syscall2(SYS_CAPSET, hdrp as usize, datap as usize) };
     syscall_result(ret).map(|_| ())
+}
+
+/// `capset(hdrp, datap)` — typed Linux capability update helper.
+///
+/// # Safety
+///
+/// `hdrp` and `datap` must point to readable capability structures.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_capset_data(
+    hdrp: *const CapUserHeader,
+    datap: *const CapUserData,
+) -> Result<(), i32> {
+    unsafe { sys_capset(hdrp.cast::<u8>(), datap.cast::<u8>()) }
 }
 
 /// `membarrier(cmd, flags, cpu_id)` — issue memory barriers.
