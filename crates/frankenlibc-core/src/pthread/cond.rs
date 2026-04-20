@@ -1890,6 +1890,57 @@ mod tests {
     proptest! {
         #![proptest_config(property_proptest_config(256))]
 
+        /// Metamorphic: Wait and TimedWait always block when the condvar is
+        /// in an active state (Idle or Waiting), with errno=0.
+        ///
+        /// POSIX contract: pthread_cond_wait/timedwait release the mutex and
+        /// park the caller until signalled or (for timedwait) the deadline
+        /// expires; both cases report back through the return value, not
+        /// through a non-blocking outcome. From Uninitialized/Destroyed the
+        /// wait arms fail fast with EINVAL and do NOT block.
+        #[test]
+        fn prop_wait_blocks_from_active_states(
+            state in prop_oneof![
+                Just(CondvarContractState::Idle),
+                Just(CondvarContractState::Waiting),
+            ],
+            has_waiters in any::<bool>(),
+            op in prop_oneof![
+                Just(CondvarContractOp::Wait),
+                Just(CondvarContractOp::TimedWait),
+            ],
+        ) {
+            let outcome = condvar_contract_transition(state, op, has_waiters);
+            prop_assert!(
+                outcome.blocks,
+                "{:?} on active state {:?} must block",
+                op, state
+            );
+            prop_assert_eq!(outcome.errno, 0);
+            prop_assert_eq!(outcome.next, CondvarContractState::Waiting);
+        }
+
+        /// Metamorphic: Wait/TimedWait on Uninitialized or Destroyed states
+        /// fail fast with EINVAL without blocking — the waiter cannot be
+        /// allowed to park against unusable condvar memory.
+        #[test]
+        fn prop_wait_fast_fails_from_inactive_states(
+            state in prop_oneof![
+                Just(CondvarContractState::Uninitialized),
+                Just(CondvarContractState::Destroyed),
+            ],
+            has_waiters in any::<bool>(),
+            op in prop_oneof![
+                Just(CondvarContractOp::Wait),
+                Just(CondvarContractOp::TimedWait),
+            ],
+        ) {
+            let outcome = condvar_contract_transition(state, op, has_waiters);
+            prop_assert!(!outcome.blocks, "inactive state must not block");
+            prop_assert_eq!(outcome.errno, errno::EINVAL);
+            prop_assert_eq!(outcome.next, state, "inactive state must be preserved");
+        }
+
         /// Metamorphic: Signal and Broadcast must never block, for any
         /// (state, has_waiters) combination.
         ///
