@@ -547,6 +547,105 @@ options ndots:2 timeout:3 attempts:2 rotate
         },
     ];
 
+    // -----------------------------------------------------------------
+    // Smoke-fuzz proptests for ResolverConfig::parse (bd-s170, Archetype 1)
+    // -----------------------------------------------------------------
+    //
+    // ResolverConfig::parse is a full /etc/resolv.conf parser invoked
+    // during libc init. A panic on malformed input would crash every
+    // process that touches the resolver — this is the highest-value
+    // fuzz target in the resolver module.
+    //
+    // Oracle:
+    //   • Parser never panics on arbitrary bytes.
+    //   • Returned config respects documented clamps regardless of input:
+    //       - nameservers.len() ≤ MAX_NAMESERVERS
+    //       - search.len() ≤ MAX_SEARCH_DOMAINS
+    //       - ndots ≤ 15
+    //       - timeout ∈ [1, 30]
+    //       - attempts ∈ [1, 5]
+    mod smoke_fuzz {
+        use super::super::*;
+        use proptest::prelude::*;
+        use proptest::test_runner::Config as ProptestConfig;
+
+        fn fuzz_proptest_config(default_cases: u32) -> ProptestConfig {
+            let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|&v| v > 0)
+                .unwrap_or(default_cases);
+            ProptestConfig {
+                cases,
+                failure_persistence: None,
+                ..ProptestConfig::default()
+            }
+        }
+
+        proptest! {
+            #![proptest_config(fuzz_proptest_config(512))]
+
+            #[test]
+            fn fuzz_resolv_parse_never_panics(
+                bytes in proptest::collection::vec(any::<u8>(), 0..4096),
+            ) {
+                let _ = ResolverConfig::parse(&bytes);
+            }
+
+            /// Clamps must hold no matter what the input says. A
+            /// regression that forgot to clamp (e.g., propagated
+            /// `options ndots:999` directly) would be caught here.
+            #[test]
+            fn fuzz_resolv_parse_clamps_hold_for_arbitrary_bytes(
+                bytes in proptest::collection::vec(any::<u8>(), 0..4096),
+            ) {
+                let config = ResolverConfig::parse(&bytes);
+                prop_assert!(config.nameservers.len() <= MAX_NAMESERVERS);
+                prop_assert!(config.search.len() <= MAX_SEARCH_DOMAINS);
+                prop_assert!(config.ndots <= 15);
+                prop_assert!(config.timeout >= 1 && config.timeout <= 30);
+                prop_assert!(config.attempts >= 1 && config.attempts <= 5);
+            }
+
+            /// Biased strategy: directives spliced together with random
+            /// whitespace, newlines, and comments. This reaches the
+            /// actual directive handlers rather than the early-reject
+            /// "line doesn't start with a known keyword" path.
+            #[test]
+            fn fuzz_resolv_parse_directive_salad_never_panics(
+                directives in proptest::collection::vec(
+                    prop_oneof![
+                        Just(&b"nameserver 1.2.3.4\n"[..]),
+                        Just(&b"nameserver ::1\n"[..]),
+                        Just(&b"options ndots:4\n"[..]),
+                        Just(&b"options timeout:2\n"[..]),
+                        Just(&b"options attempts:3\n"[..]),
+                        Just(&b"options rotate\n"[..]),
+                        Just(&b"options use-vc\n"[..]),
+                        Just(&b"search example.com\n"[..]),
+                        Just(&b"domain local\n"[..]),
+                        Just(&b"# comment\n"[..]),
+                        Just(&b"; comment\n"[..]),
+                        Just(&b"\n"[..]),
+                        Just(&b"options ndots:999\n"[..]),
+                        Just(&b"options timeout:0\n"[..]),
+                        Just(&b"options attempts:99\n"[..]),
+                        Just(&b"nameserver 999.999.999.999\n"[..]),
+                        Just(&b"garbage line with many words\n"[..]),
+                    ],
+                    0..32,
+                ),
+            ) {
+                let bytes: Vec<u8> = directives.into_iter().flatten().copied().collect();
+                let config = ResolverConfig::parse(&bytes);
+                prop_assert!(config.nameservers.len() <= MAX_NAMESERVERS);
+                prop_assert!(config.ndots <= 15);
+                prop_assert!(config.timeout >= 1 && config.timeout <= 30);
+                prop_assert!(config.attempts >= 1 && config.attempts <= 5);
+            }
+        }
+    }
+
     #[test]
     fn resolv_conf_conformance_table() {
         let mut fails = Vec::new();
