@@ -251,10 +251,14 @@ pub const SFD_CLOEXEC: i32 = 0o2000000;
 pub const IN_NONBLOCK: i32 = 0o4000;
 /// `IN_CLOEXEC` requests close-on-exec on the new inotify descriptor.
 pub const IN_CLOEXEC: i32 = 0o2000000;
+/// `AF_UNIX` selects local Unix-domain sockets.
+pub const AF_UNIX: i32 = 1;
 /// `SOCK_NONBLOCK` requests nonblocking socket descriptor semantics.
 pub const SOCK_NONBLOCK: i32 = 0o4000;
 /// `SOCK_CLOEXEC` requests close-on-exec on newly created or accepted sockets.
 pub const SOCK_CLOEXEC: i32 = 0o2000000;
+/// `SOCK_SEQPACKET` selects sequenced, packet-preserving socket semantics.
+pub const SOCK_SEQPACKET: i32 = 5;
 /// `SIGEV_THREAD_ID` requests timer signal delivery to a specific thread ID.
 pub const SIGEV_THREAD_ID: i32 = 4;
 /// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.

@@ -316,6 +316,8 @@ mod x86_64_tests {
         assert_eq!(SYS_SOCKET, 41);
         assert_eq!(SYS_CONNECT, 42);
         assert_eq!(SYS_ACCEPT, 43);
+        assert_eq!(SYS_SENDTO, 44);
+        assert_eq!(SYS_RECVFROM, 45);
         assert_eq!(SYS_FUTEX, 202);
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
@@ -326,6 +328,7 @@ mod x86_64_tests {
         assert_eq!(SYS_LISTEN, 50);
         assert_eq!(SYS_GETSOCKNAME, 51);
         assert_eq!(SYS_GETPEERNAME, 52);
+        assert_eq!(SYS_SOCKETPAIR, 53);
         assert_eq!(SYS_ACCEPT4, 288);
         assert_eq!(SYS_SIGNALFD4, 289);
         assert_eq!(SYS_INOTIFY_INIT1, 294);
@@ -345,8 +348,10 @@ mod x86_64_tests {
         assert_eq!(SFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(IN_NONBLOCK, O_NONBLOCK);
         assert_eq!(IN_CLOEXEC, O_CLOEXEC);
+        assert_eq!(AF_UNIX, 1);
         assert_eq!(SOCK_NONBLOCK, O_NONBLOCK);
         assert_eq!(SOCK_CLOEXEC, O_CLOEXEC);
+        assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
@@ -385,6 +390,11 @@ mod x86_64_tests {
         let _: unsafe fn(i32, *const u8, u32) -> Result<(), i32> = sys_connect;
         let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<(), i32> = sys_getsockname;
         let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<(), i32> = sys_getpeername;
+        let _: unsafe fn(i32, i32, i32, *mut i32) -> Result<(), i32> = sys_socketpair;
+        let _: unsafe fn(i32, *const u8, usize, i32, *const u8, usize) -> Result<isize, i32> =
+            sys_sendto;
+        let _: unsafe fn(i32, *mut u8, usize, i32, *mut u8, *mut u32) -> Result<isize, i32> =
+            sys_recvfrom;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
@@ -889,6 +899,76 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn socketpair_seqpacket_preserves_flags_and_allows_null_sendto_destination() {
+        struct FdGuard(i32);
+
+        impl Drop for FdGuard {
+            fn drop(&mut self) {
+                if self.0 >= 0 {
+                    let _ = sys_close(self.0);
+                }
+            }
+        }
+
+        let mut sv = [-1i32; 2];
+        unsafe {
+            sys_socketpair(
+                AF_UNIX,
+                SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC,
+                0,
+                sv.as_mut_ptr(),
+            )
+        }
+        .expect("socketpair(AF_UNIX, SOCK_SEQPACKET | flags)");
+
+        let left = FdGuard(sv[0]);
+        let right = FdGuard(sv[1]);
+        for fd in [left.0, right.0] {
+            let fd_flags = unsafe { sys_fcntl(fd, F_GETFD, 0) }.expect("fcntl(F_GETFD)");
+            let status_flags = unsafe { sys_fcntl(fd, F_GETFL, 0) }.expect("fcntl(F_GETFL)");
+            assert_ne!(
+                fd_flags & FD_CLOEXEC,
+                0,
+                "socketpair should set close-on-exec"
+            );
+            assert_ne!(
+                status_flags & O_NONBLOCK,
+                0,
+                "socketpair should set nonblocking mode"
+            );
+        }
+
+        let payload = b"seqpacket";
+        let sent = unsafe {
+            sys_sendto(
+                left.0,
+                payload.as_ptr(),
+                payload.len(),
+                0,
+                core::ptr::null(),
+                0,
+            )
+        }
+        .expect("sendto on connected socketpair");
+        assert_eq!(sent as usize, payload.len());
+
+        let mut buf = [0u8; 32];
+        let received = unsafe {
+            sys_recvfrom(
+                right.0,
+                buf.as_mut_ptr(),
+                buf.len(),
+                0,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        }
+        .expect("recvfrom on socketpair");
+        assert_eq!(received as usize, payload.len());
+        assert_eq!(&buf[..received as usize], payload);
+    }
+
+    #[test]
     fn signalfd4_nonblock_and_cloexec_flags_deliver_signal() {
         struct SignalMaskGuard {
             old_mask: u64,
@@ -1367,6 +1447,8 @@ mod aarch64_tests {
         assert_eq!(SYS_SOCKET, 198);
         assert_eq!(SYS_CONNECT, 203);
         assert_eq!(SYS_ACCEPT, 202);
+        assert_eq!(SYS_SENDTO, 206);
+        assert_eq!(SYS_RECVFROM, 207);
         assert_eq!(SYS_FUTEX, 98);
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
@@ -1377,6 +1459,7 @@ mod aarch64_tests {
         assert_eq!(SYS_LISTEN, 201);
         assert_eq!(SYS_GETSOCKNAME, 204);
         assert_eq!(SYS_GETPEERNAME, 205);
+        assert_eq!(SYS_SOCKETPAIR, 199);
         assert_eq!(SYS_ACCEPT4, 242);
         assert_eq!(SYS_SIGNALFD4, 74);
         assert_eq!(SYS_INOTIFY_INIT1, 26);
@@ -1396,8 +1479,10 @@ mod aarch64_tests {
         assert_eq!(SFD_CLOEXEC, 0o2000000);
         assert_eq!(IN_NONBLOCK, O_NONBLOCK);
         assert_eq!(IN_CLOEXEC, O_CLOEXEC);
+        assert_eq!(AF_UNIX, 1);
         assert_eq!(SOCK_NONBLOCK, O_NONBLOCK);
         assert_eq!(SOCK_CLOEXEC, O_CLOEXEC);
+        assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, 0o4000);
         assert_eq!(TFD_CLOEXEC, 0o2000000);
@@ -1428,6 +1513,11 @@ mod aarch64_tests {
         let _: unsafe fn(i32, *const u8, u32) -> Result<(), i32> = sys_connect;
         let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<(), i32> = sys_getsockname;
         let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<(), i32> = sys_getpeername;
+        let _: unsafe fn(i32, i32, i32, *mut i32) -> Result<(), i32> = sys_socketpair;
+        let _: unsafe fn(i32, *const u8, usize, i32, *const u8, usize) -> Result<isize, i32> =
+            sys_sendto;
+        let _: unsafe fn(i32, *mut u8, usize, i32, *mut u8, *mut u32) -> Result<isize, i32> =
+            sys_recvfrom;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
