@@ -3443,6 +3443,24 @@ pub unsafe fn sys_timerfd_gettime_spec(fd: i32, curr_value: *mut ItimerSpec) -> 
     unsafe { sys_timerfd_gettime(fd, curr_value.cast::<u8>()) }
 }
 
+/// `read(timerfd, &mut expirations, 8)` — typed timerfd expiration-count helper.
+///
+/// Returns the number of expirations coalesced since the last read.
+#[inline]
+#[allow(unsafe_code)]
+pub fn sys_timerfd_read_expirations(fd: i32) -> Result<u64, i32> {
+    let mut expirations = 0u64;
+    let read = unsafe {
+        sys_read(
+            fd,
+            (&mut expirations as *mut u64).cast::<u8>(),
+            core::mem::size_of::<u64>(),
+        )
+    }?;
+    debug_assert_eq!(read, core::mem::size_of::<u64>());
+    Ok(expirations)
+}
+
 /// `prctl(option, arg2, arg3, arg4, arg5)` — operations on a process.
 #[inline]
 #[allow(unsafe_code)]

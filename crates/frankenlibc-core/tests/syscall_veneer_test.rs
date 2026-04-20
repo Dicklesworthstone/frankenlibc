@@ -45,6 +45,7 @@ mod x86_64_tests {
     const SEEK_END: i32 = 2;
 
     const EBADF: i32 = 9;
+    const EAGAIN: i32 = 11;
     const EFAULT: i32 = 14;
     const EINVAL: i32 = 22;
     const EACCES: i32 = 13;
@@ -429,6 +430,7 @@ mod x86_64_tests {
             sys_timerfd_settime_spec;
         let _: unsafe fn(i32, *mut u8) -> Result<(), i32> = sys_timerfd_gettime;
         let _: unsafe fn(i32, *mut ItimerSpec) -> Result<(), i32> = sys_timerfd_gettime_spec;
+        let _: fn(i32) -> Result<u64, i32> = sys_timerfd_read_expirations;
         let _: unsafe fn(*mut u8, *mut u8) -> Result<(), i32> = sys_capget;
         let _: unsafe fn(*mut CapUserHeader, *mut CapUserData) -> Result<(), i32> = sys_capget_data;
         let _: unsafe fn(*const u8, *const u8) -> Result<(), i32> = sys_capset;
@@ -1235,21 +1237,22 @@ mod x86_64_tests {
         unsafe { sys_timerfd_gettime_spec(fd, &mut current) }.expect("timerfd_gettime");
         assert_eq!(current.it_interval, Timespec::default());
 
-        let mut expirations = 0u64;
-        let read = unsafe {
-            sys_read(
-                fd,
-                (&mut expirations as *mut u64).cast::<u8>(),
-                core::mem::size_of::<u64>(),
-            )
-        }
-        .expect("timerfd read");
-        assert_eq!(read, core::mem::size_of::<u64>());
+        let expirations = sys_timerfd_read_expirations(fd).expect("timerfd read");
         assert_eq!(
             expirations, 1,
             "one-shot timer should report exactly one expiration"
         );
 
+        sys_close(fd).expect("close timerfd");
+    }
+
+    #[test]
+    fn timerfd_read_expirations_nonblocking_requires_ready_timer() {
+        let fd = sys_timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)
+            .expect("timerfd_create");
+        let err = sys_timerfd_read_expirations(fd)
+            .expect_err("nonblocking timerfd read should fail before expiration");
+        assert_eq!(err, EAGAIN);
         sys_close(fd).expect("close timerfd");
     }
 
@@ -1653,6 +1656,7 @@ mod aarch64_tests {
             sys_timerfd_settime_spec;
         let _: unsafe fn(i32, *mut u8) -> Result<(), i32> = sys_timerfd_gettime;
         let _: unsafe fn(i32, *mut ItimerSpec) -> Result<(), i32> = sys_timerfd_gettime_spec;
+        let _: fn(i32) -> Result<u64, i32> = sys_timerfd_read_expirations;
         let _: unsafe fn(*mut u8, *mut u8) -> Result<(), i32> = sys_capget;
         let _: unsafe fn(*mut CapUserHeader, *mut CapUserData) -> Result<(), i32> = sys_capget_data;
         let _: unsafe fn(*const u8, *const u8) -> Result<(), i32> = sys_capset;
