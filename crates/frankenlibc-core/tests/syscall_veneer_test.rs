@@ -24,6 +24,8 @@ mod x86_64_tests {
     const O_EXCL: i32 = 0o200;
     const O_NONBLOCK: i32 = 0o4000;
     const O_CLOEXEC: i32 = 0o2000000;
+    const AF_INET: i32 = 2;
+    const SOCK_STREAM: i32 = 1;
     const AT_FDCWD: i32 = -100;
     const AT_EACCESS: i32 = 0x200;
     const CLOCK_MONOTONIC: i32 = 1;
@@ -53,6 +55,15 @@ mod x86_64_tests {
     const MPOL_F_NODE: u32 = 1;
     const MPOL_F_ADDR: u32 = 1 << 1;
     const SCHED_DEADLINE: u32 = 6;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default)]
+    struct SockAddrIn {
+        sin_family: u16,
+        sin_port: u16,
+        sin_addr: u32,
+        sin_zero: [u8; 8],
+    }
 
     // -----------------------------------------------------------------
     // 1. getpid correctness
@@ -302,12 +313,20 @@ mod x86_64_tests {
         assert_eq!(SYS_CLONE3, 435);
         assert_eq!(SYS_EXIT_GROUP, 231);
         assert_eq!(SYS_OPENAT, 257);
+        assert_eq!(SYS_SOCKET, 41);
+        assert_eq!(SYS_CONNECT, 42);
+        assert_eq!(SYS_ACCEPT, 43);
         assert_eq!(SYS_FUTEX, 202);
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 238);
         assert_eq!(SYS_GET_MEMPOLICY, 239);
         assert_eq!(SYS_SCHED_GETAFFINITY, 204);
+        assert_eq!(SYS_BIND, 49);
+        assert_eq!(SYS_LISTEN, 50);
+        assert_eq!(SYS_GETSOCKNAME, 51);
+        assert_eq!(SYS_GETPEERNAME, 52);
+        assert_eq!(SYS_ACCEPT4, 288);
         assert_eq!(SYS_SIGNALFD4, 289);
         assert_eq!(SYS_INOTIFY_INIT1, 294);
         assert_eq!(SYS_USERFAULTFD, 323);
@@ -326,6 +345,8 @@ mod x86_64_tests {
         assert_eq!(SFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(IN_NONBLOCK, O_NONBLOCK);
         assert_eq!(IN_CLOEXEC, O_CLOEXEC);
+        assert_eq!(SOCK_NONBLOCK, O_NONBLOCK);
+        assert_eq!(SOCK_CLOEXEC, O_CLOEXEC);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
@@ -356,6 +377,14 @@ mod x86_64_tests {
         let _: unsafe fn(i32, *mut u8, usize) -> Result<usize, i32> = sys_read;
         let _: unsafe fn(i32, *const u8, usize) -> Result<usize, i32> = sys_write;
         let _: unsafe fn(i32, *const u8, i32, u32) -> Result<i32, i32> = sys_openat;
+        let _: fn(i32, i32, i32) -> Result<i32, i32> = sys_socket;
+        let _: unsafe fn(i32, *const u8, u32) -> Result<(), i32> = sys_bind;
+        let _: fn(i32, i32) -> Result<(), i32> = sys_listen;
+        let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<i32, i32> = sys_accept;
+        let _: unsafe fn(i32, *mut u8, *mut u32, i32) -> Result<i32, i32> = sys_accept4;
+        let _: unsafe fn(i32, *const u8, u32) -> Result<(), i32> = sys_connect;
+        let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<(), i32> = sys_getsockname;
+        let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<(), i32> = sys_getpeername;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
@@ -744,6 +773,119 @@ mod x86_64_tests {
         assert_eq!(info.ssi_signo, SIGUSR1 as u32);
         assert_eq!(info.ssi_tid, timerid as u32);
         assert_eq!(info.ssi_code, -2, "timer signal should report SI_TIMER");
+    }
+
+    #[test]
+    fn accept4_sets_requested_fd_flags_while_accept_does_not() {
+        struct FdGuard(i32);
+
+        impl Drop for FdGuard {
+            fn drop(&mut self) {
+                if self.0 >= 0 {
+                    let _ = sys_close(self.0);
+                }
+            }
+        }
+
+        fn loopback_addr(port: u16) -> SockAddrIn {
+            SockAddrIn {
+                sin_family: AF_INET as u16,
+                sin_port: port.to_be(),
+                sin_addr: u32::from_ne_bytes([127, 0, 0, 1]),
+                sin_zero: [0; 8],
+            }
+        }
+
+        fn connect_client(port: u16) -> FdGuard {
+            let fd = sys_socket(AF_INET, SOCK_STREAM, 0).expect("socket client");
+            let addr = loopback_addr(port);
+            unsafe {
+                sys_connect(
+                    fd,
+                    (&addr as *const SockAddrIn).cast::<u8>(),
+                    core::mem::size_of::<SockAddrIn>() as u32,
+                )
+            }
+            .expect("connect client");
+            FdGuard(fd)
+        }
+
+        let listener = sys_socket(AF_INET, SOCK_STREAM, 0).expect("socket listener");
+        let listener = FdGuard(listener);
+        let bind_addr = loopback_addr(0);
+        unsafe {
+            sys_bind(
+                listener.0,
+                (&bind_addr as *const SockAddrIn).cast::<u8>(),
+                core::mem::size_of::<SockAddrIn>() as u32,
+            )
+        }
+        .expect("bind listener");
+        sys_listen(listener.0, 2).expect("listen");
+
+        let mut listen_addr = SockAddrIn::default();
+        let mut listen_len = core::mem::size_of::<SockAddrIn>() as u32;
+        unsafe {
+            sys_getsockname(
+                listener.0,
+                (&mut listen_addr as *mut SockAddrIn).cast::<u8>(),
+                &mut listen_len,
+            )
+        }
+        .expect("getsockname listener");
+        assert_eq!(listen_len as usize, core::mem::size_of::<SockAddrIn>());
+        let port = u16::from_be(listen_addr.sin_port);
+        assert_ne!(port, 0, "listener should get an ephemeral port");
+
+        let client_plain = connect_client(port);
+        let accepted_plain =
+            unsafe { sys_accept(listener.0, core::ptr::null_mut(), core::ptr::null_mut()) }
+                .expect("accept plain");
+        let accepted_plain = FdGuard(accepted_plain);
+        let plain_fd_flags =
+            unsafe { sys_fcntl(accepted_plain.0, F_GETFD, 0) }.expect("fcntl plain F_GETFD");
+        let plain_status =
+            unsafe { sys_fcntl(accepted_plain.0, F_GETFL, 0) }.expect("fcntl plain F_GETFL");
+        assert_eq!(
+            plain_fd_flags & FD_CLOEXEC,
+            0,
+            "accept should not set close-on-exec"
+        );
+        assert_eq!(
+            plain_status & O_NONBLOCK,
+            0,
+            "accept should not set nonblocking mode"
+        );
+        drop(accepted_plain);
+        drop(client_plain);
+
+        let client_flagged = connect_client(port);
+        let accepted_flagged = unsafe {
+            sys_accept4(
+                listener.0,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                SOCK_CLOEXEC | SOCK_NONBLOCK,
+            )
+        }
+        .expect("accept4 flagged");
+        let accepted_flagged = FdGuard(accepted_flagged);
+        let flagged_fd_flags =
+            unsafe { sys_fcntl(accepted_flagged.0, F_GETFD, 0) }.expect("fcntl flagged F_GETFD");
+        let flagged_status =
+            unsafe { sys_fcntl(accepted_flagged.0, F_GETFL, 0) }.expect("fcntl flagged F_GETFL");
+        assert_ne!(
+            flagged_fd_flags & FD_CLOEXEC,
+            0,
+            "accept4 should apply close-on-exec"
+        );
+        assert_ne!(
+            flagged_status & O_NONBLOCK,
+            0,
+            "accept4 should apply nonblocking mode"
+        );
+        drop(accepted_flagged);
+        drop(client_flagged);
     }
 
     #[test]
@@ -1222,12 +1364,20 @@ mod aarch64_tests {
         assert_eq!(SYS_CLONE, 220);
         assert_eq!(SYS_CLONE3, 435);
         assert_eq!(SYS_EXIT_GROUP, 94);
+        assert_eq!(SYS_SOCKET, 198);
+        assert_eq!(SYS_CONNECT, 203);
+        assert_eq!(SYS_ACCEPT, 202);
         assert_eq!(SYS_FUTEX, 98);
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 237);
         assert_eq!(SYS_GET_MEMPOLICY, 236);
         assert_eq!(SYS_SCHED_GETAFFINITY, 123);
+        assert_eq!(SYS_BIND, 200);
+        assert_eq!(SYS_LISTEN, 201);
+        assert_eq!(SYS_GETSOCKNAME, 204);
+        assert_eq!(SYS_GETPEERNAME, 205);
+        assert_eq!(SYS_ACCEPT4, 242);
         assert_eq!(SYS_SIGNALFD4, 74);
         assert_eq!(SYS_INOTIFY_INIT1, 26);
         assert_eq!(SYS_USERFAULTFD, 282);
@@ -1246,6 +1396,8 @@ mod aarch64_tests {
         assert_eq!(SFD_CLOEXEC, 0o2000000);
         assert_eq!(IN_NONBLOCK, O_NONBLOCK);
         assert_eq!(IN_CLOEXEC, O_CLOEXEC);
+        assert_eq!(SOCK_NONBLOCK, O_NONBLOCK);
+        assert_eq!(SOCK_CLOEXEC, O_CLOEXEC);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, 0o4000);
         assert_eq!(TFD_CLOEXEC, 0o2000000);
@@ -1268,6 +1420,14 @@ mod aarch64_tests {
         let _: unsafe fn(i32, *mut u8, usize) -> Result<usize, i32> = sys_read;
         let _: unsafe fn(i32, *const u8, usize) -> Result<usize, i32> = sys_write;
         let _: unsafe fn(i32, *const u8, i32, u32) -> Result<i32, i32> = sys_openat;
+        let _: fn(i32, i32, i32) -> Result<i32, i32> = sys_socket;
+        let _: unsafe fn(i32, *const u8, u32) -> Result<(), i32> = sys_bind;
+        let _: fn(i32, i32) -> Result<(), i32> = sys_listen;
+        let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<i32, i32> = sys_accept;
+        let _: unsafe fn(i32, *mut u8, *mut u32, i32) -> Result<i32, i32> = sys_accept4;
+        let _: unsafe fn(i32, *const u8, u32) -> Result<(), i32> = sys_connect;
+        let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<(), i32> = sys_getsockname;
+        let _: unsafe fn(i32, *mut u8, *mut u32) -> Result<(), i32> = sys_getpeername;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
