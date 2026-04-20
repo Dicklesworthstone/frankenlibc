@@ -48,6 +48,16 @@ pub struct CloneArgs {
     pub cgroup: u64,
 }
 
+/// Linux `futex_waitv` waiter entry (`struct futex_waitv`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FutexWaitV {
+    pub val: u64,
+    pub uaddr: u64,
+    pub flags: u32,
+    pub reserved: u32,
+}
+
 // -------------------------------------------------------------------------
 // Syscall number constants (Linux)
 // -------------------------------------------------------------------------
@@ -1322,12 +1332,16 @@ pub const SYS_FUTIMESAT: usize = 261;
 pub const SYS_INIT_MODULE: usize = 175;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_DELETE_MODULE: usize = 176;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FUTEX_WAITV: usize = 449;
 
 // Kernel module syscalls - aarch64
 #[cfg(target_arch = "aarch64")]
 pub const SYS_INIT_MODULE: usize = 105;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_DELETE_MODULE: usize = 106;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FUTEX_WAITV: usize = 449;
 
 // Process credentials - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -1569,6 +1583,34 @@ pub unsafe fn sys_futex(
         )
     };
     syscall_result(ret).map(|v| v as isize)
+}
+
+/// `futex_waitv(waiters, nr_futexes, flags, timeout, clockid)` — wait on multiple futexes.
+///
+/// # Safety
+///
+/// `waiters` must be null or point to an array of `nr_futexes` valid `FutexWaitV`
+/// entries. `timeout` may be null or a valid timespec pointer.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_futex_waitv(
+    waiters: *const FutexWaitV,
+    nr_futexes: u32,
+    flags: u32,
+    timeout: *const u8,
+    clockid: i32,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_FUTEX_WAITV,
+            waiters as usize,
+            nr_futexes as usize,
+            flags as usize,
+            timeout as usize,
+            clockid as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
 }
 
 /// `exit_group(status)` — terminate all threads in the process.
