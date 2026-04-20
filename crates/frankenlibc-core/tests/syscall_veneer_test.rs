@@ -237,6 +237,72 @@ mod x86_64_tests {
         unsafe { sys_unlinkat(AT_FDCWD, path.as_ptr(), 0) }.expect("unlink EOF temp file");
     }
 
+    #[test]
+    fn renameat2_exchange_swaps_file_contents() {
+        let base = format!(
+            "/tmp/frankenlibc_rename_exchange_{}_{}",
+            sys_getpid(),
+            sys_gettid()
+        );
+        let left = format!("{base}_left\0").into_bytes();
+        let right = format!("{base}_right\0").into_bytes();
+
+        let left_fd = unsafe {
+            sys_openat(
+                AT_FDCWD,
+                left.as_ptr(),
+                O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+                0o600,
+            )
+        }
+        .expect("open left temp file");
+        let right_fd = unsafe {
+            sys_openat(
+                AT_FDCWD,
+                right.as_ptr(),
+                O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+                0o600,
+            )
+        }
+        .expect("open right temp file");
+
+        unsafe { sys_write(left_fd, b"left".as_ptr(), 4) }.expect("write left payload");
+        unsafe { sys_write(right_fd, b"right".as_ptr(), 5) }.expect("write right payload");
+        sys_close(left_fd).expect("close left seed fd");
+        sys_close(right_fd).expect("close right seed fd");
+
+        unsafe {
+            sys_renameat2(
+                AT_FDCWD,
+                left.as_ptr(),
+                AT_FDCWD,
+                right.as_ptr(),
+                frankenlibc_core::syscall::RENAME_EXCHANGE,
+            )
+        }
+        .expect("renameat2(RENAME_EXCHANGE)");
+
+        let left_fd = unsafe { sys_openat(AT_FDCWD, left.as_ptr(), O_RDWR | O_CLOEXEC, 0) }
+            .expect("reopen left path");
+        let right_fd = unsafe { sys_openat(AT_FDCWD, right.as_ptr(), O_RDWR | O_CLOEXEC, 0) }
+            .expect("reopen right path");
+
+        let mut left_buf = [0u8; 8];
+        let left_len =
+            unsafe { sys_read(left_fd, left_buf.as_mut_ptr(), left_buf.len()) }.expect("read left");
+        let mut right_buf = [0u8; 8];
+        let right_len = unsafe { sys_read(right_fd, right_buf.as_mut_ptr(), right_buf.len()) }
+            .expect("read right");
+
+        assert_eq!(&left_buf[..left_len], b"right");
+        assert_eq!(&right_buf[..right_len], b"left");
+
+        sys_close(left_fd).expect("close left fd");
+        sys_close(right_fd).expect("close right fd");
+        unsafe { sys_unlinkat(AT_FDCWD, left.as_ptr(), 0) }.expect("unlink left path");
+        unsafe { sys_unlinkat(AT_FDCWD, right.as_ptr(), 0) }.expect("unlink right path");
+    }
+
     // -----------------------------------------------------------------
     // 4. mmap + write + read + mprotect + munmap
     // -----------------------------------------------------------------
@@ -424,6 +490,7 @@ mod x86_64_tests {
         assert_eq!(SYS_USERFAULTFD, 323);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 230);
         assert_eq!(SYS_READLINKAT, 267);
+        assert_eq!(SYS_RENAMEAT2, 316);
         assert_eq!(SYS_WAITID, 247);
         assert_eq!(SYS_TIMERFD_SETTIME, 286);
         assert_eq!(SYS_CAPSET, 126);
@@ -446,6 +513,7 @@ mod x86_64_tests {
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
         assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
+        assert_eq!(frankenlibc_core::syscall::RENAME_EXCHANGE, 2);
         assert_eq!(frankenlibc_core::syscall::SEEK_DATA, 3);
         assert_eq!(frankenlibc_core::syscall::SEEK_HOLE, 4);
         assert_eq!(P_PID, 1);
@@ -500,6 +568,8 @@ mod x86_64_tests {
             sys_clock_nanosleep_spec;
         let _: unsafe fn(*const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlink;
         let _: unsafe fn(i32, *const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlinkat;
+        let _: unsafe fn(i32, *const u8, i32, u32) -> Result<i32, i32> = sys_openat;
+        let _: unsafe fn(i32, *const u8, i32, *const u8, u32) -> Result<(), i32> = sys_renameat2;
         let _: unsafe fn(i32, u32, *mut u8, i32, *mut u8) -> Result<(), i32> = sys_waitid;
         let _: unsafe fn(i32, u32, &mut WaitSigInfo, i32) -> Result<(), i32> = sys_waitid_info;
         let _: fn(i32) -> Result<(), i32> = sys_close;
@@ -1733,6 +1803,7 @@ mod aarch64_tests {
         assert_eq!(SYS_USERFAULTFD, 282);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 115);
         assert_eq!(SYS_READLINKAT, 78);
+        assert_eq!(SYS_RENAMEAT2, 276);
         assert_eq!(SYS_WAITID, 95);
         assert_eq!(SYS_TIMERFD_SETTIME, 86);
         assert_eq!(SYS_CAPSET, 91);
@@ -1755,6 +1826,7 @@ mod aarch64_tests {
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
         assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
+        assert_eq!(frankenlibc_core::syscall::RENAME_EXCHANGE, 2);
         assert_eq!(frankenlibc_core::syscall::SEEK_DATA, 3);
         assert_eq!(frankenlibc_core::syscall::SEEK_HOLE, 4);
         assert_eq!(P_PID, 1);
@@ -1801,6 +1873,7 @@ mod aarch64_tests {
             sys_clock_nanosleep_spec;
         let _: unsafe fn(*const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlink;
         let _: unsafe fn(i32, *const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlinkat;
+        let _: unsafe fn(i32, *const u8, i32, *const u8, u32) -> Result<(), i32> = sys_renameat2;
         let _: unsafe fn(i32, u32, *mut u8, i32, *mut u8) -> Result<(), i32> = sys_waitid;
         let _: unsafe fn(i32, u32, &mut WaitSigInfo, i32) -> Result<(), i32> = sys_waitid_info;
         let _: fn(i32) -> Result<(), i32> = sys_close;
