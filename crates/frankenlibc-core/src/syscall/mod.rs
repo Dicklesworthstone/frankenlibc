@@ -48,6 +48,52 @@ pub struct CloneArgs {
     pub cgroup: u64,
 }
 
+/// Linux `io_sqring_offsets` block nested inside `struct io_uring_params`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IoUringSqringOffsets {
+    pub head: u32,
+    pub tail: u32,
+    pub ring_mask: u32,
+    pub ring_entries: u32,
+    pub flags: u32,
+    pub dropped: u32,
+    pub array: u32,
+    pub resv1: u32,
+    pub resv2: u64,
+}
+
+/// Linux `io_cqring_offsets` block nested inside `struct io_uring_params`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IoUringCqringOffsets {
+    pub head: u32,
+    pub tail: u32,
+    pub ring_mask: u32,
+    pub ring_entries: u32,
+    pub overflow: u32,
+    pub cqes: u32,
+    pub flags: u32,
+    pub resv1: u32,
+    pub resv2: u64,
+}
+
+/// Linux `io_uring_params` block used by `io_uring_setup(2)`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IoUringParams {
+    pub sq_entries: u32,
+    pub cq_entries: u32,
+    pub flags: u32,
+    pub sq_thread_cpu: u32,
+    pub sq_thread_idle: u32,
+    pub features: u32,
+    pub wq_fd: u32,
+    pub resv: [u32; 3],
+    pub sq_off: IoUringSqringOffsets,
+    pub cq_off: IoUringCqringOffsets,
+}
+
 /// Linux `futex_waitv` waiter entry (`struct futex_waitv`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -351,6 +397,8 @@ pub const TIMER_ABSTIME: i32 = 1 << 0;
 pub const TFD_TIMER_ABSTIME: i32 = 1 << 0;
 /// `TFD_TIMER_CANCEL_ON_SET` cancels absolute realtime timers on discontinuous clock jumps.
 pub const TFD_TIMER_CANCEL_ON_SET: i32 = 1 << 1;
+/// `IORING_SETUP_SQPOLL` requests an SQPOLL submission thread for an `io_uring` instance.
+pub const IORING_SETUP_SQPOLL: u32 = 1 << 1;
 
 // -------------------------------------------------------------------------
 // Syscall number constants (Linux)
@@ -5925,6 +5973,20 @@ pub unsafe fn sys_pkey_mprotect(
 pub unsafe fn sys_io_uring_setup(entries: u32, params: *mut u8) -> Result<i32, i32> {
     let ret = unsafe { raw::syscall2(SYS_IO_URING_SETUP, entries as usize, params as usize) };
     syscall_result(ret).map(|v| v as i32)
+}
+
+/// Typed `io_uring_setup(entries, params)` helper over `struct io_uring_params`.
+///
+/// # Safety
+///
+/// `params` must point to writable `IoUringParams` storage.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_io_uring_setup_params(
+    entries: u32,
+    params: *mut IoUringParams,
+) -> Result<i32, i32> {
+    unsafe { sys_io_uring_setup(entries, params.cast::<u8>()) }
 }
 
 /// `io_uring_enter(fd, to_submit, min_complete, flags, sig)` — enter an io_uring instance.

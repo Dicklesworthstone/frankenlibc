@@ -487,6 +487,9 @@ mod x86_64_tests {
         assert_eq!(SYS_ACCEPT4, 288);
         assert_eq!(SYS_SIGNALFD4, 289);
         assert_eq!(SYS_INOTIFY_INIT1, 294);
+        assert_eq!(SYS_IO_URING_SETUP, 425);
+        assert_eq!(SYS_IO_URING_ENTER, 426);
+        assert_eq!(SYS_IO_URING_REGISTER, 427);
         assert_eq!(SYS_USERFAULTFD, 323);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 230);
         assert_eq!(SYS_READLINKAT, 267);
@@ -527,7 +530,11 @@ mod x86_64_tests {
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(IORING_SETUP_SQPOLL, 1 << 1);
         assert_eq!(core::mem::size_of::<CpuSet>(), 128);
+        assert_eq!(core::mem::size_of::<IoUringSqringOffsets>(), 40);
+        assert_eq!(core::mem::size_of::<IoUringCqringOffsets>(), 40);
+        assert_eq!(core::mem::size_of::<IoUringParams>(), 120);
         assert_eq!(core::mem::size_of::<SigEventThreadId>(), 64);
         assert_eq!(core::mem::size_of::<SignalfdSiginfo>(), 128);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
@@ -594,6 +601,11 @@ mod x86_64_tests {
             sys_futex_wait_bitset;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
+        let _: unsafe fn(u32, *mut u8) -> Result<i32, i32> = sys_io_uring_setup;
+        let _: unsafe fn(u32, *mut IoUringParams) -> Result<i32, i32> = sys_io_uring_setup_params;
+        let _: unsafe fn(i32, u32, u32, u32, *const u8, usize) -> Result<i32, i32> =
+            sys_io_uring_enter;
+        let _: unsafe fn(i32, u32, *const u8, u32) -> Result<i32, i32> = sys_io_uring_register;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
@@ -713,6 +725,38 @@ mod x86_64_tests {
             matches!(err, EFAULT | EINVAL | ENOSYS),
             "expected EFAULT/EINVAL/ENOSYS, got {err}"
         );
+    }
+
+    #[test]
+    fn io_uring_setup_zero_entries_rejected_or_unavailable() {
+        let mut params = IoUringParams::default();
+        let err = unsafe { sys_io_uring_setup_params(0, &mut params) }
+            .expect_err("io_uring_setup(entries=0) must fail");
+        assert!(
+            matches!(err, EINVAL | ENOSYS),
+            "expected EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn io_uring_setup_sqpoll_supported_or_expected_fallback() {
+        let mut params = IoUringParams {
+            flags: IORING_SETUP_SQPOLL,
+            ..IoUringParams::default()
+        };
+        match unsafe { sys_io_uring_setup_params(8, &mut params) } {
+            Ok(fd) => {
+                assert!(params.sq_entries > 0, "kernel must report SQ ring entries");
+                assert!(params.cq_entries > 0, "kernel must report CQ ring entries");
+                sys_close(fd).expect("close io_uring fd");
+            }
+            Err(err) => {
+                assert!(
+                    matches!(err, EPERM | EINVAL | ENOSYS),
+                    "expected success or EPERM/EINVAL/ENOSYS, got {err}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -2093,6 +2137,9 @@ mod aarch64_tests {
         assert_eq!(SYS_ACCEPT4, 242);
         assert_eq!(SYS_SIGNALFD4, 74);
         assert_eq!(SYS_INOTIFY_INIT1, 26);
+        assert_eq!(SYS_IO_URING_SETUP, 425);
+        assert_eq!(SYS_IO_URING_ENTER, 426);
+        assert_eq!(SYS_IO_URING_REGISTER, 427);
         assert_eq!(SYS_USERFAULTFD, 282);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 115);
         assert_eq!(SYS_READLINKAT, 78);
@@ -2133,7 +2180,11 @@ mod aarch64_tests {
         assert_eq!(TFD_CLOEXEC, 0o2000000);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(IORING_SETUP_SQPOLL, 1 << 1);
         assert_eq!(core::mem::size_of::<CpuSet>(), 128);
+        assert_eq!(core::mem::size_of::<IoUringSqringOffsets>(), 40);
+        assert_eq!(core::mem::size_of::<IoUringCqringOffsets>(), 40);
+        assert_eq!(core::mem::size_of::<IoUringParams>(), 120);
         assert_eq!(core::mem::size_of::<SigEventThreadId>(), 64);
         assert_eq!(core::mem::size_of::<SignalfdSiginfo>(), 128);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
@@ -2191,6 +2242,11 @@ mod aarch64_tests {
             sys_futex_wait_bitset;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
+        let _: unsafe fn(u32, *mut u8) -> Result<i32, i32> = sys_io_uring_setup;
+        let _: unsafe fn(u32, *mut IoUringParams) -> Result<i32, i32> = sys_io_uring_setup_params;
+        let _: unsafe fn(i32, u32, u32, u32, *const u8, usize) -> Result<i32, i32> =
+            sys_io_uring_enter;
+        let _: unsafe fn(i32, u32, *const u8, u32) -> Result<i32, i32> = sys_io_uring_register;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
