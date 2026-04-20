@@ -473,6 +473,45 @@ mod tests {
             prop_assert!(!outcome.blocks);
         }
 
+        /// Metamorphic structural invariant: `blocks ⇒ errno == 0`.
+        ///
+        /// A blocking outcome reports that the calling thread will wait for
+        /// forward progress. Waiting with an error is nonsensical: the caller
+        /// either acquired the mutex (success) or the call failed immediately.
+        /// Sweeps the full (kind × state × op) cube including invalid kinds.
+        #[test]
+        fn prop_blocks_implies_success(
+            kind in prop_oneof![
+                Just(PTHREAD_MUTEX_NORMAL),
+                Just(PTHREAD_MUTEX_RECURSIVE),
+                Just(PTHREAD_MUTEX_ERRORCHECK),
+                any::<i32>(),
+            ],
+            state in prop_oneof![
+                Just(MutexContractState::Uninitialized),
+                Just(MutexContractState::Unlocked),
+                Just(MutexContractState::LockedBySelf),
+                Just(MutexContractState::LockedByOther),
+                Just(MutexContractState::Destroyed),
+            ],
+            op in prop_oneof![
+                Just(MutexContractOp::Init),
+                Just(MutexContractOp::Lock),
+                Just(MutexContractOp::TryLock),
+                Just(MutexContractOp::Unlock),
+                Just(MutexContractOp::Destroy),
+            ],
+        ) {
+            let outcome = mutex_contract_transition(kind, state, op);
+            if outcome.blocks {
+                prop_assert_eq!(
+                    outcome.errno, 0,
+                    "blocking outcome must report success (kind={}, state={:?}, op={:?}, errno={})",
+                    kind, state, op, outcome.errno
+                );
+            }
+        }
+
         /// Metamorphic (invertive): Lock→Unlock roundtrip from Unlocked
         /// returns to Unlocked, errno=0, non-blocking — for every valid kind.
         ///
