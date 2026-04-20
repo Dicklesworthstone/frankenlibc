@@ -38,6 +38,7 @@ mod x86_64_tests {
     const EINVAL: i32 = 22;
     const ENOSYS: i32 = 38;
     const EPERM: i32 = 1;
+    const MPOL_BIND: i32 = 2;
 
     // -----------------------------------------------------------------
     // 1. getpid correctness
@@ -288,6 +289,7 @@ mod x86_64_tests {
         assert_eq!(SYS_FUTEX, 202);
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
+        assert_eq!(SYS_SET_MEMPOLICY, 238);
         assert_eq!(SYS_PIPE2, 293);
         assert_eq!(SYS_SET_TID_ADDRESS, 218);
     }
@@ -315,6 +317,7 @@ mod x86_64_tests {
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
+        let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;
         let _: unsafe fn(*mut i32, i32) -> Result<(), i32> = sys_pipe2;
@@ -404,6 +407,26 @@ mod x86_64_tests {
     #[test]
     fn memfd_secret_invalid_flags_rejected_or_unavailable() {
         let err = sys_memfd_secret(u32::MAX).expect_err("memfd_secret(all-bits-set) must fail");
+        assert!(
+            matches!(err, EINVAL | ENOSYS),
+            "expected EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn set_mempolicy_invalid_mode_rejected_or_unavailable() {
+        let err = unsafe { sys_set_mempolicy(i32::MAX, core::ptr::null(), 0) }
+            .expect_err("set_mempolicy(invalid mode, null, 0) must fail");
+        assert!(
+            matches!(err, EINVAL | ENOSYS),
+            "expected EINVAL/ENOSYS, got {err}"
+        );
+    }
+
+    #[test]
+    fn set_mempolicy_bind_requires_nodemask_or_unavailable() {
+        let err = unsafe { sys_set_mempolicy(MPOL_BIND, core::ptr::null(), 0) }
+            .expect_err("set_mempolicy(MPOL_BIND, null, 0) must fail");
         assert!(
             matches!(err, EINVAL | ENOSYS),
             "expected EINVAL/ENOSYS, got {err}"
@@ -627,6 +650,7 @@ mod aarch64_tests {
         assert_eq!(SYS_FUTEX, 98);
         assert_eq!(SYS_FUTEX_WAITV, 449);
         assert_eq!(SYS_MEMFD_SECRET, 447);
+        assert_eq!(SYS_SET_MEMPOLICY, 237);
         assert_eq!(SYS_PIPE2, 59);
         assert_eq!(SYS_SET_TID_ADDRESS, 96);
     }
@@ -646,6 +670,7 @@ mod aarch64_tests {
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
+        let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: fn(i32) -> ! = sys_exit_group;
         let _: fn() -> i32 = sys_getpid;
         let _: unsafe fn(*mut i32, i32) -> Result<(), i32> = sys_pipe2;

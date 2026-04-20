@@ -212,6 +212,8 @@ pub const SYS_SCHED_RR_GET_INTERVAL: usize = 148;
 pub const SYS_SCHED_SETAFFINITY: usize = 203;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SCHED_GETAFFINITY: usize = 204;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SET_MEMPOLICY: usize = 238;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -364,6 +366,8 @@ pub const SYS_SCHED_RR_GET_INTERVAL: usize = 127;
 pub const SYS_SCHED_SETAFFINITY: usize = 122;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SCHED_GETAFFINITY: usize = 123;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SET_MEMPOLICY: usize = 237;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -3741,6 +3745,24 @@ pub unsafe fn sys_setgroups(size: usize, list: *const u32) -> Result<(), i32> {
 pub unsafe fn sys_getrandom(buf: *mut u8, buflen: usize, flags: u32) -> Result<isize, i32> {
     let ret = unsafe { raw::syscall3(SYS_GETRANDOM, buf as usize, buflen, flags as usize) };
     syscall_result(ret).map(|v| v as isize)
+}
+
+/// `set_mempolicy(mode, nodemask, maxnode)` — set the calling thread's NUMA memory policy.
+///
+/// # Safety
+///
+/// `nodemask` must be null or point to a nodemask buffer covering at least `maxnode`
+/// bits rounded up to the kernel's unsigned-long granularity.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_set_mempolicy(
+    mode: i32,
+    nodemask: *const usize,
+    maxnode: usize,
+) -> Result<(), i32> {
+    let ret =
+        unsafe { raw::syscall3(SYS_SET_MEMPOLICY, mode as usize, nodemask as usize, maxnode) };
+    syscall_result(ret).map(|_| ())
 }
 
 /// `alarm(seconds)` — set an alarm clock for delivery of SIGALRM.
