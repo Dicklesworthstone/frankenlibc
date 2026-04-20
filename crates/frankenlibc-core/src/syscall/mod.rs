@@ -209,6 +209,37 @@ pub struct Sysinfo {
     pub _f: [u8; 0],
 }
 
+/// Linux `siginfo_t` header layout returned by `waitid(2)` on 64-bit targets.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WaitSigInfo {
+    pub si_signo: i32,
+    pub si_errno: i32,
+    pub si_code: i32,
+    pub _pad0: i32,
+    pub _pad: [i32; 28],
+}
+
+impl WaitSigInfo {
+    /// Return the child PID reported by a `SIGCHLD`-family `waitid(2)` event.
+    #[must_use]
+    pub const fn child_pid(&self) -> i32 {
+        self._pad[0]
+    }
+
+    /// Return the child UID reported by a `SIGCHLD`-family `waitid(2)` event.
+    #[must_use]
+    pub const fn child_uid(&self) -> u32 {
+        self._pad[1] as u32
+    }
+
+    /// Return the child status value reported by a `SIGCHLD`-family `waitid(2)` event.
+    #[must_use]
+    pub const fn child_status(&self) -> i32 {
+        self._pad[2]
+    }
+}
+
 const IOC_NRBITS: usize = 8;
 const IOC_TYPEBITS: usize = 8;
 const IOC_SIZEBITS: usize = 14;
@@ -263,8 +294,14 @@ pub const SOCK_SEQPACKET: i32 = 5;
 pub const CLOCK_BOOTTIME: i32 = 7;
 /// `AT_FDCWD` uses the current working directory for `*at` syscalls.
 pub const AT_FDCWD: i32 = -100;
+/// `P_PID` tells `waitid(2)` to target an exact process ID.
+pub const P_PID: i32 = 1;
 /// `SIGEV_THREAD_ID` requests timer signal delivery to a specific thread ID.
 pub const SIGEV_THREAD_ID: i32 = 4;
+/// `WSTOPPED` asks `waitid(2)` to report children that entered a stopped state.
+pub const WSTOPPED: i32 = 1 << 1;
+/// `WEXITED` asks `waitid(2)` to report children that exited or were terminated.
+pub const WEXITED: i32 = 1 << 2;
 /// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.
 pub const TFD_NONBLOCK: i32 = 0o4000;
 /// `TFD_CLOEXEC` requests close-on-exec on the new timerfd descriptor.
@@ -3622,6 +3659,31 @@ pub unsafe fn sys_waitid(
         )
     };
     syscall_result(ret).map(|_| ())
+}
+
+/// `waitid(idtype, id, infop, options)` — wait for a child state change without requesting rusage.
+///
+/// # Safety
+///
+/// `infop` must point to writable storage for the kernel's 128-byte `siginfo_t`
+/// payload, or the caller must otherwise uphold the raw `waitid(2)` contract.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_waitid_info(
+    idtype: i32,
+    id: u32,
+    infop: &mut WaitSigInfo,
+    options: i32,
+) -> Result<(), i32> {
+    unsafe {
+        sys_waitid(
+            idtype,
+            id,
+            (infop as *mut WaitSigInfo).cast::<u8>(),
+            options,
+            core::ptr::null_mut(),
+        )
+    }
 }
 
 /// `sched_setscheduler(pid, policy, param)` — set scheduling policy and parameters.

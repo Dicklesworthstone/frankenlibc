@@ -35,6 +35,9 @@ mod x86_64_tests {
     const F_GETFD: i32 = 1;
     const F_GETFL: i32 = 3;
     const FD_CLOEXEC: i32 = 1;
+    const SIGCHLD: usize = 17;
+    const SIGCONT: i32 = 18;
+    const SIGSTOP: i32 = 19;
 
     const PROT_READ: i32 = 0x1;
     const PROT_WRITE: i32 = 0x2;
@@ -52,10 +55,13 @@ mod x86_64_tests {
     const ENOSYS: i32 = 38;
     const ENOTSUP: i32 = 95;
     const EPERM: i32 = 1;
+    const ECHILD: i32 = 10;
     const MPOL_BIND: i32 = 2;
     const MPOL_F_NODE: u32 = 1;
     const MPOL_F_ADDR: u32 = 1 << 1;
     const SCHED_DEADLINE: u32 = 6;
+    const CLD_EXITED: i32 = 1;
+    const CLD_STOPPED: i32 = 5;
 
     #[repr(C)]
     #[derive(Clone, Copy, Debug, Default)]
@@ -65,6 +71,8 @@ mod x86_64_tests {
         sin_addr: u32,
         sin_zero: [u8; 8],
     }
+
+    static WAITID_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     // -----------------------------------------------------------------
     // 1. getpid correctness
@@ -336,6 +344,7 @@ mod x86_64_tests {
         assert_eq!(SYS_USERFAULTFD, 323);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 230);
         assert_eq!(SYS_READLINKAT, 267);
+        assert_eq!(SYS_WAITID, 247);
         assert_eq!(SYS_TIMERFD_SETTIME, 286);
         assert_eq!(SYS_CAPSET, 126);
         assert_eq!(SYS_SCHED_SETATTR, 314);
@@ -357,7 +366,10 @@ mod x86_64_tests {
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
         assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
+        assert_eq!(P_PID, 1);
+        assert_eq!(WSTOPPED, 2);
         assert_eq!(TIMER_ABSTIME, 1);
+        assert_eq!(WEXITED, 4);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
@@ -371,6 +383,7 @@ mod x86_64_tests {
         assert_eq!(core::mem::size_of::<CapUserHeader>(), 8);
         assert_eq!(core::mem::size_of::<CapUserData>(), 12);
         assert_eq!(core::mem::size_of::<UffdApi>(), 24);
+        assert_eq!(core::mem::size_of::<WaitSigInfo>(), 128);
     }
 
     // -----------------------------------------------------------------
@@ -405,6 +418,8 @@ mod x86_64_tests {
             sys_clock_nanosleep_spec;
         let _: unsafe fn(*const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlink;
         let _: unsafe fn(i32, *const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlinkat;
+        let _: unsafe fn(i32, u32, *mut u8, i32, *mut u8) -> Result<(), i32> = sys_waitid;
+        let _: unsafe fn(i32, u32, &mut WaitSigInfo, i32) -> Result<(), i32> = sys_waitid_info;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
@@ -1072,6 +1087,44 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn waitid_typed_helper_reports_stops_and_exits() {
+        let _lock = WAITID_LOCK.lock().expect("waitid lock");
+
+        let pid = match sys_clone_fork(SIGCHLD) {
+            Ok(0) => {
+                if sys_kill(sys_getpid(), SIGSTOP).is_err() {
+                    sys_exit_group(127);
+                }
+                sys_exit_group(9);
+            }
+            Ok(pid) => pid,
+            Err(err) => panic!("clone(SIGCHLD) failed: {err}"),
+        };
+
+        let mut stop_info = WaitSigInfo::default();
+        unsafe { sys_waitid_info(P_PID, pid as u32, &mut stop_info, WSTOPPED) }
+            .expect("waitid(WSTOPPED)");
+        assert_eq!(stop_info.si_signo, SIGCHLD as i32);
+        assert_eq!(stop_info.si_code, CLD_STOPPED);
+        assert_eq!(stop_info.child_pid(), pid);
+        assert_eq!(stop_info.child_status(), SIGSTOP);
+
+        sys_kill(pid, SIGCONT).expect("SIGCONT child");
+
+        let mut exit_info = WaitSigInfo::default();
+        unsafe { sys_waitid_info(P_PID, pid as u32, &mut exit_info, WEXITED) }
+            .expect("waitid(WEXITED)");
+        assert_eq!(exit_info.si_signo, SIGCHLD as i32);
+        assert_eq!(exit_info.si_code, CLD_EXITED);
+        assert_eq!(exit_info.child_pid(), pid);
+        assert_eq!(exit_info.child_status(), 9);
+
+        let err = unsafe { sys_wait4(pid, core::ptr::null_mut(), 0, core::ptr::null_mut()) }
+            .expect_err("waitid(WEXITED) should reap the child");
+        assert_eq!(err, ECHILD);
+    }
+
+    #[test]
     fn signalfd4_nonblock_and_cloexec_flags_deliver_signal() {
         struct SignalMaskGuard {
             old_mask: u64,
@@ -1570,6 +1623,7 @@ mod aarch64_tests {
         assert_eq!(SYS_USERFAULTFD, 282);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 115);
         assert_eq!(SYS_READLINKAT, 78);
+        assert_eq!(SYS_WAITID, 95);
         assert_eq!(SYS_TIMERFD_SETTIME, 86);
         assert_eq!(SYS_CAPSET, 91);
         assert_eq!(SYS_SCHED_SETATTR, 274);
@@ -1591,7 +1645,10 @@ mod aarch64_tests {
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
         assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
+        assert_eq!(P_PID, 1);
+        assert_eq!(WSTOPPED, 2);
         assert_eq!(TIMER_ABSTIME, 1);
+        assert_eq!(WEXITED, 4);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, 0o4000);
         assert_eq!(TFD_CLOEXEC, 0o2000000);
@@ -1605,6 +1662,7 @@ mod aarch64_tests {
         assert_eq!(core::mem::size_of::<CapUserHeader>(), 8);
         assert_eq!(core::mem::size_of::<CapUserData>(), 12);
         assert_eq!(core::mem::size_of::<UffdApi>(), 24);
+        assert_eq!(core::mem::size_of::<WaitSigInfo>(), 128);
     }
 
     #[test]
@@ -1631,6 +1689,8 @@ mod aarch64_tests {
             sys_clock_nanosleep_spec;
         let _: unsafe fn(*const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlink;
         let _: unsafe fn(i32, *const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlinkat;
+        let _: unsafe fn(i32, u32, *mut u8, i32, *mut u8) -> Result<(), i32> = sys_waitid;
+        let _: unsafe fn(i32, u32, &mut WaitSigInfo, i32) -> Result<(), i32> = sys_waitid_info;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
