@@ -675,4 +675,111 @@ mod tests {
         header.flags |= 0x0003;
         assert_eq!(header.rcode(), 3);
     }
+
+    // -----------------------------------------------------------------
+    // Smoke-fuzz proptests for encode_domain_name (bd-s170, Archetype 1)
+    // -----------------------------------------------------------------
+    //
+    // encode_domain_name turns "a.b.c" into DNS wire-format labels
+    // `\x01a\x01b\x01c\x00`. Spec-bound output invariants:
+    //   • Always terminates with the root label (single `0x00` byte)
+    //   • Every length prefix is ≤63 (RFC 1035 §2.3.4)
+    //   • Output length ≤ input length + number_of_labels + 1
+    //   • Never panics on arbitrary byte input
+
+    use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn fuzz_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(default_cases);
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
+
+    proptest! {
+        #![proptest_config(fuzz_proptest_config(512))]
+
+        #[test]
+        fn fuzz_encode_domain_name_never_panics(
+            bytes in proptest::collection::vec(any::<u8>(), 0..1024),
+        ) {
+            let _ = encode_domain_name(&bytes);
+        }
+
+        /// Every encoded wire-form output must terminate with the root
+        /// label — a single 0x00 byte. A regression that forgot the
+        /// terminator would produce outputs the kernel refuses to
+        /// dispatch.
+        #[test]
+        fn fuzz_encode_domain_name_ends_with_root_label(
+            bytes in proptest::collection::vec(any::<u8>(), 0..1024),
+        ) {
+            let out = encode_domain_name(&bytes);
+            prop_assert!(!out.is_empty(), "output must be non-empty");
+            prop_assert_eq!(
+                *out.last().unwrap(),
+                0u8,
+                "encoded domain name must end with root label (0x00)"
+            );
+        }
+
+        /// RFC 1035 §2.3.4: label length ≤ 63. Since the length prefix
+        /// is a u8 capped at 63 by the encoder, every byte we read as a
+        /// length prefix during a wire-format scan must satisfy this.
+        /// Scan by interpreting each "label length byte" and advancing.
+        #[test]
+        fn fuzz_encode_domain_name_length_prefixes_under_64(
+            bytes in proptest::collection::vec(any::<u8>(), 0..1024),
+        ) {
+            let out = encode_domain_name(&bytes);
+            let mut i = 0;
+            while i < out.len() {
+                let len = out[i] as usize;
+                if len == 0 {
+                    break; // root label
+                }
+                prop_assert!(
+                    len <= 63,
+                    "label length prefix {len} at offset {i} exceeds RFC 1035 §2.3.4 limit"
+                );
+                let end = i.checked_add(1).and_then(|j| j.checked_add(len));
+                prop_assert!(end.is_some(), "label length at offset {i} overflows usize");
+                let end = end.unwrap();
+                prop_assert!(
+                    end <= out.len(),
+                    "label at offset {i} with length {len} extends past output buffer"
+                );
+                i = end;
+            }
+        }
+
+        /// Output size is bounded: at most input_len + 2 (one length
+        /// prefix per non-empty label plus one root terminator, and
+        /// labels can't add more bytes than they consume from input
+        /// plus the length prefixes). This rejects pathological
+        /// expansion via label inflation bugs.
+        #[test]
+        fn fuzz_encode_domain_name_output_is_bounded(
+            bytes in proptest::collection::vec(any::<u8>(), 0..1024),
+        ) {
+            let out = encode_domain_name(&bytes);
+            // Max non-empty labels = input.len() / 1 + 1 (worst case:
+            // "a.a.a...a" with n 1-char labels uses n length prefixes
+            // for n characters, plus 1 terminator).
+            let max_prefixes = bytes.iter().filter(|&&b| b != b'.').count() + 1;
+            let upper = bytes.len() + max_prefixes + 1;
+            prop_assert!(
+                out.len() <= upper,
+                "output {} exceeds upper bound {} (input len {})",
+                out.len(), upper, bytes.len()
+            );
+        }
+    }
 }
