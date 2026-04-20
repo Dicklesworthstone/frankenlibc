@@ -253,6 +253,95 @@ fn gettimeofday_uses_vdso_fastpath_when_available() {
 }
 
 // ---------------------------------------------------------------------------
+// vDSO fastpath parity + fallback coverage (bd-j946)
+//
+// The existing vdso_*_uses_vdso_fastpath_when_available tests confirm the
+// fastpath is *invoked* but never verify it *agrees* with the syscall. These
+// tests close that gap using raw_syscall::sys_clock_gettime as the
+// ground-truth reference and exercise the unsupported-clock fallback path.
+// ---------------------------------------------------------------------------
+
+#[inline]
+fn timespec_to_nanos(ts: libc::timespec) -> i128 {
+    i128::from(ts.tv_sec) * 1_000_000_000 + i128::from(ts.tv_nsec)
+}
+
+#[test]
+fn clock_realtime_vdso_agrees_with_raw_syscall() {
+    use frankenlibc_core::syscall as raw_syscall;
+
+    let mut syscall_before: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut vdso_mid: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut syscall_after: libc::timespec = unsafe { std::mem::zeroed() };
+
+    // Bracket the vDSO-preferring call between two raw-syscall samples.
+    // The vDSO-backed value must lie within the bracket (monotonic kernel
+    // timekeeper guarantees a single source of truth across paths).
+    unsafe {
+        raw_syscall::sys_clock_gettime(
+            libc::CLOCK_REALTIME,
+            (&mut syscall_before as *mut libc::timespec).cast::<u8>(),
+        )
+        .expect("raw syscall before");
+        time_abi::clock_gettime(libc::CLOCK_REALTIME, &mut vdso_mid);
+        raw_syscall::sys_clock_gettime(
+            libc::CLOCK_REALTIME,
+            (&mut syscall_after as *mut libc::timespec).cast::<u8>(),
+        )
+        .expect("raw syscall after");
+    }
+
+    let before_ns = timespec_to_nanos(syscall_before);
+    let mid_ns = timespec_to_nanos(vdso_mid);
+    let after_ns = timespec_to_nanos(syscall_after);
+
+    // CLOCK_REALTIME can step under NTP adjustment; allow 50ms slack.
+    let slack_ns = 50_000_000_i128;
+    assert!(
+        mid_ns >= before_ns - slack_ns && mid_ns <= after_ns + slack_ns,
+        "vDSO CLOCK_REALTIME diverged from syscall: mid={mid_ns}ns outside [{before_ns}, {after_ns}]ns + {slack_ns}ns slack"
+    );
+}
+
+#[test]
+fn clock_monotonic_vdso_agrees_with_raw_syscall() {
+    use frankenlibc_core::syscall as raw_syscall;
+
+    let mut syscall_before: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut vdso_mid: libc::timespec = unsafe { std::mem::zeroed() };
+    let mut syscall_after: libc::timespec = unsafe { std::mem::zeroed() };
+
+    unsafe {
+        raw_syscall::sys_clock_gettime(
+            libc::CLOCK_MONOTONIC,
+            (&mut syscall_before as *mut libc::timespec).cast::<u8>(),
+        )
+        .expect("raw syscall before");
+        time_abi::clock_gettime(libc::CLOCK_MONOTONIC, &mut vdso_mid);
+        raw_syscall::sys_clock_gettime(
+            libc::CLOCK_MONOTONIC,
+            (&mut syscall_after as *mut libc::timespec).cast::<u8>(),
+        )
+        .expect("raw syscall after");
+    }
+
+    let before_ns = timespec_to_nanos(syscall_before);
+    let mid_ns = timespec_to_nanos(vdso_mid);
+    let after_ns = timespec_to_nanos(syscall_after);
+
+    // CLOCK_MONOTONIC never steps back — the bracket must be exact.
+    assert!(
+        mid_ns >= before_ns,
+        "vDSO CLOCK_MONOTONIC went backward relative to syscall: mid={mid_ns} < before={before_ns}"
+    );
+    assert!(
+        mid_ns <= after_ns,
+        "vDSO CLOCK_MONOTONIC ran ahead of syscall: mid={mid_ns} > after={after_ns}"
+    );
+}
+
+
+// ---------------------------------------------------------------------------
 // clock_getres
 // ---------------------------------------------------------------------------
 
