@@ -1697,6 +1697,73 @@ mod x86_64_tests {
         assert_eq!(err, EINVAL);
     }
 
+    /// Complement to cod's setns/unshare error tests (bd-tvug).
+    /// fsmount(-1, 0, 0): fs_fd must reference a valid fsopen-created
+    /// context. An invalid fd surfaces EBADF before any flag
+    /// validation — a regression that validated flags first would
+    /// return EINVAL and fail this test.
+    #[test]
+    fn fsmount_invalid_fd_is_ebadf_or_unavailable() {
+        match unsafe { sys_fsmount(-1, 0, 0) } {
+            Ok(fd) => {
+                let _ = sys_close(fd);
+                panic!("fsmount(-1) unexpectedly succeeded with fd {fd}");
+            }
+            Err(err) => assert!(
+                matches!(err, EBADF | ENOSYS | EPERM),
+                "expected EBADF/ENOSYS/EPERM, got {err}"
+            ),
+        }
+    }
+
+    /// mount_setattr(-1, NULL, 0, NULL, 0): dirfd must be valid (or
+    /// AT_FDCWD). -1 is neither. Kernels without the syscall report
+    /// ENOSYS; otherwise EBADF is expected.
+    #[test]
+    fn mount_setattr_invalid_fd_is_ebadf_or_unavailable() {
+        let err = unsafe {
+            sys_mount_setattr(-1, core::ptr::null(), 0, core::ptr::null_mut(), 0)
+        }
+        .expect_err("mount_setattr(-1, NULL) must fail");
+        assert!(
+            matches!(err, EBADF | EFAULT | EINVAL | ENOSYS | EPERM),
+            "expected EBADF/EFAULT/EINVAL/ENOSYS/EPERM, got {err}"
+        );
+    }
+
+    /// open_tree(-1, NULL, 0): null path with dirfd=-1 surfaces
+    /// EFAULT (null path) or EBADF (bad dirfd) depending on order
+    /// of kernel validation. Either is acceptable; hang is not.
+    #[test]
+    fn open_tree_invalid_args_is_error_or_unavailable() {
+        match unsafe { sys_open_tree(-1, core::ptr::null(), 0) } {
+            Ok(fd) => {
+                let _ = sys_close(fd);
+                panic!("open_tree(-1, NULL) unexpectedly succeeded");
+            }
+            Err(err) => assert!(
+                matches!(err, EBADF | EFAULT | EINVAL | ENOSYS | EPERM),
+                "expected EBADF/EFAULT/EINVAL/ENOSYS/EPERM, got {err}"
+            ),
+        }
+    }
+
+    /// fsopen(NULL, 0): fsname is a NULL-terminated string; a null
+    /// pointer must fail with EFAULT or EINVAL.
+    #[test]
+    fn fsopen_null_fsname_is_error_or_unavailable() {
+        match unsafe { sys_fsopen(core::ptr::null(), 0) } {
+            Ok(fd) => {
+                let _ = sys_close(fd);
+                panic!("fsopen(NULL) unexpectedly succeeded");
+            }
+            Err(err) => assert!(
+                matches!(err, EFAULT | EINVAL | ENOSYS | EPERM),
+                "expected EFAULT/EINVAL/ENOSYS/EPERM, got {err}"
+            ),
+        }
+    }
+
     #[test]
     fn rt_sigtimedwait_zero_timeout_delivers_pending_signal() {
         struct SignalMaskGuard {
