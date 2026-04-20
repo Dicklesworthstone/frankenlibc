@@ -434,4 +434,174 @@ options ndots:2 timeout:3 attempts:2 rotate
         let config = ResolverConfig::parse(b"options attempts:100\n");
         assert_eq!(config.attempts, 5);
     }
+
+    // -----------------------------------------------------------------
+    // resolver(5) conformance table (bd-x7jd)
+    // -----------------------------------------------------------------
+    //
+    // Spec source: resolver(5) man page — "The resolver configuration
+    // file contains information that is read by the resolver routines
+    // the first time they are invoked by a process."
+    //
+    // Each case exercises one documented directive or limit and cites
+    // the relevant clause of resolver(5) (or the MAXNS/MAXDNSRCH
+    // constants in <resolv.h>) so reviewers can audit conformance.
+
+    enum ResolvConfAssertion {
+        Nameservers(&'static [&'static str]),
+        NdotsEquals(u32),
+        TimeoutEquals(u32),
+        AttemptsEquals(u32),
+        SearchEquals(&'static [&'static str]),
+        DomainEquals(Option<&'static str>),
+    }
+
+    struct ResolvConfCase {
+        id: &'static str,
+        spec_ref: &'static str,
+        input: &'static [u8],
+        assertion: ResolvConfAssertion,
+    }
+
+    const RESOLV_CONF_CONFORMANCE_TABLE: &[ResolvConfCase] = &[
+        // ---- nameserver directive ----
+        ResolvConfCase {
+            id: "RESOLV-CONF-NS-001",
+            spec_ref: "resolver(5) ¶nameserver — single IPv4",
+            input: b"nameserver 8.8.8.8\n",
+            assertion: ResolvConfAssertion::Nameservers(&["8.8.8.8"]),
+        },
+        ResolvConfCase {
+            id: "RESOLV-CONF-NS-002",
+            spec_ref: "resolver(5) ¶nameserver — IPv6 address",
+            input: b"nameserver 2001:4860:4860::8888\n",
+            assertion: ResolvConfAssertion::Nameservers(&["2001:4860:4860::8888"]),
+        },
+        ResolvConfCase {
+            id: "RESOLV-CONF-NS-003",
+            // <resolv.h> MAXNS == 3; excess nameservers are silently dropped.
+            spec_ref: "resolver(5) + <resolv.h> MAXNS=3 cap on nameservers",
+            input: b"nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n",
+            assertion: ResolvConfAssertion::Nameservers(&["1.1.1.1", "2.2.2.2", "3.3.3.3"]),
+        },
+        // ---- options directive clamps ----
+        ResolvConfCase {
+            id: "RESOLV-CONF-OPT-001",
+            spec_ref: "resolver(5) ¶options ndots:n — default 1",
+            input: b"options ndots:3\n",
+            assertion: ResolvConfAssertion::NdotsEquals(3),
+        },
+        ResolvConfCase {
+            id: "RESOLV-CONF-OPT-002",
+            // glibc clamps ndots at 15; higher values are pinned down.
+            spec_ref: "resolver(5) ¶options ndots — glibc hard cap at 15",
+            input: b"options ndots:100\n",
+            assertion: ResolvConfAssertion::NdotsEquals(15),
+        },
+        ResolvConfCase {
+            id: "RESOLV-CONF-OPT-003",
+            // glibc clamps timeout to [1, 30] seconds.
+            spec_ref: "resolver(5) ¶options timeout:n — min 1s per glibc",
+            input: b"options timeout:0\n",
+            assertion: ResolvConfAssertion::TimeoutEquals(1),
+        },
+        ResolvConfCase {
+            id: "RESOLV-CONF-OPT-004",
+            spec_ref: "resolver(5) ¶options timeout:n — max 30s per glibc",
+            input: b"options timeout:100\n",
+            assertion: ResolvConfAssertion::TimeoutEquals(30),
+        },
+        ResolvConfCase {
+            id: "RESOLV-CONF-OPT-005",
+            spec_ref: "resolver(5) ¶options attempts:n — min 1 per glibc",
+            input: b"options attempts:0\n",
+            assertion: ResolvConfAssertion::AttemptsEquals(1),
+        },
+        ResolvConfCase {
+            id: "RESOLV-CONF-OPT-006",
+            spec_ref: "resolver(5) ¶options attempts:n — max 5 per glibc",
+            input: b"options attempts:100\n",
+            assertion: ResolvConfAssertion::AttemptsEquals(5),
+        },
+        // ---- search + domain directives ----
+        ResolvConfCase {
+            id: "RESOLV-CONF-SEARCH-001",
+            spec_ref: "resolver(5) ¶search — space-separated domain list",
+            input: b"search example.com local.domain\n",
+            assertion: ResolvConfAssertion::SearchEquals(&["example.com", "local.domain"]),
+        },
+        ResolvConfCase {
+            id: "RESOLV-CONF-DOMAIN-001",
+            spec_ref: "resolver(5) ¶domain — single local domain name",
+            input: b"domain example.com\n",
+            assertion: ResolvConfAssertion::DomainEquals(Some("example.com")),
+        },
+        // ---- comments and blank lines ----
+        ResolvConfCase {
+            id: "RESOLV-CONF-COMMENT-001",
+            // resolver(5): "Lines that contain a semicolon (;) or hash
+            //  character (#) in the first column are treated as comments."
+            spec_ref: "resolver(5) ¶Description — '#' and ';' start comments",
+            input: b"# nameserver 9.9.9.9\n; nameserver 4.4.4.4\nnameserver 1.1.1.1\n",
+            assertion: ResolvConfAssertion::Nameservers(&["1.1.1.1"]),
+        },
+    ];
+
+    #[test]
+    fn resolv_conf_conformance_table() {
+        let mut fails = Vec::new();
+        for case in RESOLV_CONF_CONFORMANCE_TABLE {
+            let config = ResolverConfig::parse(case.input);
+            let pass = match &case.assertion {
+                ResolvConfAssertion::Nameservers(expected) => {
+                    config.nameservers.len() == expected.len()
+                        && config
+                            .nameservers
+                            .iter()
+                            .zip(expected.iter())
+                            .all(|(got, want)| got.to_string() == *want)
+                }
+                ResolvConfAssertion::NdotsEquals(want) => config.ndots == *want,
+                ResolvConfAssertion::TimeoutEquals(want) => config.timeout == *want,
+                ResolvConfAssertion::AttemptsEquals(want) => config.attempts == *want,
+                ResolvConfAssertion::SearchEquals(expected) => {
+                    config.search.len() == expected.len()
+                        && config
+                            .search
+                            .iter()
+                            .zip(expected.iter())
+                            .all(|(got, want)| got == *want)
+                }
+                ResolvConfAssertion::DomainEquals(want) => {
+                    config.domain.as_deref() == *want
+                }
+            };
+            if !pass {
+                fails.push(format!(
+                    "{} [{}]: expected {} — got config.nameservers={:?} ndots={} timeout={} attempts={} search={:?} domain={:?}",
+                    case.id,
+                    case.spec_ref,
+                    match &case.assertion {
+                        ResolvConfAssertion::Nameservers(e) => format!("nameservers={e:?}"),
+                        ResolvConfAssertion::NdotsEquals(n) => format!("ndots={n}"),
+                        ResolvConfAssertion::TimeoutEquals(t) => format!("timeout={t}"),
+                        ResolvConfAssertion::AttemptsEquals(a) => format!("attempts={a}"),
+                        ResolvConfAssertion::SearchEquals(s) => format!("search={s:?}"),
+                        ResolvConfAssertion::DomainEquals(d) => format!("domain={d:?}"),
+                    },
+                    config.nameservers,
+                    config.ndots,
+                    config.timeout,
+                    config.attempts,
+                    config.search,
+                    config.domain,
+                ));
+            }
+        }
+        assert!(
+            fails.is_empty(),
+            "resolver(5) conformance failures:\n  {}",
+            fails.join("\n  ")
+        );
+    }
 }
