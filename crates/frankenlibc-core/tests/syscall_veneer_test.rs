@@ -535,6 +535,8 @@ mod x86_64_tests {
         assert_eq!(core::mem::size_of::<CapUserHeader>(), 8);
         assert_eq!(core::mem::size_of::<CapUserData>(), 12);
         assert_eq!(core::mem::size_of::<UffdApi>(), 24);
+        assert_eq!(core::mem::size_of::<StatFsId>(), 8);
+        assert_eq!(core::mem::size_of::<StatFs>(), 120);
         assert_eq!(core::mem::size_of::<WaitSigInfo>(), 128);
     }
 
@@ -585,6 +587,8 @@ mod x86_64_tests {
         let _: unsafe fn(i32, &SigEventThreadId, *mut i32) -> Result<(), i32> =
             sys_timer_create_sigevent;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
+        let _: unsafe fn(*const u8, *mut StatFs) -> Result<(), i32> = sys_statfs;
+        let _: unsafe fn(i32, *mut StatFs) -> Result<(), i32> = sys_fstatfs;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const u32, u32, *const Timespec, u32) -> Result<(), i32> =
             sys_futex_wait_bitset;
@@ -844,6 +848,51 @@ mod x86_64_tests {
     fn sysinfo_null_pointer_faults() {
         let err =
             unsafe { sys_sysinfo(core::ptr::null_mut()) }.expect_err("sysinfo(null) must fail");
+        assert_eq!(err, EFAULT);
+    }
+
+    #[test]
+    fn statfs_matches_libc_and_fstatfs_for_current_directory() {
+        const O_RDONLY: i32 = 0;
+
+        let path = c".";
+        let mut statfs = core::mem::MaybeUninit::<StatFs>::zeroed();
+        unsafe { sys_statfs(path.as_ptr().cast(), statfs.as_mut_ptr()) }.expect("sys_statfs");
+        let statfs = unsafe { statfs.assume_init() };
+
+        let fd = unsafe { sys_openat(AT_FDCWD, path.as_ptr().cast(), O_RDONLY | O_CLOEXEC, 0) }
+            .expect("open current directory");
+        let mut fstatfs = core::mem::MaybeUninit::<StatFs>::zeroed();
+        unsafe { sys_fstatfs(fd, fstatfs.as_mut_ptr()) }.expect("sys_fstatfs");
+        let fstatfs = unsafe { fstatfs.assume_init() };
+        sys_close(fd).expect("close current directory");
+
+        assert_eq!(fstatfs.f_bsize, statfs.f_bsize);
+        assert_eq!(fstatfs.f_frsize, statfs.f_frsize);
+        assert_eq!(fstatfs.f_blocks, statfs.f_blocks);
+        assert_eq!(fstatfs.f_bfree, statfs.f_bfree);
+        assert_eq!(fstatfs.f_bavail, statfs.f_bavail);
+        assert_eq!(fstatfs.f_files, statfs.f_files);
+        assert_eq!(fstatfs.f_ffree, statfs.f_ffree);
+        assert_eq!(fstatfs.f_namelen, statfs.f_namelen);
+        assert!(
+            statfs.f_bsize > 0,
+            "filesystem block size should be positive"
+        );
+        assert!(
+            statfs.f_frsize > 0,
+            "filesystem fragment size should be positive"
+        );
+        assert!(
+            statfs.f_namelen > 0,
+            "filesystem name limit should be positive"
+        );
+    }
+
+    #[test]
+    fn statfs_null_buffer_faults() {
+        let err = unsafe { sys_statfs(c".".as_ptr().cast(), core::ptr::null_mut()) }
+            .expect_err("statfs(null buffer) must fail");
         assert_eq!(err, EFAULT);
     }
 
@@ -1951,6 +2000,8 @@ mod aarch64_tests {
         assert_eq!(core::mem::size_of::<CapUserHeader>(), 8);
         assert_eq!(core::mem::size_of::<CapUserData>(), 12);
         assert_eq!(core::mem::size_of::<UffdApi>(), 24);
+        assert_eq!(core::mem::size_of::<StatFsId>(), 8);
+        assert_eq!(core::mem::size_of::<StatFs>(), 120);
         assert_eq!(core::mem::size_of::<WaitSigInfo>(), 128);
     }
 
@@ -1992,6 +2043,8 @@ mod aarch64_tests {
         let _: unsafe fn(i32, &SigEventThreadId, *mut i32) -> Result<(), i32> =
             sys_timer_create_sigevent;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
+        let _: unsafe fn(*const u8, *mut StatFs) -> Result<(), i32> = sys_statfs;
+        let _: unsafe fn(i32, *mut StatFs) -> Result<(), i32> = sys_fstatfs;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const u32, u32, *const Timespec, u32) -> Result<(), i32> =
             sys_futex_wait_bitset;

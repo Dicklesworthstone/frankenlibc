@@ -10932,7 +10932,7 @@ pub unsafe extern "C" fn keyctl(
 /// `statfs` — get filesystem statistics.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn statfs(path: *const c_char, buf: *mut c_void) -> c_int {
-    match unsafe { syscall::sys_statfs(path as *const u8, buf as *mut u8) } {
+    match unsafe { syscall::sys_statfs(path as *const u8, buf.cast::<syscall::StatFs>()) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -10944,7 +10944,7 @@ pub unsafe extern "C" fn statfs(path: *const c_char, buf: *mut c_void) -> c_int 
 /// `fstatfs` — get filesystem statistics by fd.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fstatfs(fd: c_int, buf: *mut c_void) -> c_int {
-    match unsafe { syscall::sys_fstatfs(fd, buf as *mut u8) } {
+    match unsafe { syscall::sys_fstatfs(fd, buf.cast::<syscall::StatFs>()) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -10958,32 +10958,23 @@ pub unsafe extern "C" fn fstatfs(fd: c_int, buf: *mut c_void) -> c_int {
 ///   type, bsize, blocks, bfree, bavail, files, ffree, fsid(2xi32), namelen, frsize, flags, spare[4]
 /// struct statvfs fields (all unsigned long):
 ///   bsize, frsize, blocks, bfree, bavail, files, ffree, favail, fsid, flag, namemax, spare[6]
-unsafe fn statfs_to_statvfs(sfs: *const libc::statfs, vfs: *mut libc::statvfs) {
+unsafe fn statfs_to_statvfs(sfs: *const syscall::StatFs, vfs: *mut libc::statvfs) {
     let s = unsafe { &*sfs };
     let v = unsafe { &mut *vfs };
-    // f_bsize and f_frsize are __fsword_t (i64 on x86_64), statvfs uses c_ulong (u64)
     v.f_bsize = s.f_bsize as u64;
     v.f_frsize = if s.f_frsize != 0 {
         s.f_frsize as u64
     } else {
         s.f_bsize as u64
     };
-    // Block/file counts are __fsblkcnt_t/__fsfilcnt_t (u64 on x86_64)
     v.f_blocks = s.f_blocks;
     v.f_bfree = s.f_bfree;
     v.f_bavail = s.f_bavail;
     v.f_files = s.f_files;
     v.f_ffree = s.f_ffree;
     v.f_favail = s.f_ffree; // Same as ffree for non-privileged
-    // fsid_t.__val is private in libc crate; read via raw pointer cast
-    let fsid_ptr = &s.f_fsid as *const libc::fsid_t as *const i32;
-    v.f_fsid = unsafe { *fsid_ptr } as u64;
-    // f_flags not exposed in libc crate's statfs; read via byte offset
-    // x86_64 kernel layout: type(0), bsize(8), blocks(16), bfree(24), bavail(32),
-    // files(40), ffree(48), fsid(56), namelen(64), frsize(72), flags(80), spare(88)
-    let statfs_ptr = sfs as *const u8;
-    let flags_val = unsafe { *(statfs_ptr.add(80) as *const i64) };
-    v.f_flag = flags_val as u64;
+    v.f_fsid = u64::from(s.f_fsid.val[0] as u32) | (u64::from(s.f_fsid.val[1] as u32) << 32);
+    v.f_flag = s.f_flags as u64;
     v.f_namemax = s.f_namelen as u64;
 }
 
@@ -10991,8 +10982,8 @@ unsafe fn statfs_to_statvfs(sfs: *const libc::statfs, vfs: *mut libc::statvfs) {
 /// Calls SYS_statfs and converts the kernel struct to statvfs layout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn statvfs(path: *const c_char, buf: *mut libc::statvfs) -> c_int {
-    let mut sfs = std::mem::MaybeUninit::<libc::statfs>::zeroed();
-    match unsafe { syscall::sys_statfs(path as *const u8, sfs.as_mut_ptr() as *mut u8) } {
+    let mut sfs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+    match unsafe { syscall::sys_statfs(path as *const u8, sfs.as_mut_ptr()) } {
         Ok(()) => {
             unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
             0
@@ -11008,8 +10999,8 @@ pub unsafe extern "C" fn statvfs(path: *const c_char, buf: *mut libc::statvfs) -
 /// Calls SYS_fstatfs and converts the kernel struct to statvfs layout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fstatvfs(fd: c_int, buf: *mut libc::statvfs) -> c_int {
-    let mut sfs = std::mem::MaybeUninit::<libc::statfs>::zeroed();
-    match unsafe { syscall::sys_fstatfs(fd, sfs.as_mut_ptr() as *mut u8) } {
+    let mut sfs = std::mem::MaybeUninit::<syscall::StatFs>::zeroed();
+    match unsafe { syscall::sys_fstatfs(fd, sfs.as_mut_ptr()) } {
         Ok(()) => {
             unsafe { statfs_to_statvfs(sfs.as_ptr(), buf) };
             0

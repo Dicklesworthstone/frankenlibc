@@ -3701,7 +3701,7 @@ pub unsafe extern "C" fn __sigsuspend(set: *const c_void) -> c_int {
 /// __statfs: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __statfs(path: *const c_char, buf: *mut c_void) -> c_int {
-    match unsafe { raw_syscall::sys_statfs(path as *const u8, buf as *mut u8) } {
+    match unsafe { raw_syscall::sys_statfs(path as *const u8, buf.cast::<raw_syscall::StatFs>()) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

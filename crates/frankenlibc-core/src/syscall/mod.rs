@@ -209,6 +209,31 @@ pub struct Sysinfo {
     pub _f: [u8; 0],
 }
 
+/// Linux `fsid_t` payload embedded in `statfs(2)` results on supported 64-bit targets.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StatFsId {
+    pub val: [i32; 2],
+}
+
+/// Linux `statfs` payload returned by `statfs(2)` / `fstatfs(2)` on supported 64-bit targets.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StatFs {
+    pub f_type: i64,
+    pub f_bsize: i64,
+    pub f_blocks: u64,
+    pub f_bfree: u64,
+    pub f_bavail: u64,
+    pub f_files: u64,
+    pub f_ffree: u64,
+    pub f_fsid: StatFsId,
+    pub f_namelen: i64,
+    pub f_frsize: i64,
+    pub f_flags: i64,
+    pub f_spare: [i64; 4],
+}
+
 /// Linux `siginfo_t` header layout returned by `waitid(2)` on 64-bit targets.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -6238,10 +6263,10 @@ pub fn sys_keyctl(operation: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64) ->
 ///
 /// # Safety
 ///
-/// `path` must be a valid null-terminated string. `buf` must point to a valid statfs structure.
+/// `path` must be a valid null-terminated string. `buf` must point to a valid `StatFs`.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_statfs(path: *const u8, buf: *mut u8) -> Result<(), i32> {
+pub unsafe fn sys_statfs(path: *const u8, buf: *mut StatFs) -> Result<(), i32> {
     let ret = unsafe { raw::syscall2(SYS_STATFS, path as usize, buf as usize) };
     syscall_result(ret).map(|_| ())
 }
@@ -6250,10 +6275,10 @@ pub unsafe fn sys_statfs(path: *const u8, buf: *mut u8) -> Result<(), i32> {
 ///
 /// # Safety
 ///
-/// `buf` must point to a valid writable statfs structure.
+/// `buf` must point to a valid writable `StatFs`.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_fstatfs(fd: i32, buf: *mut u8) -> Result<(), i32> {
+pub unsafe fn sys_fstatfs(fd: i32, buf: *mut StatFs) -> Result<(), i32> {
     let ret = unsafe { raw::syscall2(SYS_FSTATFS, fd as usize, buf as usize) };
     syscall_result(ret).map(|_| ())
 }
