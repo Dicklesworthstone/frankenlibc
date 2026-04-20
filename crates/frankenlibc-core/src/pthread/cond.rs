@@ -619,6 +619,42 @@ pub const fn sanitize_cond_clock(clock_id: i32) -> i32 {
 #[allow(unsafe_code)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn property_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0)
+            .unwrap_or(default_cases);
+
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
+
+    fn any_state() -> impl Strategy<Value = CondvarContractState> {
+        prop_oneof![
+            Just(CondvarContractState::Uninitialized),
+            Just(CondvarContractState::Idle),
+            Just(CondvarContractState::Waiting),
+            Just(CondvarContractState::Destroyed),
+        ]
+    }
+
+    fn any_op() -> impl Strategy<Value = CondvarContractOp> {
+        prop_oneof![
+            Just(CondvarContractOp::Init),
+            Just(CondvarContractOp::Destroy),
+            Just(CondvarContractOp::Wait),
+            Just(CondvarContractOp::TimedWait),
+            Just(CondvarContractOp::Signal),
+            Just(CondvarContractOp::Broadcast),
+        ]
+    }
 
     // ---- Clock constant and validator tests (existing) ----
 
@@ -1845,5 +1881,37 @@ mod tests {
         });
 
         waiter.join().unwrap();
+    }
+
+    // ---------------------------------------------------------------------------
+    // Metamorphic proptests for condvar_contract_transition (bd-nqoa)
+    // ---------------------------------------------------------------------------
+
+    proptest! {
+        #![proptest_config(property_proptest_config(256))]
+
+        /// Metamorphic: Signal and Broadcast must never block, for any
+        /// (state, has_waiters) combination.
+        ///
+        /// POSIX contract: pthread_cond_signal and pthread_cond_broadcast
+        /// return immediately regardless of waiter population. This MR
+        /// rejects any state-machine refactor that accidentally threads the
+        /// wakeup path through the blocking Wait arm.
+        #[test]
+        fn prop_signal_broadcast_never_block(
+            state in any_state(),
+            has_waiters in any::<bool>(),
+            op in prop_oneof![
+                Just(CondvarContractOp::Signal),
+                Just(CondvarContractOp::Broadcast),
+            ],
+        ) {
+            let outcome = condvar_contract_transition(state, op, has_waiters);
+            prop_assert!(
+                !outcome.blocks,
+                "{:?} on state={:?} (has_waiters={}) must not block (errno={})",
+                op, state, has_waiters, outcome.errno
+            );
+        }
     }
 }
