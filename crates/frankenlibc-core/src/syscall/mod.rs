@@ -74,6 +74,22 @@ pub struct SchedAttr {
     pub sched_util_max: u32,
 }
 
+/// Linux `timespec` block used by timer and clock syscalls on supported 64-bit targets.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Timespec {
+    pub tv_sec: i64,
+    pub tv_nsec: i64,
+}
+
+/// Linux `itimerspec` block used by `timerfd_settime(2)` / `timerfd_gettime(2)`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ItimerSpec {
+    pub it_interval: Timespec,
+    pub it_value: Timespec,
+}
+
 /// Linux `uffdio_api` handshake block used by `userfaultfd(2)` setup.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -113,6 +129,14 @@ pub const UFFD_API: u64 = 0xAA;
 pub const UFFD_FEATURE_SIGBUS: u64 = 1 << 7;
 /// `UFFD_USER_MODE_ONLY` restricts registration to user-originated faults.
 pub const UFFD_USER_MODE_ONLY: i32 = 1;
+/// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.
+pub const TFD_NONBLOCK: i32 = 0o4000;
+/// `TFD_CLOEXEC` requests close-on-exec on the new timerfd descriptor.
+pub const TFD_CLOEXEC: i32 = 0o2000000;
+/// `TFD_TIMER_ABSTIME` interprets `it_value` against the timer's absolute clock.
+pub const TFD_TIMER_ABSTIME: i32 = 1 << 0;
+/// `TFD_TIMER_CANCEL_ON_SET` cancels absolute realtime timers on discontinuous clock jumps.
+pub const TFD_TIMER_CANCEL_ON_SET: i32 = 1 << 1;
 
 // -------------------------------------------------------------------------
 // Syscall number constants (Linux)
@@ -3205,6 +3229,22 @@ pub unsafe fn sys_timerfd_settime(
     syscall_result(ret).map(|_| ())
 }
 
+/// `timerfd_settime(fd, flags, new_value, old_value)` — typed `itimerspec` timer arm/disarm helper.
+///
+/// # Safety
+///
+/// `new_value` and `old_value` must be null or valid `itimerspec` pointers.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_timerfd_settime_spec(
+    fd: i32,
+    flags: i32,
+    new_value: *const ItimerSpec,
+    old_value: *mut ItimerSpec,
+) -> Result<(), i32> {
+    unsafe { sys_timerfd_settime(fd, flags, new_value.cast::<u8>(), old_value.cast::<u8>()) }
+}
+
 /// `timerfd_gettime(fd, curr_value)` — fetch state of timer.
 ///
 /// # Safety
@@ -3215,6 +3255,17 @@ pub unsafe fn sys_timerfd_settime(
 pub unsafe fn sys_timerfd_gettime(fd: i32, curr_value: *mut u8) -> Result<(), i32> {
     let ret = unsafe { raw::syscall2(SYS_TIMERFD_GETTIME, fd as usize, curr_value as usize) };
     syscall_result(ret).map(|_| ())
+}
+
+/// `timerfd_gettime(fd, curr_value)` — typed `itimerspec` timer state helper.
+///
+/// # Safety
+///
+/// `curr_value` must be a valid writable `itimerspec` pointer.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_timerfd_gettime_spec(fd: i32, curr_value: *mut ItimerSpec) -> Result<(), i32> {
+    unsafe { sys_timerfd_gettime(fd, curr_value.cast::<u8>()) }
 }
 
 /// `prctl(option, arg2, arg3, arg4, arg5)` — operations on a process.

@@ -25,6 +25,7 @@ mod x86_64_tests {
     const O_NONBLOCK: i32 = 0o4000;
     const O_CLOEXEC: i32 = 0o2000000;
     const AT_FDCWD: i32 = -100;
+    const CLOCK_MONOTONIC: i32 = 1;
 
     const PROT_READ: i32 = 0x1;
     const PROT_WRITE: i32 = 0x2;
@@ -296,12 +297,19 @@ mod x86_64_tests {
         assert_eq!(SYS_SET_MEMPOLICY, 238);
         assert_eq!(SYS_GET_MEMPOLICY, 239);
         assert_eq!(SYS_USERFAULTFD, 323);
+        assert_eq!(SYS_TIMERFD_SETTIME, 286);
         assert_eq!(SYS_SCHED_SETATTR, 314);
         assert_eq!(SYS_PIPE2, 293);
         assert_eq!(SYS_SET_TID_ADDRESS, 218);
         assert_eq!(UFFDIO_API, 0xc018aa3f);
         assert_eq!(UFFD_API, 0xAA);
         assert_eq!(UFFD_FEATURE_SIGBUS, 1 << 7);
+        assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
+        assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
+        assert_eq!(TFD_TIMER_ABSTIME, 1);
+        assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(core::mem::size_of::<Timespec>(), 16);
+        assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
         assert_eq!(core::mem::size_of::<UffdApi>(), 24);
     }
 
@@ -331,6 +339,12 @@ mod x86_64_tests {
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
             sys_get_mempolicy;
+        let _: fn(i32, i32) -> Result<i32, i32> = sys_timerfd_create;
+        let _: unsafe fn(i32, i32, *const u8, *mut u8) -> Result<(), i32> = sys_timerfd_settime;
+        let _: unsafe fn(i32, i32, *const ItimerSpec, *mut ItimerSpec) -> Result<(), i32> =
+            sys_timerfd_settime_spec;
+        let _: unsafe fn(i32, *mut u8) -> Result<(), i32> = sys_timerfd_gettime;
+        let _: unsafe fn(i32, *mut ItimerSpec) -> Result<(), i32> = sys_timerfd_gettime_spec;
         let _: fn(i32) -> Result<i32, i32> = sys_userfaultfd;
         let _: unsafe fn(i32, *mut UffdApi) -> Result<(), i32> = sys_userfaultfd_api;
         let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;
@@ -561,6 +575,73 @@ mod x86_64_tests {
             matches!(err, EFAULT | EINVAL),
             "expected EFAULT/EINVAL, got {err}"
         );
+    }
+
+    #[test]
+    fn timerfd_settime_abstime_reports_old_state_and_expires() {
+        let fd = sys_timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)
+            .expect("timerfd_create");
+
+        let mut now = Timespec::default();
+        unsafe { sys_clock_gettime(CLOCK_MONOTONIC, (&mut now as *mut Timespec).cast::<u8>()) }
+            .expect("clock_gettime");
+
+        let absolute = if now.tv_nsec > 0 {
+            Timespec {
+                tv_sec: now.tv_sec,
+                tv_nsec: now.tv_nsec - 1,
+            }
+        } else {
+            Timespec {
+                tv_sec: now.tv_sec.saturating_sub(1),
+                tv_nsec: 999_999_999,
+            }
+        };
+        let new_value = ItimerSpec {
+            it_interval: Timespec::default(),
+            it_value: absolute,
+        };
+        let mut old_value = ItimerSpec::default();
+        unsafe { sys_timerfd_settime_spec(fd, TFD_TIMER_ABSTIME, &new_value, &mut old_value) }
+            .expect("timerfd_settime abstime");
+        assert_eq!(
+            old_value,
+            ItimerSpec::default(),
+            "new timerfd should report zero old state"
+        );
+
+        let mut current = ItimerSpec::default();
+        unsafe { sys_timerfd_gettime_spec(fd, &mut current) }.expect("timerfd_gettime");
+        assert_eq!(current.it_interval, Timespec::default());
+
+        let mut expirations = 0u64;
+        let read = unsafe {
+            sys_read(
+                fd,
+                (&mut expirations as *mut u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect("timerfd read");
+        assert_eq!(read, core::mem::size_of::<u64>());
+        assert_eq!(
+            expirations, 1,
+            "one-shot timer should report exactly one expiration"
+        );
+
+        sys_close(fd).expect("close timerfd");
+    }
+
+    #[test]
+    fn timerfd_settime_null_new_value_faults() {
+        let fd = sys_timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC).expect("timerfd_create");
+
+        let err =
+            unsafe { sys_timerfd_settime_spec(fd, 0, core::ptr::null(), core::ptr::null_mut()) }
+                .expect_err("timerfd_settime(null) must fail");
+        assert!(matches!(err, EFAULT), "expected EFAULT, got {err}");
+
+        sys_close(fd).expect("close timerfd");
     }
 
     #[test]
@@ -811,12 +892,19 @@ mod aarch64_tests {
         assert_eq!(SYS_SET_MEMPOLICY, 237);
         assert_eq!(SYS_GET_MEMPOLICY, 236);
         assert_eq!(SYS_USERFAULTFD, 282);
+        assert_eq!(SYS_TIMERFD_SETTIME, 86);
         assert_eq!(SYS_SCHED_SETATTR, 274);
         assert_eq!(SYS_PIPE2, 59);
         assert_eq!(SYS_SET_TID_ADDRESS, 96);
         assert_eq!(UFFDIO_API, 0xc018aa3f);
         assert_eq!(UFFD_API, 0xAA);
         assert_eq!(UFFD_FEATURE_SIGBUS, 1 << 7);
+        assert_eq!(TFD_NONBLOCK, 0o4000);
+        assert_eq!(TFD_CLOEXEC, 0o2000000);
+        assert_eq!(TFD_TIMER_ABSTIME, 1);
+        assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(core::mem::size_of::<Timespec>(), 16);
+        assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
         assert_eq!(core::mem::size_of::<UffdApi>(), 24);
     }
 
@@ -838,6 +926,12 @@ mod aarch64_tests {
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
             sys_get_mempolicy;
+        let _: fn(i32, i32) -> Result<i32, i32> = sys_timerfd_create;
+        let _: unsafe fn(i32, i32, *const u8, *mut u8) -> Result<(), i32> = sys_timerfd_settime;
+        let _: unsafe fn(i32, i32, *const ItimerSpec, *mut ItimerSpec) -> Result<(), i32> =
+            sys_timerfd_settime_spec;
+        let _: unsafe fn(i32, *mut u8) -> Result<(), i32> = sys_timerfd_gettime;
+        let _: unsafe fn(i32, *mut ItimerSpec) -> Result<(), i32> = sys_timerfd_gettime_spec;
         let _: fn(i32) -> Result<i32, i32> = sys_userfaultfd;
         let _: unsafe fn(i32, *mut UffdApi) -> Result<(), i32> = sys_userfaultfd_api;
         let _: unsafe fn(i32, *const SchedAttr, u32) -> Result<(), i32> = sys_sched_setattr;
