@@ -613,6 +613,8 @@ mod x86_64_tests {
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
             sys_get_mempolicy;
+        let _: unsafe fn(*const u8, *mut u8, *const u8, usize) -> Result<i32, i32> =
+            sys_rt_sigtimedwait;
         let _: unsafe fn(i32, *const u8, usize, i32) -> Result<i32, i32> = sys_signalfd4;
         let _: fn(i32, i32) -> Result<i32, i32> = sys_timerfd_create;
         let _: unsafe fn(i32, i32, *const u8, *mut u8) -> Result<(), i32> = sys_timerfd_settime;
@@ -1668,6 +1670,73 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn rt_sigtimedwait_zero_timeout_delivers_pending_signal() {
+        struct SignalMaskGuard {
+            old_mask: u64,
+        }
+
+        impl Drop for SignalMaskGuard {
+            fn drop(&mut self) {
+                let _ = unsafe {
+                    sys_rt_sigprocmask(
+                        SIG_SETMASK,
+                        (&self.old_mask as *const u64).cast::<u8>(),
+                        core::ptr::null_mut(),
+                        core::mem::size_of::<u64>(),
+                    )
+                };
+            }
+        }
+
+        let signal_mask = 1u64 << ((SIGUSR1 - 1) as u32);
+        let mut old_mask = 0u64;
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_BLOCK,
+                (&signal_mask as *const u64).cast::<u8>(),
+                (&mut old_mask as *mut u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect("rt_sigprocmask(SIG_BLOCK)");
+        let _mask_guard = SignalMaskGuard { old_mask };
+
+        sys_tgkill(sys_getpid(), sys_gettid(), SIGUSR1).expect("tgkill(SIGUSR1)");
+
+        let timeout = Timespec::default();
+        let mut info = [0u8; 128];
+        let signo = unsafe {
+            sys_rt_sigtimedwait(
+                (&signal_mask as *const u64).cast::<u8>(),
+                info.as_mut_ptr(),
+                (&timeout as *const Timespec).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect("rt_sigtimedwait");
+        assert_eq!(signo, SIGUSR1);
+    }
+
+    #[test]
+    fn rt_sigtimedwait_invalid_timeout_is_einval() {
+        let signal_mask = 1u64 << ((SIGUSR1 - 1) as u32);
+        let invalid_timeout = Timespec {
+            tv_sec: 0,
+            tv_nsec: 1_000_000_000,
+        };
+        let err = unsafe {
+            sys_rt_sigtimedwait(
+                (&signal_mask as *const u64).cast::<u8>(),
+                core::ptr::null_mut(),
+                (&invalid_timeout as *const Timespec).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect_err("rt_sigtimedwait(invalid timeout) must fail");
+        assert_eq!(err, EINVAL);
+    }
+
+    #[test]
     fn userfaultfd_api_negotiates_sigbus_or_reports_unavailable() {
         let fd = match sys_userfaultfd(O_CLOEXEC | O_NONBLOCK) {
             Ok(fd) => fd,
@@ -2386,6 +2455,8 @@ mod aarch64_tests {
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
             sys_get_mempolicy;
+        let _: unsafe fn(*const u8, *mut u8, *const u8, usize) -> Result<i32, i32> =
+            sys_rt_sigtimedwait;
         let _: unsafe fn(i32, *const u8, usize, i32) -> Result<i32, i32> = sys_signalfd4;
         let _: fn(i32, i32) -> Result<i32, i32> = sys_timerfd_create;
         let _: unsafe fn(i32, i32, *const u8, *mut u8) -> Result<(), i32> = sys_timerfd_settime;
