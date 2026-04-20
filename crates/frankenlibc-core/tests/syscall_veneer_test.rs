@@ -333,6 +333,7 @@ mod x86_64_tests {
         assert_eq!(SYS_SIGNALFD4, 289);
         assert_eq!(SYS_INOTIFY_INIT1, 294);
         assert_eq!(SYS_USERFAULTFD, 323);
+        assert_eq!(SYS_CLOCK_NANOSLEEP, 230);
         assert_eq!(SYS_TIMERFD_SETTIME, 286);
         assert_eq!(SYS_CAPSET, 126);
         assert_eq!(SYS_SCHED_SETATTR, 314);
@@ -352,6 +353,8 @@ mod x86_64_tests {
         assert_eq!(SOCK_NONBLOCK, O_NONBLOCK);
         assert_eq!(SOCK_CLOEXEC, O_CLOEXEC);
         assert_eq!(SOCK_SEQPACKET, 5);
+        assert_eq!(CLOCK_BOOTTIME, 7);
+        assert_eq!(TIMER_ABSTIME, 1);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
@@ -395,6 +398,8 @@ mod x86_64_tests {
             sys_sendto;
         let _: unsafe fn(i32, *mut u8, usize, i32, *mut u8, *mut u32) -> Result<isize, i32> =
             sys_recvfrom;
+        let _: unsafe fn(i32, i32, &Timespec, *mut Timespec) -> Result<(), i32> =
+            sys_clock_nanosleep_spec;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
@@ -969,6 +974,35 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn clock_nanosleep_boottime_abstime_accepts_elapsed_deadline() {
+        let mut now = Timespec::default();
+        unsafe { sys_clock_gettime(CLOCK_BOOTTIME, (&mut now as *mut Timespec).cast::<u8>()) }
+            .expect("clock_gettime(CLOCK_BOOTTIME)");
+
+        let elapsed_deadline = if now.tv_nsec > 0 {
+            Timespec {
+                tv_sec: now.tv_sec,
+                tv_nsec: now.tv_nsec - 1,
+            }
+        } else {
+            Timespec {
+                tv_sec: now.tv_sec.saturating_sub(1),
+                tv_nsec: 999_999_999,
+            }
+        };
+
+        unsafe {
+            sys_clock_nanosleep_spec(
+                CLOCK_BOOTTIME,
+                TIMER_ABSTIME,
+                &elapsed_deadline,
+                core::ptr::null_mut(),
+            )
+        }
+        .expect("clock_nanosleep(CLOCK_BOOTTIME, TIMER_ABSTIME)");
+    }
+
+    #[test]
     fn signalfd4_nonblock_and_cloexec_flags_deliver_signal() {
         struct SignalMaskGuard {
             old_mask: u64,
@@ -1464,6 +1498,7 @@ mod aarch64_tests {
         assert_eq!(SYS_SIGNALFD4, 74);
         assert_eq!(SYS_INOTIFY_INIT1, 26);
         assert_eq!(SYS_USERFAULTFD, 282);
+        assert_eq!(SYS_CLOCK_NANOSLEEP, 115);
         assert_eq!(SYS_TIMERFD_SETTIME, 86);
         assert_eq!(SYS_CAPSET, 91);
         assert_eq!(SYS_SCHED_SETATTR, 274);
@@ -1483,6 +1518,8 @@ mod aarch64_tests {
         assert_eq!(SOCK_NONBLOCK, O_NONBLOCK);
         assert_eq!(SOCK_CLOEXEC, O_CLOEXEC);
         assert_eq!(SOCK_SEQPACKET, 5);
+        assert_eq!(CLOCK_BOOTTIME, 7);
+        assert_eq!(TIMER_ABSTIME, 1);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, 0o4000);
         assert_eq!(TFD_CLOEXEC, 0o2000000);
@@ -1518,6 +1555,8 @@ mod aarch64_tests {
             sys_sendto;
         let _: unsafe fn(i32, *mut u8, usize, i32, *mut u8, *mut u32) -> Result<isize, i32> =
             sys_recvfrom;
+        let _: unsafe fn(i32, i32, &Timespec, *mut Timespec) -> Result<(), i32> =
+            sys_clock_nanosleep_spec;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;

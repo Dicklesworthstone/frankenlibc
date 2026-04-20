@@ -259,12 +259,16 @@ pub const SOCK_NONBLOCK: i32 = 0o4000;
 pub const SOCK_CLOEXEC: i32 = 0o2000000;
 /// `SOCK_SEQPACKET` selects sequenced, packet-preserving socket semantics.
 pub const SOCK_SEQPACKET: i32 = 5;
+/// `CLOCK_BOOTTIME` advances across suspend and is valid for `clock_gettime`/`clock_nanosleep`.
+pub const CLOCK_BOOTTIME: i32 = 7;
 /// `SIGEV_THREAD_ID` requests timer signal delivery to a specific thread ID.
 pub const SIGEV_THREAD_ID: i32 = 4;
 /// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.
 pub const TFD_NONBLOCK: i32 = 0o4000;
 /// `TFD_CLOEXEC` requests close-on-exec on the new timerfd descriptor.
 pub const TFD_CLOEXEC: i32 = 0o2000000;
+/// `TIMER_ABSTIME` interprets `clock_nanosleep` requests against an absolute deadline.
+pub const TIMER_ABSTIME: i32 = 1 << 0;
 /// `TFD_TIMER_ABSTIME` interprets `it_value` against the timer's absolute clock.
 pub const TFD_TIMER_ABSTIME: i32 = 1 << 0;
 /// `TFD_TIMER_CANCEL_ON_SET` cancels absolute realtime timers on discontinuous clock jumps.
@@ -2485,6 +2489,29 @@ pub unsafe fn sys_clock_nanosleep(
         )
     };
     syscall_result(ret).map(|_| ())
+}
+
+/// Typed `clock_nanosleep` helper over Linux `timespec`.
+///
+/// # Safety
+///
+/// `rem` may be null or must point to writable `Timespec` storage.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_clock_nanosleep_spec(
+    clock_id: i32,
+    flags: i32,
+    req: &Timespec,
+    rem: *mut Timespec,
+) -> Result<(), i32> {
+    unsafe {
+        sys_clock_nanosleep(
+            clock_id,
+            flags,
+            (req as *const Timespec).cast::<u8>(),
+            rem.cast::<u8>(),
+        )
+    }
 }
 
 /// `sendto(fd, buf, len, flags, dest_addr, addrlen)` — send a message on a socket.
