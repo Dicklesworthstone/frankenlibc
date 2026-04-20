@@ -1890,6 +1890,75 @@ mod tests {
     proptest! {
         #![proptest_config(property_proptest_config(256))]
 
+        /// Metamorphic (absorbing state): Destroyed traps every op except Init.
+        ///
+        /// Only a fresh Init may re-enter the usable contract; Destroy, Wait,
+        /// TimedWait, Signal, Broadcast on a destroyed condvar must report
+        /// EINVAL without blocking and without changing state.
+        #[test]
+        fn prop_destroyed_absorbs_non_init_ops(
+            has_waiters in any::<bool>(),
+            op in prop_oneof![
+                Just(CondvarContractOp::Destroy),
+                Just(CondvarContractOp::Wait),
+                Just(CondvarContractOp::TimedWait),
+                Just(CondvarContractOp::Signal),
+                Just(CondvarContractOp::Broadcast),
+            ],
+        ) {
+            let outcome = condvar_contract_transition(
+                CondvarContractState::Destroyed,
+                op,
+                has_waiters,
+            );
+            prop_assert_eq!(outcome.next, CondvarContractState::Destroyed);
+            prop_assert_eq!(outcome.errno, errno::EINVAL);
+            prop_assert!(!outcome.blocks);
+        }
+
+        /// Metamorphic (absorbing state): Uninitialized symmetric to Destroyed.
+        ///
+        /// Independent because the contract uses distinct match arms — a
+        /// refactor could regress only one arm.
+        #[test]
+        fn prop_uninitialized_absorbs_non_init_ops(
+            has_waiters in any::<bool>(),
+            op in prop_oneof![
+                Just(CondvarContractOp::Destroy),
+                Just(CondvarContractOp::Wait),
+                Just(CondvarContractOp::TimedWait),
+                Just(CondvarContractOp::Signal),
+                Just(CondvarContractOp::Broadcast),
+            ],
+        ) {
+            let outcome = condvar_contract_transition(
+                CondvarContractState::Uninitialized,
+                op,
+                has_waiters,
+            );
+            prop_assert_eq!(outcome.next, CondvarContractState::Uninitialized);
+            prop_assert_eq!(outcome.errno, errno::EINVAL);
+            prop_assert!(!outcome.blocks);
+        }
+
+        /// Metamorphic structural invariant: `blocks ⇒ errno == 0`.
+        /// Sweeps the full state × op × has_waiters cube.
+        #[test]
+        fn prop_blocks_implies_success(
+            state in any_state(),
+            op in any_op(),
+            has_waiters in any::<bool>(),
+        ) {
+            let outcome = condvar_contract_transition(state, op, has_waiters);
+            if outcome.blocks {
+                prop_assert_eq!(
+                    outcome.errno, 0,
+                    "blocking outcome must be success (state={:?}, op={:?}, has_waiters={})",
+                    state, op, has_waiters
+                );
+            }
+        }
+
         /// Metamorphic: Broadcast on Waiting always lands in Idle, regardless
         /// of has_waiters. Signal on Waiting returns to Idle only when no
         /// other waiters remain (has_waiters=false).
