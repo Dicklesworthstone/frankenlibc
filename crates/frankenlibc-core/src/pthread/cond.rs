@@ -2077,4 +2077,122 @@ mod tests {
             );
         }
     }
+
+    // -----------------------------------------------------------------
+    // POSIX.1-2017 conformance table: pthread_cond_destroy (bd-u8qy)
+    // -----------------------------------------------------------------
+    //
+    // Spec source: IEEE Std 1003.1-2017 §pthread_cond_destroy.
+    // Key clauses:
+    //   • "It shall be safe to destroy an initialized condition variable
+    //      upon which no threads are currently blocked."
+    //   • "Attempting to destroy a condition variable upon which other
+    //      threads are currently blocked results in undefined behavior."
+    //      FrankenLibC returns EBUSY as a deterministic mechanical
+    //      fallback.
+    //   • "The results are undefined if ... the condition variable is
+    //      not initialized." → EINVAL on Uninitialized / Destroyed.
+
+    struct CondDestroyConformanceCase {
+        id: &'static str,
+        posix_ref: &'static str,
+        state: CondvarContractState,
+        has_waiters: bool,
+        expected_next: CondvarContractState,
+        expected_errno: i32,
+    }
+
+    const COND_DESTROY_CONFORMANCE_TABLE: &[CondDestroyConformanceCase] = &[
+        CondDestroyConformanceCase {
+            id: "POSIX-COND-DESTROY-001",
+            posix_ref: "IEEE 1003.1-2017 §pthread_cond_destroy ¶Description",
+            state: CondvarContractState::Idle,
+            has_waiters: false,
+            expected_next: CondvarContractState::Destroyed,
+            expected_errno: 0,
+        },
+        CondDestroyConformanceCase {
+            id: "POSIX-COND-DESTROY-002",
+            // has_waiters ignored on Idle (no current waiters by definition)
+            //  but the spec guarantee holds: idle destroy is always safe.
+            posix_ref: "IEEE 1003.1-2017 §pthread_cond_destroy ¶Description",
+            state: CondvarContractState::Idle,
+            has_waiters: true,
+            expected_next: CondvarContractState::Destroyed,
+            expected_errno: 0,
+        },
+        CondDestroyConformanceCase {
+            id: "POSIX-COND-DESTROY-003",
+            // Destroy with blocked waiters: POSIX leaves the behavior
+            //  undefined. FrankenLibC returns EBUSY and preserves the
+            //  Waiting state so the waiters remain valid.
+            posix_ref: "IEEE 1003.1-2017 §pthread_cond_destroy ¶Errors/EBUSY (mechanical fallback)",
+            state: CondvarContractState::Waiting,
+            has_waiters: true,
+            expected_next: CondvarContractState::Waiting,
+            expected_errno: errno::EBUSY,
+        },
+        CondDestroyConformanceCase {
+            id: "POSIX-COND-DESTROY-004",
+            // has_waiters=false but state=Waiting is a transient race
+            //  (last waiter unparking); destroy still rejects with EBUSY
+            //  until the contract transitions to Idle.
+            posix_ref: "IEEE 1003.1-2017 §pthread_cond_destroy ¶Errors/EBUSY (transient)",
+            state: CondvarContractState::Waiting,
+            has_waiters: false,
+            expected_next: CondvarContractState::Waiting,
+            expected_errno: errno::EBUSY,
+        },
+        CondDestroyConformanceCase {
+            id: "POSIX-COND-DESTROY-005",
+            posix_ref: "IEEE 1003.1-2017 §pthread_cond_destroy ¶Errors/EINVAL",
+            state: CondvarContractState::Uninitialized,
+            has_waiters: false,
+            expected_next: CondvarContractState::Uninitialized,
+            expected_errno: errno::EINVAL,
+        },
+        CondDestroyConformanceCase {
+            id: "POSIX-COND-DESTROY-006",
+            // Double-destroy protection: POSIX undefined; FrankenLibC
+            //  deterministically rejects with EINVAL.
+            posix_ref: "IEEE 1003.1-2017 §pthread_cond_destroy ¶Errors/EINVAL (double-destroy)",
+            state: CondvarContractState::Destroyed,
+            has_waiters: false,
+            expected_next: CondvarContractState::Destroyed,
+            expected_errno: errno::EINVAL,
+        },
+    ];
+
+    #[test]
+    fn posix_cond_destroy_conformance_table() {
+        let mut fails = Vec::new();
+        for case in COND_DESTROY_CONFORMANCE_TABLE {
+            let outcome = condvar_contract_transition(
+                case.state,
+                CondvarContractOp::Destroy,
+                case.has_waiters,
+            );
+            if outcome.next != case.expected_next || outcome.errno != case.expected_errno {
+                fails.push(format!(
+                    "{} [{}]: expected next={:?}/errno={} got next={:?}/errno={}",
+                    case.id,
+                    case.posix_ref,
+                    case.expected_next,
+                    case.expected_errno,
+                    outcome.next,
+                    outcome.errno,
+                ));
+            }
+            assert!(
+                !outcome.blocks,
+                "{}: destroy must never block (POSIX §pthread_cond_destroy)",
+                case.id
+            );
+        }
+        assert!(
+            fails.is_empty(),
+            "POSIX cond-destroy conformance failures:\n  {}",
+            fails.join("\n  ")
+        );
+    }
 }
