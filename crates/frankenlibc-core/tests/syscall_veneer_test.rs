@@ -1746,6 +1746,33 @@ mod x86_64_tests {
         sys_kill(pid, 0).expect("kill(self, 0) must succeed as POSIX null signal");
     }
 
+    /// Metamorphic parity: for the current thread, sys_tgkill(getpid, gettid, 0)
+    /// and sys_tkill(gettid, 0) must both succeed. tgkill is a refinement of
+    /// tkill with an extra tgid guard against pid reuse races, so the two
+    /// calls must agree on a thread the caller owns.
+    #[test]
+    fn sys_tgkill_tkill_parity_on_self_null_signal() {
+        let pid = sys_getpid();
+        let tid = sys_gettid();
+        sys_tgkill(pid, tid, 0).expect("tgkill(self, 0) must succeed");
+        sys_tkill(tid, 0).expect("tkill(self, 0) must succeed");
+    }
+
+    /// Metamorphic: sys_tgkill with a mismatched tgid must fail with ESRCH
+    /// (thread no longer belongs to the named process), even when the tid
+    /// itself is live. tkill has no tgid guard and would succeed on the
+    /// same tid, so the divergence pins down tgkill's extra check.
+    #[test]
+    fn sys_tgkill_mismatched_tgid_is_esrch() {
+        // Pick a tgid that cannot match: PID 1 (init) belongs to a different
+        // thread group than our test binary, so our own tid cannot be a
+        // thread of pid 1. tgkill must reject; tkill would not check tgid.
+        const ESRCH: i32 = 3;
+        let tid = sys_gettid();
+        let err = sys_tgkill(1, tid, 0).expect_err("tgkill(1, self_tid, 0) must fail");
+        assert_eq!(err, ESRCH, "expected ESRCH for mismatched tgid, got {err}");
+    }
+
     /// sys_kill with an out-of-range signal number must fail with EINVAL,
     /// regardless of target pid. The kernel validates `sig` before
     /// running the permission check, so even an invalid pid/sig
