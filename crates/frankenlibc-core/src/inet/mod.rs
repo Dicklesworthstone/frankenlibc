@@ -1127,4 +1127,136 @@ mod tests {
         assert_eq!(buf[14], 0x89);
         assert_eq!(buf[15], 0x0a);
     }
+
+    // -----------------------------------------------------------------
+    // Smoke-fuzz proptests for IP parsers (bd-8zsp, Archetype 1)
+    // -----------------------------------------------------------------
+    //
+    // parse_ipv4, parse_ipv6, inet_pton, inet_aton are classic
+    // security-sensitive parsers. Requirements:
+    //   • Never panic on arbitrary byte input (no slice out-of-bounds,
+    //     no integer overflow in dotted-quad/hex-group arithmetic,
+    //     no infinite loops on malformed "::" sequences).
+    //   • Round-trip: for every successful parse, format(parse(x))
+    //     re-parses to the same bytes.
+
+    use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn fuzz_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(default_cases);
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
+
+    proptest! {
+        #![proptest_config(fuzz_proptest_config(512))]
+
+        /// parse_ipv4 must never panic on any byte sequence — the
+        /// dotted-quad grammar has four multiplication+add hot-spots
+        /// per octet where overflow bugs traditionally surface.
+        #[test]
+        fn fuzz_parse_ipv4_never_panics(
+            bytes in proptest::collection::vec(any::<u8>(), 0..64),
+        ) {
+            let _ = parse_ipv4(&bytes);
+        }
+
+        /// Biased alphabet over digits/dots/'-' — this reaches the
+        /// actual dotted-quad parsing logic instead of the early-
+        /// reject path that raw bytes hit almost exclusively.
+        #[test]
+        fn fuzz_parse_ipv4_structured_alphabet_never_panics(
+            bytes in proptest::collection::vec(
+                prop_oneof![
+                    Just(b'.'), Just(b'-'), Just(b':'),
+                    Just(b'0'), Just(b'1'), Just(b'2'), Just(b'9'),
+                    Just(b'a'), Just(b'f'), Just(b'x'),
+                    Just(0u8), Just(0xffu8),
+                ],
+                0..32,
+            ),
+        ) {
+            let _ = parse_ipv4(&bytes);
+        }
+
+        /// parse_ipv4 round-trip: if parse succeeds, format+reparse
+        /// yields the same 4 octets. Catches format/parse asymmetry.
+        #[test]
+        fn fuzz_parse_ipv4_roundtrip(octets: [u8; 4]) {
+            let len = format_ipv4_len(&octets);
+            let buf = format_ipv4(&octets);
+            let formatted = &buf[..len];
+            let reparsed = parse_ipv4(formatted)
+                .expect("format_ipv4 output must always re-parse");
+            prop_assert_eq!(reparsed, octets);
+        }
+
+        /// parse_ipv6 must never panic — the "::" expansion and
+        /// group-count accounting are classic crash sources in libc
+        /// implementations (see CVE-2007-1217, CVE-2008-1672).
+        #[test]
+        fn fuzz_parse_ipv6_never_panics(
+            bytes in proptest::collection::vec(any::<u8>(), 0..128),
+        ) {
+            let _ = parse_ipv6(&bytes);
+        }
+
+        /// Biased IPv6 alphabet: hex digits, ':', '.', boundaries.
+        #[test]
+        fn fuzz_parse_ipv6_structured_alphabet_never_panics(
+            bytes in proptest::collection::vec(
+                prop_oneof![
+                    Just(b':'), Just(b'.'), Just(b'['),
+                    Just(b'0'), Just(b'1'), Just(b'9'),
+                    Just(b'a'), Just(b'f'), Just(b'F'),
+                    Just(0u8), Just(0xffu8),
+                ],
+                0..64,
+            ),
+        ) {
+            let _ = parse_ipv6(&bytes);
+        }
+
+        /// parse_ipv6 round-trip: format+reparse yields the same
+        /// 16 bytes. Implicitly verifies "::" compression never
+        /// collides with an ambiguous representation.
+        #[test]
+        fn fuzz_parse_ipv6_roundtrip(octets: [u8; 16]) {
+            let len = format_ipv6_len(&octets);
+            let buf = format_ipv6(&octets);
+            let formatted = &buf[..len];
+            let reparsed = parse_ipv6(formatted)
+                .expect("format_ipv6 output must always re-parse");
+            prop_assert_eq!(reparsed, octets);
+        }
+
+        /// inet_pton smoke: never panics on arbitrary (af, bytes).
+        /// dst buffer sized for IPv6; caller never provides a dst
+        /// smaller than needed per POSIX.
+        #[test]
+        fn fuzz_inet_pton_never_panics(
+            af in prop_oneof![Just(2i32), Just(10i32), any::<i32>()],
+            bytes in proptest::collection::vec(any::<u8>(), 0..64),
+        ) {
+            let mut dst = [0u8; 16];
+            let _ = inet_pton(af, &bytes, &mut dst);
+        }
+
+        /// inet_aton smoke: never panics on arbitrary bytes.
+        #[test]
+        fn fuzz_inet_aton_never_panics(
+            bytes in proptest::collection::vec(any::<u8>(), 0..64),
+        ) {
+            let mut dst = [0u8; 4];
+            let _ = inet_aton(&bytes, &mut dst);
+        }
+    }
 }
