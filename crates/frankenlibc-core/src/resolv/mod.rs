@@ -857,4 +857,277 @@ mod tests {
         let err = getnameinfo(&addr, 0).unwrap_err();
         assert_eq!(err, EAI_FAMILY);
     }
+
+    // -----------------------------------------------------------------
+    // hosts(5) / RFC 952 / RFC 1123 conformance table (bd-x7jd)
+    // -----------------------------------------------------------------
+    //
+    // Spec sources:
+    //   • hosts(5) — /etc/hosts format and parsing semantics
+    //   • RFC 952 — original hostname grammar
+    //   • RFC 1123 §2.1 — hostname relaxation (digits as first char)
+    //
+    // Each entry cites the clause that motivates the expected parse
+    // outcome. Reviewers can audit behavior by cross-referencing.
+
+    struct HostsParseCase {
+        id: &'static str,
+        spec_ref: &'static str,
+        input: &'static [u8],
+        expected_addr: Option<&'static [u8]>,
+        expected_names: &'static [&'static [u8]],
+    }
+
+    const HOSTS_PARSE_CONFORMANCE_TABLE: &[HostsParseCase] = &[
+        // ---- Whitespace handling (hosts(5) "whitespace") ----
+        HostsParseCase {
+            id: "HOSTS-PARSE-001",
+            spec_ref: "hosts(5) ¶Description — single space separator",
+            input: b"127.0.0.1 localhost",
+            expected_addr: Some(b"127.0.0.1"),
+            expected_names: &[b"localhost"],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-002",
+            spec_ref: "hosts(5) ¶Description — tab separator",
+            input: b"127.0.0.1\tlocalhost",
+            expected_addr: Some(b"127.0.0.1"),
+            expected_names: &[b"localhost"],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-003",
+            spec_ref: "hosts(5) ¶Description — mixed runs of spaces/tabs",
+            input: b"127.0.0.1 \t  localhost\t \tloopback",
+            expected_addr: Some(b"127.0.0.1"),
+            expected_names: &[b"localhost", b"loopback"],
+        },
+        // ---- Address families ----
+        HostsParseCase {
+            id: "HOSTS-PARSE-010",
+            spec_ref: "hosts(5) ¶IP_address — IPv4 dotted quad",
+            input: b"192.0.2.1 example",
+            expected_addr: Some(b"192.0.2.1"),
+            expected_names: &[b"example"],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-011",
+            spec_ref: "hosts(5) ¶IP_address — IPv6 loopback",
+            input: b"::1 localhost6 ip6-loopback",
+            expected_addr: Some(b"::1"),
+            expected_names: &[b"localhost6", b"ip6-loopback"],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-012",
+            spec_ref: "hosts(5) ¶IP_address — full IPv6 literal",
+            input: b"2001:db8::1 ipv6host",
+            expected_addr: Some(b"2001:db8::1"),
+            expected_names: &[b"ipv6host"],
+        },
+        // ---- Comments & blank lines ----
+        HostsParseCase {
+            id: "HOSTS-PARSE-020",
+            spec_ref: "hosts(5) ¶Description — '#' begins comment",
+            input: b"# pure comment line",
+            expected_addr: None,
+            expected_names: &[],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-021",
+            spec_ref: "hosts(5) ¶Description — '#' terminates parseable content",
+            input: b"10.0.0.1 host # trailing comment",
+            expected_addr: Some(b"10.0.0.1"),
+            expected_names: &[b"host"],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-022",
+            spec_ref: "hosts(5) ¶Description — blank line is ignored",
+            input: b"",
+            expected_addr: None,
+            expected_names: &[],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-023",
+            spec_ref: "hosts(5) ¶Description — whitespace-only line is blank",
+            input: b"   \t\t   ",
+            expected_addr: None,
+            expected_names: &[],
+        },
+        // ---- RFC 952 / RFC 1123 hostname character sets ----
+        HostsParseCase {
+            id: "HOSTS-PARSE-030",
+            spec_ref: "RFC 1123 §2.1 — digits permitted as first char",
+            input: b"10.0.0.5 3com.local",
+            expected_addr: Some(b"10.0.0.5"),
+            expected_names: &[b"3com.local"],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-031",
+            spec_ref: "RFC 952 — hyphens allowed interior",
+            input: b"10.0.0.6 my-host-name",
+            expected_addr: Some(b"10.0.0.6"),
+            expected_names: &[b"my-host-name"],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-032",
+            spec_ref: "hosts(5) ¶alias — multiple aliases share a line",
+            input: b"10.0.0.7 primary alias1 alias2 alias3",
+            expected_addr: Some(b"10.0.0.7"),
+            expected_names: &[b"primary", b"alias1", b"alias2", b"alias3"],
+        },
+        // ---- Malformed input rejection ----
+        HostsParseCase {
+            id: "HOSTS-PARSE-040",
+            spec_ref: "hosts(5) ¶IP_address — non-IP first field rejected",
+            input: b"not-an-ip hostname",
+            expected_addr: None,
+            expected_names: &[],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-041",
+            spec_ref: "hosts(5) ¶Description — IP without any name is rejected",
+            input: b"127.0.0.1",
+            expected_addr: None,
+            expected_names: &[],
+        },
+        HostsParseCase {
+            id: "HOSTS-PARSE-042",
+            spec_ref: "hosts(5) ¶IP_address — IPv4 octet > 255 rejected",
+            input: b"999.0.0.1 bad",
+            expected_addr: None,
+            expected_names: &[],
+        },
+    ];
+
+    #[test]
+    fn hosts_parse_conformance_table() {
+        let mut fails = Vec::new();
+        for case in HOSTS_PARSE_CONFORMANCE_TABLE {
+            let actual = parse_hosts_line(case.input);
+            let pass = match (&actual, case.expected_addr) {
+                (None, None) => true,
+                (Some((addr, names)), Some(expected_addr)) => {
+                    addr == expected_addr
+                        && names.len() == case.expected_names.len()
+                        && names
+                            .iter()
+                            .zip(case.expected_names.iter())
+                            .all(|(a, b)| a.as_slice() == *b)
+                }
+                _ => false,
+            };
+            if !pass {
+                fails.push(format!(
+                    "{} [{}]: expected addr={:?} names={:?}, got {:?}",
+                    case.id,
+                    case.spec_ref,
+                    case.expected_addr.map(|a| core::str::from_utf8(a).unwrap_or("<non-utf8>")),
+                    case.expected_names
+                        .iter()
+                        .map(|n| core::str::from_utf8(n).unwrap_or("<non-utf8>"))
+                        .collect::<Vec<_>>(),
+                    actual,
+                ));
+            }
+        }
+        assert!(
+            fails.is_empty(),
+            "hosts(5) parse conformance failures:\n  {}",
+            fails.join("\n  ")
+        );
+    }
+
+    // ---- lookup_hosts conformance (case-insensitivity + multi-address) ----
+
+    struct HostsLookupCase {
+        id: &'static str,
+        spec_ref: &'static str,
+        content: &'static [u8],
+        query: &'static [u8],
+        expected: &'static [&'static [u8]],
+    }
+
+    const HOSTS_LOOKUP_CONFORMANCE_TABLE: &[HostsLookupCase] = &[
+        HostsLookupCase {
+            id: "HOSTS-LOOKUP-001",
+            spec_ref: "RFC 1035 §2.3.3 — DNS is case-insensitive; hosts lookup mirrors it",
+            content: b"10.0.0.1 MyHost\n",
+            query: b"myhost",
+            expected: &[b"10.0.0.1"],
+        },
+        HostsLookupCase {
+            id: "HOSTS-LOOKUP-002",
+            spec_ref: "RFC 1035 §2.3.3 — query case is also insensitive",
+            content: b"10.0.0.2 myhost\n",
+            query: b"MYHOST",
+            expected: &[b"10.0.0.2"],
+        },
+        HostsLookupCase {
+            id: "HOSTS-LOOKUP-003",
+            spec_ref: "hosts(5) — alias entries match query",
+            content: b"10.0.0.7 primary alias1 alias2\n",
+            query: b"alias2",
+            expected: &[b"10.0.0.7"],
+        },
+        HostsLookupCase {
+            id: "HOSTS-LOOKUP-004",
+            spec_ref: "hosts(5) — multiple lines may map same name to multiple IPs",
+            content: b"10.0.0.1 web\n10.0.0.2 web\n",
+            query: b"web",
+            expected: &[b"10.0.0.1", b"10.0.0.2"],
+        },
+        HostsLookupCase {
+            id: "HOSTS-LOOKUP-005",
+            spec_ref: "hosts(5) — mixed IPv4/IPv6 entries for same name",
+            content: b"127.0.0.1 localhost\n::1 localhost\n",
+            query: b"localhost",
+            expected: &[b"127.0.0.1", b"::1"],
+        },
+        HostsLookupCase {
+            id: "HOSTS-LOOKUP-006",
+            spec_ref: "hosts(5) — comment lines are skipped during lookup",
+            content: b"# 10.0.0.1 fake\n10.0.0.2 real\n",
+            query: b"fake",
+            expected: &[],
+        },
+        HostsLookupCase {
+            id: "HOSTS-LOOKUP-007",
+            spec_ref: "hosts(5) — no match returns empty set",
+            content: b"127.0.0.1 localhost\n",
+            query: b"unknown.example",
+            expected: &[],
+        },
+    ];
+
+    #[test]
+    fn hosts_lookup_conformance_table() {
+        let mut fails = Vec::new();
+        for case in HOSTS_LOOKUP_CONFORMANCE_TABLE {
+            let actual = lookup_hosts(case.content, case.query);
+            let pass = actual.len() == case.expected.len()
+                && actual
+                    .iter()
+                    .zip(case.expected.iter())
+                    .all(|(a, b)| a.as_slice() == *b);
+            if !pass {
+                fails.push(format!(
+                    "{} [{}]: expected {:?}, got {:?}",
+                    case.id,
+                    case.spec_ref,
+                    case.expected
+                        .iter()
+                        .map(|a| core::str::from_utf8(a).unwrap_or("<non-utf8>"))
+                        .collect::<Vec<_>>(),
+                    actual
+                        .iter()
+                        .map(|a| core::str::from_utf8(a).unwrap_or("<non-utf8>"))
+                        .collect::<Vec<_>>(),
+                ));
+            }
+        }
+        assert!(
+            fails.is_empty(),
+            "hosts(5) lookup conformance failures:\n  {}",
+            fails.join("\n  ")
+        );
+    }
 }
