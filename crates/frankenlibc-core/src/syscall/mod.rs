@@ -110,6 +110,31 @@ pub struct ItimerSpec {
     pub it_value: Timespec,
 }
 
+/// Linux `sigevent` layout for `SIGEV_THREAD_ID` timer delivery on supported 64-bit targets.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SigEventThreadId {
+    pub value: u64,
+    pub signo: i32,
+    pub notify: i32,
+    pub tid: i32,
+    pub pad: [i32; 11],
+}
+
+impl SigEventThreadId {
+    /// Construct a zero-value `SIGEV_THREAD_ID` notification targeting `tid`.
+    #[must_use]
+    pub fn new(signo: i32, tid: i32) -> Self {
+        Self {
+            value: 0,
+            signo,
+            notify: SIGEV_THREAD_ID,
+            tid,
+            pad: [0; 11],
+        }
+    }
+}
+
 /// Linux capability syscall header (`struct __user_cap_header_struct`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -226,6 +251,8 @@ pub const SFD_CLOEXEC: i32 = 0o2000000;
 pub const IN_NONBLOCK: i32 = 0o4000;
 /// `IN_CLOEXEC` requests close-on-exec on the new inotify descriptor.
 pub const IN_CLOEXEC: i32 = 0o2000000;
+/// `SIGEV_THREAD_ID` requests timer signal delivery to a specific thread ID.
+pub const SIGEV_THREAD_ID: i32 = 4;
 /// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.
 pub const TFD_NONBLOCK: i32 = 0o4000;
 /// `TFD_CLOEXEC` requests close-on-exec on the new timerfd descriptor.
@@ -4615,6 +4642,21 @@ pub unsafe fn sys_pidfd_send_signal(
 pub unsafe fn sys_timer_create(clockid: i32, sevp: usize, timerid: *mut i32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall3(SYS_TIMER_CREATE, clockid as usize, sevp, timerid as usize) };
     syscall_result(ret).map(|_| ())
+}
+
+/// `timer_create(clockid, sevp, timerid)` using the typed Linux `SIGEV_THREAD_ID` sigevent layout.
+///
+/// # Safety
+///
+/// `timerid` must point to a valid timer ID output location.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_timer_create_sigevent(
+    clockid: i32,
+    sevp: &SigEventThreadId,
+    timerid: *mut i32,
+) -> Result<(), i32> {
+    unsafe { sys_timer_create(clockid, (sevp as *const SigEventThreadId) as usize, timerid) }
 }
 
 /// `timer_settime(timerid, flags, new_value, old_value)` — arm/disarm a POSIX timer.

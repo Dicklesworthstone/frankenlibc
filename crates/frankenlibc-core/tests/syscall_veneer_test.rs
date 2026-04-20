@@ -45,7 +45,9 @@ mod x86_64_tests {
     const EBADF: i32 = 9;
     const EFAULT: i32 = 14;
     const EINVAL: i32 = 22;
+    const EACCES: i32 = 13;
     const ENOSYS: i32 = 38;
+    const ENOTSUP: i32 = 95;
     const EPERM: i32 = 1;
     const MPOL_BIND: i32 = 2;
     const MPOL_F_NODE: u32 = 1;
@@ -324,11 +326,13 @@ mod x86_64_tests {
         assert_eq!(SFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(IN_NONBLOCK, O_NONBLOCK);
         assert_eq!(IN_CLOEXEC, O_CLOEXEC);
+        assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
         assert_eq!(core::mem::size_of::<CpuSet>(), 128);
+        assert_eq!(core::mem::size_of::<SigEventThreadId>(), 64);
         assert_eq!(core::mem::size_of::<SignalfdSiginfo>(), 128);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
         assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
@@ -360,6 +364,8 @@ mod x86_64_tests {
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
         let _: fn(i32) -> Result<i32, i32> = sys_inotify_init1;
         let _: unsafe fn(i32, &mut CpuSet) -> Result<usize, i32> = sys_sched_getaffinity_cpuset;
+        let _: unsafe fn(i32, &SigEventThreadId, *mut i32) -> Result<(), i32> =
+            sys_timer_create_sigevent;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
@@ -638,6 +644,106 @@ mod x86_64_tests {
             cpuset.contains_cpu(cpu),
             "affinity mask should contain current cpu {cpu}"
         );
+    }
+
+    #[test]
+    fn timer_create_sigevent_targets_current_thread() {
+        struct SignalMaskGuard {
+            old_mask: u64,
+        }
+
+        impl Drop for SignalMaskGuard {
+            fn drop(&mut self) {
+                let _ = unsafe {
+                    sys_rt_sigprocmask(
+                        SIG_SETMASK,
+                        (&self.old_mask as *const u64).cast::<u8>(),
+                        core::ptr::null_mut(),
+                        core::mem::size_of::<u64>(),
+                    )
+                };
+            }
+        }
+
+        struct FdGuard(i32);
+
+        impl Drop for FdGuard {
+            fn drop(&mut self) {
+                let _ = sys_close(self.0);
+            }
+        }
+
+        struct TimerGuard(i32);
+
+        impl Drop for TimerGuard {
+            fn drop(&mut self) {
+                let _ = sys_timer_delete(self.0);
+            }
+        }
+
+        let signal_mask = 1u64 << ((SIGUSR1 - 1) as u32);
+        let mut old_mask = 0u64;
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_BLOCK,
+                (&signal_mask as *const u64).cast::<u8>(),
+                (&mut old_mask as *mut u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect("rt_sigprocmask(SIG_BLOCK)");
+        let _mask_guard = SignalMaskGuard { old_mask };
+
+        let fd = unsafe {
+            sys_signalfd4(
+                -1,
+                (&signal_mask as *const u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+                SFD_CLOEXEC,
+            )
+        }
+        .expect("signalfd4");
+        let _fd_guard = FdGuard(fd);
+
+        let sigevent = SigEventThreadId::new(SIGUSR1, sys_gettid());
+        let mut timerid = -1;
+        match unsafe { sys_timer_create_sigevent(CLOCK_MONOTONIC, &sigevent, &mut timerid) } {
+            Ok(()) => {}
+            Err(ENOSYS | EPERM | EACCES | ENOTSUP) => return,
+            Err(err) => panic!("expected timer_create or ENOSYS/EPERM/EACCES/ENOTSUP, got {err}"),
+        }
+        let _timer_guard = TimerGuard(timerid);
+
+        let new_value = ItimerSpec {
+            it_interval: Timespec::default(),
+            it_value: Timespec {
+                tv_sec: 0,
+                tv_nsec: 1_000_000,
+            },
+        };
+        unsafe {
+            sys_timer_settime(
+                timerid,
+                0,
+                (&new_value as *const ItimerSpec).cast::<u8>(),
+                core::ptr::null_mut(),
+            )
+        }
+        .expect("timer_settime");
+
+        let mut info = SignalfdSiginfo::default();
+        let read = unsafe {
+            sys_read(
+                fd,
+                (&mut info as *mut SignalfdSiginfo).cast::<u8>(),
+                core::mem::size_of::<SignalfdSiginfo>(),
+            )
+        }
+        .expect("read timer signal");
+        assert_eq!(read, core::mem::size_of::<SignalfdSiginfo>());
+        assert_eq!(info.ssi_signo, SIGUSR1 as u32);
+        assert_eq!(info.ssi_tid, timerid as u32);
+        assert_eq!(info.ssi_code, -2, "timer signal should report SI_TIMER");
     }
 
     #[test]
@@ -1140,11 +1246,13 @@ mod aarch64_tests {
         assert_eq!(SFD_CLOEXEC, 0o2000000);
         assert_eq!(IN_NONBLOCK, O_NONBLOCK);
         assert_eq!(IN_CLOEXEC, O_CLOEXEC);
+        assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, 0o4000);
         assert_eq!(TFD_CLOEXEC, 0o2000000);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
         assert_eq!(core::mem::size_of::<CpuSet>(), 128);
+        assert_eq!(core::mem::size_of::<SigEventThreadId>(), 64);
         assert_eq!(core::mem::size_of::<SignalfdSiginfo>(), 128);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
         assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
@@ -1168,6 +1276,8 @@ mod aarch64_tests {
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
         let _: fn(i32) -> Result<i32, i32> = sys_inotify_init1;
         let _: unsafe fn(i32, &mut CpuSet) -> Result<usize, i32> = sys_sched_getaffinity_cpuset;
+        let _: unsafe fn(i32, &SigEventThreadId, *mut i32) -> Result<(), i32> =
+            sys_timer_create_sigevent;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
