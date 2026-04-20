@@ -2656,6 +2656,36 @@ fn gethostbyname2_r_ipv6_localhost_packs_result_into_caller_buffer() {
 }
 
 #[test]
+fn gethostbyname2_r_ipv6_small_buffer_preserves_h_errno() {
+    let name = CString::new("localhost").unwrap();
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 64];
+    let mut result: *mut libc::hostent = std::ptr::dangling_mut::<libc::hostent>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostbyname2_r(
+            name.as_ptr(),
+            libc::AF_INET6,
+            (&mut hostent as *mut libc::hostent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, libc::ERANGE);
+    assert!(
+        result.is_null(),
+        "small caller buffer should yield NULL result on ERANGE"
+    );
+    assert_eq!(
+        h_errno, -1,
+        "glibc leaves h_errno untouched when gethostbyname2_r returns ERANGE"
+    );
+}
+
+#[test]
 fn ether_line_parses_valid_ethers_entry() {
     let line = CString::new("08:00:20:00:61:cb printer").unwrap();
     let mut addr = [0u8; 6];

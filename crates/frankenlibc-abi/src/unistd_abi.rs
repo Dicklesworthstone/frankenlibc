@@ -13293,12 +13293,15 @@ pub unsafe extern "C" fn gethostbyname2_r(
         let list_off = (addr_end + (ptr_size - 1)) & !(ptr_size - 1);
         let addr_list_off = list_off;
         let alias_list_off = addr_list_off + 2 * ptr_size;
-        let needed = alias_list_off + ptr_size;
+        // glibc's reentrant host lookup ABI requires extra pointer scratch beyond
+        // the packed hostent fields themselves. Preserving that headroom keeps the
+        // ERANGE threshold aligned with the host for small caller buffers.
+        let scratch_ptr_slots = 5 * ptr_size;
+        let needed = alias_list_off + ptr_size + scratch_ptr_slots;
         if buflen < needed {
             unsafe {
                 crate::resolv_abi::freeaddrinfo(res);
                 *result = std::ptr::null_mut();
-                *h_errnop = 2; // TRY_AGAIN
             }
             return libc::ERANGE;
         }
