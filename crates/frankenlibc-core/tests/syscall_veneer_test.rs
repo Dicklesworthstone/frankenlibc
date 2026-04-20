@@ -26,6 +26,12 @@ mod x86_64_tests {
     const O_CLOEXEC: i32 = 0o2000000;
     const AT_FDCWD: i32 = -100;
     const CLOCK_MONOTONIC: i32 = 1;
+    const SIGUSR1: i32 = 10;
+    const SIG_BLOCK: i32 = 0;
+    const SIG_SETMASK: i32 = 2;
+    const F_GETFD: i32 = 1;
+    const F_GETFL: i32 = 3;
+    const FD_CLOEXEC: i32 = 1;
 
     const PROT_READ: i32 = 0x1;
     const PROT_WRITE: i32 = 0x2;
@@ -296,6 +302,7 @@ mod x86_64_tests {
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 238);
         assert_eq!(SYS_GET_MEMPOLICY, 239);
+        assert_eq!(SYS_SIGNALFD4, 289);
         assert_eq!(SYS_USERFAULTFD, 323);
         assert_eq!(SYS_TIMERFD_SETTIME, 286);
         assert_eq!(SYS_CAPSET, 126);
@@ -307,10 +314,13 @@ mod x86_64_tests {
         assert_eq!(UFFD_FEATURE_SIGBUS, 1 << 7);
         assert_eq!(LINUX_CAPABILITY_VERSION_3, 0x2008_0522);
         assert_eq!(LINUX_CAPABILITY_U32S_3, 2);
+        assert_eq!(SFD_NONBLOCK, O_NONBLOCK);
+        assert_eq!(SFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(core::mem::size_of::<SignalfdSiginfo>(), 128);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
         assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
         assert_eq!(core::mem::size_of::<CapUserHeader>(), 8);
@@ -344,6 +354,7 @@ mod x86_64_tests {
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
             sys_get_mempolicy;
+        let _: unsafe fn(i32, *const u8, usize, i32) -> Result<i32, i32> = sys_signalfd4;
         let _: fn(i32, i32) -> Result<i32, i32> = sys_timerfd_create;
         let _: unsafe fn(i32, i32, *const u8, *mut u8) -> Result<(), i32> = sys_timerfd_settime;
         let _: unsafe fn(i32, i32, *const ItimerSpec, *mut ItimerSpec) -> Result<(), i32> =
@@ -536,6 +547,86 @@ mod x86_64_tests {
             matches!(err, EINVAL | ENOSYS),
             "expected EINVAL/ENOSYS, got {err}"
         );
+    }
+
+    #[test]
+    fn signalfd4_nonblock_and_cloexec_flags_deliver_signal() {
+        struct SignalMaskGuard {
+            old_mask: u64,
+        }
+
+        impl Drop for SignalMaskGuard {
+            fn drop(&mut self) {
+                let _ = unsafe {
+                    sys_rt_sigprocmask(
+                        SIG_SETMASK,
+                        (&self.old_mask as *const u64).cast::<u8>(),
+                        core::ptr::null_mut(),
+                        core::mem::size_of::<u64>(),
+                    )
+                };
+            }
+        }
+
+        struct FdGuard(i32);
+
+        impl Drop for FdGuard {
+            fn drop(&mut self) {
+                let _ = sys_close(self.0);
+            }
+        }
+
+        let signal_mask = 1u64 << ((SIGUSR1 - 1) as u32);
+        let mut old_mask = 0u64;
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_BLOCK,
+                (&signal_mask as *const u64).cast::<u8>(),
+                (&mut old_mask as *mut u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect("rt_sigprocmask(SIG_BLOCK)");
+        let _mask_guard = SignalMaskGuard { old_mask };
+
+        let fd = unsafe {
+            sys_signalfd4(
+                -1,
+                (&signal_mask as *const u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+                SFD_NONBLOCK | SFD_CLOEXEC,
+            )
+        }
+        .expect("signalfd4");
+        let _fd_guard = FdGuard(fd);
+
+        let fd_flags = unsafe { sys_fcntl(fd, F_GETFD, 0) }.expect("fcntl(F_GETFD)");
+        assert_ne!(
+            fd_flags & FD_CLOEXEC,
+            0,
+            "signalfd4 should apply close-on-exec"
+        );
+        let file_status = unsafe { sys_fcntl(fd, F_GETFL, 0) }.expect("fcntl(F_GETFL)");
+        assert_ne!(
+            file_status & O_NONBLOCK,
+            0,
+            "signalfd4 should apply nonblocking mode"
+        );
+
+        sys_tgkill(sys_getpid(), sys_gettid(), SIGUSR1).expect("tgkill(SIGUSR1)");
+
+        let mut info = SignalfdSiginfo::default();
+        let read = unsafe {
+            sys_read(
+                fd,
+                (&mut info as *mut SignalfdSiginfo).cast::<u8>(),
+                core::mem::size_of::<SignalfdSiginfo>(),
+            )
+        }
+        .expect("read signalfd siginfo");
+        assert_eq!(read, core::mem::size_of::<SignalfdSiginfo>());
+        assert_eq!(info.ssi_signo, SIGUSR1 as u32);
+        assert_eq!(info.ssi_pid, sys_getpid() as u32);
     }
 
     #[test]
@@ -745,6 +836,7 @@ mod aarch64_tests {
     const O_RDWR: i32 = 2;
     const O_CREAT: i32 = 0o100;
     const O_EXCL: i32 = 0o200;
+    const O_NONBLOCK: i32 = 0o4000;
     const O_CLOEXEC: i32 = 0o2000000;
     const AT_FDCWD: i32 = -100;
 
@@ -935,6 +1027,7 @@ mod aarch64_tests {
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 237);
         assert_eq!(SYS_GET_MEMPOLICY, 236);
+        assert_eq!(SYS_SIGNALFD4, 74);
         assert_eq!(SYS_USERFAULTFD, 282);
         assert_eq!(SYS_TIMERFD_SETTIME, 86);
         assert_eq!(SYS_CAPSET, 91);
@@ -946,10 +1039,13 @@ mod aarch64_tests {
         assert_eq!(UFFD_FEATURE_SIGBUS, 1 << 7);
         assert_eq!(LINUX_CAPABILITY_VERSION_3, 0x2008_0522);
         assert_eq!(LINUX_CAPABILITY_U32S_3, 2);
+        assert_eq!(SFD_NONBLOCK, O_NONBLOCK);
+        assert_eq!(SFD_CLOEXEC, 0o2000000);
         assert_eq!(TFD_NONBLOCK, 0o4000);
         assert_eq!(TFD_CLOEXEC, 0o2000000);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(core::mem::size_of::<SignalfdSiginfo>(), 128);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
         assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
         assert_eq!(core::mem::size_of::<CapUserHeader>(), 8);
@@ -975,6 +1071,7 @@ mod aarch64_tests {
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
         let _: unsafe fn(*mut i32, *mut usize, usize, *const u8, u32) -> Result<(), i32> =
             sys_get_mempolicy;
+        let _: unsafe fn(i32, *const u8, usize, i32) -> Result<i32, i32> = sys_signalfd4;
         let _: fn(i32, i32) -> Result<i32, i32> = sys_timerfd_create;
         let _: unsafe fn(i32, i32, *const u8, *mut u8) -> Result<(), i32> = sys_timerfd_settime;
         let _: unsafe fn(i32, i32, *const ItimerSpec, *mut ItimerSpec) -> Result<(), i32> =

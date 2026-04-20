@@ -116,6 +116,34 @@ pub struct UffdApi {
     pub ioctls: u64,
 }
 
+/// Linux `signalfd_siginfo` record read from a signalfd descriptor.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SignalfdSiginfo {
+    pub ssi_signo: u32,
+    pub ssi_errno: i32,
+    pub ssi_code: i32,
+    pub ssi_pid: u32,
+    pub ssi_uid: u32,
+    pub ssi_fd: i32,
+    pub ssi_tid: u32,
+    pub ssi_band: u32,
+    pub ssi_overrun: u32,
+    pub ssi_trapno: u32,
+    pub ssi_status: i32,
+    pub ssi_int: i32,
+    pub ssi_ptr: u64,
+    pub ssi_utime: u64,
+    pub ssi_stime: u64,
+    pub ssi_addr: u64,
+    pub ssi_addr_lsb: u16,
+    pub __pad2: u16,
+    pub ssi_syscall: i32,
+    pub ssi_call_addr: u64,
+    pub ssi_arch: u32,
+    pub __pad: [u8; 28],
+}
+
 const IOC_NRBITS: usize = 8;
 const IOC_TYPEBITS: usize = 8;
 const IOC_SIZEBITS: usize = 14;
@@ -150,6 +178,10 @@ pub const UFFD_USER_MODE_ONLY: i32 = 1;
 pub const LINUX_CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 /// `_LINUX_CAPABILITY_U32S_3` reports two `u32` words per capability set.
 pub const LINUX_CAPABILITY_U32S_3: usize = 2;
+/// `SFD_NONBLOCK` requests nonblocking signalfd file descriptor semantics.
+pub const SFD_NONBLOCK: i32 = 0o4000;
+/// `SFD_CLOEXEC` requests close-on-exec on the new signalfd descriptor.
+pub const SFD_CLOEXEC: i32 = 0o2000000;
 /// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.
 pub const TFD_NONBLOCK: i32 = 0o4000;
 /// `TFD_CLOEXEC` requests close-on-exec on the new timerfd descriptor.
