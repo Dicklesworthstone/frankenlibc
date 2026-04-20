@@ -248,6 +248,63 @@ fn vdso_positive_rc_falls_back_instead_of_synthesizing_negative_errno() {
 }
 
 #[test]
+fn vdso_classify_zero_is_success() {
+    // Happy path: rc == 0 is the only Success outcome per the Linux vDSO
+    // contract. Pinning this explicitly guards against a refactor that
+    // reshuffles match arms.
+    assert_eq!(
+        time_abi::__frankenlibc_classify_vdso_return(0),
+        time_abi::VdsoCallOutcome::Success
+    );
+}
+
+#[test]
+fn vdso_classify_boundary_positive_and_negative_rc() {
+    // rc=1 is the smallest positive non-zero — must route to
+    // FallbackToSyscall per the vDSO "positive means not-implemented"
+    // convention. rc=i32::MAX exercises the same arm at the other end.
+    assert_eq!(
+        time_abi::__frankenlibc_classify_vdso_return(1),
+        time_abi::VdsoCallOutcome::FallbackToSyscall
+    );
+    assert_eq!(
+        time_abi::__frankenlibc_classify_vdso_return(i32::MAX),
+        time_abi::VdsoCallOutcome::FallbackToSyscall
+    );
+
+    // rc=-1 is the smallest-magnitude negative (-EPERM) — must surface as
+    // Fail(1), not FallbackToSyscall. A regression that collapsed the
+    // "negative and not -ENOSYS" guard would flip this into a fallback.
+    assert_eq!(
+        time_abi::__frankenlibc_classify_vdso_return(-1),
+        time_abi::VdsoCallOutcome::Fail(1)
+    );
+}
+
+#[test]
+fn vdso_classify_fail_errno_is_always_positive() {
+    // Structural invariant: whenever classify_vdso_return returns
+    // Fail(e), e must be strictly positive so it can legally be written
+    // to errno. A bug that forgot to negate rc, or that mishandled
+    // sign-extension on a future rt_sigreturn-style path, would emit a
+    // non-positive errno and violate POSIX.
+    for rc in [-1, -2, -libc::EINVAL, -libc::EPERM, -libc::ENOMEM, -libc::EFAULT] {
+        if rc == -libc::ENOSYS {
+            continue;
+        }
+        match time_abi::__frankenlibc_classify_vdso_return(rc) {
+            time_abi::VdsoCallOutcome::Fail(e) => {
+                assert!(
+                    e > 0,
+                    "Fail({e}) from rc={rc} — errno must be strictly positive"
+                );
+            }
+            other => panic!("rc={rc} expected Fail(_), got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn clock_gettime_uses_vdso_fastpath_when_available() {
     let before = time_abi::vdso_fastpath_snapshot();
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
