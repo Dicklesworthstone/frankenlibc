@@ -229,12 +229,50 @@ fn gethostbyname_r_numeric_ipv4_populates_result() {
 }
 
 #[test]
-fn gethostbyname_r_small_buffer_returns_erange() {
+fn gethostbyaddr_r_small_buffer_returns_erange_preserves_h_errno() {
+    // glibc parity (bd-a892): gethostbyaddr_r must also leave
+    // *h_errnop untouched on ERANGE — symmetric to gethostbyname_r.
+    with_resolver_backends(Some(b"10.0.0.42 somehost\n"), None, |_| {
+        let octets: [u8; 4] = [10, 0, 0, 42];
+        let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+        let mut scratch = [0i8; 4];
+        let mut result_ptr: *mut c_void = ptr::null_mut();
+        const SENTINEL: i32 = -54321;
+        let mut h_errno = SENTINEL;
+
+        let rc = unsafe {
+            inet_abi::gethostbyaddr_r(
+                octets.as_ptr().cast::<c_void>(),
+                octets.len() as libc::socklen_t,
+                libc::AF_INET,
+                (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                scratch.as_mut_ptr(),
+                scratch.len(),
+                &mut result_ptr,
+                &mut h_errno,
+            )
+        };
+        assert_eq!(rc, libc::ERANGE);
+        assert!(result_ptr.is_null());
+        assert_eq!(
+            h_errno, SENTINEL,
+            "ERANGE must leave *h_errnop untouched (glibc parity)"
+        );
+    });
+}
+
+#[test]
+fn gethostbyname_r_small_buffer_returns_erange_preserves_h_errno() {
+    // glibc parity (bd-a892): when the caller buffer is too small, the
+    // reentrant ABI returns ERANGE and leaves *h_errnop untouched so
+    // callers can distinguish "retry with a bigger buffer" from a real
+    // resolution failure.
     let query = CString::new("127.0.0.1").expect("query should be valid C string");
     let mut hostent: libc::hostent = unsafe { mem::zeroed() };
     let mut scratch = [0i8; 4];
     let mut result_ptr: *mut c_void = ptr::null_mut();
-    let mut h_errno = -1;
+    const SENTINEL: i32 = -12345;
+    let mut h_errno = SENTINEL;
 
     let rc = unsafe {
         inet_abi::gethostbyname_r(
@@ -248,7 +286,10 @@ fn gethostbyname_r_small_buffer_returns_erange() {
     };
     assert_eq!(rc, libc::ERANGE);
     assert!(result_ptr.is_null());
-    assert_eq!(h_errno, NO_RECOVERY_ERRNO);
+    assert_eq!(
+        h_errno, SENTINEL,
+        "ERANGE must leave *h_errnop untouched (glibc parity)"
+    );
 }
 
 #[test]

@@ -1556,8 +1556,14 @@ pub(crate) unsafe fn gethostbyname_r_impl(
             0
         }
         Err(code) => {
-            // SAFETY: optional h_errno pointer from caller.
-            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            // glibc parity: ERANGE ("buffer too small, try again with a
+            // bigger one") must not clobber *h_errnop. Callers rely on
+            // that invariant to distinguish a retry-with-bigger-buffer
+            // condition from a real resolution failure.
+            if code != libc::ERANGE {
+                // SAFETY: optional h_errno pointer from caller.
+                unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            }
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
             code
         }
@@ -1626,7 +1632,11 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
             0
         }
         Err(code) => {
-            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            // glibc parity: ERANGE must leave *h_errnop untouched so
+            // callers can safely retry with a grown buffer.
+            if code != libc::ERANGE {
+                unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            }
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
             code
         }
