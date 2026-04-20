@@ -3202,6 +3202,17 @@ fn faccessat_checks_existence() {
     let _ = std::fs::remove_file(path.to_str().unwrap());
 }
 
+#[test]
+fn faccessat_at_eaccess_checks_existence() {
+    let path = temp_path("faccessat_at_eaccess");
+    std::fs::write(path.to_str().unwrap(), b"x").unwrap();
+
+    let rc = unsafe { faccessat(libc::AT_FDCWD, path.as_ptr(), libc::F_OK, libc::AT_EACCESS) };
+    assert_eq!(rc, 0);
+
+    let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
 // ---------------------------------------------------------------------------
 // Core POSIX: mkfifo
 // ---------------------------------------------------------------------------

@@ -624,6 +624,8 @@ pub const SYS_SYMLINKAT: usize = 266;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FACCESSAT: usize = 269;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_FACCESSAT2: usize = 439;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_MKDIRAT: usize = 258;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FCHMODAT: usize = 268;
@@ -699,6 +701,8 @@ pub const SYS_SCHED_GETSCHEDULER: usize = 120;
 pub const SYS_SYMLINKAT: usize = 36;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FACCESSAT: usize = 48;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FACCESSAT2: usize = 439;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_MKDIRAT: usize = 34;
 #[cfg(target_arch = "aarch64")]
@@ -3608,14 +3612,33 @@ pub unsafe fn sys_symlinkat(
     syscall_result(ret).map(|_| ())
 }
 
-/// `faccessat(dirfd, pathname, mode, flags)` — check file accessibility.
+/// `faccessat(dirfd, pathname, mode)` — legacy file accessibility check.
 ///
 /// # Safety
 ///
 /// `pathname` must be a valid NUL-terminated string.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_faccessat(
+pub unsafe fn sys_faccessat(dirfd: i32, pathname: *const u8, mode: i32) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_FACCESSAT,
+            dirfd as usize,
+            pathname as usize,
+            mode as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `faccessat2(dirfd, pathname, mode, flags)` — check file accessibility with Linux flags.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_faccessat2(
     dirfd: i32,
     pathname: *const u8,
     mode: i32,
@@ -3623,7 +3646,7 @@ pub unsafe fn sys_faccessat(
 ) -> Result<(), i32> {
     let ret = unsafe {
         raw::syscall4(
-            SYS_FACCESSAT,
+            SYS_FACCESSAT2,
             dirfd as usize,
             pathname as usize,
             mode as usize,

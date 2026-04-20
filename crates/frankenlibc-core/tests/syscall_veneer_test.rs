@@ -25,6 +25,7 @@ mod x86_64_tests {
     const O_NONBLOCK: i32 = 0o4000;
     const O_CLOEXEC: i32 = 0o2000000;
     const AT_FDCWD: i32 = -100;
+    const AT_EACCESS: i32 = 0x200;
     const CLOCK_MONOTONIC: i32 = 1;
     const SIGUSR1: i32 = 10;
     const SIG_BLOCK: i32 = 0;
@@ -289,6 +290,8 @@ mod x86_64_tests {
         assert_eq!(SYS_MUNMAP, 11);
         assert_eq!(SYS_GETDENTS64, 217);
         assert_eq!(SYS_FCNTL, 72);
+        assert_eq!(SYS_FACCESSAT, 269);
+        assert_eq!(SYS_FACCESSAT2, 439);
         assert_eq!(SYS_FDATASYNC, 75);
         assert_eq!(SYS_FALLOCATE, 285);
         assert_eq!(SYS_GETPID, 39);
@@ -347,6 +350,8 @@ mod x86_64_tests {
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
         let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_mprotect;
+        let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
+        let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
@@ -547,6 +552,13 @@ mod x86_64_tests {
             matches!(err, EINVAL | ENOSYS),
             "expected EINVAL/ENOSYS, got {err}"
         );
+    }
+
+    #[test]
+    fn faccessat2_at_eaccess_checks_current_directory() {
+        let path = b".\0";
+        unsafe { sys_faccessat2(AT_FDCWD, path.as_ptr(), 0, AT_EACCESS) }
+            .expect("faccessat2(AT_EACCESS) should accept the current directory");
     }
 
     #[test]
@@ -838,6 +850,7 @@ mod aarch64_tests {
     const O_EXCL: i32 = 0o200;
     const O_NONBLOCK: i32 = 0o4000;
     const O_CLOEXEC: i32 = 0o2000000;
+    const AT_EACCESS: i32 = 0x200;
     const AT_FDCWD: i32 = -100;
 
     const PROT_READ: i32 = 0x1;
@@ -1017,6 +1030,8 @@ mod aarch64_tests {
         assert_eq!(SYS_FCNTL, 25);
         assert_eq!(SYS_FDATASYNC, 83);
         assert_eq!(SYS_FALLOCATE, 47);
+        assert_eq!(SYS_FACCESSAT, 48);
+        assert_eq!(SYS_FACCESSAT2, 439);
         assert_eq!(SYS_GETPID, 172);
         assert_eq!(SYS_GETTID, 178);
         assert_eq!(SYS_CLONE, 220);
@@ -1064,6 +1079,8 @@ mod aarch64_tests {
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
         let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_mprotect;
+        let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
+        let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
@@ -1108,5 +1125,12 @@ mod aarch64_tests {
         let _: unsafe fn(*const CloneArgs, usize) -> Result<i32, i32> = sys_clone3;
         let _: unsafe fn(i32, *mut u8, usize, i64) -> Result<usize, i32> = sys_pread64;
         let _: unsafe fn(i32, *const u8, usize, i64) -> Result<usize, i32> = sys_pwrite64;
+    }
+
+    #[test]
+    fn faccessat2_at_eaccess_checks_current_directory() {
+        let path = b".\0";
+        unsafe { sys_faccessat2(AT_FDCWD, path.as_ptr(), 0, AT_EACCESS) }
+            .expect("faccessat2(AT_EACCESS) should accept the current directory");
     }
 }

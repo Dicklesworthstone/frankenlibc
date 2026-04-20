@@ -480,7 +480,7 @@ pub unsafe extern "C" fn access(path: *const c_char, amode: c_int) -> c_int {
         if mode.heals_enabled() {
             // default to F_OK (existence check) in hardened mode
             let rc = match unsafe {
-                syscall::sys_faccessat(libc::AT_FDCWD, path as *const u8, unistd_core::F_OK, 0)
+                syscall::sys_faccessat(libc::AT_FDCWD, path as *const u8, unistd_core::F_OK)
             } {
                 Ok(()) => 0,
                 Err(e) => {
@@ -496,7 +496,7 @@ pub unsafe extern "C" fn access(path: *const c_char, amode: c_int) -> c_int {
         return -1;
     }
 
-    let rc = match unsafe { syscall::sys_faccessat(libc::AT_FDCWD, path as *const u8, amode, 0) } {
+    let rc = match unsafe { syscall::sys_faccessat(libc::AT_FDCWD, path as *const u8, amode) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -1578,7 +1578,7 @@ pub unsafe extern "C" fn faccessat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_faccessat(dirfd, path as *const u8, amode, flags) } {
+    let rc = match unsafe { syscall::sys_faccessat2(dirfd, path as *const u8, amode, flags) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
