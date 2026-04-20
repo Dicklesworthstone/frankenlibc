@@ -1732,6 +1732,33 @@ mod x86_64_tests {
             "expected EFAULT/ENOSYS/EPERM, got {err}"
         );
     }
+
+    // -----------------------------------------------------------------
+    // Metamorphic: raw-syscall signal semantics (bd-imo7)
+    // -----------------------------------------------------------------
+
+    /// POSIX null-signal (sig=0) performs only permission and thread-
+    /// existence checks; sending to the current process must succeed
+    /// because the caller always has permission to signal itself.
+    #[test]
+    fn sys_kill_self_null_signal_succeeds() {
+        let pid = sys_getpid();
+        sys_kill(pid, 0).expect("kill(self, 0) must succeed as POSIX null signal");
+    }
+
+    /// sys_kill with an out-of-range signal number must fail with EINVAL,
+    /// regardless of target pid. The kernel validates `sig` before
+    /// running the permission check, so even an invalid pid/sig
+    /// combination surfaces EINVAL rather than ESRCH or EPERM.
+    #[test]
+    fn sys_kill_self_rejects_out_of_range_signal() {
+        let pid = sys_getpid();
+        let err = sys_kill(pid, 65).expect_err("kill(self, 65) must fail");
+        assert_eq!(err, EINVAL, "expected EINVAL for sig=65, got {err}");
+
+        let err = sys_kill(pid, -1).expect_err("kill(self, -1) must fail");
+        assert_eq!(err, EINVAL, "expected EINVAL for sig=-1, got {err}");
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
