@@ -473,6 +473,66 @@ mod tests {
             prop_assert!(!outcome.blocks);
         }
 
+        /// Metamorphic (absorbing state): Destroyed traps every op except Init.
+        ///
+        /// POSIX requires the destroyed memory be uninitialized before reuse:
+        /// only a fresh Init re-enters the usable state machine. This MR
+        /// fences the state graph against any refactor that would accidentally
+        /// allow Lock/TryLock/Unlock/Destroy to escape the Destroyed sink
+        /// (e.g. via "recover on Unlock" heuristics in the ABI wrapper).
+        #[test]
+        fn prop_destroyed_absorbs_non_init_ops(
+            kind in prop_oneof![
+                Just(PTHREAD_MUTEX_NORMAL),
+                Just(PTHREAD_MUTEX_RECURSIVE),
+                Just(PTHREAD_MUTEX_ERRORCHECK),
+            ],
+            op in prop_oneof![
+                Just(MutexContractOp::Lock),
+                Just(MutexContractOp::TryLock),
+                Just(MutexContractOp::Unlock),
+                Just(MutexContractOp::Destroy),
+            ],
+        ) {
+            let outcome = mutex_contract_transition(
+                kind,
+                MutexContractState::Destroyed,
+                op,
+            );
+            prop_assert_eq!(outcome.next, MutexContractState::Destroyed);
+            prop_assert_eq!(outcome.errno, errno::EINVAL);
+            prop_assert!(!outcome.blocks, "Destroyed state never blocks");
+        }
+
+        /// Metamorphic (absorbing state): Uninitialized traps every op except Init.
+        ///
+        /// Symmetric to prop_destroyed_absorbs_non_init_ops. Independent because
+        /// Uninitialized and Destroyed use separate match arms in the contract
+        /// function; a bug could regress one arm without affecting the other.
+        #[test]
+        fn prop_uninitialized_absorbs_non_init_ops(
+            kind in prop_oneof![
+                Just(PTHREAD_MUTEX_NORMAL),
+                Just(PTHREAD_MUTEX_RECURSIVE),
+                Just(PTHREAD_MUTEX_ERRORCHECK),
+            ],
+            op in prop_oneof![
+                Just(MutexContractOp::Lock),
+                Just(MutexContractOp::TryLock),
+                Just(MutexContractOp::Unlock),
+                Just(MutexContractOp::Destroy),
+            ],
+        ) {
+            let outcome = mutex_contract_transition(
+                kind,
+                MutexContractState::Uninitialized,
+                op,
+            );
+            prop_assert_eq!(outcome.next, MutexContractState::Uninitialized);
+            prop_assert_eq!(outcome.errno, errno::EINVAL);
+            prop_assert!(!outcome.blocks, "Uninitialized state never blocks");
+        }
+
         /// Metamorphic structural invariant: `blocks ⇒ errno == 0`.
         ///
         /// A blocking outcome reports that the calling thread will wait for
