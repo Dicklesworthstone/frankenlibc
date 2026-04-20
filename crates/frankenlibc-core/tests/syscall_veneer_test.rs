@@ -334,6 +334,7 @@ mod x86_64_tests {
         assert_eq!(SYS_INOTIFY_INIT1, 294);
         assert_eq!(SYS_USERFAULTFD, 323);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 230);
+        assert_eq!(SYS_READLINKAT, 267);
         assert_eq!(SYS_TIMERFD_SETTIME, 286);
         assert_eq!(SYS_CAPSET, 126);
         assert_eq!(SYS_SCHED_SETATTR, 314);
@@ -354,6 +355,7 @@ mod x86_64_tests {
         assert_eq!(SOCK_CLOEXEC, O_CLOEXEC);
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
+        assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
         assert_eq!(TIMER_ABSTIME, 1);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
@@ -400,6 +402,8 @@ mod x86_64_tests {
             sys_recvfrom;
         let _: unsafe fn(i32, i32, &Timespec, *mut Timespec) -> Result<(), i32> =
             sys_clock_nanosleep_spec;
+        let _: unsafe fn(*const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlink;
+        let _: unsafe fn(i32, *const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlinkat;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;
@@ -1003,6 +1007,69 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn readlink_helper_matches_readlinkat_relative_dirfd() {
+        struct FdGuard(i32);
+
+        impl Drop for FdGuard {
+            fn drop(&mut self) {
+                if self.0 >= 0 {
+                    let _ = sys_close(self.0);
+                }
+            }
+        }
+
+        let dir = std::path::PathBuf::from(format!(
+            "/tmp/frankenlibc_readlink_{}_{}",
+            sys_getpid(),
+            sys_gettid()
+        ));
+        let mut dir_bytes = dir.to_string_lossy().into_owned().into_bytes();
+        dir_bytes.push(0);
+
+        unsafe { sys_mkdirat(AT_FDCWD, dir_bytes.as_ptr(), 0o700) }.expect("mkdirat temp dir");
+        let dirfd =
+            unsafe { sys_openat(AT_FDCWD, dir_bytes.as_ptr(), O_CLOEXEC, 0) }.expect("open dir");
+        let dirfd = FdGuard(dirfd);
+
+        let target = b"payload-target\0";
+        let link_name = b"link\0";
+        unsafe { sys_symlinkat(target.as_ptr(), dirfd.0, link_name.as_ptr()) }
+            .expect("symlinkat link");
+
+        let mut via_dirfd = [0u8; 64];
+        let via_dirfd_len = unsafe {
+            sys_readlinkat(
+                dirfd.0,
+                link_name.as_ptr(),
+                via_dirfd.as_mut_ptr(),
+                via_dirfd.len(),
+            )
+        }
+        .expect("readlinkat relative");
+
+        let mut full_link = dir.to_string_lossy().into_owned().into_bytes();
+        full_link.extend_from_slice(b"/link\0");
+        let mut via_readlink = [0u8; 64];
+        let via_readlink_len = unsafe {
+            sys_readlink(
+                full_link.as_ptr(),
+                via_readlink.as_mut_ptr(),
+                via_readlink.len(),
+            )
+        }
+        .expect("readlink helper");
+
+        let expected = &target[..target.len() - 1];
+        assert_eq!(via_dirfd_len as usize, expected.len());
+        assert_eq!(via_readlink_len as usize, expected.len());
+        assert_eq!(&via_dirfd[..via_dirfd_len as usize], expected);
+        assert_eq!(&via_readlink[..via_readlink_len as usize], expected);
+
+        std::fs::remove_file(dir.join("link")).expect("cleanup link");
+        std::fs::remove_dir(&dir).expect("cleanup dir");
+    }
+
+    #[test]
     fn signalfd4_nonblock_and_cloexec_flags_deliver_signal() {
         struct SignalMaskGuard {
             old_mask: u64,
@@ -1499,6 +1566,7 @@ mod aarch64_tests {
         assert_eq!(SYS_INOTIFY_INIT1, 26);
         assert_eq!(SYS_USERFAULTFD, 282);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 115);
+        assert_eq!(SYS_READLINKAT, 78);
         assert_eq!(SYS_TIMERFD_SETTIME, 86);
         assert_eq!(SYS_CAPSET, 91);
         assert_eq!(SYS_SCHED_SETATTR, 274);
@@ -1519,6 +1587,7 @@ mod aarch64_tests {
         assert_eq!(SOCK_CLOEXEC, O_CLOEXEC);
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
+        assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
         assert_eq!(TIMER_ABSTIME, 1);
         assert_eq!(SIGEV_THREAD_ID, 4);
         assert_eq!(TFD_NONBLOCK, 0o4000);
@@ -1557,6 +1626,8 @@ mod aarch64_tests {
             sys_recvfrom;
         let _: unsafe fn(i32, i32, &Timespec, *mut Timespec) -> Result<(), i32> =
             sys_clock_nanosleep_spec;
+        let _: unsafe fn(*const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlink;
+        let _: unsafe fn(i32, *const u8, *mut u8, usize) -> Result<isize, i32> = sys_readlinkat;
         let _: fn(i32) -> Result<(), i32> = sys_close;
         let _: unsafe fn(*mut u8, usize, i32, i32, i32, i64) -> Result<*mut u8, i32> = sys_mmap;
         let _: unsafe fn(*mut u8, usize) -> Result<(), i32> = sys_munmap;

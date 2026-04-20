@@ -261,6 +261,8 @@ pub const SOCK_CLOEXEC: i32 = 0o2000000;
 pub const SOCK_SEQPACKET: i32 = 5;
 /// `CLOCK_BOOTTIME` advances across suspend and is valid for `clock_gettime`/`clock_nanosleep`.
 pub const CLOCK_BOOTTIME: i32 = 7;
+/// `AT_FDCWD` uses the current working directory for `*at` syscalls.
+pub const AT_FDCWD: i32 = -100;
 /// `SIGEV_THREAD_ID` requests timer signal delivery to a specific thread ID.
 pub const SIGEV_THREAD_ID: i32 = 4;
 /// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.
@@ -2925,6 +2927,16 @@ pub unsafe fn sys_readlinkat(
         )
     };
     syscall_result(ret).map(|v| v as isize)
+}
+
+/// `readlink(pathname, buf, bufsiz)` — read value of a symbolic link from the cwd namespace.
+///
+/// # Safety
+/// `pathname` must be a valid C string, `buf` must be a valid writable buffer.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_readlink(pathname: *const u8, buf: *mut u8, bufsiz: usize) -> Result<isize, i32> {
+    unsafe { sys_readlinkat(AT_FDCWD, pathname, buf, bufsiz) }
 }
 
 /// `utimensat(dirfd, pathname, times, flags)` — update file timestamps.
