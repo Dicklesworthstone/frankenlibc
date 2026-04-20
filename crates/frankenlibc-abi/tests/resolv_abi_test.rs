@@ -15,7 +15,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use frankenlibc_abi::inet_abi;
 use frankenlibc_abi::resolv_abi;
 
-const NO_RECOVERY_ERRNO: i32 = 3;
 const HOST_NOT_FOUND_ERRNO: i32 = 1;
 const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
