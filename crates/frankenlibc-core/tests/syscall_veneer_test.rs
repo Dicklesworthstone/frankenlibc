@@ -306,6 +306,7 @@ mod x86_64_tests {
         assert_eq!(SYS_SET_MEMPOLICY, 238);
         assert_eq!(SYS_GET_MEMPOLICY, 239);
         assert_eq!(SYS_SIGNALFD4, 289);
+        assert_eq!(SYS_INOTIFY_INIT1, 294);
         assert_eq!(SYS_USERFAULTFD, 323);
         assert_eq!(SYS_TIMERFD_SETTIME, 286);
         assert_eq!(SYS_CAPSET, 126);
@@ -320,6 +321,8 @@ mod x86_64_tests {
         assert_eq!(LINUX_CAPABILITY_U32S_3, 2);
         assert_eq!(SFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(SFD_CLOEXEC, O_CLOEXEC);
+        assert_eq!(IN_NONBLOCK, O_NONBLOCK);
+        assert_eq!(IN_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
@@ -353,6 +356,7 @@ mod x86_64_tests {
         let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_mprotect;
         let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
+        let _: fn(i32) -> Result<i32, i32> = sys_inotify_init1;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
@@ -587,6 +591,32 @@ mod x86_64_tests {
         let err =
             unsafe { sys_sysinfo(core::ptr::null_mut()) }.expect_err("sysinfo(null) must fail");
         assert_eq!(err, EFAULT);
+    }
+
+    #[test]
+    fn inotify_init1_nonblock_and_cloexec_flags_apply_to_fd() {
+        let fd = sys_inotify_init1(IN_NONBLOCK | IN_CLOEXEC).expect("inotify_init1");
+
+        let fd_flags = unsafe { sys_fcntl(fd, F_GETFD, 0) }.expect("fcntl(F_GETFD)");
+        assert_ne!(
+            fd_flags & FD_CLOEXEC,
+            0,
+            "inotify_init1 should apply close-on-exec"
+        );
+        let file_status = unsafe { sys_fcntl(fd, F_GETFL, 0) }.expect("fcntl(F_GETFL)");
+        assert_ne!(
+            file_status & O_NONBLOCK,
+            0,
+            "inotify_init1 should apply nonblocking mode"
+        );
+
+        sys_close(fd).expect("close inotify fd");
+    }
+
+    #[test]
+    fn inotify_init1_invalid_flags_are_rejected() {
+        let err = sys_inotify_init1(i32::MIN).expect_err("inotify_init1(invalid flags) must fail");
+        assert_eq!(err, EINVAL);
     }
 
     #[test]
@@ -1071,6 +1101,7 @@ mod aarch64_tests {
         assert_eq!(SYS_SET_MEMPOLICY, 237);
         assert_eq!(SYS_GET_MEMPOLICY, 236);
         assert_eq!(SYS_SIGNALFD4, 74);
+        assert_eq!(SYS_INOTIFY_INIT1, 26);
         assert_eq!(SYS_USERFAULTFD, 282);
         assert_eq!(SYS_TIMERFD_SETTIME, 86);
         assert_eq!(SYS_CAPSET, 91);
@@ -1085,6 +1116,8 @@ mod aarch64_tests {
         assert_eq!(LINUX_CAPABILITY_U32S_3, 2);
         assert_eq!(SFD_NONBLOCK, O_NONBLOCK);
         assert_eq!(SFD_CLOEXEC, 0o2000000);
+        assert_eq!(IN_NONBLOCK, O_NONBLOCK);
+        assert_eq!(IN_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_NONBLOCK, 0o4000);
         assert_eq!(TFD_CLOEXEC, 0o2000000);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
@@ -1110,6 +1143,7 @@ mod aarch64_tests {
         let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_mprotect;
         let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
+        let _: fn(i32) -> Result<i32, i32> = sys_inotify_init1;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =

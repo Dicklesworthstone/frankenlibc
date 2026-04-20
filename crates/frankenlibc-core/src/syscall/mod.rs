@@ -202,6 +202,10 @@ pub const LINUX_CAPABILITY_U32S_3: usize = 2;
 pub const SFD_NONBLOCK: i32 = 0o4000;
 /// `SFD_CLOEXEC` requests close-on-exec on the new signalfd descriptor.
 pub const SFD_CLOEXEC: i32 = 0o2000000;
+/// `IN_NONBLOCK` requests nonblocking inotify file descriptor semantics.
+pub const IN_NONBLOCK: i32 = 0o4000;
+/// `IN_CLOEXEC` requests close-on-exec on the new inotify descriptor.
+pub const IN_CLOEXEC: i32 = 0o2000000;
 /// `TFD_NONBLOCK` requests nonblocking timerfd file descriptor semantics.
 pub const TFD_NONBLOCK: i32 = 0o4000;
 /// `TFD_CLOEXEC` requests close-on-exec on the new timerfd descriptor.
