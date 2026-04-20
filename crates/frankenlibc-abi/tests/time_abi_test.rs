@@ -221,6 +221,33 @@ fn vdso_fastpath_snapshot_reflects_mapping_presence() {
 }
 
 #[test]
+fn vdso_symbol_version_matches_target_arch() {
+    let version = time_abi::__frankenlibc_vdso_symbol_version_name();
+    #[cfg(target_arch = "x86_64")]
+    assert_eq!(version, "LINUX_2.6");
+    #[cfg(target_arch = "aarch64")]
+    assert_eq!(version, "LINUX_2.6.39");
+    #[cfg(target_arch = "riscv64")]
+    assert_eq!(version, "LINUX_4.15");
+}
+
+#[test]
+fn vdso_positive_rc_falls_back_instead_of_synthesizing_negative_errno() {
+    assert_eq!(
+        time_abi::__frankenlibc_classify_vdso_return(7),
+        time_abi::VdsoCallOutcome::FallbackToSyscall
+    );
+    assert_eq!(
+        time_abi::__frankenlibc_classify_vdso_return(-libc::EINVAL),
+        time_abi::VdsoCallOutcome::Fail(libc::EINVAL)
+    );
+    assert_eq!(
+        time_abi::__frankenlibc_classify_vdso_return(-libc::ENOSYS),
+        time_abi::VdsoCallOutcome::FallbackToSyscall
+    );
+}
+
+#[test]
 fn clock_gettime_uses_vdso_fastpath_when_available() {
     let before = time_abi::vdso_fastpath_snapshot();
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };

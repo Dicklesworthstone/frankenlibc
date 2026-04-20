@@ -21,6 +21,14 @@ use crate::util::scan_c_string;
 type VdsoClockGettimeFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
 type VdsoGettimeofdayFn = unsafe extern "C" fn(*mut libc::timeval, *mut libc::timezone) -> c_int;
 
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VdsoCallOutcome {
+    Success,
+    FallbackToSyscall,
+    Fail(c_int),
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct VdsoSymbols {
     mapping_present: bool,
@@ -42,6 +50,49 @@ pub struct VdsoFastpathSnapshot {
 static VDSO_SYMBOLS: OnceLock<VdsoSymbols> = OnceLock::new();
 static VDSO_CLOCK_GETTIME_HITS: AtomicU64 = AtomicU64::new(0);
 static VDSO_GETTIMEOFDAY_HITS: AtomicU64 = AtomicU64::new(0);
+
+const fn vdso_symbol_version_bytes() -> &'static [u8] {
+    #[cfg(target_arch = "aarch64")]
+    {
+        b"LINUX_2.6.39\0"
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+        b"LINUX_4.15\0"
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
+    {
+        b"LINUX_2.6\0"
+    }
+}
+
+#[inline]
+fn vdso_symbol_version_cstr() -> &'static core::ffi::CStr {
+    core::ffi::CStr::from_bytes_with_nul(vdso_symbol_version_bytes())
+        .expect("vDSO version string must be a valid C string")
+}
+
+#[inline]
+fn classify_vdso_return(rc: c_int) -> VdsoCallOutcome {
+    if rc == 0 {
+        VdsoCallOutcome::Success
+    } else if rc == -libc::ENOSYS || rc > 0 {
+        VdsoCallOutcome::FallbackToSyscall
+    } else {
+        VdsoCallOutcome::Fail(-rc)
+    }
+}
+
+#[doc(hidden)]
+pub fn __frankenlibc_vdso_symbol_version_name() -> &'static str {
+    let bytes = vdso_symbol_version_bytes();
+    std::str::from_utf8(&bytes[..bytes.len() - 1]).expect("vDSO version string must be utf-8")
+}
+
+#[doc(hidden)]
+pub fn __frankenlibc_classify_vdso_return(rc: c_int) -> VdsoCallOutcome {
+    classify_vdso_return(rc)
+}
 
 #[inline]
 fn last_host_errno(default: c_int) -> c_int {
@@ -95,13 +146,16 @@ unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
             let vdso_clock_gettime: VdsoClockGettimeFn =
                 unsafe { core::mem::transmute(symbols.clock_gettime) };
             let rc = unsafe { vdso_clock_gettime(clock_id, tp) };
-            if rc == 0 {
-                VDSO_CLOCK_GETTIME_HITS.fetch_add(1, Ordering::Relaxed);
-                return 0;
-            }
-            if rc != -libc::ENOSYS {
-                unsafe { set_abi_errno(-rc) };
-                return -1;
+            match classify_vdso_return(rc) {
+                VdsoCallOutcome::Success => {
+                    VDSO_CLOCK_GETTIME_HITS.fetch_add(1, Ordering::Relaxed);
+                    return 0;
+                }
+                VdsoCallOutcome::FallbackToSyscall => {}
+                VdsoCallOutcome::Fail(err) => {
+                    unsafe { set_abi_errno(err) };
+                    return -1;
+                }
             }
         }
     }
@@ -117,13 +171,16 @@ unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
         let vdso_gettimeofday: VdsoGettimeofdayFn =
             unsafe { core::mem::transmute(symbols.gettimeofday) };
         let rc = unsafe { vdso_gettimeofday(tv, std::ptr::null_mut()) };
-        if rc == 0 {
-            VDSO_GETTIMEOFDAY_HITS.fetch_add(1, Ordering::Relaxed);
-            return 0;
-        }
-        if rc != -libc::ENOSYS {
-            unsafe { set_abi_errno(-rc) };
-            return -1;
+        match classify_vdso_return(rc) {
+            VdsoCallOutcome::Success => {
+                VDSO_GETTIMEOFDAY_HITS.fetch_add(1, Ordering::Relaxed);
+                return 0;
+            }
+            VdsoCallOutcome::FallbackToSyscall => {}
+            VdsoCallOutcome::Fail(err) => {
+                unsafe { set_abi_errno(err) };
+                return -1;
+            }
         }
     }
 
@@ -164,7 +221,7 @@ fn resolve_vdso_symbols() -> VdsoSymbols {
         crate::dlfcn_abi::dlvsym(
             handle,
             c"__vdso_clock_gettime".as_ptr(),
-            c"LINUX_2.6".as_ptr(),
+            vdso_symbol_version_cstr().as_ptr(),
         )
     };
     let clock_gettime = if clock_gettime.is_null() {
@@ -176,7 +233,7 @@ fn resolve_vdso_symbols() -> VdsoSymbols {
         crate::dlfcn_abi::dlvsym(
             handle,
             c"__vdso_gettimeofday".as_ptr(),
-            c"LINUX_2.6".as_ptr(),
+            vdso_symbol_version_cstr().as_ptr(),
         )
     };
     let gettimeofday = if gettimeofday.is_null() {
