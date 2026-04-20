@@ -601,6 +601,70 @@ fn getaddrinfo_null_node_ai_addrconfig_filters_unspecified_to_ipv4() {
 }
 
 #[test]
+fn getaddrinfo_null_node_ai_addrconfig_filters_unspecified_to_ipv6_only() {
+    // Symmetric companion to ..._filters_unspecified_to_ipv4. A host with
+    // only IPv6 non-loopback routes (e.g., IPv6-only network) must surface
+    // only AF_INET6 records for null-node queries under AI_ADDRCONFIG.
+    // The empty route table below plus a non-loopback ::/0 entry in
+    // if_inet6 models an IPv6-only box.
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n",
+        ),
+        Some(b"20010db8000000000000000000000001 02 80 00 20   eth0\n"),
+        |_| {
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let families = unsafe { collect_addrinfo_families(res) };
+            assert_eq!(families, vec![libc::AF_INET6]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
+fn getaddrinfo_null_node_ai_addrconfig_preserves_both_families_on_dual_stack() {
+    // Dual-stack host with both IPv4 and IPv6 non-loopback routes must
+    // return both AF_INET and AF_INET6 nodes for null-node queries.
+    // Confirms the filter only removes families that are *unsupported*,
+    // not that it inadvertently trims supported families.
+    with_resolver_backends_and_addrconfig(
+        None,
+        None,
+        Some(
+            b"Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\neth0\t00000000\t01010101\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        ),
+        Some(b"20010db8000000000000000000000001 02 80 00 20   eth0\n"),
+        |_| {
+            let service = CString::new("8080").unwrap();
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_flags = libc::AI_ADDRCONFIG;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(ptr::null(), service.as_ptr(), &hints, &mut res) };
+            assert_eq!(rc, 0);
+            assert!(!res.is_null());
+            let mut families = unsafe { collect_addrinfo_families(res) };
+            families.sort();
+            assert_eq!(families, vec![libc::AF_INET, libc::AF_INET6]);
+
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        },
+    );
+}
+
+#[test]
 fn getaddrinfo_null_node_ai_addrconfig_returns_noname_without_nonloopback_families() {
     with_resolver_backends_and_addrconfig(
         None,
