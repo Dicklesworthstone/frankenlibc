@@ -1267,6 +1267,177 @@ mod tests {
             }
         }
 
+        /// POSIX services(5) conformance — cited spec clauses below.
+        /// Each case pins a specific documented behavior of the
+        /// services-file parser. Keeps the invariant proptests
+        /// (fuzz_parse_services_line_*) as the "does it crash / is
+        /// output a subset" fence and adds spec provenance here.
+        #[test]
+        fn services_parse_conformance_table(
+            // Use any() for proptest's boilerplate; we ignore the arg
+            // and run the full const table once per iteration with
+            // cases=1 effectively.
+            _seed in any::<u8>(),
+        ) {
+            struct Case {
+                id: &'static str,
+                spec_ref: &'static str,
+                input: &'static [u8],
+                expected_name: Option<&'static [u8]>,
+                expected_port: u16,
+                expected_proto: &'static [u8],
+                expected_aliases: &'static [&'static [u8]],
+            }
+            const TABLE: &[Case] = &[
+                Case {
+                    id: "SERVICES-PARSE-001",
+                    spec_ref: "services(5) ¶Format — official_name port/protocol",
+                    input: b"ssh\t22/tcp",
+                    expected_name: Some(b"ssh"),
+                    expected_port: 22,
+                    expected_proto: b"tcp",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-002",
+                    spec_ref: "services(5) ¶Format — multiple aliases allowed",
+                    input: b"http  80/tcp  www www-http",
+                    expected_name: Some(b"http"),
+                    expected_port: 80,
+                    expected_proto: b"tcp",
+                    expected_aliases: &[b"www", b"www-http"],
+                },
+                Case {
+                    id: "SERVICES-PARSE-003",
+                    spec_ref: "services(5) ¶Format — udp protocol accepted",
+                    input: b"dns 53/udp",
+                    expected_name: Some(b"dns"),
+                    expected_port: 53,
+                    expected_proto: b"udp",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-004",
+                    spec_ref: "services(5) ¶Description — '#' starts comment",
+                    input: b"smtp 25/tcp mail  # Simple Mail Transfer",
+                    expected_name: Some(b"smtp"),
+                    expected_port: 25,
+                    expected_proto: b"tcp",
+                    expected_aliases: &[b"mail"],
+                },
+                Case {
+                    id: "SERVICES-PARSE-005",
+                    spec_ref: "services(5) ¶Description — pure comment line rejected",
+                    input: b"# This is a comment",
+                    expected_name: None,
+                    expected_port: 0,
+                    expected_proto: b"",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-006",
+                    spec_ref: "services(5) ¶Description — blank line rejected",
+                    input: b"",
+                    expected_name: None,
+                    expected_port: 0,
+                    expected_proto: b"",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-007",
+                    // services(5): port/protocol must include '/' separator.
+                    spec_ref: "services(5) ¶Format — missing '/' in port/proto rejected",
+                    input: b"bad 22tcp",
+                    expected_name: None,
+                    expected_port: 0,
+                    expected_proto: b"",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-008",
+                    // An empty protocol field after '/' is ill-formed.
+                    spec_ref: "services(5) ¶Format — empty protocol rejected",
+                    input: b"bad 22/",
+                    expected_name: None,
+                    expected_port: 0,
+                    expected_proto: b"",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-009",
+                    // Non-numeric port must be rejected (u16::parse fails).
+                    spec_ref: "services(5) ¶Format — non-numeric port rejected",
+                    input: b"bad abc/tcp",
+                    expected_name: None,
+                    expected_port: 0,
+                    expected_proto: b"",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-010",
+                    // Port > 65535 must be rejected (u16 overflow).
+                    spec_ref: "services(5) ¶Format — port must fit u16 (0..=65535)",
+                    input: b"bad 70000/tcp",
+                    expected_name: None,
+                    expected_port: 0,
+                    expected_proto: b"",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-011",
+                    spec_ref: "services(5) ¶Format — boundary: port 0 is valid",
+                    input: b"nullport 0/tcp",
+                    expected_name: Some(b"nullport"),
+                    expected_port: 0,
+                    expected_proto: b"tcp",
+                    expected_aliases: &[],
+                },
+                Case {
+                    id: "SERVICES-PARSE-012",
+                    spec_ref: "services(5) ¶Format — boundary: port 65535 is valid",
+                    input: b"maxport 65535/tcp",
+                    expected_name: Some(b"maxport"),
+                    expected_port: 65535,
+                    expected_proto: b"tcp",
+                    expected_aliases: &[],
+                },
+            ];
+
+            let mut fails = Vec::new();
+            for case in TABLE {
+                let actual = parse_services_line(case.input);
+                let pass = match (&actual, case.expected_name) {
+                    (None, None) => true,
+                    (Some(entry), Some(want_name)) => {
+                        entry.name == want_name
+                            && entry.port == case.expected_port
+                            && entry.protocol == case.expected_proto
+                            && entry.aliases.len() == case.expected_aliases.len()
+                            && entry
+                                .aliases
+                                .iter()
+                                .zip(case.expected_aliases.iter())
+                                .all(|(a, b)| a == b)
+                    }
+                    _ => false,
+                };
+                if !pass {
+                    fails.push(format!(
+                        "{} [{}]: input={:?}, actual={:?}",
+                        case.id,
+                        case.spec_ref,
+                        core::str::from_utf8(case.input).unwrap_or("<non-utf8>"),
+                        actual,
+                    ));
+                }
+            }
+            prop_assert!(
+                fails.is_empty(),
+                "services(5) parse conformance failures:\n  {}",
+                fails.join("\n  ")
+            );
+        }
+
         /// Biased alphabet containing the port-grammar delimiters
         /// ('/') and digit/alpha characters — a raw-byte fuzz almost
         /// never produces a '/' in the right spot to reach the port
