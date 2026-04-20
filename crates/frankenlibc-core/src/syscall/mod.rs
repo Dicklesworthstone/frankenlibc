@@ -304,6 +304,8 @@ pub const RENAME_EXCHANGE: u32 = 1 << 1;
 pub const CLONE_PIDFD: u64 = 1 << 12;
 /// `P_PID` tells `waitid(2)` to target an exact process ID.
 pub const P_PID: i32 = 1;
+/// `P_PIDFD` tells `waitid(2)` to target a process through a pidfd selector.
+pub const P_PIDFD: i32 = 3;
 /// `SIGEV_THREAD_ID` requests timer signal delivery to a specific thread ID.
 pub const SIGEV_THREAD_ID: i32 = 4;
 /// `WSTOPPED` asks `waitid(2)` to report children that entered a stopped state.

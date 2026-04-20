@@ -518,6 +518,7 @@ mod x86_64_tests {
         assert_eq!(frankenlibc_core::syscall::SEEK_DATA, 3);
         assert_eq!(frankenlibc_core::syscall::SEEK_HOLE, 4);
         assert_eq!(P_PID, 1);
+        assert_eq!(frankenlibc_core::syscall::P_PIDFD, 3);
         assert_eq!(WSTOPPED, 2);
         assert_eq!(TIMER_ABSTIME, 1);
         assert_eq!(WEXITED, 4);
@@ -1342,6 +1343,69 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn waitid_pidfd_selector_reports_clone3_child_or_expected_fallback() {
+        let _lock = WAITID_LOCK.lock().expect("waitid lock");
+
+        let mut pidfd = -1_i32;
+        let args = CloneArgs {
+            flags: frankenlibc_core::syscall::CLONE_PIDFD,
+            pidfd: (&mut pidfd as *mut i32).cast::<()>() as u64,
+            exit_signal: SIGCHLD as u64,
+            ..CloneArgs::default()
+        };
+
+        match unsafe { sys_clone3(&args, core::mem::size_of::<CloneArgs>()) } {
+            Ok(0) => sys_exit_group(41),
+            Ok(pid) => {
+                assert!(pidfd >= 0, "clone3(CLONE_PIDFD) did not populate pidfd");
+
+                let mut exit_info = WaitSigInfo::default();
+                match unsafe {
+                    sys_waitid_info(
+                        frankenlibc_core::syscall::P_PIDFD,
+                        pidfd as u32,
+                        &mut exit_info,
+                        WEXITED,
+                    )
+                } {
+                    Ok(()) => {
+                        assert_eq!(exit_info.si_signo, SIGCHLD as i32);
+                        assert_eq!(exit_info.si_code, CLD_EXITED);
+                        assert_eq!(exit_info.child_pid(), pid);
+                        assert_eq!(exit_info.child_status(), 41);
+
+                        let err = unsafe {
+                            sys_wait4(pid, core::ptr::null_mut(), 0, core::ptr::null_mut())
+                        }
+                        .expect_err("waitid(P_PIDFD, ...) should reap the child");
+                        assert_eq!(err, ECHILD);
+                    }
+                    Err(err) => {
+                        assert!(
+                            matches!(err, EINVAL | ENOSYS),
+                            "expected EINVAL/ENOSYS for unsupported P_PIDFD waitid, got {err}"
+                        );
+
+                        let mut fallback = WaitSigInfo::default();
+                        unsafe { sys_waitid_info(P_PID, pid as u32, &mut fallback, WEXITED) }
+                            .expect("fallback waitid(WEXITED)");
+                        assert_eq!(fallback.child_pid(), pid);
+                        assert_eq!(fallback.child_status(), 41);
+                    }
+                }
+
+                sys_close(pidfd).expect("close pidfd");
+            }
+            Err(err) => {
+                assert!(
+                    matches!(err, ENOSYS | EPERM),
+                    "expected ENOSYS/EPERM, got {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn signalfd4_nonblock_and_cloexec_flags_deliver_signal() {
         struct SignalMaskGuard {
             old_mask: u64,
@@ -1870,6 +1934,7 @@ mod aarch64_tests {
         assert_eq!(frankenlibc_core::syscall::SEEK_DATA, 3);
         assert_eq!(frankenlibc_core::syscall::SEEK_HOLE, 4);
         assert_eq!(P_PID, 1);
+        assert_eq!(frankenlibc_core::syscall::P_PIDFD, 3);
         assert_eq!(WSTOPPED, 2);
         assert_eq!(TIMER_ABSTIME, 1);
         assert_eq!(WEXITED, 4);
