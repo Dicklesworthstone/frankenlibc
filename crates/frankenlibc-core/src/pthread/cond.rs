@@ -1890,6 +1890,49 @@ mod tests {
     proptest! {
         #![proptest_config(property_proptest_config(256))]
 
+        /// Metamorphic: Broadcast on Waiting always lands in Idle, regardless
+        /// of has_waiters. Signal on Waiting returns to Idle only when no
+        /// other waiters remain (has_waiters=false).
+        ///
+        /// This MR captures the semantic difference that justifies having
+        /// two distinct wakeup ops: Broadcast is unconditionally draining
+        /// ("wake all"), while Signal's exit state depends on population.
+        /// A regression that confused the two arms would escape any MR that
+        /// only checked "wakeups don't block" (prop_signal_broadcast_never_block).
+        #[test]
+        fn prop_broadcast_drains_waiting_regardless_of_has_waiters(
+            has_waiters in any::<bool>(),
+        ) {
+            let outcome = condvar_contract_transition(
+                CondvarContractState::Waiting,
+                CondvarContractOp::Broadcast,
+                has_waiters,
+            );
+            prop_assert_eq!(outcome.next, CondvarContractState::Idle);
+            prop_assert_eq!(outcome.errno, 0);
+            prop_assert!(!outcome.blocks);
+        }
+
+        /// Metamorphic companion: Signal on Waiting respects has_waiters.
+        ///
+        /// - has_waiters=true  → stays Waiting (one wakeup left others parked)
+        /// - has_waiters=false → transitions to Idle (last waiter woken)
+        #[test]
+        fn prop_signal_waiting_depends_on_has_waiters(has_waiters in any::<bool>()) {
+            let outcome = condvar_contract_transition(
+                CondvarContractState::Waiting,
+                CondvarContractOp::Signal,
+                has_waiters,
+            );
+            prop_assert_eq!(outcome.errno, 0);
+            prop_assert!(!outcome.blocks);
+            if has_waiters {
+                prop_assert_eq!(outcome.next, CondvarContractState::Waiting);
+            } else {
+                prop_assert_eq!(outcome.next, CondvarContractState::Idle);
+            }
+        }
+
         /// Metamorphic: Wait and TimedWait always block when the condvar is
         /// in an active state (Idle or Waiting), with errno=0.
         ///
