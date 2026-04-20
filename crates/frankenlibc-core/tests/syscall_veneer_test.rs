@@ -305,6 +305,7 @@ mod x86_64_tests {
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 238);
         assert_eq!(SYS_GET_MEMPOLICY, 239);
+        assert_eq!(SYS_SCHED_GETAFFINITY, 204);
         assert_eq!(SYS_SIGNALFD4, 289);
         assert_eq!(SYS_INOTIFY_INIT1, 294);
         assert_eq!(SYS_USERFAULTFD, 323);
@@ -327,6 +328,7 @@ mod x86_64_tests {
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(core::mem::size_of::<CpuSet>(), 128);
         assert_eq!(core::mem::size_of::<SignalfdSiginfo>(), 128);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
         assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
@@ -357,6 +359,7 @@ mod x86_64_tests {
         let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
         let _: fn(i32) -> Result<i32, i32> = sys_inotify_init1;
+        let _: unsafe fn(i32, &mut CpuSet) -> Result<usize, i32> = sys_sched_getaffinity_cpuset;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
@@ -617,6 +620,24 @@ mod x86_64_tests {
     fn inotify_init1_invalid_flags_are_rejected() {
         let err = sys_inotify_init1(i32::MIN).expect_err("inotify_init1(invalid flags) must fail");
         assert_eq!(err, EINVAL);
+    }
+
+    #[test]
+    fn sched_getaffinity_cpuset_contains_current_cpu() {
+        let mut cpuset = CpuSet::default();
+        let bytes =
+            unsafe { sys_sched_getaffinity_cpuset(0, &mut cpuset) }.expect("sched_getaffinity");
+        assert!(
+            bytes > 0 && bytes <= core::mem::size_of::<CpuSet>(),
+            "kernel returned unexpected affinity size {bytes}"
+        );
+
+        let mut cpu = 0_u32;
+        unsafe { sys_getcpu(&mut cpu, core::ptr::null_mut()) }.expect("getcpu");
+        assert!(
+            cpuset.contains_cpu(cpu),
+            "affinity mask should contain current cpu {cpu}"
+        );
     }
 
     #[test]
@@ -1100,6 +1121,7 @@ mod aarch64_tests {
         assert_eq!(SYS_MEMFD_SECRET, 447);
         assert_eq!(SYS_SET_MEMPOLICY, 237);
         assert_eq!(SYS_GET_MEMPOLICY, 236);
+        assert_eq!(SYS_SCHED_GETAFFINITY, 123);
         assert_eq!(SYS_SIGNALFD4, 74);
         assert_eq!(SYS_INOTIFY_INIT1, 26);
         assert_eq!(SYS_USERFAULTFD, 282);
@@ -1122,6 +1144,7 @@ mod aarch64_tests {
         assert_eq!(TFD_CLOEXEC, 0o2000000);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(core::mem::size_of::<CpuSet>(), 128);
         assert_eq!(core::mem::size_of::<SignalfdSiginfo>(), 128);
         assert_eq!(core::mem::size_of::<Timespec>(), 16);
         assert_eq!(core::mem::size_of::<ItimerSpec>(), 32);
@@ -1144,6 +1167,7 @@ mod aarch64_tests {
         let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
         let _: fn(i32) -> Result<i32, i32> = sys_inotify_init1;
+        let _: unsafe fn(i32, &mut CpuSet) -> Result<usize, i32> = sys_sched_getaffinity_cpuset;
         let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =

@@ -58,6 +58,26 @@ pub struct FutexWaitV {
     pub reserved: u32,
 }
 
+/// Linux `cpu_set_t` layout used by `sched_getaffinity(2)` on supported 64-bit targets.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CpuSet {
+    pub bits: [u64; 16],
+}
+
+impl CpuSet {
+    /// Report whether the given CPU index is present in this affinity mask.
+    #[must_use]
+    pub fn contains_cpu(&self, cpu: u32) -> bool {
+        let cpu = cpu as usize;
+        let word = cpu / u64::BITS as usize;
+        let bit = cpu % u64::BITS as usize;
+        self.bits
+            .get(word)
+            .is_some_and(|mask| (mask & (1_u64 << bit)) != 0)
+    }
+}
+
 /// Linux `sched_attr` block used by `sched_setattr(2)` / `sched_getattr(2)`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -3611,6 +3631,24 @@ pub unsafe fn sys_sched_getaffinity(
         )
     };
     syscall_result(ret).map(|v| v as i32)
+}
+
+/// `sched_getaffinity(pid, sizeof(cpu_set_t), mask)` using the typed Linux `cpu_set_t` layout.
+///
+/// # Safety
+///
+/// `mask` must be a valid writable `CpuSet`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_sched_getaffinity_cpuset(pid: i32, mask: &mut CpuSet) -> Result<usize, i32> {
+    unsafe {
+        sys_sched_getaffinity(
+            pid,
+            core::mem::size_of::<CpuSet>(),
+            (mask as *mut CpuSet).cast(),
+        )
+    }
+    .map(|bytes| bytes as usize)
 }
 
 /// `symlinkat(target, newdirfd, linkpath)` — create a symbolic link relative to directory fd.
