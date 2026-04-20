@@ -513,6 +513,7 @@ mod x86_64_tests {
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
         assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
+        assert_eq!(frankenlibc_core::syscall::CLONE_PIDFD, 1 << 12);
         assert_eq!(frankenlibc_core::syscall::RENAME_EXCHANGE, 2);
         assert_eq!(frankenlibc_core::syscall::SEEK_DATA, 3);
         assert_eq!(frankenlibc_core::syscall::SEEK_HOLE, 4);
@@ -1303,6 +1304,44 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn clone3_clone_pidfd_reports_child_fd_or_expected_fallback() {
+        let _lock = WAITID_LOCK.lock().expect("waitid lock");
+
+        let mut pidfd = -1_i32;
+        let args = CloneArgs {
+            flags: frankenlibc_core::syscall::CLONE_PIDFD,
+            pidfd: (&mut pidfd as *mut i32).cast::<()>() as u64,
+            exit_signal: SIGCHLD as u64,
+            ..CloneArgs::default()
+        };
+
+        match unsafe { sys_clone3(&args, core::mem::size_of::<CloneArgs>()) } {
+            Ok(0) => sys_exit_group(23),
+            Ok(pid) => {
+                assert!(pidfd >= 0, "clone3(CLONE_PIDFD) did not populate pidfd");
+                let fd_flags = unsafe { sys_fcntl(pidfd, F_GETFD, 0) }.expect("fcntl(F_GETFD)");
+                assert!(fd_flags >= 0, "pidfd must be a valid descriptor");
+
+                let mut exit_info = WaitSigInfo::default();
+                unsafe { sys_waitid_info(P_PID, pid as u32, &mut exit_info, WEXITED) }
+                    .expect("waitid(WEXITED)");
+                assert_eq!(exit_info.si_signo, SIGCHLD as i32);
+                assert_eq!(exit_info.si_code, CLD_EXITED);
+                assert_eq!(exit_info.child_pid(), pid);
+                assert_eq!(exit_info.child_status(), 23);
+
+                sys_close(pidfd).expect("close pidfd");
+            }
+            Err(err) => {
+                assert!(
+                    matches!(err, ENOSYS | EPERM),
+                    "expected ENOSYS/EPERM, got {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn signalfd4_nonblock_and_cloexec_flags_deliver_signal() {
         struct SignalMaskGuard {
             old_mask: u64,
@@ -1826,6 +1865,7 @@ mod aarch64_tests {
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
         assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
+        assert_eq!(frankenlibc_core::syscall::CLONE_PIDFD, 1 << 12);
         assert_eq!(frankenlibc_core::syscall::RENAME_EXCHANGE, 2);
         assert_eq!(frankenlibc_core::syscall::SEEK_DATA, 3);
         assert_eq!(frankenlibc_core::syscall::SEEK_HOLE, 4);

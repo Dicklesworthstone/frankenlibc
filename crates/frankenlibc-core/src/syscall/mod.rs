@@ -300,6 +300,8 @@ pub const SEEK_DATA: i32 = 3;
 pub const SEEK_HOLE: i32 = 4;
 /// `RENAME_EXCHANGE` atomically swaps the two pathnames supplied to `renameat2(2)`.
 pub const RENAME_EXCHANGE: u32 = 1 << 1;
+/// `CLONE_PIDFD` requests a pidfd written to `clone3`'s `pidfd` output pointer.
+pub const CLONE_PIDFD: u64 = 1 << 12;
 /// `P_PID` tells `waitid(2)` to target an exact process ID.
 pub const P_PID: i32 = 1;
 /// `SIGEV_THREAD_ID` requests timer signal delivery to a specific thread ID.
