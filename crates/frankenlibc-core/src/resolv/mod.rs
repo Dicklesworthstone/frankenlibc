@@ -477,6 +477,21 @@ fn eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use proptest::test_runner::Config as ProptestConfig;
+
+    fn fuzz_proptest_config(default_cases: u32) -> ProptestConfig {
+        let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(default_cases);
+        ProptestConfig {
+            cases,
+            failure_persistence: None,
+            ..ProptestConfig::default()
+        }
+    }
 
     // ---- parse_hosts_line ----
 
@@ -1129,5 +1144,81 @@ mod tests {
             "hosts(5) lookup conformance failures:\n  {}",
             fails.join("\n  ")
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Smoke-fuzz proptests for parse_hosts_line (bd-s170, Archetype 1)
+    // -----------------------------------------------------------------
+    //
+    // Oracle: the parser must never panic on arbitrary byte input, must
+    // always terminate, and when it returns Some(_) the decoded output
+    // must be a subset of the input bytes (no ghost data introduction).
+
+    proptest! {
+        #![proptest_config(fuzz_proptest_config(512))]
+
+        /// Smoke fuzz: parse_hosts_line accepts any byte sequence without
+        /// panicking. A parser that indexes with raw byte arithmetic on
+        /// multibyte UTF-8 or trusts the '#' comment stripper to leave
+        /// non-empty bytes could panic on crafted inputs — this sweep
+        /// drives the parser through tens of thousands of garbage lines.
+        #[test]
+        fn fuzz_parse_hosts_line_never_panics(
+            bytes in proptest::collection::vec(any::<u8>(), 0..512),
+        ) {
+            let _ = parse_hosts_line(&bytes);
+        }
+
+        /// Structural invariant: when parse_hosts_line returns Some(addr, names),
+        /// the addr bytes and every name bytes must each appear as a
+        /// contiguous substring of the input (up to the first '#'
+        /// comment marker). A regression that synthesized output from
+        /// elsewhere — or that over-ran the comment strip — would be
+        /// caught here.
+        #[test]
+        fn fuzz_parse_hosts_line_output_is_input_subset(
+            bytes in proptest::collection::vec(any::<u8>(), 0..512),
+        ) {
+            if let Some((addr, names)) = parse_hosts_line(&bytes) {
+                let pre_comment: &[u8] = match bytes.iter().position(|&b| b == b'#') {
+                    Some(pos) => &bytes[..pos],
+                    None => &bytes[..],
+                };
+                prop_assert!(
+                    pre_comment.windows(addr.len()).any(|w| w == addr),
+                    "addr {:?} not a substring of pre-comment input {:?}",
+                    addr, pre_comment
+                );
+                for name in &names {
+                    prop_assert!(
+                        pre_comment.windows(name.len()).any(|w| w == name),
+                        "name {:?} not a substring of pre-comment input {:?}",
+                        name, pre_comment
+                    );
+                }
+            }
+        }
+
+        /// Biased fuzz: inputs built from a small ASCII alphabet mixed
+        /// with structural delimiters (spaces, tabs, '#', '.', ':',
+        /// digits). Random bytes alone rarely produce a parseable first
+        /// field, so they hit the early-reject path every time. This
+        /// strategy reaches deeper into the parser by generating bytes
+        /// that resemble IP addresses.
+        #[test]
+        fn fuzz_parse_hosts_line_structured_alphabet_never_panics(
+            bytes in proptest::collection::vec(
+                prop_oneof![
+                    Just(b' '), Just(b'\t'), Just(b'#'), Just(b'.'),
+                    Just(b':'), Just(b'0'), Just(b'1'), Just(b'2'),
+                    Just(b'9'), Just(b'a'), Just(b'f'), Just(b'z'),
+                    Just(b'A'), Just(b'Z'), Just(b'-'),
+                    Just(0u8), Just(0xffu8),
+                ],
+                0..256,
+            ),
+        ) {
+            let _ = parse_hosts_line(&bytes);
+        }
     }
 }
