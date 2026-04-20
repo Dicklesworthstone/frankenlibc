@@ -487,9 +487,16 @@ mod x86_64_tests {
         assert_eq!(SYS_ACCEPT4, 288);
         assert_eq!(SYS_SIGNALFD4, 289);
         assert_eq!(SYS_INOTIFY_INIT1, 294);
+        assert_eq!(SYS_SETNS, 308);
+        assert_eq!(SYS_UNSHARE, 272);
         assert_eq!(SYS_IO_URING_SETUP, 425);
         assert_eq!(SYS_IO_URING_ENTER, 426);
         assert_eq!(SYS_IO_URING_REGISTER, 427);
+        assert_eq!(SYS_OPEN_TREE, 428);
+        assert_eq!(SYS_MOVE_MOUNT, 429);
+        assert_eq!(SYS_FSOPEN, 430);
+        assert_eq!(SYS_FSMOUNT, 432);
+        assert_eq!(SYS_MOUNT_SETATTR, 442);
         assert_eq!(SYS_USERFAULTFD, 323);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 230);
         assert_eq!(SYS_READLINKAT, 267);
@@ -592,6 +599,15 @@ mod x86_64_tests {
         let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
         let _: fn(i32) -> Result<i32, i32> = sys_inotify_init1;
+        let _: fn(i32, i32) -> Result<(), i32> = sys_setns;
+        let _: fn(i32) -> Result<(), i32> = sys_unshare;
+        let _: unsafe fn(i32, *const u8, u32) -> Result<i32, i32> = sys_open_tree;
+        let _: unsafe fn(i32, *const u8, i32, *const u8, u32) -> Result<(), i32> =
+            sys_move_mount;
+        let _: unsafe fn(*const u8, u32) -> Result<i32, i32> = sys_fsopen;
+        let _: unsafe fn(i32, u32, u32) -> Result<i32, i32> = sys_fsmount;
+        let _: unsafe fn(i32, *const u8, u32, *mut u8, usize) -> Result<(), i32> =
+            sys_mount_setattr;
         let _: unsafe fn(i32, &mut CpuSet) -> Result<usize, i32> = sys_sched_getaffinity_cpuset;
         let _: unsafe fn(i32, &SigEventThreadId, *mut i32) -> Result<(), i32> =
             sys_timer_create_sigevent;
@@ -1670,6 +1686,18 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn setns_invalid_fd_is_ebadf() {
+        let err = sys_setns(-1, 0).expect_err("setns(-1, 0) must fail");
+        assert_eq!(err, EBADF);
+    }
+
+    #[test]
+    fn unshare_invalid_flags_is_einval() {
+        let err = sys_unshare(-1).expect_err("unshare(-1) must fail");
+        assert_eq!(err, EINVAL);
+    }
+
+    #[test]
     fn rt_sigtimedwait_zero_timeout_delivers_pending_signal() {
         struct SignalMaskGuard {
             old_mask: u64,
@@ -2465,9 +2493,16 @@ mod aarch64_tests {
         assert_eq!(SYS_ACCEPT4, 242);
         assert_eq!(SYS_SIGNALFD4, 74);
         assert_eq!(SYS_INOTIFY_INIT1, 26);
+        assert_eq!(SYS_SETNS, 268);
+        assert_eq!(SYS_UNSHARE, 97);
         assert_eq!(SYS_IO_URING_SETUP, 425);
         assert_eq!(SYS_IO_URING_ENTER, 426);
         assert_eq!(SYS_IO_URING_REGISTER, 427);
+        assert_eq!(SYS_OPEN_TREE, 428);
+        assert_eq!(SYS_MOVE_MOUNT, 429);
+        assert_eq!(SYS_FSOPEN, 430);
+        assert_eq!(SYS_FSMOUNT, 432);
+        assert_eq!(SYS_MOUNT_SETATTR, 442);
         assert_eq!(SYS_USERFAULTFD, 282);
         assert_eq!(SYS_CLOCK_NANOSLEEP, 115);
         assert_eq!(SYS_READLINKAT, 78);
@@ -2561,6 +2596,15 @@ mod aarch64_tests {
         let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
         let _: fn(i32) -> Result<i32, i32> = sys_inotify_init1;
+        let _: fn(i32, i32) -> Result<(), i32> = sys_setns;
+        let _: fn(i32) -> Result<(), i32> = sys_unshare;
+        let _: unsafe fn(i32, *const u8, u32) -> Result<i32, i32> = sys_open_tree;
+        let _: unsafe fn(i32, *const u8, i32, *const u8, u32) -> Result<(), i32> =
+            sys_move_mount;
+        let _: unsafe fn(*const u8, u32) -> Result<i32, i32> = sys_fsopen;
+        let _: unsafe fn(i32, u32, u32) -> Result<i32, i32> = sys_fsmount;
+        let _: unsafe fn(i32, *const u8, u32, *mut u8, usize) -> Result<(), i32> =
+            sys_mount_setattr;
         let _: unsafe fn(i32, &mut CpuSet) -> Result<usize, i32> = sys_sched_getaffinity_cpuset;
         let _: unsafe fn(i32, &SigEventThreadId, *mut i32) -> Result<(), i32> =
             sys_timer_create_sigevent;
