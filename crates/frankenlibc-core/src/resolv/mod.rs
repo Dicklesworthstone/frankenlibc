@@ -1220,5 +1220,72 @@ mod tests {
         ) {
             let _ = parse_hosts_line(&bytes);
         }
+
+        // -------------------------------------------------------------
+        // Smoke-fuzz proptests for parse_services_line (bd-s170)
+        //
+        // Oracle:
+        //   • Parser never panics on arbitrary bytes.
+        //   • When Some(entry) is returned, the port field fits u16
+        //     and the protocol field is non-empty (invariants the
+        //     parser must uphold by construction).
+        //   • Returned name/protocol/aliases must each be a substring
+        //     of the pre-comment input (no ghost-data synthesis).
+        // -------------------------------------------------------------
+
+        #[test]
+        fn fuzz_parse_services_line_never_panics(
+            bytes in proptest::collection::vec(any::<u8>(), 0..512),
+        ) {
+            let _ = parse_services_line(&bytes);
+        }
+
+        #[test]
+        fn fuzz_parse_services_line_invariants(
+            bytes in proptest::collection::vec(any::<u8>(), 0..512),
+        ) {
+            if let Some(entry) = parse_services_line(&bytes) {
+                // Protocol must be non-empty (the parser rejects empty)
+                prop_assert!(!entry.protocol.is_empty());
+                prop_assert!(!entry.name.is_empty());
+
+                // All decoded fields must be substrings of the
+                // pre-comment input region.
+                let pre_comment: &[u8] = match bytes.iter().position(|&b| b == b'#') {
+                    Some(pos) => &bytes[..pos],
+                    None => &bytes[..],
+                };
+                prop_assert!(pre_comment
+                    .windows(entry.name.len())
+                    .any(|w| w == entry.name));
+                prop_assert!(pre_comment
+                    .windows(entry.protocol.len())
+                    .any(|w| w == entry.protocol));
+                for alias in &entry.aliases {
+                    prop_assert!(pre_comment.windows(alias.len()).any(|w| w == alias));
+                }
+            }
+        }
+
+        /// Biased alphabet containing the port-grammar delimiters
+        /// ('/') and digit/alpha characters — a raw-byte fuzz almost
+        /// never produces a '/' in the right spot to reach the port
+        /// parsing branch, so this strategy is what actually exercises
+        /// it.
+        #[test]
+        fn fuzz_parse_services_line_structured_alphabet_never_panics(
+            bytes in proptest::collection::vec(
+                prop_oneof![
+                    Just(b' '), Just(b'\t'), Just(b'#'), Just(b'/'),
+                    Just(b'0'), Just(b'1'), Just(b'9'),
+                    Just(b'a'), Just(b'z'), Just(b'A'), Just(b'Z'),
+                    Just(b'-'), Just(b'_'), Just(b'.'),
+                    Just(0u8), Just(0xffu8),
+                ],
+                0..256,
+            ),
+        ) {
+            let _ = parse_services_line(&bytes);
+        }
     }
 }
