@@ -530,6 +530,8 @@ mod x86_64_tests {
         assert_eq!(TFD_CLOEXEC, O_CLOEXEC);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(IORING_ENTER_GETEVENTS, 1 << 0);
+        assert_eq!(IORING_ENTER_SQ_WAKEUP, 1 << 1);
         assert_eq!(IORING_SETUP_SQPOLL, 1 << 1);
         assert_eq!(core::mem::size_of::<CpuSet>(), 128);
         assert_eq!(core::mem::size_of::<IoUringSqringOffsets>(), 40);
@@ -605,6 +607,7 @@ mod x86_64_tests {
         let _: unsafe fn(u32, *mut IoUringParams) -> Result<i32, i32> = sys_io_uring_setup_params;
         let _: unsafe fn(i32, u32, u32, u32, *const u8, usize) -> Result<i32, i32> =
             sys_io_uring_enter;
+        let _: fn(i32) -> Result<i32, i32> = sys_io_uring_enter_sqpoll_wakeup;
         let _: unsafe fn(i32, u32, *const u8, u32) -> Result<i32, i32> = sys_io_uring_register;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;
@@ -757,6 +760,16 @@ mod x86_64_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn io_uring_enter_sqpoll_wakeup_invalid_fd_rejected_or_unavailable() {
+        let err = sys_io_uring_enter_sqpoll_wakeup(-1)
+            .expect_err("io_uring SQPOLL wakeup on invalid fd must fail");
+        assert!(
+            matches!(err, EBADF | ENOSYS),
+            "expected EBADF/ENOSYS, got {err}"
+        );
     }
 
     #[test]
@@ -2180,6 +2193,8 @@ mod aarch64_tests {
         assert_eq!(TFD_CLOEXEC, 0o2000000);
         assert_eq!(TFD_TIMER_ABSTIME, 1);
         assert_eq!(TFD_TIMER_CANCEL_ON_SET, 2);
+        assert_eq!(IORING_ENTER_GETEVENTS, 1 << 0);
+        assert_eq!(IORING_ENTER_SQ_WAKEUP, 1 << 1);
         assert_eq!(IORING_SETUP_SQPOLL, 1 << 1);
         assert_eq!(core::mem::size_of::<CpuSet>(), 128);
         assert_eq!(core::mem::size_of::<IoUringSqringOffsets>(), 40);
@@ -2246,6 +2261,7 @@ mod aarch64_tests {
         let _: unsafe fn(u32, *mut IoUringParams) -> Result<i32, i32> = sys_io_uring_setup_params;
         let _: unsafe fn(i32, u32, u32, u32, *const u8, usize) -> Result<i32, i32> =
             sys_io_uring_enter;
+        let _: fn(i32) -> Result<i32, i32> = sys_io_uring_enter_sqpoll_wakeup;
         let _: unsafe fn(i32, u32, *const u8, u32) -> Result<i32, i32> = sys_io_uring_register;
         let _: fn(u32) -> Result<i32, i32> = sys_memfd_secret;
         let _: unsafe fn(i32, *const usize, usize) -> Result<(), i32> = sys_set_mempolicy;

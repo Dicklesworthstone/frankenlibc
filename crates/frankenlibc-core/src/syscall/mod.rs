@@ -397,6 +397,10 @@ pub const TIMER_ABSTIME: i32 = 1 << 0;
 pub const TFD_TIMER_ABSTIME: i32 = 1 << 0;
 /// `TFD_TIMER_CANCEL_ON_SET` cancels absolute realtime timers on discontinuous clock jumps.
 pub const TFD_TIMER_CANCEL_ON_SET: i32 = 1 << 1;
+/// `IORING_ENTER_GETEVENTS` asks `io_uring_enter(2)` to wait for completions.
+pub const IORING_ENTER_GETEVENTS: u32 = 1 << 0;
+/// `IORING_ENTER_SQ_WAKEUP` wakes the SQPOLL thread for an `io_uring` instance.
+pub const IORING_ENTER_SQ_WAKEUP: u32 = 1 << 1;
 /// `IORING_SETUP_SQPOLL` requests an SQPOLL submission thread for an `io_uring` instance.
 pub const IORING_SETUP_SQPOLL: u32 = 1 << 1;
 
@@ -6016,6 +6020,14 @@ pub unsafe fn sys_io_uring_enter(
         )
     };
     syscall_result(ret).map(|v| v as i32)
+}
+
+/// Convenience helper for `io_uring_enter(..., IORING_ENTER_SQ_WAKEUP, ...)`.
+#[inline]
+pub fn sys_io_uring_enter_sqpoll_wakeup(fd: i32) -> Result<i32, i32> {
+    // SAFETY: passes a null signal-mask pointer with a zero size, matching the
+    // kernel contract for the no-signal-mask form of io_uring_enter.
+    unsafe { sys_io_uring_enter(fd, 0, 0, IORING_ENTER_SQ_WAKEUP, core::ptr::null(), 0) }
 }
 
 /// `io_uring_register(fd, opcode, arg, nr_args)` — register files or user buffers for io_uring.
