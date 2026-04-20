@@ -1123,6 +1123,37 @@ fn timerfd_create_with_nonblock() {
 }
 
 #[test]
+fn timerfd_create_with_cloexec_and_nonblock() {
+    use frankenlibc_abi::poll_abi::timerfd_create;
+    let fd = unsafe {
+        timerfd_create(
+            libc::CLOCK_MONOTONIC,
+            libc::TFD_CLOEXEC | libc::TFD_NONBLOCK,
+        )
+    };
+    assert!(
+        fd >= 0,
+        "timerfd_create with TFD_CLOEXEC | TFD_NONBLOCK should succeed"
+    );
+
+    let fd_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    assert_ne!(
+        fd_flags & libc::FD_CLOEXEC,
+        0,
+        "timerfd_create should apply close-on-exec when both flags are requested"
+    );
+
+    let status_flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    assert_ne!(
+        status_flags & libc::O_NONBLOCK,
+        0,
+        "timerfd_create should apply nonblocking mode when both flags are requested"
+    );
+
+    unsafe { close(fd) };
+}
+
+#[test]
 fn timerfd_settime_returns_old_value() {
     use frankenlibc_abi::poll_abi::{timerfd_create, timerfd_settime};
     let fd = unsafe { timerfd_create(libc::CLOCK_MONOTONIC, 0) };
