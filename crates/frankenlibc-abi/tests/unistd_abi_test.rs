@@ -33,10 +33,10 @@ use frankenlibc_abi::unistd_abi::{
     getutline_r, glob64, globfree64, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo,
     msgrcv, msgsnd, open, pathconf, process_madvise, process_mrelease, process_vm_readv,
     process_vm_writev, read, readlink, rename, rmdir, semctl, semop, setfsent, sethostent,
-    setnetent, setnetgrent, setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset,
-    sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname,
-    unlink, updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree,
-    write,
+    setnetent, setnetgrent, setns, setprotoent, setservent, setttyent, setutent, shmdt, sigpause,
+    sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask,
+    uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp,
+    wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -1857,6 +1857,38 @@ fn process_mrelease_invalid_pidfd_fails_cleanly() {
         "unexpected errno for process_mrelease invalid pidfd: {}",
         errno_value()
     );
+}
+
+#[test]
+fn setns_invalid_fd_sets_errno_like_host() {
+    clear_errno();
+    let host_rc = unsafe { libc::setns(-1, 0) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { setns(-1, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn unshare_invalid_flags_sets_errno_like_host() {
+    clear_errno();
+    let host_rc = unsafe { libc::unshare(-1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { unshare(-1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
 }
 
 #[test]
