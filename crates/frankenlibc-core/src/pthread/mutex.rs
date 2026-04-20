@@ -688,4 +688,127 @@ mod tests {
             }
         }
     }
+
+    // -----------------------------------------------------------------
+    // POSIX.1-2017 conformance table: pthread_mutex_unlock (bd-u8qy)
+    // -----------------------------------------------------------------
+    //
+    // Spec source: IEEE Std 1003.1-2017, System Interfaces, pthread_mutex_unlock.
+    //
+    // Each entry cites the section/paragraph of POSIX that mandates the
+    // expected outcome. Reviewers can audit conformance by diffing the
+    // cited clause against the contract transition it exercises.
+
+    struct UnlockConformanceCase {
+        id: &'static str,
+        posix_ref: &'static str,
+        kind: i32,
+        state: MutexContractState,
+        expected_next: MutexContractState,
+        expected_errno: i32,
+    }
+
+    const UNLOCK_CONFORMANCE_TABLE: &[UnlockConformanceCase] = &[
+        UnlockConformanceCase {
+            id: "POSIX-MUTEX-UNLOCK-001",
+            // "If there are threads blocked on the mutex object ... the scheduling policy shall
+            //  determine which thread shall acquire the mutex." — a successful unlock releases it.
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_unlock ¶Description",
+            kind: PTHREAD_MUTEX_NORMAL,
+            state: MutexContractState::LockedBySelf,
+            expected_next: MutexContractState::Unlocked,
+            expected_errno: 0,
+        },
+        UnlockConformanceCase {
+            id: "POSIX-MUTEX-UNLOCK-002",
+            // Error-checking mutexes: "If the mutex is not currently locked by the calling
+            //  thread ... an error shall be returned." EPERM is the mandated errno.
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_unlock ¶Errors/EPERM",
+            kind: PTHREAD_MUTEX_ERRORCHECK,
+            state: MutexContractState::LockedByOther,
+            expected_next: MutexContractState::LockedByOther,
+            expected_errno: errno::EPERM,
+        },
+        UnlockConformanceCase {
+            id: "POSIX-MUTEX-UNLOCK-003",
+            // Normal mutexes: Linux glibc returns EPERM for unlock-by-non-owner to avoid
+            //  silent corruption; POSIX permits implementation-defined behavior here and
+            //  FrankenLibC mirrors the glibc choice.
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_unlock ¶Errors/EPERM + glibc extension",
+            kind: PTHREAD_MUTEX_NORMAL,
+            state: MutexContractState::LockedByOther,
+            expected_next: MutexContractState::LockedByOther,
+            expected_errno: errno::EPERM,
+        },
+        UnlockConformanceCase {
+            id: "POSIX-MUTEX-UNLOCK-004",
+            // Unlock of a never-locked Unlocked mutex: EPERM (the calling thread is not
+            //  the owner, matching the LockedByOther arm's semantics).
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_unlock ¶Errors/EPERM",
+            kind: PTHREAD_MUTEX_ERRORCHECK,
+            state: MutexContractState::Unlocked,
+            expected_next: MutexContractState::Unlocked,
+            expected_errno: errno::EPERM,
+        },
+        UnlockConformanceCase {
+            id: "POSIX-MUTEX-UNLOCK-005",
+            // Operations on an uninitialized or destroyed mutex "shall return an error".
+            //  POSIX allows either EINVAL or undefined behavior; FrankenLibC chooses EINVAL
+            //  as the safest mechanical fallback.
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_unlock ¶Errors/EINVAL",
+            kind: PTHREAD_MUTEX_NORMAL,
+            state: MutexContractState::Uninitialized,
+            expected_next: MutexContractState::Uninitialized,
+            expected_errno: errno::EINVAL,
+        },
+        UnlockConformanceCase {
+            id: "POSIX-MUTEX-UNLOCK-006",
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_unlock ¶Errors/EINVAL",
+            kind: PTHREAD_MUTEX_NORMAL,
+            state: MutexContractState::Destroyed,
+            expected_next: MutexContractState::Destroyed,
+            expected_errno: errno::EINVAL,
+        },
+        UnlockConformanceCase {
+            id: "POSIX-MUTEX-UNLOCK-007",
+            // Recursive mutex: unlock by owner returns 0 regardless of recursion depth;
+            //  the contract abstracts depth into the LockedBySelf state.
+            posix_ref: "IEEE 1003.1-2017 §pthread_mutex_unlock ¶Description (recursive)",
+            kind: PTHREAD_MUTEX_RECURSIVE,
+            state: MutexContractState::LockedBySelf,
+            expected_next: MutexContractState::Unlocked,
+            expected_errno: 0,
+        },
+    ];
+
+    #[test]
+    fn posix_mutex_unlock_conformance_table() {
+        let mut fails = Vec::new();
+        for case in UNLOCK_CONFORMANCE_TABLE {
+            let outcome =
+                mutex_contract_transition(case.kind, case.state, MutexContractOp::Unlock);
+            if outcome.next != case.expected_next || outcome.errno != case.expected_errno {
+                fails.push(format!(
+                    "{} [{}]: expected next={:?}/errno={} got next={:?}/errno={}",
+                    case.id,
+                    case.posix_ref,
+                    case.expected_next,
+                    case.expected_errno,
+                    outcome.next,
+                    outcome.errno,
+                ));
+            }
+            // Unlock is never a blocking operation regardless of outcome.
+            assert!(
+                !outcome.blocks,
+                "{}: unlock must never block (POSIX §pthread_mutex_unlock)",
+                case.id
+            );
+        }
+        assert!(
+            fails.is_empty(),
+            "POSIX mutex-unlock conformance failures:\n  {}",
+            fails.join("\n  ")
+        );
+    }
 }
