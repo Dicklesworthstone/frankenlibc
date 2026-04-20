@@ -47,6 +47,7 @@ mod x86_64_tests {
     const SEEK_SET: i32 = 0;
     const SEEK_END: i32 = 2;
 
+    const ENXIO: i32 = 6;
     const EBADF: i32 = 9;
     const EAGAIN: i32 = 11;
     const EFAULT: i32 = 14;
@@ -157,6 +158,83 @@ mod x86_64_tests {
 
         // Cleanup via the typed veneer.
         unsafe { sys_unlinkat(AT_FDCWD, path_buf.as_ptr(), 0) }.expect("unlinkat cleanup");
+    }
+
+    #[test]
+    fn lseek_seek_hole_and_seek_data_find_sparse_regions() {
+        let path = format!(
+            "/tmp/frankenlibc_seek_hole_{}_{}\0",
+            sys_getpid(),
+            sys_gettid()
+        );
+        let path = path.into_bytes();
+
+        let fd = unsafe {
+            sys_openat(
+                AT_FDCWD,
+                path.as_ptr(),
+                O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+                0o600,
+            )
+        }
+        .expect("open sparse temp file");
+
+        unsafe { sys_write(fd, b"A".as_ptr(), 1) }.expect("write head extent");
+        let second_extent = 8192i64;
+        sys_lseek(fd, second_extent, SEEK_SET).expect("seek to sparse offset");
+        unsafe { sys_write(fd, b"B".as_ptr(), 1) }.expect("write tail extent");
+
+        let data_from_start =
+            sys_lseek(fd, 0, frankenlibc_core::syscall::SEEK_DATA).expect("SEEK_DATA from start");
+        assert_eq!(data_from_start, 0);
+
+        let hole_from_start =
+            sys_lseek(fd, 0, frankenlibc_core::syscall::SEEK_HOLE).expect("SEEK_HOLE from start");
+        assert!(
+            hole_from_start > 0 && hole_from_start <= second_extent,
+            "expected first hole before second extent, got {hole_from_start}"
+        );
+
+        let data_from_gap = sys_lseek(fd, 4096, frankenlibc_core::syscall::SEEK_DATA)
+            .expect("SEEK_DATA from sparse gap");
+        assert_eq!(data_from_gap, second_extent);
+
+        let file_end = sys_lseek(fd, 0, SEEK_END).expect("SEEK_END after sparse writes");
+        let hole_after_data = sys_lseek(fd, second_extent, frankenlibc_core::syscall::SEEK_HOLE)
+            .expect("SEEK_HOLE from second extent");
+        assert_eq!(hole_after_data, file_end);
+
+        sys_close(fd).expect("close sparse temp file");
+        unsafe { sys_unlinkat(AT_FDCWD, path.as_ptr(), 0) }.expect("unlink sparse temp file");
+    }
+
+    #[test]
+    fn lseek_seek_data_beyond_eof_returns_enxio() {
+        let path = format!(
+            "/tmp/frankenlibc_seek_data_eof_{}_{}\0",
+            sys_getpid(),
+            sys_gettid()
+        );
+        let path = path.into_bytes();
+
+        let fd = unsafe {
+            sys_openat(
+                AT_FDCWD,
+                path.as_ptr(),
+                O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+                0o600,
+            )
+        }
+        .expect("open EOF temp file");
+
+        unsafe { sys_write(fd, b"data".as_ptr(), 4) }.expect("write file body");
+        let eof = sys_lseek(fd, 0, SEEK_END).expect("SEEK_END");
+        let err = sys_lseek(fd, eof, frankenlibc_core::syscall::SEEK_DATA)
+            .expect_err("SEEK_DATA at EOF must fail");
+        assert_eq!(err, ENXIO);
+
+        sys_close(fd).expect("close EOF temp file");
+        unsafe { sys_unlinkat(AT_FDCWD, path.as_ptr(), 0) }.expect("unlink EOF temp file");
     }
 
     // -----------------------------------------------------------------
@@ -368,6 +446,8 @@ mod x86_64_tests {
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
         assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
+        assert_eq!(frankenlibc_core::syscall::SEEK_DATA, 3);
+        assert_eq!(frankenlibc_core::syscall::SEEK_HOLE, 4);
         assert_eq!(P_PID, 1);
         assert_eq!(WSTOPPED, 2);
         assert_eq!(TIMER_ABSTIME, 1);
@@ -1675,6 +1755,8 @@ mod aarch64_tests {
         assert_eq!(SOCK_SEQPACKET, 5);
         assert_eq!(CLOCK_BOOTTIME, 7);
         assert_eq!(frankenlibc_core::syscall::AT_FDCWD, AT_FDCWD);
+        assert_eq!(frankenlibc_core::syscall::SEEK_DATA, 3);
+        assert_eq!(frankenlibc_core::syscall::SEEK_HOLE, 4);
         assert_eq!(P_PID, 1);
         assert_eq!(WSTOPPED, 2);
         assert_eq!(TIMER_ABSTIME, 1);

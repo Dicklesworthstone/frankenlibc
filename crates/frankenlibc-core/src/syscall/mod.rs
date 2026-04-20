@@ -294,6 +294,10 @@ pub const SOCK_SEQPACKET: i32 = 5;
 pub const CLOCK_BOOTTIME: i32 = 7;
 /// `AT_FDCWD` uses the current working directory for `*at` syscalls.
 pub const AT_FDCWD: i32 = -100;
+/// `SEEK_DATA` advances `lseek(2)` to the next data extent in a sparse file.
+pub const SEEK_DATA: i32 = 3;
+/// `SEEK_HOLE` advances `lseek(2)` to the next hole extent in a sparse file.
+pub const SEEK_HOLE: i32 = 4;
 /// `P_PID` tells `waitid(2)` to target an exact process ID.
 pub const P_PID: i32 = 1;
 /// `SIGEV_THREAD_ID` requests timer signal delivery to a specific thread ID.
