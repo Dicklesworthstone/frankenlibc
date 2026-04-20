@@ -1736,6 +1736,133 @@ mod x86_64_tests {
         assert_eq!(err, EINVAL);
     }
 
+    /// Symmetric negative to cod's zero_timeout_delivers_pending_signal
+    /// (bd-9zdo). rt_sigtimedwait(2): "EAGAIN — No signal in set became
+    /// pending within the timeout period." With a zero timeout and no
+    /// matching signal pending, the veneer must return immediately
+    /// with EAGAIN rather than block or succeed with stale data.
+    #[test]
+    fn rt_sigtimedwait_zero_timeout_no_pending_returns_eagain() {
+        // Pick a signal that we know isn't pending: use a high-numbered
+        // real-time signal unlikely to be in any ambient mask. We do
+        // NOT raise it. The mask still must block the signal so a stray
+        // delivery from elsewhere doesn't convert this into the
+        // "delivered" path.
+        const SIGRTMIN: i32 = 34;
+        let sig = SIGRTMIN + 2; // unlikely to be in use anywhere
+        let signal_mask = 1u64 << ((sig - 1) as u32);
+
+        // Block the signal for the duration of the test so any stray
+        // delivery queues up rather than terminates the process.
+        struct SignalMaskGuard {
+            old_mask: u64,
+        }
+        impl Drop for SignalMaskGuard {
+            fn drop(&mut self) {
+                let _ = unsafe {
+                    sys_rt_sigprocmask(
+                        SIG_SETMASK,
+                        (&self.old_mask as *const u64).cast::<u8>(),
+                        core::ptr::null_mut(),
+                        core::mem::size_of::<u64>(),
+                    )
+                };
+            }
+        }
+        let mut old_mask = 0u64;
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_BLOCK,
+                (&signal_mask as *const u64).cast::<u8>(),
+                (&mut old_mask as *mut u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect("rt_sigprocmask(SIG_BLOCK)");
+        let _mask_guard = SignalMaskGuard { old_mask };
+
+        let timeout = Timespec::default();
+        let err = unsafe {
+            sys_rt_sigtimedwait(
+                (&signal_mask as *const u64).cast::<u8>(),
+                core::ptr::null_mut(),
+                (&timeout as *const Timespec).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect_err("rt_sigtimedwait(zero timeout, no pending) must fail");
+        // EAGAIN on Linux (kernel may also return EINTR if a different
+        // signal interrupts the syscall — rare but permitted by POSIX).
+        const EAGAIN: i32 = 11;
+        const EINTR: i32 = 4;
+        assert!(
+            matches!(err, EAGAIN | EINTR),
+            "expected EAGAIN or EINTR, got {err}"
+        );
+    }
+
+    /// When a signal IS delivered, the caller-supplied siginfo_t buffer
+    /// must be populated with si_signo equal to the returned signo.
+    /// Catches silent kernel-ABI drift where a different siginfo layout
+    /// would leave si_signo uninitialized while the return value is
+    /// still correct.
+    #[test]
+    fn rt_sigtimedwait_populates_siginfo_signo() {
+        struct SignalMaskGuard {
+            old_mask: u64,
+        }
+        impl Drop for SignalMaskGuard {
+            fn drop(&mut self) {
+                let _ = unsafe {
+                    sys_rt_sigprocmask(
+                        SIG_SETMASK,
+                        (&self.old_mask as *const u64).cast::<u8>(),
+                        core::ptr::null_mut(),
+                        core::mem::size_of::<u64>(),
+                    )
+                };
+            }
+        }
+
+        let signal_mask = 1u64 << ((SIGUSR1 - 1) as u32);
+        let mut old_mask = 0u64;
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_BLOCK,
+                (&signal_mask as *const u64).cast::<u8>(),
+                (&mut old_mask as *mut u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect("rt_sigprocmask(SIG_BLOCK)");
+        let _mask_guard = SignalMaskGuard { old_mask };
+
+        sys_tgkill(sys_getpid(), sys_gettid(), SIGUSR1).expect("tgkill(SIGUSR1)");
+
+        let timeout = Timespec::default();
+        // Pre-fill with 0xAA so we can detect any byte the kernel
+        // didn't touch. si_signo (first 4 bytes on Linux) must be
+        // overwritten to the delivered signal number.
+        let mut info = [0xAAu8; 128];
+        let signo = unsafe {
+            sys_rt_sigtimedwait(
+                (&signal_mask as *const u64).cast::<u8>(),
+                info.as_mut_ptr(),
+                (&timeout as *const Timespec).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+            )
+        }
+        .expect("rt_sigtimedwait");
+        assert_eq!(signo, SIGUSR1);
+
+        // siginfo_t.si_signo is a c_int at offset 0 on Linux.
+        let si_signo = i32::from_ne_bytes([info[0], info[1], info[2], info[3]]);
+        assert_eq!(
+            si_signo, SIGUSR1,
+            "siginfo.si_signo must match delivered signo; buffer may be stale"
+        );
+    }
+
     #[test]
     fn userfaultfd_api_negotiates_sigbus_or_reports_unavailable() {
         let fd = match sys_userfaultfd(O_CLOEXEC | O_NONBLOCK) {
