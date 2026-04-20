@@ -473,6 +473,35 @@ mod tests {
             prop_assert!(!outcome.blocks);
         }
 
+        /// Metamorphic: TryLock must never block, for any (kind, state).
+        ///
+        /// POSIX contract: pthread_mutex_trylock returns immediately with either
+        /// 0 (acquired) or an error (EBUSY/EDEADLK/EINVAL). It never waits.
+        /// This MR rejects any future refactor that conflates Lock/TryLock paths.
+        #[test]
+        fn prop_trylock_never_blocks(
+            kind in prop_oneof![
+                Just(PTHREAD_MUTEX_NORMAL),
+                Just(PTHREAD_MUTEX_RECURSIVE),
+                Just(PTHREAD_MUTEX_ERRORCHECK),
+                any::<i32>(),
+            ],
+            state in prop_oneof![
+                Just(MutexContractState::Uninitialized),
+                Just(MutexContractState::Unlocked),
+                Just(MutexContractState::LockedBySelf),
+                Just(MutexContractState::LockedByOther),
+                Just(MutexContractState::Destroyed),
+            ],
+        ) {
+            let outcome = mutex_contract_transition(kind, state, MutexContractOp::TryLock);
+            prop_assert!(
+                !outcome.blocks,
+                "TryLock must never block (kind={}, state={:?}, errno={})",
+                kind, state, outcome.errno
+            );
+        }
+
         #[test]
         fn prop_relock_semantics_from_locked_by_self(kind in prop_oneof![
             Just(PTHREAD_MUTEX_NORMAL),
