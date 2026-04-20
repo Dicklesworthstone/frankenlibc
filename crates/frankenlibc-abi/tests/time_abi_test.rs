@@ -208,6 +208,50 @@ fn gettimeofday_agrees_with_time() {
     assert!((tv.tv_sec - t).abs() <= 1);
 }
 
+#[test]
+fn vdso_fastpath_snapshot_reflects_mapping_presence() {
+    let snapshot = time_abi::vdso_fastpath_snapshot();
+    assert_eq!(
+        snapshot.handle_opened,
+        snapshot.clock_gettime_available || snapshot.gettimeofday_available
+    );
+    if snapshot.handle_opened {
+        assert!(snapshot.mapping_present);
+    }
+}
+
+#[test]
+fn clock_gettime_uses_vdso_fastpath_when_available() {
+    let before = time_abi::vdso_fastpath_snapshot();
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let rc = unsafe { time_abi::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+    assert_eq!(rc, 0);
+
+    let after = time_abi::vdso_fastpath_snapshot();
+    if before.clock_gettime_available {
+        assert!(
+            after.clock_gettime_hits > before.clock_gettime_hits,
+            "clock_gettime should record a vDSO hit when the fastpath is available"
+        );
+    }
+}
+
+#[test]
+fn gettimeofday_uses_vdso_fastpath_when_available() {
+    let before = time_abi::vdso_fastpath_snapshot();
+    let mut tv: libc::timeval = unsafe { std::mem::zeroed() };
+    let rc = unsafe { time_abi::gettimeofday(&mut tv, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+
+    let after = time_abi::vdso_fastpath_snapshot();
+    if before.gettimeofday_available {
+        assert!(
+            after.gettimeofday_hits > before.gettimeofday_hits,
+            "gettimeofday should record a vDSO hit when the fastpath is available"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // clock_getres
 // ---------------------------------------------------------------------------

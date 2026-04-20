@@ -1,9 +1,12 @@
 //! ABI layer for `<time.h>` functions.
 //!
-//! Syscalls (`clock_gettime`, etc.) are invoked via `libc`. Pure arithmetic
-//! (broken-down conversion) delegates to `frankenlibc_core::time`.
+//! `clock_gettime` and `gettimeofday` prefer direct vDSO entrypoints when the
+//! kernel exposes them, and otherwise fall back to raw syscalls. Pure
+//! arithmetic (broken-down conversion) delegates to `frankenlibc_core::time`.
 
-use std::ffi::{c_int, c_void};
+use std::ffi::{c_int, c_ulong, c_void};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::syscall as raw_syscall;
@@ -15,6 +18,31 @@ use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
+type VdsoClockGettimeFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
+type VdsoGettimeofdayFn = unsafe extern "C" fn(*mut libc::timeval, *mut libc::timezone) -> c_int;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct VdsoSymbols {
+    mapping_present: bool,
+    handle: usize,
+    clock_gettime: usize,
+    gettimeofday: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VdsoFastpathSnapshot {
+    pub mapping_present: bool,
+    pub handle_opened: bool,
+    pub clock_gettime_available: bool,
+    pub gettimeofday_available: bool,
+    pub clock_gettime_hits: u64,
+    pub gettimeofday_hits: u64,
+}
+
+static VDSO_SYMBOLS: OnceLock<VdsoSymbols> = OnceLock::new();
+static VDSO_CLOCK_GETTIME_HITS: AtomicU64 = AtomicU64::new(0);
+static VDSO_GETTIMEOFDAY_HITS: AtomicU64 = AtomicU64::new(0);
+
 #[inline]
 fn last_host_errno(default: c_int) -> c_int {
     std::io::Error::last_os_error()
@@ -22,8 +50,33 @@ fn last_host_errno(default: c_int) -> c_int {
         .unwrap_or(default)
 }
 
+pub fn vdso_fastpath_snapshot() -> VdsoFastpathSnapshot {
+    let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
+    VdsoFastpathSnapshot {
+        mapping_present: symbols.mapping_present,
+        handle_opened: symbols.handle != 0,
+        clock_gettime_available: symbols.clock_gettime != 0,
+        gettimeofday_available: symbols.gettimeofday != 0,
+        clock_gettime_hits: VDSO_CLOCK_GETTIME_HITS.load(Ordering::Relaxed),
+        gettimeofday_hits: VDSO_GETTIMEOFDAY_HITS.load(Ordering::Relaxed),
+    }
+}
+
 #[inline]
-unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
+fn vdso_clock_supported(clock_id: c_int) -> bool {
+    matches!(
+        clock_id,
+        libc::CLOCK_REALTIME
+            | libc::CLOCK_MONOTONIC
+            | libc::CLOCK_REALTIME_COARSE
+            | libc::CLOCK_MONOTONIC_COARSE
+            | libc::CLOCK_BOOTTIME
+            | libc::CLOCK_TAI
+    )
+}
+
+#[inline]
+unsafe fn raw_clock_gettime_syscall(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
     match unsafe { raw_syscall::sys_clock_gettime(clock_id, tp as *mut u8) } {
         Ok(()) => 0,
         Err(e) => {
@@ -31,6 +84,141 @@ unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
             -1
         }
     }
+}
+
+#[inline]
+unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
+    if vdso_clock_supported(clock_id) {
+        let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
+        if symbols.clock_gettime != 0 {
+            // SAFETY: cached address is resolved from the vDSO with the expected ABI.
+            let vdso_clock_gettime: VdsoClockGettimeFn =
+                unsafe { core::mem::transmute(symbols.clock_gettime) };
+            let rc = unsafe { vdso_clock_gettime(clock_id, tp) };
+            if rc == 0 {
+                VDSO_CLOCK_GETTIME_HITS.fetch_add(1, Ordering::Relaxed);
+                return 0;
+            }
+            if rc != -libc::ENOSYS {
+                unsafe { set_abi_errno(-rc) };
+                return -1;
+            }
+        }
+    }
+
+    unsafe { raw_clock_gettime_syscall(clock_id, tp) }
+}
+
+#[inline]
+unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
+    let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
+    if symbols.gettimeofday != 0 {
+        // SAFETY: cached address is resolved from the vDSO with the expected ABI.
+        let vdso_gettimeofday: VdsoGettimeofdayFn =
+            unsafe { core::mem::transmute(symbols.gettimeofday) };
+        let rc = unsafe { vdso_gettimeofday(tv, std::ptr::null_mut()) };
+        if rc == 0 {
+            VDSO_GETTIMEOFDAY_HITS.fetch_add(1, Ordering::Relaxed);
+            return 0;
+        }
+        if rc != -libc::ENOSYS {
+            unsafe { set_abi_errno(-rc) };
+            return -1;
+        }
+    }
+
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+    if rc != 0 {
+        return -1;
+    }
+
+    unsafe {
+        (*tv).tv_sec = ts.tv_sec;
+        (*tv).tv_usec = ts.tv_nsec / 1000;
+    }
+    0
+}
+
+fn resolve_vdso_symbols() -> VdsoSymbols {
+    let mapping_present =
+        raw_getauxval(libc::AT_SYSINFO_EHDR as c_ulong).is_some_and(|value| value != 0);
+    if !mapping_present {
+        return VdsoSymbols::default();
+    }
+
+    let handle = unsafe {
+        crate::dlfcn_abi::dlopen(
+            c"linux-vdso.so.1".as_ptr(),
+            libc::RTLD_NOW | libc::RTLD_LOCAL,
+        )
+    };
+    if handle.is_null() {
+        return VdsoSymbols {
+            mapping_present,
+            ..VdsoSymbols::default()
+        };
+    }
+
+    let clock_gettime = unsafe {
+        crate::dlfcn_abi::dlvsym(
+            handle,
+            c"__vdso_clock_gettime".as_ptr(),
+            c"LINUX_2.6".as_ptr(),
+        )
+    };
+    let clock_gettime = if clock_gettime.is_null() {
+        unsafe { crate::dlfcn_abi::dlsym(handle, c"__vdso_clock_gettime".as_ptr()) }
+    } else {
+        clock_gettime
+    };
+    let gettimeofday = unsafe {
+        crate::dlfcn_abi::dlvsym(
+            handle,
+            c"__vdso_gettimeofday".as_ptr(),
+            c"LINUX_2.6".as_ptr(),
+        )
+    };
+    let gettimeofday = if gettimeofday.is_null() {
+        unsafe { crate::dlfcn_abi::dlsym(handle, c"__vdso_gettimeofday".as_ptr()) }
+    } else {
+        gettimeofday
+    };
+
+    VdsoSymbols {
+        mapping_present,
+        handle: handle as usize,
+        clock_gettime: clock_gettime as usize,
+        gettimeofday: gettimeofday as usize,
+    }
+}
+
+fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
+    let fd = unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            c"/proc/self/auxv".as_ptr() as *const u8,
+            libc::O_RDONLY,
+            0,
+        )
+    }
+    .ok()? as c_int;
+    let entry_size = 2 * std::mem::size_of::<c_ulong>();
+    let mut buf = [0u8; 4096];
+    let read_result = unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len()) };
+    let _ = raw_syscall::sys_close(fd);
+    let bytes = read_result.ok()? as usize;
+    for chunk in buf[..bytes].chunks_exact(entry_size) {
+        let at = c_ulong::from_ne_bytes(chunk[..8].try_into().ok()?);
+        let av = c_ulong::from_ne_bytes(chunk[8..16].try_into().ok()?);
+        if at == typ {
+            return Some(av);
+        }
+        if at == 0 {
+            break;
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -244,16 +432,10 @@ pub unsafe extern "C" fn gettimeofday(tv: *mut libc::timeval, tz: *mut c_void) -
         return -1;
     }
 
-    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-    let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+    let rc = unsafe { raw_gettimeofday(tv) };
     if rc != 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
         return -1;
-    }
-
-    unsafe {
-        (*tv).tv_sec = ts.tv_sec;
-        (*tv).tv_usec = ts.tv_nsec / 1000;
     }
     0
 }
