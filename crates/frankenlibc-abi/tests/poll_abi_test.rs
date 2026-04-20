@@ -1115,6 +1115,13 @@ fn timerfd_create_with_nonblock() {
     let fd = unsafe { timerfd_create(libc::CLOCK_MONOTONIC, libc::TFD_NONBLOCK) };
     assert!(fd >= 0, "timerfd_create with TFD_NONBLOCK should succeed");
 
+    let fd_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    assert_eq!(
+        fd_flags & libc::FD_CLOEXEC,
+        0,
+        "timerfd_create with TFD_NONBLOCK alone should not set close-on-exec"
+    );
+
     // Read on disarmed nonblock timerfd should fail with EAGAIN
     let mut val: u64 = 0;
     let n = unsafe { libc::read(fd, &mut val as *mut u64 as *mut _, 8) };

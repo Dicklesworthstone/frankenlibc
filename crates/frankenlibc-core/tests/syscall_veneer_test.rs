@@ -1785,6 +1785,27 @@ mod x86_64_tests {
     }
 
     #[test]
+    fn timerfd_create_with_nonblock_keeps_cloexec_clear() {
+        let fd = sys_timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK).expect("timerfd_create");
+
+        let fd_flags = unsafe { sys_fcntl(fd, F_GETFD, 0) }.expect("fcntl(F_GETFD)");
+        assert_eq!(
+            fd_flags & FD_CLOEXEC,
+            0,
+            "timerfd_create with TFD_NONBLOCK alone should not set close-on-exec"
+        );
+
+        let status_flags = unsafe { sys_fcntl(fd, F_GETFL, 0) }.expect("fcntl(F_GETFL)");
+        assert_ne!(
+            status_flags & O_NONBLOCK,
+            0,
+            "timerfd_create with TFD_NONBLOCK should still set nonblocking mode"
+        );
+
+        sys_close(fd).expect("close timerfd");
+    }
+
+    #[test]
     fn timerfd_read_expirations_nonblocking_requires_ready_timer() {
         let fd = sys_timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)
             .expect("timerfd_create");
