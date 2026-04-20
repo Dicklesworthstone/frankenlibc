@@ -658,7 +658,9 @@ pub unsafe extern "C" fn raise(signum: c_int) -> c_int {
         return -1;
     }
 
-    if !signal_core::valid_signal(signum) {
+    // POSIX: sig 0 is the null signal — tgkill performs only the permission
+    // and thread-existence checks, matching glibc's pthread_kill semantics.
+    if !signal_core::valid_signal(signum) && signum != 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;

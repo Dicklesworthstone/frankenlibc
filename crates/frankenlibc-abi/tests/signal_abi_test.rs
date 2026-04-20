@@ -1049,3 +1049,39 @@ fn siginterrupt_sigusr1() {
     let rc = unsafe { siginterrupt(libc::SIGUSR1, 0) };
     assert_eq!(rc, 0, "siginterrupt(SIGUSR1, 0) should succeed");
 }
+
+// ---------------------------------------------------------------------------
+// raise — null signal semantics (bd-gii3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn raise_null_signal_succeeds() {
+    // POSIX: raise(0) must not send a signal; it performs only the permission
+    // and thread-existence checks (tgkill with sig=0). Host glibc returns 0.
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { frankenlibc_abi::signal_abi::raise(0) };
+    let err = unsafe { *__errno_location() };
+    assert_eq!(rc, 0, "raise(0) null-signal should return 0");
+    assert_eq!(err, 0, "raise(0) must not set errno");
+}
+
+#[test]
+fn raise_negative_signal_rejected() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { frankenlibc_abi::signal_abi::raise(-1) };
+    let err = unsafe { *__errno_location() };
+    assert_eq!(rc, -1, "raise(-1) must fail");
+    assert_eq!(err, errno::EINVAL, "raise(-1) must set EINVAL");
+}
+
+#[test]
+fn raise_above_max_signal_rejected() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { frankenlibc_abi::signal_abi::raise(65) };
+    let err = unsafe { *__errno_location() };
+    assert_eq!(rc, -1, "raise(65) must fail");
+    assert_eq!(err, errno::EINVAL, "raise(65) must set EINVAL");
+}

@@ -462,6 +462,16 @@
       "note": "Signal 65 exceeds SIGRTMAX; gsignal returns -1/EINVAL without invoking any handler"
     },
     {
+      "name": "gsignal_null_signal_both",
+      "function": "gsignal",
+      "spec_section": "System V gsignal",
+      "inputs": { "sig": 0 },
+      "expected_output": "0:0:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "gsignal(0) dispatches to raise(0); POSIX null-signal performs tgkill permission check and returns success without invoking any handler"
+    },
+    {
       "name": "gsignal_sigkill_preinstall_both",
       "function": "gsignal",
       "spec_section": "System V gsignal",
