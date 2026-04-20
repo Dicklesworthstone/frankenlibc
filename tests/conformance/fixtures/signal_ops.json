@@ -350,6 +350,126 @@
       "expected_errno": 22,
       "mode": "both",
       "note": "Signal 65 is one past SIGRTMAX/_NSIG; signal() rejects with EINVAL"
+    },
+    {
+      "name": "ssignal_install_sigkill_both",
+      "function": "ssignal",
+      "spec_section": "System V ssignal",
+      "inputs": { "sig": 9 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "SIGKILL cannot be caught; ssignal must reject with SIG_ERR/EINVAL (sysv_signal via sigaction)"
+    },
+    {
+      "name": "ssignal_install_sigstop_both",
+      "function": "ssignal",
+      "spec_section": "System V ssignal",
+      "inputs": { "sig": 19 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "SIGSTOP cannot be caught; ssignal must reject with SIG_ERR/EINVAL"
+    },
+    {
+      "name": "ssignal_install_negative_both",
+      "function": "ssignal",
+      "spec_section": "System V ssignal",
+      "inputs": { "sig": -1 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Negative signal numbers are out of range; ssignal rejects with SIG_ERR/EINVAL"
+    },
+    {
+      "name": "ssignal_install_zero_both",
+      "function": "ssignal",
+      "spec_section": "System V ssignal",
+      "inputs": { "sig": 0 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "The null signal 0 is not valid for handler installation via ssignal"
+    },
+    {
+      "name": "ssignal_install_sigterm_both",
+      "function": "ssignal",
+      "spec_section": "System V ssignal",
+      "inputs": { "sig": 15 },
+      "expected_output": "INSTALLED:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "SIGTERM (15) handler installation via ssignal succeeds in both modes"
+    },
+    {
+      "name": "ssignal_install_sigrtmax_both",
+      "function": "ssignal",
+      "spec_section": "System V ssignal",
+      "inputs": { "sig": 64 },
+      "expected_output": "INSTALLED:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Upper-boundary valid signal SIGRTMAX (64) installs successfully via ssignal"
+    },
+    {
+      "name": "ssignal_install_above_max_both",
+      "function": "ssignal",
+      "spec_section": "System V ssignal",
+      "inputs": { "sig": 65 },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Signal 65 (one past SIGRTMAX/_NSIG) rejects via ssignal with EINVAL"
+    },
+    {
+      "name": "gsignal_sigterm_delivery_both",
+      "function": "gsignal",
+      "spec_section": "System V gsignal",
+      "inputs": { "sig": 15, "preinstall": "ssignal" },
+      "expected_output": "0:15:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "gsignal delivers SIGTERM synchronously to the ssignal-installed handler (SA_RESETHAND ensures one-shot)"
+    },
+    {
+      "name": "gsignal_sigusr2_delivery_both",
+      "function": "gsignal",
+      "spec_section": "System V gsignal",
+      "inputs": { "sig": 12, "preinstall": "ssignal" },
+      "expected_output": "0:12:0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "gsignal delivers SIGUSR2 to the ssignal-installed handler"
+    },
+    {
+      "name": "gsignal_negative_both",
+      "function": "gsignal",
+      "spec_section": "System V gsignal",
+      "inputs": { "sig": -1 },
+      "expected_output": "-1:0:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Negative signal numbers fail raise(); handler counter untouched"
+    },
+    {
+      "name": "gsignal_above_max_both",
+      "function": "gsignal",
+      "spec_section": "System V gsignal",
+      "inputs": { "sig": 65 },
+      "expected_output": "-1:0:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Signal 65 exceeds SIGRTMAX; gsignal returns -1/EINVAL without invoking any handler"
+    },
+    {
+      "name": "gsignal_sigkill_preinstall_both",
+      "function": "gsignal",
+      "spec_section": "System V gsignal",
+      "inputs": { "sig": 9, "preinstall": "ssignal" },
+      "expected_output": "SIG_ERR:22",
+      "expected_errno": 22,
+      "mode": "both",
+      "note": "Preinstall phase rejects SIGKILL handler; differential executor short-circuits to SIG_ERR before gsignal runs"
     }
   ]
 }
