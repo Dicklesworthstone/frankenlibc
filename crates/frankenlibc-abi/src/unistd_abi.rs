@@ -9682,7 +9682,7 @@ pub unsafe extern "C" fn sysinfo(info: *mut libc::sysinfo) -> c_int {
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    match unsafe { syscall::sys_sysinfo(info as *mut u8) } {
+    match unsafe { syscall::sys_sysinfo(info.cast::<syscall::Sysinfo>()) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

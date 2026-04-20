@@ -310,6 +310,7 @@ mod x86_64_tests {
         assert_eq!(SYS_TIMERFD_SETTIME, 286);
         assert_eq!(SYS_CAPSET, 126);
         assert_eq!(SYS_SCHED_SETATTR, 314);
+        assert_eq!(SYS_SYSINFO, 99);
         assert_eq!(SYS_PIPE2, 293);
         assert_eq!(SYS_SET_TID_ADDRESS, 218);
         assert_eq!(UFFDIO_API, 0xc018aa3f);
@@ -352,6 +353,7 @@ mod x86_64_tests {
         let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_mprotect;
         let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
+        let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;
@@ -559,6 +561,32 @@ mod x86_64_tests {
         let path = b".\0";
         unsafe { sys_faccessat2(AT_FDCWD, path.as_ptr(), 0, AT_EACCESS) }
             .expect("faccessat2(AT_EACCESS) should accept the current directory");
+    }
+
+    #[test]
+    fn sysinfo_reports_memory_and_uptime() {
+        let mut info = core::mem::MaybeUninit::<Sysinfo>::zeroed();
+        unsafe { sys_sysinfo(info.as_mut_ptr()) }.expect("sysinfo");
+        let info = unsafe { info.assume_init() };
+
+        let mem_unit = u128::from(if info.mem_unit == 0 { 1 } else { info.mem_unit });
+        let total_ram = (info.totalram as u128) * mem_unit;
+        let free_ram = (info.freeram as u128) * mem_unit;
+
+        assert!(info.uptime >= 0, "uptime should be non-negative");
+        assert!(total_ram > 0, "total RAM should be positive");
+        assert!(
+            free_ram <= total_ram,
+            "free RAM should not exceed total RAM"
+        );
+        assert!(info.procs > 0, "sysinfo should report at least one process");
+    }
+
+    #[test]
+    fn sysinfo_null_pointer_faults() {
+        let err =
+            unsafe { sys_sysinfo(core::ptr::null_mut()) }.expect_err("sysinfo(null) must fail");
+        assert_eq!(err, EFAULT);
     }
 
     #[test]
@@ -1047,6 +1075,7 @@ mod aarch64_tests {
         assert_eq!(SYS_TIMERFD_SETTIME, 86);
         assert_eq!(SYS_CAPSET, 91);
         assert_eq!(SYS_SCHED_SETATTR, 274);
+        assert_eq!(SYS_SYSINFO, 179);
         assert_eq!(SYS_PIPE2, 59);
         assert_eq!(SYS_SET_TID_ADDRESS, 96);
         assert_eq!(UFFDIO_API, 0xc018aa3f);
@@ -1081,6 +1110,7 @@ mod aarch64_tests {
         let _: unsafe fn(*mut u8, usize, i32) -> Result<(), i32> = sys_mprotect;
         let _: unsafe fn(i32, *const u8, i32) -> Result<(), i32> = sys_faccessat;
         let _: unsafe fn(i32, *const u8, i32, i32) -> Result<(), i32> = sys_faccessat2;
+        let _: unsafe fn(*mut Sysinfo) -> Result<(), i32> = sys_sysinfo;
         let _: unsafe fn(*const u32, i32, u32, usize, usize, u32) -> Result<isize, i32> = sys_futex;
         let _: unsafe fn(*const FutexWaitV, u32, u32, *const u8, i32) -> Result<i32, i32> =
             sys_futex_waitv;

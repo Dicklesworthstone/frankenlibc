@@ -144,6 +144,26 @@ pub struct SignalfdSiginfo {
     pub __pad: [u8; 28],
 }
 
+/// Linux `sysinfo` payload returned by `sysinfo(2)` on supported 64-bit targets.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sysinfo {
+    pub uptime: i64,
+    pub loads: [u64; 3],
+    pub totalram: u64,
+    pub freeram: u64,
+    pub sharedram: u64,
+    pub bufferram: u64,
+    pub totalswap: u64,
+    pub freeswap: u64,
+    pub procs: u16,
+    pub pad: u16,
+    pub totalhigh: u64,
+    pub freehigh: u64,
+    pub mem_unit: u32,
+    pub _f: [u8; 0],
+}
+
 const IOC_NRBITS: usize = 8;
 const IOC_TYPEBITS: usize = 8;
 const IOC_SIZEBITS: usize = 14;
@@ -5082,7 +5102,7 @@ pub unsafe fn sys_swapoff(path: *const u8) -> Result<(), i32> {
 /// `info` must point to a valid sysinfo structure.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_sysinfo(info: *mut u8) -> Result<(), i32> {
+pub unsafe fn sys_sysinfo(info: *mut Sysinfo) -> Result<(), i32> {
     let ret = unsafe { raw::syscall1(SYS_SYSINFO, info as usize) };
     syscall_result(ret).map(|_| ())
 }

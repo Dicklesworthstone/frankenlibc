@@ -22,8 +22,9 @@ use frankenlibc_abi::unistd_abi::{
     sched_get_priority_min, sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler,
     sched_rr_get_interval, sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget,
     semop, setdomainname, sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget,
-    signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf, timer_create, timer_delete,
-    timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r, unlockpt,
+    signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf, sysinfo, timer_create,
+    timer_delete, timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r,
+    unlockpt,
 };
 use frankenlibc_core::syscall as raw_syscall;
 use std::ffi::CString;
@@ -1597,7 +1598,7 @@ fn get_phys_and_avphys_pages_match_sysinfo_projection() {
     let mut info = std::mem::MaybeUninit::<libc::sysinfo>::zeroed();
     // SAFETY: valid writable pointer for kernel sysinfo payload.
     assert_eq!(
-        unsafe { raw_syscall::sys_sysinfo(info.as_mut_ptr().cast()) },
+        unsafe { raw_syscall::sys_sysinfo(info.as_mut_ptr().cast::<raw_syscall::Sysinfo>()) },
         Ok(())
     );
     // SAFETY: syscall succeeded and initialized `info`.
@@ -1629,6 +1630,25 @@ fn get_phys_and_avphys_pages_match_sysinfo_projection() {
         actual_avphys >= expected_avphys,
         "get_avphys_pages() ({actual_avphys}) should be >= sysinfo freeram ({expected_avphys})"
     );
+}
+
+#[test]
+fn abi_sysinfo_reports_memory_and_uptime() {
+    let mut info = std::mem::MaybeUninit::<libc::sysinfo>::zeroed();
+    assert_eq!(unsafe { sysinfo(info.as_mut_ptr()) }, 0);
+    let info = unsafe { info.assume_init() };
+
+    let mem_unit = if info.mem_unit == 0 {
+        1_u128
+    } else {
+        info.mem_unit as u128
+    };
+    let total_bytes = (info.totalram as u128) * mem_unit;
+    let free_bytes = (info.freeram as u128) * mem_unit;
+
+    assert!(info.uptime >= 0);
+    assert!(total_bytes > 0);
+    assert!(free_bytes <= total_bytes);
 }
 
 #[test]
