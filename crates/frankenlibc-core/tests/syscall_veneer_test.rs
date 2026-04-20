@@ -1746,6 +1746,93 @@ mod x86_64_tests {
         sys_kill(pid, 0).expect("kill(self, 0) must succeed as POSIX null signal");
     }
 
+    /// Metamorphic (invertive): rt_sigprocmask get→set→restore is the
+    /// identity. Save the current mask, block SIGUSR1, verify the mask
+    /// reflects the block, restore to the saved mask, and verify the
+    /// restored state matches the original word-for-word.
+    ///
+    /// Fences against: sigset_t ABI drift (wrong sigsetsize, endianness
+    /// bugs in the block-word representation), `how` parameter swaps
+    /// between SIG_SETMASK/SIG_BLOCK, and any path that silently loses
+    /// bits between the kernel and userspace buffers.
+    #[test]
+    fn sys_rt_sigprocmask_get_set_restore_is_invertive() {
+        const SIG_UNBLOCK: i32 = 1;
+        let sigsetsize = core::mem::size_of::<u64>();
+
+        // Phase 1: snapshot current mask with a no-op SIG_SETMASK query.
+        let mut saved_mask: u64 = 0;
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_UNBLOCK,
+                core::ptr::null(),
+                (&mut saved_mask as *mut u64).cast::<u8>(),
+                sigsetsize,
+            )
+        }
+        .expect("rt_sigprocmask snapshot");
+
+        // Phase 2: block SIGUSR1, observe the new mask.
+        let sigusr1_bit = 1u64 << ((SIGUSR1 - 1) as u32);
+        let mut after_block: u64 = 0;
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_BLOCK,
+                (&sigusr1_bit as *const u64).cast::<u8>(),
+                (&mut after_block as *mut u64).cast::<u8>(),
+                sigsetsize,
+            )
+        }
+        .expect("rt_sigprocmask(SIG_BLOCK, SIGUSR1)");
+        assert_eq!(
+            after_block, saved_mask,
+            "oldset from SIG_BLOCK must equal the pre-block mask"
+        );
+
+        let mut observed: u64 = 0;
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_UNBLOCK,
+                core::ptr::null(),
+                (&mut observed as *mut u64).cast::<u8>(),
+                sigsetsize,
+            )
+        }
+        .expect("rt_sigprocmask observe after block");
+        assert_eq!(
+            observed & sigusr1_bit,
+            sigusr1_bit,
+            "SIGUSR1 bit must be set after SIG_BLOCK"
+        );
+
+        // Phase 3: restore the saved mask verbatim via SIG_SETMASK.
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_SETMASK,
+                (&saved_mask as *const u64).cast::<u8>(),
+                core::ptr::null_mut(),
+                sigsetsize,
+            )
+        }
+        .expect("rt_sigprocmask(SIG_SETMASK, saved)");
+
+        // Phase 4: observe restored state; must equal saved_mask exactly.
+        let mut restored: u64 = 0;
+        unsafe {
+            sys_rt_sigprocmask(
+                SIG_UNBLOCK,
+                core::ptr::null(),
+                (&mut restored as *mut u64).cast::<u8>(),
+                sigsetsize,
+            )
+        }
+        .expect("rt_sigprocmask final snapshot");
+        assert_eq!(
+            restored, saved_mask,
+            "get→set→restore must be invertive (saved={saved_mask:#x}, restored={restored:#x})"
+        );
+    }
+
     /// Metamorphic parity: for the current thread, sys_tgkill(getpid, gettid, 0)
     /// and sys_tkill(gettid, 0) must both succeed. tgkill is a refinement of
     /// tkill with an extra tgid guard against pid reuse races, so the two
