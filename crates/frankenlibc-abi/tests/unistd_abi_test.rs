@@ -2071,11 +2071,11 @@ fn getaddrinfo_a_nowait_degenerate_requests_preserve_errno_like_host() {
     };
 
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = libc::E2BIG;
     }
     let host_null_list =
         unsafe { host_getaddrinfo_a(GAI_NOWAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
-    let host_null_list_errno = errno_value();
+    let host_null_list_errno = unsafe { *libc::__errno_location() };
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
@@ -2087,7 +2087,7 @@ fn getaddrinfo_a_nowait_degenerate_requests_preserve_errno_like_host() {
 
     let mut host_requests = [std::ptr::null_mut()];
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = libc::E2BIG;
     }
     let host_all_null = unsafe {
         host_getaddrinfo_a(
@@ -2097,7 +2097,7 @@ fn getaddrinfo_a_nowait_degenerate_requests_preserve_errno_like_host() {
             std::ptr::null_mut(),
         )
     };
-    let host_all_null_errno = errno_value();
+    let host_all_null_errno = unsafe { *libc::__errno_location() };
 
     let mut abi_requests = [std::ptr::null_mut()];
     unsafe {
@@ -2117,12 +2117,77 @@ fn getaddrinfo_a_nowait_degenerate_requests_preserve_errno_like_host() {
 }
 
 #[test]
-fn getaddrinfo_a_invalid_modes_report_badflags_before_degenerate_success() {
+fn getaddrinfo_a_mode_semantics_match_host_across_empty_and_all_null_requests() {
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
+
+    let Some(host_getaddrinfo_a) = (unsafe { load_host_symbol("getaddrinfo_a") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+    else {
+        return;
+    };
+
+    for mode in [GAI_WAIT, GAI_NOWAIT, -1, 2] {
+        unsafe {
+            *libc::__errno_location() = libc::E2BIG;
+        }
+        let host_empty =
+            unsafe { host_getaddrinfo_a(mode, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+        let host_empty_errno = unsafe { *libc::__errno_location() };
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        let abi_empty =
+            unsafe { getaddrinfo_a(mode, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+        let abi_empty_errno = errno_value();
+        assert_eq!(abi_empty, host_empty, "mode {mode} empty-list rc");
+        assert_eq!(
+            abi_empty_errno, host_empty_errno,
+            "mode {mode} empty-list errno"
+        );
+
+        let mut host_requests = [std::ptr::null_mut()];
+        unsafe {
+            *libc::__errno_location() = libc::E2BIG;
+        }
+        let host_all_null = unsafe {
+            host_getaddrinfo_a(
+                mode,
+                host_requests.as_mut_ptr(),
+                host_requests.len() as c_int,
+                std::ptr::null_mut(),
+            )
+        };
+        let host_all_null_errno = unsafe { *libc::__errno_location() };
+
+        let mut abi_requests = [std::ptr::null_mut()];
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        let abi_all_null = unsafe {
+            getaddrinfo_a(
+                mode,
+                abi_requests.as_mut_ptr(),
+                abi_requests.len() as c_int,
+                std::ptr::null_mut(),
+            )
+        };
+        let abi_all_null_errno = errno_value();
+        assert_eq!(abi_all_null, host_all_null, "mode {mode} all-null rc");
+        assert_eq!(
+            abi_all_null_errno, host_all_null_errno,
+            "mode {mode} all-null errno"
+        );
+    }
+}
+
+#[test]
+fn getaddrinfo_a_invalid_modes_report_eai_system_with_einval_like_host() {
     unsafe {
         *__errno_location() = 0;
     }
     let rc = unsafe { getaddrinfo_a(-1, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
-    assert_eq!(rc, libc::EAI_BADFLAGS);
+    assert_eq!(rc, libc::EAI_SYSTEM);
     assert_eq!(errno_value(), libc::EINVAL);
 
     unsafe {
@@ -2130,7 +2195,7 @@ fn getaddrinfo_a_invalid_modes_report_badflags_before_degenerate_success() {
     }
     let mut requests = [std::ptr::null_mut()];
     let rc = unsafe { getaddrinfo_a(2, requests.as_mut_ptr(), 1, std::ptr::null_mut()) };
-    assert_eq!(rc, libc::EAI_BADFLAGS);
+    assert_eq!(rc, libc::EAI_SYSTEM);
     assert_eq!(errno_value(), libc::EINVAL);
 }
 

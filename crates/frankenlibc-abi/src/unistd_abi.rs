@@ -18321,7 +18321,7 @@ pub unsafe extern "C" fn getaddrinfo_a(
 
     if mode != GAI_WAIT && mode != GAI_NOWAIT {
         unsafe { set_abi_errno(libc::EINVAL) };
-        return libc::EAI_BADFLAGS;
+        return libc::EAI_SYSTEM;
     }
     if nitems <= 0 {
         return 0;
