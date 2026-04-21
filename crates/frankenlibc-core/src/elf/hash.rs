@@ -6,6 +6,8 @@
 //!
 //! Both are implemented here for symbol lookup acceleration.
 
+use super::symbol::{Elf64Symbol, get_string};
+
 /// Compute the ELF (System V) hash for a symbol name.
 ///
 /// This is the original ELF hash algorithm from the System V ABI.
@@ -100,22 +102,21 @@ impl GnuHashHeader {
 }
 
 /// GNU hash table for symbol lookup.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct GnuHashTable<'a> {
+#[derive(Debug, Clone)]
+pub struct GnuHashTable {
     /// Header information
     pub header: GnuHashHeader,
     /// Bloom filter words (64-bit each on ELF64)
-    bloom: &'a [u64],
+    bloom: Vec<u64>,
     /// Hash buckets
-    buckets: &'a [u32],
+    buckets: Vec<u32>,
     /// Hash chains (starts at symoffset)
-    chains: &'a [u32],
+    chains: Vec<u32>,
 }
 
-impl<'a> GnuHashTable<'a> {
+impl GnuHashTable {
     /// Parse a GNU hash table from a byte slice.
-    pub fn parse(data: &'a [u8]) -> Option<Self> {
+    pub fn parse(data: &[u8]) -> Option<Self> {
         let header = GnuHashHeader::parse(data)?;
 
         // Calculate offsets
@@ -131,18 +132,15 @@ impl<'a> GnuHashTable<'a> {
         }
 
         // Parse bloom filter
-        // Note: For safe transmutation we'd use bytemuck or zerocopy.
-        // For now, these remain empty slices - full implementation would parse properly.
-        let _bloom_data = &data[bloom_start..bloom_start + bloom_size_bytes];
-        let bloom: &[u64] = &[];
+        let bloom_data = &data[bloom_start..bloom_start + bloom_size_bytes];
+        let bloom = parse_u64_words(bloom_data)?;
 
         // Parse buckets
-        let _buckets_data = &data[buckets_start..buckets_start + buckets_size_bytes];
-        let buckets: &[u32] = &[];
+        let buckets_data = &data[buckets_start..buckets_start + buckets_size_bytes];
+        let buckets = parse_u32_words(buckets_data)?;
 
         // Chains extend to end of section (variable length)
-        let _chains_data = &data[chains_start..];
-        let chains: &[u32] = &[];
+        let chains = parse_u32_words(&data[chains_start..])?;
 
         Some(Self {
             header,
@@ -168,25 +166,58 @@ impl<'a> GnuHashTable<'a> {
         let word = self.bloom[word_idx];
         (word & bit1 != 0) && (word & bit2 != 0)
     }
+
+    /// Look up a symbol by name and return its dynsym index.
+    pub fn lookup(&self, name: &[u8], dynsym: &[Elf64Symbol], dynstr: &[u8]) -> Option<u32> {
+        if self.header.nbuckets == 0 || self.buckets.is_empty() {
+            return None;
+        }
+
+        let hash = gnu_hash(name);
+        if !self.bloom_check(hash) {
+            return None;
+        }
+
+        let bucket_idx = (hash % self.header.nbuckets) as usize;
+        let mut sym_idx = *self.buckets.get(bucket_idx)?;
+        if sym_idx < self.header.symoffset {
+            return None;
+        }
+
+        loop {
+            let chain_idx = sym_idx.checked_sub(self.header.symoffset)? as usize;
+            let chain = *self.chains.get(chain_idx)?;
+            if (chain | 1) == (hash | 1)
+                && symbol_name_matches(dynsym, dynstr, sym_idx as usize, name)
+            {
+                return Some(sym_idx);
+            }
+            if chain & 1 != 0 {
+                break;
+            }
+            sym_idx = sym_idx.checked_add(1)?;
+        }
+
+        None
+    }
 }
 
 /// ELF (System V) hash table for symbol lookup.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct ElfHashTable<'a> {
+#[derive(Debug, Clone)]
+pub struct ElfHashTable {
     /// Number of buckets
     nbucket: u32,
     /// Number of chain entries
     nchain: u32,
     /// Bucket array
-    buckets: &'a [u32],
+    buckets: Vec<u32>,
     /// Chain array
-    chains: &'a [u32],
+    chains: Vec<u32>,
 }
 
-impl<'a> ElfHashTable<'a> {
+impl ElfHashTable {
     /// Parse an ELF hash table from a byte slice.
-    pub fn parse(data: &'a [u8]) -> Option<Self> {
+    pub fn parse(data: &[u8]) -> Option<Self> {
         if data.len() < 8 {
             return None;
         }
@@ -199,39 +230,82 @@ impl<'a> ElfHashTable<'a> {
             return None;
         }
 
-        // For now, return with empty arrays
-        // A real implementation would parse the bucket and chain arrays
+        let buckets_start = 8;
+        let buckets_end = buckets_start + nbucket as usize * 4;
+        let chains_end = buckets_end + nchain as usize * 4;
+        let buckets = parse_u32_words(&data[buckets_start..buckets_end])?;
+        let chains = parse_u32_words(&data[buckets_end..chains_end])?;
+
         Some(Self {
             nbucket,
             nchain,
-            buckets: &[],
-            chains: &[],
+            buckets,
+            chains,
         })
     }
 
     /// Look up a symbol by name hash.
     ///
     /// Returns the symbol index if found, or None if not found.
-    pub fn lookup(&self, hash: u32, _name: &[u8]) -> Option<u32> {
+    pub fn lookup(
+        &self,
+        hash: u32,
+        name: &[u8],
+        dynsym: &[Elf64Symbol],
+        dynstr: &[u8],
+    ) -> Option<u32> {
         if self.buckets.is_empty() || self.nbucket == 0 {
             return None;
         }
 
         let bucket_idx = hash % self.nbucket;
-        let mut sym_idx = self.buckets[bucket_idx as usize];
+        let mut sym_idx = *self.buckets.get(bucket_idx as usize)?;
 
         while sym_idx != 0 {
-            // Would compare name here
-            // For now, just follow chain
-            if (sym_idx as usize) < self.chains.len() {
-                sym_idx = self.chains[sym_idx as usize];
-            } else {
-                break;
+            if sym_idx as usize >= self.nchain as usize {
+                return None;
             }
+            if symbol_name_matches(dynsym, dynstr, sym_idx as usize, name) {
+                return Some(sym_idx);
+            }
+            sym_idx = *self.chains.get(sym_idx as usize)?;
         }
 
         None
     }
+}
+
+fn parse_u32_words(data: &[u8]) -> Option<Vec<u32>> {
+    if !data.len().is_multiple_of(4) {
+        return None;
+    }
+
+    let mut words = Vec::with_capacity(data.len() / 4);
+    for chunk in data.chunks_exact(4) {
+        words.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    Some(words)
+}
+
+fn parse_u64_words(data: &[u8]) -> Option<Vec<u64>> {
+    if !data.len().is_multiple_of(8) {
+        return None;
+    }
+
+    let mut words = Vec::with_capacity(data.len() / 8);
+    for chunk in data.chunks_exact(8) {
+        words.push(u64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]));
+    }
+    Some(words)
+}
+
+fn symbol_name_matches(dynsym: &[Elf64Symbol], dynstr: &[u8], sym_idx: usize, name: &[u8]) -> bool {
+    dynsym
+        .get(sym_idx)
+        .and_then(|sym| get_string(dynstr, sym.st_name).ok())
+        .is_some_and(|sym_name| sym_name.as_bytes() == name)
 }
 
 #[cfg(test)]
@@ -276,6 +350,92 @@ mod tests {
         assert_eq!(header.symoffset, 1);
         assert_eq!(header.bloom_size, 2);
         assert_eq!(header.bloom_shift, 6);
+    }
+
+    #[test]
+    fn test_elf_hash_table_lookup() {
+        let name = b"foo";
+        let hash = elf_hash(name);
+        let bucket_idx = (hash % 4) as usize;
+
+        let mut data = vec![0u8; 8 + 4 * 4 + 2 * 4];
+        data[0..4].copy_from_slice(&4u32.to_le_bytes());
+        data[4..8].copy_from_slice(&2u32.to_le_bytes());
+
+        let buckets_start = 8;
+        let mut buckets = [0u32; 4];
+        buckets[bucket_idx] = 1;
+        for (i, bucket) in buckets.into_iter().enumerate() {
+            let start = buckets_start + i * 4;
+            data[start..start + 4].copy_from_slice(&bucket.to_le_bytes());
+        }
+
+        let chains_start = buckets_start + 4 * 4;
+        data[chains_start + 4..chains_start + 8].copy_from_slice(&0u32.to_le_bytes());
+
+        let table = ElfHashTable::parse(&data).unwrap();
+        let dynsym = vec![
+            Elf64Symbol {
+                st_name: 0,
+                st_info: 0,
+                st_other: 0,
+                st_shndx: 0,
+                st_value: 0,
+                st_size: 0,
+            },
+            Elf64Symbol {
+                st_name: 1,
+                st_info: 0x12,
+                st_other: 0,
+                st_shndx: 1,
+                st_value: 0x1000,
+                st_size: 0,
+            },
+        ];
+        let dynstr = b"\0foo\0";
+
+        assert_eq!(table.lookup(hash, name, &dynsym, dynstr), Some(1));
+        assert_eq!(table.lookup(hash, b"bar", &dynsym, dynstr), None);
+    }
+
+    #[test]
+    fn test_gnu_hash_table_lookup() {
+        let name = b"foo";
+        let hash = gnu_hash(name);
+        let bloom_word = (1u64 << (hash % 64)) | (1u64 << ((hash >> 5) % 64));
+
+        let mut data = vec![0u8; 16 + 8 + 4 + 4];
+        data[0..4].copy_from_slice(&1u32.to_le_bytes());
+        data[4..8].copy_from_slice(&1u32.to_le_bytes());
+        data[8..12].copy_from_slice(&1u32.to_le_bytes());
+        data[12..16].copy_from_slice(&5u32.to_le_bytes());
+        data[16..24].copy_from_slice(&bloom_word.to_le_bytes());
+        data[24..28].copy_from_slice(&1u32.to_le_bytes());
+        data[28..32].copy_from_slice(&(hash | 1).to_le_bytes());
+
+        let table = GnuHashTable::parse(&data).unwrap();
+        let dynsym = vec![
+            Elf64Symbol {
+                st_name: 0,
+                st_info: 0,
+                st_other: 0,
+                st_shndx: 0,
+                st_value: 0,
+                st_size: 0,
+            },
+            Elf64Symbol {
+                st_name: 1,
+                st_info: 0x12,
+                st_other: 0,
+                st_shndx: 1,
+                st_value: 0x1000,
+                st_size: 0,
+            },
+        ];
+        let dynstr = b"\0foo\0";
+
+        assert_eq!(table.lookup(name, &dynsym, dynstr), Some(1));
+        assert_eq!(table.lookup(b"bar", &dynsym, dynstr), None);
     }
 
     #[test]

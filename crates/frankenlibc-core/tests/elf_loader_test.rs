@@ -59,6 +59,14 @@ fn parse_system_libc() {
         !obj.dynstr.is_empty(),
         "libc should have dynamic string table"
     );
+    assert!(
+        obj.gnu_hash.is_some(),
+        "libc should expose a GNU hash table"
+    );
+    assert!(
+        obj.elf_hash.is_some(),
+        "libc should expose an ELF hash table"
+    );
 
     // Check for LOAD segments
     let load_count = obj.program_headers.iter().filter(|ph| ph.is_load()).count();
@@ -188,6 +196,9 @@ fn parse_system_ldso() {
     // ld.so should have minimal symbols
     eprintln!("ld.so: {} dynamic symbols", obj.dynsym.len());
     assert!(!obj.program_headers.is_empty());
+    assert!(obj.lookup_symbol("_dl_allocate_tls").is_some());
+    assert!(obj.lookup_symbol("_dl_deallocate_tls").is_some());
+    assert!(obj.lookup_symbol("_rtld_global").is_some());
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +251,16 @@ fn symbol_lookup_works() {
         let name = obj.symbol_name(malloc_sym);
         assert_eq!(name, Some("malloc"));
     }
+
+    let versioned_malloc = obj.lookup_symbol_versioned("malloc", Some("GLIBC_2.2.5"));
+    assert!(
+        versioned_malloc.is_some(),
+        "libc should expose malloc@@GLIBC_2.2.5"
+    );
+    assert!(
+        obj.lookup_symbol_versioned("malloc", Some("GLIBC_999.0"))
+            .is_none()
+    );
 
     // Nonexistent symbol
     assert!(
@@ -312,6 +333,10 @@ fn relocation_parsing() {
     // Check that relocation parsing infrastructure works
     let total_relocs = obj.rela_dyn.len() + obj.rela_plt.len();
     eprintln!("  Total relocations parsed: {}", total_relocs);
+    assert!(
+        !obj.rela_plt.is_empty(),
+        "libc should expose .rela.plt separately from .rela.dyn"
+    );
 
     // If we found relocations, verify they have valid types
     if !obj.rela_dyn.is_empty() {

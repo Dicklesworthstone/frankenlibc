@@ -34,7 +34,7 @@ pub mod relocation;
 pub mod section;
 pub mod symbol;
 
-pub use hash::{GnuHashTable, elf_hash, gnu_hash};
+pub use hash::{ElfHashTable, GnuHashTable, elf_hash, gnu_hash};
 pub use header::{Elf64Header, ElfClass, ElfData, ElfMachine, ElfOsAbi, ElfType};
 pub use loader::{ElfLoader, LoadedObject, NullSymbolLookup, RelocationStats, SymbolLookup};
 pub use program::{Elf64ProgramHeader, ProgramFlags, ProgramType};
