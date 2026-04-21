@@ -14,7 +14,7 @@ use frankenlibc_abi::stdlib_abi::{
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, creat64, ctermid, ether_aton,
     ether_aton_r, ether_ntoa, ether_ntoa_r, eventfd_read, eventfd_write, fpathconf, fsconfig,
-    fsopen, fstat64, fstatat64, ftruncate64, getcpu, getdomainname, gethostid, getlogin,
+    fsopen, fspick, fstat64, fstatat64, ftruncate64, getcpu, getdomainname, gethostid, getlogin,
     getlogin_r, getopt, getopt_long, getpagesize, grantpt, herror, hstrerror, lockf, lseek64,
     lstat64, mkdtemp, mount_setattr, mq_close, mq_getattr, mq_open, mq_receive, mq_send,
     mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree, open64, pathconf,
@@ -3258,6 +3258,37 @@ fn fsopen_null_fsname_nonzero_flags_preserves_unprivileged_eperm_like_host() {
         abi_err,
         libc::EPERM,
         "unexpected errno from fsopen(NULL, 1): {abi_err}"
+    );
+}
+
+#[test]
+fn fspick_null_path_preserves_unprivileged_eperm_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_fspick,
+            libc::AT_FDCWD,
+            ptr::null::<libc::c_char>(),
+            0_u32,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { fspick(libc::AT_FDCWD, ptr::null(), 0) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EPERM,
+        "unexpected errno from fspick(AT_FDCWD, NULL, 0): {abi_err}"
     );
 }
 
