@@ -2112,6 +2112,50 @@ fn process_mrelease_invalid_flags_override_invalid_pidfd_like_host() {
 }
 
 #[test]
+fn process_mrelease_zero_pidfd_sets_ebadf_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_mrelease,
+            0 as libc::c_long,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_mrelease(0, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn process_mrelease_invalid_flags_override_zero_pidfd_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_mrelease,
+            0 as libc::c_long,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_mrelease(0, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
 fn setns_invalid_fd_sets_errno_like_host() {
     clear_errno();
     let host_rc = unsafe { libc::setns(-1, 0) };
