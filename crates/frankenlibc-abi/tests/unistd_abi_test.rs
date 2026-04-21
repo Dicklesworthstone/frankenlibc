@@ -2548,6 +2548,72 @@ fn gai_suspend_all_null_request_timeouts_match_host_contract() {
 }
 
 #[test]
+fn async_dns_stub_tests_keep_host_parity_and_safe_divergence_paths_separate() {
+    // Proven host-parity path: degenerate synchronous cases with empty or
+    // all-NULL request sets preserve host libc behavior exactly.
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) },
+        0
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    let all_null_requests: [*mut c_void; 1] = [std::ptr::null_mut()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe {
+            gai_suspend(
+                all_null_requests.as_ptr().cast(),
+                all_null_requests.len() as c_int,
+                std::ptr::null(),
+            )
+        },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    let mut zeroed_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { gai_error((&mut zeroed_request as *mut GaicbShape).cast()) },
+        0
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    // Intentional safe-divergence path: crash-prone or unsupported async
+    // submission shapes do not mirror host UB and instead fail safely.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    assert_eq!(
+        unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 1, std::ptr::null_mut()) },
+        libc::EAI_SYSTEM
+    );
+    assert_eq!(errno_value(), libc::ENOSYS);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { gai_suspend(std::ptr::null(), 1, std::ptr::null()) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    assert_eq!(unsafe { gai_error(std::ptr::null_mut()) }, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+}
+
+#[test]
 fn strfmon_small_buffer_sets_e2big() {
     let mut buf = [0_i8; 4];
     unsafe {

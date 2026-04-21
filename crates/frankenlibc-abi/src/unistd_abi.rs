@@ -18361,8 +18361,9 @@ const EAI_ALLDONE: c_int = -103;
 ///
 /// FrankenLibC resolves all `getaddrinfo` calls synchronously and does not
 /// export `getaddrinfo_a`, so no asynchronous requests can still be pending by
-/// the time a caller reaches `gai_cancel`. Match the host-glibc degenerate path
-/// and report `EAI_ALLDONE` without mutating `errno`.
+/// the time a caller reaches `gai_cancel`. This is part of the proven
+/// host-parity path for the degenerate synchronous wrappers, so report
+/// `EAI_ALLDONE` without mutating `errno`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
     let _ = req;
@@ -18373,9 +18374,10 @@ pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
 ///
 /// Since all resolution is synchronous and `getaddrinfo_a` is unimplemented,
 /// a zeroed request descriptor is already complete, while opaque handles remain
-/// unsupported. Match the host-glibc degenerate path for an all-zero `gaicb`
-/// and report success without mutating `errno`; otherwise return `EAI_SYSTEM`
-/// with `ENOSYS`.
+/// unsupported. The all-zero `gaicb` case is part of the proven host-parity
+/// path and reports success without mutating `errno`. Opaque or NULL handles
+/// are treated as an intentional safe divergence and return `EAI_SYSTEM` with
+/// `ENOSYS` instead of following host-UB-adjacent behavior.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
     if unsafe { is_zeroed_gaicb_request(req) } {
@@ -18388,9 +18390,12 @@ pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
 /// `gai_suspend` — wait for async name resolution requests to complete (bd-9dq5).
 ///
 /// Since all resolution is synchronous, every request in the list is already
-/// complete by the time `gai_suspend` is called. Match host glibc's degenerate
-/// synchronous behavior and return `EAI_ALLDONE` without mutating `errno`,
-/// even when the caller supplies a timeout that would otherwise be invalid.
+/// complete by the time `gai_suspend` is called. The empty-list and all-NULL
+/// list cases are part of the proven host-parity path and return `EAI_ALLDONE`
+/// without mutating `errno`, even when the caller supplies a timeout that
+/// would otherwise be invalid. Nonzero `ent` with a NULL list is an intentional
+/// safe divergence from crash-prone host behavior and also returns
+/// `EAI_ALLDONE` without mutating `errno`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_suspend(
     _list: *const *const c_void,
