@@ -43,6 +43,8 @@ use frankenlibc_abi::unistd_abi::{
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
 const GAI_WAIT: c_int = 0;
 const GAI_NOWAIT: c_int = 1;
+const GAI_BADFLAGS_NEGATIVE_MODE: c_int = -1;
+const GAI_BADFLAGS_POSITIVE_MODE: c_int = 2;
 const GAI_EAI_ALLDONE: c_int = -103;
 
 #[repr(C)]
@@ -2185,7 +2187,12 @@ fn getaddrinfo_a_mode_semantics_match_host_across_empty_and_all_null_requests() 
         return;
     };
 
-    for mode in [GAI_WAIT, GAI_NOWAIT, -1, 2] {
+    for mode in [
+        GAI_WAIT,
+        GAI_NOWAIT,
+        GAI_BADFLAGS_NEGATIVE_MODE,
+        GAI_BADFLAGS_POSITIVE_MODE,
+    ] {
         unsafe {
             *libc::__errno_location() = libc::E2BIG;
         }
@@ -2241,20 +2248,52 @@ fn getaddrinfo_a_mode_semantics_match_host_across_empty_and_all_null_requests() 
 
 #[test]
 fn getaddrinfo_a_invalid_modes_report_eai_system_with_einval_like_host() {
-    unsafe {
-        *__errno_location() = 0;
-    }
-    let rc = unsafe { getaddrinfo_a(-1, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
-    assert_eq!(rc, libc::EAI_SYSTEM);
-    assert_eq!(errno_value(), libc::EINVAL);
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
 
-    unsafe {
-        *__errno_location() = 0;
+    let Some(host_getaddrinfo_a) = (unsafe { load_host_symbol("getaddrinfo_a") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+    else {
+        return;
+    };
+
+    for (label, mode, nitems) in [
+        ("negative_badflags", GAI_BADFLAGS_NEGATIVE_MODE, 0),
+        ("positive_badflags", GAI_BADFLAGS_POSITIVE_MODE, 1),
+    ] {
+        let mut host_requests = [std::ptr::null_mut()];
+        unsafe {
+            *libc::__errno_location() = libc::E2BIG;
+        }
+        let host_rc = unsafe {
+            host_getaddrinfo_a(
+                mode,
+                host_requests.as_mut_ptr(),
+                nitems,
+                std::ptr::null_mut(),
+            )
+        };
+        let host_errno = unsafe { *libc::__errno_location() };
+
+        let mut abi_requests = [std::ptr::null_mut()];
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        let abi_rc = unsafe {
+            getaddrinfo_a(
+                mode,
+                abi_requests.as_mut_ptr(),
+                nitems,
+                std::ptr::null_mut(),
+            )
+        };
+        let abi_errno = errno_value();
+
+        assert_eq!(abi_rc, host_rc, "{label} rc");
+        assert_eq!(abi_errno, host_errno, "{label} errno");
+        assert_eq!(abi_rc, libc::EAI_SYSTEM, "{label} rc contract");
+        assert_eq!(abi_errno, libc::EINVAL, "{label} errno contract");
     }
-    let mut requests = [std::ptr::null_mut()];
-    let rc = unsafe { getaddrinfo_a(2, requests.as_mut_ptr(), 1, std::ptr::null_mut()) };
-    assert_eq!(rc, libc::EAI_SYSTEM);
-    assert_eq!(errno_value(), libc::EINVAL);
 }
 
 #[test]
