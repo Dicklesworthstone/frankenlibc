@@ -14,17 +14,17 @@ use frankenlibc_abi::stdlib_abi::{
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, creat64, ctermid, ether_aton,
     ether_aton_r, ether_ntoa, ether_ntoa_r, eventfd_read, eventfd_write, fpathconf, fsconfig,
-    fstat64, fstatat64, ftruncate64, getcpu, getdomainname, gethostid, getlogin, getlogin_r,
-    getopt, getopt_long, getpagesize, grantpt, herror, hstrerror, lockf, lseek64, lstat64, mkdtemp,
-    mount_setattr, mq_close, mq_getattr, mq_open, mq_receive, mq_send, mq_setattr, mq_unlink,
-    msgctl, msgget, msgrcv, msgsnd, nice, open_tree, open64, pathconf, pidfd_send_signal,
-    posix_fadvise, posix_fallocate, posix_madvise, posix_openpt, pread64, ptsname, pwrite64,
-    renameat2, sched_get_priority_max, sched_get_priority_min, sched_getaffinity, sched_getcpu,
-    sched_getparam, sched_getscheduler, sched_rr_get_interval, sched_setaffinity, sched_setparam,
-    sched_setscheduler, semctl, semget, semop, setdomainname, sethostname, shm_open, shm_unlink,
-    shmat, shmctl, shmdt, shmget, signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf,
-    sysinfo, timer_create, timer_delete, timer_getoverrun, timer_gettime, timer_settime,
-    truncate64, ttyname, ttyname_r, unlockpt,
+    fsopen, fstat64, fstatat64, ftruncate64, getcpu, getdomainname, gethostid, getlogin,
+    getlogin_r, getopt, getopt_long, getpagesize, grantpt, herror, hstrerror, lockf, lseek64,
+    lstat64, mkdtemp, mount_setattr, mq_close, mq_getattr, mq_open, mq_receive, mq_send,
+    mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree, open64, pathconf,
+    pidfd_send_signal, posix_fadvise, posix_fallocate, posix_madvise, posix_openpt, pread64,
+    ptsname, pwrite64, renameat2, sched_get_priority_max, sched_get_priority_min,
+    sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler, sched_rr_get_interval,
+    sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget, semop, setdomainname,
+    sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget, signalfd4, sigqueue,
+    sigtimedwait, sigwaitinfo, stat64, sysconf, sysinfo, timer_create, timer_delete,
+    timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r, unlockpt,
 };
 use frankenlibc_core::syscall as raw_syscall;
 use std::ffi::CString;
@@ -2839,6 +2839,23 @@ fn fsconfig_invalid_fsfd_with_set_flag_key_sets_einval_like_host() {
         err,
         libc::EINVAL,
         "unexpected errno from fsconfig(-1, FSCONFIG_SET_FLAG, \"k\", NULL, 0): {err}"
+    );
+}
+
+#[test]
+fn fsopen_nonzero_flags_with_valid_fsname_preserves_eperm_like_host() {
+    let fsname = CString::new("tmpfs").expect("valid fsname");
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { fsopen(fsname.as_ptr(), 1) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, -1);
+    assert_eq!(
+        err,
+        libc::EPERM,
+        "unexpected errno from fsopen(\"tmpfs\", 1): {err}"
     );
 }
 
