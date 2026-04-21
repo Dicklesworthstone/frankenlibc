@@ -707,6 +707,35 @@ fn condattr_setclock_rejects_invalid_clock_without_mutation() {
 }
 
 #[test]
+fn condattr_setclock_invalid_clock_matches_host_libc() {
+    unsafe {
+        let mut native_attr: libc::pthread_condattr_t = std::mem::zeroed();
+        let mut host_attr: libc::pthread_condattr_t = std::mem::zeroed();
+        assert_eq!(pthread_condattr_init(&mut native_attr), 0);
+        assert_eq!(libc::pthread_condattr_init(&mut host_attr), 0);
+
+        let native_rc = pthread_condattr_setclock(&mut native_attr, -1);
+        let host_rc = libc::pthread_condattr_setclock(&mut host_attr, -1);
+        assert_eq!(native_rc, host_rc);
+
+        let mut native_clock: libc::clockid_t = -1;
+        let mut host_clock: libc::clockid_t = -1;
+        assert_eq!(
+            pthread_condattr_getclock(&native_attr, &mut native_clock),
+            0
+        );
+        assert_eq!(
+            libc::pthread_condattr_getclock(&host_attr, &mut host_clock),
+            0
+        );
+        assert_eq!(native_clock, host_clock);
+
+        pthread_condattr_destroy(&mut native_attr);
+        libc::pthread_condattr_destroy(&mut host_attr);
+    }
+}
+
+#[test]
 fn condattr_getpshared() {
     unsafe {
         let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
@@ -2471,17 +2500,51 @@ fn condattr_clock_and_pshared_roundtrip_independent() {
 }
 
 #[test]
-fn condattr_getclock_after_destroy_is_rejected() {
+fn condattr_getclock_after_destroy_matches_host_libc() {
     unsafe {
-        let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
-        pthread_condattr_init(&mut attr);
-        assert_eq!(pthread_condattr_destroy(&mut attr), 0);
+        let mut native_attr: libc::pthread_condattr_t = std::mem::zeroed();
+        let mut host_attr: libc::pthread_condattr_t = std::mem::zeroed();
+        assert_eq!(pthread_condattr_init(&mut native_attr), 0);
+        assert_eq!(libc::pthread_condattr_init(&mut host_attr), 0);
+        assert_eq!(pthread_condattr_destroy(&mut native_attr), 0);
+        assert_eq!(libc::pthread_condattr_destroy(&mut host_attr), 0);
 
-        let mut clock_id: libc::clockid_t = 0;
+        let mut native_clock: libc::clockid_t = -1;
+        let mut host_clock: libc::clockid_t = -1;
         assert_eq!(
-            pthread_condattr_getclock(&attr, &mut clock_id),
-            libc::EINVAL
+            pthread_condattr_getclock(&native_attr, &mut native_clock),
+            libc::pthread_condattr_getclock(&host_attr, &mut host_clock)
         );
+        assert_eq!(native_clock, host_clock);
+    }
+}
+
+#[test]
+fn condattr_setclock_after_destroy_matches_host_libc() {
+    unsafe {
+        let mut native_attr: libc::pthread_condattr_t = std::mem::zeroed();
+        let mut host_attr: libc::pthread_condattr_t = std::mem::zeroed();
+        assert_eq!(pthread_condattr_init(&mut native_attr), 0);
+        assert_eq!(libc::pthread_condattr_init(&mut host_attr), 0);
+        assert_eq!(pthread_condattr_destroy(&mut native_attr), 0);
+        assert_eq!(libc::pthread_condattr_destroy(&mut host_attr), 0);
+
+        assert_eq!(
+            pthread_condattr_setclock(&mut native_attr, libc::CLOCK_MONOTONIC),
+            libc::pthread_condattr_setclock(&mut host_attr, libc::CLOCK_MONOTONIC)
+        );
+
+        let mut native_clock: libc::clockid_t = -1;
+        let mut host_clock: libc::clockid_t = -1;
+        assert_eq!(
+            pthread_condattr_getclock(&native_attr, &mut native_clock),
+            0
+        );
+        assert_eq!(
+            libc::pthread_condattr_getclock(&host_attr, &mut host_clock),
+            0
+        );
+        assert_eq!(native_clock, host_clock);
     }
 }
 
@@ -2500,13 +2563,25 @@ fn condattr_unknown_word_is_rejected() {
 }
 
 #[test]
-fn cond_init_rejects_destroyed_attr() {
+fn cond_init_after_destroyed_attr_matches_host_libc() {
     unsafe {
-        let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
-        let mut cond: libc::pthread_cond_t = std::mem::zeroed();
-        assert_eq!(pthread_condattr_init(&mut attr), 0);
-        assert_eq!(pthread_condattr_destroy(&mut attr), 0);
-        assert_eq!(pthread_cond_init(&mut cond, &attr), libc::EINVAL);
+        let mut native_attr: libc::pthread_condattr_t = std::mem::zeroed();
+        let mut host_attr: libc::pthread_condattr_t = std::mem::zeroed();
+        let mut native_cond: libc::pthread_cond_t = std::mem::zeroed();
+        let mut host_cond: libc::pthread_cond_t = std::mem::zeroed();
+        assert_eq!(pthread_condattr_init(&mut native_attr), 0);
+        assert_eq!(libc::pthread_condattr_init(&mut host_attr), 0);
+        assert_eq!(pthread_condattr_destroy(&mut native_attr), 0);
+        assert_eq!(libc::pthread_condattr_destroy(&mut host_attr), 0);
+
+        let native_rc = pthread_cond_init(&mut native_cond, &native_attr);
+        let host_rc = libc::pthread_cond_init(&mut host_cond, &host_attr);
+        assert_eq!(native_rc, host_rc);
+
+        if native_rc == 0 {
+            assert_eq!(pthread_cond_destroy(&mut native_cond), 0);
+            assert_eq!(libc::pthread_cond_destroy(&mut host_cond), 0);
+        }
     }
 }
 

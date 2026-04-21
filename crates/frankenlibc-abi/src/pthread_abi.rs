@@ -3298,7 +3298,6 @@ pub unsafe extern "C" fn pthread_mutexattr_gettype(
 const CONDATTR_CLOCK_MONOTONIC_BIT: c_int = 1 << 0;
 const CONDATTR_PSHARED_BIT: c_int = 1 << 1;
 const CONDATTR_VALID_BIT: c_int = 1 << 2;
-const CONDATTR_DESTROYED_SENTINEL: c_int = 0x7fff_ffff;
 const CONDATTR_ALLOWED_MASK: c_int =
     CONDATTR_CLOCK_MONOTONIC_BIT | CONDATTR_PSHARED_BIT | CONDATTR_VALID_BIT;
 
@@ -3368,9 +3367,6 @@ pub unsafe extern "C" fn pthread_condattr_destroy(attr: *mut libc::pthread_conda
     if attr.is_null() {
         return libc::EINVAL;
     }
-    // SAFETY: attr is non-null; caller owns the memory.
-    let word = unsafe { &mut *(attr.cast::<c_int>()) };
-    *word = CONDATTR_DESTROYED_SENTINEL;
     0
 }
 
@@ -3403,9 +3399,6 @@ pub unsafe extern "C" fn pthread_condattr_getclock(
         return libc::EINVAL;
     }
     let word = unsafe { *(attr.cast::<c_int>()) };
-    if word == CONDATTR_DESTROYED_SENTINEL {
-        return libc::EINVAL;
-    }
     if condattr_word_valid(word) {
         unsafe { *clock_id = decode_condattr_clock(word) };
         return 0;
