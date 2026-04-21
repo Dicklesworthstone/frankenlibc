@@ -106,9 +106,8 @@ impl HashTable {
                 return std::ptr::null_mut();
             }
             if Self::keys_equal(slot.key, item.key) {
-                if action == Action::ENTER {
-                    slot.data = item.data;
-                }
+                // POSIX/glibc return the existing entry for duplicate ENTER calls
+                // without replacing its payload.
                 return slot as *mut HashSlot as *mut Entry;
             }
         }
@@ -567,7 +566,5 @@ pub unsafe extern "C" fn remque(elem: *mut c_void) {
         if !(*e).next.is_null() {
             (*(*e).next).prev = (*e).prev;
         }
-        (*e).next = std::ptr::null_mut();
-        (*e).prev = std::ptr::null_mut();
     }
 }

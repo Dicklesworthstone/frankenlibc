@@ -462,6 +462,7 @@ pub fn execute_fixture_case(
         "hsearch" => execute_hsearch_case(inputs, mode),
         "hsearch_r" => execute_hsearch_r_case(inputs, mode),
         "tsearch" => execute_tsearch_case(inputs, mode),
+        "tfind" => execute_tfind_case(inputs, mode),
         "tdelete" => execute_tdelete_case(inputs, mode),
         "twalk" => execute_twalk_case(inputs, mode),
         "lfind" => execute_lfind_case(inputs, mode),
@@ -952,6 +953,26 @@ fn execute_hsearch_r_case(
 }
 
 fn execute_tsearch_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let keys = parse_c_int_vec(inputs, "keys")?;
+    let probes = parse_c_int_vec(inputs, "find")?;
+
+    Ok(parity_execution(
+        run_tree_insert_find(host_tsearch, host_tfind, host_tdelete, &keys, &probes),
+        run_tree_insert_find(
+            frankenlibc_abi::search_abi::tsearch,
+            frankenlibc_abi::search_abi::tfind,
+            frankenlibc_abi::search_abi::tdelete,
+            &keys,
+            &probes,
+        ),
+    ))
+}
+
+fn execute_tfind_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {

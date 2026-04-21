@@ -102,7 +102,7 @@ fn search_ops_covers_hash_tables() {
     let fixture = load_fixture("search_ops");
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
-    for pattern in ["hsearch", "hsearch_r"] {
+    for pattern in ["hcreate", "hsearch", "hdestroy", "hsearch_r"] {
         assert!(
             case_names.iter().any(|name| name.contains(pattern)),
             "Missing hash-table coverage for {pattern}"
@@ -115,7 +115,7 @@ fn search_ops_covers_binary_trees() {
     let fixture = load_fixture("search_ops");
     let case_names: Vec<&str> = fixture.cases.iter().map(|c| c.name.as_str()).collect();
 
-    for pattern in ["tsearch", "tdelete", "twalk"] {
+    for pattern in ["tsearch", "tfind", "tdelete", "twalk"] {
         assert!(
             case_names.iter().any(|name| name.contains(pattern)),
             "Missing binary-tree coverage for {pattern}"
@@ -180,7 +180,7 @@ fn search_ops_modes_valid() {
 fn search_ops_case_count_stable() {
     let fixture = load_fixture("search_ops");
 
-    const EXPECTED_MIN_CASES: usize = 10;
+    const EXPECTED_MIN_CASES: usize = 11;
 
     assert!(
         fixture.cases.len() >= EXPECTED_MIN_CASES,
