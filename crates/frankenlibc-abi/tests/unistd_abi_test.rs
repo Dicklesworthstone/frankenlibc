@@ -2060,6 +2060,63 @@ fn getaddrinfo_a_nowait_degenerate_requests_report_success_without_touching_errn
 }
 
 #[test]
+fn getaddrinfo_a_nowait_degenerate_requests_preserve_errno_like_host() {
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
+
+    let Some(host_getaddrinfo_a) = (unsafe { load_host_symbol("getaddrinfo_a") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+    else {
+        return;
+    };
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let host_null_list =
+        unsafe { host_getaddrinfo_a(GAI_NOWAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let host_null_list_errno = errno_value();
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_null_list =
+        unsafe { getaddrinfo_a(GAI_NOWAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let abi_null_list_errno = errno_value();
+    assert_eq!(abi_null_list, host_null_list);
+    assert_eq!(abi_null_list_errno, host_null_list_errno);
+
+    let mut host_requests = [std::ptr::null_mut()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let host_all_null = unsafe {
+        host_getaddrinfo_a(
+            GAI_NOWAIT,
+            host_requests.as_mut_ptr(),
+            host_requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    let host_all_null_errno = errno_value();
+
+    let mut abi_requests = [std::ptr::null_mut()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_all_null = unsafe {
+        getaddrinfo_a(
+            GAI_NOWAIT,
+            abi_requests.as_mut_ptr(),
+            abi_requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    let abi_all_null_errno = errno_value();
+    assert_eq!(abi_all_null, host_all_null);
+    assert_eq!(abi_all_null_errno, host_all_null_errno);
+}
+
+#[test]
 fn getaddrinfo_a_invalid_modes_report_badflags_before_degenerate_success() {
     unsafe {
         *__errno_location() = 0;
