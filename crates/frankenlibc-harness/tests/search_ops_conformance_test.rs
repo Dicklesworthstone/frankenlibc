@@ -1,11 +1,11 @@
 //! search.h operations conformance test suite.
 //!
-//! Validates POSIX/XSI `<search.h>` entrypoints through the shared fixture
-//! runner against host glibc parity.
+//! Validates POSIX/XSI `<search.h>` entrypoints through the isolated harness
+//! subprocess against host glibc parity.
 
-use frankenlibc_harness::{FixtureSet, TestRunner};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -54,10 +54,71 @@ fn load_fixture(name: &str) -> FixtureFile {
         .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
 }
 
-fn load_fixture_set(name: &str) -> FixtureSet {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
-    FixtureSet::from_file(&path)
-        .unwrap_or_else(|e| panic!("Failed to load {} as FixtureSet: {}", path.display(), e))
+#[derive(Debug, Deserialize)]
+struct MatrixCaseEnvelope {
+    kind: String,
+    #[serde(default)]
+    run: Option<DifferentialExecution>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DifferentialExecution {
+    host_output: String,
+    impl_output: String,
+    host_parity: bool,
+}
+
+fn execute_case_via_harness(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_harness"))
+        .arg("conformance-matrix-case")
+        .arg("--function")
+        .arg(function)
+        .arg("--mode")
+        .arg(mode)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("failed to spawn harness subprocess: {err}"))?;
+
+    let payload =
+        serde_json::to_vec(inputs).map_err(|err| format!("failed to serialize inputs: {err}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(&payload)
+            .map_err(|err| format!("failed to write subprocess stdin: {err}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("failed to wait on harness subprocess: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "harness subprocess exited with status {:?}: {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    let envelope: MatrixCaseEnvelope = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("invalid harness subprocess payload: {err}"))?;
+    match envelope.kind.as_str() {
+        "ok" => envelope
+            .run
+            .ok_or_else(|| String::from("missing run payload from harness subprocess")),
+        "error" => Err(envelope
+            .error
+            .unwrap_or_else(|| String::from("missing error payload from harness subprocess"))),
+        other => Err(format!("unknown harness subprocess payload kind: {other}")),
+    }
 }
 
 #[test]
@@ -206,27 +267,36 @@ fn search_ops_has_search_spec_references() {
 
 #[test]
 fn search_ops_fixture_executes_with_host_parity_in_both_modes() {
-    let fixture = load_fixture_set("search_ops");
+    let fixture = load_fixture("search_ops");
 
-    for mode in ["strict", "hardened"] {
-        let results = TestRunner::new("search_ops", mode).run(&fixture);
-        assert_eq!(
-            results.len(),
-            fixture.cases.len(),
-            "{mode} run should execute every search_ops fixture case"
-        );
+    for case in &fixture.cases {
+        let expected_output = case
+            .expected_output
+            .as_deref()
+            .unwrap_or_else(|| panic!("case {} missing expected_output", case.name));
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
 
-        for result in results {
+        for mode in modes {
+            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "search_ops case {} ({mode}) failed to execute via harness: {err}",
+                        case.name
+                    )
+                });
             assert!(
-                result.passed,
-                "{mode} case {} failed: expected={}, actual={}, diff={:?}",
-                result.case_name, result.expected, result.actual, result.diff
+                result.host_parity,
+                "search_ops case {} ({mode}) lost host parity: host_output={}",
+                case.name, result.host_output
             );
-            assert!(
-                result.diff.is_none(),
-                "{mode} case {} lost host parity or emitted notes: {:?}",
-                result.case_name,
-                result.diff
+            assert_eq!(
+                result.impl_output, expected_output,
+                "search_ops case {} ({mode}) mismatched fixture output",
+                case.name
             );
         }
     }
