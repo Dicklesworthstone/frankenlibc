@@ -1858,6 +1858,52 @@ fn process_vm_writev_null_iov_nonzero_counts_set_efault_like_host() {
 }
 
 #[test]
+fn process_vm_readv_invalid_flags_override_null_iov_fault_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut remote_byte = 0_u8;
+    let remote_iov = libc::iovec {
+        iov_base: (&mut remote_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    clear_errno();
+    let host_rc = unsafe { libc::process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn process_vm_writev_invalid_flags_override_null_iov_fault_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+    let mut local_byte = 7_u8;
+    let local_iov = libc::iovec {
+        iov_base: (&mut local_byte as *mut u8).cast(),
+        iov_len: 1,
+    };
+
+    clear_errno();
+    let host_rc = unsafe { libc::process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
 fn process_vm_readv_zero_local_iov_count_preserves_errno_and_succeeds() {
     let pid = std::process::id() as libc::pid_t;
     let mut remote_byte = 0_u8;

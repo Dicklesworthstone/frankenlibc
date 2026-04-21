@@ -9460,6 +9460,11 @@ fn process_vm_missing_iov_payload(
     (local_iov.is_null() && liovcnt > 0) || (remote_iov.is_null() && riovcnt > 0)
 }
 
+#[inline]
+fn process_vm_invalid_flags(flags: c_ulong) -> bool {
+    flags != 0
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn process_vm_readv(
     pid: libc::pid_t,
@@ -9471,6 +9476,7 @@ pub unsafe extern "C" fn process_vm_readv(
 ) -> isize {
     let io_units = liovcnt.saturating_add(riovcnt) as usize;
     let missing_payload = process_vm_missing_iov_payload(local_iov, liovcnt, remote_iov, riovcnt);
+    let invalid_flags = process_vm_invalid_flags(flags);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::VirtualMemory,
         local_iov as usize,
@@ -9481,6 +9487,16 @@ pub unsafe extern "C" fn process_vm_readv(
     );
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::VirtualMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(12, io_units),
+            true,
+        );
+        return -1;
+    }
+    if invalid_flags {
+        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(
             ApiFamily::VirtualMemory,
             decision.profile,
@@ -9543,6 +9559,7 @@ pub unsafe extern "C" fn process_vm_writev(
 ) -> isize {
     let io_units = liovcnt.saturating_add(riovcnt) as usize;
     let missing_payload = process_vm_missing_iov_payload(local_iov, liovcnt, remote_iov, riovcnt);
+    let invalid_flags = process_vm_invalid_flags(flags);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::VirtualMemory,
         local_iov as usize,
@@ -9553,6 +9570,16 @@ pub unsafe extern "C" fn process_vm_writev(
     );
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::VirtualMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(12, io_units),
+            true,
+        );
+        return -1;
+    }
+    if invalid_flags {
+        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(
             ApiFamily::VirtualMemory,
             decision.profile,
