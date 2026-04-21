@@ -3312,6 +3312,30 @@ fn fsmount_invalid_flags_preserves_unprivileged_eperm_like_host() {
 }
 
 #[test]
+fn fsmount_invalid_attr_flags_preserves_unprivileged_eperm_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::syscall(libc::SYS_fsmount, -1, 0_u32, 1_u32) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { fsmount(-1, 0, 1) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EPERM,
+        "unexpected errno from fsmount(-1, 0, 1): {abi_err}"
+    );
+}
+
+#[test]
 fn fspick_null_path_preserves_unprivileged_eperm_like_host() {
     unsafe {
         *libc::__errno_location() = 0;
