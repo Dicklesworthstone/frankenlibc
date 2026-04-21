@@ -2856,6 +2856,22 @@ fn pidfd_send_signal_invalid_pidfd_sets_ebadf_like_host() {
 }
 
 #[test]
+fn pidfd_send_signal_invalid_flags_do_not_override_bad_pidfd() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { pidfd_send_signal(-1, 0, ptr::null(), 1) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, -1);
+    assert_eq!(
+        err,
+        libc::EBADF,
+        "unexpected errno from pidfd_send_signal(-1, flags=1): {err}"
+    );
+}
+
+#[test]
 fn sched_getcpu_success_does_not_set_errno() {
     unsafe {
         *__errno_location() = 0;
