@@ -1762,11 +1762,16 @@ fn shmdt_null_pointer_fails_with_einval_like_host() {
 
 #[test]
 fn semctl_ipc_rmid_without_variadic_arg_fails_for_invalid_semaphore_id() {
+    // bd-jm3h: host glibc returns EINVAL for semctl(-1, 0, IPC_RMID).
+    // The broad is_expected_sysvipc_errno sentinel accepted a whole
+    // family; tighten to the exact host-parity contract so any future
+    // drift surfaces immediately.
     let rc = unsafe { semctl(-1, 0, libc::IPC_RMID) };
     assert_eq!(rc, -1);
-    assert!(
-        is_expected_sysvipc_errno(errno_value()),
-        "unexpected errno for semctl IPC_RMID invalid semid: {}",
+    assert_eq!(
+        errno_value(),
+        libc::EINVAL,
+        "semctl(-1, 0, IPC_RMID) must return EINVAL (host-parity), got {}",
         errno_value()
     );
 }
@@ -2277,6 +2282,34 @@ fn mount_setattr_null_pathname_at_empty_path_still_sets_einval_like_host() {
             0,
         )
     };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn mount_setattr_slash_path_null_attr_sets_einval_like_host() {
+    let slash = CString::new("/").unwrap();
+
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            libc::AT_FDCWD as libc::c_long,
+            slash.as_ptr(),
+            0 as libc::c_uint,
+            std::ptr::null::<c_void>(),
+            0_usize,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc =
+        unsafe { mount_setattr(libc::AT_FDCWD, slash.as_ptr(), 0, std::ptr::null_mut(), 0) };
     assert_eq!(abi_rc, -1);
     let abi_errno = errno_value();
 
