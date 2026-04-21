@@ -2118,6 +2118,63 @@ fn getaddrinfo_a_nowait_degenerate_requests_preserve_errno_like_host() {
 }
 
 #[test]
+fn getaddrinfo_a_wait_zero_requests_preserve_errno_like_host() {
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
+
+    let Some(host_getaddrinfo_a) = (unsafe { load_host_symbol("getaddrinfo_a") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+    else {
+        return;
+    };
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_null_list =
+        unsafe { host_getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let host_null_list_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_null_list =
+        unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let abi_null_list_errno = errno_value();
+    assert_eq!(abi_null_list, host_null_list);
+    assert_eq!(abi_null_list_errno, host_null_list_errno);
+
+    let mut host_requests = [std::ptr::null_mut()];
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_negative_nitems = unsafe {
+        host_getaddrinfo_a(
+            GAI_WAIT,
+            host_requests.as_mut_ptr(),
+            -1,
+            std::ptr::null_mut(),
+        )
+    };
+    let host_negative_nitems_errno = unsafe { *libc::__errno_location() };
+
+    let mut abi_requests = [std::ptr::null_mut()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_negative_nitems = unsafe {
+        getaddrinfo_a(
+            GAI_WAIT,
+            abi_requests.as_mut_ptr(),
+            -1,
+            std::ptr::null_mut(),
+        )
+    };
+    let abi_negative_nitems_errno = errno_value();
+    assert_eq!(abi_negative_nitems, host_negative_nitems);
+    assert_eq!(abi_negative_nitems_errno, host_negative_nitems_errno);
+}
+
+#[test]
 fn getaddrinfo_a_mode_semantics_match_host_across_empty_and_all_null_requests() {
     type HostGetaddrinfoAFn =
         unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;

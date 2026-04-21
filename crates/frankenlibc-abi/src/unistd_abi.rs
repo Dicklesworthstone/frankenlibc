@@ -18323,6 +18323,8 @@ pub unsafe extern "C" fn getaddrinfo_a(
         unsafe { set_abi_errno(libc::EINVAL) };
         return libc::EAI_SYSTEM;
     }
+    // Host glibc treats the empty request set as a synchronous no-op and
+    // returns success without mutating errno, even when `list` is NULL.
     if nitems <= 0 {
         return 0;
     }
