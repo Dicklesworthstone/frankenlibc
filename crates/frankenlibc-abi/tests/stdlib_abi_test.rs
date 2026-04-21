@@ -18,8 +18,8 @@ use frankenlibc_abi::unistd_abi::{
     getlogin_r, getopt, getopt_long, getpagesize, grantpt, herror, hstrerror, lockf, lseek64,
     lstat64, mkdtemp, mount_setattr, mq_close, mq_getattr, mq_open, mq_receive, mq_send,
     mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree, open64, pathconf,
-    pidfd_send_signal, posix_fadvise, posix_fallocate, posix_madvise, posix_openpt, pread64,
-    ptsname, pwrite64, renameat2, sched_get_priority_max, sched_get_priority_min,
+    pidfd_open, pidfd_send_signal, posix_fadvise, posix_fallocate, posix_madvise, posix_openpt,
+    pread64, ptsname, pwrite64, renameat2, sched_get_priority_max, sched_get_priority_min,
     sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler, sched_rr_get_interval,
     sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget, semop, setdomainname,
     sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget, signalfd4, sigqueue,
@@ -3098,6 +3098,26 @@ fn open_tree_null_path_sets_efault_like_host() {
         libc::EFAULT,
         "unexpected errno from open_tree(null): {err}"
     );
+}
+
+#[test]
+fn pidfd_open_current_pid_succeeds_without_touching_errno() {
+    unsafe {
+        *__errno_location() = libc::EAGAIN;
+    }
+    let pidfd = unsafe { pidfd_open(libc::getpid(), 0) };
+    let err = unsafe { *__errno_location() };
+
+    assert!(pidfd >= 0, "pidfd_open(getpid(), 0) should succeed");
+    assert_eq!(
+        err,
+        libc::EAGAIN,
+        "pidfd_open(getpid(), 0) should not touch errno"
+    );
+
+    unsafe {
+        libc::close(pidfd);
+    }
 }
 
 #[test]
