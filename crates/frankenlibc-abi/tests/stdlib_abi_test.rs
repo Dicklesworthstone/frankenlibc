@@ -791,6 +791,18 @@ fn sched_setparam_invalid_pid_sets_einval() {
 }
 
 #[test]
+fn sched_setparam_negative_pid_null_param_sets_einval() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let observed = unsafe { sched_setparam(-1, ptr::null()) };
+    let observed_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, -1);
+    assert_eq!(observed_errno, libc::EINVAL);
+}
+
+#[test]
 fn sched_setscheduler_invalid_pid_sets_einval() {
     let param = libc::sched_param { sched_priority: 0 };
 
