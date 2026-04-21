@@ -35,6 +35,7 @@ pub mod check_oracle;
 pub mod config;
 pub mod decision_contract;
 pub mod ebr;
+pub mod evidence;
 pub mod evidence_ledger;
 pub mod fingerprint;
 pub mod flat_combining;
@@ -72,6 +73,13 @@ pub use config::SafetyLevel;
 pub use decision_contract::{
     DecisionAction as DecisionContractAction, DecisionContractMachine,
     DecisionEvent as DecisionContractEvent, DecisionTransition, TsmState,
+};
+pub use evidence::{
+    DEFAULT_STDIO_EVIDENCE_PATH, DEFAULT_STDIO_EVIDENCE_RING_CAPACITY, FpOrigin,
+    MembraneStages as StdioMembraneStages, ProcessInfo as StdioProcessInfo, RuntimeMathState,
+    STDIO_EVIDENCE_SCHEMA_VERSION, StdioEventKind, StdioEvidenceRingBuffer, StdioEvidenceRow,
+    StdioParams, StdioResult, default_stdio_evidence_path, global_stdio_evidence_ring,
+    next_stdio_trace_id, serialize_stdio_evidence_row,
 };
 pub use evidence_ledger::{
     EvidenceCategory, EvidenceLedger, EvidenceLevel, EvidenceRecord, OtlpExportSummary,

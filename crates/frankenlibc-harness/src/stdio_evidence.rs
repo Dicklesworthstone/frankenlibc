@@ -1,246 +1,57 @@
-//! JSONL evidence schema for stdio entrypoints.
+//! JSONL evidence parser facade for stdio entrypoints.
 //!
-//! Per bd-9chy.4 and Plan v4 §14: every healing event, foreign-pointer adoption,
-//! POMDP repair decision, and membrane stage attribution emits a JSONL row.
+//! Per bd-9chy.4 and Plan v4 §14, the schema is defined in
+//! `frankenlibc-membrane` so the ABI emitter and harness parser share a single
+//! source of truth. This module keeps the parser entrypoints in the harness.
 //!
 //! ## Compatibility Policy
 //!
-//! Evidence is an output artifact for external consumers. Unlike most code in this
-//! project, backwards compatibility is required: the parser must support at least
-//! the previous schema version (currently only v1 exists). When adding v2, keep
-//! v1 parsing as a fallback for old evidence files.
+//! Evidence is an external artifact. The parser must continue to accept the
+//! current schema version and prior compatible rows from the same major series.
 
-use serde::{Deserialize, Serialize};
+pub use frankenlibc_membrane::evidence::{
+    FpOrigin, MembraneStages, ProcessInfo, RuntimeMathState, STDIO_EVIDENCE_SCHEMA_VERSION,
+    StdioEventKind, StdioEvidenceRow, StdioParams, StdioResult, serialize_stdio_evidence_row,
+};
+use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 /// Schema version for stdio evidence records.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = STDIO_EVIDENCE_SCHEMA_VERSION;
 
-/// Event kinds for stdio evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StdioEventKind {
-    /// fopen/fdopen/freopen acquired a stream.
-    StreamAcquired,
-    /// fclose released a stream.
-    StreamReleased,
-    /// Read operation (fread, fgetc, fgets, etc.).
-    Read,
-    /// Write operation (fwrite, fputc, fputs, etc.).
-    Write,
-    /// Seek operation (fseek, fseeko, rewind, fsetpos).
-    Seek,
-    /// Tell operation (ftell, ftello, fgetpos).
-    Tell,
-    /// Flush operation (fflush).
-    Flush,
-    /// ungetc pushed back a character.
-    Ungetc,
-    /// Error/EOF flag query (feof, ferror).
-    StatusQuery,
-    /// clearerr cleared flags.
-    ClearError,
-    /// Foreign pointer adopted (non-native FILE* used).
-    ForeignAdoption,
-    /// Healing action triggered.
-    HealingTriggered,
-    /// POMDP repair decision made.
-    PomdpRepair,
-}
+pub use frankenlibc_membrane::evidence::{
+    DEFAULT_STDIO_EVIDENCE_PATH, DEFAULT_STDIO_EVIDENCE_RING_CAPACITY, StdioEvidenceRingBuffer,
+    default_stdio_evidence_path, global_stdio_evidence_ring, next_stdio_trace_id,
+};
 
-/// Origin of the FILE pointer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FpOrigin {
-    /// Native NativeFile from fopen/fdopen/freopen.
-    Native,
-    /// Adopted foreign pointer from external library.
-    Foreign,
-    /// Standard stream (stdin/stdout/stderr).
-    Standard,
-    /// Memory stream (fmemopen/open_memstream).
-    Memory,
-    /// Unknown origin.
-    Unknown,
-}
-
-/// Process identification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessInfo {
-    /// Process ID.
-    pub pid: u32,
-    /// Thread ID (gettid).
-    pub tid: u32,
-    /// Process command name (from /proc/self/comm).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub comm: Option<String>,
-}
-
-/// Function parameters (varies by function).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum StdioParams {
-    /// fopen/freopen parameters.
-    Open { path: Option<String>, mode: String },
-    /// fread/fwrite parameters.
-    ReadWrite { size: usize, nmemb: usize },
-    /// fseek parameters.
-    Seek { offset: i64, whence: String },
-    /// fprintf/snprintf parameters.
-    Format {
-        format: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        size: Option<usize>,
-    },
-    /// ungetc parameters.
-    Ungetc { c: i32 },
-    /// Generic/no parameters.
-    None {},
-}
-
-/// Function result.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StdioResult {
-    /// Return value (as string for flexibility).
-    pub return_value: String,
-    /// errno after call (0 if not applicable).
-    pub errno: i32,
-    /// Call elapsed time in nanoseconds.
-    pub elapsed_ns: u64,
-}
-
-/// Per-stage membrane timing.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct MembraneStages {
-    /// Null check time in ns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub null_check_ns: Option<u64>,
-    /// Registry lookup time in ns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registry_lookup_ns: Option<u64>,
-    /// Bloom filter time in ns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bloom_ns: Option<u64>,
-    /// Bounds check time in ns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bounds_ns: Option<u64>,
-    /// Fingerprint verification time in ns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fingerprint_ns: Option<u64>,
-    /// Total validation time in ns.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub total_ns: Option<u64>,
-}
-
-/// Runtime math controller state.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct RuntimeMathState {
-    /// POMDP action taken.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pomdp_action: Option<String>,
-    /// Conformal prediction band.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conformal_band: Option<f64>,
-    /// Cohomology consistency check passed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cohomology_consistent: Option<bool>,
-    /// CVaR alarm triggered.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cvar_alarm: Option<bool>,
-    /// Risk upper bound in PPM.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub risk_upper_bound_ppm: Option<u32>,
-    /// Policy ID that made the decision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub policy_id: Option<u32>,
-}
-
-/// A single stdio evidence row.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StdioEvidenceRow {
-    /// Schema version (always 1 for now).
-    pub schema_version: u32,
-    /// Unix timestamp in nanoseconds.
-    pub timestamp_unix_ns: u64,
-    /// Process identification.
-    pub process: ProcessInfo,
-    /// Safety mode (strict/hardened/off).
-    pub mode: String,
-    /// Event kind.
-    pub event_kind: StdioEventKind,
-    /// Function name.
-    pub function: String,
-    /// FILE pointer as hex string.
-    pub fp_hex: String,
-    /// Origin of the FILE pointer.
-    pub fp_origin: FpOrigin,
-    /// Underlying file descriptor (-1 for memory streams).
-    pub fd: i32,
-    /// Function parameters.
-    pub params: StdioParams,
-    /// Function result.
-    pub result: StdioResult,
-    /// Membrane stage timings.
-    #[serde(default, skip_serializing_if = "MembraneStages::is_empty")]
-    pub membrane_stages: MembraneStages,
-    /// Runtime math controller state.
-    #[serde(default, skip_serializing_if = "RuntimeMathState::is_empty")]
-    pub runtime_math: RuntimeMathState,
-    /// Healing action if triggered.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub healing_action: Option<String>,
-    /// Monotonic evidence sequence number.
-    pub evidence_ring_seq: u64,
-    /// Trace ID (UUID format).
-    pub trace_id: String,
-}
-
-impl MembraneStages {
-    /// Returns true if all fields are None.
-    pub fn is_empty(&self) -> bool {
-        self.null_check_ns.is_none()
-            && self.registry_lookup_ns.is_none()
-            && self.bloom_ns.is_none()
-            && self.bounds_ns.is_none()
-            && self.fingerprint_ns.is_none()
-            && self.total_ns.is_none()
-    }
-}
-
-impl RuntimeMathState {
-    /// Returns true if all fields are None.
-    pub fn is_empty(&self) -> bool {
-        self.pomdp_action.is_none()
-            && self.conformal_band.is_none()
-            && self.cohomology_consistent.is_none()
-            && self.cvar_alarm.is_none()
-            && self.risk_upper_bound_ppm.is_none()
-            && self.policy_id.is_none()
-    }
+#[derive(Debug, Deserialize)]
+struct SchemaEnvelope {
+    #[serde(default)]
+    schema_version: u32,
 }
 
 /// Error types for parsing stdio evidence.
 #[derive(Debug)]
 pub enum ParseError {
-    /// IO error reading the file.
     Io(std::io::Error),
-    /// JSON deserialization error.
     Json {
         line: usize,
         error: serde_json::Error,
     },
-    /// Unsupported schema version.
-    UnsupportedVersion { line: usize, version: u32 },
+    UnsupportedVersion {
+        line: usize,
+        version: u32,
+    },
 }
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParseError::Io(e) => write!(f, "IO error: {e}"),
-            ParseError::Json { line, error } => write!(f, "JSON error at line {line}: {error}"),
-            ParseError::UnsupportedVersion { line, version } => {
+            Self::Io(error) => write!(f, "IO error: {error}"),
+            Self::Json { line, error } => write!(f, "JSON error at line {line}: {error}"),
+            Self::UnsupportedVersion { line, version } => {
                 write!(f, "Unsupported schema version {version} at line {line}")
             }
         }
@@ -250,8 +61,8 @@ impl std::fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 impl From<std::io::Error> for ParseError {
-    fn from(e: std::io::Error) -> Self {
-        ParseError::Io(e)
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
     }
 }
 
@@ -264,6 +75,7 @@ pub struct StdioEvidenceIterator<R: BufRead> {
 
 impl<R: BufRead> StdioEvidenceIterator<R> {
     /// Create a new iterator from a buffered reader.
+    #[must_use]
     pub fn new(reader: R) -> Self {
         Self {
             reader,
@@ -281,36 +93,31 @@ impl<R: BufRead> Iterator for StdioEvidenceIterator<R> {
         loop {
             self.line_number += 1;
             match self.reader.read_line(&mut self.buffer) {
-                Ok(0) => return None, // EOF
+                Ok(0) => return None,
                 Ok(_) => {
                     let trimmed = self.buffer.trim();
                     if trimmed.is_empty() {
                         self.buffer.clear();
-                        continue; // Skip empty lines
+                        continue;
                     }
-                    match serde_json::from_str::<StdioEvidenceRow>(trimmed) {
-                        Ok(row) => {
-                            // Version check for backwards compat
-                            if row.schema_version > SCHEMA_VERSION {
-                                return Some(Err(ParseError::UnsupportedVersion {
-                                    line: self.line_number,
-                                    version: row.schema_version,
-                                }));
-                            }
-                            return Some(Ok(row));
-                        }
-                        Err(e) => {
-                            return Some(Err(ParseError::Json {
-                                line: self.line_number,
-                                error: e,
-                            }));
-                        }
-                    }
+                    return Some(parse_stdio_evidence_line(self.line_number, trimmed));
                 }
-                Err(e) => return Some(Err(ParseError::Io(e))),
+                Err(error) => return Some(Err(ParseError::Io(error))),
             }
         }
     }
+}
+
+fn parse_stdio_evidence_line(line: usize, trimmed: &str) -> Result<StdioEvidenceRow, ParseError> {
+    let envelope: SchemaEnvelope =
+        serde_json::from_str(trimmed).map_err(|error| ParseError::Json { line, error })?;
+    if envelope.schema_version > SCHEMA_VERSION {
+        return Err(ParseError::UnsupportedVersion {
+            line,
+            version: envelope.schema_version,
+        });
+    }
+    serde_json::from_str(trimmed).map_err(|error| ParseError::Json { line, error })
 }
 
 /// Open a stdio evidence JSONL file and return an iterator.
@@ -321,9 +128,9 @@ pub fn parse_stdio_evidence_file(
     Ok(StdioEvidenceIterator::new(BufReader::new(file)))
 }
 
-/// Serialize a row to JSONL (single line, no trailing newline).
+/// Serialize a row to a single JSONL line without a trailing newline.
 pub fn serialize_row(row: &StdioEvidenceRow) -> Result<String, serde_json::Error> {
-    serde_json::to_string(row)
+    serialize_stdio_evidence_row(row)
 }
 
 #[cfg(test)]
@@ -403,9 +210,33 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_v1_rows_without_optional_fields() {
+        let jsonl = concat!(
+            "{\"schema_version\":1,\"timestamp_unix_ns\":1700000000000000000,",
+            "\"process\":{\"pid\":1234,\"tid\":1234},",
+            "\"mode\":\"strict\",\"event_kind\":\"foreign_adoption\",",
+            "\"function\":\"adopt_foreign_file\",\"fp_hex\":\"0x1234\",",
+            "\"fp_origin\":\"foreign\",\"fd\":3,\"params\":{},",
+            "\"result\":{\"return_value\":\"0x5678\",\"errno\":0,\"elapsed_ns\":99},",
+            "\"membrane_stages\":{\"total_ns\":99},",
+            "\"healing_action\":null,\"evidence_ring_seq\":1,",
+            "\"trace_id\":\"550e8400-e29b-41d4-a716-446655440000\"}\n"
+        );
+
+        let mut iter = StdioEvidenceIterator::new(Cursor::new(jsonl.as_bytes()));
+        let row = iter
+            .next()
+            .expect("one row")
+            .expect("parser must accept compatible v1 row");
+
+        assert_eq!(row.process.comm, None);
+        assert!(row.runtime_math.is_empty());
+    }
+
+    #[test]
     fn schema_version_check() {
         let mut row = sample_row();
-        row.schema_version = 99; // Future version
+        row.schema_version = 99;
 
         let json = serde_json::to_string(&row).expect("serialize");
         let jsonl = format!("{json}\n");
@@ -413,13 +244,11 @@ mod tests {
         let cursor = Cursor::new(jsonl.as_bytes());
         let mut iter = StdioEvidenceIterator::new(BufReader::new(cursor));
 
-        let result = iter.next();
-        assert!(result.is_some());
-        match result.unwrap() {
+        match iter.next().expect("one result") {
             Err(ParseError::UnsupportedVersion { version, .. }) => {
                 assert_eq!(version, 99);
             }
-            _ => panic!("Expected UnsupportedVersion error"),
+            other => panic!("expected UnsupportedVersion error, got {other:?}"),
         }
     }
 
@@ -434,18 +263,6 @@ mod tests {
         let rows: Vec<_> = iter.collect::<Result<Vec<_>, _>>().expect("parse all");
 
         assert_eq!(rows.len(), 1);
-    }
-
-    #[test]
-    fn trace_id_propagation() {
-        let row = sample_row();
-        let json = serialize_row(&row).expect("serialize");
-        let parsed: StdioEvidenceRow = serde_json::from_str(&json).expect("deserialize");
-
-        assert_eq!(
-            parsed.trace_id, "550e8400-e29b-41d4-a716-446655440000",
-            "trace_id must be preserved through serialization"
-        );
     }
 
     #[test]
@@ -481,6 +298,10 @@ mod tests {
             row.mode
         );
         assert!(
+            row.process.comm.is_some(),
+            "foreign adoption rows should record /proc/self/comm"
+        );
+        assert!(
             !row.result.return_value.is_empty(),
             "foreign adoption should record the adopted native pointer"
         );
@@ -491,7 +312,7 @@ mod tests {
         assert!(row.trace_id.contains('-'), "trace_id should be UUID-shaped");
         assert!(
             rows.next().is_none(),
-            "bounded ABI slice should emit exactly one stdio adoption row"
+            "bounded slice should emit exactly one row"
         );
 
         frankenlibc_abi::io_internal_abi::conformance_testing::clear_stdio_evidence_log();
