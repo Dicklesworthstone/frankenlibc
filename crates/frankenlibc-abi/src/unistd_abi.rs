@@ -18356,11 +18356,23 @@ pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
 /// `gai_error` — query status of an asynchronous name resolution request (bd-9dq5).
 ///
 /// Since all resolution is synchronous and `getaddrinfo_a` is unimplemented,
-/// every request handle is treated as unsupported. Returns `EAI_SYSTEM` with
-/// `ENOSYS` for both NULL and non-NULL requests.
+/// a zeroed request descriptor is already complete, while opaque handles remain
+/// unsupported. Match the host-glibc degenerate path for an all-zero `gaicb`
+/// and report `EAI_ALLDONE` without mutating `errno`; otherwise return
+/// `EAI_SYSTEM` with `ENOSYS`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
-    let _ = req;
+    if !req.is_null() {
+        // SAFETY: `req` is a caller-provided pointer. We only read the first
+        // four pointer-sized fields, which match glibc's public `gaicb`
+        // request-shape (name/service/request/result) well enough to recognize
+        // the degenerate all-zero handle without depending on the full struct
+        // layout.
+        let fields = unsafe { std::slice::from_raw_parts(req.cast::<*const c_void>(), 4) };
+        if fields.iter().all(|field| field.is_null()) {
+            return EAI_ALLDONE;
+        }
+    }
     unsafe { set_abi_errno(libc::ENOSYS) };
     libc::EAI_SYSTEM
 }

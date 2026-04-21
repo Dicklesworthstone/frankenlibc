@@ -45,6 +45,14 @@ const GAI_NOWAIT: c_int = 1;
 const GAI_EAI_ALLDONE: c_int = -103;
 
 #[repr(C)]
+struct GaicbShape {
+    ar_name: *const c_char,
+    ar_service: *const c_char,
+    ar_request: *const c_void,
+    ar_result: *mut c_void,
+}
+
+#[repr(C)]
 struct NetEnt {
     n_name: *mut c_char,
     n_aliases: *mut *mut c_char,
@@ -2074,10 +2082,28 @@ fn gai_error_stub_family_still_sets_errno_for_eai_system() {
     unsafe {
         *__errno_location() = 0;
     }
-    let mut dummy = 0u8;
-    let dummy_ptr = &mut dummy as *mut _ as *mut c_void;
-    assert_eq!(unsafe { gai_error(dummy_ptr) }, libc::EAI_SYSTEM);
+    let request = GaicbShape {
+        ar_name: c"opaque".as_ptr(),
+        ar_service: std::ptr::null(),
+        ar_request: std::ptr::null(),
+        ar_result: std::ptr::null_mut(),
+    };
+    assert_eq!(
+        unsafe { gai_error((&request as *const GaicbShape).cast_mut().cast::<c_void>()) },
+        libc::EAI_SYSTEM
+    );
     assert_eq!(errno_value(), libc::ENOSYS);
+}
+
+#[test]
+fn gai_error_zeroed_gaicb_reports_all_done_without_touching_errno() {
+    let mut request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let request_ptr = (&mut request as *mut GaicbShape).cast::<c_void>();
+    assert_eq!(unsafe { gai_error(request_ptr) }, GAI_EAI_ALLDONE);
+    assert_eq!(errno_value(), libc::E2BIG);
 }
 
 #[test]
