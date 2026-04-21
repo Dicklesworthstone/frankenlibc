@@ -2011,14 +2011,47 @@ fn process_madvise_null_iov_nonzero_len_fails_cleanly() {
 }
 
 #[test]
-fn process_mrelease_invalid_pidfd_fails_cleanly() {
-    let rc = unsafe { process_mrelease(-1, 0) };
-    assert_eq!(rc, -1);
-    assert!(
-        is_expected_process_vm_errno(errno_value()),
-        "unexpected errno for process_mrelease invalid pidfd: {}",
-        errno_value()
-    );
+fn process_mrelease_invalid_pidfd_sets_ebadf_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_mrelease,
+            -1 as libc::c_long,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_mrelease(-1, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn process_mrelease_invalid_flags_override_invalid_pidfd_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_mrelease,
+            -1 as libc::c_long,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_mrelease(-1, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
 }
 
 #[test]
