@@ -16,15 +16,16 @@ use frankenlibc_abi::unistd_abi::{
     ether_aton_r, ether_ntoa, ether_ntoa_r, eventfd_read, eventfd_write, fpathconf, fsconfig,
     fsmount, fsopen, fspick, fstat64, fstatat64, ftruncate64, getcpu, getdomainname, gethostid,
     getlogin, getlogin_r, getopt, getopt_long, getpagesize, grantpt, herror, hstrerror, lockf,
-    lseek64, lstat64, mkdtemp, mount_setattr, mq_close, mq_getattr, mq_open, mq_receive, mq_send,
-    mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree, open64, pathconf,
-    pidfd_open, pidfd_send_signal, posix_fadvise, posix_fallocate, posix_madvise, posix_openpt,
-    pread64, ptsname, pwrite64, renameat2, sched_get_priority_max, sched_get_priority_min,
-    sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler, sched_rr_get_interval,
-    sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget, semop, setdomainname,
-    sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget, signalfd4, sigqueue,
-    sigtimedwait, sigwaitinfo, stat64, sysconf, sysinfo, timer_create, timer_delete,
-    timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r, unlockpt,
+    lseek64, lstat64, mkdtemp, mount_setattr, move_mount, mq_close, mq_getattr, mq_open,
+    mq_receive, mq_send, mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree,
+    open64, pathconf, pidfd_open, pidfd_send_signal, posix_fadvise, posix_fallocate, posix_madvise,
+    posix_openpt, pread64, ptsname, pwrite64, renameat2, sched_get_priority_max,
+    sched_get_priority_min, sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler,
+    sched_rr_get_interval, sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget,
+    semop, setdomainname, sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget,
+    signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf, sysinfo, timer_create,
+    timer_delete, timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r,
+    unlockpt,
 };
 use frankenlibc_core::syscall as raw_syscall;
 use std::ffi::CString;
@@ -3332,6 +3333,49 @@ fn fsmount_invalid_attr_flags_preserves_unprivileged_eperm_like_host() {
         abi_err,
         libc::EPERM,
         "unexpected errno from fsmount(-1, 0, 1): {abi_err}"
+    );
+}
+
+#[test]
+fn move_mount_null_target_path_preserves_unprivileged_eperm_like_host() {
+    let source_path = CString::new("/").expect("valid source path");
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_move_mount,
+            libc::AT_FDCWD,
+            source_path.as_ptr(),
+            libc::AT_FDCWD,
+            ptr::null::<libc::c_char>(),
+            0_u32,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe {
+        move_mount(
+            libc::AT_FDCWD,
+            source_path.as_ptr(),
+            libc::AT_FDCWD,
+            ptr::null(),
+            0,
+        )
+    };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EPERM,
+        "unexpected errno from move_mount(AT_FDCWD, \"/\", AT_FDCWD, NULL, 0): {abi_err}"
     );
 }
 
