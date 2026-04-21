@@ -2808,7 +2808,7 @@ fn signalfd4_invalid_flags_set_einval() {
 }
 
 #[test]
-fn mount_setattr_null_path_sets_efault_or_perm() {
+fn mount_setattr_null_path_sets_einval_like_host() {
     unsafe {
         *__errno_location() = 0;
     }
@@ -2816,11 +2816,9 @@ fn mount_setattr_null_path_sets_efault_or_perm() {
     let err = unsafe { *__errno_location() };
 
     assert_eq!(rc, -1);
-    assert!(
-        matches!(
-            err,
-            libc::EFAULT | libc::EPERM | libc::EINVAL | libc::ENOSYS
-        ),
+    assert_eq!(
+        err,
+        libc::EINVAL,
         "unexpected errno from mount_setattr(null): {err}"
     );
 }
