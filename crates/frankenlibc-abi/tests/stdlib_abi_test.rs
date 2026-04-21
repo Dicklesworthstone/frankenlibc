@@ -3380,6 +3380,39 @@ fn move_mount_null_target_path_preserves_unprivileged_eperm_like_host() {
 }
 
 #[test]
+fn move_mount_both_null_paths_preserves_unprivileged_eperm_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_move_mount,
+            libc::AT_FDCWD,
+            ptr::null::<libc::c_char>(),
+            libc::AT_FDCWD,
+            ptr::null::<libc::c_char>(),
+            0_u32,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { move_mount(libc::AT_FDCWD, ptr::null(), libc::AT_FDCWD, ptr::null(), 0) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EPERM,
+        "unexpected errno from move_mount(AT_FDCWD, NULL, AT_FDCWD, NULL, 0): {abi_err}"
+    );
+}
+
+#[test]
 fn fspick_null_path_preserves_unprivileged_eperm_like_host() {
     unsafe {
         *libc::__errno_location() = 0;
