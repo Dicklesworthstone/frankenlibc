@@ -1753,13 +1753,6 @@ fn is_expected_sysvipc_errno(err: i32) -> bool {
     matches!(err, libc::EFAULT | libc::EINVAL | libc::EPERM)
 }
 
-fn is_expected_process_vm_errno(err: i32) -> bool {
-    matches!(
-        err,
-        libc::EFAULT | libc::EINVAL | libc::EPERM | libc::ENOSYS | libc::ESRCH | libc::EBADF
-    )
-}
-
 #[test]
 fn shmdt_null_pointer_fails_with_einval_like_host() {
     let rc = unsafe { shmdt(std::ptr::null()) };
@@ -2000,14 +1993,78 @@ fn process_vm_writev_invalid_flags_override_all_null_zero_counts_like_host() {
 }
 
 #[test]
-fn process_madvise_null_iov_nonzero_len_fails_cleanly() {
-    let rc = unsafe { process_madvise(-1, std::ptr::null(), 1, libc::MADV_NORMAL, 0) };
-    assert_eq!(rc, -1);
-    assert!(
-        is_expected_process_vm_errno(errno_value()),
-        "unexpected errno for process_madvise null iov: {}",
-        errno_value()
-    );
+fn process_madvise_null_iov_nonzero_len_sets_efault_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_madvise,
+            -1 as libc::c_long,
+            std::ptr::null::<libc::iovec>(),
+            1_usize,
+            libc::MADV_NORMAL,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_madvise(-1, std::ptr::null(), 1, libc::MADV_NORMAL, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EFAULT);
+}
+
+#[test]
+fn process_madvise_null_iov_zero_len_invalid_pidfd_sets_ebadf_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_madvise,
+            -1 as libc::c_long,
+            std::ptr::null::<libc::iovec>(),
+            0_usize,
+            libc::MADV_NORMAL,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_madvise(-1, std::ptr::null(), 0, libc::MADV_NORMAL, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
+fn process_madvise_invalid_flags_set_einval_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_madvise,
+            -1 as libc::c_long,
+            std::ptr::null::<libc::iovec>(),
+            0_usize,
+            libc::MADV_NORMAL,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_madvise(-1, std::ptr::null(), 0, libc::MADV_NORMAL, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
 }
 
 #[test]
