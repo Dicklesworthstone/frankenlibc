@@ -17,14 +17,14 @@ use frankenlibc_abi::unistd_abi::{
     fstatat64, ftruncate64, getcpu, getdomainname, gethostid, getlogin, getlogin_r, getopt,
     getopt_long, getpagesize, grantpt, herror, hstrerror, lockf, lseek64, lstat64, mkdtemp,
     mount_setattr, mq_close, mq_getattr, mq_open, mq_receive, mq_send, mq_setattr, mq_unlink,
-    msgctl, msgget, msgrcv, msgsnd, nice, open64, pathconf, posix_fadvise, posix_fallocate,
-    posix_madvise, posix_openpt, pread64, ptsname, pwrite64, renameat2, sched_get_priority_max,
-    sched_get_priority_min, sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler,
-    sched_rr_get_interval, sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget,
-    semop, setdomainname, sethostname, shm_open, shm_unlink, shmat, shmctl, shmdt, shmget,
-    signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf, sysinfo, timer_create,
-    timer_delete, timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r,
-    unlockpt,
+    msgctl, msgget, msgrcv, msgsnd, nice, open_tree, open64, pathconf, posix_fadvise,
+    posix_fallocate, posix_madvise, posix_openpt, pread64, ptsname, pwrite64, renameat2,
+    sched_get_priority_max, sched_get_priority_min, sched_getaffinity, sched_getcpu,
+    sched_getparam, sched_getscheduler, sched_rr_get_interval, sched_setaffinity, sched_setparam,
+    sched_setscheduler, semctl, semget, semop, setdomainname, sethostname, shm_open, shm_unlink,
+    shmat, shmctl, shmdt, shmget, signalfd4, sigqueue, sigtimedwait, sigwaitinfo, stat64, sysconf,
+    sysinfo, timer_create, timer_delete, timer_getoverrun, timer_gettime, timer_settime,
+    truncate64, ttyname, ttyname_r, unlockpt,
 };
 use frankenlibc_core::syscall as raw_syscall;
 use std::ffi::CString;
@@ -2820,6 +2820,22 @@ fn mount_setattr_null_path_sets_einval_like_host() {
         err,
         libc::EINVAL,
         "unexpected errno from mount_setattr(null): {err}"
+    );
+}
+
+#[test]
+fn open_tree_null_path_sets_efault_like_host() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { open_tree(libc::AT_FDCWD, ptr::null(), 0) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, -1);
+    assert_eq!(
+        err,
+        libc::EFAULT,
+        "unexpected errno from open_tree(null): {err}"
     );
 }
 
