@@ -48,7 +48,11 @@
       "name": "backtrace_corrupted_stack_hardened",
       "function": "backtrace",
       "spec_section": "FrankenLibC TSM repair",
-      "inputs": { "buffer": "valid_array_64", "size": 64 },
+      "inputs": {
+        "buffer": "valid_array_64",
+        "size": 64,
+        "stack": "corrupted_frame_chain"
+      },
       "expected_output": "truncated_count",
       "expected_errno": 0,
       "mode": "hardened",

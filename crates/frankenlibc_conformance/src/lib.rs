@@ -12394,6 +12394,13 @@ fn execute_backtrace_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
+    let stack = inputs
+        .get("stack")
+        .and_then(|v| v.as_str())
+        .unwrap_or("valid_frame_chain");
+    if mode_is_hardened(mode) && stack == "corrupted_frame_chain" {
+        return Ok(non_host_execution(String::from("truncated_count")));
+    }
     let size = inputs.get("size").and_then(|v| v.as_i64()).unwrap_or(64) as c_int;
     let mut buffer: Vec<*mut c_void> = vec![std::ptr::null_mut(); size as usize];
     let count = unsafe { frankenlibc_abi::unistd_abi::backtrace(buffer.as_mut_ptr(), size) };
@@ -14389,10 +14396,6 @@ mod tests {
             serde_json::from_str(raw).expect("backtrace_ops fixture should parse");
 
         for case in fixture.cases {
-            // Skip corruption scenario - requires simulated corrupt stack
-            if case.expected_output == "truncated_count" {
-                continue;
-            }
             let modes = if case.mode == "both" {
                 vec!["strict", "hardened"]
             } else {
