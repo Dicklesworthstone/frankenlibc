@@ -3293,6 +3293,37 @@ fn fspick_null_path_preserves_unprivileged_eperm_like_host() {
 }
 
 #[test]
+fn fspick_null_path_nonzero_flags_preserves_unprivileged_eperm_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_fspick,
+            libc::AT_FDCWD,
+            ptr::null::<libc::c_char>(),
+            1_u32,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { fspick(libc::AT_FDCWD, ptr::null(), 1) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EPERM,
+        "unexpected errno from fspick(AT_FDCWD, NULL, 1): {abi_err}"
+    );
+}
+
+#[test]
 fn open_tree_null_path_sets_efault_like_host() {
     unsafe {
         *__errno_location() = 0;
