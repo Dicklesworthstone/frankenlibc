@@ -2252,6 +2252,39 @@ fn mount_setattr_null_pathname_invalid_dirfd_sets_einval_like_host() {
 }
 
 #[test]
+fn mount_setattr_null_pathname_at_empty_path_still_sets_einval_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            libc::AT_FDCWD as libc::c_long,
+            std::ptr::null::<c_char>(),
+            libc::AT_EMPTY_PATH as libc::c_uint,
+            std::ptr::null::<c_void>(),
+            0_usize,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe {
+        mount_setattr(
+            libc::AT_FDCWD,
+            std::ptr::null(),
+            libc::AT_EMPTY_PATH as libc::c_uint,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
 fn setns_invalid_fd_sets_errno_like_host() {
     clear_errno();
     let host_rc = unsafe { libc::setns(-1, 0) };
