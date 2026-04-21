@@ -2966,6 +2966,49 @@ fn renameat2_null_paths_set_efault() {
 }
 
 #[test]
+fn renameat2_invalid_flags_override_both_null_paths_with_einval_like_host() {
+    let invalid_flags = 0x8000_0000_u32;
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            ptr::null::<libc::c_char>(),
+            libc::AT_FDCWD,
+            ptr::null::<libc::c_char>(),
+            invalid_flags,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe {
+        renameat2(
+            libc::AT_FDCWD,
+            ptr::null(),
+            libc::AT_FDCWD,
+            ptr::null(),
+            invalid_flags,
+        )
+    };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EINVAL,
+        "unexpected errno from renameat2(AT_FDCWD, NULL, AT_FDCWD, NULL, 0x80000000): {abi_err}"
+    );
+}
+
+#[test]
 fn renameat2_null_oldpath_sets_efault() {
     let dot = CString::new(".").unwrap();
 
