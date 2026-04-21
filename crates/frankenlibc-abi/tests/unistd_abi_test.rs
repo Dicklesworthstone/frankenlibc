@@ -2483,6 +2483,71 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
 }
 
 #[test]
+fn gai_suspend_all_null_request_timeouts_match_host_contract() {
+    type HostGaiSuspendFn =
+        unsafe extern "C" fn(*const *const c_void, c_int, *const libc::timespec) -> c_int;
+
+    let Some(host_gai_suspend) = (unsafe { load_host_symbol("gai_suspend") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiSuspendFn>(ptr) })
+    else {
+        return;
+    };
+
+    let requests: [*const c_void; 1] = [std::ptr::null()];
+    let invalid_nanoseconds = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000_000,
+    };
+    let invalid_seconds = libc::timespec {
+        tv_sec: -1,
+        tv_nsec: 0,
+    };
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_invalid_nanoseconds = unsafe {
+        host_gai_suspend(
+            requests.as_ptr(),
+            requests.len() as c_int,
+            &invalid_nanoseconds,
+        )
+    };
+    let host_invalid_nanoseconds_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_invalid_nanoseconds = unsafe {
+        gai_suspend(
+            requests.as_ptr(),
+            requests.len() as c_int,
+            &invalid_nanoseconds,
+        )
+    };
+    let abi_invalid_nanoseconds_errno = errno_value();
+    assert_eq!(abi_invalid_nanoseconds, host_invalid_nanoseconds);
+    assert_eq!(
+        abi_invalid_nanoseconds_errno,
+        host_invalid_nanoseconds_errno
+    );
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_invalid_seconds =
+        unsafe { host_gai_suspend(requests.as_ptr(), requests.len() as c_int, &invalid_seconds) };
+    let host_invalid_seconds_errno = unsafe { *libc::__errno_location() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_invalid_seconds =
+        unsafe { gai_suspend(requests.as_ptr(), requests.len() as c_int, &invalid_seconds) };
+    let abi_invalid_seconds_errno = errno_value();
+    assert_eq!(abi_invalid_seconds, host_invalid_seconds);
+    assert_eq!(abi_invalid_seconds_errno, host_invalid_seconds_errno);
+}
+
+#[test]
 fn strfmon_small_buffer_sets_e2big() {
     let mut buf = [0_i8; 4];
     unsafe {
