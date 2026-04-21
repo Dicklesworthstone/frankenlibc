@@ -32,7 +32,7 @@ use frankenlibc_abi::unistd_abi::{
     getppid, getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent,
     getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline,
     getutline_r, glob64, globfree64, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo,
-    mount_setattr, msgrcv, msgsnd, open, pathconf, process_madvise, process_mrelease,
+    mount_setattr, msgrcv, msgsnd, open, pathconf, pidfd_getfd, process_madvise, process_mrelease,
     process_vm_readv, process_vm_writev, read, readlink, rename, rmdir, semctl, semop, setfsent,
     sethostent, setnetent, setnetgrent, setns, setprotoent, setservent, setttyent, setutent, shmdt,
     sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf,
@@ -2232,6 +2232,29 @@ fn process_mrelease_invalid_flags_override_zero_pidfd_like_host() {
 
     clear_errno();
     let abi_rc = unsafe { process_mrelease(0, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn pidfd_getfd_invalid_flags_override_invalid_pidfd_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_getfd,
+            -1 as libc::c_long,
+            0 as libc::c_long,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { pidfd_getfd(-1, 0, 1) };
     assert_eq!(abi_rc, -1);
     let abi_errno = errno_value();
 
