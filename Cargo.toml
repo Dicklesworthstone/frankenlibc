@@ -41,5 +41,5 @@ frankenlibc-abi = { path = "crates/frankenlibc-abi" }
 frankenlibc-fixture-exec = { path = "crates/frankenlibc-fixture-exec" }
 
 # Companion crates (build tooling only)
-asupersync-conformance = "0.2.5"
+asupersync-conformance = "0.3.0"
 ftui-harness = "0.2.1"
