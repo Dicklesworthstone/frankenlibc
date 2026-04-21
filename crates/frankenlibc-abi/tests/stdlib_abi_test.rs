@@ -814,6 +814,18 @@ fn sched_getparam_matches_kernel_syscall() {
 }
 
 #[test]
+fn sched_getparam_current_pid_null_output_sets_einval() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let observed = unsafe { sched_getparam(0, ptr::null_mut()) };
+    let observed_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, -1);
+    assert_eq!(observed_errno, libc::EINVAL);
+}
+
+#[test]
 fn sched_setparam_invalid_pid_sets_einval() {
     let param = libc::sched_param { sched_priority: 0 };
 
