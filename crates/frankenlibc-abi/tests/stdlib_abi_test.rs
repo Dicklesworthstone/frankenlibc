@@ -3125,6 +3125,38 @@ fn signalfd4_null_mask_with_exact_sizemask_sets_efault_like_host() {
 }
 
 #[test]
+fn signalfd4_null_mask_keeps_efault_even_with_invalid_flags_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_signalfd4,
+            -1,
+            ptr::null::<libc::sigset_t>(),
+            std::mem::size_of::<u64>(),
+            -1,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { signalfd4(-1, ptr::null(), -1) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EFAULT,
+        "unexpected errno from signalfd4(-1, NULL, -1): {abi_err}"
+    );
+}
+
+#[test]
 fn mount_setattr_null_path_sets_einval_like_host() {
     unsafe {
         *__errno_location() = 0;
