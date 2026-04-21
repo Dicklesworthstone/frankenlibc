@@ -917,18 +917,22 @@ fn io_2_1_aliases_resolve_to_native_stdio_storage() {
     let stdin_ptr = native_stdio_stream_ptr(libc::STDIN_FILENO);
     let stdout_ptr = native_stdio_stream_ptr(libc::STDOUT_FILENO);
     let stderr_ptr = native_stdio_stream_ptr(libc::STDERR_FILENO);
+    let stdin_global = unsafe { std::ptr::addr_of_mut!(stdin).read() };
+    let stdout_global = unsafe { std::ptr::addr_of_mut!(stdout).read() };
+    let stderr_global = unsafe { std::ptr::addr_of_mut!(stderr).read() };
+    let io_stdin = unsafe { std::ptr::addr_of_mut!(IO_2_1_STDIN).read() };
+    let io_stdout = unsafe { std::ptr::addr_of_mut!(IO_2_1_STDOUT).read() };
+    let io_stderr = unsafe { std::ptr::addr_of_mut!(IO_2_1_STDERR).read() };
 
-    unsafe {
-        assert_eq!(stdin, stdin_ptr);
-        assert_eq!(stdout, stdout_ptr);
-        assert_eq!(stderr, stderr_ptr);
-        assert_eq!(IO_2_1_STDIN, stdin_ptr);
-        assert_eq!(IO_2_1_STDOUT, stdout_ptr);
-        assert_eq!(IO_2_1_STDERR, stderr_ptr);
-        assert_eq!(IO_2_1_STDIN, stdin);
-        assert_eq!(IO_2_1_STDOUT, stdout);
-        assert_eq!(IO_2_1_STDERR, stderr);
-    }
+    assert_eq!(stdin_global, stdin_ptr);
+    assert_eq!(stdout_global, stdout_ptr);
+    assert_eq!(stderr_global, stderr_ptr);
+    assert_eq!(io_stdin, stdin_ptr);
+    assert_eq!(io_stdout, stdout_ptr);
+    assert_eq!(io_stderr, stderr_ptr);
+    assert_eq!(io_stdin, stdin_global);
+    assert_eq!(io_stdout, stdout_global);
+    assert_eq!(io_stderr, stderr_global);
 
     assert_eq!(verify_native_file(stdin_ptr), Some(0));
     assert_eq!(verify_native_file(stdout_ptr), Some(1));
