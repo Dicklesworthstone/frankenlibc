@@ -1749,10 +1749,6 @@ fn argp_parse_empty_args_succeeds() {
 // SysV IPC surface tests
 // ---------------------------------------------------------------------------
 
-fn is_expected_sysvipc_errno(err: i32) -> bool {
-    matches!(err, libc::EFAULT | libc::EINVAL | libc::EPERM)
-}
-
 #[test]
 fn shmdt_null_pointer_fails_with_einval_like_host() {
     let rc = unsafe { shmdt(std::ptr::null()) };
@@ -1778,33 +1774,45 @@ fn semctl_ipc_rmid_without_variadic_arg_fails_for_invalid_semaphore_id() {
 
 #[test]
 fn semop_null_payload_nonzero_ops_fails_cleanly() {
+    // bd-7g3f: host glibc surfaces EFAULT for semop(_, NULL, nsops>0)
+    // because the kernel dereferences sops before validating semid.
+    // Tighten from the broad family sentinel to the exact host-parity
+    // errno so future drift is caught immediately.
     let rc = unsafe { semop(-1, std::ptr::null_mut(), 1) };
     assert_eq!(rc, -1);
-    assert!(
-        is_expected_sysvipc_errno(errno_value()),
-        "unexpected errno for semop null payload: {}",
+    assert_eq!(
+        errno_value(),
+        libc::EFAULT,
+        "semop(-1, NULL, 1) must return EFAULT (host-parity), got {}",
         errno_value()
     );
 }
 
 #[test]
 fn msgsnd_null_payload_nonzero_size_fails_cleanly() {
+    // bd-6kkg: host glibc surfaces EFAULT for msgsnd(_, NULL, size>0)
+    // because the kernel dereferences msgp before the queue-id check.
     let rc = unsafe { msgsnd(-1, std::ptr::null(), 8, 0) };
     assert_eq!(rc, -1);
-    assert!(
-        is_expected_sysvipc_errno(errno_value()),
-        "unexpected errno for msgsnd null payload: {}",
+    assert_eq!(
+        errno_value(),
+        libc::EFAULT,
+        "msgsnd(-1, NULL, 8, 0) must return EFAULT (host-parity), got {}",
         errno_value()
     );
 }
 
 #[test]
 fn msgrcv_null_payload_nonzero_size_fails_cleanly() {
+    // bd-he3h: for msgrcv the kernel validates msgid BEFORE the msgp
+    // pointer, so the invalid queue-id path wins: msgrcv(-1, NULL, 8,
+    // 0, 0) returns EINVAL, not EFAULT. Pin that precedence rule.
     let rc = unsafe { msgrcv(-1, std::ptr::null_mut(), 8, 0, 0) };
     assert_eq!(rc, -1);
-    assert!(
-        is_expected_sysvipc_errno(errno_value()),
-        "unexpected errno for msgrcv null payload: {}",
+    assert_eq!(
+        errno_value(),
+        libc::EINVAL,
+        "msgrcv(-1, NULL, 8, 0, 0) must return EINVAL (host-parity: invalid msqid wins over NULL payload), got {}",
         errno_value()
     );
 }
