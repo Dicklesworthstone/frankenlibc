@@ -192,6 +192,23 @@ fn sched_getaffinity_invalid_pid_valid_mask_sets_esrch() {
 }
 
 #[test]
+fn sched_getaffinity_invalid_pid_zero_size_sets_einval() {
+    let _guard = SCHED_AFFINITY_TEST_GUARD
+        .lock()
+        .expect("affinity test guard lock should succeed");
+    let mut cpuset: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { sched_getaffinity(-1, 0, (&mut cpuset as *mut libc::cpu_set_t).cast()) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, -1);
+    assert_eq!(err, libc::EINVAL);
+}
+
+#[test]
 fn strtoll_sets_endptr_to_first_unparsed_byte() {
     let mut endptr = ptr::null_mut();
 
