@@ -2096,13 +2096,13 @@ fn gai_error_stub_family_still_sets_errno_for_eai_system() {
 }
 
 #[test]
-fn gai_error_zeroed_gaicb_reports_all_done_without_touching_errno() {
+fn gai_error_zeroed_gaicb_reports_success_without_touching_errno() {
     let mut request: GaicbShape = unsafe { std::mem::zeroed() };
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
     let request_ptr = (&mut request as *mut GaicbShape).cast::<c_void>();
-    assert_eq!(unsafe { gai_error(request_ptr) }, GAI_EAI_ALLDONE);
+    assert_eq!(unsafe { gai_error(request_ptr) }, 0);
     assert_eq!(errno_value(), libc::E2BIG);
 }
 
@@ -2182,6 +2182,135 @@ fn gai_suspend_degenerate_requests_ignore_invalid_timeouts() {
         GAI_EAI_ALLDONE
     );
     assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
+    type HostGaiCancelFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+    type HostGaiErrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+    type HostGaiSuspendFn =
+        unsafe extern "C" fn(*const *const c_void, c_int, *const libc::timespec) -> c_int;
+
+    let Some(host_gai_cancel) = (unsafe { load_host_symbol("gai_cancel") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiCancelFn>(ptr) })
+    else {
+        return;
+    };
+    let Some(host_gai_error) = (unsafe { load_host_symbol("gai_error") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiErrorFn>(ptr) })
+    else {
+        return;
+    };
+    let Some(host_gai_suspend) = (unsafe { load_host_symbol("gai_suspend") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiSuspendFn>(ptr) })
+    else {
+        return;
+    };
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let host_cancel_null = unsafe { host_gai_cancel(std::ptr::null_mut()) };
+    let host_cancel_null_errno = errno_value();
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_cancel_null = unsafe { gai_cancel(std::ptr::null_mut()) };
+    let abi_cancel_null_errno = errno_value();
+    assert_eq!(abi_cancel_null, host_cancel_null);
+    assert_eq!(abi_cancel_null_errno, host_cancel_null_errno);
+
+    let mut host_dummy = 0u8;
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let host_cancel_dummy = unsafe { host_gai_cancel((&mut host_dummy as *mut u8).cast()) };
+    let host_cancel_dummy_errno = errno_value();
+    let mut abi_dummy = 0u8;
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_cancel_dummy = unsafe { gai_cancel((&mut abi_dummy as *mut u8).cast()) };
+    let abi_cancel_dummy_errno = errno_value();
+    assert_eq!(abi_cancel_dummy, host_cancel_dummy);
+    assert_eq!(abi_cancel_dummy_errno, host_cancel_dummy_errno);
+
+    let mut host_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let host_error_zeroed =
+        unsafe { host_gai_error((&mut host_request as *mut GaicbShape).cast()) };
+    let host_error_zeroed_errno = errno_value();
+    let mut abi_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_error_zeroed = unsafe { gai_error((&mut abi_request as *mut GaicbShape).cast()) };
+    let abi_error_zeroed_errno = errno_value();
+    assert_eq!(abi_error_zeroed, host_error_zeroed);
+    assert_eq!(abi_error_zeroed_errno, host_error_zeroed_errno);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let host_suspend_empty = unsafe { host_gai_suspend(std::ptr::null(), 0, std::ptr::null()) };
+    let host_suspend_empty_errno = errno_value();
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_suspend_empty = unsafe { gai_suspend(std::ptr::null(), 0, std::ptr::null()) };
+    let abi_suspend_empty_errno = errno_value();
+    assert_eq!(abi_suspend_empty, host_suspend_empty);
+    assert_eq!(abi_suspend_empty_errno, host_suspend_empty_errno);
+
+    let host_requests: [*const c_void; 1] = [std::ptr::null()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let host_suspend_null_slot = unsafe {
+        host_gai_suspend(
+            host_requests.as_ptr(),
+            host_requests.len() as c_int,
+            std::ptr::null(),
+        )
+    };
+    let host_suspend_null_slot_errno = errno_value();
+    let abi_requests: [*const c_void; 1] = [std::ptr::null()];
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_suspend_null_slot = unsafe {
+        gai_suspend(
+            abi_requests.as_ptr(),
+            abi_requests.len() as c_int,
+            std::ptr::null(),
+        )
+    };
+    let abi_suspend_null_slot_errno = errno_value();
+    assert_eq!(abi_suspend_null_slot, host_suspend_null_slot);
+    assert_eq!(abi_suspend_null_slot_errno, host_suspend_null_slot_errno);
+
+    let invalid_timeout = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000_000,
+    };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let host_suspend_invalid_timeout =
+        unsafe { host_gai_suspend(std::ptr::null(), 0, &invalid_timeout) };
+    let host_suspend_invalid_timeout_errno = errno_value();
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_suspend_invalid_timeout = unsafe { gai_suspend(std::ptr::null(), 0, &invalid_timeout) };
+    let abi_suspend_invalid_timeout_errno = errno_value();
+    assert_eq!(abi_suspend_invalid_timeout, host_suspend_invalid_timeout);
+    assert_eq!(
+        abi_suspend_invalid_timeout_errno,
+        host_suspend_invalid_timeout_errno
+    );
 }
 
 #[test]

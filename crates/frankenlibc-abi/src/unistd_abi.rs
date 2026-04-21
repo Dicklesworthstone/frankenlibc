@@ -18358,8 +18358,8 @@ pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
 /// Since all resolution is synchronous and `getaddrinfo_a` is unimplemented,
 /// a zeroed request descriptor is already complete, while opaque handles remain
 /// unsupported. Match the host-glibc degenerate path for an all-zero `gaicb`
-/// and report `EAI_ALLDONE` without mutating `errno`; otherwise return
-/// `EAI_SYSTEM` with `ENOSYS`.
+/// and report success without mutating `errno`; otherwise return `EAI_SYSTEM`
+/// with `ENOSYS`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
     if !req.is_null() {
@@ -18370,7 +18370,7 @@ pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
         // layout.
         let fields = unsafe { std::slice::from_raw_parts(req.cast::<*const c_void>(), 4) };
         if fields.iter().all(|field| field.is_null()) {
-            return EAI_ALLDONE;
+            return 0;
         }
     }
     unsafe { set_abi_errno(libc::ENOSYS) };
