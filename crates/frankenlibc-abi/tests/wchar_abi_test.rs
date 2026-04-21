@@ -5,6 +5,7 @@
 use std::ffi::{CStr, c_char, c_int, c_void};
 
 use frankenlibc_abi::glibc_internal_abi::fwide;
+use frankenlibc_abi::io_internal_abi::verify_native_file;
 use frankenlibc_abi::stdlib_abi::{basename, dirname, realpath};
 use frankenlibc_abi::wchar_abi::*;
 
@@ -1395,6 +1396,8 @@ fn open_wmemstream_flushes_wide_buffer_and_reports_orientation() {
     assert!(!stream.is_null());
     assert!(!buf.is_null());
     assert_eq!(size, 0);
+    assert!(verify_native_file(stream).is_some());
+    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fileno(stream) }, -1);
 
     assert!(unsafe { fwide(stream, 0) } > 0);
     assert!(unsafe { fwide(stream, -1) } > 0);
@@ -1410,6 +1413,7 @@ fn open_wmemstream_flushes_wide_buffer_and_reports_orientation() {
     assert_eq!(written[2], 0);
 
     assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(stream) }, 0);
+    assert!(verify_native_file(stream).is_none());
     assert_eq!(size, 2);
     let written = unsafe { std::slice::from_raw_parts(buf, size + 1) };
     assert_eq!(written[0], 'é' as u32);

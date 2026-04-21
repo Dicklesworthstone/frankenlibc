@@ -19,7 +19,7 @@ use frankenlibc_abi::io_internal_abi::{
     _IO_file_setbuf, _IO_file_stat, _IO_file_sync, _IO_file_underflow, _IO_file_write,
     _IO_file_xsputn, _IO_flush_all, _IO_fopen, _IO_fprintf, _IO_fputs, _IO_fread, _IO_fsetpos,
     _IO_fsetpos64, _IO_ftell, _IO_fwrite, _IO_printf, _IO_setbuffer, _IO_setvbuf, _IO_sprintf,
-    _IO_sscanf, _IO_ungetc, _IO_vfprintf, _IO_vsprintf,
+    _IO_sscanf, _IO_ungetc, _IO_vfprintf, _IO_vsprintf, verify_native_file,
 };
 use frankenlibc_abi::io_internal_abi::{_IO_feof, _IO_ferror, _IO_getc, _IO_putc};
 use frankenlibc_abi::stdio_abi::{
@@ -2073,7 +2073,10 @@ fn fmemopen_write_creates_stream() {
     let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w+".as_ptr()) };
     // fmemopen may not work fully without LD_PRELOAD, just check it returns something
     if !stream.is_null() {
+        assert!(verify_native_file(stream).is_some());
+        assert_eq!(unsafe { fileno(stream) }, -1);
         assert_eq!(unsafe { fclose(stream) }, 0);
+        assert!(verify_native_file(stream).is_none());
     }
 }
 
@@ -2115,8 +2118,11 @@ fn open_memstream_returns_stream_or_null() {
     if stream.is_null() {
         return;
     }
+    assert!(verify_native_file(stream).is_some());
+    assert_eq!(unsafe { fileno(stream) }, -1);
     // Just close it — don't free ptr as it may be managed internally
     unsafe { fclose(stream) };
+    assert!(verify_native_file(stream).is_none());
 }
 
 #[test]

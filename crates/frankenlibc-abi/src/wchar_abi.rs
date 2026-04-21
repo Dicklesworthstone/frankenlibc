@@ -4373,8 +4373,28 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
         *sizep = 0;
     }
 
-    let id =
-        crate::stdio_abi::register_stream(frankenlibc_core::stdio::StdioStream::new_mem_dynamic());
+    let handle = crate::stdio_abi::register_memory_stream_with_native_handle(
+        frankenlibc_core::stdio::StdioStream::new_mem_dynamic(),
+        crate::io_internal_abi::NativeFileBacking::MemoryGrowing {
+            buf_ptr: bufp.cast::<*mut c_char>(),
+            size_ptr: sizep,
+            capacity: size_of::<u32>(),
+            data: Vec::new(),
+        },
+        frankenlibc_core::stdio::OpenFlags {
+            writable: true,
+            ..Default::default()
+        },
+    );
+    if handle.is_null() {
+        unsafe {
+            crate::malloc_abi::free(initial.cast::<c_void>());
+            *bufp = std::ptr::null_mut();
+            *sizep = 0;
+        }
+        return std::ptr::null_mut();
+    }
+    let id = crate::stdio_abi::stream_id_from_handle(handle);
     let mut guard = wide_memstream_registry()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -4387,7 +4407,7 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
         },
     );
 
-    id as *mut c_void
+    handle
 }
 
 /// `getwc` — alias for fgetwc.

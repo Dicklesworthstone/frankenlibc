@@ -622,6 +622,60 @@ fn alloc_stream_id() -> usize {
     id
 }
 
+fn native_stream_open_flags(open_flags: OpenFlags) -> u32 {
+    let mut flags = 0u32;
+    if open_flags.readable {
+        flags |= io_internal_abi::file_flags::READ;
+    }
+    if open_flags.writable {
+        flags |= io_internal_abi::file_flags::WRITE;
+    }
+    if open_flags.append {
+        flags |= io_internal_abi::file_flags::APPEND;
+    }
+    flags
+}
+
+fn maybe_unregister_dynamic_native_stream(stream: *mut c_void) {
+    if let Some(slot) = io_internal_abi::verify_native_file(stream)
+        && slot >= 3
+    {
+        let mut native_reg = io_internal_abi::native_stream_registry();
+        let _ = native_reg.unregister(slot);
+    }
+}
+
+pub(crate) fn register_memory_stream_with_native_handle(
+    stream: StdioStream,
+    backing: io_internal_abi::NativeFileBacking,
+    open_flags: OpenFlags,
+) -> *mut c_void {
+    let file = io_internal_abi::NativeFile::new_with_backing(
+        backing,
+        native_stream_open_flags(open_flags),
+        NativeFileBufMode::None,
+    );
+    let mut native_reg = io_internal_abi::native_stream_registry();
+    let Some(slot) = native_reg.register(file) else {
+        unsafe { set_abi_errno(errno::EMFILE) };
+        return std::ptr::null_mut();
+    };
+    let native_ptr = match native_reg.get_mut(slot) {
+        Some(file) => file as *mut io_internal_abi::NativeFile as *mut c_void,
+        None => {
+            unsafe { set_abi_errno(errno::EMFILE) };
+            return std::ptr::null_mut();
+        }
+    };
+    io_internal_abi::register_native_file_ptr(native_ptr);
+    drop(native_reg);
+
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.insert(native_ptr as usize, stream);
+    native_ptr
+}
+
+#[allow(dead_code)]
 pub(crate) fn register_stream(stream: StdioStream) -> usize {
     let id = alloc_stream_id();
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
@@ -1154,6 +1208,7 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
             map.remove(&id);
         }
         crate::wchar_abi::unregister_open_wmemstream(id);
+        maybe_unregister_dynamic_native_stream(stream);
         return 0;
     }
 
@@ -1197,6 +1252,7 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
         adverse = true;
     }
 
+    maybe_unregister_dynamic_native_stream(stream);
     if adverse { libc::EOF } else { 0 }
 }
 
@@ -2605,7 +2661,7 @@ pub unsafe extern "C" fn fileno(stream: *mut c_void) -> c_int {
     }
     let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = reg.streams.get(&id) {
-        s.fd()
+        if s.is_mem_backed() { -1 } else { s.fd() }
     } else {
         unsafe { set_abi_errno(errno::EBADF) };
         -1
@@ -6186,10 +6242,20 @@ pub unsafe extern "C" fn fmemopen(
     };
 
     let stream = StdioStream::new_mem_fixed(data, content_len, open_flags);
-    let id = alloc_stream_id();
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.insert(id, stream);
-    drop(reg);
+    let handle = register_memory_stream_with_native_handle(
+        stream,
+        io_internal_abi::NativeFileBacking::MemoryFixed {
+            buf: buf.cast::<u8>(),
+            size,
+            content_len,
+            owns: buf.is_null(),
+        },
+        open_flags,
+    );
+    if handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let id = canonical_stream_id(handle);
 
     if !buf.is_null() {
         let mut guard = mem_fixed_registry()
@@ -6210,7 +6276,7 @@ pub unsafe extern "C" fn fmemopen(
         }
     }
 
-    id as *mut c_void
+    handle
 }
 
 /// POSIX `open_memstream` — open a dynamic memory buffer for writing.
@@ -6225,13 +6291,31 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
         return std::ptr::null_mut();
     }
 
-    let stream = StdioStream::new_mem_dynamic();
-    let id = alloc_stream_id();
+    let initial_buf = unsafe { malloc(1) };
+    if initial_buf.is_null() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return std::ptr::null_mut();
+    }
 
-    // Register the stream.
-    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.streams.insert(id, stream);
-    drop(reg);
+    let stream = StdioStream::new_mem_dynamic();
+    let handle = register_memory_stream_with_native_handle(
+        stream,
+        io_internal_abi::NativeFileBacking::MemoryGrowing {
+            buf_ptr: ptr,
+            size_ptr: sizeloc,
+            capacity: 1,
+            data: Vec::new(),
+        },
+        OpenFlags {
+            writable: true,
+            ..Default::default()
+        },
+    );
+    if handle.is_null() {
+        unsafe { free(initial_buf.cast::<c_void>()) };
+        return std::ptr::null_mut();
+    }
+    let id = canonical_stream_id(handle);
 
     // Register sync metadata so fflush/fclose can update the C caller's pointers.
     let mut sync_guard = mem_sync_registry()
@@ -6249,15 +6333,12 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
 
     // Initialize caller's pointers to empty state.
     unsafe {
-        let initial_buf = malloc(1);
-        if !initial_buf.is_null() {
-            *initial_buf.cast::<u8>() = 0; // NUL-terminate
-            *ptr = initial_buf.cast::<c_char>();
-            *sizeloc = 0;
-        }
+        *initial_buf.cast::<u8>() = 0; // NUL-terminate
+        *ptr = initial_buf.cast::<c_char>();
+        *sizeloc = 0;
     }
 
-    id as *mut c_void
+    handle
 }
 
 /// GNU `fopencookie` — open a custom stream with user-defined I/O callbacks.
