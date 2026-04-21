@@ -18297,6 +18297,18 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
 // Async DNS (getaddrinfo_a family)
 // ===========================================================================
 
+unsafe fn is_zeroed_gaicb_request(req: *mut c_void) -> bool {
+    if req.is_null() {
+        return false;
+    }
+    // SAFETY: `req` is a caller-provided pointer. We only read the first four
+    // pointer-sized fields, which match glibc's public `gaicb` request-shape
+    // (name/service/request/result) well enough to recognize the degenerate
+    // all-zero handle without depending on the full struct layout.
+    let fields = unsafe { std::slice::from_raw_parts(req.cast::<*const c_void>(), 4) };
+    fields.iter().all(|field| field.is_null())
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaddrinfo_a(
     mode: c_int,
@@ -18317,11 +18329,15 @@ pub unsafe extern "C" fn getaddrinfo_a(
     if !list.is_null() {
         // SAFETY: `list` is a C pointer to `nitems` request slots provided by the
         // caller. We only create a shared slice after validating `nitems > 0`,
-        // and we only read pointer values to recognize the host-glibc
-        // degenerate "all requests are NULL" success path.
+        // and we only inspect `gaicb`-shaped entries enough to recognize the
+        // host-glibc degenerate success path where every request slot is either
+        // NULL or points at a zeroed request descriptor.
         let requests =
             unsafe { std::slice::from_raw_parts(list as *const *mut c_void, nitems as usize) };
-        if requests.iter().all(|request| request.is_null()) {
+        if requests
+            .iter()
+            .all(|request| request.is_null() || unsafe { is_zeroed_gaicb_request(*request) })
+        {
             return 0;
         }
     }
@@ -18362,16 +18378,8 @@ pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
 /// with `ENOSYS`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
-    if !req.is_null() {
-        // SAFETY: `req` is a caller-provided pointer. We only read the first
-        // four pointer-sized fields, which match glibc's public `gaicb`
-        // request-shape (name/service/request/result) well enough to recognize
-        // the degenerate all-zero handle without depending on the full struct
-        // layout.
-        let fields = unsafe { std::slice::from_raw_parts(req.cast::<*const c_void>(), 4) };
-        if fields.iter().all(|field| field.is_null()) {
-            return 0;
-        }
+    if unsafe { is_zeroed_gaicb_request(req) } {
+        return 0;
     }
     unsafe { set_abi_errno(libc::ENOSYS) };
     libc::EAI_SYSTEM

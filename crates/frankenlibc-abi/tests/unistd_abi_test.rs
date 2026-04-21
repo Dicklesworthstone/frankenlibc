@@ -1993,6 +1993,48 @@ fn getaddrinfo_a_all_null_request_slots_report_success_without_touching_errno() 
 }
 
 #[test]
+fn getaddrinfo_a_zeroed_gaicb_request_slots_report_success_without_touching_errno() {
+    let mut first: GaicbShape = unsafe { std::mem::zeroed() };
+    let mut second: GaicbShape = unsafe { std::mem::zeroed() };
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut requests = [
+        (&mut first as *mut GaicbShape).cast::<c_void>(),
+        (&mut second as *mut GaicbShape).cast::<c_void>(),
+    ];
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_WAIT,
+            requests.as_mut_ptr(),
+            requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut mixed_requests = [
+        std::ptr::null_mut(),
+        (&mut first as *mut GaicbShape).cast::<c_void>(),
+    ];
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_NOWAIT,
+            mixed_requests.as_mut_ptr(),
+            mixed_requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
 fn getaddrinfo_a_nowait_degenerate_requests_report_success_without_touching_errno() {
     unsafe {
         *__errno_location() = libc::E2BIG;
@@ -2040,8 +2082,13 @@ fn getaddrinfo_a_non_null_requests_still_fall_back_to_eai_system() {
     unsafe {
         *__errno_location() = 0;
     }
-    let mut request_payload = 0u8;
-    let mut requests = [&mut request_payload as *mut _ as *mut c_void];
+    let mut request = GaicbShape {
+        ar_name: c"opaque".as_ptr(),
+        ar_service: std::ptr::null(),
+        ar_request: std::ptr::null(),
+        ar_result: std::ptr::null_mut(),
+    };
+    let mut requests = [(&mut request as *mut GaicbShape).cast::<c_void>()];
     let rc = unsafe {
         getaddrinfo_a(
             GAI_WAIT,
