@@ -2395,6 +2395,76 @@ fn mount_setattr_slash_path_null_attr_sets_einval_like_host() {
 }
 
 #[test]
+fn mount_setattr_empty_path_preserves_unprivileged_eperm_like_host() {
+    let empty = CString::new("").unwrap();
+    let attr_size = std::mem::size_of::<[u64; 4]>();
+
+    let mut host_plain_attr = [0_u64; 4];
+    clear_errno();
+    let host_plain_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            libc::AT_FDCWD as libc::c_long,
+            empty.as_ptr(),
+            0 as libc::c_uint,
+            host_plain_attr.as_mut_ptr().cast::<c_void>(),
+            attr_size,
+        )
+    };
+    assert_eq!(host_plain_rc, -1);
+    let host_plain_errno = unsafe { *libc::__errno_location() };
+
+    let mut abi_plain_attr = [0_u64; 4];
+    clear_errno();
+    let abi_plain_rc = unsafe {
+        mount_setattr(
+            libc::AT_FDCWD,
+            empty.as_ptr(),
+            0,
+            abi_plain_attr.as_mut_ptr().cast::<c_void>(),
+            attr_size,
+        )
+    };
+    assert_eq!(abi_plain_rc, -1);
+    let abi_plain_errno = errno_value();
+
+    assert_eq!(abi_plain_errno, host_plain_errno);
+    assert_eq!(abi_plain_errno, libc::EPERM);
+
+    let mut host_empty_path_attr = [0_u64; 4];
+    clear_errno();
+    let host_empty_path_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            libc::AT_FDCWD as libc::c_long,
+            empty.as_ptr(),
+            libc::AT_EMPTY_PATH as libc::c_uint,
+            host_empty_path_attr.as_mut_ptr().cast::<c_void>(),
+            attr_size,
+        )
+    };
+    assert_eq!(host_empty_path_rc, -1);
+    let host_empty_path_errno = unsafe { *libc::__errno_location() };
+
+    let mut abi_empty_path_attr = [0_u64; 4];
+    clear_errno();
+    let abi_empty_path_rc = unsafe {
+        mount_setattr(
+            libc::AT_FDCWD,
+            empty.as_ptr(),
+            libc::AT_EMPTY_PATH as libc::c_uint,
+            abi_empty_path_attr.as_mut_ptr().cast::<c_void>(),
+            attr_size,
+        )
+    };
+    assert_eq!(abi_empty_path_rc, -1);
+    let abi_empty_path_errno = errno_value();
+
+    assert_eq!(abi_empty_path_errno, host_empty_path_errno);
+    assert_eq!(abi_empty_path_errno, libc::EPERM);
+}
+
+#[test]
 fn setns_invalid_fd_sets_errno_like_host() {
     clear_errno();
     let host_rc = unsafe { libc::setns(-1, 0) };
