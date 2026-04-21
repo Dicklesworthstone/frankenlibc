@@ -74,6 +74,8 @@ type ResolvedPthreadAttrSetaffinityNpFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize, *const libc::cpu_set_t) -> c_int;
 type ResolvedPthreadAttrSetsigmaskNpFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, *const libc::sigset_t) -> c_int;
+type ResolvedPthreadSigqueueFn =
+    unsafe extern "C" fn(libc::pthread_t, c_int, libc::sigval) -> c_int;
 // Host attr type aliases reintroduced for LD_PRELOAD compatibility in host mode.
 
 // ---------------------------------------------------------------------------
@@ -158,6 +160,7 @@ static RESOLVED_PTHREAD_ATTR_SETSCHEDPOLICY_PTR: OnceLock<usize> = OnceLock::new
 static RESOLVED_PTHREAD_ATTR_SETSCHEDPARAM_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETAFFINITY_NP_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSIGMASK_NP_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_SIGQUEUE_PTR: OnceLock<usize> = OnceLock::new();
 
 thread_local! {
     static FORCE_NATIVE_THREADING_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
@@ -469,6 +472,16 @@ unsafe fn resolved_pthread_attr_setsigmask_np_fn() -> Option<ResolvedPthreadAttr
         )
     }?;
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetsigmaskNpFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_sigqueue_fn() -> Option<ResolvedPthreadSigqueueFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_SIGQUEUE_PTR,
+            &[b"pthread_sigqueue\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadSigqueueFn>(ptr) })
 }
 
 pub(crate) fn prewarm_host_thread_lifecycle_symbols() {
@@ -5434,7 +5447,11 @@ pub unsafe extern "C" fn pthread_sigqueue(
                 Err(errno) => errno,
             }
         }
-        None => libc::ESRCH,
+        None => unsafe {
+            resolved_pthread_sigqueue_fn()
+                .map(|host_pthread_sigqueue| host_pthread_sigqueue(thread, sig, value))
+                .unwrap_or(libc::ESRCH)
+        },
     }
 }
 
