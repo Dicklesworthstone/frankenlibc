@@ -3023,6 +3023,29 @@ fn signalfd4_invalid_flags_set_einval() {
 }
 
 #[test]
+fn signalfd4_valid_mask_zero_flags_succeeds_without_touching_errno() {
+    let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::sigemptyset(&mut mask);
+        libc::sigaddset(&mut mask, libc::SIGUSR1);
+        *__errno_location() = libc::EAGAIN;
+    }
+    let fd = unsafe { signalfd4(-1, (&mask as *const libc::sigset_t).cast(), 0) };
+    let err = unsafe { *__errno_location() };
+
+    assert!(fd >= 0, "signalfd4(-1, &mask, 0) should succeed");
+    assert_eq!(
+        err,
+        libc::EAGAIN,
+        "signalfd4(-1, &mask, 0) should not touch errno"
+    );
+
+    unsafe {
+        libc::close(fd);
+    }
+}
+
+#[test]
 fn signalfd4_null_mask_with_exact_sizemask_sets_efault_like_host() {
     unsafe {
         *__errno_location() = 0;
