@@ -13,12 +13,23 @@ RUN_ID="stdio-native-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "${OUT_DIR}" "${BIN_DIR}"
 
 TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"
-LIB="${TARGET_DIR}/release/libfrankenlibc_abi.so"
+LIB_CANDIDATES=(
+  "${TARGET_DIR}/release/libfrankenlibc_abi.so"
+  "${ROOT}/target/release/libfrankenlibc_abi.so"
+)
+LIB=""
 
 echo "[stdio-native] building release ABI library via rch" >"${TEST_LOG}"
 rch exec -- cargo build -p frankenlibc-abi --release >>"${TEST_LOG}" 2>&1
 
-if [[ ! -f "${LIB}" ]]; then
+for candidate in "${LIB_CANDIDATES[@]}"; do
+  if [[ -f "${candidate}" ]]; then
+    LIB="${candidate}"
+    break
+  fi
+done
+
+if [[ -z "${LIB}" ]]; then
   echo "FAIL: expected release library missing at ${LIB}" >&2
   cat "${TEST_LOG}" >&2
   exit 1
@@ -30,9 +41,13 @@ symbol_addr() {
     {
       name = $NF
       sub(/@.*/, "", name)
-      if (name == sym) {
-        print $1
-        exit
+      if (name == sym && addr == "") {
+        addr = $1
+      }
+    }
+    END {
+      if (addr != "") {
+        print addr
       }
     }
   '
@@ -60,9 +75,9 @@ check_alias_addr "stdin" "_IO_2_1_stdin_"
 check_alias_addr "stdout" "_IO_2_1_stdout_"
 check_alias_addr "stderr" "_IO_2_1_stderr_"
 
-cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 "${ROOT}/tests/integration/fixture_stdio_printf.c" \
+cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_printf.c" \
   -o "${BIN_DIR}/fixture_stdio_printf.bin"
-cc -D_POSIX_C_SOURCE=200809L -std=c11 -O2 "${ROOT}/tests/integration/fixture_stdio_globals.c" \
+cc -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_globals.c" \
   -o "${BIN_DIR}/fixture_stdio_globals.bin"
 
 now_iso_ms() {

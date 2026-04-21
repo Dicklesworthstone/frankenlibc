@@ -1009,6 +1009,33 @@ fn active_stdout_stream() -> *mut c_void {
     }
 }
 
+#[cfg(not(debug_assertions))]
+unsafe fn sync_copy_relocated_stdio_symbol(
+    symbol: &CStr,
+    owned_cell: *mut *mut c_void,
+    value: *mut c_void,
+) {
+    type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+
+    let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
+        return;
+    };
+    // SAFETY: raw resolver returns the host glibc dlsym with the expected ABI.
+    let host_dlsym: DlsymFn = unsafe { core::mem::transmute(addr) };
+    // SAFETY: data-symbol dlsym returns the address of the writable symbol cell.
+    let mut resolved_cell = unsafe { host_dlsym(std::ptr::null_mut(), symbol.as_ptr()) };
+    if resolved_cell.is_null() {
+        resolved_cell = unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol.as_ptr()) };
+    }
+    let resolved_cell = resolved_cell.cast::<*mut c_void>();
+    if resolved_cell.is_null() || resolved_cell == owned_cell {
+        return;
+    }
+    // SAFETY: RTLD_DEFAULT resolved a writable copy-relocated symbol cell with
+    // the same `FILE *` layout as our exported globals.
+    unsafe { resolved_cell.write(value) };
+}
+
 /// Publish FrankenLibC-owned stdio globals and mark host stdio delegation ready.
 pub(crate) fn init_host_stdio_streams() {
     ensure_host_libio_exit_safe();
@@ -1026,6 +1053,39 @@ pub(crate) fn init_host_stdio_streams() {
                 IO_2_1_STDIN = stdin_ptr;
                 IO_2_1_STDOUT = stdout_ptr;
                 IO_2_1_STDERR = stderr_ptr;
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                sync_copy_relocated_stdio_symbol(
+                    c"stdin",
+                    core::ptr::addr_of_mut!(stdin),
+                    stdin_ptr,
+                );
+                sync_copy_relocated_stdio_symbol(
+                    c"stdout",
+                    core::ptr::addr_of_mut!(stdout),
+                    stdout_ptr,
+                );
+                sync_copy_relocated_stdio_symbol(
+                    c"stderr",
+                    core::ptr::addr_of_mut!(stderr),
+                    stderr_ptr,
+                );
+                sync_copy_relocated_stdio_symbol(
+                    c"_IO_2_1_stdin_",
+                    core::ptr::addr_of_mut!(stdin),
+                    stdin_ptr,
+                );
+                sync_copy_relocated_stdio_symbol(
+                    c"_IO_2_1_stdout_",
+                    core::ptr::addr_of_mut!(stdout),
+                    stdout_ptr,
+                );
+                sync_copy_relocated_stdio_symbol(
+                    c"_IO_2_1_stderr_",
+                    core::ptr::addr_of_mut!(stderr),
+                    stderr_ptr,
+                );
             }
         }
     }
