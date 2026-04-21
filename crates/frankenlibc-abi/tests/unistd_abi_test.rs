@@ -1893,11 +1893,56 @@ fn unshare_invalid_flags_sets_errno_like_host() {
 }
 
 #[test]
-fn getaddrinfo_a_stub_sets_errno_for_eai_system() {
+fn getaddrinfo_a_zero_item_requests_report_success_without_touching_errno() {
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { getaddrinfo_a(0, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut requests = [std::ptr::null_mut()];
+    let rc = unsafe { getaddrinfo_a(0, requests.as_mut_ptr(), -1, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn getaddrinfo_a_all_null_request_slots_report_success_without_touching_errno() {
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut requests = [std::ptr::null_mut(), std::ptr::null_mut()];
+    let rc = unsafe {
+        getaddrinfo_a(
+            0,
+            requests.as_mut_ptr(),
+            requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn getaddrinfo_a_non_null_requests_still_fall_back_to_eai_system() {
     unsafe {
         *__errno_location() = 0;
     }
-    let rc = unsafe { getaddrinfo_a(0, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let mut request_payload = 0u8;
+    let mut requests = [&mut request_payload as *mut _ as *mut c_void];
+    let rc = unsafe {
+        getaddrinfo_a(
+            0,
+            requests.as_mut_ptr(),
+            requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
     assert_eq!(rc, libc::EAI_SYSTEM);
     assert_eq!(errno_value(), libc::ENOSYS);
 }

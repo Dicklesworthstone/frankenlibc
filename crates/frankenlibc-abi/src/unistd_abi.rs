@@ -18300,10 +18300,24 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaddrinfo_a(
     _mode: c_int,
-    _list: *mut *mut c_void,
-    _nitems: c_int,
+    list: *mut *mut c_void,
+    nitems: c_int,
     _sevp: *mut c_void,
 ) -> c_int {
+    if nitems <= 0 {
+        return 0;
+    }
+    if !list.is_null() {
+        // SAFETY: `list` is a C pointer to `nitems` request slots provided by the
+        // caller. We only create a shared slice after validating `nitems > 0`,
+        // and we only read pointer values to recognize the host-glibc
+        // degenerate "all requests are NULL" success path.
+        let requests =
+            unsafe { std::slice::from_raw_parts(list as *const *mut c_void, nitems as usize) };
+        if requests.iter().all(|request| request.is_null()) {
+            return 0;
+        }
+    }
     unsafe { set_abi_errno(libc::ENOSYS) };
     libc::EAI_SYSTEM
 }
