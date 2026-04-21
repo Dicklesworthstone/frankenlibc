@@ -2068,6 +2068,31 @@ fn process_madvise_invalid_flags_set_einval_like_host() {
 }
 
 #[test]
+fn process_madvise_invalid_flags_override_bad_pidfd_and_missing_iov_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_process_madvise,
+            -1 as libc::c_long,
+            std::ptr::null::<libc::iovec>(),
+            1_usize,
+            libc::MADV_NORMAL,
+            1 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_madvise(-1, std::ptr::null(), 1, libc::MADV_NORMAL, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
 fn process_mrelease_invalid_pidfd_sets_ebadf_like_host() {
     clear_errno();
     let host_rc = unsafe {

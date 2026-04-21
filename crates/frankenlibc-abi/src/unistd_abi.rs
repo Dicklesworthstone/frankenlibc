@@ -11978,6 +11978,11 @@ pub unsafe extern "C" fn personality(persona: c_ulong) -> c_int {
     }
 }
 
+#[inline]
+fn process_madvise_invalid_flags(flags: c_uint) -> bool {
+    flags != 0
+}
+
 /// Linux `process_madvise` — advise about memory usage for another process.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn process_madvise(
@@ -11988,6 +11993,7 @@ pub unsafe extern "C" fn process_madvise(
     flags: c_uint,
 ) -> isize {
     let missing_payload = iovec.is_null() && vlen > 0;
+    let invalid_flags = process_madvise_invalid_flags(flags);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::VirtualMemory,
         iovec as usize,
@@ -11998,6 +12004,16 @@ pub unsafe extern "C" fn process_madvise(
     );
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(
+            ApiFamily::VirtualMemory,
+            decision.profile,
+            runtime_policy::scaled_cost(10, vlen),
+            true,
+        );
+        return -1;
+    }
+    if invalid_flags {
+        unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(
             ApiFamily::VirtualMemory,
             decision.profile,
