@@ -4,9 +4,9 @@
 //! regcomp, regexec, fnmatch, glob, wordexp.
 //! Run: cargo test -p frankenlibc-harness --test regex_glob_ops_conformance_test
 
-use frankenlibc_harness::{FixtureSet, TestRunner};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -53,14 +53,84 @@ fn load_fixture(name: &str) -> FixtureFile {
         .unwrap_or_else(|e| panic!("Invalid JSON in {}: {}", path.display(), e))
 }
 
-fn load_fixture_set(name: &str) -> FixtureSet {
-    let path = repo_root().join(format!("tests/conformance/fixtures/{name}.json"));
-    FixtureSet::from_file(&path)
-        .unwrap_or_else(|e| panic!("Failed to load {} as FixtureSet: {}", path.display(), e))
+#[derive(Debug, Deserialize)]
+struct MatrixCaseEnvelope {
+    kind: String,
+    #[serde(default)]
+    run: Option<DifferentialExecution>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DifferentialExecution {
+    host_output: String,
+    impl_output: String,
+    host_parity: bool,
+}
+
+fn execute_case_via_harness(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_harness"))
+        .arg("conformance-matrix-case")
+        .arg("--function")
+        .arg(function)
+        .arg("--mode")
+        .arg(mode)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("failed to spawn harness subprocess: {err}"))?;
+
+    let payload =
+        serde_json::to_vec(inputs).map_err(|err| format!("failed to serialize inputs: {err}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(&payload)
+            .map_err(|err| format!("failed to write subprocess stdin: {err}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("failed to wait on harness subprocess: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "harness subprocess exited with status {:?}: {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    let envelope: MatrixCaseEnvelope = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("invalid harness subprocess payload: {err}"))?;
+    match envelope.kind.as_str() {
+        "ok" => envelope
+            .run
+            .ok_or_else(|| String::from("missing run payload from harness subprocess")),
+        "error" => Err(envelope
+            .error
+            .unwrap_or_else(|| String::from("missing error payload from harness subprocess"))),
+        other => Err(format!("unknown harness subprocess payload kind: {other}")),
+    }
 }
 
 fn mode_matches(active_mode: &str, case_mode: &str) -> bool {
     case_mode == active_mode || case_mode == "both"
+}
+
+fn expected_output_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        other => other.to_string(),
+    }
 }
 
 #[test]
@@ -175,32 +245,35 @@ fn regex_glob_ops_case_count_stable() {
 
 #[test]
 fn regex_glob_ops_fixture_executes_with_host_parity_in_both_modes() {
-    let fixture = load_fixture_set("regex_glob_ops");
+    let fixture = load_fixture("regex_glob_ops");
 
     for mode in ["strict", "hardened"] {
-        let results = TestRunner::new("regex_glob_ops", mode).run(&fixture);
-        let expected_cases = fixture
+        for case in fixture
             .cases
             .iter()
             .filter(|case| mode_matches(mode, &case.mode))
-            .count();
-        assert_eq!(
-            results.len(),
-            expected_cases,
-            "{mode} run should execute every regex_glob_ops fixture case"
-        );
-
-        for result in results {
-            assert!(
-                result.passed,
-                "{mode} case {} failed: expected={}, actual={}, diff={:?}",
-                result.case_name, result.expected, result.actual, result.diff
+        {
+            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "regex_glob_ops case {} ({mode}) failed to execute via harness: {err}",
+                        case.name
+                    )
+                });
+            let expected = expected_output_text(
+                case.expected_output
+                    .as_ref()
+                    .expect("regex_glob_ops cases must have expected_output"),
+            );
+            assert_eq!(
+                result.impl_output, expected,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
             );
             assert!(
-                result.diff.is_none(),
-                "{mode} case {} lost host parity or emitted notes: {:?}",
-                result.case_name,
-                result.diff
+                result.host_parity,
+                "regex_glob_ops case {} ({mode}) lost host parity: host_output={}",
+                case.name, result.host_output
             );
         }
     }
