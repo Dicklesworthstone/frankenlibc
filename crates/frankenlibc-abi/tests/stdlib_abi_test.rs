@@ -2796,6 +2796,18 @@ fn getcpu_invalid_pointer_sets_efault() {
 }
 
 #[test]
+fn getcpu_all_null_outputs_succeeds_without_touching_errno() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { getcpu(ptr::null_mut(), ptr::null_mut(), ptr::null_mut()) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, 0, "getcpu(NULL, NULL, NULL) should succeed");
+    assert_eq!(err, 0, "getcpu(NULL, NULL, NULL) should not touch errno");
+}
+
+#[test]
 fn signalfd4_invalid_flags_set_einval() {
     let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
