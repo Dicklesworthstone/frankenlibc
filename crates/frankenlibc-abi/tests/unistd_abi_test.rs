@@ -11,6 +11,7 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::process::ExitStatusExt;
 use std::sync::atomic::AtomicI32;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2611,6 +2612,61 @@ fn async_dns_stub_tests_keep_host_parity_and_safe_divergence_paths_separate() {
     }
     assert_eq!(unsafe { gai_error(std::ptr::null_mut()) }, libc::EAI_SYSTEM);
     assert_eq!(errno_value(), libc::ENOSYS);
+}
+
+#[test]
+fn host_gai_error_null_probe_process() {
+    if std::env::var_os("FRANKENLIBC_HOST_GAI_ERROR_NULL_PROBE").is_none() {
+        return;
+    }
+
+    type HostGaiErrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+    let host_gai_error = unsafe { load_host_symbol("gai_error") }
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiErrorFn>(ptr) })
+        .expect("host gai_error symbol should exist for null probe");
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { host_gai_error(std::ptr::null_mut()) };
+    let err = unsafe { *libc::__errno_location() };
+    println!("HOST_GAI_ERROR_NULL_RETURN:{rc}:{err}");
+}
+
+#[test]
+fn gai_error_null_policy_is_characterized_without_crashing_parent_tests() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("host_gai_error_null_probe_process")
+        .arg("--nocapture")
+        .env("FRANKENLIBC_HOST_GAI_ERROR_NULL_PROBE", "1")
+        .output()
+        .expect("failed to spawn host gai_error(NULL) probe subprocess");
+
+    let host_stdout = String::from_utf8_lossy(&output.stdout);
+    let host_stderr = String::from_utf8_lossy(&output.stderr);
+    let host_signal = output.status.signal();
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { gai_error(std::ptr::null_mut()) };
+    let abi_errno = errno_value();
+    assert_eq!(abi_rc, libc::EAI_SYSTEM);
+    assert_eq!(abi_errno, libc::ENOSYS);
+
+    if output.status.success() {
+        assert!(
+            host_stdout.contains("HOST_GAI_ERROR_NULL_RETURN:"),
+            "host gai_error(NULL) probe exited successfully without reporting its outcome; stdout={host_stdout:?} stderr={host_stderr:?}"
+        );
+    } else {
+        assert!(
+            host_signal.is_some(),
+            "host gai_error(NULL) probe failed without a signal classification; status={:?} stdout={host_stdout:?} stderr={host_stderr:?}",
+            output.status.code()
+        );
+    }
 }
 
 #[test]

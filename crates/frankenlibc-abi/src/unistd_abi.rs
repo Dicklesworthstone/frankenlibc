@@ -18377,7 +18377,8 @@ pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
 /// unsupported. The all-zero `gaicb` case is part of the proven host-parity
 /// path and reports success without mutating `errno`. Opaque or NULL handles
 /// are treated as an intentional safe divergence and return `EAI_SYSTEM` with
-/// `ENOSYS` instead of following host-UB-adjacent behavior.
+/// `ENOSYS` instead of following crash-prone or otherwise host-UB-adjacent
+/// behavior.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
     if unsafe { is_zeroed_gaicb_request(req) } {
