@@ -3074,6 +3074,39 @@ fn mount_setattr_null_path_sets_einval_like_host() {
 }
 
 #[test]
+fn fsconfig_invalid_fsfd_with_null_key_value_sets_einval_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_fsconfig,
+            -1,
+            FSCONFIG_SET_FLAG_CMD,
+            ptr::null::<libc::c_char>(),
+            ptr::null::<libc::c_char>(),
+            0_usize,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { fsconfig(-1, FSCONFIG_SET_FLAG_CMD, ptr::null(), ptr::null(), 0) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EINVAL,
+        "unexpected errno from fsconfig(-1, FSCONFIG_SET_FLAG, NULL, NULL, 0): {abi_err}"
+    );
+}
+
+#[test]
 fn fsconfig_invalid_fsfd_with_set_flag_key_sets_einval_like_host() {
     let key = CString::new("k").expect("valid key");
     unsafe {
