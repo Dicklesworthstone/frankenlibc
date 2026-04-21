@@ -1875,6 +1875,30 @@ fn process_vm_writev_zero_remote_iov_count_preserves_errno_and_succeeds() {
 }
 
 #[test]
+fn process_vm_readv_all_null_zero_counts_preserve_errno_and_succeed() {
+    let pid = std::process::id() as libc::pid_t;
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn process_vm_writev_all_null_zero_counts_preserve_errno_and_succeed() {
+    let pid = std::process::id() as libc::pid_t;
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
 fn process_madvise_null_iov_nonzero_len_fails_cleanly() {
     let rc = unsafe { process_madvise(-1, std::ptr::null(), 1, libc::MADV_NORMAL, 0) };
     assert_eq!(rc, -1);
