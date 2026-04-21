@@ -2926,6 +2926,20 @@ fn renameat2_null_paths_set_efault() {
 }
 
 #[test]
+fn renameat2_null_oldpath_sets_efault() {
+    let dot = CString::new(".").unwrap();
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { renameat2(libc::AT_FDCWD, ptr::null(), libc::AT_FDCWD, dot.as_ptr(), 0) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, -1);
+    assert_eq!(err, libc::EFAULT);
+}
+
+#[test]
 fn getcpu_invalid_pointer_sets_efault() {
     unsafe {
         *__errno_location() = 0;
