@@ -3145,6 +3145,9 @@ fn pidfd_open_current_pid_succeeds_without_touching_errno() {
 
 #[test]
 fn pidfd_open_current_pid_invalid_flags_set_einval_like_host() {
+    // bd-3srp: host glibc surfaces EINVAL for pidfd_open(getpid(), 1).
+    // Assertion already exact — keeping as the host-parity regression
+    // gate for flag validation.
     unsafe {
         *__errno_location() = libc::EAGAIN;
     }
@@ -3156,6 +3159,24 @@ fn pidfd_open_current_pid_invalid_flags_set_einval_like_host() {
         err,
         libc::EINVAL,
         "unexpected errno from pidfd_open(getpid(), 1): {err}"
+    );
+}
+
+#[test]
+fn pidfd_open_invalid_pid_sets_einval_like_host() {
+    // bd-11sh: host glibc surfaces EINVAL for pidfd_open(-1, 0) —
+    // negative pid fails validation before any process-lookup step.
+    unsafe {
+        *__errno_location() = libc::EAGAIN;
+    }
+    let pidfd = unsafe { pidfd_open(-1, 0) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(pidfd, -1);
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "unexpected errno from pidfd_open(-1, 0): {err}"
     );
 }
 
