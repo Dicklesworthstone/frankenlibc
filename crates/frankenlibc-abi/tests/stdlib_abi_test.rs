@@ -730,6 +730,18 @@ fn sched_getscheduler_matches_kernel_syscall() {
 }
 
 #[test]
+fn sched_getscheduler_negative_pid_sets_einval() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let observed = unsafe { sched_getscheduler(-1) };
+    let observed_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, -1);
+    assert_eq!(observed_errno, libc::EINVAL);
+}
+
+#[test]
 fn sched_getparam_matches_kernel_syscall() {
     let mut observed_param = libc::sched_param { sched_priority: -1 };
     // SAFETY: __errno_location points to thread-local errno.
