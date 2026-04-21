@@ -4,8 +4,10 @@
 //! conversion specifiers, flags, width, precision, and length modifiers.
 //! Run: cargo test -p frankenlibc-harness --test printf_conformance_conformance_test
 
+use frankenlibc_fixture_exec::execute_fixture_case;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -247,4 +249,170 @@ fn printf_conformance_covers_special_values() {
         case_names.iter().any(|n| n.contains("nan")),
         "Missing NaN tests"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Execution coverage (bd-12hh)
+// ---------------------------------------------------------------------------
+//
+// Dispatch fixture cases with a concrete `expected_output: Some(String)`
+// through both the in-process executor and the isolated harness
+// subprocess. Cases that rely on `expected_output_bytes` or
+// `expected_output_pattern` (e.g. %p pointer addresses, %a hex floats
+// whose exact output is non-deterministic) are skipped here — their
+// validation belongs in a dedicated bytes/pattern path.
+
+#[test]
+fn printf_conformance_fixture_cases_match_execute_fixture_case() {
+    let fixture = load_fixture("printf_conformance");
+    let mut executed = 0usize;
+    let mut skipped = 0usize;
+
+    for case in &fixture.cases {
+        let Some(expected_output) = case.expected_output.as_deref() else {
+            skipped += 1;
+            continue;
+        };
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result =
+                execute_fixture_case(&case.function, &case.inputs, mode).unwrap_or_else(|err| {
+                    panic!(
+                        "fixture case {} ({mode}) failed to execute: {err}",
+                        case.name
+                    )
+                });
+            assert_eq!(
+                result.impl_output, expected_output,
+                "fixture expected_output mismatch for {} ({mode})",
+                case.name
+            );
+            assert!(
+                result.host_parity || result.host_output == "UB",
+                "defined host behavior diverged for {} ({mode}): host={}, impl={}",
+                case.name,
+                result.host_output,
+                result.impl_output
+            );
+            executed += 1;
+        }
+    }
+    eprintln!(
+        "printf_conformance in-process: executed={executed} skipped={skipped} (skipped cases use expected_output_bytes/pattern)"
+    );
+}
+
+#[derive(Debug, Deserialize)]
+struct MatrixCaseEnvelope {
+    kind: String,
+    #[serde(default)]
+    run: Option<DifferentialExecution>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DifferentialExecution {
+    host_output: String,
+    impl_output: String,
+    host_parity: bool,
+}
+
+fn execute_case_via_harness(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_harness"))
+        .arg("conformance-matrix-case")
+        .arg("--function")
+        .arg(function)
+        .arg("--mode")
+        .arg(mode)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("failed to spawn harness subprocess: {err}"))?;
+
+    let payload =
+        serde_json::to_vec(inputs).map_err(|err| format!("failed to serialize inputs: {err}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(&payload)
+            .map_err(|err| format!("failed to write subprocess stdin: {err}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("failed to wait on harness subprocess: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "harness subprocess exited with status {:?}: {}",
+            output.status.code(),
+            stderr
+        ));
+    }
+
+    let envelope: MatrixCaseEnvelope = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("invalid harness subprocess payload: {err}"))?;
+    match envelope.kind.as_str() {
+        "ok" => envelope
+            .run
+            .ok_or_else(|| String::from("missing run payload from harness subprocess")),
+        "error" => Err(envelope
+            .error
+            .unwrap_or_else(|| String::from("missing error payload from harness subprocess"))),
+        other => Err(format!("unknown harness subprocess payload kind: {other}")),
+    }
+}
+
+#[test]
+fn printf_conformance_fixture_executes_with_host_parity_via_harness_matrix() {
+    let fixture = load_fixture("printf_conformance");
+    let mut executed = 0usize;
+    let mut skipped = 0usize;
+
+    for case in &fixture.cases {
+        let Some(expected_output) = case.expected_output.as_deref() else {
+            skipped += 1;
+            continue;
+        };
+        let modes: &[&str] = if case.mode.eq_ignore_ascii_case("both") {
+            &["strict", "hardened"]
+        } else {
+            &[case.mode.as_str()]
+        };
+
+        for mode in modes {
+            let result = execute_case_via_harness(&case.function, &case.inputs, mode)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "printf_conformance case {} ({mode}) failed to execute via harness: {err}",
+                        case.name
+                    )
+                });
+            assert!(
+                result.host_parity || result.host_output == "UB",
+                "printf_conformance case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
+                case.name,
+                result.host_output,
+                result.impl_output
+            );
+            assert_eq!(
+                result.impl_output, expected_output,
+                "printf_conformance case {} ({mode}) mismatched fixture output via harness",
+                case.name
+            );
+            executed += 1;
+        }
+    }
+    eprintln!("printf_conformance harness-matrix: executed={executed} skipped={skipped}");
 }
