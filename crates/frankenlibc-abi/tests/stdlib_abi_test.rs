@@ -2742,6 +2742,25 @@ fn eventfd_read_invalid_fd_preserves_ebadf() {
 }
 
 #[test]
+fn eventfd_read_valid_fd_null_output_sets_efault() {
+    let fd = unsafe { libc::eventfd(1, 0) };
+    assert!(fd >= 0, "eventfd should create a readable descriptor");
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { eventfd_read(fd, ptr::null_mut()) };
+    let err = unsafe { *__errno_location() };
+
+    unsafe {
+        libc::close(fd);
+    }
+
+    assert_eq!(rc, -1);
+    assert_eq!(err, libc::EFAULT);
+}
+
+#[test]
 fn eventfd_write_invalid_fd_preserves_ebadf() {
     unsafe {
         *__errno_location() = 0;
