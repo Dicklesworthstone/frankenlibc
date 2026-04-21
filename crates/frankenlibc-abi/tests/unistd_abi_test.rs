@@ -1750,14 +1750,10 @@ fn is_expected_process_vm_errno(err: i32) -> bool {
 }
 
 #[test]
-fn shmdt_null_pointer_fails_with_expected_errno_family() {
+fn shmdt_null_pointer_fails_with_einval_like_host() {
     let rc = unsafe { shmdt(std::ptr::null()) };
     assert_eq!(rc, -1);
-    assert!(
-        is_expected_sysvipc_errno(errno_value()),
-        "unexpected errno for shmdt(null): {}",
-        errno_value()
-    );
+    assert_eq!(errno_value(), libc::EINVAL);
 }
 
 #[test]
