@@ -18369,7 +18369,8 @@ pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
 ///
 /// Since all resolution is synchronous, every request in the list is already
 /// complete by the time `gai_suspend` is called. Match host glibc's degenerate
-/// synchronous behavior and return `EAI_ALLDONE` without mutating `errno`.
+/// synchronous behavior and return `EAI_ALLDONE` without mutating `errno`,
+/// even when the caller supplies a timeout that would otherwise be invalid.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_suspend(
     _list: *const *const c_void,

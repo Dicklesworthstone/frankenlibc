@@ -2049,6 +2049,62 @@ fn gai_suspend_reports_all_done_for_synchronous_stub_handles() {
 }
 
 #[test]
+fn gai_suspend_degenerate_requests_ignore_invalid_timeouts() {
+    let invalid_nanoseconds = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000_000,
+    };
+    let invalid_seconds = libc::timespec {
+        tv_sec: -1,
+        tv_nsec: 0,
+    };
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { gai_suspend(std::ptr::null(), 0, &invalid_nanoseconds) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { gai_suspend(std::ptr::null(), 0, &invalid_seconds) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    let requests: [*const c_void; 1] = [std::ptr::null()];
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe {
+            gai_suspend(
+                requests.as_ptr(),
+                requests.len() as c_int,
+                &invalid_nanoseconds,
+            )
+        },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    assert_eq!(
+        unsafe { gai_suspend(requests.as_ptr(), requests.len() as c_int, &invalid_seconds,) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
 fn strfmon_small_buffer_sets_e2big() {
     let mut buf = [0_i8; 4];
     unsafe {
