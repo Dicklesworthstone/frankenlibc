@@ -13,9 +13,9 @@ use frankenlibc_abi::stdlib_abi::{
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, creat64, ctermid, ether_aton,
-    ether_aton_r, ether_ntoa, ether_ntoa_r, eventfd_read, eventfd_write, fpathconf, fstat64,
-    fstatat64, ftruncate64, getcpu, getdomainname, gethostid, getlogin, getlogin_r, getopt,
-    getopt_long, getpagesize, grantpt, herror, hstrerror, lockf, lseek64, lstat64, mkdtemp,
+    ether_aton_r, ether_ntoa, ether_ntoa_r, eventfd_read, eventfd_write, fpathconf, fsconfig,
+    fstat64, fstatat64, ftruncate64, getcpu, getdomainname, gethostid, getlogin, getlogin_r,
+    getopt, getopt_long, getpagesize, grantpt, herror, hstrerror, lockf, lseek64, lstat64, mkdtemp,
     mount_setattr, mq_close, mq_getattr, mq_open, mq_receive, mq_send, mq_setattr, mq_unlink,
     msgctl, msgget, msgrcv, msgsnd, nice, open_tree, open64, pathconf, pidfd_send_signal,
     posix_fadvise, posix_fallocate, posix_madvise, posix_openpt, pread64, ptsname, pwrite64,
@@ -71,6 +71,8 @@ static SHM_NAME_NONCE: AtomicU64 = AtomicU64::new(1);
 static MQ_NAME_NONCE: AtomicU64 = AtomicU64::new(1);
 static GETOPT_TEST_GUARD: Mutex<()> = Mutex::new(());
 static SCHED_AFFINITY_TEST_GUARD: Mutex<()> = Mutex::new(());
+
+const FSCONFIG_SET_FLAG_CMD: libc::c_uint = 0;
 
 fn unique_shm_name(prefix: &str) -> CString {
     let n = SHM_NAME_NONCE.fetch_add(1, Ordering::Relaxed);
@@ -2820,6 +2822,23 @@ fn mount_setattr_null_path_sets_einval_like_host() {
         err,
         libc::EINVAL,
         "unexpected errno from mount_setattr(null): {err}"
+    );
+}
+
+#[test]
+fn fsconfig_invalid_fsfd_with_set_flag_key_sets_einval_like_host() {
+    let key = CString::new("k").expect("valid key");
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { fsconfig(-1, FSCONFIG_SET_FLAG_CMD, key.as_ptr(), ptr::null(), 0) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, -1);
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "unexpected errno from fsconfig(-1, FSCONFIG_SET_FLAG, \"k\", NULL, 0): {err}"
     );
 }
 
