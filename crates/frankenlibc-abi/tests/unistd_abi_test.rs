@@ -1950,6 +1950,25 @@ fn process_vm_readv_all_null_zero_counts_preserve_errno_and_succeed() {
 }
 
 #[test]
+fn process_vm_readv_invalid_flags_override_all_null_zero_counts_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+
+    clear_errno();
+    let host_rc =
+        unsafe { libc::process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
 fn process_vm_writev_all_null_zero_counts_preserve_errno_and_succeed() {
     let pid = std::process::id() as libc::pid_t;
 
@@ -1959,6 +1978,25 @@ fn process_vm_writev_all_null_zero_counts_preserve_errno_and_succeed() {
     let rc = unsafe { process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn process_vm_writev_invalid_flags_override_all_null_zero_counts_like_host() {
+    let pid = std::process::id() as libc::pid_t;
+
+    clear_errno();
+    let host_rc =
+        unsafe { libc::process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 1) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
 }
 
 #[test]
