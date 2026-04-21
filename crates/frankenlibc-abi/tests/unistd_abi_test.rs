@@ -40,6 +40,7 @@ use frankenlibc_abi::unistd_abi::{
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
+const GAI_EAI_ALLDONE: c_int = -103;
 
 #[repr(C)]
 struct NetEnt {
@@ -1902,16 +1903,24 @@ fn getaddrinfo_a_stub_sets_errno_for_eai_system() {
 }
 
 #[test]
-fn gai_stub_family_sets_errno_for_eai_system() {
+fn gai_cancel_reports_all_done_for_synchronous_stub_handles() {
     unsafe {
-        *__errno_location() = 0;
+        *__errno_location() = libc::E2BIG;
     }
-    assert_eq!(
-        unsafe { gai_cancel(std::ptr::null_mut()) },
-        libc::EAI_SYSTEM
-    );
-    assert_eq!(errno_value(), libc::ENOSYS);
+    assert_eq!(unsafe { gai_cancel(std::ptr::null_mut()) }, GAI_EAI_ALLDONE);
+    assert_eq!(errno_value(), libc::E2BIG);
 
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut dummy = 0u8;
+    let dummy_ptr = &mut dummy as *mut _ as *mut c_void;
+    assert_eq!(unsafe { gai_cancel(dummy_ptr) }, GAI_EAI_ALLDONE);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn gai_error_stub_family_still_sets_errno_for_eai_system() {
     unsafe {
         *__errno_location() = 0;
     }
@@ -1925,15 +1934,28 @@ fn gai_stub_family_sets_errno_for_eai_system() {
     let dummy_ptr = &mut dummy as *mut _ as *mut c_void;
     assert_eq!(unsafe { gai_error(dummy_ptr) }, libc::EAI_SYSTEM);
     assert_eq!(errno_value(), libc::ENOSYS);
+}
 
+#[test]
+fn gai_suspend_reports_all_done_for_synchronous_stub_handles() {
     unsafe {
-        *__errno_location() = 0;
+        *__errno_location() = libc::E2BIG;
     }
     assert_eq!(
         unsafe { gai_suspend(std::ptr::null(), 0, std::ptr::null()) },
-        libc::EAI_SYSTEM
+        GAI_EAI_ALLDONE
     );
-    assert_eq!(errno_value(), libc::ENOSYS);
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let requests: [*const c_void; 1] = [std::ptr::null()];
+    assert_eq!(
+        unsafe { gai_suspend(requests.as_ptr(), requests.len() as c_int, std::ptr::null()) },
+        GAI_EAI_ALLDONE
+    );
+    assert_eq!(errno_value(), libc::E2BIG);
 }
 
 #[test]

@@ -18323,13 +18323,13 @@ const EAI_ALLDONE: c_int = -103;
 /// `gai_cancel` — cancel an asynchronous name resolution request (bd-9dq5).
 ///
 /// FrankenLibC resolves all `getaddrinfo` calls synchronously and does not
-/// export `getaddrinfo_a`, so no async requests ever exist. A non-NULL request
-/// pointer is treated as unsupported, returning `EAI_SYSTEM` with `ENOSYS`.
+/// export `getaddrinfo_a`, so no asynchronous requests can still be pending by
+/// the time a caller reaches `gai_cancel`. Match the host-glibc degenerate path
+/// and report `EAI_ALLDONE` without mutating `errno`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
     let _ = req;
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    libc::EAI_SYSTEM
+    EAI_ALLDONE
 }
 
 /// `gai_error` — query status of an asynchronous name resolution request (bd-9dq5).
@@ -18347,17 +18347,15 @@ pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
 /// `gai_suspend` — wait for async name resolution requests to complete (bd-9dq5).
 ///
 /// Since all resolution is synchronous, every request in the list is already
-/// complete by the time `gai_suspend` is called. For now, treat this as an
-/// unimplemented async entrypoint and return `EAI_SYSTEM` + `ENOSYS`.
+/// complete by the time `gai_suspend` is called. Match host glibc's degenerate
+/// synchronous behavior and return `EAI_ALLDONE` without mutating `errno`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_suspend(
     _list: *const *const c_void,
-    nitems: c_int,
+    _nitems: c_int,
     _timeout: *const libc::timespec,
 ) -> c_int {
-    let _ = nitems;
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    libc::EAI_SYSTEM
+    EAI_ALLDONE
 }
 
 // ===========================================================================
