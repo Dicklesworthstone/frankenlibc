@@ -251,7 +251,9 @@ fn membrane_mode_split_fixture_executes_with_host_parity_via_harness_matrix() {
             assert!(
                 result.host_parity || result.host_output == "UB",
                 "membrane_mode_split case {} ({mode}) lost host parity via harness: host_output={}, impl_output={}",
-                case.name, result.host_output, result.impl_output
+                case.name,
+                result.host_output,
+                result.impl_output
             );
             assert_eq!(
                 result.impl_output, expected_output,
