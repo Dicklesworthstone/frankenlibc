@@ -540,13 +540,15 @@ mod tests {
         for c in 0u8..=255u8 {
             if !is_upper(c) {
                 assert_eq!(
-                    to_lower(c), c,
+                    to_lower(c),
+                    c,
                     "POSIX §7.3.2 tolower(0x{c:02x}) must be identity on non-upper"
                 );
             }
             if !is_lower(c) {
                 assert_eq!(
-                    to_upper(c), c,
+                    to_upper(c),
+                    c,
                     "POSIX §7.3.2 toupper(0x{c:02x}) must be identity on non-lower"
                 );
             }

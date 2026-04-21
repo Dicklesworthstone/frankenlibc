@@ -602,8 +602,7 @@ mod x86_64_tests {
         let _: fn(i32, i32) -> Result<(), i32> = sys_setns;
         let _: fn(i32) -> Result<(), i32> = sys_unshare;
         let _: unsafe fn(i32, *const u8, u32) -> Result<i32, i32> = sys_open_tree;
-        let _: unsafe fn(i32, *const u8, i32, *const u8, u32) -> Result<(), i32> =
-            sys_move_mount;
+        let _: unsafe fn(i32, *const u8, i32, *const u8, u32) -> Result<(), i32> = sys_move_mount;
         let _: unsafe fn(*const u8, u32) -> Result<i32, i32> = sys_fsopen;
         let _: unsafe fn(i32, u32, u32) -> Result<i32, i32> = sys_fsmount;
         let _: unsafe fn(i32, *const u8, u32, *mut u8, usize) -> Result<(), i32> =
@@ -1721,10 +1720,8 @@ mod x86_64_tests {
     /// ENOSYS; otherwise EBADF is expected.
     #[test]
     fn mount_setattr_invalid_fd_is_ebadf_or_unavailable() {
-        let err = unsafe {
-            sys_mount_setattr(-1, core::ptr::null(), 0, core::ptr::null_mut(), 0)
-        }
-        .expect_err("mount_setattr(-1, NULL) must fail");
+        let err = unsafe { sys_mount_setattr(-1, core::ptr::null(), 0, core::ptr::null_mut(), 0) }
+            .expect_err("mount_setattr(-1, NULL) must fail");
         assert!(
             matches!(err, EBADF | EFAULT | EINVAL | ENOSYS | EPERM),
             "expected EBADF/EFAULT/EINVAL/ENOSYS/EPERM, got {err}"
@@ -2666,8 +2663,7 @@ mod aarch64_tests {
         let _: fn(i32, i32) -> Result<(), i32> = sys_setns;
         let _: fn(i32) -> Result<(), i32> = sys_unshare;
         let _: unsafe fn(i32, *const u8, u32) -> Result<i32, i32> = sys_open_tree;
-        let _: unsafe fn(i32, *const u8, i32, *const u8, u32) -> Result<(), i32> =
-            sys_move_mount;
+        let _: unsafe fn(i32, *const u8, i32, *const u8, u32) -> Result<(), i32> = sys_move_mount;
         let _: unsafe fn(*const u8, u32) -> Result<i32, i32> = sys_fsopen;
         let _: unsafe fn(i32, u32, u32) -> Result<i32, i32> = sys_fsmount;
         let _: unsafe fn(i32, *const u8, u32, *mut u8, usize) -> Result<(), i32> =

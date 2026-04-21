@@ -1035,7 +1035,8 @@ mod tests {
                     "{} [{}]: expected addr={:?} names={:?}, got {:?}",
                     case.id,
                     case.spec_ref,
-                    case.expected_addr.map(|a| core::str::from_utf8(a).unwrap_or("<non-utf8>")),
+                    case.expected_addr
+                        .map(|a| core::str::from_utf8(a).unwrap_or("<non-utf8>")),
                     case.expected_names
                         .iter()
                         .map(|n| core::str::from_utf8(n).unwrap_or("<non-utf8>"))

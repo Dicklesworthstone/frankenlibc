@@ -896,8 +896,7 @@ mod tests {
     fn posix_mutex_unlock_conformance_table() {
         let mut fails = Vec::new();
         for case in UNLOCK_CONFORMANCE_TABLE {
-            let outcome =
-                mutex_contract_transition(case.kind, case.state, MutexContractOp::Unlock);
+            let outcome = mutex_contract_transition(case.kind, case.state, MutexContractOp::Unlock);
             if outcome.next != case.expected_next || outcome.errno != case.expected_errno {
                 fails.push(format!(
                     "{} [{}]: expected next={:?}/errno={} got next={:?}/errno={}",

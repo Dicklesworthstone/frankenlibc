@@ -476,10 +476,7 @@ unsafe fn resolved_pthread_attr_setsigmask_np_fn() -> Option<ResolvedPthreadAttr
 
 unsafe fn resolved_pthread_sigqueue_fn() -> Option<ResolvedPthreadSigqueueFn> {
     let ptr = unsafe {
-        resolve_cached_pthread_attr_symbol(
-            &RESOLVED_PTHREAD_SIGQUEUE_PTR,
-            &[b"pthread_sigqueue\0"],
-        )
+        resolve_cached_pthread_attr_symbol(&RESOLVED_PTHREAD_SIGQUEUE_PTR, &[b"pthread_sigqueue\0"])
     }?;
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadSigqueueFn>(ptr) })
 }

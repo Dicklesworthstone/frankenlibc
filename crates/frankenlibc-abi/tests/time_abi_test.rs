@@ -288,7 +288,14 @@ fn vdso_classify_fail_errno_is_always_positive() {
     // to errno. A bug that forgot to negate rc, or that mishandled
     // sign-extension on a future rt_sigreturn-style path, would emit a
     // non-positive errno and violate POSIX.
-    for rc in [-1, -2, -libc::EINVAL, -libc::EPERM, -libc::ENOMEM, -libc::EFAULT] {
+    for rc in [
+        -1,
+        -2,
+        -libc::EINVAL,
+        -libc::EPERM,
+        -libc::ENOMEM,
+        -libc::EFAULT,
+    ] {
         if rc == -libc::ENOSYS {
             continue;
         }

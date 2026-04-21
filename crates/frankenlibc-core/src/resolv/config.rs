@@ -481,7 +481,8 @@ options ndots:2 timeout:3 attempts:2 rotate
             id: "RESOLV-CONF-NS-003",
             // <resolv.h> MAXNS == 3; excess nameservers are silently dropped.
             spec_ref: "resolver(5) + <resolv.h> MAXNS=3 cap on nameservers",
-            input: b"nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n",
+            input:
+                b"nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n",
             assertion: ResolvConfAssertion::Nameservers(&["1.1.1.1", "2.2.2.2", "3.3.3.3"]),
         },
         // ---- options directive clamps ----
@@ -671,9 +672,7 @@ options ndots:2 timeout:3 attempts:2 rotate
                             .zip(expected.iter())
                             .all(|(got, want)| got == *want)
                 }
-                ResolvConfAssertion::DomainEquals(want) => {
-                    config.domain.as_deref() == *want
-                }
+                ResolvConfAssertion::DomainEquals(want) => config.domain.as_deref() == *want,
             };
             if !pass {
                 fails.push(format!(
