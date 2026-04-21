@@ -13,6 +13,11 @@ Cargo.lock
 /*.jpg
 /*.png
 
+# Root-level agent scratch (ad-hoc reproducers compiled + source alongside)
+/test_*
+/test_*.c
+/test_*.rs
+
 # bv (beads viewer) local config and caches
 .bv/
 
