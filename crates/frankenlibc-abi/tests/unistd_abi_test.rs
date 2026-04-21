@@ -1812,7 +1812,7 @@ fn msgrcv_null_payload_nonzero_size_fails_cleanly() {
 }
 
 #[test]
-fn process_vm_readv_null_iov_nonzero_counts_fails_cleanly() {
+fn process_vm_readv_null_iov_nonzero_counts_set_efault_like_host() {
     let pid = std::process::id() as libc::pid_t;
     let mut remote_byte = 0_u8;
     let remote_iov = libc::iovec {
@@ -1820,17 +1820,22 @@ fn process_vm_readv_null_iov_nonzero_counts_fails_cleanly() {
         iov_len: 1,
     };
 
-    let rc = unsafe { process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 0) };
-    assert_eq!(rc, -1);
-    assert!(
-        is_expected_process_vm_errno(errno_value()),
-        "unexpected errno for process_vm_readv null iov: {}",
-        errno_value()
-    );
+    clear_errno();
+    let host_rc = unsafe { libc::process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 0) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 1, &remote_iov, 1, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EFAULT);
 }
 
 #[test]
-fn process_vm_writev_null_iov_nonzero_counts_fails_cleanly() {
+fn process_vm_writev_null_iov_nonzero_counts_set_efault_like_host() {
     let pid = std::process::id() as libc::pid_t;
     let mut local_byte = 7_u8;
     let local_iov = libc::iovec {
@@ -1838,13 +1843,18 @@ fn process_vm_writev_null_iov_nonzero_counts_fails_cleanly() {
         iov_len: 1,
     };
 
-    let rc = unsafe { process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 0) };
-    assert_eq!(rc, -1);
-    assert!(
-        is_expected_process_vm_errno(errno_value()),
-        "unexpected errno for process_vm_writev null iov: {}",
-        errno_value()
-    );
+    clear_errno();
+    let host_rc = unsafe { libc::process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 0) };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 1, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EFAULT);
 }
 
 #[test]
