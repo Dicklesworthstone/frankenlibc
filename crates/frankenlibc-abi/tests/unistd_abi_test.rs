@@ -2424,6 +2424,11 @@ fn gai_suspend_reports_all_done_for_synchronous_stub_handles() {
 
 #[test]
 fn gai_suspend_degenerate_requests_ignore_invalid_timeouts() {
+    const EMPTY_INVALID_NANOSECONDS_SENTINEL: c_int = libc::E2BIG;
+    const EMPTY_INVALID_SECONDS_SENTINEL: c_int = libc::EOVERFLOW;
+    const NULL_SLOT_INVALID_NANOSECONDS_SENTINEL: c_int = libc::ENAMETOOLONG;
+    const NULL_SLOT_INVALID_SECONDS_SENTINEL: c_int = libc::EMSGSIZE;
+
     let invalid_nanoseconds = libc::timespec {
         tv_sec: 0,
         tv_nsec: 1_000_000_000,
@@ -2434,27 +2439,27 @@ fn gai_suspend_degenerate_requests_ignore_invalid_timeouts() {
     };
 
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *__errno_location() = EMPTY_INVALID_NANOSECONDS_SENTINEL;
     }
     assert_eq!(
         unsafe { gai_suspend(std::ptr::null(), 0, &invalid_nanoseconds) },
         GAI_EAI_ALLDONE
     );
-    assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(errno_value(), EMPTY_INVALID_NANOSECONDS_SENTINEL);
 
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *__errno_location() = EMPTY_INVALID_SECONDS_SENTINEL;
     }
     assert_eq!(
         unsafe { gai_suspend(std::ptr::null(), 0, &invalid_seconds) },
         GAI_EAI_ALLDONE
     );
-    assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(errno_value(), EMPTY_INVALID_SECONDS_SENTINEL);
 
     let requests: [*const c_void; 1] = [std::ptr::null()];
 
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *__errno_location() = NULL_SLOT_INVALID_NANOSECONDS_SENTINEL;
     }
     assert_eq!(
         unsafe {
@@ -2466,16 +2471,16 @@ fn gai_suspend_degenerate_requests_ignore_invalid_timeouts() {
         },
         GAI_EAI_ALLDONE
     );
-    assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(errno_value(), NULL_SLOT_INVALID_NANOSECONDS_SENTINEL);
 
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *__errno_location() = NULL_SLOT_INVALID_SECONDS_SENTINEL;
     }
     assert_eq!(
         unsafe { gai_suspend(requests.as_ptr(), requests.len() as c_int, &invalid_seconds,) },
         GAI_EAI_ALLDONE
     );
-    assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(errno_value(), NULL_SLOT_INVALID_SECONDS_SENTINEL);
 }
 
 #[test]
@@ -2484,6 +2489,7 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
     type HostGaiErrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
     type HostGaiSuspendFn =
         unsafe extern "C" fn(*const *const c_void, c_int, *const libc::timespec) -> c_int;
+    const EMPTY_INVALID_TIMEOUT_SENTINEL: c_int = libc::EILSEQ;
 
     let Some(host_gai_cancel) = (unsafe { load_host_symbol("gai_cancel") })
         .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiCancelFn>(ptr) })
@@ -2590,13 +2596,13 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
         tv_nsec: 1_000_000_000,
     };
     unsafe {
-        *libc::__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = EMPTY_INVALID_TIMEOUT_SENTINEL;
     }
     let host_suspend_invalid_timeout =
         unsafe { host_gai_suspend(std::ptr::null(), 0, &invalid_timeout) };
     let host_suspend_invalid_timeout_errno = unsafe { *libc::__errno_location() };
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *__errno_location() = EMPTY_INVALID_TIMEOUT_SENTINEL;
     }
     let abi_suspend_invalid_timeout = unsafe { gai_suspend(std::ptr::null(), 0, &invalid_timeout) };
     let abi_suspend_invalid_timeout_errno = errno_value();
@@ -2611,6 +2617,8 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
 fn gai_suspend_all_null_request_timeouts_match_host_contract() {
     type HostGaiSuspendFn =
         unsafe extern "C" fn(*const *const c_void, c_int, *const libc::timespec) -> c_int;
+    const NULL_SLOT_INVALID_NANOSECONDS_SENTINEL: c_int = libc::ENOTRECOVERABLE;
+    const NULL_SLOT_INVALID_SECONDS_SENTINEL: c_int = libc::EREMOTEIO;
 
     let Some(host_gai_suspend) = (unsafe { load_host_symbol("gai_suspend") })
         .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiSuspendFn>(ptr) })
@@ -2629,7 +2637,7 @@ fn gai_suspend_all_null_request_timeouts_match_host_contract() {
     };
 
     unsafe {
-        *libc::__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = NULL_SLOT_INVALID_NANOSECONDS_SENTINEL;
     }
     let host_invalid_nanoseconds = unsafe {
         host_gai_suspend(
@@ -2640,7 +2648,7 @@ fn gai_suspend_all_null_request_timeouts_match_host_contract() {
     };
     let host_invalid_nanoseconds_errno = unsafe { *libc::__errno_location() };
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *__errno_location() = NULL_SLOT_INVALID_NANOSECONDS_SENTINEL;
     }
     let abi_invalid_nanoseconds = unsafe {
         gai_suspend(
@@ -2657,13 +2665,13 @@ fn gai_suspend_all_null_request_timeouts_match_host_contract() {
     );
 
     unsafe {
-        *libc::__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = NULL_SLOT_INVALID_SECONDS_SENTINEL;
     }
     let host_invalid_seconds =
         unsafe { host_gai_suspend(requests.as_ptr(), requests.len() as c_int, &invalid_seconds) };
     let host_invalid_seconds_errno = unsafe { *libc::__errno_location() };
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *__errno_location() = NULL_SLOT_INVALID_SECONDS_SENTINEL;
     }
     let abi_invalid_seconds =
         unsafe { gai_suspend(requests.as_ptr(), requests.len() as c_int, &invalid_seconds) };
