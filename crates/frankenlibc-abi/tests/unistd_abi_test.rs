@@ -1906,11 +1906,22 @@ fn process_vm_readv_zero_local_iov_count_preserves_errno_and_succeeds() {
     };
 
     unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc = unsafe { libc::process_vm_readv(pid, std::ptr::null(), 0, &remote_iov, 1, 0) };
+    assert_eq!(host_rc, 0);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
         *__errno_location() = libc::E2BIG;
     }
-    let rc = unsafe { process_vm_readv(pid, std::ptr::null(), 0, &remote_iov, 1, 0) };
-    assert_eq!(rc, 0);
-    assert_eq!(errno_value(), libc::E2BIG);
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 0, &remote_iov, 1, 0) };
+    assert_eq!(abi_rc, 0);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::E2BIG);
 }
 
 #[test]
@@ -1923,11 +1934,22 @@ fn process_vm_writev_zero_remote_iov_count_preserves_errno_and_succeeds() {
     };
 
     unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc = unsafe { libc::process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 0, 0) };
+    assert_eq!(host_rc, 0);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
         *__errno_location() = libc::E2BIG;
     }
-    let rc = unsafe { process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 0, 0) };
-    assert_eq!(rc, 0);
-    assert_eq!(errno_value(), libc::E2BIG);
+    let abi_rc = unsafe { process_vm_writev(pid, &local_iov, 1, std::ptr::null(), 0, 0) };
+    assert_eq!(abi_rc, 0);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::E2BIG);
 }
 
 #[test]
@@ -1935,11 +1957,23 @@ fn process_vm_readv_all_null_zero_counts_preserve_errno_and_succeed() {
     let pid = std::process::id() as libc::pid_t;
 
     unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc =
+        unsafe { libc::process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(host_rc, 0);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
         *__errno_location() = libc::E2BIG;
     }
-    let rc = unsafe { process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
-    assert_eq!(rc, 0);
-    assert_eq!(errno_value(), libc::E2BIG);
+    let abi_rc = unsafe { process_vm_readv(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(abi_rc, 0);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::E2BIG);
 }
 
 #[test]
@@ -1966,11 +2000,23 @@ fn process_vm_writev_all_null_zero_counts_preserve_errno_and_succeed() {
     let pid = std::process::id() as libc::pid_t;
 
     unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc =
+        unsafe { libc::process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(host_rc, 0);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
         *__errno_location() = libc::E2BIG;
     }
-    let rc = unsafe { process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
-    assert_eq!(rc, 0);
-    assert_eq!(errno_value(), libc::E2BIG);
+    let abi_rc = unsafe { process_vm_writev(pid, std::ptr::null(), 0, std::ptr::null(), 0, 0) };
+    assert_eq!(abi_rc, 0);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::E2BIG);
 }
 
 #[test]
