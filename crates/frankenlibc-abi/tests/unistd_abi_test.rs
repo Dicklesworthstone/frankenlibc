@@ -2240,6 +2240,29 @@ fn process_mrelease_invalid_flags_override_zero_pidfd_like_host() {
 }
 
 #[test]
+fn pidfd_getfd_invalid_pidfd_sets_ebadf_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_getfd,
+            -1 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_uint,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { pidfd_getfd(-1, 0, 0) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
+}
+
+#[test]
 fn pidfd_getfd_invalid_flags_override_invalid_pidfd_like_host() {
     clear_errno();
     let host_rc = unsafe {
