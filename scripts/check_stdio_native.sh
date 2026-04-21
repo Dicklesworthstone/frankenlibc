@@ -24,6 +24,42 @@ if [[ ! -f "${LIB}" ]]; then
   exit 1
 fi
 
+symbol_addr() {
+  local symbol="$1"
+  nm -D --defined-only "${LIB}" 2>/dev/null | awk -v sym="${symbol}" '
+    {
+      name = $NF
+      sub(/@.*/, "", name)
+      if (name == sym) {
+        print $1
+        exit
+      }
+    }
+  '
+}
+
+check_alias_addr() {
+  local public_symbol="$1"
+  local alias_symbol="$2"
+  local public_addr alias_addr
+  public_addr="$(symbol_addr "${public_symbol}")"
+  alias_addr="$(symbol_addr "${alias_symbol}")"
+  if [[ -z "${public_addr}" || -z "${alias_addr}" ]]; then
+    echo "FAIL: missing nm symbol(s) for ${public_symbol}/${alias_symbol}" >&2
+    nm -D --defined-only "${LIB}" >&2 || true
+    exit 1
+  fi
+  if [[ "${public_addr}" != "${alias_addr}" ]]; then
+    echo "FAIL: ${alias_symbol} address ${alias_addr} != ${public_symbol} address ${public_addr}" >&2
+    nm -D --defined-only "${LIB}" | grep -E "(${public_symbol}|${alias_symbol})" >&2 || true
+    exit 1
+  fi
+}
+
+check_alias_addr "stdin" "_IO_2_1_stdin_"
+check_alias_addr "stdout" "_IO_2_1_stdout_"
+check_alias_addr "stderr" "_IO_2_1_stderr_"
+
 cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 "${ROOT}/tests/integration/fixture_stdio_printf.c" \
   -o "${BIN_DIR}/fixture_stdio_printf.bin"
 cc -D_POSIX_C_SOURCE=200809L -std=c11 -O2 "${ROOT}/tests/integration/fixture_stdio_globals.c" \
@@ -99,6 +135,7 @@ cat >"${REPORT}" <<JSON
   "library": "target/release/libfrankenlibc_abi.so",
   "checks": {
     "release_build_via_rch": "pass",
+    "nm_stdio_alias_addresses": "pass",
     "fixture_stdio_printf_strict": "pass",
     "fixture_stdio_printf_hardened": "pass",
     "fixture_stdio_globals_strict": "pass",

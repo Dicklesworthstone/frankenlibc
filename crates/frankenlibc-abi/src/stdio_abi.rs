@@ -10,6 +10,8 @@
 //! `StdioStream` instances from frankenlibc-core. stdin/stdout/stderr are
 //! pre-registered at well-known sentinel addresses.
 
+#[cfg(not(debug_assertions))]
+use core::arch::global_asm;
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -937,26 +939,47 @@ pub static mut stderr: *mut c_void = STDERR_SENTINEL as *mut c_void;
 
 // glibc internal `_IO_2_1_{stdin,stdout,stderr}_` aliases.
 //
-// In glibc, `_IO_2_1_stdin_` is the actual FILE struct and `stdin` is defined as `&_IO_2_1_stdin_`.
-// Some binaries resolve these symbols directly via dlsym or link-time resolution.
+// Some binaries resolve these names directly instead of going through the
+// public `stdin/stdout/stderr` globals. Release builds export them as true
+// linker aliases to those globals, which keeps both names on the exact same
+// pointer cell and therefore the exact same NativeFile storage.
 //
-// These must point to the same NativeFile storage as stdin/stdout/stderr to avoid
-// mismatched flushes and double-closes.
-//
-// We use AtomicPtr with explicit export_name to ensure linker visibility.
-use std::sync::atomic::AtomicPtr;
-
-#[unsafe(export_name = "_IO_2_1_stdin_")]
+// Debug/test builds do not export the libc symbol surface, so they keep local
+// mirror statics with the same runtime values for unit-test coverage.
+#[cfg(debug_assertions)]
 #[allow(non_upper_case_globals)]
-pub static IO_2_1_STDIN: AtomicPtr<c_void> = AtomicPtr::new(STDIN_SENTINEL as *mut c_void);
+pub static mut IO_2_1_STDIN: *mut c_void = STDIN_SENTINEL as *mut c_void;
 
-#[unsafe(export_name = "_IO_2_1_stdout_")]
+#[cfg(debug_assertions)]
 #[allow(non_upper_case_globals)]
-pub static IO_2_1_STDOUT: AtomicPtr<c_void> = AtomicPtr::new(STDOUT_SENTINEL as *mut c_void);
+pub static mut IO_2_1_STDOUT: *mut c_void = STDOUT_SENTINEL as *mut c_void;
 
-#[unsafe(export_name = "_IO_2_1_stderr_")]
+#[cfg(debug_assertions)]
 #[allow(non_upper_case_globals)]
-pub static IO_2_1_STDERR: AtomicPtr<c_void> = AtomicPtr::new(STDERR_SENTINEL as *mut c_void);
+pub static mut IO_2_1_STDERR: *mut c_void = STDERR_SENTINEL as *mut c_void;
+
+#[cfg(not(debug_assertions))]
+unsafe extern "C" {
+    #[link_name = "_IO_2_1_stdin_"]
+    pub static mut IO_2_1_STDIN: *mut c_void;
+    #[link_name = "_IO_2_1_stdout_"]
+    pub static mut IO_2_1_STDOUT: *mut c_void;
+    #[link_name = "_IO_2_1_stderr_"]
+    pub static mut IO_2_1_STDERR: *mut c_void;
+}
+
+#[cfg(not(debug_assertions))]
+global_asm!(
+    ".global _IO_2_1_stdin_",
+    ".type _IO_2_1_stdin_, @object",
+    ".set _IO_2_1_stdin_, stdin",
+    ".global _IO_2_1_stdout_",
+    ".type _IO_2_1_stdout_, @object",
+    ".set _IO_2_1_stdout_, stdout",
+    ".global _IO_2_1_stderr_",
+    ".type _IO_2_1_stderr_, @object",
+    ".set _IO_2_1_stderr_, stderr",
+);
 
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 static HOST_LIBIO_EXIT_PATCHED: AtomicBool = AtomicBool::new(false);
@@ -998,15 +1021,20 @@ pub(crate) fn init_host_stdio_streams() {
             stdin = stdin_ptr;
             stdout = stdout_ptr;
             stderr = stderr_ptr;
-            // Initialize the _IO_2_1_* aliases to point to the same NativeFile storage.
-            // This ensures binaries that resolve these symbols directly see the same
-            // streams as those using stdin/stdout/stderr.
-            IO_2_1_STDIN.store(stdin_ptr, Ordering::Release);
-            IO_2_1_STDOUT.store(stdout_ptr, Ordering::Release);
-            IO_2_1_STDERR.store(stderr_ptr, Ordering::Release);
+            #[cfg(debug_assertions)]
+            {
+                IO_2_1_STDIN = stdin_ptr;
+                IO_2_1_STDOUT = stdout_ptr;
+                IO_2_1_STDERR = stderr_ptr;
+            }
         }
     }
     HOST_STDIO_BOOTSTRAPPED.store(true, Ordering::Release);
+}
+
+#[doc(hidden)]
+pub fn init_host_stdio_streams_for_tests() {
+    init_host_stdio_streams();
 }
 
 // ---------------------------------------------------------------------------
@@ -6745,11 +6773,8 @@ mod _io_internal {
         pos
     }
 
-    // glibc _IO_2_1_{stdin,stdout,stderr}_ are the actual FILE struct objects.
-    // We do NOT export these symbols — doing so would shadow glibc's real
-    // FILE structs with zeroed memory, breaking _IO_un_link and other
-    // internal glibc operations that traverse the IO list. Instead, we let
-    // the host's symbols remain visible and point our stdin/stdout/stderr
-    // globals to the host's real FILE objects via init_host_stdio_streams().
+    // `_IO_2_1_{stdin,stdout,stderr}_` are exported by the outer module as
+    // aliases to `stdin/stdout/stderr`, so all six names resolve to the same
+    // NativeFile-backed standard stream cells.
 } // mod _io_internal
 pub use _io_internal::*;

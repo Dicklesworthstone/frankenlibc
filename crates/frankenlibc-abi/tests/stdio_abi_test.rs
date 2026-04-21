@@ -19,7 +19,8 @@ use frankenlibc_abi::io_internal_abi::{
     _IO_file_setbuf, _IO_file_stat, _IO_file_sync, _IO_file_underflow, _IO_file_write,
     _IO_file_xsputn, _IO_flush_all, _IO_fopen, _IO_fprintf, _IO_fputs, _IO_fread, _IO_fsetpos,
     _IO_fsetpos64, _IO_ftell, _IO_fwrite, _IO_printf, _IO_setbuffer, _IO_setvbuf, _IO_sprintf,
-    _IO_sscanf, _IO_ungetc, _IO_vfprintf, _IO_vsprintf, verify_native_file,
+    _IO_sscanf, _IO_ungetc, _IO_vfprintf, _IO_vsprintf, native_stdio_stream_ptr,
+    verify_native_file,
 };
 use frankenlibc_abi::io_internal_abi::{_IO_feof, _IO_ferror, _IO_getc, _IO_putc};
 use frankenlibc_abi::stdio_abi::{
@@ -33,6 +34,9 @@ use frankenlibc_abi::stdio_abi::{
     _IO_seekoff,
     _IO_seekpos,
     _IO_sgetn,
+    IO_2_1_STDERR,
+    IO_2_1_STDIN,
+    IO_2_1_STDOUT,
     asprintf,
     clearerr,
     clearerr_unlocked,
@@ -84,6 +88,7 @@ use frankenlibc_abi::stdio_abi::{
     getdelim,
     getline,
     getw,
+    init_host_stdio_streams_for_tests,
     mktemp,
     // Newly tested:
     open_memstream,
@@ -107,6 +112,9 @@ use frankenlibc_abi::stdio_abi::{
     snprintf,
     sprintf,
     sscanf,
+    stderr,
+    stdin,
+    stdout,
     take_last_decision_gate_for_tests,
     tmpfile,
     tmpfile64,
@@ -900,6 +908,31 @@ fn strict_hot_stdio_writes_skip_runtime_policy_gate() {
     let _ = take_last_decision_gate_for_tests();
     assert_eq!(unsafe { puts(c"".as_ptr()) }, 0);
     assert_eq!(take_last_decision_gate_for_tests(), None);
+}
+
+#[test]
+fn io_2_1_aliases_resolve_to_native_stdio_storage() {
+    init_host_stdio_streams_for_tests();
+
+    let stdin_ptr = native_stdio_stream_ptr(libc::STDIN_FILENO);
+    let stdout_ptr = native_stdio_stream_ptr(libc::STDOUT_FILENO);
+    let stderr_ptr = native_stdio_stream_ptr(libc::STDERR_FILENO);
+
+    unsafe {
+        assert_eq!(stdin, stdin_ptr);
+        assert_eq!(stdout, stdout_ptr);
+        assert_eq!(stderr, stderr_ptr);
+        assert_eq!(IO_2_1_STDIN, stdin_ptr);
+        assert_eq!(IO_2_1_STDOUT, stdout_ptr);
+        assert_eq!(IO_2_1_STDERR, stderr_ptr);
+        assert_eq!(IO_2_1_STDIN, stdin);
+        assert_eq!(IO_2_1_STDOUT, stdout);
+        assert_eq!(IO_2_1_STDERR, stderr);
+    }
+
+    assert_eq!(verify_native_file(stdin_ptr), Some(0));
+    assert_eq!(verify_native_file(stdout_ptr), Some(1));
+    assert_eq!(verify_native_file(stderr_ptr), Some(2));
 }
 
 #[test]
