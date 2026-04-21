@@ -12354,19 +12354,43 @@ fn execute_mmap_case(
     let flags = parse_i32(inputs, "flags").unwrap_or(34);
     let fd = parse_i32(inputs, "fd").unwrap_or(-1);
     let offset = inputs.get("offset").and_then(|v| v.as_i64()).unwrap_or(0) as libc::off_t;
+    let invalid_prot = (prot & !(libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC)) != 0;
+    let missing_visibility = (flags & (libc::MAP_PRIVATE | libc::MAP_SHARED)) == 0;
+    let repaired = mode_is_hardened(mode) && (invalid_prot || missing_visibility);
+    let effective_prot = if mode_is_hardened(mode) && invalid_prot {
+        libc::PROT_READ
+    } else {
+        prot
+    };
+    let effective_flags = if mode_is_hardened(mode) && missing_visibility {
+        flags | libc::MAP_PRIVATE
+    } else {
+        flags
+    };
 
     if length == 0 {
         return Ok(non_host_execution("MAP_FAILED".to_string()));
     }
 
     let ptr = unsafe {
-        frankenlibc_abi::mmap_abi::mmap(std::ptr::null_mut(), length, prot, flags, fd, offset)
+        frankenlibc_abi::mmap_abi::mmap(
+            std::ptr::null_mut(),
+            length,
+            effective_prot,
+            effective_flags,
+            fd,
+            offset,
+        )
     };
     let result = if ptr == libc::MAP_FAILED {
         "MAP_FAILED"
     } else {
         unsafe { frankenlibc_abi::mmap_abi::munmap(ptr, length) };
-        "MAPPED"
+        if repaired {
+            "MAPPED_REPAIRED"
+        } else {
+            "MAPPED"
+        }
     };
     Ok(non_host_execution(result.to_string()))
 }
@@ -14439,10 +14463,6 @@ mod tests {
             serde_json::from_str(raw).expect("virtual_memory_ops fixture should parse");
 
         for case in fixture.cases {
-            // Skip hardened repair cases - executor doesn't track repair annotations
-            if case.expected_output == "MAPPED_REPAIRED" {
-                continue;
-            }
             // Skip cases requiring pre-mapped addresses
             if case.inputs.get("addr").map(|v| v.as_str()) == Some(Some("valid_mapped")) {
                 continue;
