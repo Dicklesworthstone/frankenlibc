@@ -3181,6 +3181,24 @@ fn pidfd_open_invalid_pid_sets_einval_like_host() {
 }
 
 #[test]
+fn pidfd_open_invalid_pid_dominates_invalid_flags_with_einval_like_host() {
+    // bd-k59i: host glibc keeps the invalid-pid EINVAL contract even
+    // when flags are also invalid.
+    unsafe {
+        *__errno_location() = libc::EAGAIN;
+    }
+    let pidfd = unsafe { pidfd_open(-1, 1) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(pidfd, -1);
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "unexpected errno from pidfd_open(-1, 1): {err}"
+    );
+}
+
+#[test]
 fn pidfd_send_signal_invalid_pidfd_sets_ebadf_like_host() {
     unsafe {
         *__errno_location() = 0;
