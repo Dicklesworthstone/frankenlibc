@@ -10876,8 +10876,12 @@ fn execute_tcgetattr_case(
     ensure_supported_mode(mode)?;
     let fd = parse_i32(inputs, "fd")?;
     let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+    }
     let result = unsafe { frankenlibc_abi::termios_abi::tcgetattr(fd, &mut termios) };
-    let impl_output = if result == 0 {
+    let impl_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    let impl_output = if result == 0 || (result == -1 && impl_errno == libc::ENOTTY) {
         "0_OR_ENOTTY".to_string()
     } else {
         format!("{result}")
@@ -14303,8 +14307,8 @@ mod tests {
     // NOTE: time_ops.json uses placeholder outputs (POSITIVE_INT, NON_NEGATIVE, TM_STRUCT)
     // but executor returns placeholders unchanged - functions not yet implemented in executor
 
-    // NOTE: termios_ops.json uses flexible placeholders (0_OR_ENOTTY) but executor
-    // returns actual results (-1) - format mismatch
+    // NOTE: termios_ops.json uses flexible placeholders (0_OR_ENOTTY) and the
+    // shared executor normalizes ENOTTY failures into that fixture contract.
 
     #[test]
     fn socket_ops_fixture_cases_match_execute_fixture_case() {
