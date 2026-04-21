@@ -2377,10 +2377,10 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
     };
 
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = libc::E2BIG;
     }
     let host_cancel_null = unsafe { host_gai_cancel(std::ptr::null_mut()) };
-    let host_cancel_null_errno = errno_value();
+    let host_cancel_null_errno = unsafe { *libc::__errno_location() };
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
@@ -2391,10 +2391,10 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
 
     let mut host_dummy = 0u8;
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = libc::E2BIG;
     }
     let host_cancel_dummy = unsafe { host_gai_cancel((&mut host_dummy as *mut u8).cast()) };
-    let host_cancel_dummy_errno = errno_value();
+    let host_cancel_dummy_errno = unsafe { *libc::__errno_location() };
     let mut abi_dummy = 0u8;
     unsafe {
         *__errno_location() = libc::E2BIG;
@@ -2406,11 +2406,11 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
 
     let mut host_request: GaicbShape = unsafe { std::mem::zeroed() };
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = libc::E2BIG;
     }
     let host_error_zeroed =
         unsafe { host_gai_error((&mut host_request as *mut GaicbShape).cast()) };
-    let host_error_zeroed_errno = errno_value();
+    let host_error_zeroed_errno = unsafe { *libc::__errno_location() };
     let mut abi_request: GaicbShape = unsafe { std::mem::zeroed() };
     unsafe {
         *__errno_location() = libc::E2BIG;
@@ -2421,10 +2421,10 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
     assert_eq!(abi_error_zeroed_errno, host_error_zeroed_errno);
 
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = libc::E2BIG;
     }
     let host_suspend_empty = unsafe { host_gai_suspend(std::ptr::null(), 0, std::ptr::null()) };
-    let host_suspend_empty_errno = errno_value();
+    let host_suspend_empty_errno = unsafe { *libc::__errno_location() };
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
@@ -2435,7 +2435,7 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
 
     let host_requests: [*const c_void; 1] = [std::ptr::null()];
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = libc::E2BIG;
     }
     let host_suspend_null_slot = unsafe {
         host_gai_suspend(
@@ -2444,7 +2444,7 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
             std::ptr::null(),
         )
     };
-    let host_suspend_null_slot_errno = errno_value();
+    let host_suspend_null_slot_errno = unsafe { *libc::__errno_location() };
     let abi_requests: [*const c_void; 1] = [std::ptr::null()];
     unsafe {
         *__errno_location() = libc::E2BIG;
@@ -2465,11 +2465,11 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
         tv_nsec: 1_000_000_000,
     };
     unsafe {
-        *__errno_location() = libc::E2BIG;
+        *libc::__errno_location() = libc::E2BIG;
     }
     let host_suspend_invalid_timeout =
         unsafe { host_gai_suspend(std::ptr::null(), 0, &invalid_timeout) };
-    let host_suspend_invalid_timeout_errno = errno_value();
+    let host_suspend_invalid_timeout_errno = unsafe { *libc::__errno_location() };
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
