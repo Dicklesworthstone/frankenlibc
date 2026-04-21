@@ -855,6 +855,23 @@ fn sched_rr_get_interval_null_pointer_sets_efault() {
 }
 
 #[test]
+fn sched_rr_get_interval_negative_pid_valid_output_sets_einval() {
+    let mut observed_tp = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let observed = unsafe { sched_rr_get_interval(-1, &mut observed_tp) };
+    let observed_errno = unsafe { *__errno_location() };
+
+    assert_eq!(observed, -1);
+    assert_eq!(observed_errno, libc::EINVAL);
+}
+
+#[test]
 fn timer_settime_gettime_getoverrun_and_delete_roundtrip() {
     let Some(timer_id) = open_test_timer() else {
         return;
