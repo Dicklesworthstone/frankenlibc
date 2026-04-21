@@ -32,12 +32,12 @@ use frankenlibc_abi::unistd_abi::{
     getppid, getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent,
     getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline,
     getutline_r, glob64, globfree64, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo,
-    msgrcv, msgsnd, open, pathconf, process_madvise, process_mrelease, process_vm_readv,
-    process_vm_writev, read, readlink, rename, rmdir, semctl, semop, setfsent, sethostent,
-    setnetent, setnetgrent, setns, setprotoent, setservent, setttyent, setutent, shmdt, sigpause,
-    sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask,
-    uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp,
-    wordfree as abi_wordfree, write,
+    mount_setattr, msgrcv, msgsnd, open, pathconf, process_madvise, process_mrelease,
+    process_vm_readv, process_vm_writev, read, readlink, rename, rmdir, semctl, semop, setfsent,
+    sethostent, setnetent, setnetgrent, setns, setprotoent, setservent, setttyent, setutent, shmdt,
+    sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf,
+    truncate, umask, uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname,
+    wordexp as abi_wordexp, wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -2219,6 +2219,31 @@ fn process_mrelease_invalid_flags_override_zero_pidfd_like_host() {
 
     clear_errno();
     let abi_rc = unsafe { process_mrelease(0, 1) };
+    assert_eq!(abi_rc, -1);
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EINVAL);
+}
+
+#[test]
+fn mount_setattr_null_pathname_invalid_dirfd_sets_einval_like_host() {
+    clear_errno();
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_mount_setattr,
+            -1 as libc::c_long,
+            std::ptr::null::<c_char>(),
+            0 as libc::c_uint,
+            std::ptr::null::<c_void>(),
+            0_usize,
+        )
+    };
+    assert_eq!(host_rc, -1);
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    clear_errno();
+    let abi_rc = unsafe { mount_setattr(-1, std::ptr::null(), 0, std::ptr::null_mut(), 0) };
     assert_eq!(abi_rc, -1);
     let abi_errno = errno_value();
 
