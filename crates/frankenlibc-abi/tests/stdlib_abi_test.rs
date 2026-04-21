@@ -3010,6 +3010,39 @@ fn getcpu_all_null_outputs_succeeds_without_touching_errno() {
 }
 
 #[test]
+fn getcpu_null_cpu_pointer_with_valid_node_succeeds_without_touching_errno_like_host() {
+    let mut host_node = 0_u32;
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_getcpu,
+            ptr::null_mut::<libc::c_uint>(),
+            &mut host_node as *mut u32,
+            ptr::null_mut::<libc::c_void>(),
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    let mut abi_node = 0_u32;
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_rc = unsafe { getcpu(ptr::null_mut(), &mut abi_node, ptr::null_mut()) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, 0, "host getcpu(NULL, &node, NULL) should succeed");
+    assert_eq!(abi_rc, 0, "getcpu(NULL, &node, NULL) should succeed");
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::E2BIG,
+        "getcpu(NULL, &node, NULL) should preserve errno"
+    );
+}
+
+#[test]
 fn signalfd4_invalid_flags_set_einval() {
     let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
