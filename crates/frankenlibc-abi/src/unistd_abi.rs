@@ -18299,11 +18299,18 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaddrinfo_a(
-    _mode: c_int,
+    mode: c_int,
     list: *mut *mut c_void,
     nitems: c_int,
     _sevp: *mut c_void,
 ) -> c_int {
+    const GAI_WAIT: c_int = 0;
+    const GAI_NOWAIT: c_int = 1;
+
+    if mode != GAI_WAIT && mode != GAI_NOWAIT {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return libc::EAI_BADFLAGS;
+    }
     if nitems <= 0 {
         return 0;
     }

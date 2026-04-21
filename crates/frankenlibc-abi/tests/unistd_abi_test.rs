@@ -40,6 +40,8 @@ use frankenlibc_abi::unistd_abi::{
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
+const GAI_WAIT: c_int = 0;
+const GAI_NOWAIT: c_int = 1;
 const GAI_EAI_ALLDONE: c_int = -103;
 
 #[repr(C)]
@@ -1897,7 +1899,7 @@ fn getaddrinfo_a_zero_item_requests_report_success_without_touching_errno() {
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
-    let rc = unsafe { getaddrinfo_a(0, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    let rc = unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
 
@@ -1905,7 +1907,7 @@ fn getaddrinfo_a_zero_item_requests_report_success_without_touching_errno() {
         *__errno_location() = libc::E2BIG;
     }
     let mut requests = [std::ptr::null_mut()];
-    let rc = unsafe { getaddrinfo_a(0, requests.as_mut_ptr(), -1, std::ptr::null_mut()) };
+    let rc = unsafe { getaddrinfo_a(GAI_WAIT, requests.as_mut_ptr(), -1, std::ptr::null_mut()) };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
 }
@@ -1918,7 +1920,7 @@ fn getaddrinfo_a_all_null_request_slots_report_success_without_touching_errno() 
     let mut requests = [std::ptr::null_mut(), std::ptr::null_mut()];
     let rc = unsafe {
         getaddrinfo_a(
-            0,
+            GAI_WAIT,
             requests.as_mut_ptr(),
             requests.len() as c_int,
             std::ptr::null_mut(),
@@ -1926,6 +1928,49 @@ fn getaddrinfo_a_all_null_request_slots_report_success_without_touching_errno() 
     };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn getaddrinfo_a_nowait_degenerate_requests_report_success_without_touching_errno() {
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { getaddrinfo_a(GAI_NOWAIT, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let mut requests = [std::ptr::null_mut()];
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_NOWAIT,
+            requests.as_mut_ptr(),
+            requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn getaddrinfo_a_invalid_modes_report_badflags_before_degenerate_success() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { getaddrinfo_a(-1, std::ptr::null_mut(), 0, std::ptr::null_mut()) };
+    assert_eq!(rc, libc::EAI_BADFLAGS);
+    assert_eq!(errno_value(), libc::EINVAL);
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let mut requests = [std::ptr::null_mut()];
+    let rc = unsafe { getaddrinfo_a(2, requests.as_mut_ptr(), 1, std::ptr::null_mut()) };
+    assert_eq!(rc, libc::EAI_BADFLAGS);
+    assert_eq!(errno_value(), libc::EINVAL);
 }
 
 #[test]
@@ -1937,7 +1982,7 @@ fn getaddrinfo_a_non_null_requests_still_fall_back_to_eai_system() {
     let mut requests = [&mut request_payload as *mut _ as *mut c_void];
     let rc = unsafe {
         getaddrinfo_a(
-            0,
+            GAI_WAIT,
             requests.as_mut_ptr(),
             requests.len() as c_int,
             std::ptr::null_mut(),
