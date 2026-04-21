@@ -2773,6 +2773,25 @@ fn eventfd_write_invalid_fd_preserves_ebadf() {
 }
 
 #[test]
+fn eventfd_write_valid_fd_forbidden_all_ones_sets_einval() {
+    let fd = unsafe { libc::eventfd(0, 0) };
+    assert!(fd >= 0, "eventfd should create a writable descriptor");
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { eventfd_write(fd, u64::MAX) };
+    let err = unsafe { *__errno_location() };
+
+    unsafe {
+        libc::close(fd);
+    }
+
+    assert_eq!(rc, -1);
+    assert_eq!(err, libc::EINVAL);
+}
+
+#[test]
 fn posix_fadvise_invalid_fd_returns_ebadf_directly() {
     unsafe {
         *__errno_location() = 0;
