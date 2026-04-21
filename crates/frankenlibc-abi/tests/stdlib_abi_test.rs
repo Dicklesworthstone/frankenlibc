@@ -2810,6 +2810,18 @@ fn signalfd4_invalid_flags_set_einval() {
 }
 
 #[test]
+fn signalfd4_null_mask_with_exact_sizemask_sets_efault_like_host() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { signalfd4(-1, ptr::null(), 0) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, -1);
+    assert_eq!(err, libc::EFAULT);
+}
+
+#[test]
 fn mount_setattr_null_path_sets_einval_like_host() {
     unsafe {
         *__errno_location() = 0;
