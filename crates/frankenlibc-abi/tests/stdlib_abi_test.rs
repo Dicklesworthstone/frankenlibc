@@ -746,6 +746,26 @@ fn sched_priority_bounds_invalid_policy_set_errno() {
 }
 
 #[test]
+fn sched_priority_bounds_sched_batch_are_zero() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let min = unsafe { sched_get_priority_min(libc::SCHED_BATCH) };
+    let min_errno = unsafe { *__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let max = unsafe { sched_get_priority_max(libc::SCHED_BATCH) };
+    let max_errno = unsafe { *__errno_location() };
+
+    assert_eq!(min, 0);
+    assert_eq!(min_errno, 0);
+    assert_eq!(max, 0);
+    assert_eq!(max_errno, 0);
+}
+
+#[test]
 fn sched_getscheduler_matches_kernel_syscall() {
     // SAFETY: __errno_location points to thread-local errno.
     unsafe {
