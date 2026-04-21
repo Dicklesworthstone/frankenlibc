@@ -901,6 +901,23 @@ fn timer_settime_gettime_getoverrun_and_delete_roundtrip() {
 }
 
 #[test]
+fn timer_gettime_valid_timer_null_output_sets_efault() {
+    let Some(timer_id) = open_test_timer() else {
+        return;
+    };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { timer_gettime(timer_id, ptr::null_mut()) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(unsafe { timer_delete(timer_id) }, 0);
+    assert_eq!(rc, -1);
+    assert_eq!(err, libc::EFAULT);
+}
+
+#[test]
 fn timer_invalid_inputs_match_kernel_syscalls() {
     let invalid_timer = (-1_isize) as *mut libc::c_void;
     let mut observed_curr: libc::itimerspec = unsafe { std::mem::zeroed() };
