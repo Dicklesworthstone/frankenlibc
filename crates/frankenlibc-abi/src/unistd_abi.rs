@@ -18399,9 +18399,9 @@ pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
 /// complete by the time `gai_suspend` is called. The empty-list and all-NULL
 /// list cases are part of the proven host-parity path and return `EAI_ALLDONE`
 /// without mutating `errno`, even when the caller supplies a timeout that
-/// would otherwise be invalid. Nonzero `ent` with a NULL list is an intentional
-/// safe divergence from crash-prone host behavior and also returns
-/// `EAI_ALLDONE` without mutating `errno`.
+/// would otherwise be invalid. Nonzero `ent` with a NULL list, including
+/// negative `ent`, is an intentional safe divergence from crash-prone host
+/// behavior and also returns `EAI_ALLDONE` without mutating `errno`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_suspend(
     _list: *const *const c_void,

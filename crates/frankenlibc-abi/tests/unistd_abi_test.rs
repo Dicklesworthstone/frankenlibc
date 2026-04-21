@@ -2786,6 +2786,29 @@ fn host_getaddrinfo_a_null_list_positive_nitems_probe_process() {
 }
 
 #[test]
+fn host_gai_suspend_null_list_nonzero_ent_probe_process() {
+    let Some(ent) = std::env::var_os("FRANKENLIBC_HOST_GAI_SUSPEND_NULL_LIST_ENT")
+        .and_then(|value| value.into_string().ok())
+        .and_then(|value| value.parse::<c_int>().ok())
+    else {
+        return;
+    };
+
+    type HostGaiSuspendFn =
+        unsafe extern "C" fn(*const *const c_void, c_int, *const libc::timespec) -> c_int;
+    let host_gai_suspend = unsafe { load_host_symbol("gai_suspend") }
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiSuspendFn>(ptr) })
+        .expect("host gai_suspend symbol should exist for null-list probe");
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { host_gai_suspend(std::ptr::null(), ent, std::ptr::null()) };
+    let err = unsafe { *libc::__errno_location() };
+    println!("HOST_GAI_SUSPEND_NULL_LIST_RETURN:{ent}:{rc}:{err}");
+}
+
+#[test]
 fn gai_error_null_policy_is_characterized_without_crashing_parent_tests() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
@@ -2818,6 +2841,47 @@ fn gai_error_null_policy_is_characterized_without_crashing_parent_tests() {
             "host gai_error(NULL) probe failed without a signal classification; status={:?} stdout={host_stdout:?} stderr={host_stderr:?}",
             output.status.code()
         );
+    }
+}
+
+#[test]
+fn gai_suspend_null_list_nonzero_ent_policy_is_characterized_without_crashing_parent_tests() {
+    for ent in [1, -1] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("host_gai_suspend_null_list_nonzero_ent_probe_process")
+            .arg("--nocapture")
+            .env(
+                "FRANKENLIBC_HOST_GAI_SUSPEND_NULL_LIST_ENT",
+                ent.to_string(),
+            )
+            .output()
+            .expect("failed to spawn host gai_suspend(NULL, nonzero ent) probe subprocess");
+
+        let host_stdout = String::from_utf8_lossy(&output.stdout);
+        let host_stderr = String::from_utf8_lossy(&output.stderr);
+        let host_signal = output.status.signal();
+
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        let abi_rc = unsafe { gai_suspend(std::ptr::null(), ent, std::ptr::null()) };
+        let abi_errno = errno_value();
+        assert_eq!(abi_rc, GAI_EAI_ALLDONE, "ent={ent} rc");
+        assert_eq!(abi_errno, libc::E2BIG, "ent={ent} errno");
+
+        if output.status.success() {
+            assert!(
+                host_stdout.contains(&format!("HOST_GAI_SUSPEND_NULL_LIST_RETURN:{ent}:")),
+                "host gai_suspend(NULL, ent={ent}) probe exited successfully without reporting its outcome; stdout={host_stdout:?} stderr={host_stderr:?}"
+            );
+        } else {
+            assert!(
+                host_signal.is_some(),
+                "host gai_suspend(NULL, ent={ent}) probe failed without a signal classification; status={:?} stdout={host_stdout:?} stderr={host_stderr:?}",
+                output.status.code()
+            );
+        }
     }
 }
 
