@@ -3091,6 +3091,42 @@ fn fsconfig_invalid_fsfd_with_set_flag_key_sets_einval_like_host() {
 }
 
 #[test]
+fn fsconfig_invalid_command_on_invalid_fsfd_still_sets_einval_like_host() {
+    let key = CString::new("k").expect("valid key");
+    let invalid_cmd = 999_u32;
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_fsconfig,
+            -1,
+            invalid_cmd,
+            key.as_ptr(),
+            ptr::null::<libc::c_char>(),
+            0_usize,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { fsconfig(-1, invalid_cmd, key.as_ptr(), ptr::null(), 0) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EINVAL,
+        "unexpected errno from fsconfig(-1, 999, \"k\", NULL, 0): {abi_err}"
+    );
+}
+
+#[test]
 fn fsopen_nonzero_flags_with_valid_fsname_preserves_eperm_like_host() {
     let fsname = CString::new("tmpfs").expect("valid fsname");
     unsafe {
