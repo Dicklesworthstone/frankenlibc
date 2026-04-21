@@ -3,8 +3,12 @@
 //! Handles wide-character (32-bit) string operations.
 //! On Linux/glibc, `wchar_t` is 32-bit (UTF-32).
 //!
+use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
+use std::mem::size_of;
+use std::sync::{Mutex, OnceLock};
 
+use frankenlibc_core::stdio::StdioStream;
 use frankenlibc_core::stdio::printf::{FormatSegment, parse_format_string};
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -29,6 +33,82 @@ fn record_truncation(requested: usize, truncated: usize) {
 /// Convert byte count to wchar count (assuming 4-byte wchar_t).
 fn bytes_to_wchars(bytes: usize) -> usize {
     bytes / 4
+}
+
+#[derive(Clone, Copy)]
+struct WideMemStreamSync {
+    buf_loc: *mut *mut u32,
+    size_loc: *mut usize,
+}
+
+// SAFETY: These raw pointers are only dereferenced while holding the registry
+// mutex, and POSIX requires the caller-provided buf/size locations to remain
+// valid for the lifetime of the open_wmemstream stream.
+unsafe impl Send for WideMemStreamSync {}
+
+fn wide_memstream_registry() -> &'static Mutex<Option<HashMap<usize, WideMemStreamSync>>> {
+    static REGISTRY: OnceLock<Mutex<Option<HashMap<usize, WideMemStreamSync>>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(Some(HashMap::new())))
+}
+
+fn decode_wmemstream_bytes(data: &[u8]) -> Vec<u32> {
+    match std::str::from_utf8(data) {
+        Ok(s) => s.chars().map(|ch| ch as u32).collect(),
+        Err(_) => String::from_utf8_lossy(data)
+            .chars()
+            .map(|ch| ch as u32)
+            .collect(),
+    }
+}
+
+pub(crate) unsafe fn sync_open_wmemstream_to_caller(id: usize, stream: &StdioStream) {
+    let guard = wide_memstream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(ref map) = *guard
+        && let Some(info) = map.get(&id)
+    {
+        let Some(data) = stream.mem_data() else {
+            return;
+        };
+        let wchars = decode_wmemstream_bytes(data);
+        let alloc_size = (wchars.len() + 1) * size_of::<u32>();
+        let buf = unsafe { crate::malloc_abi::raw_alloc(alloc_size) } as *mut u32;
+        if buf.is_null() {
+            return;
+        }
+        for (idx, wc) in wchars.iter().copied().enumerate() {
+            unsafe { *buf.add(idx) = wc };
+        }
+        unsafe { *buf.add(wchars.len()) = 0 };
+        let previous = unsafe { *info.buf_loc };
+        unsafe {
+            *info.buf_loc = buf;
+            *info.size_loc = wchars.len();
+        }
+        if !previous.is_null() {
+            unsafe { crate::malloc_abi::raw_free(previous.cast::<c_void>()) };
+        }
+    }
+}
+
+pub(crate) fn unregister_open_wmemstream(id: usize) {
+    let mut guard = wide_memstream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(ref mut map) = *guard {
+        map.remove(&id);
+    }
+}
+
+pub(crate) fn fwide_orientation(stream: *mut c_void) -> Option<c_int> {
+    let id = crate::stdio_abi::stream_id_from_handle(stream);
+    let guard = wide_memstream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    guard
+        .as_ref()
+        .and_then(|map| map.contains_key(&id).then_some(1))
 }
 
 /// Scan a wide string with an optional hard bound (in elements).
@@ -4281,9 +4361,8 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
         return std::ptr::null_mut();
     }
 
-    // Use underlying open_memstream for byte-level storage, then track wide metadata.
     // Allocate initial wide buffer (empty, NUL-terminated).
-    let initial = unsafe { crate::malloc_abi::raw_alloc(4) } as *mut u32;
+    let initial = unsafe { crate::malloc_abi::raw_alloc(size_of::<u32>()) } as *mut u32;
     if initial.is_null() {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return std::ptr::null_mut();
@@ -4294,22 +4373,21 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
         *sizep = 0;
     }
 
-    // Delegate to our byte-level open_memstream. The wide semantics will be handled
-    // by the fwprintf/fputwc layer which converts wide → UTF-8 → byte stream.
-    let mut byte_ptr: *mut i8 = std::ptr::null_mut();
-    let mut byte_size: usize = 0;
-    let stream =
-        unsafe { crate::stdio_abi::open_memstream(&mut byte_ptr as *mut *mut i8, &mut byte_size) };
-    if stream.is_null() {
-        unsafe { crate::malloc_abi::raw_free(initial as *mut c_void) };
-        unsafe {
-            *bufp = std::ptr::null_mut();
-            *sizep = 0;
-        }
-        return std::ptr::null_mut();
-    }
+    let id =
+        crate::stdio_abi::register_stream(frankenlibc_core::stdio::StdioStream::new_mem_dynamic());
+    let mut guard = wide_memstream_registry()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    map.insert(
+        id,
+        WideMemStreamSync {
+            buf_loc: bufp,
+            size_loc: sizep,
+        },
+    );
 
-    stream
+    id as *mut c_void
 }
 
 /// `getwc` — alias for fgetwc.

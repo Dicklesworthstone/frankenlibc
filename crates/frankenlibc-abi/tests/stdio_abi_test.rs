@@ -2119,6 +2119,32 @@ fn open_memstream_returns_stream_or_null() {
     unsafe { fclose(stream) };
 }
 
+#[test]
+fn open_memstream_grows_and_syncs_on_flush_and_close() {
+    let mut ptr: *mut c_char = std::ptr::null_mut();
+    let mut size: usize = 0;
+    let stream = unsafe { open_memstream(&mut ptr, &mut size) };
+    assert!(!stream.is_null());
+
+    let payload = vec![b'x'; 8192];
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(size, payload.len());
+    assert!(!ptr.is_null());
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), size) };
+    assert_eq!(bytes, payload.as_slice());
+    assert_eq!(unsafe { *ptr.add(size) }, 0);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(size, payload.len());
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), size) };
+    assert_eq!(bytes, payload.as_slice());
+
+    unsafe { frankenlibc_abi::malloc_abi::free(ptr.cast::<c_void>()) };
+}
+
 // ===========================================================================
 // puts / putchar / putchar_unlocked — test via file stream (fdopen)
 // ===========================================================================

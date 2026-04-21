@@ -4950,6 +4950,10 @@ pub unsafe extern "C" fn futimesat(
 // fwide: native — always return 0 (unset, compatible with byte-oriented streams)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fwide(stream: *mut c_void, mode: c_int) -> c_int {
+    if let Some(orientation) = crate::wchar_abi::fwide_orientation(stream) {
+        let _ = mode;
+        return orientation;
+    }
     let _ = (stream, mode);
     0 // stream orientation not set
 }

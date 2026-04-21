@@ -622,6 +622,17 @@ fn alloc_stream_id() -> usize {
     id
 }
 
+pub(crate) fn register_stream(stream: StdioStream) -> usize {
+    let id = alloc_stream_id();
+    let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
+    reg.streams.insert(id, stream);
+    id
+}
+
+pub(crate) fn stream_id_from_handle(stream: *mut c_void) -> usize {
+    canonical_stream_id(stream)
+}
+
 #[inline]
 fn stream_exists(id: usize) -> bool {
     let reg = registry().lock().unwrap_or_else(|e| e.into_inner());
@@ -1126,6 +1137,7 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
         unsafe {
             sync_memstream_to_caller(id, &s);
             sync_fmemopen_full(id, &s);
+            crate::wchar_abi::sync_open_wmemstream_to_caller(id, &s);
         }
         // Remove sync metadata for open_memstream.
         let mut sync_guard = mem_sync_registry()
@@ -1141,6 +1153,7 @@ pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
         if let Some(ref mut map) = *fixed_guard {
             map.remove(&id);
         }
+        crate::wchar_abi::unregister_open_wmemstream(id);
         return 0;
     }
 
@@ -1240,6 +1253,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
                     unsafe {
                         sync_memstream_to_caller(id, s);
                         sync_fmemopen_full(id, s);
+                        crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
                     }
                     true
                 } else {
@@ -1269,6 +1283,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
             unsafe {
                 sync_memstream_to_caller(id, s);
                 sync_fmemopen_full(id, s);
+                crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
             }
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, false);
             return 0;
@@ -5058,6 +5073,7 @@ pub unsafe extern "C" fn freopen(
             unsafe {
                 sync_memstream_to_caller(id, &old);
                 sync_fmemopen_full(id, &old);
+                crate::wchar_abi::sync_open_wmemstream_to_caller(id, &old);
             }
             let mut sync_guard = mem_sync_registry()
                 .lock()
@@ -5071,6 +5087,7 @@ pub unsafe extern "C" fn freopen(
             if let Some(ref mut map) = *fixed_guard {
                 map.remove(&id);
             }
+            crate::wchar_abi::unregister_open_wmemstream(id);
         }
         let pending = old.prepare_close();
         let old_fd = old.fd();

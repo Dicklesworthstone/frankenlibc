@@ -4,6 +4,7 @@
 
 use std::ffi::{CStr, c_char, c_int, c_void};
 
+use frankenlibc_abi::glibc_internal_abi::fwide;
 use frankenlibc_abi::stdlib_abi::{basename, dirname, realpath};
 use frankenlibc_abi::wchar_abi::*;
 
@@ -1384,4 +1385,36 @@ fn wide_stream_string_io_handles_newline_splitting() {
     assert!(unsafe { fgetws(buf.as_mut_ptr(), buf.len() as i32, stream) }.is_null());
 
     assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(stream) }, 0);
+}
+
+#[test]
+fn open_wmemstream_flushes_wide_buffer_and_reports_orientation() {
+    let mut buf: *mut u32 = std::ptr::null_mut();
+    let mut size = 0usize;
+    let stream = unsafe { open_wmemstream(&mut buf, &mut size) };
+    assert!(!stream.is_null());
+    assert!(!buf.is_null());
+    assert_eq!(size, 0);
+
+    assert!(unsafe { fwide(stream, 0) } > 0);
+    assert!(unsafe { fwide(stream, -1) } > 0);
+
+    assert_eq!(unsafe { fputwc('é' as u32, stream) }, 'é' as u32);
+    assert_eq!(unsafe { fputwc('A' as u32, stream) }, 'A' as u32);
+    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fflush(stream) }, 0);
+
+    assert_eq!(size, 2);
+    let written = unsafe { std::slice::from_raw_parts(buf, size + 1) };
+    assert_eq!(written[0], 'é' as u32);
+    assert_eq!(written[1], 'A' as u32);
+    assert_eq!(written[2], 0);
+
+    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(stream) }, 0);
+    assert_eq!(size, 2);
+    let written = unsafe { std::slice::from_raw_parts(buf, size + 1) };
+    assert_eq!(written[0], 'é' as u32);
+    assert_eq!(written[1], 'A' as u32);
+    assert_eq!(written[2], 0);
+
+    unsafe { frankenlibc_abi::malloc_abi::free(buf.cast::<c_void>()) };
 }
