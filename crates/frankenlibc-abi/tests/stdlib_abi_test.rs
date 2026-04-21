@@ -3121,6 +3121,22 @@ fn pidfd_open_current_pid_succeeds_without_touching_errno() {
 }
 
 #[test]
+fn pidfd_open_current_pid_invalid_flags_set_einval_like_host() {
+    unsafe {
+        *__errno_location() = libc::EAGAIN;
+    }
+    let pidfd = unsafe { pidfd_open(libc::getpid(), 1) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(pidfd, -1);
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "unexpected errno from pidfd_open(getpid(), 1): {err}"
+    );
+}
+
+#[test]
 fn pidfd_send_signal_invalid_pidfd_sets_ebadf_like_host() {
     unsafe {
         *__errno_location() = 0;
