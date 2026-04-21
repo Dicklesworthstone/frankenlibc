@@ -18375,12 +18375,12 @@ pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
 /// `gai_error` — query status of an asynchronous name resolution request (bd-9dq5).
 ///
 /// Since all resolution is synchronous and `getaddrinfo_a` is unimplemented,
-/// a zeroed request descriptor is already complete, while opaque handles remain
-/// unsupported. The all-zero `gaicb` case is part of the proven host-parity
-/// path and reports success without mutating `errno`. Opaque or NULL handles
-/// are treated as an intentional safe divergence and return `EAI_SYSTEM` with
-/// `ENOSYS` instead of following crash-prone or otherwise host-UB-adjacent
-/// behavior.
+/// a zeroed request descriptor represents the completed synchronous stub
+/// handle, while opaque handles remain unsupported. The all-zero `gaicb` case
+/// is part of the proven host-parity path and reports success without mutating
+/// `errno`. Opaque or NULL handles are treated as an intentional safe
+/// divergence and return `EAI_SYSTEM` with `ENOSYS` instead of following
+/// crash-prone or otherwise host-UB-adjacent behavior.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
     if unsafe { is_zeroed_gaicb_request(req) } {

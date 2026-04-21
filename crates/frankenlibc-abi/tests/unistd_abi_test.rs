@@ -2334,6 +2334,34 @@ fn gai_error_zeroed_gaicb_reports_success_without_touching_errno() {
 }
 
 #[test]
+fn gai_error_zeroed_gaicb_preserves_errno_like_host() {
+    type HostGaiErrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+    let Some(host_gai_error) = (unsafe { load_host_symbol("gai_error") })
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGaiErrorFn>(ptr) })
+    else {
+        return;
+    };
+
+    let mut host_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let host_rc = unsafe { host_gai_error((&mut host_request as *mut GaicbShape).cast()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let mut abi_request: GaicbShape = unsafe { std::mem::zeroed() };
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
+    let abi_rc = unsafe { gai_error((&mut abi_request as *mut GaicbShape).cast()) };
+    let abi_errno = errno_value();
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+}
+
+#[test]
 fn gai_suspend_reports_all_done_for_synchronous_stub_handles() {
     unsafe {
         *__errno_location() = libc::E2BIG;
