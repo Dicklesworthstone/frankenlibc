@@ -133,6 +133,25 @@ fn temp_path(tag: &str) -> PathBuf {
     path
 }
 
+fn temp_dir_entries_with_prefix(prefix: &str) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    let tmp_dir = std::env::temp_dir();
+    let Ok(entries) = fs::read_dir(&tmp_dir) else {
+        return matches;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(prefix.as_bytes()))
+        {
+            matches.push(path);
+        }
+    }
+    matches.sort();
+    matches
+}
+
 unsafe extern "C" fn call_io_vfprintf(
     stream: *mut c_void,
     format: *const c_char,
@@ -1600,6 +1619,39 @@ fn tmpfile_creates_writable_anonymous_stream() {
     assert_eq!(content.to_bytes(), b"tmpfile-test");
 
     assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn tmpfile_closes_without_leaking_named_tmp_entries() {
+    let before = temp_dir_entries_with_prefix("frankenlibc_");
+
+    let stream = unsafe { tmpfile() };
+    assert!(!stream.is_null());
+
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+
+    let proc_fd_path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+    let target =
+        fs::read_link(&proc_fd_path).expect("tmpfile fd should be visible in /proc/self/fd");
+    let rendered = target.to_string_lossy();
+    assert!(
+        rendered.contains("/tmp/"),
+        "tmpfile backing path should live under /tmp: {rendered}"
+    );
+    assert!(
+        rendered.contains("(deleted)"),
+        "tmpfile backing file should already be unlinked while open: {rendered}"
+    );
+
+    assert_eq!(unsafe { fputs(c"tmpfile-cleanup".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+
+    let after = temp_dir_entries_with_prefix("frankenlibc_");
+    assert_eq!(
+        after, before,
+        "tmpfile must not leave residual named files in /tmp"
+    );
 }
 
 #[test]
