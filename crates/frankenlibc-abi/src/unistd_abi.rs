@@ -18328,6 +18328,9 @@ pub unsafe extern "C" fn getaddrinfo_a(
     if nitems <= 0 {
         return 0;
     }
+    // Host glibc is crash-prone when `list` is NULL but `nitems > 0`.
+    // FrankenLibC intentionally treats that shape as unsupported and returns
+    // `EAI_SYSTEM`/`ENOSYS` instead of mirroring host UB at the ABI boundary.
     if !list.is_null() {
         // SAFETY: `list` is a C pointer to `nitems` request slots provided by the
         // caller. We only create a shared slice after validating `nitems > 0`,

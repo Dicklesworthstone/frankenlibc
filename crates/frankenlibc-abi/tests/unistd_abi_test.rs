@@ -2766,6 +2766,26 @@ fn host_gai_error_null_probe_process() {
 }
 
 #[test]
+fn host_getaddrinfo_a_null_list_positive_nitems_probe_process() {
+    if std::env::var_os("FRANKENLIBC_HOST_GETADDRINFO_A_NULL_LIST_PROBE").is_none() {
+        return;
+    }
+
+    type HostGetaddrinfoAFn =
+        unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
+    let host_getaddrinfo_a = unsafe { load_host_symbol("getaddrinfo_a") }
+        .map(|ptr| unsafe { std::mem::transmute::<*mut c_void, HostGetaddrinfoAFn>(ptr) })
+        .expect("host getaddrinfo_a symbol should exist for null-list probe");
+
+    unsafe {
+        *libc::__errno_location() = libc::E2BIG;
+    }
+    let rc = unsafe { host_getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 1, std::ptr::null_mut()) };
+    let err = unsafe { *libc::__errno_location() };
+    println!("HOST_GETADDRINFO_A_NULL_LIST_RETURN:{rc}:{err}");
+}
+
+#[test]
 fn gai_error_null_policy_is_characterized_without_crashing_parent_tests() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
@@ -2796,6 +2816,42 @@ fn gai_error_null_policy_is_characterized_without_crashing_parent_tests() {
         assert!(
             host_signal.is_some(),
             "host gai_error(NULL) probe failed without a signal classification; status={:?} stdout={host_stdout:?} stderr={host_stderr:?}",
+            output.status.code()
+        );
+    }
+}
+
+#[test]
+fn getaddrinfo_a_null_list_positive_nitems_policy_is_characterized_without_crashing_parent_tests() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("host_getaddrinfo_a_null_list_positive_nitems_probe_process")
+        .arg("--nocapture")
+        .env("FRANKENLIBC_HOST_GETADDRINFO_A_NULL_LIST_PROBE", "1")
+        .output()
+        .expect("failed to spawn host getaddrinfo_a(NULL, positive nitems) probe subprocess");
+
+    let host_stdout = String::from_utf8_lossy(&output.stdout);
+    let host_stderr = String::from_utf8_lossy(&output.stderr);
+    let host_signal = output.status.signal();
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { getaddrinfo_a(GAI_WAIT, std::ptr::null_mut(), 1, std::ptr::null_mut()) };
+    let abi_errno = errno_value();
+    assert_eq!(abi_rc, libc::EAI_SYSTEM);
+    assert_eq!(abi_errno, libc::ENOSYS);
+
+    if output.status.success() {
+        assert!(
+            host_stdout.contains("HOST_GETADDRINFO_A_NULL_LIST_RETURN:"),
+            "host getaddrinfo_a(NULL, positive nitems) probe exited successfully without reporting its outcome; stdout={host_stdout:?} stderr={host_stderr:?}"
+        );
+    } else {
+        assert!(
+            host_signal.is_some(),
+            "host getaddrinfo_a(NULL, positive nitems) probe failed without a signal classification; status={:?} stdout={host_stdout:?} stderr={host_stderr:?}",
             output.status.code()
         );
     }
