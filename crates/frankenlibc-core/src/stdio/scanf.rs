@@ -81,6 +81,15 @@ fn scanf_length_allowed(length: LengthMod, length_mask: u8) -> bool {
     }
 }
 
+const fn invalid_scanf_route() -> ScanfRoute {
+    ScanfRoute {
+        handler: ScanfHandler::Invalid,
+        length_mask: 0,
+        skips_leading_whitespace: false,
+        arg_category: ScanfArgCategory::None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Scan value types
 // ---------------------------------------------------------------------------
@@ -120,6 +129,7 @@ pub struct ScanSpec {
     pub length: LengthMod,
     pub conversion: u8,
     pub scanset: Option<ScanSet>,
+    route: ScanfRoute,
 }
 
 /// Character set for %[...] specifier.
@@ -161,6 +171,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 length: LengthMod::None,
                 conversion: 0,
                 scanset: None,
+                route: invalid_scanf_route(),
             };
 
             // Assignment suppression.
@@ -277,7 +288,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
             if !scanf_length_allowed(spec.length, route.length_mask) {
                 break;
             }
-            let _ = (route.skips_leading_whitespace, route.arg_category);
+            spec.route = route;
 
             directives.push(ScanDirective::Spec(Box::new(spec)));
         } else if fmt[i].is_ascii_whitespace() {
@@ -385,19 +396,19 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
 /// Returns `None` on matching failure.
 /// Returns `Some((value, new_pos))` on success. `value` is `None` for %n.
 fn scan_one(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
-    match spec.conversion {
-        b'd' => scan_int(input, pos, spec, 10, true),
-        b'i' => scan_int_auto(input, pos, spec),
-        b'u' => scan_int(input, pos, spec, 10, false),
-        b'o' => scan_int(input, pos, spec, 8, false),
-        b'x' | b'X' => scan_int(input, pos, spec, 16, false),
-        b'f' | b'e' | b'g' | b'a' | b'E' | b'G' | b'A' | b'F' => scan_float(input, pos, spec),
-        b'c' => scan_char(input, pos, spec),
-        b's' => scan_string(input, pos, spec),
-        b'[' => scan_scanset(input, pos, spec),
-        b'n' => Some((Some(ScanValue::CharsConsumed(pos)), pos)),
-        b'p' => scan_pointer(input, pos, spec),
-        _ => None,
+    match spec.route.handler {
+        ScanfHandler::SignedDecimal => scan_int(input, pos, spec, 10, true),
+        ScanfHandler::SignedAutoBase => scan_int_auto(input, pos, spec),
+        ScanfHandler::UnsignedDecimal => scan_int(input, pos, spec, 10, false),
+        ScanfHandler::UnsignedOctal => scan_int(input, pos, spec, 8, false),
+        ScanfHandler::UnsignedHex => scan_int(input, pos, spec, 16, false),
+        ScanfHandler::Float => scan_float(input, pos, spec),
+        ScanfHandler::Character => scan_char(input, pos, spec),
+        ScanfHandler::String => scan_string(input, pos, spec),
+        ScanfHandler::Scanset => scan_scanset(input, pos, spec),
+        ScanfHandler::CharsConsumed => Some((Some(ScanValue::CharsConsumed(pos)), pos)),
+        ScanfHandler::Pointer => scan_pointer(input, pos, spec),
+        ScanfHandler::Invalid => None,
     }
 }
 
@@ -414,6 +425,14 @@ fn effective_width(spec: &ScanSpec, default: usize) -> usize {
     spec.width.unwrap_or(default)
 }
 
+fn apply_leading_whitespace_policy(input: &[u8], pos: usize, spec: &ScanSpec) -> usize {
+    if spec.route.skips_leading_whitespace {
+        skip_ws(input, pos)
+    } else {
+        pos
+    }
+}
+
 /// Scan an integer with specified base. If `signed`, allow leading +/-.
 fn scan_int(
     input: &[u8],
@@ -422,7 +441,7 @@ fn scan_int(
     base: u32,
     signed: bool,
 ) -> Option<(Option<ScanValue>, usize)> {
-    let pos = skip_ws(input, pos);
+    let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
         return None;
     }
@@ -509,7 +528,7 @@ fn scan_int(
 
 /// Scan integer with auto-detected base (%i: 0x=hex, 0=octal, else decimal).
 fn scan_int_auto(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
-    let pos = skip_ws(input, pos);
+    let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
         return None;
     }
@@ -601,7 +620,7 @@ fn digit_value(b: u8, base: u32) -> Option<u32> {
 
 /// Scan a floating-point number.
 fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
-    let pos = skip_ws(input, pos);
+    let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
         return None;
     }
@@ -824,7 +843,7 @@ fn scan_hex_float(
 
 /// Scan character(s) (%c). No whitespace skip. Width = number of chars.
 fn scan_char(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
-    // %c does NOT skip whitespace.
+    let pos = apply_leading_whitespace_policy(input, pos, spec);
     let n = spec.width.unwrap_or(1);
     if pos + n > input.len() {
         return None;
@@ -835,7 +854,7 @@ fn scan_char(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanVa
 
 /// Scan a string (%s). Skips whitespace, then reads non-whitespace.
 fn scan_string(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
-    let pos = skip_ws(input, pos);
+    let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
         return None;
     }
@@ -860,6 +879,7 @@ fn scan_string(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Scan
 
 /// Scan a scanset (%[...]). No whitespace skip.
 fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
+    let pos = apply_leading_whitespace_policy(input, pos, spec);
     let scanset = spec.scanset.as_ref()?;
     let max_chars = effective_width(spec, usize::MAX);
     let mut i = pos;
@@ -887,7 +907,7 @@ fn scan_scanset(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<Sca
 
 /// Scan a pointer (%p). Expects 0xHEX or (nil).
 fn scan_pointer(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
-    let pos = skip_ws(input, pos);
+    let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
         return None;
     }
@@ -1154,6 +1174,24 @@ mod tests {
         assert!(scanf_length_allowed(LengthMod::L, string.length_mask));
         assert!(!scanf_length_allowed(LengthMod::BigL, string.length_mask));
         assert!(scanf_route(b'Q').is_none());
+    }
+
+    #[test]
+    fn test_parsed_scanf_specs_embed_generated_routes() {
+        let dirs = parse_scanf_format(b"%3s%c");
+        let specs: Vec<_> = dirs
+            .iter()
+            .filter_map(|directive| match directive {
+                ScanDirective::Spec(spec) => Some(spec),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].route.handler, ScanfHandler::String);
+        assert!(specs[0].route.skips_leading_whitespace);
+        assert_eq!(specs[1].route.handler, ScanfHandler::Character);
+        assert!(!specs[1].route.skips_leading_whitespace);
     }
 
     #[test]
