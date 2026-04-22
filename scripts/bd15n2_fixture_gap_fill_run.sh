@@ -52,6 +52,14 @@ LIB_CANDIDATES=(
   "${ROOT}/target/debug/libfrankenlibc_abi.so"
   "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 )
+# Honour a caller-supplied CARGO_TARGET_DIR so the gate works under rch,
+# sccache, CI target-dir redirection, or any local override (bd-gilq3).
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  LIB_CANDIDATES+=(
+    "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
+    "${CARGO_TARGET_DIR}/debug/libfrankenlibc_abi.so"
+  )
+fi
 
 LIB_PATH=""
 for candidate in "${LIB_CANDIDATES[@]}"; do
@@ -73,6 +81,7 @@ fi
 
 if [[ -z "${LIB_PATH}" ]]; then
   echo "FAIL: could not locate libfrankenlibc_abi.so" >&2
+  echo "      searched: ${LIB_CANDIDATES[*]}" >&2
   exit 2
 fi
 

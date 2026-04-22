@@ -28,6 +28,13 @@ LIB_CANDIDATES=(
   "${ROOT}/target/release/libfrankenlibc_abi.so"
   "/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
 )
+# Honour caller-supplied CARGO_TARGET_DIR (bd-gilq3).
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  LIB_CANDIDATES+=(
+    "${CARGO_TARGET_DIR}/release/libfrankenlibc_abi.so"
+    "${CARGO_TARGET_DIR}/debug/libfrankenlibc_abi.so"
+  )
+fi
 
 LIB_PATH=""
 for candidate in "${LIB_CANDIDATES[@]}"; do
