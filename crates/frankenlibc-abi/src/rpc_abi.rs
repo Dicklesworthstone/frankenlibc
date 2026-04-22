@@ -2871,7 +2871,17 @@ pub unsafe extern "C" fn host2netname(
         }
     };
     let name = format!("unix.{}@{}\0", host_str, domain_str);
-    let buf = unsafe { crate::malloc_abi::raw_alloc(name.len()) } as *mut c_char;
+    // POSIX host2netname returns a heap buffer that the CALLER frees with the
+    // standard free(). That means we must allocate through the allocator whose
+    // free() matches: when frankenlibc is linked as a normal dep (test build,
+    // no LD_PRELOAD), `libc::free` binds to host glibc's free, so the malloc
+    // side has to match. If we allocate via our internal raw_alloc (arena),
+    // the caller's free sees a non-glibc chunk header and aborts with
+    // `free(): invalid size` (bd-dqqh1 cluster). Using libc::malloc keeps the
+    // alloc/free pair consistent in both the LD_PRELOAD and non-preload
+    // contexts — under LD_PRELOAD the host libc::malloc is our own interposed
+    // symbol anyway.
+    let buf = unsafe { libc::malloc(name.len()) } as *mut c_char;
     if buf.is_null() {
         return 0;
     }
