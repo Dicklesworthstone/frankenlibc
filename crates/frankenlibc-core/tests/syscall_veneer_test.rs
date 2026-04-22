@@ -1690,6 +1690,46 @@ mod x86_64_tests {
         assert_eq!(err, EBADF);
     }
 
+    /// bd-qjl2a: host glibc surfaces EFAULT for renameat2 in exchange
+    /// mode when the destination path pointer is NULL (even though
+    /// the source path "." is valid). The kernel dereferences the
+    /// second path before dispatch, so RENAME_EXCHANGE cannot rescue
+    /// a bad pointer.
+    #[test]
+    fn renameat2_exchange_null_newpath_is_efault() {
+        let oldpath = b".\0";
+        let err = unsafe {
+            sys_renameat2(
+                AT_FDCWD,
+                oldpath.as_ptr(),
+                AT_FDCWD,
+                core::ptr::null(),
+                frankenlibc_core::syscall::RENAME_EXCHANGE,
+            )
+        }
+        .expect_err("renameat2(EXCHANGE, '.', NULL) must fail");
+        assert_eq!(
+            err, EFAULT,
+            "renameat2 exchange with NULL newpath must return EFAULT (host-parity), got {err}"
+        );
+    }
+
+    /// bd-uid4: host glibc surfaces EINVAL for signalfd4 when the
+    /// kernel's `sigsetsize` argument is zero (even when the mask
+    /// pointer is non-NULL). rt_sigaction uses the same kernel
+    /// sigsetsize, so the zero-size path must fail-fast with EINVAL
+    /// before the mask is dereferenced.
+    #[test]
+    fn signalfd4_zero_sizemask_with_valid_mask_is_einval() {
+        let mask: u64 = 1u64 << ((SIGUSR1 - 1) as u32);
+        let err = unsafe { sys_signalfd4(-1, (&mask as *const u64).cast::<u8>(), 0, 0) }
+            .expect_err("signalfd4(-1, &mask, 0, 0) must fail");
+        assert_eq!(
+            err, EINVAL,
+            "signalfd4 with zero sigsetsize must return EINVAL (host-parity), got {err}"
+        );
+    }
+
     #[test]
     fn unshare_invalid_flags_is_einval() {
         let err = sys_unshare(-1).expect_err("unshare(-1) must fail");
