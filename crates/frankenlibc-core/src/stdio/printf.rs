@@ -132,6 +132,89 @@ struct PrintfRoute {
     arg_category: ArgCategory,
 }
 
+impl PrintfRoute {
+    fn is_valid(self) -> bool {
+        !matches!(self.handler, PrintfHandler::Invalid)
+    }
+
+    fn accepts_length(self, length: LengthMod) -> bool {
+        match length {
+            LengthMod::None => true,
+            LengthMod::Hh => self.length_mask & 0b0000_0001 != 0,
+            LengthMod::H => self.length_mask & 0b0000_0010 != 0,
+            LengthMod::L => self.length_mask & 0b0000_0100 != 0,
+            LengthMod::Ll => self.length_mask & 0b0000_1000 != 0,
+            LengthMod::J => self.length_mask & 0b0001_0000 != 0,
+            LengthMod::Z => self.length_mask & 0b0010_0000 != 0,
+            LengthMod::T => self.length_mask & 0b0100_0000 != 0,
+            LengthMod::BigL => self.length_mask & 0b1000_0000 != 0,
+        }
+    }
+
+    fn sanitize_flags(self, flags: &mut FormatFlags) {
+        if self.flag_mask & 0b0000_0001 == 0 {
+            flags.left_justify = false;
+        }
+        if self.flag_mask & 0b0000_0010 == 0 {
+            flags.force_sign = false;
+        }
+        if self.flag_mask & 0b0000_0100 == 0 {
+            flags.space_sign = false;
+        }
+        if self.flag_mask & 0b0000_1000 == 0 {
+            flags.alt_form = false;
+        }
+        if self.flag_mask & 0b0001_0000 == 0 {
+            flags.zero_pad = false;
+        }
+    }
+
+    fn value_arg_kind(self) -> Option<ValueArgKind> {
+        match self.arg_category {
+            ArgCategory::None => None,
+            ArgCategory::Float => Some(ValueArgKind::Fp),
+            ArgCategory::SignedInt
+            | ArgCategory::UnsignedInt
+            | ArgCategory::Pointer
+            | ArgCategory::String
+            | ArgCategory::Store => Some(ValueArgKind::Gp),
+        }
+    }
+
+    fn is_string_arg(self) -> bool {
+        matches!(self.arg_category, ArgCategory::String)
+    }
+
+    fn is_literal_percent(self) -> bool {
+        matches!(self.handler, PrintfHandler::LiteralPercent)
+    }
+
+    fn is_store_count(self) -> bool {
+        matches!(self.handler, PrintfHandler::StoreCount)
+    }
+
+    fn int_base(self) -> (u64, bool) {
+        match self.handler {
+            PrintfHandler::UnsignedOctal => (8, false),
+            PrintfHandler::UnsignedHexLower => (16, false),
+            PrintfHandler::UnsignedHexUpper => (16, true),
+            _ => (10, false),
+        }
+    }
+
+    fn alt_prefix(self, alt_form: bool) -> &'static [u8] {
+        if !alt_form {
+            return b"";
+        }
+        match self.handler {
+            PrintfHandler::UnsignedOctal => b"0",
+            PrintfHandler::UnsignedHexLower => b"0x",
+            PrintfHandler::UnsignedHexUpper => b"0X",
+            _ => b"",
+        }
+    }
+}
+
 mod generated_printf_tables {
     include!(concat!(
         env!("OUT_DIR"),
@@ -192,15 +275,7 @@ impl FormatSpec {
         if self.conversion == b'm' {
             return None;
         }
-        match self.route()?.arg_category {
-            ArgCategory::None => None,
-            ArgCategory::Float => Some(ValueArgKind::Fp),
-            ArgCategory::SignedInt
-            | ArgCategory::UnsignedInt
-            | ArgCategory::Pointer
-            | ArgCategory::String
-            | ArgCategory::Store => Some(ValueArgKind::Gp),
-        }
+        self.route().and_then(PrintfRoute::value_arg_kind)
     }
 
     pub fn value_arg_is_float(&self) -> bool {
@@ -208,13 +283,11 @@ impl FormatSpec {
     }
 
     pub fn value_arg_is_string(&self) -> bool {
-        self.route()
-            .is_some_and(|route| matches!(route.arg_category, ArgCategory::String))
+        self.route().is_some_and(PrintfRoute::is_string_arg)
     }
 
     pub fn is_literal_percent(&self) -> bool {
-        self.route()
-            .is_some_and(|route| matches!(route.handler, PrintfHandler::LiteralPercent))
+        self.route().is_some_and(PrintfRoute::is_literal_percent)
     }
 
     pub fn is_errno_message(&self) -> bool {
@@ -222,8 +295,7 @@ impl FormatSpec {
     }
 
     pub fn stores_count(&self) -> bool {
-        self.route()
-            .is_some_and(|route| matches!(route.handler, PrintfHandler::StoreCount))
+        self.route().is_some_and(PrintfRoute::is_store_count)
     }
 
     fn handler(&self) -> Option<PrintfHandler> {
@@ -231,24 +303,12 @@ impl FormatSpec {
     }
 
     fn int_base(&self) -> (u64, bool) {
-        match self.handler() {
-            Some(PrintfHandler::UnsignedOctal) => (8, false),
-            Some(PrintfHandler::UnsignedHexLower) => (16, false),
-            Some(PrintfHandler::UnsignedHexUpper) => (16, true),
-            _ => (10, false),
-        }
+        self.route().map_or((10, false), PrintfRoute::int_base)
     }
 
     fn alt_prefix(&self) -> &'static [u8] {
-        if !self.flags.alt_form {
-            return b"";
-        }
-        match self.handler() {
-            Some(PrintfHandler::UnsignedOctal) => b"0",
-            Some(PrintfHandler::UnsignedHexLower) => b"0x",
-            Some(PrintfHandler::UnsignedHexUpper) => b"0X",
-            _ => b"",
-        }
+        self.route()
+            .map_or(b"", |route| route.alt_prefix(self.flags.alt_form))
     }
 
     pub fn render_value_arg(&self, raw: u64, buf: &mut Vec<u8>) -> bool {
@@ -589,10 +649,10 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
         None
     } else {
         let route = printf_route(conversion)?;
-        if !printf_length_allowed(length, route.length_mask) {
+        if !route.accepts_length(length) {
             return None;
         }
-        sanitize_flags_for_route(&mut flags, route.flag_mask);
+        route.sanitize_flags(&mut flags);
         Some(route)
     };
 
@@ -612,43 +672,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
 
 fn printf_route(conversion: u8) -> Option<PrintfRoute> {
     let route = PRINTF_TABLE[conversion as usize];
-    if route.handler == PrintfHandler::Invalid {
-        None
-    } else {
-        Some(route)
-    }
-}
-
-fn printf_length_allowed(length: LengthMod, length_mask: u8) -> bool {
-    match length {
-        LengthMod::None => true,
-        LengthMod::Hh => length_mask & 0b0000_0001 != 0,
-        LengthMod::H => length_mask & 0b0000_0010 != 0,
-        LengthMod::L => length_mask & 0b0000_0100 != 0,
-        LengthMod::Ll => length_mask & 0b0000_1000 != 0,
-        LengthMod::J => length_mask & 0b0001_0000 != 0,
-        LengthMod::Z => length_mask & 0b0010_0000 != 0,
-        LengthMod::T => length_mask & 0b0100_0000 != 0,
-        LengthMod::BigL => length_mask & 0b1000_0000 != 0,
-    }
-}
-
-fn sanitize_flags_for_route(flags: &mut FormatFlags, flag_mask: u8) {
-    if flag_mask & 0b0000_0001 == 0 {
-        flags.left_justify = false;
-    }
-    if flag_mask & 0b0000_0010 == 0 {
-        flags.force_sign = false;
-    }
-    if flag_mask & 0b0000_0100 == 0 {
-        flags.space_sign = false;
-    }
-    if flag_mask & 0b0000_1000 == 0 {
-        flags.alt_form = false;
-    }
-    if flag_mask & 0b0001_0000 == 0 {
-        flags.zero_pad = false;
-    }
+    if !route.is_valid() { None } else { Some(route) }
 }
 
 /// Iterate over segments of a printf format string.
@@ -1322,9 +1346,14 @@ mod tests {
 
         assert_eq!(signed.handler, PrintfHandler::SignedDecimal);
         assert_eq!(signed.arg_category, ArgCategory::SignedInt);
+        assert_eq!(signed.value_arg_kind(), Some(ValueArgKind::Gp));
+        assert!(signed.accepts_length(LengthMod::L));
+        assert!(!signed.accepts_length(LengthMod::BigL));
         assert_eq!(floating.handler, PrintfHandler::FloatGeneral);
         assert_eq!(floating.arg_category, ArgCategory::Float);
+        assert_eq!(floating.value_arg_kind(), Some(ValueArgKind::Fp));
         assert_eq!(literal.handler, PrintfHandler::LiteralPercent);
+        assert!(literal.is_literal_percent());
         assert!(printf_route(b'Q').is_none());
     }
 
