@@ -210,8 +210,33 @@ impl FormatSpec {
             .is_some_and(|route| matches!(route.handler, PrintfHandler::StoreCount))
     }
 
+    fn handler(&self) -> Option<PrintfHandler> {
+        self.route().map(|route| route.handler)
+    }
+
+    fn int_base(&self) -> (u64, bool) {
+        match self.handler() {
+            Some(PrintfHandler::UnsignedOctal) => (8, false),
+            Some(PrintfHandler::UnsignedHexLower) => (16, false),
+            Some(PrintfHandler::UnsignedHexUpper) => (16, true),
+            _ => (10, false),
+        }
+    }
+
+    fn alt_prefix(&self) -> &'static [u8] {
+        if !self.flags.alt_form {
+            return b"";
+        }
+        match self.handler() {
+            Some(PrintfHandler::UnsignedOctal) => b"0",
+            Some(PrintfHandler::UnsignedHexLower) => b"0x",
+            Some(PrintfHandler::UnsignedHexUpper) => b"0X",
+            _ => b"",
+        }
+    }
+
     pub fn render_value_arg(&self, raw: u64, buf: &mut Vec<u8>) -> bool {
-        match printf_handler(self) {
+        match self.handler() {
             Some(PrintfHandler::SignedDecimal) => {
                 let val = match self.length {
                     LengthMod::Hh => (raw as i8) as i64,
@@ -610,14 +635,6 @@ fn sanitize_flags_for_route(flags: &mut FormatFlags, flag_mask: u8) {
     }
 }
 
-fn printf_handler(spec: &FormatSpec) -> Option<PrintfHandler> {
-    spec.route().map(|route| route.handler)
-}
-
-fn is_octal_handler(spec: &FormatSpec) -> bool {
-    matches!(printf_handler(spec), Some(PrintfHandler::UnsignedOctal))
-}
-
 /// Iterate over segments of a printf format string.
 ///
 /// Yields `FormatSegment::Literal` for literal runs and `FormatSegment::Spec`
@@ -675,7 +692,7 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         value as u64
     };
 
-    let (base, uppercase) = int_base(spec);
+    let (base, uppercase) = spec.int_base();
     let mut digits = [0u8; 64];
     let digit_count = render_digits(abs, base, uppercase, &mut digits);
     let digit_slice = &digits[64 - digit_count..];
@@ -699,7 +716,7 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let zero_prefix_count = precision.saturating_sub(digit_count);
 
     // Alternate form prefix.
-    let prefix = alt_prefix(spec);
+    let prefix = spec.alt_prefix();
 
     // Total content width.
     let content_len = sign.is_some() as usize + prefix.len() + zero_prefix_count + digit_count;
@@ -741,7 +758,7 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
 
 /// Render an unsigned integer to `buf` according to `spec`.
 pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
-    let (base, uppercase) = int_base(spec);
+    let (base, uppercase) = spec.int_base();
     let mut digits = [0u8; 64];
     let digit_count = render_digits(value, base, uppercase, &mut digits);
     let digit_slice = &digits[64 - digit_count..];
@@ -757,20 +774,20 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // the precision, if and only if necessary, to force the first digit to be zero"
     let prefix: &[u8] = if value == 0 {
         b""
-    } else if spec.flags.alt_form && is_octal_handler(spec) {
+    } else if spec.flags.alt_form && spec.alt_prefix() == b"0" {
         // Octal: only add '0' if first digit wouldn't already be 0
         let first_digit_is_zero =
             zero_prefix_count > 0 || (digit_count > 0 && digit_slice[0] == b'0');
         if first_digit_is_zero { b"" } else { b"0" }
     } else {
-        alt_prefix(spec)
+        spec.alt_prefix()
     };
 
     let content_len = prefix.len() + zero_prefix_count + digit_count;
 
     let mut suppress_zero = value == 0 && matches!(spec.precision, Precision::Fixed(0));
     // POSIX: For 'o' conversion with '#', if the value and precision are both 0, a single 0 is printed.
-    if suppress_zero && spec.flags.alt_form && is_octal_handler(spec) {
+    if suppress_zero && spec.flags.alt_form && spec.alt_prefix() == b"0" {
         suppress_zero = false;
     }
 
@@ -855,7 +872,7 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let abs = value.abs();
 
     // Generate digit string.
-    let body = match printf_handler(spec) {
+    let body = match spec.handler() {
         Some(PrintfHandler::FloatFixed) => format_f(abs, precision, spec.flags.alt_form),
         Some(PrintfHandler::FloatExp) => format_e(
             abs,
@@ -1012,15 +1029,6 @@ fn resolve_width(spec: &FormatSpec) -> usize {
     }
 }
 
-fn int_base(spec: &FormatSpec) -> (u64, bool) {
-    match printf_handler(spec) {
-        Some(PrintfHandler::UnsignedOctal) => (8, false),
-        Some(PrintfHandler::UnsignedHexLower) => (16, false),
-        Some(PrintfHandler::UnsignedHexUpper) => (16, true),
-        _ => (10, false),
-    }
-}
-
 /// Render `value` in the given `base` into the END of `buf`.
 /// Returns the number of digits written. Digits are placed right-aligned.
 fn render_digits(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64]) -> usize {
@@ -1041,18 +1049,6 @@ fn render_digits(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64])
         value /= base;
     }
     64 - pos
-}
-
-fn alt_prefix(spec: &FormatSpec) -> &'static [u8] {
-    if !spec.flags.alt_form {
-        return b"";
-    }
-    match printf_handler(spec) {
-        Some(PrintfHandler::UnsignedOctal) => b"0",
-        Some(PrintfHandler::UnsignedHexLower) => b"0x",
-        Some(PrintfHandler::UnsignedHexUpper) => b"0X",
-        _ => b"",
-    }
 }
 
 fn pad(buf: &mut Vec<u8>, byte: u8, count: usize) {
