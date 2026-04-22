@@ -51,6 +51,11 @@ path = "fuzz_targets/fuzz_env.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_sched"
+path = "fuzz_targets/fuzz_sched.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
