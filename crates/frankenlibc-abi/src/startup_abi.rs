@@ -931,16 +931,78 @@ std::thread_local! {
     };
 }
 
-static HOST_CXA_THREAD_ATEXIT_IMPL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+// Cached pointer to the host's __cxa_thread_atexit_impl. Encoded as:
+//   0                  = unresolved (try lookup)
+//   usize::MAX         = resolved-but-absent (host doesn't export the symbol)
+//   any other value    = resolved function pointer
+//
+// Using a plain AtomicUsize (not OnceLock) is required because the resolver
+// path may indirectly re-enter `__cxa_thread_atexit_impl` during dynamic
+// loader/TLS bring-up; a OnceLock would wedge in its RUNNING state and the
+// recursive call would futex-wait on itself.
+static HOST_CXA_THREAD_ATEXIT_IMPL: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+const HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL: usize = usize::MAX;
+
+std::thread_local! {
+    static HOST_CXA_LOOKUP_REENTRY: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
 
 unsafe fn host_cxa_thread_atexit_impl() -> Option<HostCxaThreadAtExitImplFn> {
-    let ptr = *HOST_CXA_THREAD_ATEXIT_IMPL.get_or_init(|| unsafe {
-        crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"__cxa_thread_atexit_impl".as_ptr()) as usize
-    });
-    if ptr == 0 {
+    use std::sync::atomic::Ordering;
+
+    let cached = HOST_CXA_THREAD_ATEXIT_IMPL.load(Ordering::Acquire);
+    if cached == HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL {
+        return None;
+    }
+    if cached != 0 {
+        return Some(unsafe { std::mem::transmute::<usize, HostCxaThreadAtExitImplFn>(cached) });
+    }
+
+    // Reentry guard: if the resolver recurses back into us before the lookup
+    // completes, return None so the caller falls through to the in-Rust TLS
+    // fallback list. Without this guard the recursive path would re-enter
+    // dlsym and either hang the loader lock or stack-overflow.
+    let entered = HOST_CXA_LOOKUP_REENTRY
+        .try_with(|c| {
+            if c.get() {
+                false
+            } else {
+                c.set(true);
+                true
+            }
+        })
+        .unwrap_or(false);
+    if !entered {
+        return None;
+    }
+
+    let resolved = unsafe {
+        crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"__cxa_thread_atexit_impl".as_ptr())
+    } as usize;
+
+    let _ = HOST_CXA_LOOKUP_REENTRY.try_with(|c| c.set(false));
+
+    let to_store = if resolved == 0 {
+        HOST_CXA_THREAD_ATEXIT_IMPL_SENTINEL_NULL
+    } else {
+        resolved
+    };
+    // First-writer-wins: any concurrent resolver returns the same dlsym
+    // result, so losing the race is fine.
+    let _ = HOST_CXA_THREAD_ATEXIT_IMPL.compare_exchange(
+        0,
+        to_store,
+        Ordering::Release,
+        Ordering::Acquire,
+    );
+
+    if resolved == 0 {
         None
     } else {
-        Some(unsafe { std::mem::transmute::<usize, HostCxaThreadAtExitImplFn>(ptr) })
+        Some(unsafe { std::mem::transmute::<usize, HostCxaThreadAtExitImplFn>(resolved) })
     }
 }
 
