@@ -66,6 +66,11 @@ path = "fuzz_targets/fuzz_mmap.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_signal"
+path = "fuzz_targets/fuzz_signal.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
