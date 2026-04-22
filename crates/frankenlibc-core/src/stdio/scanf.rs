@@ -132,6 +132,49 @@ pub struct ScanSpec {
     route: ScanfRoute,
 }
 
+impl ScanSpec {
+    pub fn skips_leading_whitespace(&self) -> bool {
+        self.route.skips_leading_whitespace
+    }
+
+    pub fn stores_count(&self) -> bool {
+        matches!(self.route.arg_category, ScanfArgCategory::Store)
+    }
+
+    pub fn writes_char_buffer(&self) -> bool {
+        matches!(self.route.arg_category, ScanfArgCategory::CharBuffer)
+    }
+
+    pub fn writes_string_buffer(&self) -> bool {
+        matches!(self.route.arg_category, ScanfArgCategory::StringBuffer)
+    }
+
+    pub fn writes_float(&self) -> bool {
+        matches!(self.route.arg_category, ScanfArgCategory::Float)
+    }
+
+    pub fn writes_pointer(&self) -> bool {
+        matches!(self.route.arg_category, ScanfArgCategory::Pointer)
+    }
+
+    fn scan_at(&self, input: &[u8], pos: usize) -> Option<(Option<ScanValue>, usize)> {
+        match self.route.handler {
+            ScanfHandler::SignedDecimal => scan_int(input, pos, self, 10, true),
+            ScanfHandler::SignedAutoBase => scan_int_auto(input, pos, self),
+            ScanfHandler::UnsignedDecimal => scan_int(input, pos, self, 10, false),
+            ScanfHandler::UnsignedOctal => scan_int(input, pos, self, 8, false),
+            ScanfHandler::UnsignedHex => scan_int(input, pos, self, 16, false),
+            ScanfHandler::Float => scan_float(input, pos, self),
+            ScanfHandler::Character => scan_char(input, pos, self),
+            ScanfHandler::String => scan_string(input, pos, self),
+            ScanfHandler::Scanset => scan_scanset(input, pos, self),
+            ScanfHandler::CharsConsumed => Some((Some(ScanValue::CharsConsumed(pos)), pos)),
+            ScanfHandler::Pointer => scan_pointer(input, pos, self),
+            ScanfHandler::Invalid => None,
+        }
+    }
+}
+
 /// Character set for %[...] specifier.
 #[derive(Debug, Clone)]
 pub struct ScanSet {
@@ -358,7 +401,7 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
                 pos += 1;
             }
             ScanDirective::Spec(spec) => {
-                let result = scan_one(input, pos, spec);
+                let result = spec.scan_at(input, pos);
                 match result {
                     None => {
                         // Matching failure or input exhaustion.
@@ -392,26 +435,6 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
     }
 }
 
-/// Scan a single conversion specifier.
-/// Returns `None` on matching failure.
-/// Returns `Some((value, new_pos))` on success. `value` is `None` for %n.
-fn scan_one(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
-    match spec.route.handler {
-        ScanfHandler::SignedDecimal => scan_int(input, pos, spec, 10, true),
-        ScanfHandler::SignedAutoBase => scan_int_auto(input, pos, spec),
-        ScanfHandler::UnsignedDecimal => scan_int(input, pos, spec, 10, false),
-        ScanfHandler::UnsignedOctal => scan_int(input, pos, spec, 8, false),
-        ScanfHandler::UnsignedHex => scan_int(input, pos, spec, 16, false),
-        ScanfHandler::Float => scan_float(input, pos, spec),
-        ScanfHandler::Character => scan_char(input, pos, spec),
-        ScanfHandler::String => scan_string(input, pos, spec),
-        ScanfHandler::Scanset => scan_scanset(input, pos, spec),
-        ScanfHandler::CharsConsumed => Some((Some(ScanValue::CharsConsumed(pos)), pos)),
-        ScanfHandler::Pointer => scan_pointer(input, pos, spec),
-        ScanfHandler::Invalid => None,
-    }
-}
-
 /// Skip leading whitespace. Returns new position.
 fn skip_ws(input: &[u8], mut pos: usize) -> usize {
     while pos < input.len() && input[pos].is_ascii_whitespace() {
@@ -426,7 +449,7 @@ fn effective_width(spec: &ScanSpec, default: usize) -> usize {
 }
 
 fn apply_leading_whitespace_policy(input: &[u8], pos: usize, spec: &ScanSpec) -> usize {
-    if spec.route.skips_leading_whitespace {
+    if spec.skips_leading_whitespace() {
         skip_ws(input, pos)
     } else {
         pos
@@ -1188,10 +1211,28 @@ mod tests {
             .collect();
 
         assert_eq!(specs.len(), 2);
-        assert_eq!(specs[0].route.handler, ScanfHandler::String);
-        assert!(specs[0].route.skips_leading_whitespace);
-        assert_eq!(specs[1].route.handler, ScanfHandler::Character);
-        assert!(!specs[1].route.skips_leading_whitespace);
+        assert!(specs[0].writes_string_buffer());
+        assert!(specs[0].skips_leading_whitespace());
+        assert!(specs[1].writes_char_buffer());
+        assert!(!specs[1].skips_leading_whitespace());
+    }
+
+    #[test]
+    fn test_scan_spec_helper_methods_follow_generated_arg_categories() {
+        let dirs = parse_scanf_format(b"%d %n %p %f");
+        let specs: Vec<_> = dirs
+            .iter()
+            .filter_map(|directive| match directive {
+                ScanDirective::Spec(spec) => Some(spec),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(specs.len(), 4);
+        assert!(!specs[0].writes_float());
+        assert!(specs[1].stores_count());
+        assert!(specs[2].writes_pointer());
+        assert!(specs[3].writes_float());
     }
 
     #[test]
