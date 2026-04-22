@@ -126,6 +126,19 @@ struct PrintfRoute {
     arg_category: ArgCategory,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintfDispatchKind {
+    LiteralPercent,
+    ErrnoMessage,
+    StoreCount,
+    SignedInt,
+    UnsignedInt,
+    Float,
+    Character,
+    String,
+    Pointer,
+}
+
 mod generated_printf_tables {
     include!(concat!(
         env!("OUT_DIR"),
@@ -458,6 +471,31 @@ fn printf_route(conversion: u8) -> Option<PrintfRoute> {
         let _ = (route.length_mask, route.flag_mask, route.arg_category);
         Some(route)
     }
+}
+
+pub fn printf_dispatch_kind(conversion: u8) -> Option<PrintfDispatchKind> {
+    if conversion == b'm' {
+        return Some(PrintfDispatchKind::ErrnoMessage);
+    }
+
+    let route = printf_route(conversion)?;
+    Some(match route.handler {
+        PrintfHandler::LiteralPercent => PrintfDispatchKind::LiteralPercent,
+        PrintfHandler::StoreCount => PrintfDispatchKind::StoreCount,
+        PrintfHandler::SignedDecimal => PrintfDispatchKind::SignedInt,
+        PrintfHandler::UnsignedOctal
+        | PrintfHandler::UnsignedDecimal
+        | PrintfHandler::UnsignedHexLower
+        | PrintfHandler::UnsignedHexUpper => PrintfDispatchKind::UnsignedInt,
+        PrintfHandler::FloatFixed
+        | PrintfHandler::FloatExp
+        | PrintfHandler::FloatGeneral
+        | PrintfHandler::FloatHex => PrintfDispatchKind::Float,
+        PrintfHandler::Character => PrintfDispatchKind::Character,
+        PrintfHandler::String => PrintfDispatchKind::String,
+        PrintfHandler::Pointer => PrintfDispatchKind::Pointer,
+        PrintfHandler::Invalid => return None,
+    })
 }
 
 /// Iterate over segments of a printf format string.
@@ -1156,6 +1194,24 @@ mod tests {
         assert_eq!(floating.arg_category, ArgCategory::Float);
         assert_eq!(literal.handler, PrintfHandler::LiteralPercent);
         assert!(printf_route(b'Q').is_none());
+    }
+
+    #[test]
+    fn test_printf_dispatch_kind_tracks_generated_routes() {
+        assert_eq!(
+            printf_dispatch_kind(b'd'),
+            Some(PrintfDispatchKind::SignedInt)
+        );
+        assert_eq!(printf_dispatch_kind(b'g'), Some(PrintfDispatchKind::Float));
+        assert_eq!(
+            printf_dispatch_kind(b'%'),
+            Some(PrintfDispatchKind::LiteralPercent)
+        );
+        assert_eq!(
+            printf_dispatch_kind(b'm'),
+            Some(PrintfDispatchKind::ErrnoMessage)
+        );
+        assert_eq!(printf_dispatch_kind(b'Q'), None);
     }
 
     #[test]

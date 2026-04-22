@@ -2957,7 +2957,8 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 
 use frankenlibc_core::stdio::{
     FormatSegment, LengthMod, Precision, Width, format_char, format_float, format_pointer,
-    format_signed, format_str, format_unsigned, parse_format_string,
+    format_signed, format_str, format_unsigned, parse_format_string, printf_dispatch_kind,
+    PrintfDispatchKind,
 };
 
 /// Maximum variadic arguments we extract per printf call.
@@ -2970,10 +2971,10 @@ pub(crate) enum PrintfArgKind {
 }
 
 fn spec_value_kind(spec: &frankenlibc_core::stdio::FormatSpec) -> Option<PrintfArgKind> {
-    match spec.conversion {
-        b'%' | b'm' => None,
-        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => Some(PrintfArgKind::Fp),
-        _ => Some(PrintfArgKind::Gp),
+    match printf_dispatch_kind(spec.conversion) {
+        Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage) | None => None,
+        Some(PrintfDispatchKind::Float) => Some(PrintfArgKind::Fp),
+        Some(_) => Some(PrintfArgKind::Gp),
     }
 }
 
@@ -3035,9 +3036,10 @@ pub(crate) fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
             if spec.precision.uses_arg() {
                 needed += 1;
             }
-            match spec.conversion {
-                b'%' | b'm' => {}
-                _ => needed += 1,
+            match printf_dispatch_kind(spec.conversion) {
+                Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage)
+                | None => {}
+                Some(_) => needed += 1,
             }
         }
     }
@@ -3083,15 +3085,16 @@ macro_rules! extract_va_args {
                         $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
-                    match spec.conversion {
-                        b'%' | b'm' => {}
-                        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                    match printf_dispatch_kind(spec.conversion) {
+                        Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage)
+                        | None => {}
+                        Some(PrintfDispatchKind::Float) => {
                             if _idx < $extract_count {
                                 $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
                                 _idx += 1;
                             }
                         }
-                        _ => {
+                        Some(_) => {
                             if _idx < $extract_count {
                                 $buf[_idx] = unsafe { $args.arg::<u64>() };
                                 _idx += 1;
@@ -3179,9 +3182,9 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                 };
 
                 // Consume one argument for the conversion.
-                match spec.conversion {
-                    b'%' => buf.push(b'%'),
-                    b'm' => {
+                match printf_dispatch_kind(spec.conversion) {
+                    Some(PrintfDispatchKind::LiteralPercent) => buf.push(b'%'),
+                    Some(PrintfDispatchKind::ErrnoMessage) => {
                         let e = unsafe { *crate::errno_abi::__errno_location() };
                         let mut err_buf = [0u8; 256];
                         let rc = unsafe {
@@ -3198,7 +3201,7 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             buf.extend_from_slice(b"Unknown error");
                         }
                     }
-                    b'n' => {
+                    Some(PrintfDispatchKind::StoreCount) => {
                         // %n: store count of bytes written so far.
                         // Respects length modifier: %hhn→i8, %hn→i16,
                         // %n→i32, %ln→i64, %lln→i64, %zn→isize, %jn→i64.
@@ -3278,7 +3281,7 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             }
                         }
                     }
-                    b'd' | b'i' => {
+                    Some(PrintfDispatchKind::SignedInt) => {
                         if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             let val = match spec.length {
                                 LengthMod::Hh => (raw as i8) as i64,
@@ -3289,7 +3292,7 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             format_signed(val, &resolved_spec, &mut buf);
                         }
                     }
-                    b'u' | b'x' | b'X' | b'o' => {
+                    Some(PrintfDispatchKind::UnsignedInt) => {
                         if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             let val = match spec.length {
                                 LengthMod::Hh => (raw as u8) as u64,
@@ -3300,18 +3303,18 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             format_unsigned(val, &resolved_spec, &mut buf);
                         }
                     }
-                    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                    Some(PrintfDispatchKind::Float) => {
                         if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             let val = f64::from_bits(raw);
                             format_float(val, &resolved_spec, &mut buf);
                         }
                     }
-                    b'c' => {
+                    Some(PrintfDispatchKind::Character) => {
                         if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             format_char(raw as u8, &resolved_spec, &mut buf);
                         }
                     }
-                    b's' => {
+                    Some(PrintfDispatchKind::String) => {
                         if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             let ptr = raw as usize as *const u8;
                             if ptr.is_null() {
@@ -3322,12 +3325,12 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                             }
                         }
                     }
-                    b'p' => {
+                    Some(PrintfDispatchKind::Pointer) => {
                         if let Some(raw) = read_arg(value_position, &mut arg_idx) {
                             format_pointer(raw as usize, &resolved_spec, &mut buf);
                         }
                     }
-                    _ => {}
+                    None => {}
                 }
             }
         }
@@ -3912,9 +3915,10 @@ pub(crate) unsafe fn vprintf_extract_args(
                         unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
                     idx += 1;
                 }
-                match spec.conversion {
-                    b'%' | b'm' => {}
-                    b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+                match printf_dispatch_kind(spec.conversion) {
+                    Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage)
+                    | None => {}
+                    Some(PrintfDispatchKind::Float) => {
                         if idx < extract_count {
                             buf[idx] = unsafe {
                                 vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr)
@@ -3922,7 +3926,7 @@ pub(crate) unsafe fn vprintf_extract_args(
                             idx += 1;
                         }
                     }
-                    _ => {
+                    Some(_) => {
                         if idx < extract_count {
                             buf[idx] = unsafe {
                                 vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr)
