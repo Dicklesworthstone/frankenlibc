@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use stdio_synth::{
     PrintfGrammar, ScanfGrammar, build_pipeline_artifacts, build_pipeline_manifest,
@@ -34,6 +35,7 @@ fn main() {
     emit_rerun_if_changed(&printf_snapshot_path);
     emit_rerun_if_changed(&scanf_snapshot_path);
     emit_rerun_if_changed(&bounds_audit_fixture_path);
+    println!("cargo:rerun-if-env-changed=FRANKENLIBC_SMT_SOLVER");
     println!(
         "cargo:rustc-env=FRANKENLIBC_CORE_BOUNDS_AUDIT_PATH={}",
         bounds_audit_fixture_path.display()
@@ -77,6 +79,7 @@ fn main() {
         &out_dir.join("synth/manifest.json"),
         &build_pipeline_manifest(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table),
     );
+    verify_smt_if_solver_available(&out_dir.join("proof/stdio_tables.smt2"));
 }
 
 fn emit_rerun_if_changed(path: &Path) {
@@ -138,4 +141,63 @@ fn write_manifest(manifest_path: &Path, manifest: &stdio_synth::PipelineManifest
             manifest_path.display()
         )
     });
+}
+
+fn verify_smt_if_solver_available(proof_path: &Path) {
+    let Some(solver) = resolve_solver() else {
+        println!(
+            "cargo:warning=No SMT solver found for {}. Skipping solver execution.",
+            proof_path.display()
+        );
+        return;
+    };
+
+    let output = Command::new(&solver)
+        .arg(proof_path)
+        .output()
+        .unwrap_or_else(|err| panic!("failed to run SMT solver `{solver}`: {err}"));
+
+    if !output.status.success() {
+        panic!(
+            "SMT solver `{solver}` failed for {}: {}",
+            proof_path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let status = stdout
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(str::trim)
+        .unwrap_or("");
+
+    if status != "sat" {
+        panic!(
+            "SMT solver `{solver}` returned `{status}` for {}; expected `sat`",
+            proof_path.display()
+        );
+    }
+}
+
+fn resolve_solver() -> Option<String> {
+    if let Ok(solver) = env::var("FRANKENLIBC_SMT_SOLVER") {
+        let solver = solver.trim();
+        if !solver.is_empty() {
+            return Some(solver.to_owned());
+        }
+    }
+
+    ["cvc5", "z3"]
+        .into_iter()
+        .find(|solver| solver_available(solver))
+        .map(str::to_owned)
+}
+
+fn solver_available(solver: &str) -> bool {
+    Command::new(solver)
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
