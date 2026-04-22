@@ -1322,6 +1322,29 @@ fn sched_setscheduler_current_pid_null_param_sets_einval_like_host() {
 }
 
 #[test]
+fn sched_setscheduler_nonexistent_pid_null_param_sets_einval_like_host() {
+    let nonexistent_pid = libc::pid_t::MAX;
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc =
+        unsafe { libc::sched_setscheduler(nonexistent_pid, libc::SCHED_OTHER, ptr::null()) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { sched_setscheduler(nonexistent_pid, libc::SCHED_OTHER, ptr::null()) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EINVAL);
+}
+
+#[test]
 fn sched_setscheduler_nonexistent_pid_valid_param_sets_esrch_like_host() {
     let nonexistent_pid = libc::pid_t::MAX;
     let param = libc::sched_param { sched_priority: 0 };
