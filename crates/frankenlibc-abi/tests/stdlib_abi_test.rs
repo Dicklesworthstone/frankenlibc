@@ -218,6 +218,43 @@ fn sched_setaffinity_invalid_pid_valid_mask_sets_esrch_like_host() {
 }
 
 #[test]
+fn sched_setaffinity_zero_cpusetsize_sets_einval_like_host() {
+    let _guard = SCHED_AFFINITY_TEST_GUARD
+        .lock()
+        .expect("affinity test guard lock should succeed");
+    let mut cpuset: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+
+    assert_eq!(
+        unsafe {
+            sched_getaffinity(
+                0,
+                std::mem::size_of::<libc::cpu_set_t>(),
+                (&mut cpuset as *mut libc::cpu_set_t).cast(),
+            )
+        },
+        0
+    );
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc =
+        unsafe { libc::sched_setaffinity(0, 0, (&cpuset as *const libc::cpu_set_t).cast()) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { sched_setaffinity(0, 0, (&cpuset as *const libc::cpu_set_t).cast()) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EINVAL);
+}
+
+#[test]
 fn sched_getaffinity_invalid_pid_valid_mask_sets_esrch() {
     let _guard = SCHED_AFFINITY_TEST_GUARD
         .lock()
@@ -3451,8 +3488,14 @@ fn eventfd_write_invalid_fd_forbidden_all_ones_preserves_ebadf_like_host() {
 fn eventfd_write_nonblocking_saturated_counter_sets_eagain_like_host() {
     let host_fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK) };
     let abi_fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK) };
-    assert!(host_fd >= 0, "host eventfd should create a nonblocking descriptor");
-    assert!(abi_fd >= 0, "abi eventfd should create a nonblocking descriptor");
+    assert!(
+        host_fd >= 0,
+        "host eventfd should create a nonblocking descriptor"
+    );
+    assert!(
+        abi_fd >= 0,
+        "abi eventfd should create a nonblocking descriptor"
+    );
 
     assert_eq!(unsafe { libc::eventfd_write(host_fd, u64::MAX - 1) }, 0);
     assert_eq!(unsafe { libc::eventfd_write(abi_fd, u64::MAX - 1) }, 0);
