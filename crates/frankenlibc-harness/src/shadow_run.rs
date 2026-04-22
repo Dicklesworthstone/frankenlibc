@@ -1308,7 +1308,7 @@ fn append_optional_markdown_block(body: &mut String, title: &str, content: Optio
 
 fn sha256_path(path: &Path) -> Result<String, ShadowRunError> {
     let bytes = fs::read(path)?;
-    Ok(format!("{:x}", Sha256::digest(&bytes)))
+    Ok(hex_digest(&Sha256::digest(&bytes)))
 }
 
 fn evaluate_pass_condition(

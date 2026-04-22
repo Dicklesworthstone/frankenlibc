@@ -5,11 +5,10 @@
 //! mutex_bench, condvar_bench) to achieve coverage across all major families.
 
 use std::cell::RefCell;
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use criterion::{
-    BenchmarkId, Criterion, black_box, criterion_group, criterion_main, measurement::WallTime,
-};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main, measurement::WallTime};
 
 #[derive(Default)]
 struct BenchStats {

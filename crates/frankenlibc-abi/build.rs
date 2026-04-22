@@ -407,7 +407,7 @@ fn emit_startup_init_order_certificate(out_dir: &Path) {
         serde_json::to_string_pretty(&certificate).expect("startup certificate should serialize");
     let mut hasher = Sha256::new();
     hasher.update(canonical.as_bytes());
-    let witness = format!("{:x}", hasher.finalize());
+    let witness = hex_digest(&hasher.finalize());
     certificate["witness_sha256"] = Value::String(witness);
 
     let body = serde_json::to_string_pretty(&certificate)
@@ -421,6 +421,10 @@ fn load_json(path: &Path) -> Value {
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display())); // ubs:ignore — build.rs must hard-fail on missing inputs
     serde_json::from_str(&body)
         .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display())) // ubs:ignore — build.rs must hard-fail on invalid inputs
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn extract_libc_call(fragment: &str) -> Option<&str> {

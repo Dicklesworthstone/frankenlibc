@@ -12,9 +12,10 @@
 //! - Machine-readable `RUNTIME_MATH_KERNEL_BENCH ... p50_ns_op=...` lines for perf gating.
 
 use std::cell::RefCell;
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::malloc::size_class;
 use frankenlibc_membrane::config::safety_level;
 use frankenlibc_membrane::runtime_math::approachability::ApproachabilityController;

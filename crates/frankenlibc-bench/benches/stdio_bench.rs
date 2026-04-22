@@ -2,12 +2,14 @@
 //!
 //! Will benchmark printf formatting, file I/O, and buffering once implemented.
 
+use std::hint::black_box;
+
 use criterion::{Criterion, criterion_group, criterion_main};
 
 fn bench_placeholder(c: &mut Criterion) {
     c.bench_function("stdio_placeholder", |b| {
         b.iter(|| {
-            criterion::black_box(42);
+            black_box(42);
         });
     });
 }

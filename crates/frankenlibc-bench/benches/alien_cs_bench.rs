@@ -3,7 +3,7 @@
 //! Measures per-operation overhead for RCU, SeqLock, EBR, and Flat Combining
 //! at varying thread counts. Establishes performance budgets and tracks regressions.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_membrane::bravo::BravoRwLock;
 use frankenlibc_membrane::ebr::EbrCollector;
 use frankenlibc_membrane::flat_combining::FlatCombiner;
@@ -11,6 +11,7 @@ use frankenlibc_membrane::left_right::LeftRight;
 use frankenlibc_membrane::rcu::{RcuCell, RcuReader};
 use frankenlibc_membrane::seqlock::{SeqLock, SeqLockReader};
 use std::collections::HashMap;
+use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;

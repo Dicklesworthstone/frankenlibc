@@ -154,7 +154,11 @@ fn sha256_hex(path: &Path) -> String {
     let bytes = std::fs::read(path).expect("artifact should be readable for hashing");
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    hex_digest(&hasher.finalize())
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {

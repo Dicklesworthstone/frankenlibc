@@ -1,6 +1,7 @@
 use std::ffi::c_void;
+use std::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 fn benchmark_memcpy_paths(c: &mut Criterion) {
     let sizes: [usize; 4] = [64, 256, 1024, 4096];

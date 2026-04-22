@@ -4,10 +4,11 @@
 //! per-mode metadata (`FRANKENLIBC_MODE`) and percentile summaries.
 
 use std::cell::RefCell;
+use std::hint::black_box;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 #[derive(Default)]
 struct BenchStats {

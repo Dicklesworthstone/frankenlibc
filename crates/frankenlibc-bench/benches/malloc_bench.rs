@@ -5,6 +5,7 @@
 //! operation mixes, and batch sizes.
 
 use std::fs::{File, create_dir_all};
+use std::hint::black_box;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -294,7 +295,7 @@ fn bench_alloc_free_cycle(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("system", size), &size, |b, &sz| {
             b.iter(|| {
                 let v = vec![0u8; sz];
-                criterion::black_box(v);
+                black_box(v);
             });
         });
     }
@@ -307,7 +308,7 @@ fn bench_alloc_burst(c: &mut Criterion) {
     group.bench_function("1000x64B", |b| {
         b.iter(|| {
             let allocs: Vec<Vec<u8>> = (0..1000).map(|_| vec![0u8; 64]).collect();
-            criterion::black_box(allocs);
+            black_box(allocs);
         });
     });
 
@@ -320,14 +321,14 @@ fn bench_bounded_index_overhead(c: &mut Criterion) {
     let mut group = c.benchmark_group("bounded_index");
 
     group.bench_function("raw_usize", |b| {
-        b.iter(|| criterion::black_box(buckets[criterion::black_box(index)]))
+        b.iter(|| black_box(buckets[black_box(index)]))
     });
 
     group.bench_function("bounded_try_from", |b| {
         b.iter(|| {
-            let bounded = SizeClassIndex::try_from(criterion::black_box(index))
+            let bounded = SizeClassIndex::try_from(black_box(index))
                 .expect("benchmark index should remain in range");
-            criterion::black_box(buckets[bounded.get()])
+            black_box(buckets[bounded.get()])
         })
     });
 

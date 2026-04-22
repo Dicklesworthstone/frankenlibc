@@ -13,9 +13,10 @@
 //! - Optional CPU pinning: set `FRANKENLIBC_BENCH_PIN=1` (Linux only).
 
 use std::cell::RefCell;
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_membrane::config::safety_level;
 use frankenlibc_membrane::{ApiFamily, MembraneAction, RuntimeContext, RuntimeMathKernel};
 

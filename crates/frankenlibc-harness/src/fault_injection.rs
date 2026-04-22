@@ -764,7 +764,7 @@ fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<(), FaultIn
 
 fn sha256_path(path: &Path) -> Result<String, FaultInjectionError> {
     let bytes = fs::read(path)?;
-    Ok(format!("{:x}", Sha256::digest(&bytes)))
+    Ok(hex_digest(&Sha256::digest(&bytes)))
 }
 
 fn now_utc() -> String {
@@ -783,6 +783,10 @@ fn now_utc() -> String {
         secs % 60,
         millis,
     )
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn churn_allocator_state(
