@@ -954,7 +954,12 @@ mod tests {
     #[test]
     fn difftime_does_not_overflow_on_extreme_epochs() {
         let d = difftime(i64::MAX, i64::MIN);
-        assert!(d.is_finite(), "difftime({:x}, {:x}) = {d}", i64::MAX, i64::MIN);
+        assert!(
+            d.is_finite(),
+            "difftime({:x}, {:x}) = {d}",
+            i64::MAX,
+            i64::MIN
+        );
         assert!(d > 0.0);
         let d_inv = difftime(i64::MIN, i64::MAX);
         assert!(d_inv.is_finite());

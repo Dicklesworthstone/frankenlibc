@@ -263,9 +263,9 @@ fuzz_target!(|input: AllocFuzzInput| {
                     continue;
                 }
                 let requested_size = (*size as usize).clamp(1, MAX_ALLOC);
-                if let Some(ptr) =
-                    state.malloc(requested_size, |alloc_size| backing_alloc(&mut backing, alloc_size))
-                {
+                if let Some(ptr) = state.malloc(requested_size, |alloc_size| {
+                    backing_alloc(&mut backing, alloc_size)
+                }) {
                     state_live.push(StateAlloc {
                         ptr,
                         requested_size,
@@ -280,7 +280,8 @@ fuzz_target!(|input: AllocFuzzInput| {
                 }
                 let ct = (*count as usize).clamp(1, 256);
                 let elem_size = (*size as usize).clamp(1, MAX_ALLOC);
-                if let Some(requested_size) = ct.checked_mul(elem_size).filter(|size| *size <= MAX_ALLOC)
+                if let Some(requested_size) =
+                    ct.checked_mul(elem_size).filter(|size| *size <= MAX_ALLOC)
                     && let Some(ptr) = state.malloc(requested_size, |alloc_size| {
                         backing_alloc(&mut backing, alloc_size)
                     })
@@ -300,9 +301,9 @@ fuzz_target!(|input: AllocFuzzInput| {
                 let idx = (*index as usize) % state_live.len();
                 let old_alloc = state_live[idx];
                 let requested_size = (*new_size as usize).clamp(1, MAX_ALLOC);
-                if let Some(new_ptr) =
-                    state.malloc(requested_size, |alloc_size| backing_alloc(&mut backing, alloc_size))
-                {
+                if let Some(new_ptr) = state.malloc(requested_size, |alloc_size| {
+                    backing_alloc(&mut backing, alloc_size)
+                }) {
                     state.free(old_alloc.ptr, old_alloc.requested_size, |ptr| {
                         backing_free(&mut backing, ptr)
                     });
@@ -321,9 +322,9 @@ fuzz_target!(|input: AllocFuzzInput| {
                 let bogus = synthetic_state_bogus(*addr_lo, &state_live);
                 let requested_size = (*new_size as usize).clamp(1, MAX_ALLOC);
                 assert!(state_live.iter().all(|alloc| alloc.ptr != bogus));
-                if let Some(ptr) =
-                    state.malloc(requested_size, |alloc_size| backing_alloc(&mut backing, alloc_size))
-                {
+                if let Some(ptr) = state.malloc(requested_size, |alloc_size| {
+                    backing_alloc(&mut backing, alloc_size)
+                }) {
                     state_live.push(StateAlloc {
                         ptr,
                         requested_size,

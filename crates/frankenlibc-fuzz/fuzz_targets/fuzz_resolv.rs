@@ -68,7 +68,10 @@ fn fuzz_reverse_lookup_hosts(input: &ResolvFuzzInput) {
     let addr = &input.addr[..input.addr.len().min(256)];
     let results = resolv::reverse_lookup_hosts(content, addr);
     for name in &results {
-        assert!(!name.is_empty(), "reverse-looked-up name should not be empty");
+        assert!(
+            !name.is_empty(),
+            "reverse-looked-up name should not be empty"
+        );
     }
 }
 

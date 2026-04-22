@@ -19,8 +19,8 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::string::regex::{
-    regex_compile, regex_error, regex_exec, RegMatch, REG_EXTENDED, REG_ICASE, REG_NEWLINE,
-    REG_NOMATCH, REG_NOSUB, REG_NOTBOL, REG_NOTEOL,
+    REG_EXTENDED, REG_ICASE, REG_NEWLINE, REG_NOMATCH, REG_NOSUB, REG_NOTBOL, REG_NOTEOL, RegMatch,
+    regex_compile, regex_error, regex_exec,
 };
 
 /// Maximum pattern length to prevent NFA explosion.
@@ -115,8 +115,7 @@ fn fuzz_compile_exec(input: &RegexFuzzInput) {
                     .input
                     .iter()
                     .position(|&b| b == 0)
-                    .unwrap_or(input.input.len())
-                    as i32;
+                    .unwrap_or(input.input.len()) as i32;
 
                 for m in &matches {
                     if m.rm_so >= 0 {

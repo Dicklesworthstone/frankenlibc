@@ -78,18 +78,10 @@ fn fuzz_trig(input: &MathFuzzInput) {
     // sincos should agree with sin/cos
     let (sc_s, sc_c) = math::sincos(x);
     if s.is_finite() {
-        assert_eq!(
-            s.to_bits(),
-            sc_s.to_bits(),
-            "sincos sin disagrees at x={x}"
-        );
+        assert_eq!(s.to_bits(), sc_s.to_bits(), "sincos sin disagrees at x={x}");
     }
     if c.is_finite() {
-        assert_eq!(
-            c.to_bits(),
-            sc_c.to_bits(),
-            "sincos cos disagrees at x={x}"
-        );
+        assert_eq!(c.to_bits(), sc_c.to_bits(), "sincos cos disagrees at x={x}");
     }
 
     // Pythagorean identity for finite x
@@ -137,10 +129,7 @@ fn fuzz_exp_log(input: &MathFuzzInput) {
             let rt = math::log2(e2x);
             if rt.is_finite() {
                 let err = (rt - x).abs();
-                assert!(
-                    err < EPS_F64,
-                    "log2(exp2({x})) = {rt}, error = {err}"
-                );
+                assert!(err < EPS_F64, "log2(exp2({x})) = {rt}, error = {err}");
             }
         }
     }
@@ -186,10 +175,7 @@ fn fuzz_float_utils(input: &MathFuzzInput) {
             let rt = sq * sq;
             if x > 1e-300 && x < 1e300 {
                 let rel = ((rt - x) / x).abs();
-                assert!(
-                    rel < EPS_F64,
-                    "sqrt({x})² = {rt}, relative error = {rel}"
-                );
+                assert!(rel < EPS_F64, "sqrt({x})² = {rt}, relative error = {rel}");
             }
         }
     }

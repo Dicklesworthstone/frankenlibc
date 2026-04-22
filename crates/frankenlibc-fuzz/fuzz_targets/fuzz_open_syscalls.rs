@@ -103,10 +103,8 @@ fuzz_target!(|input: OpenFuzzInput| {
     };
 
     let compare_host = !input.null_path;
-    let use_relative = op == OP_OPENAT
-        && at_fd_kind != ATFD_CWD
-        && path_case != PATH_DEV_NULL
-        && !input.null_path;
+    let use_relative =
+        op == OP_OPENAT && at_fd_kind != ATFD_CWD && path_case != PATH_DEV_NULL && !input.null_path;
 
     let ours_path = if input.null_path {
         std::ptr::null()
@@ -179,7 +177,8 @@ fuzz_target!(|input: OpenFuzzInput| {
 
 fn test_roots() -> &'static TestRoots {
     TEST_ROOTS.get_or_init(|| {
-        let base = std::env::temp_dir().join(format!("frankenlibc-fuzz-open-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("frankenlibc-fuzz-open-{}", std::process::id()));
         let ours_root = base.join("ours");
         let host_root = base.join("host");
         let ours_work = ours_root.join("work");
@@ -205,7 +204,12 @@ fn test_roots() -> &'static TestRoots {
 fn open_directory_fd(path: &Path) -> i32 {
     let bytes = path.as_os_str().as_bytes();
     let c_path = CString::new(bytes).expect("directory path must be NUL-free");
-    let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+    let fd = unsafe {
+        libc::open(
+            c_path.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
     assert!(fd >= 0, "failed to open fuzz root directory");
     fd
 }
@@ -241,14 +245,14 @@ fn build_case_paths(
 ) -> Option<CasePaths> {
     match path_case {
         PATH_EXISTING => build_named_case(roots, named_bytes(b"existing", case_id), |path| {
-                fs::write(path, b"seed").ok()?;
-                Some(true)
-            }),
+            fs::write(path, b"seed").ok()?;
+            Some(true)
+        }),
         PATH_MISSING => build_named_case(roots, named_bytes(b"missing", case_id), |_| Some(false)),
         PATH_DIRECTORY => build_named_case(roots, named_bytes(b"dir", case_id), |path| {
-                fs::create_dir_all(path).ok()?;
-                Some(false)
-            }),
+            fs::create_dir_all(path).ok()?;
+            Some(false)
+        }),
         PATH_PARENT_ESCAPE => build_parent_escape_case(roots, case_id),
         PATH_DEV_NULL => Some(CasePaths {
             ours_absolute: Some(CString::new("/dev/null").expect("literal has no NUL")),
@@ -272,11 +276,7 @@ fn build_case_paths(
     }
 }
 
-fn build_named_case<F>(
-    roots: &TestRoots,
-    name_bytes: Vec<u8>,
-    setup: F,
-) -> Option<CasePaths>
+fn build_named_case<F>(roots: &TestRoots, name_bytes: Vec<u8>, setup: F) -> Option<CasePaths>
 where
     F: Fn(&Path) -> Option<bool>,
 {

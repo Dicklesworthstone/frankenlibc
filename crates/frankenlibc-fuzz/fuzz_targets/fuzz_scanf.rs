@@ -17,7 +17,7 @@
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
-use frankenlibc_core::stdio::scanf::{parse_scanf_format, scan_input, ScanDirective, ScanValue};
+use frankenlibc_core::stdio::scanf::{ScanDirective, ScanValue, parse_scanf_format, scan_input};
 
 /// Maximum format string length to bound parsing.
 const MAX_FORMAT: usize = 1024;

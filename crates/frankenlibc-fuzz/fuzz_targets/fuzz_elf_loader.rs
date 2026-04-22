@@ -16,15 +16,15 @@
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::elf::hash::ElfHashTable;
-use frankenlibc_core::elf::program::{parse_program_headers, ProgramType};
+use frankenlibc_core::elf::program::{ProgramType, parse_program_headers};
 use frankenlibc_core::elf::relocation::{
-    compute_relocation, parse_relocations, RelocationContext, RelocationType,
+    RelocationContext, RelocationType, compute_relocation, parse_relocations,
 };
-use frankenlibc_core::elf::section::{parse_section_headers, SectionType};
-use frankenlibc_core::elf::symbol::{get_string, parse_symbols, Elf64Symbol};
+use frankenlibc_core::elf::section::{SectionType, parse_section_headers};
+use frankenlibc_core::elf::symbol::{Elf64Symbol, get_string, parse_symbols};
 use frankenlibc_core::elf::{
-    self, elf_hash, gnu_hash, Elf64Header, ElfLoader, GnuHashTable, NullSymbolLookup,
-    RelocationResult, RelocationStats, SymbolLookup,
+    self, Elf64Header, ElfLoader, GnuHashTable, NullSymbolLookup, RelocationResult,
+    RelocationStats, SymbolLookup, elf_hash, gnu_hash,
 };
 
 const MAX_INPUT: usize = 16 * 1024;
@@ -172,9 +172,11 @@ fn fuzz_normalized_loader(seed: &[u8], image: &[u8]) {
     assert_eq!(program_headers.len(), PROGRAM_HEADER_COUNT);
     assert!(program_headers.iter().any(|header| header.is_load()));
     assert!(program_headers.iter().any(|header| header.is_dynamic()));
-    assert!(program_headers
-        .iter()
-        .any(|header| matches!(header.p_type, ProgramType::Dynamic)));
+    assert!(
+        program_headers
+            .iter()
+            .any(|header| matches!(header.p_type, ProgramType::Dynamic))
+    );
 
     let section_headers = match parse_section_headers(
         image,
@@ -186,15 +188,21 @@ fn fuzz_normalized_loader(seed: &[u8], image: &[u8]) {
         Err(_) => return,
     };
     assert_eq!(section_headers.len(), SECTION_HEADER_COUNT);
-    assert!(section_headers
-        .iter()
-        .any(|header| matches!(header.sh_type, SectionType::Dynsym)));
-    assert!(section_headers
-        .iter()
-        .any(|header| matches!(header.sh_type, SectionType::Strtab)));
-    assert!(section_headers
-        .iter()
-        .any(|header| matches!(header.sh_type, SectionType::Rela)));
+    assert!(
+        section_headers
+            .iter()
+            .any(|header| matches!(header.sh_type, SectionType::Dynsym))
+    );
+    assert!(
+        section_headers
+            .iter()
+            .any(|header| matches!(header.sh_type, SectionType::Strtab))
+    );
+    assert!(
+        section_headers
+            .iter()
+            .any(|header| matches!(header.sh_type, SectionType::Rela))
+    );
 
     let symbols = match parse_symbols(image, DYNSYM_OFFSET as u64, DYNSYM_SIZE as u64) {
         Ok(symbols) => symbols,
@@ -431,11 +439,7 @@ fn build_normalized_elf_image(seed: &[u8]) -> Vec<u8> {
 }
 
 fn elf_type(seed: &[u8]) -> u16 {
-    if seed_byte(seed, 4) & 1 == 0 {
-        3
-    } else {
-        2
-    }
+    if seed_byte(seed, 4) & 1 == 0 { 3 } else { 2 }
 }
 
 fn load_flags(seed: &[u8]) -> u32 {

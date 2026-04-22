@@ -138,10 +138,7 @@ fn fuzz_ntop_roundtrip(input: &InetFuzzInput) {
         let mut rt = [0u8; 16];
         let rc = inet::inet_pton(AF_INET6, &text, &mut rt);
         assert_eq!(rc, 1, "IPv6 ntop→pton failed");
-        assert_eq!(
-            rt, input.ipv6_bytes,
-            "IPv6 round-trip mismatch"
-        );
+        assert_eq!(rt, input.ipv6_bytes, "IPv6 round-trip mismatch");
     }
 }
 
@@ -192,7 +189,11 @@ fn fuzz_parse_consistency(input: &InetFuzzInput) {
         assert_eq!(aton_rc, 1, "parse_ipv4 succeeded but inet_aton failed");
         assert_eq!(aton_dst, octets, "inet_aton and parse_ipv4 disagree");
         // inet_addr stores in network byte order
-        assert_eq!(addr.to_ne_bytes(), octets, "inet_addr and parse_ipv4 disagree");
+        assert_eq!(
+            addr.to_ne_bytes(),
+            octets,
+            "inet_addr and parse_ipv4 disagree"
+        );
     }
 
     // If parse_ipv4 fails, inet_aton should fail too

@@ -21,7 +21,7 @@ use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::resolv::config::ResolverConfig;
 use frankenlibc_core::resolv::dns::{
-    encode_domain_name, DnsHeader, DnsMessage, DnsQuestion, DnsRecord, DNS_HEADER_SIZE,
+    DNS_HEADER_SIZE, DnsHeader, DnsMessage, DnsQuestion, DnsRecord, encode_domain_name,
 };
 
 /// Maximum input size to prevent OOM.
@@ -77,7 +77,10 @@ fn fuzz_dns_header_decode(input: &ResolverFuzzInput) {
         // If we decoded successfully, re-encoding should produce valid output
         let mut encode_buf = [0u8; DNS_HEADER_SIZE];
         let encoded = header.encode(&mut encode_buf);
-        assert!(encoded.is_some(), "re-encode of valid header should succeed");
+        assert!(
+            encoded.is_some(),
+            "re-encode of valid header should succeed"
+        );
     }
 
     // Also test header round-trip with known-good construction

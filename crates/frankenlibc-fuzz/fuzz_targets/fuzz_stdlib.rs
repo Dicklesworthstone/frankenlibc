@@ -146,7 +146,10 @@ fn fuzz_strtod(input: &StdlibFuzzInput) {
 
     // If strtod parsed something, strtof should parse the same prefix
     if endptr > 0 && endptrf > 0 {
-        assert_eq!(endptr, endptrf, "strtod and strtof should consume same prefix");
+        assert_eq!(
+            endptr, endptrf,
+            "strtod and strtof should consume same prefix"
+        );
     }
 
     // NaN/Inf should be handled gracefully
@@ -170,7 +173,11 @@ fn fuzz_atoi(input: &StdlibFuzzInput) {
     // atof should be consistent with strtod
     let f = conversion::atof(&s);
     let (strtod_val, _) = conversion::strtod(&s);
-    assert_eq!(f.to_bits(), strtod_val.to_bits(), "atof and strtod should agree");
+    assert_eq!(
+        f.to_bits(),
+        strtod_val.to_bits(),
+        "atof and strtod should agree"
+    );
 }
 
 fn fuzz_qsort(input: &StdlibFuzzInput) {
@@ -196,7 +203,11 @@ fn fuzz_qsort(input: &StdlibFuzzInput) {
         let curr_range = &buf[i * width..(i + 1) * width];
         let prev = read_i32_ne(prev_range);
         let curr = read_i32_ne(curr_range);
-        assert!(prev.is_some(), "qsort produced truncated element at {}", i - 1);
+        assert!(
+            prev.is_some(),
+            "qsort produced truncated element at {}",
+            i - 1
+        );
         assert!(curr.is_some(), "qsort produced truncated element at {}", i);
         let prev = prev.unwrap_or_default();
         let curr = curr.unwrap_or_default();

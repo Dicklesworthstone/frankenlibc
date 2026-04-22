@@ -165,10 +165,7 @@ fn fuzz_partition_invariants(input: &CtypeFuzzInput) {
 fn fuzz_digit_xdigit_subset(input: &CtypeFuzzInput) {
     for &c in &input.bytes {
         if ctype::is_digit(c) {
-            assert!(
-                ctype::is_xdigit(c),
-                "digit({c:#04x}) must also be xdigit"
-            );
+            assert!(ctype::is_xdigit(c), "digit({c:#04x}) must also be xdigit");
         }
     }
 }

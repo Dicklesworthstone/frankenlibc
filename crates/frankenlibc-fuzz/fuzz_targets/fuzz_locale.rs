@@ -292,12 +292,13 @@ fn fuzz_message_catalog_backend(input: &LocaleFuzzInput) {
         CString::new("/tmp/frankenlibc_missing_catalog_fuzz.cat").unwrap()
     } else {
         let mut path = b"/tmp/frankenlibc_missing_catalog_".to_vec();
-        path.extend(
-            domain_name
-                .as_bytes()
-                .iter()
-                .map(|byte| if byte.is_ascii_alphanumeric() { *byte } else { b'_' }),
-        );
+        path.extend(domain_name.as_bytes().iter().map(|byte| {
+            if byte.is_ascii_alphanumeric() {
+                *byte
+            } else {
+                b'_'
+            }
+        }));
         path.extend_from_slice(b".cat");
         CString::new(path).unwrap()
     };

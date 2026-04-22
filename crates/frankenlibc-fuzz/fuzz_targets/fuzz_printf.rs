@@ -27,8 +27,9 @@ use frankenlibc_abi::stdio_abi::{asprintf, snprintf, sprintf};
 use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_core::stdio::printf::{
-    format_char, format_float, format_pointer, format_signed, format_str, format_unsigned,
-    parse_format_spec, parse_format_string, FormatFlags, FormatSpec, LengthMod, Precision, Width,
+    FormatFlags, FormatSpec, LengthMod, Precision, Width, format_char, format_float,
+    format_pointer, format_signed, format_str, format_unsigned, parse_format_spec,
+    parse_format_string,
 };
 
 /// Maximum output buffer size to prevent OOM.
@@ -90,8 +91,8 @@ fn make_spec(input: &PrintfFuzzInput) -> FormatSpec {
     };
 
     let conversions = [
-        b'd', b'i', b'o', b'u', b'x', b'X', b'f', b'F', b'e', b'E', b'g', b'G', b'a', b'A',
-        b'c', b's', b'p', b'n',
+        b'd', b'i', b'o', b'u', b'x', b'X', b'f', b'F', b'e', b'E', b'g', b'G', b'a', b'A', b'c',
+        b's', b'p', b'n',
     ];
     let conversion = conversions[(input.conversion as usize) % conversions.len()];
 
@@ -155,27 +156,15 @@ fn c_buffer_prefix(buf: &[c_char]) -> Vec<u8> {
     buf.iter().take(copied).map(|&ch| ch as u8).collect()
 }
 
-unsafe extern "C" fn call_snprintf_signed(
-    buf: *mut c_char,
-    size: usize,
-    value: i64,
-) -> c_int {
+unsafe extern "C" fn call_snprintf_signed(buf: *mut c_char, size: usize, value: i64) -> c_int {
     unsafe { snprintf(buf, size, c"%lld".as_ptr(), value) }
 }
 
-unsafe extern "C" fn call_snprintf_unsigned(
-    buf: *mut c_char,
-    size: usize,
-    value: u64,
-) -> c_int {
+unsafe extern "C" fn call_snprintf_unsigned(buf: *mut c_char, size: usize, value: u64) -> c_int {
     unsafe { snprintf(buf, size, c"%#llx".as_ptr(), value) }
 }
 
-unsafe extern "C" fn call_snprintf_float(
-    buf: *mut c_char,
-    size: usize,
-    value: f64,
-) -> c_int {
+unsafe extern "C" fn call_snprintf_float(buf: *mut c_char, size: usize, value: f64) -> c_int {
     unsafe { snprintf(buf, size, c"%.17g".as_ptr(), value) }
 }
 
@@ -477,7 +466,12 @@ fn fuzz_sprintf_hardened_truncation(input: &PrintfFuzzInput) {
 
     let mut full_ptr: *mut c_char = std::ptr::null_mut();
     let expected = unsafe {
-        call_asprintf_combo(&mut full_ptr, input.signed_val, text.as_ptr(), input.unsigned_val)
+        call_asprintf_combo(
+            &mut full_ptr,
+            input.signed_val,
+            text.as_ptr(),
+            input.unsigned_val,
+        )
     };
     if expected < 0 {
         return;
@@ -497,7 +491,8 @@ fn fuzz_sprintf_hardened_truncation(input: &PrintfFuzzInput) {
     unsafe {
         std::ptr::write_bytes(tracked.cast::<u8>(), 0xA5, cap);
     }
-    let rc = unsafe { call_sprintf_combo(tracked, input.signed_val, text.as_ptr(), input.unsigned_val) };
+    let rc =
+        unsafe { call_sprintf_combo(tracked, input.signed_val, text.as_ptr(), input.unsigned_val) };
     assert_eq!(rc, expected);
 
     let tracked_bytes = unsafe { std::slice::from_raw_parts(tracked.cast::<u8>(), cap) };
@@ -519,8 +514,14 @@ fn fuzz_sprintf_hardened_truncation(input: &PrintfFuzzInput) {
 fn fuzz_asprintf_matches_snprintf(input: &PrintfFuzzInput) {
     let text = sanitize_cstring(&input.str_val, MAX_ABI_STRING);
     let mut out: *mut c_char = std::ptr::null_mut();
-    let asprintf_rc =
-        unsafe { call_asprintf_combo(&mut out, input.signed_val, text.as_ptr(), input.unsigned_val) };
+    let asprintf_rc = unsafe {
+        call_asprintf_combo(
+            &mut out,
+            input.signed_val,
+            text.as_ptr(),
+            input.unsigned_val,
+        )
+    };
     if asprintf_rc < 0 {
         return;
     }
@@ -562,7 +563,10 @@ fn fuzz_percent_n_abi(input: &PrintfFuzzInput) {
 
     let rc = unsafe { call_snprintf_count(buf.as_mut_ptr(), size, &mut count, text.as_ptr()) };
     assert!(rc >= 4);
-    assert_eq!(count, 3, "%n must record the byte count before the directive");
+    assert_eq!(
+        count, 3,
+        "%n must record the byte count before the directive"
+    );
 
     if size > 0 {
         let expected = format!("abc:{}", text.to_string_lossy());
