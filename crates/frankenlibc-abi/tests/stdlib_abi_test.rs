@@ -1027,6 +1027,88 @@ fn sched_priority_bounds_sched_batch_are_zero() {
     assert_eq!(max_errno, 0);
 }
 
+/// bd-gkml2: host glibc reports min=0 and max=0 for SCHED_IDLE and
+/// must not touch errno. Mirrors the SCHED_BATCH regression above.
+#[test]
+fn sched_priority_bounds_sched_idle_are_zero() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let min = unsafe { sched_get_priority_min(libc::SCHED_IDLE) };
+    let min_errno = unsafe { *__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let max = unsafe { sched_get_priority_max(libc::SCHED_IDLE) };
+    let max_errno = unsafe { *__errno_location() };
+
+    assert_eq!(min, 0, "SCHED_IDLE min must be 0 (host-parity)");
+    assert_eq!(min_errno, 0);
+    assert_eq!(max, 0, "SCHED_IDLE max must be 0 (host-parity)");
+    assert_eq!(max_errno, 0);
+}
+
+/// bd-gh8m4: host glibc reports min=0 and max=0 for SCHED_DEADLINE
+/// (policy 6 on Linux), even though SCHED_DEADLINE uses the
+/// deadline-based scheduler rather than a classical priority band.
+#[test]
+fn sched_priority_bounds_sched_deadline_are_zero() {
+    // SCHED_DEADLINE is not exported by libc on every target; use the
+    // kernel-stable constant defined alongside SCHED_DEADLINE in the
+    // veneer tests.
+    const SCHED_DEADLINE: libc::c_int = 6;
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let min = unsafe { sched_get_priority_min(SCHED_DEADLINE) };
+    let min_errno = unsafe { *__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let max = unsafe { sched_get_priority_max(SCHED_DEADLINE) };
+    let max_errno = unsafe { *__errno_location() };
+
+    assert_eq!(min, 0, "SCHED_DEADLINE min must be 0 (host-parity)");
+    assert_eq!(min_errno, 0);
+    assert_eq!(max, 0, "SCHED_DEADLINE max must be 0 (host-parity)");
+    assert_eq!(max_errno, 0);
+}
+
+/// bd-i5fto: host glibc surfaces EINVAL for sched_get_priority_min(-1).
+/// Complements the existing i32::MAX invalid-policy test by pinning
+/// the negative-policy branch explicitly.
+#[test]
+fn sched_get_priority_min_negative_policy_is_einval() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { sched_get_priority_min(-1) };
+    assert_eq!(rc, -1, "sched_get_priority_min(-1) must return -1");
+    assert_eq!(
+        unsafe { *__errno_location() },
+        libc::EINVAL,
+        "sched_get_priority_min(-1) must set errno=EINVAL (host-parity)"
+    );
+}
+
+/// bd-kkihe: symmetric negative-policy pin for sched_get_priority_max.
+#[test]
+fn sched_get_priority_max_negative_policy_is_einval() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { sched_get_priority_max(-1) };
+    assert_eq!(rc, -1, "sched_get_priority_max(-1) must return -1");
+    assert_eq!(
+        unsafe { *__errno_location() },
+        libc::EINVAL,
+        "sched_get_priority_max(-1) must set errno=EINVAL (host-parity)"
+    );
+}
+
 #[test]
 fn sched_getscheduler_matches_kernel_syscall() {
     // SAFETY: __errno_location points to thread-local errno.
