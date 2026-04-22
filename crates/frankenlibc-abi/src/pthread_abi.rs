@@ -43,6 +43,7 @@ use crate::errno_abi::set_abi_errno;
 use crate::host_resolve::{
     host_pthread_cancel_raw as resolved_thread_cancel_raw,
     host_pthread_clockjoin_np_raw as resolved_thread_clockjoin_np_raw,
+    host_pthread_condattr_getclock_raw as resolved_thread_condattr_getclock_raw,
     host_pthread_create_raw as resolved_thread_create_raw,
     host_pthread_detach_raw as resolved_thread_detach_raw,
     host_pthread_exit_raw as resolved_thread_exit_raw,
@@ -2450,7 +2451,16 @@ pub unsafe extern "C" fn pthread_cond_init(
         if rc == 0 {
             clock_id
         } else {
-            return libc::EINVAL;
+            let mut host_clock_id: libc::clockid_t = PTHREAD_COND_CLOCK_REALTIME;
+            let Some(host_getclock) = resolved_thread_condattr_getclock_raw() else {
+                return libc::EINVAL;
+            };
+            let host_rc =
+                unsafe { host_getclock(attr, &mut host_clock_id as *mut libc::clockid_t) };
+            if host_rc != 0 {
+                return libc::EINVAL;
+            }
+            host_clock_id
         }
     };
     // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.

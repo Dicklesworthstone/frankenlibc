@@ -24,6 +24,7 @@ static HOST_PTHREAD_SELF: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_TRYJOIN_NP: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_TIMEDJOIN_NP: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_CLOCKJOIN_NP: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_CONDATTR_GETCLOCK: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_EQUAL: AtomicUsize = AtomicUsize::new(0);
 static HOST_MALLOC: AtomicUsize = AtomicUsize::new(0);
 static HOST_CALLOC: AtomicUsize = AtomicUsize::new(0);
@@ -424,6 +425,7 @@ pub(crate) fn bootstrap_host_symbols() {
         ("pthread_tryjoin_np", &HOST_PTHREAD_TRYJOIN_NP),
         ("pthread_timedjoin_np", &HOST_PTHREAD_TIMEDJOIN_NP),
         ("pthread_clockjoin_np", &HOST_PTHREAD_CLOCKJOIN_NP),
+        ("pthread_condattr_getclock", &HOST_PTHREAD_CONDATTR_GETCLOCK),
         ("pthread_equal", &HOST_PTHREAD_EQUAL),
         ("malloc", &HOST_MALLOC),
         ("calloc", &HOST_CALLOC),
@@ -528,6 +530,12 @@ pub(crate) fn host_pthread_clockjoin_np_raw() -> Option<
     unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void, c_int, *const libc::timespec) -> i32,
 > {
     load_host_symbol(&HOST_PTHREAD_CLOCKJOIN_NP).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_condattr_getclock_raw()
+-> Option<unsafe extern "C" fn(*const libc::pthread_condattr_t, *mut libc::clockid_t) -> i32> {
+    load_host_symbol(&HOST_PTHREAD_CONDATTR_GETCLOCK)
+        .map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_equal_raw()
