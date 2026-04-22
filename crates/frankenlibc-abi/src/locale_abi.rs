@@ -3,7 +3,9 @@
 //! Bootstrap provides the POSIX "C"/"POSIX" locale only. `setlocale` accepts
 //! these names and rejects all others. `localeconv` returns C-locale defaults.
 
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::os::unix::ffi::OsStrExt;
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::locale as locale_core;
@@ -496,35 +498,235 @@ pub unsafe extern "C" fn nl_langinfo_l(item: libc::nl_item, _locale: *mut c_void
 #[allow(non_camel_case_types)]
 pub type nl_catd = isize;
 
+const INVALID_NL_CATD: nl_catd = -1;
+const CATGETS_MAGIC: u32 = 0x9604_08de;
+const CATALOG_HEADER_WORDS: usize = 3;
+const CATALOG_SLOT_WORDS: usize = 3;
+
+struct MessageCatalog {
+    plane_size: usize,
+    plane_depth: usize,
+    table: Box<[u32]>,
+    strings: Box<[u8]>,
+}
+
+impl MessageCatalog {
+    fn message_ptr(&self, set_id: c_int, msg_id: c_int) -> Option<*const c_char> {
+        let stored_set = set_id.checked_add(1)?;
+        if stored_set <= 0 || msg_id < 0 {
+            return None;
+        }
+
+        let stored_set = stored_set as usize;
+        let msg_id = msg_id as usize;
+        let mut idx = ((stored_set * msg_id) % self.plane_size) * CATALOG_SLOT_WORDS;
+
+        for _ in 0..self.plane_depth {
+            if self.table[idx] == stored_set as u32 && self.table[idx + 1] == msg_id as u32 {
+                let offset = self.table[idx + 2] as usize;
+                if offset >= self.strings.len() {
+                    return None;
+                }
+                return Some(self.strings[offset..].as_ptr().cast::<c_char>());
+            }
+            idx += self.plane_size * CATALOG_SLOT_WORDS;
+        }
+
+        None
+    }
+}
+
+struct CatalogRegistry {
+    next_id: nl_catd,
+    open: HashMap<nl_catd, MessageCatalog>,
+}
+
+fn catalog_registry() -> &'static Mutex<CatalogRegistry> {
+    static STORAGE: OnceLock<Mutex<CatalogRegistry>> = OnceLock::new();
+    STORAGE.get_or_init(|| {
+        Mutex::new(CatalogRegistry {
+            next_id: 1,
+            open: HashMap::new(),
+        })
+    })
+}
+
+fn next_catalog_id(registry: &mut CatalogRegistry) -> nl_catd {
+    loop {
+        let candidate = registry.next_id;
+        registry.next_id = registry.next_id.checked_add(1).unwrap_or(1);
+        if registry.next_id == INVALID_NL_CATD {
+            registry.next_id = 1;
+        }
+        if candidate != INVALID_NL_CATD && !registry.open.contains_key(&candidate) {
+            return candidate;
+        }
+    }
+}
+
+fn catalog_word(bytes: &[u8], offset: usize, swapped_header: bool) -> Option<u32> {
+    let chunk: [u8; 4] = bytes.get(offset..offset + 4)?.try_into().ok()?;
+    Some(if swapped_header {
+        u32::from_be_bytes(chunk)
+    } else {
+        u32::from_le_bytes(chunk)
+    })
+}
+
+fn parse_catalog_bytes(bytes: Vec<u8>) -> Result<MessageCatalog, c_int> {
+    let header_len = CATALOG_HEADER_WORDS * std::mem::size_of::<u32>();
+    if bytes.len() <= header_len {
+        return Err(libc::EINVAL);
+    }
+
+    let magic_le = catalog_word(&bytes, 0, false).ok_or(libc::EINVAL)?;
+    let swapped_header = if magic_le == CATGETS_MAGIC {
+        false
+    } else if catalog_word(&bytes, 0, true).ok_or(libc::EINVAL)? == CATGETS_MAGIC {
+        true
+    } else {
+        return Err(libc::EINVAL);
+    };
+
+    let plane_size = catalog_word(&bytes, 4, swapped_header).ok_or(libc::EINVAL)? as usize;
+    let plane_depth = catalog_word(&bytes, 8, swapped_header).ok_or(libc::EINVAL)? as usize;
+    if plane_size == 0 || plane_depth == 0 {
+        return Err(libc::EINVAL);
+    }
+
+    let table_words = plane_size
+        .checked_mul(plane_depth)
+        .and_then(|count| count.checked_mul(CATALOG_SLOT_WORDS))
+        .ok_or(libc::EINVAL)?;
+    let table_bytes = table_words
+        .checked_mul(std::mem::size_of::<u32>())
+        .ok_or(libc::EINVAL)?;
+    let first_table_end = header_len.checked_add(table_bytes).ok_or(libc::EINVAL)?;
+    let strings_offset = first_table_end
+        .checked_add(table_bytes)
+        .ok_or(libc::EINVAL)?;
+    if strings_offset >= bytes.len() {
+        return Err(libc::EINVAL);
+    }
+
+    let first_table = bytes.get(header_len..first_table_end).ok_or(libc::EINVAL)?;
+    let mut table = Vec::with_capacity(table_words);
+    for chunk in first_table.chunks_exact(4) {
+        let word: [u8; 4] = chunk.try_into().map_err(|_| libc::EINVAL)?;
+        table.push(u32::from_le_bytes(word));
+    }
+    if table.len() != table_words {
+        return Err(libc::EINVAL);
+    }
+
+    let strings = bytes[strings_offset..].to_vec().into_boxed_slice();
+    let max_offset = table
+        .iter()
+        .skip(2)
+        .step_by(CATALOG_SLOT_WORDS)
+        .copied()
+        .max()
+        .unwrap_or(0) as usize;
+    if max_offset >= strings.len() || !strings[max_offset..].contains(&0) {
+        return Err(libc::EINVAL);
+    }
+
+    Ok(MessageCatalog {
+        plane_size,
+        plane_depth,
+        table: table.into_boxed_slice(),
+        strings,
+    })
+}
+
+/// Test hook: clear any process-global catalog descriptors for deterministic
+/// locale ABI tests.
+#[doc(hidden)]
+pub fn locale_reset_catalog_state_for_tests() {
+    let mut registry = catalog_registry().lock().unwrap_or_else(|e| e.into_inner());
+    registry.next_id = 1;
+    registry.open.clear();
+}
+
 /// `catopen` — open a message catalog.
 ///
-/// Returns (nl_catd)-1 with errno set to ENOSYS. Message catalogs are
-/// not supported, but the symbol must be present for configure scripts.
+/// Minimal deterministic backend: open a direct catalog path, parse the glibc
+/// `.cat` table format, and return an opaque descriptor id.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn catopen(_name: *const c_char, _oflag: c_int) -> nl_catd {
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    -1
+pub unsafe extern "C" fn catopen(name: *const c_char, _oflag: c_int) -> nl_catd {
+    if name.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return INVALID_NL_CATD;
+    }
+
+    let name = unsafe { CStr::from_ptr(name) };
+    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(name.to_bytes()));
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            unsafe { set_abi_errno(err.raw_os_error().unwrap_or(libc::EIO)) };
+            return INVALID_NL_CATD;
+        }
+    };
+
+    let catalog = match parse_catalog_bytes(bytes) {
+        Ok(catalog) => catalog,
+        Err(err) => {
+            unsafe { set_abi_errno(err) };
+            return INVALID_NL_CATD;
+        }
+    };
+
+    let mut registry = catalog_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let id = next_catalog_id(&mut registry);
+    registry.open.insert(id, catalog);
+    id
 }
 
 /// `catgets` — read a message from a catalog.
 ///
-/// Returns the default string since catalogs are not supported.
+/// Mirrors glibc's forgiving contract for failed `catopen` descriptors:
+/// `catgets((nl_catd)-1, ...)` simply returns the default string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn catgets(
-    _catd: nl_catd,
-    _set_id: c_int,
-    _msg_id: c_int,
+    catd: nl_catd,
+    set_id: c_int,
+    msg_id: c_int,
     s: *const c_char,
 ) -> *const c_char {
-    // Return default string as-is
-    s
+    if catd == INVALID_NL_CATD || set_id < 0 || msg_id < 0 {
+        return s;
+    }
+
+    let registry = catalog_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(catalog) = registry.open.get(&catd) else {
+        unsafe { set_abi_errno(libc::EBADF) };
+        return s;
+    };
+
+    if let Some(message_ptr) = catalog.message_ptr(set_id, msg_id) {
+        message_ptr
+    } else {
+        unsafe { set_abi_errno(libc::ENOMSG) };
+        s
+    }
 }
 
 /// `catclose` — close a message catalog.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn catclose(_catd: nl_catd) -> c_int {
-    unsafe { set_abi_errno(libc::EBADF) };
-    -1
+pub unsafe extern "C" fn catclose(catd: nl_catd) -> c_int {
+    if catd == INVALID_NL_CATD {
+        unsafe { set_abi_errno(libc::EBADF) };
+        return -1;
+    }
+
+    let mut registry = catalog_registry().lock().unwrap_or_else(|e| e.into_inner());
+    if registry.open.remove(&catd).is_some() {
+        0
+    } else {
+        unsafe { set_abi_errno(libc::EBADF) };
+        -1
+    }
 }
 
 #[cfg(test)]

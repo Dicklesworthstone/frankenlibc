@@ -6,7 +6,7 @@
 //! - setlocale/newlocale/uselocale with arbitrary category selectors and names
 //! - nl_langinfo / nl_langinfo_l item selection
 //! - gettext/textdomain/bindtextdomain state transitions
-//! - catopen/catgets/catclose errno and default-string semantics
+//! - catopen/catgets/catclose missing-catalog and default-string semantics
 //!
 //! Bead: bd-wzud
 
@@ -21,8 +21,9 @@ use frankenlibc_abi::{
     errno_abi::__errno_location,
     locale_abi::{
         LocaleT, bindtextdomain, catclose, catgets, catopen, dgettext, duplocale, freelocale,
-        gettext, locale_reset_gettext_state_for_tests, localeconv, newlocale, ngettext,
-        nl_langinfo, nl_langinfo_l, setlocale, textdomain, uselocale,
+        gettext, locale_reset_catalog_state_for_tests, locale_reset_gettext_state_for_tests,
+        localeconv, newlocale, ngettext, nl_langinfo, nl_langinfo_l, setlocale, textdomain,
+        uselocale,
     },
 };
 use frankenlibc_core::locale;
@@ -282,13 +283,23 @@ fn fuzz_gettext_domain_state(input: &LocaleFuzzInput) {
     );
 }
 
-fn fuzz_message_catalog_stubs(input: &LocaleFuzzInput) {
+fn fuzz_message_catalog_backend(input: &LocaleFuzzInput) {
+    locale_reset_catalog_state_for_tests();
+
     let domain_name = sanitize_cstring(&input.domain_name, MAX_DOMAIN_NAME);
     let msgid = sanitize_cstring(&input.msgid, MAX_MESSAGE_LEN);
-    let domain_ptr = if input.use_null_domain_name {
-        ptr::null()
+    let path_name = if input.use_null_domain_name || domain_name.as_bytes().is_empty() {
+        CString::new("/tmp/frankenlibc_missing_catalog_fuzz.cat").unwrap()
     } else {
-        domain_name.as_ptr()
+        let mut path = b"/tmp/frankenlibc_missing_catalog_".to_vec();
+        path.extend(
+            domain_name
+                .as_bytes()
+                .iter()
+                .map(|byte| if byte.is_ascii_alphanumeric() { *byte } else { b'_' }),
+        );
+        path.extend_from_slice(b".cat");
+        CString::new(path).unwrap()
     };
 
     let errno_ptr = unsafe { __errno_location() };
@@ -298,9 +309,9 @@ fn fuzz_message_catalog_stubs(input: &LocaleFuzzInput) {
 
     unsafe { *errno_ptr = 0 };
 
-    let catalog = unsafe { catopen(domain_ptr, 0) };
+    let catalog = unsafe { catopen(path_name.as_ptr(), 0) };
     assert_eq!(catalog, -1);
-    assert_eq!(unsafe { *errno_ptr }, libc::ENOSYS);
+    assert_eq!(unsafe { *errno_ptr }, libc::ENOENT);
 
     let fallback = unsafe { catgets(catalog, 1, 1, msgid.as_ptr()) };
     assert_eq!(fallback, msgid.as_ptr());
@@ -319,6 +330,6 @@ fuzz_target!(|input: LocaleFuzzInput| {
         2 => fuzz_thread_locale_handles(&input),
         3 => fuzz_langinfo(&input),
         4 => fuzz_gettext_domain_state(&input),
-        _ => fuzz_message_catalog_stubs(&input),
+        _ => fuzz_message_catalog_backend(&input),
     }
 });

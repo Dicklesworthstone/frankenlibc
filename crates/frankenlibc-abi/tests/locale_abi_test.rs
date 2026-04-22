@@ -7,19 +7,97 @@
 //! nl_langinfo_l, catopen/catgets/catclose.
 
 use std::ffi::{CStr, CString, c_char};
+use std::fs;
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 use std::ptr;
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::locale_abi::{
     bindtextdomain, catclose, catgets, catopen, dgettext, duplocale, freelocale, gettext,
-    locale_reset_gettext_state_for_tests, localeconv, newlocale, ngettext, nl_langinfo,
-    nl_langinfo_l, setlocale, textdomain, uselocale,
+    locale_reset_catalog_state_for_tests, locale_reset_gettext_state_for_tests, localeconv,
+    newlocale, ngettext, nl_langinfo, nl_langinfo_l, setlocale, textdomain, uselocale,
 };
 
 static GETTEXT_STATE_GUARD: Mutex<()> = Mutex::new(());
+static CATALOG_STATE_GUARD: Mutex<()> = Mutex::new(());
 
 fn reset_gettext_state() {
     locale_reset_gettext_state_for_tests();
+}
+
+unsafe fn load_host_symbol(name: &str) -> Option<*mut libc::c_void> {
+    let libc_name = CString::new("libc.so.6").unwrap();
+    let handle = unsafe { libc::dlopen(libc_name.as_ptr(), libc::RTLD_NOW) };
+    if handle.is_null() {
+        return None;
+    }
+    let sym = CString::new(name).unwrap();
+    let ptr = unsafe { libc::dlsym(handle, sym.as_ptr()) };
+    if ptr.is_null() { None } else { Some(ptr) }
+}
+
+type HostCatopenFn = unsafe extern "C" fn(*const c_char, libc::c_int) -> *mut libc::c_void;
+type HostCatgetsFn =
+    unsafe extern "C" fn(*mut libc::c_void, libc::c_int, libc::c_int, *const c_char) -> *mut c_char;
+type HostCatcloseFn = unsafe extern "C" fn(*mut libc::c_void) -> libc::c_int;
+
+fn temp_catalog_path(tag: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("frankenlibc_{tag}_{unique}.cat"))
+}
+
+fn build_test_catalog(entries: &[(u32, u32, &str)]) -> Vec<u8> {
+    const MAGIC: u32 = 0x9604_08de;
+
+    let mut string_blob = Vec::new();
+    let mut stored = Vec::with_capacity(entries.len());
+    for &(set_id, msg_id, text) in entries {
+        let offset = string_blob.len() as u32;
+        string_blob.extend_from_slice(text.as_bytes());
+        string_blob.push(0);
+        stored.push((set_id + 1, msg_id, offset));
+    }
+
+    let mut plane_size = entries.len().max(1);
+    loop {
+        let mut seen = std::collections::HashSet::new();
+        if stored.iter().all(|&(set_id, msg_id, _)| {
+            seen.insert((set_id as usize * msg_id as usize) % plane_size)
+        }) {
+            break;
+        }
+        plane_size += 1;
+    }
+
+    let mut table = vec![0u32; plane_size * 3];
+    for &(set_id, msg_id, offset) in &stored {
+        let idx = ((set_id as usize * msg_id as usize) % plane_size) * 3;
+        table[idx] = set_id;
+        table[idx + 1] = msg_id;
+        table[idx + 2] = offset;
+    }
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&MAGIC.to_le_bytes());
+    bytes.extend_from_slice(&(plane_size as u32).to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    for word in &table {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    for word in &table {
+        bytes.extend_from_slice(&word.to_be_bytes());
+    }
+    bytes.extend_from_slice(&string_blob);
+    bytes
+}
+
+fn host_invalid_catalog() -> *mut libc::c_void {
+    usize::MAX as *mut libc::c_void
 }
 
 // ---------------------------------------------------------------------------
@@ -472,25 +550,174 @@ fn nl_langinfo_l_codeset() {
 }
 
 // ---------------------------------------------------------------------------
-// catopen / catgets / catclose (ENOSYS stubs)
+// catopen / catgets / catclose
 // ---------------------------------------------------------------------------
 
 #[test]
-fn catopen_returns_error() {
-    let name = CString::new("test.cat").unwrap();
-    let catd = unsafe { catopen(name.as_ptr(), 0) };
-    assert_eq!(catd, -1, "catopen should return -1 (not supported)");
+fn catopen_missing_catalog_matches_host_errno() {
+    let _guard = CATALOG_STATE_GUARD.lock().unwrap();
+    locale_reset_catalog_state_for_tests();
+
+    let Some(host_catopen_ptr) = (unsafe { load_host_symbol("catopen") }) else {
+        return;
+    };
+    let host_catopen: HostCatopenFn = unsafe { std::mem::transmute(host_catopen_ptr) };
+
+    let path = temp_catalog_path("missing_catalog");
+    let path_c = CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_catd = unsafe { host_catopen(path_c.as_ptr(), 0) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let abi_catd = unsafe { catopen(path_c.as_ptr(), 0) };
+    let abi_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    assert_eq!(host_catd, host_invalid_catalog());
+    assert_eq!(abi_catd, -1);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::ENOENT);
 }
 
 #[test]
-fn catgets_returns_default_string() {
+fn catgets_failed_open_descriptor_returns_default_like_host() {
+    let _guard = CATALOG_STATE_GUARD.lock().unwrap();
+    locale_reset_catalog_state_for_tests();
+
+    let Some(host_catgets_ptr) = (unsafe { load_host_symbol("catgets") }) else {
+        return;
+    };
+    let host_catgets: HostCatgetsFn = unsafe { std::mem::transmute(host_catgets_ptr) };
+
     let default_str = CString::new("default").unwrap();
-    let result = unsafe { catgets(-1, 1, 1, default_str.as_ptr()) };
-    assert_eq!(result, default_str.as_ptr());
+
+    unsafe {
+        *libc::__errno_location() = 777;
+    }
+    let host_result = unsafe { host_catgets(host_invalid_catalog(), 1, 1, default_str.as_ptr()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 777;
+    }
+    let abi_result = unsafe { catgets(-1, 1, 1, default_str.as_ptr()) };
+    let abi_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    assert_eq!(host_result, default_str.as_ptr() as *mut c_char);
+    assert_eq!(abi_result, default_str.as_ptr());
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, 777);
 }
 
 #[test]
-fn catclose_returns_error() {
-    let rc = unsafe { catclose(-1) };
-    assert_eq!(rc, -1, "catclose should return -1");
+fn generated_catalog_hit_miss_and_close_match_host() {
+    let _guard = CATALOG_STATE_GUARD.lock().unwrap();
+    locale_reset_catalog_state_for_tests();
+
+    let Some(host_catopen_ptr) = (unsafe { load_host_symbol("catopen") }) else {
+        return;
+    };
+    let Some(host_catgets_ptr) = (unsafe { load_host_symbol("catgets") }) else {
+        return;
+    };
+    let Some(host_catclose_ptr) = (unsafe { load_host_symbol("catclose") }) else {
+        return;
+    };
+    let host_catopen: HostCatopenFn = unsafe { std::mem::transmute(host_catopen_ptr) };
+    let host_catgets: HostCatgetsFn = unsafe { std::mem::transmute(host_catgets_ptr) };
+    let host_catclose: HostCatcloseFn = unsafe { std::mem::transmute(host_catclose_ptr) };
+
+    let path = temp_catalog_path("message_catalog");
+    let bytes = build_test_catalog(&[(1, 1, "translated"), (1, 3, "fallback-hit")]);
+    fs::write(&path, bytes).unwrap();
+    let path_c = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let default_str = CString::new("default").unwrap();
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_catd = unsafe { host_catopen(path_c.as_ptr(), 0) };
+    let host_open_errno = unsafe { *libc::__errno_location() };
+    assert_ne!(
+        host_catd,
+        host_invalid_catalog(),
+        "host catopen should succeed"
+    );
+    assert_eq!(host_open_errno, 0);
+
+    let abi_catd = unsafe { catopen(path_c.as_ptr(), 0) };
+    let abi_open_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_ne!(abi_catd, -1, "ABI catopen should succeed");
+    assert_eq!(abi_open_errno, 0);
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_hit = unsafe { host_catgets(host_catd, 1, 1, default_str.as_ptr()) };
+    let host_hit_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+    let abi_hit = unsafe { catgets(abi_catd, 1, 1, default_str.as_ptr()) };
+    let abi_hit_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    assert_eq!(
+        unsafe { CStr::from_ptr(host_hit) }.to_bytes(),
+        b"translated"
+    );
+    assert_eq!(unsafe { CStr::from_ptr(abi_hit) }.to_bytes(), b"translated");
+    assert_eq!(abi_hit_errno, host_hit_errno);
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_miss = unsafe { host_catgets(host_catd, 1, 2, default_str.as_ptr()) };
+    let host_miss_errno = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+    let abi_miss = unsafe { catgets(abi_catd, 1, 2, default_str.as_ptr()) };
+    let abi_miss_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    assert_eq!(host_miss, default_str.as_ptr() as *mut c_char);
+    assert_eq!(abi_miss, default_str.as_ptr());
+    assert_eq!(abi_miss_errno, host_miss_errno);
+    assert_eq!(abi_miss_errno, libc::ENOMSG);
+
+    let host_close = unsafe { host_catclose(host_catd) };
+    let host_close_errno = unsafe { *libc::__errno_location() };
+    let abi_close = unsafe { catclose(abi_catd) };
+    let abi_close_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    assert_eq!(abi_close, host_close);
+    assert_eq!(abi_close_errno, host_close_errno);
+    assert_eq!(abi_close, 0);
+}
+
+#[test]
+fn catclose_invalid_descriptor_matches_host_ebadf() {
+    let _guard = CATALOG_STATE_GUARD.lock().unwrap();
+    locale_reset_catalog_state_for_tests();
+
+    let Some(host_catclose_ptr) = (unsafe { load_host_symbol("catclose") }) else {
+        return;
+    };
+    let host_catclose: HostCatcloseFn = unsafe { std::mem::transmute(host_catclose_ptr) };
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { host_catclose(host_invalid_catalog()) };
+    let host_errno = unsafe { *libc::__errno_location() };
+
+    let abi_rc = unsafe { catclose(-1) };
+    let abi_errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_errno, host_errno);
+    assert_eq!(abi_errno, libc::EBADF);
 }
