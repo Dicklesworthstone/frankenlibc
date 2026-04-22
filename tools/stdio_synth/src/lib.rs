@@ -176,6 +176,28 @@ pub enum ScanfArgCategory {
     Pointer,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoverageArtifact {
+    pub version: u32,
+    pub description: String,
+    pub printf_interactions: Vec<PrintfCoverageInteraction>,
+    pub scanf_interactions: Vec<ScanfCoverageInteraction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PrintfCoverageInteraction {
+    pub conversion: String,
+    pub length_modifier: Option<String>,
+    pub flag: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ScanfCoverageInteraction {
+    pub conversion: String,
+    pub length_modifier: Option<String>,
+    pub assignment_suppressed: bool,
+}
+
 impl PrintfGrammar {
     /// Load grammar from JSON file.
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
@@ -602,6 +624,106 @@ where
     bytes
 }
 
+fn length_labels_from_mask(mask: u8) -> Vec<Option<String>> {
+    let labels = [
+        (0b0000_0001, "hh"),
+        (0b0000_0010, "h"),
+        (0b0000_0100, "l"),
+        (0b0000_1000, "ll"),
+        (0b0001_0000, "j"),
+        (0b0010_0000, "z"),
+        (0b0100_0000, "t"),
+        (0b1000_0000, "L"),
+    ];
+    let mut values = labels
+        .into_iter()
+        .filter_map(|(bit, label)| ((mask & bit) != 0).then_some(Some(label.to_owned())))
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        values.push(None);
+    }
+    values
+}
+
+fn flag_labels_from_mask(mask: u8) -> Vec<Option<String>> {
+    let labels = [
+        (0b0000_0001, "-"),
+        (0b0000_0010, "+"),
+        (0b0000_0100, " "),
+        (0b0000_1000, "#"),
+        (0b0001_0000, "0"),
+    ];
+    let mut values = labels
+        .into_iter()
+        .filter_map(|(bit, label)| ((mask & bit) != 0).then_some(Some(label.to_owned())))
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        values.push(None);
+    }
+    values
+}
+
+pub fn emit_coverage_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> String {
+    let mut printf_interactions = Vec::new();
+    for byte in sorted_conversion_bytes(&printf_grammar.conversion) {
+        let route = printf_table[byte as usize];
+        if route.handler == PrintfHandler::Invalid {
+            continue;
+        }
+        let conversion = (byte as char).to_string();
+        for length_modifier in length_labels_from_mask(route.length_mask) {
+            for flag in flag_labels_from_mask(route.flag_mask) {
+                printf_interactions.push(PrintfCoverageInteraction {
+                    conversion: conversion.clone(),
+                    length_modifier: length_modifier.clone(),
+                    flag: flag.clone(),
+                });
+            }
+        }
+    }
+    printf_interactions.sort();
+
+    let mut scanf_interactions = Vec::new();
+    for byte in sorted_conversion_bytes(&scanf_grammar.conversion) {
+        let route = scanf_table[byte as usize];
+        if route.handler == ScanfHandler::Invalid {
+            continue;
+        }
+        let conversion = (byte as char).to_string();
+        for length_modifier in length_labels_from_mask(route.length_mask) {
+            scanf_interactions.push(ScanfCoverageInteraction {
+                conversion: conversion.clone(),
+                length_modifier: length_modifier.clone(),
+                assignment_suppressed: false,
+            });
+            if scanf_grammar.assignment_suppression {
+                scanf_interactions.push(ScanfCoverageInteraction {
+                    conversion: conversion.clone(),
+                    length_modifier: length_modifier.clone(),
+                    assignment_suppressed: true,
+                });
+            }
+        }
+    }
+    scanf_interactions.sort();
+
+    let artifact = CoverageArtifact {
+        version: 1,
+        description: "Deterministic stdio interaction coverage derived from generated printf/scanf route tables".to_owned(),
+        printf_interactions,
+        scanf_interactions,
+    };
+
+    let mut json = serde_json::to_string_pretty(&artifact).expect("coverage artifact serializes");
+    json.push('\n');
+    json
+}
+
 /// Emit a deterministic SMT-LIB proof artifact for the current stdio tables.
 pub fn emit_smt_proof_source(
     printf_grammar: &PrintfGrammar,
@@ -848,5 +970,24 @@ mod tests {
         assert!(emitted_once.contains("(assert (= (printf_handler 100) 1))"));
         assert!(emitted_once.contains("(assert (= (scanf_handler 91) 9))"));
         assert!(emitted_once.contains("(check-sat)"));
+    }
+
+    #[test]
+    fn emitted_coverage_artifact_is_deterministic() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let emitted_once =
+            emit_coverage_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+        let emitted_twice =
+            emit_coverage_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("\"printf_interactions\""));
+        assert!(emitted_once.contains("\"scanf_interactions\""));
+        assert!(emitted_once.contains("\"conversion\": \"d\""));
+        assert!(emitted_once.contains("\"assignment_suppressed\": true"));
     }
 }
