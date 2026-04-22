@@ -287,10 +287,6 @@ const KNOWN_IMPL_GAPS: &[(&str, &str)] = &[
     ("sprintf_zd_negative", "bd-luc3d"),
     ("sprintf_l_d", "bd-luc3d"),
     ("sprintf_lo_max", "bd-luc3d"),
-    // bd-vgrav: u64 > i64::MAX (e.g. ULLONG_MAX) is currently bucketed
-    // into PrintfArg::Double; %llu dispatch then goes through the
-    // Double arm and varargs type mismatch produces wrong output.
-    ("sprintf_llu_max", "bd-vgrav"),
     // bd-qij6l: modern glibc disables %n in snprintf (FORTIFY); our
     // impl honors it. Parity check needs either fixture relaxation or
     // a host-side wrapper. sprintf_n_with_args also triggers a

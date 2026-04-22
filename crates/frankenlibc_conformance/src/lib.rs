@@ -2493,6 +2493,7 @@ fn mode_is_hardened(mode: &str) -> bool {
 enum PrintfArg {
     Int(c_int),
     Long(c_longlong),
+    Ulong(core::ffi::c_ulonglong),
     Double(c_double),
     Str(CString),
     NullPtr,
@@ -2522,10 +2523,14 @@ fn parse_printf_args(inputs: &serde_json::Value) -> Result<Vec<PrintfArg>, Strin
             continue;
         }
 
-        if let Some(f) = value.as_f64()
-            && (f.fract() != 0.0 || f.abs() > i64::MAX as f64)
+        // JSON integer literals outside i64 range (e.g. ULLONG_MAX for
+        // %llu) must stay on the integer path rather than silently
+        // rounding through f64.
+        if value.is_u64()
+            && let Some(v) = value.as_u64()
+            && i64::try_from(v).is_err()
         {
-            args.push(PrintfArg::Double(f));
+            args.push(PrintfArg::Ulong(v));
             continue;
         }
 
@@ -2538,6 +2543,13 @@ fn parse_printf_args(inputs: &serde_json::Value) -> Result<Vec<PrintfArg>, Strin
             } else {
                 args.push(PrintfArg::Long(int_value as c_longlong));
             }
+            continue;
+        }
+
+        if let Some(f) = value.as_f64()
+            && (f.fract() != 0.0 || f.abs() > i64::MAX as f64)
+        {
+            args.push(PrintfArg::Double(f));
             continue;
         }
 
@@ -2604,6 +2616,9 @@ fn run_impl_snprintf(
             frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0)
         },
         [PrintfArg::Long(a0)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0)
+        },
+        [PrintfArg::Ulong(a0)] => unsafe {
             frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0)
         },
         [PrintfArg::Double(a0)] => unsafe {
@@ -2677,6 +2692,7 @@ fn run_host_snprintf(
         [] => unsafe { libc::snprintf(dst, size, fmt) },
         [PrintfArg::Int(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
         [PrintfArg::Long(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
+        [PrintfArg::Ulong(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
         [PrintfArg::Double(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
         [PrintfArg::Str(a0)] => unsafe { libc::snprintf(dst, size, fmt, a0.as_ptr()) },
         [PrintfArg::NullPtr] => unsafe {
@@ -2739,6 +2755,7 @@ fn run_impl_fprintf(
         [] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt) },
         [PrintfArg::Int(a0)] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0) },
         [PrintfArg::Long(a0)] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0) },
+        [PrintfArg::Ulong(a0)] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0) },
         [PrintfArg::Double(a0)] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0) },
         [PrintfArg::Str(a0)] => unsafe {
             frankenlibc_abi::stdio_abi::fprintf(stream, fmt, a0.as_ptr())
@@ -2771,6 +2788,7 @@ fn run_host_fprintf(
         [] => unsafe { libc::fprintf(stream, fmt) },
         [PrintfArg::Int(a0)] => unsafe { libc::fprintf(stream, fmt, *a0) },
         [PrintfArg::Long(a0)] => unsafe { libc::fprintf(stream, fmt, *a0) },
+        [PrintfArg::Ulong(a0)] => unsafe { libc::fprintf(stream, fmt, *a0) },
         [PrintfArg::Double(a0)] => unsafe { libc::fprintf(stream, fmt, *a0) },
         [PrintfArg::Str(a0)] => unsafe { libc::fprintf(stream, fmt, a0.as_ptr()) },
         [PrintfArg::Int(a0), PrintfArg::Int(a1)] => unsafe { libc::fprintf(stream, fmt, *a0, *a1) },
