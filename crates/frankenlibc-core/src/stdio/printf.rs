@@ -487,7 +487,12 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
     let route = if conversion == b'm' {
         None
     } else {
-        Some(printf_route(conversion)?)
+        let route = printf_route(conversion)?;
+        if !printf_length_allowed(length, route.length_mask) {
+            return None;
+        }
+        sanitize_flags_for_route(&mut flags, route.flag_mask);
+        Some(route)
     };
 
     Some((
@@ -539,6 +544,38 @@ fn route_dispatch_kind(route: PrintfRoute) -> Option<PrintfDispatchKind> {
         PrintfHandler::Pointer => PrintfDispatchKind::Pointer,
         PrintfHandler::Invalid => return None,
     })
+}
+
+fn printf_length_allowed(length: LengthMod, length_mask: u8) -> bool {
+    match length {
+        LengthMod::None => true,
+        LengthMod::Hh => length_mask & 0b0000_0001 != 0,
+        LengthMod::H => length_mask & 0b0000_0010 != 0,
+        LengthMod::L => length_mask & 0b0000_0100 != 0,
+        LengthMod::Ll => length_mask & 0b0000_1000 != 0,
+        LengthMod::J => length_mask & 0b0001_0000 != 0,
+        LengthMod::Z => length_mask & 0b0010_0000 != 0,
+        LengthMod::T => length_mask & 0b0100_0000 != 0,
+        LengthMod::BigL => length_mask & 0b1000_0000 != 0,
+    }
+}
+
+fn sanitize_flags_for_route(flags: &mut FormatFlags, flag_mask: u8) {
+    if flag_mask & 0b0000_0001 == 0 {
+        flags.left_justify = false;
+    }
+    if flag_mask & 0b0000_0010 == 0 {
+        flags.force_sign = false;
+    }
+    if flag_mask & 0b0000_0100 == 0 {
+        flags.space_sign = false;
+    }
+    if flag_mask & 0b0000_1000 == 0 {
+        flags.alt_form = false;
+    }
+    if flag_mask & 0b0001_0000 == 0 {
+        flags.zero_pad = false;
+    }
 }
 
 fn printf_handler(spec: &FormatSpec) -> Option<PrintfHandler> {
@@ -1296,6 +1333,21 @@ mod tests {
         let (spec, _) = parse_format_spec(b"llu").unwrap();
         assert_eq!(spec.length, LengthMod::Ll);
         assert_eq!(spec.conversion, b'u');
+    }
+
+    #[test]
+    fn test_parse_invalid_length_modifier_rejects_printf_spec() {
+        assert!(parse_format_spec(b"Ls").is_none());
+    }
+
+    #[test]
+    fn test_parse_sanitizes_flags_using_generated_route_mask() {
+        let (spec, _) = parse_format_spec(b"+#0s").unwrap();
+        assert!(!spec.flags.force_sign);
+        assert!(!spec.flags.alt_form);
+        assert!(!spec.flags.zero_pad);
+        assert!(!spec.flags.space_sign);
+        assert!(!spec.flags.left_justify);
     }
 
     #[test]
