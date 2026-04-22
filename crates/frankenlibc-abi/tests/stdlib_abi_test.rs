@@ -4052,6 +4052,50 @@ fn renameat2_exchange_null_oldpath_sets_efault_like_host() {
 }
 
 #[test]
+fn renameat2_exchange_null_newpath_sets_efault_like_host() {
+    let dot = CString::new(".").unwrap();
+    let exchange = libc::RENAME_EXCHANGE;
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            dot.as_ptr(),
+            libc::AT_FDCWD,
+            ptr::null::<libc::c_char>(),
+            exchange,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe {
+        renameat2(
+            libc::AT_FDCWD,
+            dot.as_ptr(),
+            libc::AT_FDCWD,
+            ptr::null(),
+            exchange,
+        )
+    };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(libc::c_long::from(abi_rc), host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EFAULT,
+        "unexpected errno from renameat2(AT_FDCWD, \".\", AT_FDCWD, NULL, RENAME_EXCHANGE): {abi_err}"
+    );
+}
+
+#[test]
 fn renameat2_null_oldpath_sets_efault() {
     let dot = CString::new(".").unwrap();
 
