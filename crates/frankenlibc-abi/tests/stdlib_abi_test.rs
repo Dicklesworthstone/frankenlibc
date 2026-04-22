@@ -18,7 +18,8 @@ use frankenlibc_abi::unistd_abi::{
     getlogin, getlogin_r, getopt, getopt_long, getpagesize, grantpt, herror, hstrerror, lockf,
     lseek64, lstat64, mkdtemp, mount_setattr, move_mount, mq_close, mq_getattr, mq_open,
     mq_receive, mq_send, mq_setattr, mq_unlink, msgctl, msgget, msgrcv, msgsnd, nice, open_tree,
-    open64, pathconf, pidfd_open, pidfd_send_signal, posix_fadvise, posix_fallocate, posix_madvise,
+    open64, pathconf, pidfd_getfd, pidfd_open, pidfd_send_signal, posix_fadvise, posix_fallocate,
+    posix_madvise,
     posix_openpt, pread64, ptsname, pwrite64, renameat2, sched_get_priority_max,
     sched_get_priority_min, sched_getaffinity, sched_getcpu, sched_getparam, sched_getscheduler,
     sched_rr_get_interval, sched_setaffinity, sched_setparam, sched_setscheduler, semctl, semget,
@@ -5011,6 +5012,110 @@ fn pidfd_send_signal_invalid_flags_do_not_override_bad_pidfd() {
         err,
         libc::EBADF,
         "unexpected errno from pidfd_send_signal(-1, flags=1): {err}"
+    );
+}
+
+/// bd-9i16b: POSIX null-signal (sig=0) on a valid pidfd must succeed
+/// without touching errno. It's a permission/existence probe only —
+/// no delivery happens. Mirrors the null-signal contract we pin for
+/// raise(0) and kill(pid, 0).
+#[test]
+fn pidfd_send_signal_self_null_signal_succeeds_without_touching_errno() {
+    let self_fd = unsafe { pidfd_open(libc::getpid(), 0) };
+    if self_fd < 0 {
+        // Kernels/containers without pidfd_open skip cleanly.
+        return;
+    }
+    unsafe {
+        *__errno_location() = libc::EAGAIN;
+    }
+    let rc = unsafe { pidfd_send_signal(self_fd, 0, ptr::null(), 0) };
+    let err = unsafe { *__errno_location() };
+    let close_rc = unsafe { libc::close(self_fd) };
+    assert_eq!(close_rc, 0);
+
+    assert_eq!(rc, 0, "pidfd_send_signal(self, 0) must succeed");
+    assert_eq!(
+        err,
+        libc::EAGAIN,
+        "pidfd_send_signal(self, 0) must not touch errno, got {err}"
+    );
+}
+
+/// bd-dg2e8: out-of-range signals are rejected with EINVAL even on a
+/// valid pidfd. Signal 65 is past SIGRTMAX (NSIG=65) on Linux.
+#[test]
+fn pidfd_send_signal_self_invalid_signal_is_einval() {
+    let self_fd = unsafe { pidfd_open(libc::getpid(), 0) };
+    if self_fd < 0 {
+        return;
+    }
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { pidfd_send_signal(self_fd, 65, ptr::null(), 0) };
+    let err = unsafe { *__errno_location() };
+    let close_rc = unsafe { libc::close(self_fd) };
+    assert_eq!(close_rc, 0);
+
+    assert_eq!(rc, -1, "pidfd_send_signal(self, 65) must fail");
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "pidfd_send_signal(self, 65) must set errno=EINVAL, got {err}"
+    );
+}
+
+/// bd-rcw4p: pidfd_getfd with an invalid targetfd on an otherwise
+/// valid self pidfd must surface EBADF. Targetfd=-1 is the canonical
+/// "no such fd" trigger the kernel validates before the cross-process
+/// duplication logic runs.
+#[test]
+fn pidfd_getfd_self_invalid_targetfd_is_ebadf() {
+    let self_fd = unsafe { pidfd_open(libc::getpid(), 0) };
+    if self_fd < 0 {
+        return;
+    }
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { pidfd_getfd(self_fd, -1, 0) };
+    let err = unsafe { *__errno_location() };
+    let close_rc = unsafe { libc::close(self_fd) };
+    assert_eq!(close_rc, 0);
+
+    assert_eq!(rc, -1, "pidfd_getfd(self, -1, 0) must fail");
+    assert_eq!(
+        err,
+        libc::EBADF,
+        "pidfd_getfd(self, -1, 0) must set errno=EBADF, got {err}"
+    );
+}
+
+/// bd-sh2ms: pidfd_getfd reserves its flags word — any non-zero value
+/// is rejected with EINVAL. Host glibc surfaces this even with a
+/// valid self pidfd and valid targetfd.
+#[test]
+fn pidfd_getfd_self_invalid_flags_is_einval() {
+    let self_fd = unsafe { pidfd_open(libc::getpid(), 0) };
+    if self_fd < 0 {
+        return;
+    }
+    unsafe {
+        *__errno_location() = 0;
+    }
+    // Use targetfd=0 (stdin, always valid) so flag validation is the
+    // error that surfaces.
+    let rc = unsafe { pidfd_getfd(self_fd, 0, 1) };
+    let err = unsafe { *__errno_location() };
+    let close_rc = unsafe { libc::close(self_fd) };
+    assert_eq!(close_rc, 0);
+
+    assert_eq!(rc, -1, "pidfd_getfd(self, 0, 1) must fail");
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "pidfd_getfd(self, 0, 1) must set errno=EINVAL, got {err}"
     );
 }
 
