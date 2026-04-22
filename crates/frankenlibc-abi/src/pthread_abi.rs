@@ -44,6 +44,7 @@ use crate::host_resolve::{
     host_pthread_create_raw as resolved_thread_create_raw,
     host_pthread_detach_raw as resolved_thread_detach_raw,
     host_pthread_exit_raw as resolved_thread_exit_raw,
+    host_pthread_join_raw as resolved_thread_join_raw,
 };
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
@@ -2015,8 +2016,19 @@ pub unsafe extern "C" fn pthread_create(
 }
 
 /// POSIX `pthread_join`.
+///
+/// Thread handles are dispatched the same way as `pthread_detach`:
+/// if force_native_threading is off AND this handle was not minted
+/// by our native path, delegate to the host glibc so pthread_create's
+/// host-path threads can actually be joined (bd-21ypi).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
+    if !force_native_threading_enabled()
+        && !is_managed_thread_handle(thread)
+        && let Some(host_join) = resolved_thread_join_raw()
+    {
+        return unsafe { host_join(thread, retval) };
+    }
     unsafe { native_pthread_join(thread, retval) }
 }
 
