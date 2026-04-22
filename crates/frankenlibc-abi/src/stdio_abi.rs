@@ -2970,10 +2970,12 @@ pub(crate) enum PrintfArgKind {
 }
 
 fn spec_value_kind(spec: &frankenlibc_core::stdio::FormatSpec) -> Option<PrintfArgKind> {
-    match spec.dispatch_kind() {
-        Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage) | None => None,
-        Some(PrintfDispatchKind::Float) => Some(PrintfArgKind::Fp),
-        Some(_) => Some(PrintfArgKind::Gp),
+    if !spec.consumes_value_arg() {
+        None
+    } else if spec.value_arg_is_float() {
+        Some(PrintfArgKind::Fp)
+    } else {
+        Some(PrintfArgKind::Gp)
     }
 }
 
@@ -3035,10 +3037,8 @@ pub(crate) fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
             if spec.precision.uses_arg() {
                 needed += 1;
             }
-            match spec.dispatch_kind() {
-                Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage)
-                | None => {}
-                Some(_) => needed += 1,
+            if spec.consumes_value_arg() {
+                needed += 1;
             }
         }
     }
@@ -3084,22 +3084,15 @@ macro_rules! extract_va_args {
                         $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
-                    match spec.dispatch_kind() {
-                        Some(
-                            PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage,
-                        )
-                        | None => {}
-                        Some(PrintfDispatchKind::Float) => {
+                    if spec.consumes_value_arg() {
+                        if spec.value_arg_is_float() {
                             if _idx < $extract_count {
                                 $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
                                 _idx += 1;
                             }
-                        }
-                        Some(_) => {
-                            if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.arg::<u64>() };
-                                _idx += 1;
-                            }
+                        } else if _idx < $extract_count {
+                            $buf[_idx] = unsafe { $args.arg::<u64>() };
+                            _idx += 1;
                         }
                     }
                 }

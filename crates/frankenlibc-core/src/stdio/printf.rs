@@ -198,6 +198,19 @@ impl FormatSpec {
         route_dispatch_kind(self.route()?)
     }
 
+    pub fn consumes_value_arg(&self) -> bool {
+        if self.conversion == b'm' {
+            return false;
+        }
+        self.route()
+            .is_some_and(|route| !matches!(route.arg_category, ArgCategory::None))
+    }
+
+    pub fn value_arg_is_float(&self) -> bool {
+        self.route()
+            .is_some_and(|route| matches!(route.arg_category, ArgCategory::Float))
+    }
+
     fn route(&self) -> Option<PrintfRoute> {
         if self.conversion == b'm' {
             None
