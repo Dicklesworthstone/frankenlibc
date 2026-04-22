@@ -458,11 +458,10 @@ pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) fn teardown_thread_tls(tid: i32) {
     let values_ptr = table_lookup(tid);
-    if values_ptr.is_null() {
-        return;
-    }
 
-    // Ensure RCU registration for lock-free registry reads.
+    // Ensure RCU registration for lock-free registry reads. Required for the
+    // registered-thread path; the fallback path also needs an RCU read lock to
+    // snapshot the key registry safely.
     let _ = rcu::rcu_register_thread(tid as u32);
 
     for _iteration in 0..PTHREAD_DESTRUCTOR_ITERATIONS {
@@ -482,8 +481,16 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
                     if call_count >= MAX_CALLS {
                         break;
                     }
-                    if reg.slots[i].in_use {
-                        // SAFETY: values_ptr points to a valid [TlsEntry; PTHREAD_KEYS_MAX].
+                    if !reg.slots[i].in_use {
+                        continue;
+                    }
+                    // Primary path: walk the per-thread TLS table if this
+                    // thread was registered via register_thread_tls (native
+                    // clone trampoline path).
+                    if !values_ptr.is_null() {
+                        // SAFETY: values_ptr points to a valid
+                        // [TlsEntry; PTHREAD_KEYS_MAX] for the registered
+                        // native-managed thread.
                         let entry = *values_ptr.add(i);
                         if entry.seq == reg.slots[i].seq && entry.value != 0 {
                             // Clear the value before calling destructor.
@@ -491,9 +498,34 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
                             if let Some(dtor) = reg.slots[i].destructor {
                                 calls[call_count] = (entry.value, dtor);
                                 call_count += 1;
+                                continue;
                             }
                         }
                     }
+                    // Fallback path: a thread whose pthread_create went
+                    // through the host libc path never calls
+                    // register_thread_tls, so values set via
+                    // pthread_setspecific landed in the thread-local
+                    // FALLBACK_TLS_VALUES Cell array (see write_tls_value).
+                    // FALLBACK_TLS_VALUES is thread-local, which means we
+                    // can only address it from the exiting thread itself —
+                    // which is exactly where teardown_thread_tls runs.
+                    FALLBACK_TLS_VALUES.with(|values| {
+                        let entry = values[i].get();
+                        if entry.seq == reg.slots[i].seq && entry.value != 0 {
+                            // Clear the value before calling destructor.
+                            values[i].set(TlsEntry {
+                                seq: entry.seq,
+                                value: 0,
+                            });
+                            if let Some(dtor) = reg.slots[i].destructor
+                                && call_count < MAX_CALLS
+                            {
+                                calls[call_count] = (entry.value, dtor);
+                                call_count += 1;
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -512,7 +544,8 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
         }
     }
 
-    // Remove from the table and unregister from RCU.
+    // Remove from the table and unregister from RCU. table_remove is a no-op
+    // for the fallback path (tid was never inserted) — safe to call either way.
     table_remove(tid);
     let _ = rcu::rcu_unregister_thread(tid as u32);
 }

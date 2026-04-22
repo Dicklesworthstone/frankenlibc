@@ -1986,8 +1986,18 @@ pub fn pthread_mutex_htm_snapshot_for_tests() -> HtmSiteSnapshot {
 
 /// Test hook: force thread lifecycle operations (create/join/detach/self/equal)
 /// to use the native implementation, bypassing host glibc delegation.
+///
+/// Sets BOTH the global `FORCE_NATIVE_THREADING` atomic (so every cargo-test
+/// worker thread reads native, not just the one that happened to run the
+/// `std::sync::Once` setter first) AND the thread-local override (for fast-
+/// path reads on the caller). Without the global-atomic store, tests that
+/// rely on our native clone-trampoline path (e.g. pthread_tsd_test's
+/// `tsd_destructor_runs_on_thread_exit`, bd-9hq64) silently dispatched to
+/// host libc pthread_create on any worker thread other than the one that
+/// tripped the `Once`, and teardown_thread_tls never ran.
 #[doc(hidden)]
 pub fn pthread_threading_force_native_for_tests() {
+    FORCE_NATIVE_THREADING.store(true, Ordering::Release);
     FORCE_NATIVE_THREADING_OVERRIDE.with(|override_cell| override_cell.set(Some(true)));
 }
 
