@@ -1,0 +1,170 @@
+{
+  "$schema": "scanf_grammar.schema.json",
+  "version": 1,
+  "description": "POSIX scanf format language as typed regular tree: suppression x width x length x conversion x scanset",
+  "spec_reference": "POSIX.1-2024 fscanf() / IEEE Std 1003.1-2024",
+
+  "format_syntax": {
+    "pattern": "%[*][width][length]conversion",
+    "scanset_variant": "%[*][width][length][scanset]"
+  },
+
+  "assignment_suppression": true,
+
+  "width": {
+    "description": "Maximum input characters consumed for a conversion.",
+    "variants": [
+      { "type": "literal", "pattern": "[1-9][0-9]*" }
+    ],
+    "default": null
+  },
+
+  "length_modifier": {
+    "description": "Size specifier for the corresponding assignment target",
+    "members": {
+      "hh": { "int_type": "signed char* / unsigned char*" },
+      "h": { "int_type": "short* / unsigned short*" },
+      "l": {
+        "int_type": "long* / unsigned long*",
+        "char_type": "wint_t*",
+        "string_type": "wchar_t*"
+      },
+      "ll": { "int_type": "long long* / unsigned long long*" },
+      "j": { "int_type": "intmax_t* / uintmax_t*" },
+      "z": { "int_type": "size_t* / ssize_t*" },
+      "t": { "int_type": "ptrdiff_t*" },
+      "L": { "float_type": "long double*" }
+    }
+  },
+
+  "conversion": {
+    "description": "Conversion specifier determines accepted input class and assignment target",
+    "members": {
+      "d": {
+        "name": "signed_decimal",
+        "target": "signed integer family pointer",
+        "input": "decimal integer",
+        "skips_leading_whitespace": true
+      },
+      "i": {
+        "name": "signed_integer_auto_base",
+        "target": "signed integer family pointer",
+        "input": "base-detected integer",
+        "skips_leading_whitespace": true
+      },
+      "u": {
+        "name": "unsigned_decimal",
+        "target": "unsigned integer family pointer",
+        "input": "decimal integer",
+        "skips_leading_whitespace": true
+      },
+      "o": {
+        "name": "unsigned_octal",
+        "target": "unsigned integer family pointer",
+        "input": "octal integer",
+        "skips_leading_whitespace": true
+      },
+      "x": {
+        "name": "unsigned_hex",
+        "target": "unsigned integer family pointer",
+        "input": "hex integer",
+        "skips_leading_whitespace": true
+      },
+      "X": {
+        "name": "unsigned_hex_upper",
+        "target": "unsigned integer family pointer",
+        "input": "hex integer",
+        "skips_leading_whitespace": true,
+        "note": "Same semantics as x"
+      },
+      "f": {
+        "name": "float_fixed",
+        "target": "float / double / long double pointer",
+        "input": "floating point",
+        "skips_leading_whitespace": true
+      },
+      "F": {
+        "name": "float_fixed_upper",
+        "target": "float / double / long double pointer",
+        "input": "floating point",
+        "skips_leading_whitespace": true,
+        "note": "Same semantics as f"
+      },
+      "e": {
+        "name": "float_exp",
+        "target": "float / double / long double pointer",
+        "input": "floating point",
+        "skips_leading_whitespace": true
+      },
+      "E": {
+        "name": "float_exp_upper",
+        "target": "float / double / long double pointer",
+        "input": "floating point",
+        "skips_leading_whitespace": true,
+        "note": "Same semantics as e"
+      },
+      "g": {
+        "name": "float_general",
+        "target": "float / double / long double pointer",
+        "input": "floating point",
+        "skips_leading_whitespace": true
+      },
+      "G": {
+        "name": "float_general_upper",
+        "target": "float / double / long double pointer",
+        "input": "floating point",
+        "skips_leading_whitespace": true,
+        "note": "Same semantics as g"
+      },
+      "a": {
+        "name": "float_hex",
+        "target": "float / double / long double pointer",
+        "input": "hexadecimal floating point",
+        "skips_leading_whitespace": true
+      },
+      "A": {
+        "name": "float_hex_upper",
+        "target": "float / double / long double pointer",
+        "input": "hexadecimal floating point",
+        "skips_leading_whitespace": true,
+        "note": "Same semantics as a"
+      },
+      "c": {
+        "name": "character",
+        "target": "char* / wchar_t*",
+        "input": "raw character sequence",
+        "skips_leading_whitespace": false
+      },
+      "s": {
+        "name": "string",
+        "target": "char* / wchar_t*",
+        "input": "non-whitespace string",
+        "skips_leading_whitespace": true
+      },
+      "[": {
+        "name": "scanset",
+        "target": "char* / wchar_t*",
+        "input": "character class match",
+        "skips_leading_whitespace": false
+      },
+      "n": {
+        "name": "chars_consumed",
+        "target": "integer family pointer",
+        "input": "none",
+        "skips_leading_whitespace": false
+      },
+      "p": {
+        "name": "pointer",
+        "target": "void**",
+        "input": "implementation-defined pointer literal",
+        "skips_leading_whitespace": true
+      }
+    }
+  },
+
+  "scanset": {
+    "supports_negation": true,
+    "supports_ranges": true,
+    "first_char_may_be_closing_bracket": true
+  }
+}

@@ -36,6 +36,17 @@ pub struct PrintfGrammar {
     pub conversion: std::collections::HashMap<String, ConversionSpec>,
 }
 
+/// scanf format specification parsed from JSON grammar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanfGrammar {
+    pub version: u32,
+    pub description: String,
+    pub assignment_suppression: bool,
+    pub length_modifier: std::collections::HashMap<String, LengthSpec>,
+    pub conversion: std::collections::HashMap<String, ScanfConversionSpec>,
+    pub scanset: Option<ScansetSpec>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlagSpec {
     pub name: String,
@@ -57,6 +68,24 @@ pub struct ConversionSpec {
     pub output: String,
     #[serde(default)]
     pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanfConversionSpec {
+    pub name: String,
+    pub target: String,
+    pub input: String,
+    #[serde(default)]
+    pub skips_leading_whitespace: bool,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScansetSpec {
+    pub supports_negation: bool,
+    pub supports_ranges: bool,
+    pub first_char_may_be_closing_bracket: bool,
 }
 
 /// A single entry in the dispatch table.
@@ -141,6 +170,46 @@ impl PrintfGrammar {
             flag_set,
             length_modifier,
             conversion,
+        })
+    }
+}
+
+impl ScanfGrammar {
+    /// Load grammar from JSON file.
+    pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let content = std::fs::read_to_string(path)?;
+        let raw: serde_json::Value = serde_json::from_str(&content)?;
+
+        let length_modifier = raw
+            .get("length_modifier")
+            .and_then(|v| v.get("members"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let conversion = raw
+            .get("conversion")
+            .and_then(|v| v.get("members"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let scanset = raw
+            .get("scanset")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        Ok(Self {
+            version: raw.get("version").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            description: raw
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned(),
+            assignment_suppression: raw
+                .get("assignment_suppression")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            length_modifier,
+            conversion,
+            scanset,
         })
     }
 }
@@ -314,6 +383,12 @@ mod tests {
         PrintfGrammar::load(&grammar_path).expect("printf grammar should load")
     }
 
+    fn load_scanf_grammar() -> ScanfGrammar {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let grammar_path = manifest_dir.join("spec/scanf_grammar.json");
+        ScanfGrammar::load(&grammar_path).expect("scanf grammar should load")
+    }
+
     #[test]
     fn generated_printf_table_routes_core_specifiers() {
         let table = generate_printf_table(&load_grammar());
@@ -338,5 +413,38 @@ mod tests {
         assert!(emitted_once.contains("pub const PRINTF_TABLE: [PrintfRoute; 256]"));
         assert!(emitted_once.contains("PrintfHandler::SignedDecimal"));
         assert!(emitted_once.contains("PrintfHandler::LiteralPercent"));
+    }
+
+    #[test]
+    fn scanf_grammar_loads_core_specifiers() {
+        let grammar = load_scanf_grammar();
+
+        assert!(grammar.assignment_suppression);
+        assert_eq!(
+            grammar
+                .conversion
+                .get("d")
+                .expect("signed decimal conversion")
+                .name,
+            "signed_decimal"
+        );
+        assert_eq!(
+            grammar
+                .conversion
+                .get("[")
+                .expect("scanset conversion")
+                .name,
+            "scanset"
+        );
+        assert!(
+            grammar
+                .conversion
+                .get("s")
+                .expect("string conversion")
+                .skips_leading_whitespace
+        );
+        let scanset = grammar.scanset.expect("scanset support");
+        assert!(scanset.supports_negation);
+        assert!(scanset.supports_ranges);
     }
 }
