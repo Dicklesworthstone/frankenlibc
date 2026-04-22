@@ -1,0 +1,15 @@
+{
+  "audit_scope": "allocator_internal_index_sites",
+  "total_bounds_checks": 7,
+  "statically_proven": 7,
+  "dynamically_checked": 0,
+  "entries": [
+    {"function": "ThreadCache::alloc", "statically_proven": 1, "dynamically_checked": 0},
+    {"function": "ThreadCache::dealloc", "statically_proven": 1, "dynamically_checked": 0},
+    {"function": "ThreadCache::drain_magazine", "statically_proven": 1, "dynamically_checked": 0},
+    {"function": "ThreadCache::is_full", "statically_proven": 1, "dynamically_checked": 0},
+    {"function": "MallocState::malloc.central_bin_pop", "statically_proven": 1, "dynamically_checked": 0},
+    {"function": "MallocState::free.central_bin_len", "statically_proven": 1, "dynamically_checked": 0},
+    {"function": "MallocState::free.central_bin_push", "statically_proven": 1, "dynamically_checked": 0}
+  ]
+}
