@@ -2983,6 +2983,37 @@ fn eventfd_read_invalid_fd_null_output_preserves_ebadf_like_host() {
 }
 
 #[test]
+fn eventfd_read_nonblocking_empty_counter_sets_eagain_like_host() {
+    let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK) };
+    assert!(fd >= 0, "eventfd should create a nonblocking descriptor");
+
+    let mut host_value = 0_u64;
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::eventfd_read(fd, &mut host_value) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    let mut abi_value = 0_u64;
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { eventfd_read(fd, &mut abi_value) };
+    let abi_err = unsafe { *__errno_location() };
+
+    unsafe {
+        libc::close(fd);
+    }
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EAGAIN);
+    assert_eq!(host_value, 0);
+    assert_eq!(abi_value, 0);
+}
+
+#[test]
 fn eventfd_write_invalid_fd_preserves_ebadf() {
     unsafe {
         *__errno_location() = 0;
