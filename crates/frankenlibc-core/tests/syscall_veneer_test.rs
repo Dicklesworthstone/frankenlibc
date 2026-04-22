@@ -1730,6 +1730,79 @@ mod x86_64_tests {
         );
     }
 
+    /// bd-qdsc6: signalfd4 with a valid mask and the combined flag
+    /// word SFD_CLOEXEC|SFD_NONBLOCK must return a live descriptor.
+    /// Allowed flag bits must not trigger EINVAL.
+    #[test]
+    fn signalfd4_valid_mask_cloexec_nonblock_succeeds() {
+        let mask: u64 = 1u64 << ((SIGUSR1 - 1) as u32);
+        let fd = unsafe {
+            sys_signalfd4(
+                -1,
+                (&mask as *const u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+                SFD_CLOEXEC | SFD_NONBLOCK,
+            )
+        }
+        .expect("signalfd4(-1, &mask, size, CLOEXEC|NONBLOCK) must succeed");
+        assert!(fd >= 0, "returned fd must be non-negative, got {fd}");
+        sys_close(fd).expect("close signalfd");
+    }
+
+    /// bd-vitcn: signalfd4 rejects unknown flag bits with EINVAL even
+    /// when a valid mask and valid flag bit are present. Flag bit 0x8
+    /// is not in the kernel's SFD_* set.
+    #[test]
+    fn signalfd4_valid_mask_cloexec_plus_invalid_bit_is_einval() {
+        let mask: u64 = 1u64 << ((SIGUSR1 - 1) as u32);
+        let err = unsafe {
+            sys_signalfd4(
+                -1,
+                (&mask as *const u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+                SFD_CLOEXEC | 0x8,
+            )
+        }
+        .expect_err("signalfd4 with bogus flag bit must fail");
+        assert_eq!(
+            err, EINVAL,
+            "signalfd4(CLOEXEC|0x8) must return EINVAL (host-parity), got {err}"
+        );
+    }
+
+    /// bd-hzkc6: signalfd4(existing_fd, &mask, size, 0) updates the
+    /// mask in place and returns the same fd. Verifies the
+    /// in-place-update contract.
+    #[test]
+    fn signalfd4_existing_fd_same_mask_returns_same_fd() {
+        let mask: u64 = 1u64 << ((SIGUSR1 - 1) as u32);
+        let first = unsafe {
+            sys_signalfd4(
+                -1,
+                (&mask as *const u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+                SFD_CLOEXEC,
+            )
+        }
+        .expect("initial signalfd4 must succeed");
+        assert!(first >= 0);
+
+        let updated = unsafe {
+            sys_signalfd4(
+                first,
+                (&mask as *const u64).cast::<u8>(),
+                core::mem::size_of::<u64>(),
+                0,
+            )
+        }
+        .expect("signalfd4(existing_fd, same_mask, 0) must succeed");
+        assert_eq!(
+            updated, first,
+            "signalfd4 update must return the same fd (host-parity), got {updated} vs {first}"
+        );
+        sys_close(first).expect("close signalfd");
+    }
+
     #[test]
     fn unshare_invalid_flags_is_einval() {
         let err = sys_unshare(-1).expect_err("unshare(-1) must fail");
