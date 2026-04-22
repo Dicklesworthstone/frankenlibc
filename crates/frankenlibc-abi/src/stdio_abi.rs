@@ -2956,9 +2956,9 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 // ---------------------------------------------------------------------------
 
 use frankenlibc_core::stdio::{
-    FormatSegment, LengthMod, Precision, Width, format_char, format_float, format_pointer,
-    format_signed, format_str, format_unsigned, parse_format_string, printf_dispatch_kind,
-    PrintfDispatchKind,
+    FormatSegment, LengthMod, Precision, PrintfDispatchKind, Width, format_char, format_float,
+    format_pointer, format_signed, format_str, format_unsigned, parse_format_string,
+    printf_dispatch_kind,
 };
 
 /// Maximum variadic arguments we extract per printf call.
@@ -3086,7 +3086,9 @@ macro_rules! extract_va_args {
                         _idx += 1;
                     }
                     match printf_dispatch_kind(spec.conversion) {
-                        Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage)
+                        Some(
+                            PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage,
+                        )
                         | None => {}
                         Some(PrintfDispatchKind::Float) => {
                             if _idx < $extract_count {
