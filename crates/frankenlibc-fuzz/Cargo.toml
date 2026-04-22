@@ -111,6 +111,11 @@ path = "fuzz_targets/fuzz_pthread_rwlock.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_pthread_sync_misc"
+path = "fuzz_targets/fuzz_pthread_sync_misc.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
