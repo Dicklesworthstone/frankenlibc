@@ -3476,12 +3476,22 @@ pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
         None
     };
 
-    // SAFETY: scan string, allocate via malloc, copy.
+    // SAFETY: scan string, allocate via libc::malloc, copy.
+    //
+    // Note: we use libc::malloc (not raw_alloc) so the alloc/free pair is
+    // consistent with the caller's libc::free. raw_alloc routes through
+    // native_libc_malloc which, under NATIVE_MALLOC_REENTRY contention,
+    // falls back to the static BUMP_HEAP arena — returning pointers that
+    // glibc's free cannot validate, aborting with "free(): invalid size".
+    // Under LD_PRELOAD libc::malloc is our own interposed symbol (so
+    // identical machinery); in debug test builds libc::malloc is glibc's
+    // malloc (so pairs with glibc's libc::free). Either way, no
+    // cross-allocator free.  bd-zgifl / bd-dqqh1 cluster.
     unsafe {
         let (s_len, _) = scan_c_string(s, bound);
         let alloc_size = s_len + 1;
 
-        let dst = crate::malloc_abi::raw_alloc(alloc_size);
+        let dst = libc::malloc(alloc_size);
         if dst.is_null() {
             record_string_stage_outcome(
                 &ordering,
@@ -3569,13 +3579,14 @@ pub unsafe extern "C" fn strndup(s: *const c_char, n: usize) -> *mut c_char {
         Some(n)
     };
 
-    // SAFETY: scan string up to n, allocate via malloc, copy.
+    // SAFETY: scan string up to n, allocate via libc::malloc (see strdup
+    // comment on bd-zgifl for why not raw_alloc), copy.
     unsafe {
         let (s_len, _) = scan_c_string(s, bound);
         let copy_len = s_len.min(n);
         let alloc_size = copy_len + 1;
 
-        let dst = crate::malloc_abi::raw_alloc(alloc_size);
+        let dst = libc::malloc(alloc_size);
         if dst.is_null() {
             record_string_stage_outcome(
                 &ordering,
