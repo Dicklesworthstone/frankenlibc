@@ -165,13 +165,12 @@ fn fuzz_strftime(input: &TimeFuzzInput) {
 /// Test difftime with arbitrary epoch pairs.
 fn fuzz_difftime(input: &TimeFuzzInput) {
     let d = time::difftime(input.epoch, input.epoch2);
-    // difftime(a, b) == -(difftime(b, a))
+    // difftime(a, b) == -(difftime(b, a)). difftime(i64, i64) -> f64
+    // cannot produce NaN, and the antisymmetry property holds at
+    // value level: we must not compare via to_bits() because +0 and
+    // -0 are both valid zero outcomes when epoch == epoch2.
     let d_inv = time::difftime(input.epoch2, input.epoch);
-    assert_eq!(
-        d.to_bits(),
-        (-d_inv).to_bits(),
-        "difftime antisymmetry violated"
-    );
+    assert_eq!(d, -d_inv, "difftime antisymmetry violated");
     // difftime(a, a) == 0
     let d_self = time::difftime(input.epoch, input.epoch);
     assert_eq!(d_self, 0.0, "difftime(a, a) should be 0");

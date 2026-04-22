@@ -227,9 +227,15 @@ pub fn format_asctime(bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
 }
 
 /// POSIX `difftime` — difference in seconds between two `time_t` values.
+///
+/// Convert to `f64` before subtracting so that full-range i64 inputs
+/// (e.g. `i64::MAX - i64::MIN`) do not overflow the integer type. f64
+/// has enough dynamic range to represent the difference (with some
+/// loss of precision for epochs outside ±2^53) — glibc's difftime
+/// behaves the same way (bd-5koo6).
 #[inline]
 pub fn difftime(time1: i64, time0: i64) -> f64 {
-    (time1 - time0) as f64
+    (time1 as f64) - (time0 as f64)
 }
 
 /// Full day-of-week names.
@@ -939,6 +945,25 @@ mod tests {
         assert!(valid_clock_id_extended(CLOCK_BOOTTIME));
         assert!(!valid_clock_id_extended(99));
         assert!(!valid_clock_id_extended(-1));
+    }
+
+    /// Regression for bd-7rxtm: difftime on full-range i64 inputs
+    /// used to overflow the i64 subtraction (e.g. i64::MAX - i64::MIN).
+    /// Surfaced via fuzz_time. The fix converts to f64 before
+    /// subtracting — matches glibc's behavior.
+    #[test]
+    fn difftime_does_not_overflow_on_extreme_epochs() {
+        let d = difftime(i64::MAX, i64::MIN);
+        assert!(d.is_finite(), "difftime({:x}, {:x}) = {d}", i64::MAX, i64::MIN);
+        assert!(d > 0.0);
+        let d_inv = difftime(i64::MIN, i64::MAX);
+        assert!(d_inv.is_finite());
+        assert!(d_inv < 0.0);
+        // Antisymmetry at value level.
+        assert_eq!(d, -d_inv);
+        // Degenerate self-difference.
+        assert_eq!(difftime(i64::MAX, i64::MAX), 0.0);
+        assert_eq!(difftime(i64::MIN, i64::MIN), 0.0);
     }
 
     /// Regression for bd-7rxtm: out-of-range BrokenDownTime fields
