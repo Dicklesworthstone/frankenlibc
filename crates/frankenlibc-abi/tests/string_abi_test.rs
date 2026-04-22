@@ -1008,6 +1008,56 @@ fn fnmatch_casefold() {
     );
 }
 
+/// Regression for bd-64uch: glibc's handling of unterminated `[`
+/// brackets is nuanced — a benign unterminated bracket is treated as
+/// a literal `[`, but one that ends mid-range (`-` immediately before
+/// NUL with prior content) is rejected with FNM_NOMATCH. Surfaced via
+/// fuzz_pattern_match.
+#[test]
+fn fnmatch_unterminated_bracket_matches_glibc() {
+    // Lone '[' is literal '['.
+    assert_eq!(unsafe { fnmatch(c"[".as_ptr(), c"[".as_ptr(), 0) }, 0);
+    // '[ab' (no closing ']') is literal '[' + 'a' + 'b'.
+    assert_eq!(unsafe { fnmatch(c"[ab".as_ptr(), c"[ab".as_ptr(), 0) }, 0);
+    // '[a-b' (looks like a range but unterminated) is literal.
+    assert_eq!(unsafe { fnmatch(c"[a-b".as_ptr(), c"[a-b".as_ptr(), 0) }, 0);
+    // '[-' with '-' as the first content char is literal '[-'.
+    assert_eq!(unsafe { fnmatch(c"[-".as_ptr(), c"[-".as_ptr(), 0) }, 0);
+    // '[a-' (incomplete range trailing '-') must NOT match.
+    assert_eq!(
+        unsafe { fnmatch(c"[a-".as_ptr(), c"[a-".as_ptr(), 0) },
+        libc::FNM_NOMATCH
+    );
+    // '[abc-' (incomplete range trailing '-') must NOT match.
+    assert_eq!(
+        unsafe { fnmatch(c"[abc-".as_ptr(), c"[abc-".as_ptr(), 0) },
+        libc::FNM_NOMATCH
+    );
+}
+
+/// Regression for bd-64uch: `at_start` for the leading-period rule
+/// must reset to false once any string character is consumed.
+/// Otherwise pattern '\xff*?*' against '\xff.' (with FNM_PERIOD set)
+/// incorrectly rejects '.' as a leading period even though it sits at
+/// position 1. Surfaced via fuzz_pattern_match.
+#[test]
+fn fnmatch_leading_period_only_at_string_start() {
+    let pat = b"\xff*?*\0";
+    let s = b"\xff.\0";
+    let flags = libc::FNM_PATHNAME | libc::FNM_PERIOD | libc::FNM_CASEFOLD;
+    let rc = unsafe {
+        fnmatch(
+            pat.as_ptr() as *const std::ffi::c_char,
+            s.as_ptr() as *const std::ffi::c_char,
+            flags,
+        )
+    };
+    assert_eq!(
+        rc, 0,
+        "FNM_PERIOD must only reject '.' at string position 0, not after any consumed char"
+    );
+}
+
 /// Regression for bd-m40be: our fnmatch flag bits must match
 /// /usr/include/fnmatch.h exactly because callers include the system
 /// header and pass those bit values directly. PATHNAME and NOESCAPE

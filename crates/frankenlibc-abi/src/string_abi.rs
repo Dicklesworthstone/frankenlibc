@@ -5181,6 +5181,53 @@ pub unsafe extern "C" fn fnmatch(
     }
 }
 
+/// Outcome of pre-classifying a `[...]` bracket expression at `pat[pi]`.
+/// Mirrors glibc's observed behavior: a closed bracket parses normally;
+/// an unterminated bracket whose final content byte is `-` (an
+/// incomplete range) yields no-match; any other unterminated bracket is
+/// treated as a literal `[` followed by literal characters.
+enum BracketShape {
+    Terminated,
+    LiteralFallback,
+    Invalid,
+}
+
+/// Walk the bracket starting at `pat[pi]` (must point at `[`) without
+/// consuming any input, returning whether it's terminated, an
+/// incomplete range, or harmlessly unterminated. Used so the main
+/// matcher can choose between bracket parsing, literal `[` matching,
+/// and outright failure.
+unsafe fn classify_bracket(pat: *const u8, pi: usize) -> BracketShape {
+    let mut scan = pi + 1; // skip the opening '['
+    if unsafe { *pat.add(scan) } == b'!' || unsafe { *pat.add(scan) } == b'^' {
+        scan += 1;
+    }
+    let mut content_count = 0usize;
+    let mut last_was_dash = false;
+    loop {
+        let bc = unsafe { *pat.add(scan) };
+        if bc == 0 {
+            // Hit NUL with no closing ']'. If the last content byte
+            // was a `-` and at least one earlier content byte preceded
+            // it, glibc reports that as an incomplete range and the
+            // whole match fails; otherwise the `[...` becomes literal.
+            if last_was_dash && content_count > 1 {
+                return BracketShape::Invalid;
+            }
+            return BracketShape::LiteralFallback;
+        }
+        // POSIX: a `]` as the first content byte (after optional !/^)
+        // is literal, not a closer — that's the `content_count > 0`
+        // gate.
+        if bc == b']' && content_count > 0 {
+            return BracketShape::Terminated;
+        }
+        last_was_dash = bc == b'-';
+        content_count += 1;
+        scan += 1;
+    }
+}
+
 /// Recursive fnmatch implementation operating on byte pointers + offsets.
 unsafe fn fnmatch_impl(
     pat: *const u8,
@@ -5194,6 +5241,12 @@ unsafe fn fnmatch_impl(
     let period = flags & FNM_PERIOD != 0;
     let noescape = flags & FNM_NOESCAPE != 0;
     let casefold = flags & FNM_CASEFOLD != 0;
+
+    // Track whether the next string character is still "at the start"
+    // for leading-period purposes. As soon as we consume a string
+    // character, subsequent `?`/`*`/bracket/literal matches are no
+    // longer at-start (bd-64uch found via fuzz_pattern_match).
+    let mut at_start = at_start;
 
     loop {
         let pc = unsafe { *pat.add(pi) };
@@ -5219,6 +5272,7 @@ unsafe fn fnmatch_impl(
                 }
                 pi += 1;
                 si += 1;
+                at_start = false;
             }
             b'*' => {
                 // Skip consecutive *'s
@@ -5266,6 +5320,40 @@ unsafe fn fnmatch_impl(
                 return false;
             }
             b'[' => {
+                // POSIX leaves an unterminated bracket expression
+                // implementation-defined; glibc has a more nuanced
+                // rule than "always literal" — see classify_bracket
+                // (bd-64uch).
+                match unsafe { classify_bracket(pat, pi) } {
+                    BracketShape::Invalid => return false,
+                    BracketShape::LiteralFallback => {
+                        if sc == 0
+                            || (pathname && sc == b'/')
+                            || (period
+                                && sc == b'.'
+                                && (at_start
+                                    || (pathname
+                                        && si > 0
+                                        && unsafe { *str_.add(si - 1) } == b'/')))
+                        {
+                            return false;
+                        }
+                        let eq = if casefold {
+                            b'['.eq_ignore_ascii_case(&sc)
+                        } else {
+                            sc == b'['
+                        };
+                        if !eq {
+                            return false;
+                        }
+                        pi += 1;
+                        si += 1;
+                        at_start = false;
+                        continue;
+                    }
+                    BracketShape::Terminated => {}
+                }
+
                 if sc == 0 || (pathname && sc == b'/') {
                     return false;
                 }
@@ -5365,6 +5453,7 @@ unsafe fn fnmatch_impl(
                     return false;
                 }
                 si += 1;
+                at_start = false;
             }
             b'\\' if !noescape => {
                 pi += 1;
@@ -5382,6 +5471,7 @@ unsafe fn fnmatch_impl(
                 }
                 pi += 1;
                 si += 1;
+                at_start = false;
             }
             _ => {
                 if sc == 0 {
@@ -5397,6 +5487,7 @@ unsafe fn fnmatch_impl(
                 }
                 pi += 1;
                 si += 1;
+                at_start = false;
             }
         }
     }
