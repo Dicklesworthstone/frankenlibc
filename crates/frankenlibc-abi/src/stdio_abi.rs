@@ -2956,35 +2956,20 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 // ---------------------------------------------------------------------------
 
 use frankenlibc_core::stdio::{
-    FormatSegment, LengthMod, Precision, Width, format_str, parse_format_string,
+    FormatSegment, LengthMod, Precision, ValueArgKind, Width, format_str, parse_format_string,
 };
 
 /// Maximum variadic arguments we extract per printf call.
 pub(crate) const MAX_VA_ARGS: usize = 32;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PrintfArgKind {
-    Gp,
-    Fp,
-}
-
-fn spec_value_kind(spec: &frankenlibc_core::stdio::FormatSpec) -> Option<PrintfArgKind> {
-    if !spec.consumes_value_arg() {
-        None
-    } else if spec.value_arg_is_float() {
-        Some(PrintfArgKind::Fp)
-    } else {
-        Some(PrintfArgKind::Gp)
-    }
-}
+pub(crate) use frankenlibc_core::stdio::ValueArgKind as PrintfArgKind;
 
 pub(crate) fn positional_printf_arg_plan(
     segments: &[FormatSegment<'_>],
-) -> Option<Vec<PrintfArgKind>> {
+) -> Option<Vec<ValueArgKind>> {
     let mut any_positional = false;
-    let mut plan: Vec<Option<PrintfArgKind>> = Vec::new();
+    let mut plan: Vec<Option<ValueArgKind>> = Vec::new();
 
-    let mut assign = |position: usize, kind: PrintfArgKind| {
+    let mut assign = |position: usize, kind: ValueArgKind| {
         if position == 0 {
             return;
         }
@@ -3001,13 +2986,13 @@ pub(crate) fn positional_printf_arg_plan(
     for seg in segments {
         if let FormatSegment::Spec(spec) = seg {
             if let Some(position) = spec.width.position() {
-                assign(position, PrintfArgKind::Gp);
+                assign(position, ValueArgKind::Gp);
             }
             if let Some(position) = spec.precision.position() {
-                assign(position, PrintfArgKind::Gp);
+                assign(position, ValueArgKind::Gp);
             }
             if let Some(position) = spec.value_position
-                && let Some(kind) = spec_value_kind(spec)
+                && let Some(kind) = spec.value_arg_kind()
             {
                 assign(position, kind);
             }
@@ -3016,7 +3001,7 @@ pub(crate) fn positional_printf_arg_plan(
 
     any_positional.then(|| {
         plan.into_iter()
-            .map(|kind| kind.unwrap_or(PrintfArgKind::Gp))
+            .map(|kind| kind.unwrap_or(ValueArgKind::Gp))
             .collect()
     })
 }
@@ -3052,13 +3037,13 @@ macro_rules! extract_va_args {
         if let Some(_plan) = positional_printf_arg_plan($segments) {
             for _kind in _plan.iter().take($extract_count) {
                 match _kind {
-                    PrintfArgKind::Gp => {
+                    ValueArgKind::Gp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<u64>() };
                             _idx += 1;
                         }
                     }
-                    PrintfArgKind::Fp => {
+                    ValueArgKind::Fp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
                             _idx += 1;
@@ -3083,16 +3068,16 @@ macro_rules! extract_va_args {
                         $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
-                    if spec.consumes_value_arg() {
-                        if spec.value_arg_is_float() {
-                            if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
-                                _idx += 1;
-                            }
-                        } else if _idx < $extract_count {
+                    match spec.value_arg_kind() {
+                        Some(ValueArgKind::Fp) if _idx < $extract_count => {
+                            $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                            _idx += 1;
+                        }
+                        Some(ValueArgKind::Gp) if _idx < $extract_count => {
                             $buf[_idx] = unsafe { $args.arg::<u64>() };
                             _idx += 1;
                         }
+                        _ => {}
                     }
                 }
             }
@@ -3836,14 +3821,14 @@ pub(crate) unsafe fn vprintf_extract_args(
     if let Some(plan) = positional_printf_arg_plan(segments) {
         for kind in plan.iter().take(extract_count) {
             match kind {
-                PrintfArgKind::Gp => {
+                ValueArgKind::Gp => {
                     if idx < extract_count {
                         buf[idx] =
                             unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
                         idx += 1;
                     }
                 }
-                PrintfArgKind::Fp => {
+                ValueArgKind::Fp => {
                     if idx < extract_count {
                         buf[idx] =
                             unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
@@ -3865,19 +3850,18 @@ pub(crate) unsafe fn vprintf_extract_args(
                         unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
                     idx += 1;
                 }
-                if spec.consumes_value_arg() {
-                    if spec.value_arg_is_float() {
-                        if idx < extract_count {
-                            buf[idx] = unsafe {
-                                vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr)
-                            };
-                            idx += 1;
-                        }
-                    } else if idx < extract_count {
+                match spec.value_arg_kind() {
+                    Some(ValueArgKind::Fp) if idx < extract_count => {
+                        buf[idx] =
+                            unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
+                    }
+                    Some(ValueArgKind::Gp) if idx < extract_count => {
                         buf[idx] =
                             unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
                         idx += 1;
                     }
+                    _ => {}
                 }
             }
         }

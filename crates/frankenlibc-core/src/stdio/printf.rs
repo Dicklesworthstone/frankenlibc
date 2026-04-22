@@ -119,6 +119,12 @@ enum ArgCategory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueArgKind {
+    Gp,
+    Fp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PrintfRoute {
     handler: PrintfHandler,
     length_mask: u8,
@@ -179,16 +185,26 @@ impl FormatSpec {
     }
 
     pub fn consumes_value_arg(&self) -> bool {
+        self.value_arg_kind().is_some()
+    }
+
+    pub fn value_arg_kind(&self) -> Option<ValueArgKind> {
         if self.conversion == b'm' {
-            return false;
+            return None;
         }
-        self.route()
-            .is_some_and(|route| !matches!(route.arg_category, ArgCategory::None))
+        match self.route()?.arg_category {
+            ArgCategory::None => None,
+            ArgCategory::Float => Some(ValueArgKind::Fp),
+            ArgCategory::SignedInt
+            | ArgCategory::UnsignedInt
+            | ArgCategory::Pointer
+            | ArgCategory::String
+            | ArgCategory::Store => Some(ValueArgKind::Gp),
+        }
     }
 
     pub fn value_arg_is_float(&self) -> bool {
-        self.route()
-            .is_some_and(|route| matches!(route.arg_category, ArgCategory::Float))
+        matches!(self.value_arg_kind(), Some(ValueArgKind::Fp))
     }
 
     pub fn value_arg_is_string(&self) -> bool {
@@ -1330,6 +1346,14 @@ mod tests {
             b's',
             None,
         );
+        let float = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'f',
+            None,
+        );
         let store = FormatSpec::new(
             FormatFlags::default(),
             Width::None,
@@ -1356,13 +1380,19 @@ mod tests {
         );
 
         assert!(signed.consumes_value_arg());
+        assert_eq!(signed.value_arg_kind(), Some(ValueArgKind::Gp));
         assert!(!signed.value_arg_is_string());
         assert!(!signed.stores_count());
         assert!(string.value_arg_is_string());
+        assert_eq!(string.value_arg_kind(), Some(ValueArgKind::Gp));
+        assert_eq!(float.value_arg_kind(), Some(ValueArgKind::Fp));
+        assert!(float.value_arg_is_float());
         assert!(store.stores_count());
+        assert_eq!(store.value_arg_kind(), Some(ValueArgKind::Gp));
         assert!(percent.is_literal_percent());
         assert!(errno.is_errno_message());
         assert!(!errno.consumes_value_arg());
+        assert_eq!(errno.value_arg_kind(), None);
     }
 
     #[test]
