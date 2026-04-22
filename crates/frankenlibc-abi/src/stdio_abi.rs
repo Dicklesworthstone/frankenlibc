@@ -2958,7 +2958,6 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 use frankenlibc_core::stdio::{
     FormatSegment, LengthMod, Precision, PrintfDispatchKind, Width, format_char, format_float,
     format_pointer, format_signed, format_str, format_unsigned, parse_format_string,
-    printf_dispatch_kind,
 };
 
 /// Maximum variadic arguments we extract per printf call.
@@ -2971,7 +2970,7 @@ pub(crate) enum PrintfArgKind {
 }
 
 fn spec_value_kind(spec: &frankenlibc_core::stdio::FormatSpec) -> Option<PrintfArgKind> {
-    match printf_dispatch_kind(spec.conversion) {
+    match spec.dispatch_kind() {
         Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage) | None => None,
         Some(PrintfDispatchKind::Float) => Some(PrintfArgKind::Fp),
         Some(_) => Some(PrintfArgKind::Gp),
@@ -3036,7 +3035,7 @@ pub(crate) fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
             if spec.precision.uses_arg() {
                 needed += 1;
             }
-            match printf_dispatch_kind(spec.conversion) {
+            match spec.dispatch_kind() {
                 Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage)
                 | None => {}
                 Some(_) => needed += 1,
@@ -3085,7 +3084,7 @@ macro_rules! extract_va_args {
                         $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
-                    match printf_dispatch_kind(spec.conversion) {
+                    match spec.dispatch_kind() {
                         Some(
                             PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage,
                         )
@@ -3184,7 +3183,7 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                 };
 
                 // Consume one argument for the conversion.
-                match printf_dispatch_kind(spec.conversion) {
+                match spec.dispatch_kind() {
                     Some(PrintfDispatchKind::LiteralPercent) => buf.push(b'%'),
                     Some(PrintfDispatchKind::ErrnoMessage) => {
                         let e = unsafe { *crate::errno_abi::__errno_location() };
@@ -3917,7 +3916,7 @@ pub(crate) unsafe fn vprintf_extract_args(
                         unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
                     idx += 1;
                 }
-                match printf_dispatch_kind(spec.conversion) {
+                match spec.dispatch_kind() {
                     Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage)
                     | None => {}
                     Some(PrintfDispatchKind::Float) => {

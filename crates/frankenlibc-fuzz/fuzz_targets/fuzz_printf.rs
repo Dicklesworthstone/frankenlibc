@@ -109,14 +109,14 @@ fn make_spec(input: &PrintfFuzzInput) -> FormatSpec {
     ];
     let length = lengths[(input.flags as usize >> 5) % lengths.len()];
 
-    FormatSpec {
+    FormatSpec::new(
         flags,
         width,
         precision,
         length,
         conversion,
-        value_position: None,
-    }
+        None,
+    )
 }
 
 fn init_hardened_printf_mode() {

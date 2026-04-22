@@ -157,13 +157,53 @@ pub struct FormatSpec {
     pub length: LengthMod,
     pub conversion: u8,
     pub value_position: Option<usize>,
+    route: Option<PrintfRoute>,
 }
 
 impl FormatSpec {
+    pub fn new(
+        flags: FormatFlags,
+        width: Width,
+        precision: Precision,
+        length: LengthMod,
+        conversion: u8,
+        value_position: Option<usize>,
+    ) -> Self {
+        let route = if conversion == b'm' {
+            None
+        } else {
+            printf_route(conversion)
+        };
+        Self {
+            flags,
+            width,
+            precision,
+            length,
+            conversion,
+            value_position,
+            route,
+        }
+    }
+
     pub fn uses_positional_args(&self) -> bool {
         self.value_position.is_some()
             || self.width.position().is_some()
             || self.precision.position().is_some()
+    }
+
+    pub fn dispatch_kind(&self) -> Option<PrintfDispatchKind> {
+        if self.conversion == b'm' {
+            return Some(PrintfDispatchKind::ErrnoMessage);
+        }
+        route_dispatch_kind(self.route()?)
+    }
+
+    fn route(&self) -> Option<PrintfRoute> {
+        if self.conversion == b'm' {
+            None
+        } else {
+            self.route.or_else(|| printf_route(self.conversion))
+        }
     }
 }
 
@@ -444,9 +484,11 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
     let conversion = fmt[pos];
     pos += 1;
 
-    if conversion != b'm' && printf_route(conversion).is_none() {
-        return None;
-    }
+    let route = if conversion == b'm' {
+        None
+    } else {
+        Some(printf_route(conversion)?)
+    };
 
     Some((
         FormatSpec {
@@ -456,6 +498,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
             length,
             conversion,
             value_position,
+            route,
         },
         pos,
     ))
@@ -466,9 +509,6 @@ fn printf_route(conversion: u8) -> Option<PrintfRoute> {
     if route.handler == PrintfHandler::Invalid {
         None
     } else {
-        // Keep the generated route metadata in live use even before the
-        // formatter is fully table-driven.
-        let _ = (route.length_mask, route.flag_mask, route.arg_category);
         Some(route)
     }
 }
@@ -478,7 +518,10 @@ pub fn printf_dispatch_kind(conversion: u8) -> Option<PrintfDispatchKind> {
         return Some(PrintfDispatchKind::ErrnoMessage);
     }
 
-    let route = printf_route(conversion)?;
+    route_dispatch_kind(printf_route(conversion)?)
+}
+
+fn route_dispatch_kind(route: PrintfRoute) -> Option<PrintfDispatchKind> {
     Some(match route.handler {
         PrintfHandler::LiteralPercent => PrintfDispatchKind::LiteralPercent,
         PrintfHandler::StoreCount => PrintfDispatchKind::StoreCount,
@@ -498,8 +541,12 @@ pub fn printf_dispatch_kind(conversion: u8) -> Option<PrintfDispatchKind> {
     })
 }
 
-fn printf_handler(conversion: u8) -> Option<PrintfHandler> {
-    printf_route(conversion).map(|route| route.handler)
+fn printf_handler(spec: &FormatSpec) -> Option<PrintfHandler> {
+    spec.route().map(|route| route.handler)
+}
+
+fn is_octal_handler(spec: &FormatSpec) -> bool {
+    matches!(printf_handler(spec), Some(PrintfHandler::UnsignedOctal))
 }
 
 /// Iterate over segments of a printf format string.
@@ -641,7 +688,7 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // the precision, if and only if necessary, to force the first digit to be zero"
     let prefix: &[u8] = if value == 0 {
         b""
-    } else if spec.flags.alt_form && spec.conversion == b'o' {
+    } else if spec.flags.alt_form && is_octal_handler(spec) {
         // Octal: only add '0' if first digit wouldn't already be 0
         let first_digit_is_zero =
             zero_prefix_count > 0 || (digit_count > 0 && digit_slice[0] == b'0');
@@ -654,7 +701,7 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
 
     let mut suppress_zero = value == 0 && matches!(spec.precision, Precision::Fixed(0));
     // POSIX: For 'o' conversion with '#', if the value and precision are both 0, a single 0 is printed.
-    if suppress_zero && spec.flags.alt_form && spec.conversion == b'o' {
+    if suppress_zero && spec.flags.alt_form && is_octal_handler(spec) {
         suppress_zero = false;
     }
 
@@ -739,7 +786,7 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let abs = value.abs();
 
     // Generate digit string.
-    let body = match printf_handler(spec.conversion) {
+    let body = match printf_handler(spec) {
         Some(PrintfHandler::FloatFixed) => format_f(abs, precision, spec.flags.alt_form),
         Some(PrintfHandler::FloatExp) => format_e(
             abs,
@@ -897,7 +944,7 @@ fn resolve_width(spec: &FormatSpec) -> usize {
 }
 
 fn int_base(spec: &FormatSpec) -> (u64, bool) {
-    match printf_handler(spec.conversion) {
+    match printf_handler(spec) {
         Some(PrintfHandler::UnsignedOctal) => (8, false),
         Some(PrintfHandler::UnsignedHexLower) => (16, false),
         Some(PrintfHandler::UnsignedHexUpper) => (16, true),
@@ -931,7 +978,7 @@ fn alt_prefix(spec: &FormatSpec) -> &'static [u8] {
     if !spec.flags.alt_form {
         return b"";
     }
-    match printf_handler(spec.conversion) {
+    match printf_handler(spec) {
         Some(PrintfHandler::UnsignedOctal) => b"0",
         Some(PrintfHandler::UnsignedHexLower) => b"0x",
         Some(PrintfHandler::UnsignedHexUpper) => b"0X",
@@ -1314,6 +1361,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'd',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -1329,6 +1377,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'd',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_signed(-123, &spec, &mut buf);
@@ -1344,6 +1393,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'd',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -1362,6 +1412,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'd',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -1380,6 +1431,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'd',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -1398,6 +1450,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'x',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_unsigned(255, &spec, &mut buf);
@@ -1416,6 +1469,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'o',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_unsigned(8, &spec, &mut buf);
@@ -1431,6 +1485,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b's',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_str(b"hello", &spec, &mut buf);
@@ -1446,6 +1501,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b's',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_str(b"hello", &spec, &mut buf);
@@ -1461,6 +1517,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'c',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_char(b'A', &spec, &mut buf);
@@ -1476,6 +1533,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'p',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_pointer(0, &spec, &mut buf);
@@ -1491,6 +1549,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'p',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_pointer(0xDEAD, &spec, &mut buf);
@@ -1506,6 +1565,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'f',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_float(core::f64::consts::PI, &spec, &mut buf);
@@ -1522,6 +1582,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'f',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_float(f64::NAN, &spec, &mut buf);
@@ -1537,6 +1598,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'f',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_float(f64::INFINITY, &spec, &mut buf);
@@ -1554,6 +1616,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'f',
             value_position: None,
+            route: None,
         };
 
         let mut buf = Vec::new();
@@ -1595,6 +1658,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'd',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_signed(0, &spec, &mut buf);
@@ -1613,6 +1677,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'd',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_signed(42, &spec, &mut buf);
@@ -1628,6 +1693,7 @@ mod tests {
             length: LengthMod::None,
             conversion: b'd',
             value_position: None,
+            route: None,
         };
         let mut buf = Vec::new();
         format_signed(i64::MIN, &spec, &mut buf);
