@@ -9865,7 +9865,10 @@ pub unsafe extern "C" fn get_current_dir_name() -> *mut c_char {
     match unsafe { syscall::sys_getcwd(buf.as_mut_ptr(), buf.len()) } {
         Ok(rc) => {
             let len = buf.iter().position(|&b| b == 0).unwrap_or(rc);
-            let ptr = unsafe { crate::malloc_abi::raw_alloc(len + 1) as *mut c_char };
+            // GNU get_current_dir_name returns a buffer the caller frees
+            // with free() — libc::malloc so the pair matches in both
+            // LD_PRELOAD and non-preload contexts (bd-zgifl).
+            let ptr = unsafe { libc::malloc(len + 1) as *mut c_char };
             if ptr.is_null() {
                 unsafe { set_abi_errno(libc::ENOMEM) };
                 return std::ptr::null_mut();
@@ -10094,7 +10097,10 @@ pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut
     let pid = syscall::sys_getpid() as u32;
     let name = format!("{dir_str}/{pfx_str}{pid:x}{cnt:x}");
 
-    let ptr = unsafe { crate::malloc_abi::raw_alloc(name.len() + 1) as *mut c_char };
+    // POSIX tempnam(3) — caller frees with free(). Use libc::malloc so
+    // alloc/free is consistent in both LD_PRELOAD and non-preload builds
+    // (bd-zgifl).
+    let ptr = unsafe { libc::malloc(name.len() + 1) as *mut c_char };
     if ptr.is_null() {
         return std::ptr::null_mut();
     }
