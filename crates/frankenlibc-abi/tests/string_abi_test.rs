@@ -991,7 +991,7 @@ fn fnmatch_pathname_flag() {
         0
     );
     assert_ne!(
-        unsafe { fnmatch(c"*.c".as_ptr(), c"src/main.c".as_ptr(), 2) },
+        unsafe { fnmatch(c"*.c".as_ptr(), c"src/main.c".as_ptr(), libc::FNM_PATHNAME) },
         0
     );
 }
@@ -1003,8 +1003,43 @@ fn fnmatch_casefold() {
         0
     );
     assert_eq!(
-        unsafe { fnmatch(c"hello".as_ptr(), c"HELLO".as_ptr(), 16) },
+        unsafe { fnmatch(c"hello".as_ptr(), c"HELLO".as_ptr(), libc::FNM_CASEFOLD) },
         0
+    );
+}
+
+/// Regression for bd-m40be: our fnmatch flag bits must match
+/// /usr/include/fnmatch.h exactly because callers include the system
+/// header and pass those bit values directly. PATHNAME and NOESCAPE
+/// were previously swapped, so any caller passing FNM_PATHNAME from
+/// the system header silently exercised our FNM_NOESCAPE branch.
+#[test]
+fn fnmatch_flag_bits_match_glibc_header() {
+    // Pattern "*" against string "/" with FNM_PATHNAME must NOT match
+    // (POSIX: with FNM_PATHNAME, '*' may not match '/').
+    assert_eq!(
+        unsafe { fnmatch(c"*".as_ptr(), c"/".as_ptr(), libc::FNM_PATHNAME) },
+        libc::FNM_NOMATCH,
+        "fnmatch with FNM_PATHNAME should refuse '*' matching '/' (FNM_PATHNAME bit must equal libc::FNM_PATHNAME)"
+    );
+    // With NO flag, '*' matches '/'.
+    assert_eq!(
+        unsafe { fnmatch(c"*".as_ptr(), c"/".as_ptr(), 0) },
+        0,
+        "fnmatch with no flags should let '*' match '/'"
+    );
+    // FNM_NOESCAPE: backslash is a literal character.
+    // Pattern '\\a' against string '\\a' matches when NOESCAPE is set,
+    // but matches against 'a' when NOESCAPE is unset.
+    assert_eq!(
+        unsafe { fnmatch(c"\\a".as_ptr(), c"a".as_ptr(), 0) },
+        0,
+        "without FNM_NOESCAPE, backslash quotes the next char"
+    );
+    assert_eq!(
+        unsafe { fnmatch(c"\\a".as_ptr(), c"\\a".as_ptr(), libc::FNM_NOESCAPE) },
+        0,
+        "with FNM_NOESCAPE, backslash is literal"
     );
 }
 

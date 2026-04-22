@@ -5146,11 +5146,15 @@ pub unsafe extern "C" fn regerror(
     needed
 }
 
-// POSIX fnmatch flag constants
-const FNM_NOESCAPE: c_int = 1;
-const FNM_PATHNAME: c_int = 2;
-const FNM_PERIOD: c_int = 4;
-const FNM_CASEFOLD: c_int = 16; // GNU extension
+// POSIX fnmatch flag constants. Bit values must match glibc's
+// /usr/include/fnmatch.h exactly — they're part of the libc ABI and
+// any caller that includes the system header passes those bits
+// directly. Found by the fuzz_pattern_match differential harness
+// (PATHNAME and NOESCAPE were previously swapped — bd-m40be).
+const FNM_PATHNAME: c_int = 1 << 0;
+const FNM_NOESCAPE: c_int = 1 << 1;
+const FNM_PERIOD: c_int = 1 << 2;
+const FNM_CASEFOLD: c_int = 1 << 4; // GNU extension
 const FNM_NOMATCH: c_int = 1;
 
 /// Native POSIX `fnmatch` — match a filename against a shell wildcard pattern.

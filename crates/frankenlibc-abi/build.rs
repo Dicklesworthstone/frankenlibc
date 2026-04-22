@@ -809,13 +809,24 @@ fn main() {
     let version_script = format!("{manifest_dir}/version_scripts/libc.map");
     let debug_assertions_enabled = std::env::var_os("CARGO_CFG_DEBUG_ASSERTIONS").is_some();
     let standalone_enabled = std::env::var_os("CARGO_FEATURE_STANDALONE").is_some();
+    // cargo-fuzz / libFuzzer builds inject `--cfg fuzzing` via RUSTFLAGS
+    // and link the abi crate as part of an instrumented dylib that
+    // doesn't define every symbol the libc.map version script names —
+    // so applying the script there hard-fails the link. Skip the
+    // script in that mode (bd-0ubkr).
+    let encoded_rustflags = std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
+    let fuzzing_build = encoded_rustflags
+        .split('\x1f')
+        .any(|flag| flag == "--cfg=fuzzing" || flag == "fuzzing")
+        || encoded_rustflags.contains("--cfg fuzzing");
 
     emit_rerun_directives(&repo_root, &manifest_dir);
     if standalone_enabled {
         enforce_standalone_policy(&repo_root);
     }
 
-    if !debug_assertions_enabled && std::path::Path::new(&version_script).exists() {
+    if !debug_assertions_enabled && !fuzzing_build && std::path::Path::new(&version_script).exists()
+    {
         println!("cargo:rustc-cdylib-link-arg=-Wl,--version-script={version_script}");
     }
 
