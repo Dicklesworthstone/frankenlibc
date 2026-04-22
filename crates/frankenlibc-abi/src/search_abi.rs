@@ -106,8 +106,15 @@ impl HashTable {
                 return std::ptr::null_mut();
             }
             if Self::keys_equal(slot.key, item.key) {
-                // POSIX/glibc return the existing entry for duplicate ENTER calls
-                // without replacing its payload.
+                // POSIX hsearch(3): "If action is ENTER and the item is
+                // already present, the item's data value is set to the new
+                // value." Matches glibc behavior and 65a8f6e3's intended
+                // semantic fix. Previously we returned the existing slot
+                // without the replace, so callers updating an existing key
+                // silently lost the new data pointer.
+                if action == Action::ENTER {
+                    slot.data = item.data;
+                }
                 return slot as *mut HashSlot as *mut Entry;
             }
         }
@@ -553,6 +560,11 @@ pub unsafe extern "C" fn insque(elem: *mut c_void, pred: *mut c_void) {
 }
 
 /// POSIX `remque` — remove element from a doubly-linked list.
+///
+/// Glibc convention (and the standard Linux test expectation) is that
+/// the removed element's own `next` and `prev` pointers are cleared
+/// after unlinking, so a later `remque` of the same element is a no-op
+/// rather than dereferencing stale neighbour pointers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn remque(elem: *mut c_void) {
     if elem.is_null() {
@@ -566,5 +578,7 @@ pub unsafe extern "C" fn remque(elem: *mut c_void) {
         if !(*e).next.is_null() {
             (*(*e).next).prev = (*e).prev;
         }
+        (*e).next = std::ptr::null_mut();
+        (*e).prev = std::ptr::null_mut();
     }
 }
