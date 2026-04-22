@@ -528,11 +528,17 @@ pub(crate) fn host_dl_iterate_phdr_cached() -> Option<usize> {
     (addr != 0).then_some(addr)
 }
 
-/// Get the cached host `dladdr` address (non-blocking, no recursion).
+/// Get the cached host `dladdr` address, lazily bootstrapping the
+/// host-symbol cache on first use so callers that run before startup
+/// (notably conformance / test harnesses) still resolve correctly.
+///
+/// bd-oraci: without the bootstrap the cache stays empty, our dladdr
+/// always falls through to the "unavailable" branch, and every
+/// fixture case comparing against host glibc fails with
+/// impl_output="0" vs host_output="nonzero".
 #[inline]
 pub(crate) fn host_dladdr_cached() -> Option<usize> {
-    let addr = HOST_DLADDR.load(Ordering::Acquire);
-    (addr != 0).then_some(addr)
+    load_host_symbol(&HOST_DLADDR)
 }
 
 #[inline]

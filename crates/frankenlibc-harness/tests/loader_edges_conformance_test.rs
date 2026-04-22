@@ -206,11 +206,7 @@ fn case_note_indicates_impl_defined(note: &str) -> bool {
 /// harness-matrix path records the gap rather than failing so the
 /// dispatch/packaging coverage stays green; the underlying gap is
 /// tracked in its own bead.
-const KNOWN_IMPL_GAPS: &[(&str, &str)] = &[
-    // bd-oraci: dladdr returns 0 for a valid function pointer where
-    // host glibc returns nonzero.
-    ("dladdr_valid_address_strict", "bd-oraci"),
-];
+const KNOWN_IMPL_GAPS: &[(&str, &str)] = &[];
 
 fn case_is_known_impl_gap(name: &str) -> Option<&'static str> {
     KNOWN_IMPL_GAPS
