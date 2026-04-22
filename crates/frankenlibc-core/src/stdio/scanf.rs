@@ -50,7 +50,10 @@ struct ScanfRoute {
 }
 
 mod generated_scanf_tables {
-    include!("scanf_tables.rs");
+    include!(concat!(
+        env!("OUT_DIR"),
+        "/stdio_synth/synth/scanf_table.rs"
+    ));
 }
 
 use generated_scanf_tables::SCANF_TABLE;

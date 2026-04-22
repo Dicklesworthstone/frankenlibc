@@ -127,7 +127,10 @@ struct PrintfRoute {
 }
 
 mod generated_printf_tables {
-    include!("printf_tables.rs");
+    include!(concat!(
+        env!("OUT_DIR"),
+        "/stdio_synth/synth/printf_table.rs"
+    ));
 }
 
 use generated_printf_tables::PRINTF_TABLE;
