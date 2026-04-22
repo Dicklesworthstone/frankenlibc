@@ -3014,15 +3014,23 @@ fn eventfd_read_nonblocking_empty_counter_sets_eagain_like_host() {
 }
 
 #[test]
-fn eventfd_write_invalid_fd_preserves_ebadf() {
+fn eventfd_write_invalid_fd_forbidden_all_ones_preserves_ebadf_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::eventfd_write(-1, u64::MAX) };
+    let host_err = unsafe { *libc::__errno_location() };
+
     unsafe {
         *__errno_location() = 0;
     }
-    let rc = unsafe { eventfd_write(-1, 1) };
-    let err = unsafe { *__errno_location() };
+    let abi_rc = unsafe { eventfd_write(-1, u64::MAX) };
+    let abi_err = unsafe { *__errno_location() };
 
-    assert_eq!(rc, -1);
-    assert_eq!(err, libc::EBADF);
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EBADF);
 }
 
 #[test]
