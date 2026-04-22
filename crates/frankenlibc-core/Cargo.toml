@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license-file = "../../LICENSE"
 description = "Safe Rust implementations of libc functions"
+build = "build.rs"
 
 [lints.rust]
 unsafe_code = "deny"
@@ -16,3 +17,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 proptest = "1.11.0"
+
+[build-dependencies]
+serde_json = { workspace = true }
+stdio-synth = { path = "../../tools/stdio_synth" }
