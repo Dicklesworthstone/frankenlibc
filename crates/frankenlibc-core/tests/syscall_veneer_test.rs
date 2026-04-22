@@ -1736,6 +1736,91 @@ mod x86_64_tests {
         assert_eq!(err, EINVAL);
     }
 
+    /// bd-733fn / bd-md74r / bd-6azoc / bd-qq59x
+    ///
+    /// After timer_delete(timer_id) succeeds, the handle becomes
+    /// invalid — every subsequent timer_settime / timer_gettime call
+    /// against it must fail with EINVAL regardless of the other
+    /// arguments' validity. Covers four precedence variants:
+    ///   * timer_settime with valid new_value only      (bd-733fn)
+    ///   * timer_settime with valid new_value + old     (bd-md74r)
+    ///   * timer_settime with NULL new_value            (bd-6azoc)
+    ///   * timer_gettime with NULL output               (bd-qq59x)
+    ///
+    /// The test skips cleanly on kernels/containers where
+    /// timer_create is unavailable (ENOSYS/EPERM).
+    #[test]
+    fn timer_settime_gettime_on_deleted_handle_are_einval() {
+        let sigevent = SigEventThreadId::new(SIGUSR1, sys_gettid());
+        let mut timerid = -1;
+        match unsafe { sys_timer_create_sigevent(CLOCK_MONOTONIC, &sigevent, &mut timerid) } {
+            Ok(()) => {}
+            Err(ENOSYS | EPERM | EACCES | ENOTSUP) => return,
+            Err(err) => panic!("expected timer_create or ENOSYS/EPERM/EACCES/ENOTSUP, got {err}"),
+        }
+
+        sys_timer_delete(timerid).expect("timer_delete must succeed on fresh timer");
+
+        let new_value = ItimerSpec {
+            it_interval: Timespec::default(),
+            it_value: Timespec {
+                tv_sec: 0,
+                tv_nsec: 1_000_000,
+            },
+        };
+        let mut old_value = ItimerSpec::default();
+
+        // bd-733fn: timer_settime after delete, null old_value.
+        let err = unsafe {
+            sys_timer_settime(
+                timerid,
+                0,
+                (&new_value as *const ItimerSpec).cast::<u8>(),
+                core::ptr::null_mut(),
+            )
+        }
+        .expect_err("timer_settime on deleted handle must fail");
+        assert_eq!(
+            err, EINVAL,
+            "bd-733fn: timer_settime(deleted, ..., NULL) must return EINVAL, got {err}"
+        );
+
+        // bd-md74r: timer_settime after delete, writable old_value —
+        // the deleted-handle error must still win over the write path.
+        let err = unsafe {
+            sys_timer_settime(
+                timerid,
+                0,
+                (&new_value as *const ItimerSpec).cast::<u8>(),
+                (&mut old_value as *mut ItimerSpec).cast::<u8>(),
+            )
+        }
+        .expect_err("timer_settime on deleted handle must fail");
+        assert_eq!(
+            err, EINVAL,
+            "bd-md74r: timer_settime(deleted, ..., &old) must return EINVAL, got {err}"
+        );
+
+        // bd-6azoc: timer_settime after delete, NULL new_value —
+        // deleted-handle error dominates the null-new-value path.
+        let err =
+            unsafe { sys_timer_settime(timerid, 0, core::ptr::null(), core::ptr::null_mut()) }
+                .expect_err("timer_settime(deleted, NULL, NULL) must fail");
+        assert_eq!(
+            err, EINVAL,
+            "bd-6azoc: timer_settime(deleted, NULL, NULL) must return EINVAL, got {err}"
+        );
+
+        // bd-qq59x: timer_gettime after delete, NULL output —
+        // deleted-handle error dominates the null-output path.
+        let err = unsafe { sys_timer_gettime(timerid, core::ptr::null_mut()) }
+            .expect_err("timer_gettime(deleted, NULL) must fail");
+        assert_eq!(
+            err, EINVAL,
+            "bd-qq59x: timer_gettime(deleted, NULL) must return EINVAL, got {err}"
+        );
+    }
+
     /// Complement to cod's setns/unshare error tests (bd-tvug).
     /// fsmount(-1, 0, 0): fs_fd must reference a valid fsopen-created
     /// context. An invalid fd surfaces EBADF before any flag
