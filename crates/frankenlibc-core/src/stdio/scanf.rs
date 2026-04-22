@@ -42,11 +42,64 @@ enum ScanfArgCategory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanArgKind {
+    SignedInt,
+    UnsignedInt,
+    Float,
+    CharBuffer,
+    StringBuffer,
+    Store,
+    Pointer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ScanfRoute {
     handler: ScanfHandler,
     length_mask: u8,
     skips_leading_whitespace: bool,
     arg_category: ScanfArgCategory,
+}
+
+impl ScanfRoute {
+    const fn invalid() -> Self {
+        Self {
+            handler: ScanfHandler::Invalid,
+            length_mask: 0,
+            skips_leading_whitespace: false,
+            arg_category: ScanfArgCategory::None,
+        }
+    }
+
+    fn is_valid(self) -> bool {
+        !matches!(self.handler, ScanfHandler::Invalid)
+    }
+
+    fn accepts_length(self, length: LengthMod) -> bool {
+        match length {
+            LengthMod::None => true,
+            LengthMod::Hh => self.length_mask & 0b0000_0001 != 0,
+            LengthMod::H => self.length_mask & 0b0000_0010 != 0,
+            LengthMod::L => self.length_mask & 0b0000_0100 != 0,
+            LengthMod::Ll => self.length_mask & 0b0000_1000 != 0,
+            LengthMod::J => self.length_mask & 0b0001_0000 != 0,
+            LengthMod::Z => self.length_mask & 0b0010_0000 != 0,
+            LengthMod::T => self.length_mask & 0b0100_0000 != 0,
+            LengthMod::BigL => self.length_mask & 0b1000_0000 != 0,
+        }
+    }
+
+    fn arg_kind(self) -> Option<ScanArgKind> {
+        match self.arg_category {
+            ScanfArgCategory::None => None,
+            ScanfArgCategory::SignedInt => Some(ScanArgKind::SignedInt),
+            ScanfArgCategory::UnsignedInt => Some(ScanArgKind::UnsignedInt),
+            ScanfArgCategory::Float => Some(ScanArgKind::Float),
+            ScanfArgCategory::CharBuffer => Some(ScanArgKind::CharBuffer),
+            ScanfArgCategory::StringBuffer => Some(ScanArgKind::StringBuffer),
+            ScanfArgCategory::Store => Some(ScanArgKind::Store),
+            ScanfArgCategory::Pointer => Some(ScanArgKind::Pointer),
+        }
+    }
 }
 
 mod generated_scanf_tables {
@@ -60,34 +113,7 @@ use generated_scanf_tables::SCANF_TABLE;
 
 fn scanf_route(conversion: u8) -> Option<ScanfRoute> {
     let route = SCANF_TABLE[conversion as usize];
-    if route.handler == ScanfHandler::Invalid {
-        None
-    } else {
-        Some(route)
-    }
-}
-
-fn scanf_length_allowed(length: LengthMod, length_mask: u8) -> bool {
-    match length {
-        LengthMod::None => true,
-        LengthMod::Hh => length_mask & 0b0000_0001 != 0,
-        LengthMod::H => length_mask & 0b0000_0010 != 0,
-        LengthMod::L => length_mask & 0b0000_0100 != 0,
-        LengthMod::Ll => length_mask & 0b0000_1000 != 0,
-        LengthMod::J => length_mask & 0b0001_0000 != 0,
-        LengthMod::Z => length_mask & 0b0010_0000 != 0,
-        LengthMod::T => length_mask & 0b0100_0000 != 0,
-        LengthMod::BigL => length_mask & 0b1000_0000 != 0,
-    }
-}
-
-const fn invalid_scanf_route() -> ScanfRoute {
-    ScanfRoute {
-        handler: ScanfHandler::Invalid,
-        length_mask: 0,
-        skips_leading_whitespace: false,
-        arg_category: ScanfArgCategory::None,
-    }
+    if !route.is_valid() { None } else { Some(route) }
 }
 
 // ---------------------------------------------------------------------------
@@ -133,32 +159,51 @@ pub struct ScanSpec {
 }
 
 impl ScanSpec {
+    pub fn arg_kind(&self) -> Option<ScanArgKind> {
+        self.route.arg_kind()
+    }
+
     pub fn skips_leading_whitespace(&self) -> bool {
         self.route.skips_leading_whitespace
     }
 
     pub fn stores_count(&self) -> bool {
-        matches!(self.route.arg_category, ScanfArgCategory::Store)
+        matches!(self.arg_kind(), Some(ScanArgKind::Store))
     }
 
     pub fn writes_char_buffer(&self) -> bool {
-        matches!(self.route.arg_category, ScanfArgCategory::CharBuffer)
+        matches!(self.arg_kind(), Some(ScanArgKind::CharBuffer))
     }
 
     pub fn writes_string_buffer(&self) -> bool {
-        matches!(self.route.arg_category, ScanfArgCategory::StringBuffer)
+        matches!(self.arg_kind(), Some(ScanArgKind::StringBuffer))
     }
 
     pub fn writes_float(&self) -> bool {
-        matches!(self.route.arg_category, ScanfArgCategory::Float)
+        matches!(self.arg_kind(), Some(ScanArgKind::Float))
     }
 
     pub fn writes_pointer(&self) -> bool {
-        matches!(self.route.arg_category, ScanfArgCategory::Pointer)
+        matches!(self.arg_kind(), Some(ScanArgKind::Pointer))
+    }
+
+    fn handler(&self) -> Option<ScanfHandler> {
+        self.route.is_valid().then_some(self.route.handler)
+    }
+
+    fn bind_route(&mut self) -> bool {
+        let Some(route) = scanf_route(self.conversion) else {
+            return false;
+        };
+        if !route.accepts_length(self.length) {
+            return false;
+        }
+        self.route = route;
+        true
     }
 
     fn scan_at(&self, input: &[u8], pos: usize) -> Option<(Option<ScanValue>, usize)> {
-        match self.route.handler {
+        match self.handler()? {
             ScanfHandler::SignedDecimal => scan_int(input, pos, self, 10, true),
             ScanfHandler::SignedAutoBase => scan_int_auto(input, pos, self),
             ScanfHandler::UnsignedDecimal => scan_int(input, pos, self, 10, false),
@@ -214,7 +259,7 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 length: LengthMod::None,
                 conversion: 0,
                 scanset: None,
-                route: invalid_scanf_route(),
+                route: ScanfRoute::invalid(),
             };
 
             // Assignment suppression.
@@ -324,14 +369,9 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 i += 1;
             }
 
-            let route = match scanf_route(spec.conversion) {
-                Some(route) => route,
-                None => break,
-            };
-            if !scanf_length_allowed(spec.length, route.length_mask) {
+            if !spec.bind_route() {
                 break;
             }
-            spec.route = route;
 
             directives.push(ScanDirective::Spec(Box::new(spec)));
         } else if fmt[i].is_ascii_whitespace() {
@@ -1192,10 +1232,13 @@ mod tests {
         assert_eq!(decimal.handler, ScanfHandler::SignedDecimal);
         assert_eq!(string.handler, ScanfHandler::String);
         assert_eq!(scanset.handler, ScanfHandler::Scanset);
+        assert_eq!(decimal.arg_kind(), Some(ScanArgKind::SignedInt));
+        assert_eq!(string.arg_kind(), Some(ScanArgKind::StringBuffer));
+        assert_eq!(scanset.arg_kind(), Some(ScanArgKind::StringBuffer));
         assert!(decimal.skips_leading_whitespace);
         assert!(!scanset.skips_leading_whitespace);
-        assert!(scanf_length_allowed(LengthMod::L, string.length_mask));
-        assert!(!scanf_length_allowed(LengthMod::BigL, string.length_mask));
+        assert!(string.accepts_length(LengthMod::L));
+        assert!(!string.accepts_length(LengthMod::BigL));
         assert!(scanf_route(b'Q').is_none());
     }
 
@@ -1229,6 +1272,7 @@ mod tests {
             .collect();
 
         assert_eq!(specs.len(), 4);
+        assert_eq!(specs[0].arg_kind(), Some(ScanArgKind::SignedInt));
         assert!(!specs[0].writes_float());
         assert!(specs[1].stores_count());
         assert!(specs[2].writes_pointer());
