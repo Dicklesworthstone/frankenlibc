@@ -24,6 +24,14 @@ path = "src/proof.rs"
 name = "coverage-emit"
 path = "src/coverage.rs"
 
+[[bin]]
+name = "symmetry-emit"
+path = "src/symmetry.rs"
+
+[[bin]]
+name = "compress-quotient"
+path = "src/compress.rs"
+
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

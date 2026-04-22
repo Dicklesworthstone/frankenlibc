@@ -24,6 +24,7 @@ pub mod grammar;
 pub mod table;
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Printf format specification parsed from JSON grammar.
@@ -182,6 +183,76 @@ pub struct CoverageArtifact {
     pub description: String,
     pub printf_interactions: Vec<PrintfCoverageInteraction>,
     pub scanf_interactions: Vec<ScanfCoverageInteraction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymmetryArtifact {
+    pub version: u32,
+    pub description: String,
+    pub printf_classes: Vec<PrintfSymmetryClass>,
+    pub scanf_classes: Vec<ScanfSymmetryClass>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrintfSymmetryClass {
+    pub class_id: u32,
+    pub representative_conversion: String,
+    pub member_count: u32,
+    pub members: Vec<String>,
+    pub handler: PrintfHandler,
+    pub length_mask: u8,
+    pub flag_mask: u8,
+    pub arg_category: ArgCategory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanfSymmetryClass {
+    pub class_id: u32,
+    pub representative_conversion: String,
+    pub member_count: u32,
+    pub members: Vec<String>,
+    pub handler: ScanfHandler,
+    pub length_mask: u8,
+    pub skips_leading_whitespace: bool,
+    pub arg_category: ScanfArgCategory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompressedArtifact {
+    pub version: u32,
+    pub description: String,
+    pub printf_valid_route_count: u32,
+    pub printf_node_count: u32,
+    pub scanf_valid_route_count: u32,
+    pub scanf_node_count: u32,
+    pub printf_nodes: Vec<PrintfQuotientNode>,
+    pub scanf_nodes: Vec<ScanfQuotientNode>,
+    pub printf_conversion_to_node: BTreeMap<String, u32>,
+    pub scanf_conversion_to_node: BTreeMap<String, u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrintfQuotientNode {
+    pub node_id: u32,
+    pub representative_conversion: String,
+    pub member_count: u32,
+    pub members: Vec<String>,
+    pub handler: PrintfHandler,
+    pub length_mask: u8,
+    pub flag_mask: u8,
+    pub arg_category: ArgCategory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanfQuotientNode {
+    pub node_id: u32,
+    pub representative_conversion: String,
+    pub member_count: u32,
+    pub members: Vec<String>,
+    pub handler: ScanfHandler,
+    pub length_mask: u8,
+    pub skips_leading_whitespace: bool,
+    pub arg_category: ScanfArgCategory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -663,6 +734,197 @@ fn flag_labels_from_mask(mask: u8) -> Vec<Option<String>> {
     values
 }
 
+fn build_printf_symmetry_classes(
+    grammar: &PrintfGrammar,
+    table: &[PrintfRoute; 256],
+) -> Vec<PrintfSymmetryClass> {
+    let mut groups: BTreeMap<(u8, u8, u8, u8), (PrintfRoute, Vec<String>)> = BTreeMap::new();
+    for byte in sorted_conversion_bytes(&grammar.conversion) {
+        let route = table[byte as usize];
+        if route.handler == PrintfHandler::Invalid {
+            continue;
+        }
+        let key = (
+            route.handler as u8,
+            route.length_mask,
+            route.flag_mask,
+            route.arg_category as u8,
+        );
+        let entry = groups.entry(key).or_insert((route, Vec::new()));
+        entry.1.push((byte as char).to_string());
+    }
+
+    groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, (_key, (route, members)))| PrintfSymmetryClass {
+            class_id: index as u32,
+            representative_conversion: members
+                .first()
+                .cloned()
+                .expect("printf symmetry class has member"),
+            member_count: members.len() as u32,
+            members,
+            handler: route.handler,
+            length_mask: route.length_mask,
+            flag_mask: route.flag_mask,
+            arg_category: route.arg_category,
+        })
+        .collect()
+}
+
+fn build_scanf_symmetry_classes(
+    grammar: &ScanfGrammar,
+    table: &[ScanfRoute; 256],
+) -> Vec<ScanfSymmetryClass> {
+    let mut groups: BTreeMap<(u8, u8, bool, u8), (ScanfRoute, Vec<String>)> = BTreeMap::new();
+    for byte in sorted_conversion_bytes(&grammar.conversion) {
+        let route = table[byte as usize];
+        if route.handler == ScanfHandler::Invalid {
+            continue;
+        }
+        let key = (
+            route.handler as u8,
+            route.length_mask,
+            route.skips_leading_whitespace,
+            route.arg_category as u8,
+        );
+        let entry = groups.entry(key).or_insert((route, Vec::new()));
+        entry.1.push((byte as char).to_string());
+    }
+
+    groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, (_key, (route, members)))| ScanfSymmetryClass {
+            class_id: index as u32,
+            representative_conversion: members
+                .first()
+                .cloned()
+                .expect("scanf symmetry class has member"),
+            member_count: members.len() as u32,
+            members,
+            handler: route.handler,
+            length_mask: route.length_mask,
+            skips_leading_whitespace: route.skips_leading_whitespace,
+            arg_category: route.arg_category,
+        })
+        .collect()
+}
+
+pub fn build_symmetry_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> SymmetryArtifact {
+    SymmetryArtifact {
+        version: 1,
+        description:
+            "Deterministic stdio route symmetry classes derived from generated printf/scanf tables"
+                .to_owned(),
+        printf_classes: build_printf_symmetry_classes(printf_grammar, printf_table),
+        scanf_classes: build_scanf_symmetry_classes(scanf_grammar, scanf_table),
+    }
+}
+
+pub fn emit_symmetry_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> String {
+    let artifact =
+        build_symmetry_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table);
+    let mut json = serde_json::to_string_pretty(&artifact).expect("symmetry artifact serializes");
+    json.push('\n');
+    json
+}
+
+pub fn build_compressed_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> CompressedArtifact {
+    let symmetry =
+        build_symmetry_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table);
+    let mut printf_conversion_to_node = BTreeMap::new();
+    let printf_nodes = symmetry
+        .printf_classes
+        .iter()
+        .map(|class| {
+            for member in &class.members {
+                printf_conversion_to_node.insert(member.clone(), class.class_id);
+            }
+            PrintfQuotientNode {
+                node_id: class.class_id,
+                representative_conversion: class.representative_conversion.clone(),
+                member_count: class.member_count,
+                members: class.members.clone(),
+                handler: class.handler,
+                length_mask: class.length_mask,
+                flag_mask: class.flag_mask,
+                arg_category: class.arg_category,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut scanf_conversion_to_node = BTreeMap::new();
+    let scanf_nodes = symmetry
+        .scanf_classes
+        .iter()
+        .map(|class| {
+            for member in &class.members {
+                scanf_conversion_to_node.insert(member.clone(), class.class_id);
+            }
+            ScanfQuotientNode {
+                node_id: class.class_id,
+                representative_conversion: class.representative_conversion.clone(),
+                member_count: class.member_count,
+                members: class.members.clone(),
+                handler: class.handler,
+                length_mask: class.length_mask,
+                skips_leading_whitespace: class.skips_leading_whitespace,
+                arg_category: class.arg_category,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    CompressedArtifact {
+        version: 1,
+        description: "Deterministic quotiented stdio route graph derived from symmetry classes"
+            .to_owned(),
+        printf_valid_route_count: sorted_conversion_bytes(&printf_grammar.conversion)
+            .into_iter()
+            .filter(|byte| printf_table[*byte as usize].handler != PrintfHandler::Invalid)
+            .count() as u32,
+        printf_node_count: printf_nodes.len() as u32,
+        scanf_valid_route_count: sorted_conversion_bytes(&scanf_grammar.conversion)
+            .into_iter()
+            .filter(|byte| scanf_table[*byte as usize].handler != ScanfHandler::Invalid)
+            .count() as u32,
+        scanf_node_count: scanf_nodes.len() as u32,
+        printf_nodes,
+        scanf_nodes,
+        printf_conversion_to_node,
+        scanf_conversion_to_node,
+    }
+}
+
+pub fn emit_compressed_artifact(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> String {
+    let artifact =
+        build_compressed_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table);
+    let mut json = serde_json::to_string_pretty(&artifact).expect("compressed artifact serializes");
+    json.push('\n');
+    json
+}
+
 pub fn emit_coverage_artifact(
     printf_grammar: &PrintfGrammar,
     scanf_grammar: &ScanfGrammar,
@@ -989,5 +1251,60 @@ mod tests {
         assert!(emitted_once.contains("\"scanf_interactions\""));
         assert!(emitted_once.contains("\"conversion\": \"d\""));
         assert!(emitted_once.contains("\"assignment_suppressed\": true"));
+    }
+
+    #[test]
+    fn emitted_symmetry_artifact_is_deterministic() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let emitted_once =
+            emit_symmetry_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+        let emitted_twice =
+            emit_symmetry_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("\"printf_classes\""));
+        assert!(emitted_once.contains("\"scanf_classes\""));
+        assert!(emitted_once.contains("\"member_count\""));
+        assert!(emitted_once.contains("\"representative_conversion\""));
+    }
+
+    #[test]
+    fn emitted_compressed_artifact_is_deterministic() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let emitted_once =
+            emit_compressed_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+        let emitted_twice =
+            emit_compressed_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("\"printf_nodes\""));
+        assert!(emitted_once.contains("\"scanf_nodes\""));
+        assert!(emitted_once.contains("\"printf_conversion_to_node\""));
+        assert!(emitted_once.contains("\"scanf_conversion_to_node\""));
+    }
+
+    #[test]
+    fn compression_collapses_equivalent_printf_routes() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let artifact =
+            build_compressed_artifact(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert!(artifact.printf_node_count < artifact.printf_valid_route_count);
+        assert_eq!(
+            artifact.printf_conversion_to_node.get("d"),
+            artifact.printf_conversion_to_node.get("i")
+        );
     }
 }
