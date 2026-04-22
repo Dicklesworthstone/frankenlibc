@@ -24,6 +24,7 @@ pub mod grammar;
 pub mod table;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -229,6 +230,20 @@ pub struct CompressedArtifact {
     pub scanf_nodes: Vec<ScanfQuotientNode>,
     pub printf_conversion_to_node: BTreeMap<String, u32>,
     pub scanf_conversion_to_node: BTreeMap<String, u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineManifest {
+    pub version: u32,
+    pub description: String,
+    pub artifacts: Vec<PipelineArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineArtifact {
+    pub path: String,
+    pub sha256: String,
+    pub byte_len: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -925,6 +940,88 @@ pub fn emit_compressed_artifact(
     json
 }
 
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn sha256_hex(contents: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(contents.as_bytes());
+    hex_encode(&hasher.finalize())
+}
+
+pub fn build_pipeline_artifacts(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> BTreeMap<String, String> {
+    let mut artifacts = BTreeMap::new();
+    artifacts.insert(
+        "synth/printf_table.rs".to_owned(),
+        emit_printf_table_source(printf_table),
+    );
+    artifacts.insert(
+        "synth/scanf_table.rs".to_owned(),
+        emit_scanf_table_source(scanf_table),
+    );
+    artifacts.insert(
+        "synth/coverage.json".to_owned(),
+        emit_coverage_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table),
+    );
+    artifacts.insert(
+        "synth/symmetry.json".to_owned(),
+        emit_symmetry_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table),
+    );
+    artifacts.insert(
+        "synth/quotient.json".to_owned(),
+        emit_compressed_artifact(printf_grammar, scanf_grammar, printf_table, scanf_table),
+    );
+    artifacts.insert(
+        "proof/stdio_tables.smt2".to_owned(),
+        emit_smt_proof_source(printf_grammar, scanf_grammar, printf_table, scanf_table),
+    );
+    artifacts
+}
+
+pub fn build_pipeline_manifest(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> PipelineManifest {
+    let artifacts =
+        build_pipeline_artifacts(printf_grammar, scanf_grammar, printf_table, scanf_table)
+            .into_iter()
+            .map(|(path, contents)| PipelineArtifact {
+                byte_len: contents.len(),
+                sha256: sha256_hex(&contents),
+                path,
+            })
+            .collect();
+
+    PipelineManifest {
+        version: 1,
+        description:
+            "Deterministic manifest for stdio synthesis pipeline artifacts generated from printf/scanf grammars"
+                .to_owned(),
+        artifacts,
+    }
+}
+
+pub fn emit_pipeline_manifest(
+    printf_grammar: &PrintfGrammar,
+    scanf_grammar: &ScanfGrammar,
+    printf_table: &[PrintfRoute; 256],
+    scanf_table: &[ScanfRoute; 256],
+) -> String {
+    let manifest =
+        build_pipeline_manifest(printf_grammar, scanf_grammar, printf_table, scanf_table);
+    let mut json = serde_json::to_string_pretty(&manifest).expect("pipeline manifest serializes");
+    json.push('\n');
+    json
+}
+
 pub fn emit_coverage_artifact(
     printf_grammar: &PrintfGrammar,
     scanf_grammar: &ScanfGrammar,
@@ -1306,5 +1403,27 @@ mod tests {
             artifact.printf_conversion_to_node.get("d"),
             artifact.printf_conversion_to_node.get("i")
         );
+    }
+
+    #[test]
+    fn emitted_pipeline_manifest_is_deterministic() {
+        let printf_grammar = load_grammar();
+        let scanf_grammar = load_scanf_grammar();
+        let printf_table = generate_printf_table(&printf_grammar);
+        let scanf_table = generate_scanf_table(&scanf_grammar);
+
+        let emitted_once =
+            emit_pipeline_manifest(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+        let emitted_twice =
+            emit_pipeline_manifest(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("\"path\": \"synth/printf_table.rs\""));
+        assert!(emitted_once.contains("\"path\": \"synth/scanf_table.rs\""));
+        assert!(emitted_once.contains("\"path\": \"synth/coverage.json\""));
+        assert!(emitted_once.contains("\"path\": \"synth/symmetry.json\""));
+        assert!(emitted_once.contains("\"path\": \"synth/quotient.json\""));
+        assert!(emitted_once.contains("\"path\": \"proof/stdio_tables.smt2\""));
+        assert!(emitted_once.contains("\"sha256\""));
     }
 }
