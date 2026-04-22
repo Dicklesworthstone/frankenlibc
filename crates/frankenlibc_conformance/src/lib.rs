@@ -2910,6 +2910,40 @@ fn run_impl_fprintf(
         [PrintfArg::Str(a0), PrintfArg::Str(a1)] => unsafe {
             frankenlibc_abi::stdio_abi::fprintf(stream, fmt, a0.as_ptr(), a1.as_ptr())
         },
+        [PrintfArg::NullPtr] => unsafe {
+            frankenlibc_abi::stdio_abi::fprintf(stream, fmt, std::ptr::null::<c_char>())
+        },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Double(a2),
+        ] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0, *a1, *a2) },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1), PrintfArg::Int(a2)] => unsafe {
+            frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0, *a1, *a2)
+        },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1), PrintfArg::Str(a2)] => unsafe {
+            frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0, *a1, a2.as_ptr())
+        },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Str(a1),
+            PrintfArg::Double(a2),
+        ] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0, a1.as_ptr(), *a2) },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Str(a2),
+            PrintfArg::Double(a3),
+        ] => unsafe {
+            frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0, *a1, a2.as_ptr(), *a3)
+        },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Int(a2),
+            PrintfArg::Int(a3),
+            PrintfArg::Int(a4),
+        ] => unsafe { frankenlibc_abi::stdio_abi::fprintf(stream, fmt, *a0, *a1, *a2, *a3, *a4) },
         _ => {
             return Err(format!("unsupported fprintf arg combination: {:?}", args));
         }
@@ -2939,6 +2973,36 @@ fn run_host_fprintf(
         [PrintfArg::Str(a0), PrintfArg::Str(a1)] => unsafe {
             libc::fprintf(stream, fmt, a0.as_ptr(), a1.as_ptr())
         },
+        [PrintfArg::NullPtr] => unsafe { libc::fprintf(stream, fmt, std::ptr::null::<c_char>()) },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Double(a2),
+        ] => unsafe { libc::fprintf(stream, fmt, *a0, *a1, *a2) },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1), PrintfArg::Int(a2)] => unsafe {
+            libc::fprintf(stream, fmt, *a0, *a1, *a2)
+        },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1), PrintfArg::Str(a2)] => unsafe {
+            libc::fprintf(stream, fmt, *a0, *a1, a2.as_ptr())
+        },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Str(a1),
+            PrintfArg::Double(a2),
+        ] => unsafe { libc::fprintf(stream, fmt, *a0, a1.as_ptr(), *a2) },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Str(a2),
+            PrintfArg::Double(a3),
+        ] => unsafe { libc::fprintf(stream, fmt, *a0, *a1, a2.as_ptr(), *a3) },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Int(a2),
+            PrintfArg::Int(a3),
+            PrintfArg::Int(a4),
+        ] => unsafe { libc::fprintf(stream, fmt, *a0, *a1, *a2, *a3, *a4) },
         _ => {
             return Err(format!("unsupported fprintf arg combination: {:?}", args));
         }
