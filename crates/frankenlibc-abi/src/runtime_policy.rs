@@ -1374,6 +1374,11 @@ fn strict_runtime_kernel_fast_path(mode: SafetyLevel) -> bool {
     cfg!(not(test)) && matches!(mode, SafetyLevel::Strict)
 }
 
+#[inline]
+fn runtime_kernel_passthrough_family(family: ApiFamily) -> bool {
+    matches!(family, ApiFamily::Locale)
+}
+
 pub(crate) fn decide(
     family: ApiFamily,
     addr_hint: usize,
@@ -1398,6 +1403,11 @@ pub(crate) fn decide(
         contention_hint,
         bloom_negative,
     };
+    if runtime_kernel_passthrough_family(family) {
+        let decision = passthrough_decision();
+        record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+        return (mode, decision);
+    }
     if let Some(cert) =
         lookup_active_ffi_pcc_certificate(family, requested_bytes, is_write, bloom_negative)
     {
@@ -1444,6 +1454,10 @@ pub(crate) fn observe(
     adverse: bool,
 ) {
     let mode = mode();
+    if runtime_kernel_passthrough_family(family) {
+        let _ = (profile, estimated_cost_ns, adverse, mode);
+        return;
+    }
     if lookup_active_ffi_pcc_certificate(family, usize::MAX, true, adverse).is_some()
         || lookup_active_ffi_pcc_certificate(family, usize::MAX, false, adverse).is_some()
     {
@@ -1474,6 +1488,10 @@ pub(crate) fn check_ordering(
     aligned: bool,
     recent_page: bool,
 ) -> [CheckStage; 7] {
+    if runtime_kernel_passthrough_family(family) {
+        let _ = (aligned, recent_page);
+        return PASSTHROUGH_ORDERING;
+    }
     if active_ffi_pcc_symbol_certificate()
         .is_some_and(|row| row.family == family && row.skip_stage_ordering)
     {
@@ -1509,6 +1527,10 @@ pub(crate) fn note_check_order_outcome(
     ordering_used: &[CheckStage; 7],
     exit_stage: Option<usize>,
 ) {
+    if runtime_kernel_passthrough_family(family) {
+        let _ = (aligned, recent_page, ordering_used, exit_stage);
+        return;
+    }
     if active_ffi_pcc_symbol_certificate()
         .is_some_and(|row| row.family == family && row.skip_stage_ordering)
     {
@@ -1890,6 +1912,24 @@ mod tests {
             std::env::set_var("FRANKENLIBC_MODE", "bogus");
         }
         assert_eq!(parse_mode_from_environ(), Ok(Some(SafetyLevel::Strict)));
+    }
+
+    #[test]
+    fn locale_family_stays_on_passthrough_policy_in_hardened_mode() {
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_UNRESOLVED);
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+
+        let (mode, decision) = decide(ApiFamily::Locale, 0x1234, 2, true, false, 0);
+        assert_eq!(mode, SafetyLevel::Hardened);
+        assert_eq!(decision, passthrough_decision());
+
+        observe(ApiFamily::Locale, ValidationProfile::Full, 17, true);
+        assert_eq!(
+            check_ordering(ApiFamily::Locale, true, true),
+            PASSTHROUGH_ORDERING
+        );
     }
 
     #[test]
