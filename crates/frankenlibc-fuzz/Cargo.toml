@@ -46,6 +46,11 @@ path = "fuzz_targets/fuzz_pathname.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_env"
+path = "fuzz_targets/fuzz_env.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
