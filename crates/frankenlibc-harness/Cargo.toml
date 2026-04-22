@@ -29,11 +29,11 @@ thiserror = { workspace = true }
 sha2 = { workspace = true }
 asupersync-conformance = { workspace = true, optional = true }
 ftui-harness = { workspace = true, optional = true }
-ftui-core = { version = "0.2.1", optional = true }
-ftui-layout = { version = "0.2.1", optional = true }
-ftui-render = { version = "0.2.1", optional = true }
-ftui-style = { version = "0.2.1", optional = true }
-ftui-widgets = { version = "0.2.1", optional = true }
+ftui-core = { version = "0.3.1", optional = true }
+ftui-layout = { version = "0.3.1", optional = true }
+ftui-render = { version = "0.3.1", optional = true }
+ftui-style = { version = "0.3.1", optional = true }
+ftui-widgets = { version = "0.3.1", optional = true }
 frankenlibc-membrane = { workspace = true }
 frankenlibc-abi = { workspace = true, features = ["conformance-testing"] }
 frankenlibc-core = { workspace = true }

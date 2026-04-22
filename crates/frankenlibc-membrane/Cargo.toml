@@ -23,11 +23,11 @@ proptest = "1.11"
 libc = { workspace = true }
 asupersync-conformance = { workspace = true }
 ftui-harness = { workspace = true }
-ftui-core = "0.2.1"
-ftui-layout = "0.2.1"
-ftui-render = "0.2.1"
-ftui-style = "0.2.1"
-ftui-widgets = "0.2.1"
+ftui-core = "0.3.1"
+ftui-layout = "0.3.1"
+ftui-render = "0.3.1"
+ftui-style = "0.3.1"
+ftui-widgets = "0.3.1"
 
 [build-dependencies]
 sha2 = { workspace = true }

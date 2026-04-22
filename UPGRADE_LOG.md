@@ -55,6 +55,12 @@
 - **Breaking:** None (still 4.x, patch).
 - **Build:** `rch exec -- cargo check --workspace --all-targets` -> clean.
 
+#### ftui-* (core/layout/render/style/widgets/harness): 0.2.1 -> 0.3.1
+- **Scope:** workspace root Cargo.toml + crates/frankenlibc-harness/Cargo.toml + crates/frankenlibc-membrane/Cargo.toml + crates/frankenlibc_conformance/Cargo.toml
+- **Breaking:** 0.x minor-major (0.2.1 -> 0.3.1). Tested against our 52 call sites in 6 files; all compile cleanly with no API change needed.
+- **Build:** `rch exec -- cargo check --workspace --all-targets` -> clean.
+- **Tests:** `rch exec -- cargo test -p frankenlibc-membrane --lib` -> 1339/1340 pass; 1 pre-existing flake (`runtime_math::localization_chooser::tests::observe_throughput_below_strict_budget`, passes in isolation) identical to the one noted in the previous asupersync bump session. Unrelated to ftui.
+
 #### proptest: 1.6 -> 1.11 (dev-dep)
 - **Scope:** crates/frankenlibc-core/Cargo.toml, crates/frankenlibc-membrane/Cargo.toml
 - **Breaking:** None published between 1.6 and 1.11 that affect our call sites (no strategy/config API changes).
