@@ -2959,6 +2959,30 @@ fn eventfd_read_valid_fd_null_output_sets_efault() {
 }
 
 #[test]
+fn eventfd_read_invalid_fd_null_output_preserves_ebadf_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::eventfd_read(-1, ptr::null_mut()) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { eventfd_read(-1, ptr::null_mut()) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EBADF,
+        "unexpected errno from eventfd_read(-1, NULL): {abi_err}"
+    );
+}
+
+#[test]
 fn eventfd_write_invalid_fd_preserves_ebadf() {
     unsafe {
         *__errno_location() = 0;
