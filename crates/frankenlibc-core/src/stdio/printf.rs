@@ -211,6 +211,73 @@ impl FormatSpec {
             .is_some_and(|route| matches!(route.arg_category, ArgCategory::Float))
     }
 
+    pub fn value_arg_is_string(&self) -> bool {
+        self.route()
+            .is_some_and(|route| matches!(route.arg_category, ArgCategory::String))
+    }
+
+    pub fn is_literal_percent(&self) -> bool {
+        self.route()
+            .is_some_and(|route| matches!(route.handler, PrintfHandler::LiteralPercent))
+    }
+
+    pub fn is_errno_message(&self) -> bool {
+        self.conversion == b'm'
+    }
+
+    pub fn stores_count(&self) -> bool {
+        self.route()
+            .is_some_and(|route| matches!(route.handler, PrintfHandler::StoreCount))
+    }
+
+    pub fn render_value_arg(&self, raw: u64, buf: &mut Vec<u8>) -> bool {
+        match printf_handler(self) {
+            Some(PrintfHandler::SignedDecimal) => {
+                let val = match self.length {
+                    LengthMod::Hh => (raw as i8) as i64,
+                    LengthMod::H => (raw as i16) as i64,
+                    LengthMod::L | LengthMod::Ll | LengthMod::J => raw as i64,
+                    _ => (raw as i32) as i64,
+                };
+                format_signed(val, self, buf);
+                true
+            }
+            Some(PrintfHandler::UnsignedOctal)
+            | Some(PrintfHandler::UnsignedDecimal)
+            | Some(PrintfHandler::UnsignedHexLower)
+            | Some(PrintfHandler::UnsignedHexUpper) => {
+                let val = match self.length {
+                    LengthMod::Hh => (raw as u8) as u64,
+                    LengthMod::H => (raw as u16) as u64,
+                    LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z => raw,
+                    _ => (raw as u32) as u64,
+                };
+                format_unsigned(val, self, buf);
+                true
+            }
+            Some(PrintfHandler::FloatFixed)
+            | Some(PrintfHandler::FloatExp)
+            | Some(PrintfHandler::FloatGeneral)
+            | Some(PrintfHandler::FloatHex) => {
+                format_float(f64::from_bits(raw), self, buf);
+                true
+            }
+            Some(PrintfHandler::Character) => {
+                format_char(raw as u8, self, buf);
+                true
+            }
+            Some(PrintfHandler::Pointer) => {
+                format_pointer(raw as usize, self, buf);
+                true
+            }
+            Some(PrintfHandler::String)
+            | Some(PrintfHandler::StoreCount)
+            | Some(PrintfHandler::LiteralPercent)
+            | Some(PrintfHandler::Invalid)
+            | None => false,
+        }
+    }
+
     fn route(&self) -> Option<PrintfRoute> {
         if self.conversion == b'm' {
             None
@@ -1313,6 +1380,99 @@ mod tests {
             Some(PrintfDispatchKind::ErrnoMessage)
         );
         assert_eq!(printf_dispatch_kind(b'Q'), None);
+    }
+
+    #[test]
+    fn test_format_spec_route_helpers_follow_generated_metadata() {
+        let signed = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'd',
+            None,
+        );
+        let string = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b's',
+            None,
+        );
+        let store = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'n',
+            None,
+        );
+        let percent = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'%',
+            None,
+        );
+        let errno = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'm',
+            None,
+        );
+
+        assert!(signed.consumes_value_arg());
+        assert!(!signed.value_arg_is_string());
+        assert!(!signed.stores_count());
+        assert!(string.value_arg_is_string());
+        assert!(store.stores_count());
+        assert!(percent.is_literal_percent());
+        assert!(errno.is_errno_message());
+        assert!(!errno.consumes_value_arg());
+    }
+
+    #[test]
+    fn test_render_value_arg_routes_non_string_handlers() {
+        let hex = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'x',
+            None,
+        );
+        let pointer = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'p',
+            None,
+        );
+        let string = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b's',
+            None,
+        );
+
+        let mut buf = Vec::new();
+        assert!(hex.render_value_arg(0x2a, &mut buf));
+        assert_eq!(buf, b"2a");
+
+        buf.clear();
+        assert!(pointer.render_value_arg(0x1234, &mut buf));
+        assert_eq!(buf, b"0x1234");
+
+        buf.clear();
+        assert!(!string.render_value_arg(0x1234, &mut buf));
+        assert!(buf.is_empty());
     }
 
     #[test]

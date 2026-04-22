@@ -2956,8 +2956,7 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
 // ---------------------------------------------------------------------------
 
 use frankenlibc_core::stdio::{
-    FormatSegment, LengthMod, Precision, PrintfDispatchKind, Width, format_char, format_float,
-    format_pointer, format_signed, format_str, format_unsigned, parse_format_string,
+    FormatSegment, LengthMod, Precision, Width, format_str, parse_format_string,
 };
 
 /// Maximum variadic arguments we extract per printf call.
@@ -3175,156 +3174,113 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                     None
                 };
 
-                // Consume one argument for the conversion.
-                match spec.dispatch_kind() {
-                    Some(PrintfDispatchKind::LiteralPercent) => buf.push(b'%'),
-                    Some(PrintfDispatchKind::ErrnoMessage) => {
-                        let e = unsafe { *crate::errno_abi::__errno_location() };
-                        let mut err_buf = [0u8; 256];
-                        let rc = unsafe {
-                            crate::string_abi::strerror_r(
-                                e,
-                                err_buf.as_mut_ptr() as *mut c_char,
-                                err_buf.len(),
-                            )
-                        };
-                        if rc == 0 {
-                            let msg = unsafe { CStr::from_ptr(err_buf.as_ptr() as *const c_char) };
-                            format_str(msg.to_bytes(), &resolved_spec, &mut buf);
-                        } else {
-                            buf.extend_from_slice(b"Unknown error");
-                        }
+                if resolved_spec.is_literal_percent() {
+                    buf.push(b'%');
+                } else if resolved_spec.is_errno_message() {
+                    let e = unsafe { *crate::errno_abi::__errno_location() };
+                    let mut err_buf = [0u8; 256];
+                    let rc = unsafe {
+                        crate::string_abi::strerror_r(
+                            e,
+                            err_buf.as_mut_ptr() as *mut c_char,
+                            err_buf.len(),
+                        )
+                    };
+                    if rc == 0 {
+                        let msg = unsafe { CStr::from_ptr(err_buf.as_ptr() as *const c_char) };
+                        format_str(msg.to_bytes(), &resolved_spec, &mut buf);
+                    } else {
+                        buf.extend_from_slice(b"Unknown error");
                     }
-                    Some(PrintfDispatchKind::StoreCount) => {
-                        // %n: store count of bytes written so far.
-                        // Respects length modifier: %hhn→i8, %hn→i16,
-                        // %n→i32, %ln→i64, %lln→i64, %zn→isize, %jn→i64.
-                        if let Some(raw_ptr) = read_arg(value_position, &mut arg_idx) {
-                            let ptr_val = raw_ptr as usize;
-                            if ptr_val != 0 {
-                                let count = buf.len();
-                                let size = match resolved_spec.length {
-                                    LengthMod::Hh => 1,
-                                    LengthMod::H => 2,
-                                    LengthMod::L
-                                    | LengthMod::Ll
-                                    | LengthMod::J
-                                    | LengthMod::Z
-                                    | LengthMod::T => 8,
-                                    _ => 4,
-                                };
-                                let (mode, decision) = crate::runtime_policy::decide(
-                                    frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
-                                    ptr_val,
-                                    size,
-                                    true,
-                                    false,
-                                    0,
-                                );
+                } else if resolved_spec.stores_count() {
+                    // %n: store count of bytes written so far.
+                    // Respects length modifier: %hhn→i8, %hn→i16,
+                    // %n→i32, %ln→i64, %lln→i64, %zn→isize, %jn→i64.
+                    if let Some(raw_ptr) = read_arg(value_position, &mut arg_idx) {
+                        let ptr_val = raw_ptr as usize;
+                        if ptr_val != 0 {
+                            let count = buf.len();
+                            let size = match resolved_spec.length {
+                                LengthMod::Hh => 1,
+                                LengthMod::H => 2,
+                                LengthMod::L
+                                | LengthMod::Ll
+                                | LengthMod::J
+                                | LengthMod::Z
+                                | LengthMod::T => 8,
+                                _ => 4,
+                            };
+                            let (mode, decision) = crate::runtime_policy::decide(
+                                frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+                                ptr_val,
+                                size,
+                                true,
+                                false,
+                                0,
+                            );
 
-                                let mut should_write = !matches!(
+                            let mut should_write = !matches!(
+                                decision.action,
+                                frankenlibc_membrane::runtime_math::MembraneAction::Deny
+                            );
+                            if mode.heals_enabled()
+                                || matches!(
                                     decision.action,
-                                    frankenlibc_membrane::runtime_math::MembraneAction::Deny
-                                );
-                                if mode.heals_enabled()
-                                    || matches!(
-                                        decision.action,
-                                        frankenlibc_membrane::runtime_math::MembraneAction::Repair(
-                                            _
-                                        )
-                                    )
-                                {
-                                    if let Some(rem) = crate::malloc_abi::known_remaining(ptr_val) {
-                                        if rem < size {
-                                            should_write = false;
-                                            frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
-                                        }
-                                    } else {
+                                    frankenlibc_membrane::runtime_math::MembraneAction::Repair(_)
+                                )
+                            {
+                                if let Some(rem) = crate::malloc_abi::known_remaining(ptr_val) {
+                                    if rem < size {
                                         should_write = false;
                                         frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
                                     }
+                                } else {
+                                    should_write = false;
+                                    frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
                                 }
+                            }
 
-                                if should_write {
-                                    unsafe {
-                                        match resolved_spec.length {
-                                            LengthMod::Hh => {
-                                                *(ptr_val as *mut i8) = count as i8;
-                                            }
-                                            LengthMod::H => {
-                                                *(ptr_val as *mut i16) = count as i16;
-                                            }
-                                            LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                                                *(ptr_val as *mut i64) = count as i64;
-                                            }
-                                            LengthMod::Z | LengthMod::T => {
-                                                *(ptr_val as *mut isize) = count as isize;
-                                            }
-                                            _ => {
-                                                *(ptr_val as *mut i32) = count as i32;
-                                            }
+                            if should_write {
+                                unsafe {
+                                    match resolved_spec.length {
+                                        LengthMod::Hh => {
+                                            *(ptr_val as *mut i8) = count as i8;
+                                        }
+                                        LengthMod::H => {
+                                            *(ptr_val as *mut i16) = count as i16;
+                                        }
+                                        LengthMod::L | LengthMod::Ll | LengthMod::J => {
+                                            *(ptr_val as *mut i64) = count as i64;
+                                        }
+                                        LengthMod::Z | LengthMod::T => {
+                                            *(ptr_val as *mut isize) = count as isize;
+                                        }
+                                        _ => {
+                                            *(ptr_val as *mut i32) = count as i32;
                                         }
                                     }
                                 }
-                                crate::runtime_policy::observe(
-                                    frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
-                                    decision.profile,
-                                    10,
-                                    !should_write,
-                                );
                             }
+                            crate::runtime_policy::observe(
+                                frankenlibc_membrane::runtime_math::ApiFamily::Stdio,
+                                decision.profile,
+                                10,
+                                !should_write,
+                            );
                         }
                     }
-                    Some(PrintfDispatchKind::SignedInt) => {
-                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
-                            let val = match spec.length {
-                                LengthMod::Hh => (raw as i8) as i64,
-                                LengthMod::H => (raw as i16) as i64,
-                                LengthMod::L | LengthMod::Ll | LengthMod::J => raw as i64,
-                                _ => (raw as i32) as i64,
-                            };
-                            format_signed(val, &resolved_spec, &mut buf);
+                } else if resolved_spec.value_arg_is_string() {
+                    if let Some(raw) = read_arg(value_position, &mut arg_idx) {
+                        let ptr = raw as usize as *const u8;
+                        if ptr.is_null() {
+                            format_str(b"(null)", &resolved_spec, &mut buf);
+                        } else {
+                            let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
+                            format_str(s_bytes, &resolved_spec, &mut buf);
                         }
                     }
-                    Some(PrintfDispatchKind::UnsignedInt) => {
-                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
-                            let val = match spec.length {
-                                LengthMod::Hh => (raw as u8) as u64,
-                                LengthMod::H => (raw as u16) as u64,
-                                LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z => raw,
-                                _ => (raw as u32) as u64,
-                            };
-                            format_unsigned(val, &resolved_spec, &mut buf);
-                        }
-                    }
-                    Some(PrintfDispatchKind::Float) => {
-                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
-                            let val = f64::from_bits(raw);
-                            format_float(val, &resolved_spec, &mut buf);
-                        }
-                    }
-                    Some(PrintfDispatchKind::Character) => {
-                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
-                            format_char(raw as u8, &resolved_spec, &mut buf);
-                        }
-                    }
-                    Some(PrintfDispatchKind::String) => {
-                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
-                            let ptr = raw as usize as *const u8;
-                            if ptr.is_null() {
-                                format_str(b"(null)", &resolved_spec, &mut buf);
-                            } else {
-                                let s_bytes = unsafe { c_str_bytes(ptr as *const c_char) };
-                                format_str(s_bytes, &resolved_spec, &mut buf);
-                            }
-                        }
-                    }
-                    Some(PrintfDispatchKind::Pointer) => {
-                        if let Some(raw) = read_arg(value_position, &mut arg_idx) {
-                            format_pointer(raw as usize, &resolved_spec, &mut buf);
-                        }
-                    }
-                    None => {}
+                } else if let Some(raw) = read_arg(value_position, &mut arg_idx) {
+                    let _ = resolved_spec.render_value_arg(raw, &mut buf);
                 }
             }
         }
@@ -3909,24 +3865,18 @@ pub(crate) unsafe fn vprintf_extract_args(
                         unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
                     idx += 1;
                 }
-                match spec.dispatch_kind() {
-                    Some(PrintfDispatchKind::LiteralPercent | PrintfDispatchKind::ErrnoMessage)
-                    | None => {}
-                    Some(PrintfDispatchKind::Float) => {
+                if spec.consumes_value_arg() {
+                    if spec.value_arg_is_float() {
                         if idx < extract_count {
                             buf[idx] = unsafe {
                                 vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr)
                             };
                             idx += 1;
                         }
-                    }
-                    Some(_) => {
-                        if idx < extract_count {
-                            buf[idx] = unsafe {
-                                vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr)
-                            };
-                            idx += 1;
-                        }
+                    } else if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                        idx += 1;
                     }
                 }
             }
