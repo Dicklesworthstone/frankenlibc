@@ -86,6 +86,52 @@ pub enum LengthMod {
     BigL, // 'L'
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum PrintfHandler {
+    Invalid = 0,
+    SignedDecimal,
+    UnsignedOctal,
+    UnsignedDecimal,
+    UnsignedHexLower,
+    UnsignedHexUpper,
+    FloatFixed,
+    FloatExp,
+    FloatGeneral,
+    FloatHex,
+    Character,
+    String,
+    Pointer,
+    StoreCount,
+    LiteralPercent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum ArgCategory {
+    None = 0,
+    SignedInt,
+    UnsignedInt,
+    Float,
+    Pointer,
+    String,
+    Store,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PrintfRoute {
+    handler: PrintfHandler,
+    length_mask: u8,
+    flag_mask: u8,
+    arg_category: ArgCategory,
+}
+
+mod generated_printf_tables {
+    include!("printf_tables.rs");
+}
+
+use generated_printf_tables::PRINTF_TABLE;
+
 /// A parsed printf format specifier.
 #[derive(Debug, Clone)]
 pub struct FormatSpec {
@@ -382,10 +428,8 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
     let conversion = fmt[pos];
     pos += 1;
 
-    match conversion {
-        b'd' | b'i' | b'u' | b'x' | b'X' | b'o' | b's' | b'c' | b'p' | b'n' | b'%' | b'f'
-        | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' | b'm' => {}
-        _ => return None,
+    if conversion != b'm' && printf_route(conversion).is_none() {
+        return None;
     }
 
     Some((
@@ -399,6 +443,18 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
         },
         pos,
     ))
+}
+
+fn printf_route(conversion: u8) -> Option<PrintfRoute> {
+    let route = PRINTF_TABLE[conversion as usize];
+    if route.handler == PrintfHandler::Invalid {
+        None
+    } else {
+        // Keep the generated route metadata in live use even before the
+        // formatter is fully table-driven.
+        let _ = (route.length_mask, route.flag_mask, route.arg_category);
+        Some(route)
+    }
 }
 
 /// Iterate over segments of a printf format string.
@@ -1083,6 +1139,20 @@ mod tests {
         assert_eq!(spec.width, Width::None);
         assert_eq!(spec.precision, Precision::None);
         assert_eq!(spec.value_position, None);
+    }
+
+    #[test]
+    fn test_generated_printf_table_routes_core_specifiers() {
+        let signed = printf_route(b'd').expect("signed decimal route");
+        let floating = printf_route(b'g').expect("general float route");
+        let literal = printf_route(b'%').expect("literal percent route");
+
+        assert_eq!(signed.handler, PrintfHandler::SignedDecimal);
+        assert_eq!(signed.arg_category, ArgCategory::SignedInt);
+        assert_eq!(floating.handler, PrintfHandler::FloatGeneral);
+        assert_eq!(floating.arg_category, ArgCategory::Float);
+        assert_eq!(literal.handler, PrintfHandler::LiteralPercent);
+        assert!(printf_route(b'Q').is_none());
     }
 
     #[test]

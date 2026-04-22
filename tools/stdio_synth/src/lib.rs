@@ -175,15 +175,11 @@ pub fn generate_printf_table(grammar: &PrintfGrammar) -> [PrintfRoute; 256] {
             "float_fixed_lower" | "float_fixed_upper" => {
                 (PrintfHandler::FloatFixed, ArgCategory::Float)
             }
-            "float_exp_lower" | "float_exp_upper" => {
-                (PrintfHandler::FloatExp, ArgCategory::Float)
-            }
+            "float_exp_lower" | "float_exp_upper" => (PrintfHandler::FloatExp, ArgCategory::Float),
             "float_general_lower" | "float_general_upper" => {
                 (PrintfHandler::FloatGeneral, ArgCategory::Float)
             }
-            "float_hex_lower" | "float_hex_upper" => {
-                (PrintfHandler::FloatHex, ArgCategory::Float)
-            }
+            "float_hex_lower" | "float_hex_upper" => (PrintfHandler::FloatHex, ArgCategory::Float),
             "character" => (PrintfHandler::Character, ArgCategory::SignedInt),
             "string" => (PrintfHandler::String, ArgCategory::String),
             "pointer" => (PrintfHandler::Pointer, ArgCategory::Pointer),
@@ -223,19 +219,19 @@ pub fn generate_printf_table(grammar: &PrintfGrammar) -> [PrintfRoute; 256] {
         // Compute valid flag mask (-, +, space, #, 0)
         // Bit layout: 0=-, 1=+, 2=space, 3=#, 4=0
         let flag_mask = match handler {
-            PrintfHandler::SignedDecimal => 0b11111, // all flags valid
-            PrintfHandler::UnsignedOctal => 0b11001, // -, #, 0 (not + or space)
+            PrintfHandler::SignedDecimal => 0b11111,   // all flags valid
+            PrintfHandler::UnsignedOctal => 0b11001,   // -, #, 0 (not + or space)
             PrintfHandler::UnsignedDecimal => 0b10001, // -, 0 (not +, space, #)
             PrintfHandler::UnsignedHexLower | PrintfHandler::UnsignedHexUpper => 0b11001, // -, #, 0
             PrintfHandler::FloatFixed
             | PrintfHandler::FloatExp
             | PrintfHandler::FloatGeneral
             | PrintfHandler::FloatHex => 0b11111, // all flags valid
-            PrintfHandler::Character => 0b00001,    // only - (width padding)
-            PrintfHandler::String => 0b00001,       // only -
-            PrintfHandler::Pointer => 0b00001,      // only -
-            PrintfHandler::StoreCount => 0b00000,   // no flags valid
-            PrintfHandler::LiteralPercent => 0b00000, // no flags
+            PrintfHandler::Character => 0b00001,       // only - (width padding)
+            PrintfHandler::String => 0b00001,          // only -
+            PrintfHandler::Pointer => 0b00001,         // only -
+            PrintfHandler::StoreCount => 0b00000,      // no flags valid
+            PrintfHandler::LiteralPercent => 0b00000,  // no flags
             PrintfHandler::Invalid => 0,
         };
 
@@ -306,4 +302,41 @@ pub fn emit_printf_table_source(table: &[PrintfRoute; 256]) -> String {
 
     output.push_str("];\n");
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load_grammar() -> PrintfGrammar {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let grammar_path = manifest_dir.join("spec/printf_grammar.json");
+        PrintfGrammar::load(&grammar_path).expect("printf grammar should load")
+    }
+
+    #[test]
+    fn generated_printf_table_routes_core_specifiers() {
+        let table = generate_printf_table(&load_grammar());
+
+        assert_eq!(table[b'd' as usize].handler, PrintfHandler::SignedDecimal);
+        assert_eq!(table[b's' as usize].handler, PrintfHandler::String);
+        assert_eq!(table[b'%' as usize].handler, PrintfHandler::LiteralPercent);
+        assert_eq!(table[b'd' as usize].arg_category, ArgCategory::SignedInt);
+        assert_eq!(table[b'X' as usize].arg_category, ArgCategory::UnsignedInt);
+        assert_eq!(table[b'f' as usize].arg_category, ArgCategory::Float);
+        assert_eq!(table[b'Q' as usize].handler, PrintfHandler::Invalid);
+    }
+
+    #[test]
+    fn emitted_printf_source_is_deterministic() {
+        let grammar = load_grammar();
+        let table = generate_printf_table(&grammar);
+        let emitted_once = emit_printf_table_source(&table);
+        let emitted_twice = emit_printf_table_source(&table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("pub const PRINTF_TABLE: [PrintfRoute; 256]"));
+        assert!(emitted_once.contains("PrintfHandler::SignedDecimal"));
+        assert!(emitted_once.contains("PrintfHandler::LiteralPercent"));
+    }
 }
