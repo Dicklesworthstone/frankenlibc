@@ -2495,6 +2495,7 @@ enum PrintfArg {
     Long(c_longlong),
     Double(c_double),
     Str(CString),
+    NullPtr,
 }
 
 fn parse_printf_args(inputs: &serde_json::Value) -> Result<Vec<PrintfArg>, String> {
@@ -2504,6 +2505,23 @@ fn parse_printf_args(inputs: &serde_json::Value) -> Result<Vec<PrintfArg>, Strin
 
     let mut args = Vec::with_capacity(values.len());
     for value in values {
+        // JSON null → NULL pointer (e.g. glibc %s prints "(null)").
+        if value.is_null() {
+            args.push(PrintfArg::NullPtr);
+            continue;
+        }
+
+        // JSON float literals (e.g. `12345.0`, `3.14`, `1e6`) always
+        // become PrintfArg::Double so %e/%f/%g fixture cases dispatch
+        // correctly even when the value happens to have a zero
+        // fractional part.
+        if value.is_f64()
+            && let Some(f) = value.as_f64()
+        {
+            args.push(PrintfArg::Double(f));
+            continue;
+        }
+
         if let Some(f) = value.as_f64()
             && (f.fract() != 0.0 || f.abs() > i64::MAX as f64)
         {
@@ -2594,6 +2612,9 @@ fn run_impl_snprintf(
         [PrintfArg::Str(a0)] => unsafe {
             frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, a0.as_ptr())
         },
+        [PrintfArg::NullPtr] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, std::ptr::null::<c_char>())
+        },
         [PrintfArg::Int(a0), PrintfArg::Int(a1)] => unsafe {
             frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0, *a1)
         },
@@ -2605,6 +2626,39 @@ fn run_impl_snprintf(
         },
         [PrintfArg::Str(a0), PrintfArg::Str(a1)] => unsafe {
             frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, a0.as_ptr(), a1.as_ptr())
+        },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Double(a2),
+        ] => unsafe { frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0, *a1, *a2) },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1), PrintfArg::Int(a2)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0, *a1, *a2)
+        },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1), PrintfArg::Str(a2)] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0, *a1, a2.as_ptr())
+        },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Str(a1),
+            PrintfArg::Double(a2),
+        ] => unsafe { frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0, a1.as_ptr(), *a2) },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Str(a2),
+            PrintfArg::Double(a3),
+        ] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0, *a1, a2.as_ptr(), *a3)
+        },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Int(a2),
+            PrintfArg::Int(a3),
+            PrintfArg::Int(a4),
+        ] => unsafe {
+            frankenlibc_abi::stdio_abi::snprintf(dst, size, fmt, *a0, *a1, *a2, *a3, *a4)
         },
         _ => {
             return Err(format!("unsupported snprintf arg combination: {:?}", args));
@@ -2625,6 +2679,9 @@ fn run_host_snprintf(
         [PrintfArg::Long(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
         [PrintfArg::Double(a0)] => unsafe { libc::snprintf(dst, size, fmt, *a0) },
         [PrintfArg::Str(a0)] => unsafe { libc::snprintf(dst, size, fmt, a0.as_ptr()) },
+        [PrintfArg::NullPtr] => unsafe {
+            libc::snprintf(dst, size, fmt, std::ptr::null::<c_char>())
+        },
         [PrintfArg::Int(a0), PrintfArg::Int(a1)] => unsafe {
             libc::snprintf(dst, size, fmt, *a0, *a1)
         },
@@ -2637,6 +2694,35 @@ fn run_host_snprintf(
         [PrintfArg::Str(a0), PrintfArg::Str(a1)] => unsafe {
             libc::snprintf(dst, size, fmt, a0.as_ptr(), a1.as_ptr())
         },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Double(a2),
+        ] => unsafe { libc::snprintf(dst, size, fmt, *a0, *a1, *a2) },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1), PrintfArg::Int(a2)] => unsafe {
+            libc::snprintf(dst, size, fmt, *a0, *a1, *a2)
+        },
+        [PrintfArg::Int(a0), PrintfArg::Int(a1), PrintfArg::Str(a2)] => unsafe {
+            libc::snprintf(dst, size, fmt, *a0, *a1, a2.as_ptr())
+        },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Str(a1),
+            PrintfArg::Double(a2),
+        ] => unsafe { libc::snprintf(dst, size, fmt, *a0, a1.as_ptr(), *a2) },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Str(a2),
+            PrintfArg::Double(a3),
+        ] => unsafe { libc::snprintf(dst, size, fmt, *a0, *a1, a2.as_ptr(), *a3) },
+        [
+            PrintfArg::Int(a0),
+            PrintfArg::Int(a1),
+            PrintfArg::Int(a2),
+            PrintfArg::Int(a3),
+            PrintfArg::Int(a4),
+        ] => unsafe { libc::snprintf(dst, size, fmt, *a0, *a1, *a2, *a3, *a4) },
         _ => {
             return Err(format!("unsupported snprintf arg combination: {:?}", args));
         }

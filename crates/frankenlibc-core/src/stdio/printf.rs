@@ -939,7 +939,10 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     }
 
     let exp = value.log10().floor() as i32;
-    if exp >= -(1) && exp < p as i32 {
+    // C11 7.21.6.1 para 8: use %e style iff exp < -4 OR exp >= precision;
+    // otherwise %f. The lower bound is -4 (not -1): e.g. 0.0001234 has
+    // exp = -4 and precision = 6, so it must render as "0.0001234".
+    if exp >= -4 && exp < p as i32 {
         // Use %f style.
         let frac_digits = (p as i32 - 1 - exp).max(0) as usize;
         let mut s = alloc::format!("{:.prec$}", value, prec = frac_digits);
