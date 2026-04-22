@@ -2992,7 +2992,10 @@ pub unsafe extern "C" fn user2netname(
         }
     };
     let name = format!("unix.{}@{}\0", uid, domain_str);
-    let buf = unsafe { crate::malloc_abi::raw_alloc(name.len()) } as *mut c_char;
+    // Sibling of host2netname (bd-dqqh1) — POSIX returns a buffer freed by
+    // the caller's free(), so use libc::malloc to keep the alloc/free pair
+    // consistent across LD_PRELOAD and non-preload contexts (bd-zgifl).
+    let buf = unsafe { libc::malloc(name.len()) } as *mut c_char;
     if buf.is_null() {
         return 0;
     }

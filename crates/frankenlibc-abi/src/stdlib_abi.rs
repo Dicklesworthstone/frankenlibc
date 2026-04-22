@@ -4022,8 +4022,11 @@ pub unsafe extern "C" fn realpath(
     }
 
     let dst = if resolved_path.is_null() {
-        // SAFETY: allocates writable C-compatible storage for the canonical path plus terminator.
-        let alloc = unsafe { crate::malloc_abi::raw_alloc(out.len() + 1) as *mut std::ffi::c_char };
+        // SAFETY: POSIX realpath(3) with resolved_path=NULL returns a buffer
+        // "allocated by malloc, which the caller should free with free()" —
+        // matched via libc::malloc so the caller's libc::free works in both
+        // LD_PRELOAD and non-preload contexts (bd-zgifl cluster).
+        let alloc = unsafe { libc::malloc(out.len() + 1) as *mut std::ffi::c_char };
         if alloc.is_null() {
             unsafe { set_abi_errno(errno::ENOMEM) };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
