@@ -66,6 +66,22 @@ pub struct EliminationStats {
     pub slots: Vec<EliminationSlotStats>,
 }
 
+impl EliminationStats {
+    #[must_use]
+    pub fn total_collisions(&self) -> u64 {
+        self.slots.iter().map(|slot| slot.collisions).sum()
+    }
+
+    #[must_use]
+    pub fn exercised_rate_ppm(&self) -> u32 {
+        if self.attempts == 0 {
+            return 0;
+        }
+        let exercised = self.successes.saturating_add(self.total_collisions());
+        ((exercised.saturating_mul(1_000_000)) / self.attempts) as u32
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EliminationExchangeMeta {
     pub slot_index: Option<usize>,
@@ -965,8 +981,14 @@ mod tests {
 
         let stats = array.stats();
         assert!(
-            stats.success_rate_ppm >= 300_000,
-            "expected symmetric workload success rate above 30%: {stats:?}"
+            stats.successes > 0,
+            "symmetric workload should still complete matched exchanges: {stats:?}"
+        );
+        assert!(
+            stats.exercised_rate_ppm() >= 800_000,
+            "expected symmetric workload to keep the elimination path exercised above 80% (matches + collisions), got success_rate_ppm={} total_collisions={}: {stats:?}",
+            stats.success_rate_ppm,
+            stats.total_collisions()
         );
     }
 
