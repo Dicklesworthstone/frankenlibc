@@ -1380,6 +1380,42 @@ fn sched_setscheduler_nonexistent_pid_valid_param_sets_esrch_like_host() {
 }
 
 #[test]
+fn sched_setscheduler_nonexistent_pid_invalid_policy_sets_esrch_like_host() {
+    let nonexistent_pid = libc::pid_t::MAX;
+    let invalid_policy = libc::c_int::MAX;
+    let param = libc::sched_param { sched_priority: 0 };
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::sched_setscheduler(
+            nonexistent_pid,
+            invalid_policy,
+            (&param as *const libc::sched_param).cast(),
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe {
+        sched_setscheduler(
+            nonexistent_pid,
+            invalid_policy,
+            (&param as *const libc::sched_param).cast(),
+        )
+    };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::ESRCH);
+}
+
+#[test]
 fn sched_rr_get_interval_matches_kernel_syscall() {
     let mut observed_tp = libc::timespec {
         tv_sec: 0,
