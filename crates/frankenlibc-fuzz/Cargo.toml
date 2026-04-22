@@ -61,6 +61,11 @@ path = "fuzz_targets/fuzz_pidfd_timer.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_mmap"
+path = "fuzz_targets/fuzz_mmap.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
