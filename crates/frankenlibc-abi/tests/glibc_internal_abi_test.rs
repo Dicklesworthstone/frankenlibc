@@ -2808,27 +2808,54 @@ fn test_idna_roundtrip_japanese() {
 // __call_tls_dtors tests (native TLS destructor invocation)
 // ===========================================================================
 
+fn run_tls_dtor_test_thread(entry: extern "C" fn(*mut std::ffi::c_void) -> *mut std::ffi::c_void) {
+    let mut thread = std::mem::MaybeUninit::<libc::pthread_t>::uninit();
+    let create_rc = unsafe {
+        libc::pthread_create(
+            thread.as_mut_ptr(),
+            std::ptr::null(),
+            entry,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(create_rc, 0, "pthread_create should succeed");
+
+    let mut retval = std::ptr::null_mut();
+    let join_rc = unsafe { libc::pthread_join(thread.assume_init(), &mut retval) };
+    assert_eq!(join_rc, 0, "pthread_join should succeed");
+    assert!(retval.is_null(), "TLS dtor test thread should exit cleanly");
+}
+
 #[test]
 fn test_call_tls_dtors_noop_when_empty() {
-    // Calling __call_tls_dtors with no registered destructors should not crash.
-    unsafe { __call_tls_dtors() };
+    extern "C" fn entry(_arg: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
+        frankenlibc_abi::startup_abi::clear_tls_dtors_for_tests();
+        let previous = frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(true);
+        unsafe { __call_tls_dtors() };
+        frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
+        std::ptr::null_mut()
+    }
+
+    run_tls_dtor_test_thread(entry);
 }
 
 #[test]
 fn test_call_tls_dtors_invokes_registered() {
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
     static DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
+    static REGISTER_RC: AtomicI32 = AtomicI32::new(0);
 
     unsafe extern "C" fn test_dtor(_obj: *mut std::ffi::c_void) {
         DTOR_COUNT.fetch_add(1, Ordering::SeqCst);
     }
 
-    // Run in a separate thread so we don't pollute the main thread's TLS.
-    let handle = std::thread::spawn(|| {
+    extern "C" fn entry(_arg: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
         DTOR_COUNT.store(0, Ordering::SeqCst);
+        REGISTER_RC.store(0, Ordering::SeqCst);
+        frankenlibc_abi::startup_abi::clear_tls_dtors_for_tests();
+        let previous = frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(true);
 
-        // Register 3 destructors.
         for _ in 0..3 {
             let rc = unsafe {
                 frankenlibc_abi::startup_abi::__cxa_thread_atexit_impl(
@@ -2837,34 +2864,52 @@ fn test_call_tls_dtors_invokes_registered() {
                     std::ptr::null_mut(),
                 )
             };
-            assert_eq!(rc, 0);
+            if rc != 0 {
+                frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
+                REGISTER_RC.store(rc, Ordering::SeqCst);
+                return std::ptr::dangling_mut::<std::ffi::c_void>();
+            }
         }
 
-        // Invoke them.
         unsafe { __call_tls_dtors() };
+        frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
+        std::ptr::null_mut()
+    }
 
-        DTOR_COUNT.load(Ordering::SeqCst)
-    });
-
-    let count = handle.join().unwrap();
-    assert_eq!(count, 3, "expected 3 destructors to be called");
+    run_tls_dtor_test_thread(entry);
+    assert_eq!(REGISTER_RC.load(Ordering::SeqCst), 0);
+    assert_eq!(DTOR_COUNT.load(Ordering::SeqCst), 3);
 }
 
 #[test]
 fn test_call_tls_dtors_lifo_order() {
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering};
 
-    static ORDER: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+    static ORDER_INDEX: AtomicUsize = AtomicUsize::new(0);
+    static ORDER_0: AtomicU64 = AtomicU64::new(0);
+    static ORDER_1: AtomicU64 = AtomicU64::new(0);
+    static ORDER_2: AtomicU64 = AtomicU64::new(0);
+    static REGISTER_RC: AtomicI32 = AtomicI32::new(0);
 
     unsafe extern "C" fn order_dtor(obj: *mut std::ffi::c_void) {
         let val = obj as u64;
-        ORDER.lock().unwrap().push(val);
+        match ORDER_INDEX.fetch_add(1, Ordering::SeqCst) {
+            0 => ORDER_0.store(val, Ordering::SeqCst),
+            1 => ORDER_1.store(val, Ordering::SeqCst),
+            2 => ORDER_2.store(val, Ordering::SeqCst),
+            _ => {}
+        }
     }
 
-    let handle = std::thread::spawn(|| {
-        ORDER.lock().unwrap().clear();
+    extern "C" fn entry(_arg: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
+        ORDER_INDEX.store(0, Ordering::SeqCst);
+        ORDER_0.store(0, Ordering::SeqCst);
+        ORDER_1.store(0, Ordering::SeqCst);
+        ORDER_2.store(0, Ordering::SeqCst);
+        REGISTER_RC.store(0, Ordering::SeqCst);
+        frankenlibc_abi::startup_abi::clear_tls_dtors_for_tests();
+        let previous = frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(true);
 
-        // Register in order 1, 2, 3.
         for i in 1u64..=3 {
             let rc = unsafe {
                 frankenlibc_abi::startup_abi::__cxa_thread_atexit_impl(
@@ -2873,33 +2918,47 @@ fn test_call_tls_dtors_lifo_order() {
                     std::ptr::null_mut(),
                 )
             };
-            assert_eq!(rc, 0);
+            if rc != 0 {
+                frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
+                REGISTER_RC.store(rc, Ordering::SeqCst);
+                return std::ptr::dangling_mut::<std::ffi::c_void>();
+            }
         }
 
         unsafe { __call_tls_dtors() };
+        frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
+        std::ptr::null_mut()
+    }
 
-        ORDER.lock().unwrap().clone()
-    });
-
-    let order = handle.join().unwrap();
-    // LIFO: should be called in reverse order 3, 2, 1.
-    assert_eq!(order, vec![3, 2, 1], "expected LIFO order");
+    run_tls_dtor_test_thread(entry);
+    assert_eq!(REGISTER_RC.load(Ordering::SeqCst), 0);
+    assert_eq!(ORDER_INDEX.load(Ordering::SeqCst), 3);
+    assert_eq!(ORDER_0.load(Ordering::SeqCst), 3);
+    assert_eq!(ORDER_1.load(Ordering::SeqCst), 2);
+    assert_eq!(ORDER_2.load(Ordering::SeqCst), 1);
 }
 
 #[test]
 fn test_call_tls_dtors_drains_list() {
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
     static DTOR2_COUNT: AtomicU32 = AtomicU32::new(0);
+    static REGISTER_RC: AtomicI32 = AtomicI32::new(0);
+    static AFTER_FIRST_CALL: AtomicU32 = AtomicU32::new(0);
+    static AFTER_SECOND_CALL: AtomicU32 = AtomicU32::new(0);
 
     unsafe extern "C" fn dtor2(_obj: *mut std::ffi::c_void) {
         DTOR2_COUNT.fetch_add(1, Ordering::SeqCst);
     }
 
-    let handle = std::thread::spawn(|| {
+    extern "C" fn entry(_arg: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
         DTOR2_COUNT.store(0, Ordering::SeqCst);
+        REGISTER_RC.store(0, Ordering::SeqCst);
+        AFTER_FIRST_CALL.store(0, Ordering::SeqCst);
+        AFTER_SECOND_CALL.store(0, Ordering::SeqCst);
+        frankenlibc_abi::startup_abi::clear_tls_dtors_for_tests();
+        let previous = frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(true);
 
-        // Register and call.
         let rc = unsafe {
             frankenlibc_abi::startup_abi::__cxa_thread_atexit_impl(
                 dtor2,
@@ -2907,18 +2966,23 @@ fn test_call_tls_dtors_drains_list() {
                 std::ptr::null_mut(),
             )
         };
-        assert_eq!(rc, 0);
-        unsafe { __call_tls_dtors() };
-        assert_eq!(DTOR2_COUNT.load(Ordering::SeqCst), 1);
+        if rc != 0 {
+            frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
+            REGISTER_RC.store(rc, Ordering::SeqCst);
+            return std::ptr::dangling_mut::<std::ffi::c_void>();
+        }
 
-        // Call again — should be a no-op since list was drained.
         unsafe { __call_tls_dtors() };
-        assert_eq!(
-            DTOR2_COUNT.load(Ordering::SeqCst),
-            1,
-            "second call should not invoke any more dtors"
-        );
-    });
+        AFTER_FIRST_CALL.store(DTOR2_COUNT.load(Ordering::SeqCst), Ordering::SeqCst);
 
-    handle.join().unwrap();
+        unsafe { __call_tls_dtors() };
+        AFTER_SECOND_CALL.store(DTOR2_COUNT.load(Ordering::SeqCst), Ordering::SeqCst);
+        frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
+        std::ptr::null_mut()
+    }
+
+    run_tls_dtor_test_thread(entry);
+    assert_eq!(REGISTER_RC.load(Ordering::SeqCst), 0);
+    assert_eq!(AFTER_FIRST_CALL.load(Ordering::SeqCst), 1);
+    assert_eq!(AFTER_SECOND_CALL.load(Ordering::SeqCst), 1);
 }
