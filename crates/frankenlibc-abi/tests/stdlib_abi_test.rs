@@ -1015,6 +1015,36 @@ fn timer_settime_gettime_getoverrun_and_delete_roundtrip() {
 }
 
 #[test]
+fn timer_settime_valid_timer_null_new_value_sets_einval_like_host() {
+    let Some(host_timer_id) = open_test_timer() else {
+        return;
+    };
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::timer_settime(host_timer_id, 0, ptr::null(), ptr::null_mut()) };
+    let host_err = unsafe { *libc::__errno_location() };
+    assert_eq!(unsafe { libc::timer_delete(host_timer_id) }, 0);
+
+    let Some(abi_timer_id) = open_test_timer() else {
+        return;
+    };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { timer_settime(abi_timer_id, 0, ptr::null(), ptr::null_mut()) };
+    let abi_err = unsafe { *__errno_location() };
+    assert_eq!(unsafe { timer_delete(abi_timer_id) }, 0);
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EINVAL);
+}
+
+#[test]
 fn timer_gettime_valid_timer_null_output_sets_efault() {
     let Some(timer_id) = open_test_timer() else {
         return;
