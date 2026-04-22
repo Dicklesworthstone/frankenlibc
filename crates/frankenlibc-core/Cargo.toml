@@ -15,4 +15,4 @@ parking_lot = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-proptest = "1.6"
+proptest = "1.11"

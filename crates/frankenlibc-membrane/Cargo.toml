@@ -19,7 +19,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-proptest = "1.6"
+proptest = "1.11"
 libc = { workspace = true }
 asupersync-conformance = { workspace = true }
 ftui-harness = { workspace = true }

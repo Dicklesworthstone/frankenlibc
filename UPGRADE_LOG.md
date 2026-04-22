@@ -55,3 +55,9 @@
 - **Breaking:** None (still 4.x, patch).
 - **Build:** `rch exec -- cargo check --workspace --all-targets` -> clean.
 
+#### proptest: 1.6 -> 1.11 (dev-dep)
+- **Scope:** crates/frankenlibc-core/Cargo.toml, crates/frankenlibc-membrane/Cargo.toml
+- **Breaking:** None published between 1.6 and 1.11 that affect our call sites (no strategy/config API changes).
+- **Build:** `rch exec -- cargo check --workspace --all-targets` -> clean.
+- **Tests:** `rch exec -- cargo test -p frankenlibc-core --lib` -> 1211 passed, 1 flaky concurrency test (`malloc::allocator::tests::free_matches_waiting_consumer_through_elimination`) that passes in isolation / single-threaded. This is an elimination-based allocator concurrency test, unrelated to proptest — same category as the previously-noted `runtime_math::localization_chooser::observe_throughput_below_strict_budget` flake under shared rch-worker load.
+

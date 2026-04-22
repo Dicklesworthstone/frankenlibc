@@ -2,7 +2,7 @@
   "status": "in_progress",
   "session": "Clawdstein-libupdater-frankenlibc 2026-04-21",
   "current": null,
-  "completed": ["asupersync-conformance"],
+  "completed": ["asupersync-conformance", "blake3", "clap", "proptest"],
   "failed": [],
   "skipped": [],
   "pending": [
