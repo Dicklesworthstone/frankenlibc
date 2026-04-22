@@ -267,12 +267,6 @@ fn printf_conformance_covers_special_values() {
 /// rather than failing so dispatch/packaging coverage stays green; each
 /// underlying gap is tracked in its own bead.
 const KNOWN_IMPL_GAPS: &[(&str, &str)] = &[
-    // bd-0u5fm: negative '*' width should imply '-' flag + |width|,
-    // and negative '*' precision should behave as if precision were
-    // omitted (C11 7.21.6.1 para 5). Our impl casts the negative arg
-    // to a huge usize in both cases, producing pathological output.
-    ("sprintf_star_neg_width", "bd-0u5fm"),
-    ("sprintf_star_neg_precision", "bd-0u5fm"),
     // bd-luc3d: executor passes c_int/c_double without honoring length
     // modifiers (%td needs ptrdiff_t/i64, %Lf needs long double/f80);
     // glibc reads the wider width from varargs and host_parity

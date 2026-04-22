@@ -3069,12 +3069,18 @@ macro_rules! extract_va_args {
         } else {
             for seg in $segments {
                 if let FormatSegment::Spec(spec) = seg {
+                    // C11 7.21.6.1 para 5: both the '*' width and '*'
+                    // precision arguments have type `int`. Read them
+                    // as c_int and sign-extend so render_printf's
+                    // `as i64` recovers negative values correctly.
                     if spec.width.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        let raw = unsafe { $args.arg::<core::ffi::c_int>() };
+                        $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
                     if spec.precision.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        let raw = unsafe { $args.arg::<core::ffi::c_int>() };
+                        $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
                     match spec.conversion {
