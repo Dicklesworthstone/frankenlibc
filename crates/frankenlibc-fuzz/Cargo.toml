@@ -71,6 +71,11 @@ path = "fuzz_targets/fuzz_signal.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_socket"
+path = "fuzz_targets/fuzz_socket.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
