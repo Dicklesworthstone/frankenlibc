@@ -498,6 +498,10 @@ pub fn printf_dispatch_kind(conversion: u8) -> Option<PrintfDispatchKind> {
     })
 }
 
+fn printf_handler(conversion: u8) -> Option<PrintfHandler> {
+    printf_route(conversion).map(|route| route.handler)
+}
+
 /// Iterate over segments of a printf format string.
 ///
 /// Yields `FormatSegment::Literal` for literal runs and `FormatSegment::Spec`
@@ -555,7 +559,7 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         value as u64
     };
 
-    let (base, uppercase) = int_base(spec.conversion);
+    let (base, uppercase) = int_base(spec);
     let mut digits = [0u8; 64];
     let digit_count = render_digits(abs, base, uppercase, &mut digits);
     let digit_slice = &digits[64 - digit_count..];
@@ -621,7 +625,7 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
 
 /// Render an unsigned integer to `buf` according to `spec`.
 pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
-    let (base, uppercase) = int_base(spec.conversion);
+    let (base, uppercase) = int_base(spec);
     let mut digits = [0u8; 64];
     let digit_count = render_digits(value, base, uppercase, &mut digits);
     let digit_slice = &digits[64 - digit_count..];
@@ -735,21 +739,21 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let abs = value.abs();
 
     // Generate digit string.
-    let body = match spec.conversion | 0x20 {
-        b'f' => format_f(abs, precision, spec.flags.alt_form),
-        b'e' => format_e(
+    let body = match printf_handler(spec.conversion) {
+        Some(PrintfHandler::FloatFixed) => format_f(abs, precision, spec.flags.alt_form),
+        Some(PrintfHandler::FloatExp) => format_e(
             abs,
             precision,
             spec.conversion.is_ascii_uppercase(),
             spec.flags.alt_form,
         ),
-        b'g' => format_g(
+        Some(PrintfHandler::FloatGeneral) => format_g(
             abs,
             precision,
             spec.conversion.is_ascii_uppercase(),
             spec.flags.alt_form,
         ),
-        b'a' => format_a(
+        Some(PrintfHandler::FloatHex) => format_a(
             abs,
             precision,
             spec.conversion.is_ascii_uppercase(),
@@ -892,11 +896,11 @@ fn resolve_width(spec: &FormatSpec) -> usize {
     }
 }
 
-fn int_base(conversion: u8) -> (u64, bool) {
-    match conversion {
-        b'o' => (8, false),
-        b'x' => (16, false),
-        b'X' => (16, true),
+fn int_base(spec: &FormatSpec) -> (u64, bool) {
+    match printf_handler(spec.conversion) {
+        Some(PrintfHandler::UnsignedOctal) => (8, false),
+        Some(PrintfHandler::UnsignedHexLower) => (16, false),
+        Some(PrintfHandler::UnsignedHexUpper) => (16, true),
         _ => (10, false),
     }
 }
@@ -927,10 +931,10 @@ fn alt_prefix(spec: &FormatSpec) -> &'static [u8] {
     if !spec.flags.alt_form {
         return b"";
     }
-    match spec.conversion {
-        b'o' => b"0",
-        b'x' => b"0x",
-        b'X' => b"0X",
+    match printf_handler(spec.conversion) {
+        Some(PrintfHandler::UnsignedOctal) => b"0",
+        Some(PrintfHandler::UnsignedHexLower) => b"0x",
+        Some(PrintfHandler::UnsignedHexUpper) => b"0X",
         _ => b"",
     }
 }
