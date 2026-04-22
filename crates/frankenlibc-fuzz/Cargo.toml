@@ -121,6 +121,11 @@ path = "fuzz_targets/fuzz_wordexp.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_open_syscalls"
+path = "fuzz_targets/fuzz_open_syscalls.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_strftime"
 path = "fuzz_targets/fuzz_strftime.rs"
 doc = false
