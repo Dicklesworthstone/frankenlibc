@@ -18,5 +18,5 @@ libc = "0.2"
 frankenlibc = { path = "../frankenlibc" }
 frankenlibc-core = { path = "../frankenlibc-core" }
 frankenlibc-abi = { workspace = true, features = ["conformance-testing"] }
-asupersync_conformance = { package = "asupersync-conformance", version = "0.3.0", optional = true }
+asupersync_conformance = { package = "asupersync-conformance", version = "0.3.1", optional = true }
 ftui_harness = { package = "ftui-harness", version = "0.2.1", optional = true }
