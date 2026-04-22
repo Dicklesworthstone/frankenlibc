@@ -1099,6 +1099,36 @@ fn timer_delete_null_timer_handle_sets_einval_like_host() {
 }
 
 #[test]
+fn timer_delete_deleted_timer_handle_sets_einval_like_host() {
+    let Some(host_timer_id) = open_test_timer() else {
+        return;
+    };
+    assert_eq!(unsafe { libc::timer_delete(host_timer_id) }, 0);
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::timer_delete(host_timer_id) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    let Some(abi_timer_id) = open_test_timer() else {
+        return;
+    };
+    assert_eq!(unsafe { timer_delete(abi_timer_id) }, 0);
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { timer_delete(abi_timer_id) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EINVAL);
+}
+
+#[test]
 fn timer_invalid_inputs_match_kernel_syscalls() {
     let invalid_timer = (-1_isize) as *mut libc::c_void;
     let mut observed_curr: libc::itimerspec = unsafe { std::mem::zeroed() };
