@@ -121,6 +121,11 @@ path = "fuzz_targets/fuzz_c11threads.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_wchar"
+path = "fuzz_targets/fuzz_wchar.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
