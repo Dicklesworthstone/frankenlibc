@@ -81,6 +81,16 @@ path = "fuzz_targets/fuzz_fortify.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_setjmp"
+path = "fuzz_targets/fuzz_setjmp.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_dlfcn"
+path = "fuzz_targets/fuzz_dlfcn.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
