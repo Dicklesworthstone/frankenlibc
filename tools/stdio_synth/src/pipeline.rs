@@ -24,6 +24,10 @@ struct Args {
     #[arg(long, default_value = ".")]
     output_root: PathBuf,
 
+    /// Verify that the checked-in frankenlibc-core stdio snapshots match the generated tables
+    #[arg(long)]
+    check_core_snapshots: bool,
+
     /// Print the generated manifest to stdout
     #[arg(long)]
     manifest_stdout: bool,
@@ -52,8 +56,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest =
         emit_pipeline_manifest(&printf_grammar, &scanf_grammar, &printf_table, &scanf_table);
 
-    for (relative_path, contents) in artifacts {
-        let output_path = args.output_root.join(&relative_path);
+    if args.check_core_snapshots {
+        verify_core_snapshot(
+            "printf",
+            &core_snapshot_path("printf_tables.rs"),
+            artifacts
+                .get("synth/printf_table.rs")
+                .expect("pipeline artifacts include printf table"),
+        )?;
+        verify_core_snapshot(
+            "scanf",
+            &core_snapshot_path("scanf_tables.rs"),
+            artifacts
+                .get("synth/scanf_table.rs")
+                .expect("pipeline artifacts include scanf table"),
+        )?;
+    }
+
+    for (relative_path, contents) in &artifacts {
+        let output_path = args.output_root.join(relative_path);
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -93,6 +114,30 @@ fn resolve_tool_path(path: &Path) -> PathBuf {
     } else {
         path.to_path_buf()
     }
+}
+
+fn core_snapshot_path(file_name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/frankenlibc-core/src/stdio")
+        .join(file_name)
+}
+
+fn verify_core_snapshot(
+    label: &str,
+    snapshot_path: &Path,
+    expected_contents: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let current = std::fs::read_to_string(snapshot_path)?;
+    if current != expected_contents {
+        return Err(format!(
+            "[pipeline-emit] {label} core snapshot drift detected at {}",
+            snapshot_path.display()
+        )
+        .into());
+    }
+
+    eprintln!("[pipeline-emit] Verified {}", snapshot_path.display());
+    Ok(())
 }
 
 mod hex {

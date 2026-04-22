@@ -4,7 +4,7 @@
 
 use clap::Parser;
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use stdio_synth::{PrintfGrammar, emit_printf_table_source, generate_printf_table};
 
 #[derive(Parser, Debug)]
@@ -30,9 +30,10 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let grammar_path = resolve_tool_path(&args.grammar);
 
-    eprintln!("[printf-compile] Loading grammar from {:?}", args.grammar);
-    let grammar = PrintfGrammar::load(&args.grammar)?;
+    eprintln!("[printf-compile] Loading grammar from {:?}", grammar_path);
+    let grammar = PrintfGrammar::load(&grammar_path)?;
 
     eprintln!(
         "[printf-compile] Grammar v{}: {} conversions, {} flags, {} length modifiers",
@@ -74,14 +75,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::write(&output_path, &source)?;
         eprintln!("[printf-compile] Wrote {}", output_path.display());
     } else {
-        // Default output path
-        let default_output =
-            PathBuf::from("../../crates/frankenlibc-core/src/stdio/printf_tables.rs");
+        let default_output = default_core_snapshot_path("printf_tables.rs");
         std::fs::write(&default_output, &source)?;
         eprintln!("[printf-compile] Wrote {}", default_output.display());
     }
 
     Ok(())
+}
+
+fn resolve_tool_path(path: &Path) -> PathBuf {
+    if path.exists() {
+        return path.to_path_buf();
+    }
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let joined = manifest_dir.join(path);
+    if joined.exists() {
+        joined
+    } else {
+        path.to_path_buf()
+    }
+}
+
+fn default_core_snapshot_path(file_name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../crates/frankenlibc-core/src/stdio")
+        .join(file_name)
 }
 
 // Add hex encoding helper since we're not using an external crate
