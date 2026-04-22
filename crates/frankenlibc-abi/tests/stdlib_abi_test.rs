@@ -3448,6 +3448,39 @@ fn eventfd_write_invalid_fd_forbidden_all_ones_preserves_ebadf_like_host() {
 }
 
 #[test]
+fn eventfd_write_nonblocking_saturated_counter_sets_eagain_like_host() {
+    let host_fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK) };
+    let abi_fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK) };
+    assert!(host_fd >= 0, "host eventfd should create a nonblocking descriptor");
+    assert!(abi_fd >= 0, "abi eventfd should create a nonblocking descriptor");
+
+    assert_eq!(unsafe { libc::eventfd_write(host_fd, u64::MAX - 1) }, 0);
+    assert_eq!(unsafe { libc::eventfd_write(abi_fd, u64::MAX - 1) }, 0);
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::eventfd_write(host_fd, 1) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { eventfd_write(abi_fd, 1) };
+    let abi_err = unsafe { *__errno_location() };
+
+    unsafe {
+        libc::close(host_fd);
+        libc::close(abi_fd);
+    }
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EAGAIN);
+}
+
+#[test]
 fn eventfd_write_valid_fd_forbidden_all_ones_sets_einval() {
     let fd = unsafe { libc::eventfd(0, 0) };
     assert!(fd >= 0, "eventfd should create a writable descriptor");
