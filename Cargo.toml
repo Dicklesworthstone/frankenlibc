@@ -11,6 +11,11 @@ members = [
   "crates/frankenlibc",
   "crates/frankenlibc_conformance",
 ]
+# tools/ hosts sub-workspaces (e.g. tools/stdio_synth) that declare their own
+# `[workspace]` root — they are build-time utilities, not runtime members.
+# Excluding the whole directory keeps cargo from detecting two workspace
+# roots when it walks the source tree during `cargo test -p <main-member>`.
+exclude = ["tools"]
 
 [workspace.package]
 version = "0.1.0"
