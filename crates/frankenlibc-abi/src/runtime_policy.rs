@@ -1635,8 +1635,9 @@ pub mod conformance_testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parking_lot::{ReentrantMutex, ReentrantMutexGuard};
     use std::ffi::OsString;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::OnceLock;
 
     struct ModeSwitchCounterGuard {
         previous: u64,
@@ -1660,6 +1661,7 @@ mod tests {
     }
 
     struct ModeStateGuard {
+        _lock: ReentrantMutexGuard<'static, ()>,
         previous: u8,
         previous_tls: u8,
     }
@@ -1672,6 +1674,7 @@ mod tests {
     }
 
     fn set_mode_state_for_tests(state: u8) -> ModeStateGuard {
+        let lock = runtime_policy_test_lock();
         let previous_tls = MODE_THREAD_LOCAL_CACHE
             .try_with(|cache| {
                 let previous = cache.get();
@@ -1681,6 +1684,7 @@ mod tests {
             .unwrap_or(MODE_UNRESOLVED);
         let previous = MODE_STATE.swap(state, AtomicOrdering::SeqCst);
         ModeStateGuard {
+            _lock: lock,
             previous,
             previous_tls,
         }
@@ -1718,21 +1722,21 @@ mod tests {
         }
     }
 
-    fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock should not be poisoned")
+    fn runtime_policy_test_lock() -> ReentrantMutexGuard<'static, ()> {
+        static LOCK: OnceLock<ReentrantMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| ReentrantMutex::new(())).lock()
     }
 
-    fn ffi_pcc_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("ffi_pcc lock should not be poisoned")
+    fn env_lock() -> ReentrantMutexGuard<'static, ()> {
+        runtime_policy_test_lock()
+    }
+
+    fn ffi_pcc_lock() -> ReentrantMutexGuard<'static, ()> {
+        runtime_policy_test_lock()
     }
 
     struct RuntimeReadyGuard {
+        _lock: ReentrantMutexGuard<'static, ()>,
         previous_ready: u8,
         previous_mode_log_ready: u8,
     }
@@ -1745,21 +1749,25 @@ mod tests {
     }
 
     fn enable_runtime_kernel_for_tests() -> RuntimeReadyGuard {
+        let lock = runtime_policy_test_lock();
         let previous_ready = RUNTIME_READY.swap(1, AtomicOrdering::SeqCst);
         let previous_mode_log_ready = MODE_LOG_READY.swap(1, AtomicOrdering::SeqCst);
         RuntimeReadyGuard {
+            _lock: lock,
             previous_ready,
             previous_mode_log_ready,
         }
     }
 
     fn reset_ffi_pcc_state_for_tests() {
+        let _lock = runtime_policy_test_lock();
         FFI_PCC_HASH_PREFIX.store(0, AtomicOrdering::SeqCst);
         FFI_PCC_ROW_COUNT.store(0, AtomicOrdering::SeqCst);
         FFI_PCC_STATE.store(FFI_PCC_STATE_UNVERIFIED, AtomicOrdering::SeqCst);
     }
 
     fn reset_decision_contract_machine_for_tests() {
+        let _lock = runtime_policy_test_lock();
         let _ = DECISION_CONTRACT_MACHINE.try_with(|slot| {
             *slot.borrow_mut() = DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD);
         });
