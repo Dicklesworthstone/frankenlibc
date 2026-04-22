@@ -91,6 +91,11 @@ path = "fuzz_targets/fuzz_dlfcn.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_pthread_mutex"
+path = "fuzz_targets/fuzz_pthread_mutex.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
