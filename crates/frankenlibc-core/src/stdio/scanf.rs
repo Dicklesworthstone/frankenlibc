@@ -11,6 +11,73 @@
 
 use super::printf::LengthMod;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum ScanfHandler {
+    Invalid = 0,
+    SignedDecimal,
+    SignedAutoBase,
+    UnsignedDecimal,
+    UnsignedOctal,
+    UnsignedHex,
+    Float,
+    Character,
+    String,
+    Scanset,
+    CharsConsumed,
+    Pointer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum ScanfArgCategory {
+    None = 0,
+    SignedInt,
+    UnsignedInt,
+    Float,
+    CharBuffer,
+    StringBuffer,
+    Store,
+    Pointer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScanfRoute {
+    handler: ScanfHandler,
+    length_mask: u8,
+    skips_leading_whitespace: bool,
+    arg_category: ScanfArgCategory,
+}
+
+mod generated_scanf_tables {
+    include!("scanf_tables.rs");
+}
+
+use generated_scanf_tables::SCANF_TABLE;
+
+fn scanf_route(conversion: u8) -> Option<ScanfRoute> {
+    let route = SCANF_TABLE[conversion as usize];
+    if route.handler == ScanfHandler::Invalid {
+        None
+    } else {
+        Some(route)
+    }
+}
+
+fn scanf_length_allowed(length: LengthMod, length_mask: u8) -> bool {
+    match length {
+        LengthMod::None => true,
+        LengthMod::Hh => length_mask & 0b0000_0001 != 0,
+        LengthMod::H => length_mask & 0b0000_0010 != 0,
+        LengthMod::L => length_mask & 0b0000_0100 != 0,
+        LengthMod::Ll => length_mask & 0b0000_1000 != 0,
+        LengthMod::J => length_mask & 0b0001_0000 != 0,
+        LengthMod::Z => length_mask & 0b0010_0000 != 0,
+        LengthMod::T => length_mask & 0b0100_0000 != 0,
+        LengthMod::BigL => length_mask & 0b1000_0000 != 0,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Scan value types
 // ---------------------------------------------------------------------------
@@ -199,6 +266,15 @@ pub fn parse_scanf_format(fmt: &[u8]) -> Vec<ScanDirective> {
                 spec.conversion = fmt[i];
                 i += 1;
             }
+
+            let route = match scanf_route(spec.conversion) {
+                Some(route) => route,
+                None => break,
+            };
+            if !scanf_length_allowed(spec.length, route.length_mask) {
+                break;
+            }
+            let _ = (route.skips_leading_whitespace, route.arg_category);
 
             directives.push(ScanDirective::Spec(Box::new(spec)));
         } else if fmt[i].is_ascii_whitespace() {
@@ -1047,6 +1123,34 @@ mod tests {
         } else {
             panic!("expected String");
         }
+    }
+
+    #[test]
+    fn test_parse_invalid_conversion_stops_scanf_parse() {
+        let dirs = parse_scanf_format(b"%Q%d");
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn test_parse_invalid_length_modifier_stops_scanf_parse() {
+        let dirs = parse_scanf_format(b"%Ls%d");
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn test_generated_scanf_route_metadata_covers_core_specifiers() {
+        let decimal = scanf_route(b'd').expect("decimal route");
+        let string = scanf_route(b's').expect("string route");
+        let scanset = scanf_route(b'[').expect("scanset route");
+
+        assert_eq!(decimal.handler, ScanfHandler::SignedDecimal);
+        assert_eq!(string.handler, ScanfHandler::String);
+        assert_eq!(scanset.handler, ScanfHandler::Scanset);
+        assert!(decimal.skips_leading_whitespace);
+        assert!(!scanset.skips_leading_whitespace);
+        assert!(scanf_length_allowed(LengthMod::L, string.length_mask));
+        assert!(!scanf_length_allowed(LengthMod::BigL, string.length_mask));
+        assert!(scanf_route(b'Q').is_none());
     }
 
     #[test]

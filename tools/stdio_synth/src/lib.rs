@@ -135,6 +135,47 @@ pub enum ArgCategory {
     Store,
 }
 
+/// A single entry in the generated scanf dispatch table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanfRoute {
+    pub handler: ScanfHandler,
+    pub length_mask: u8,
+    pub skips_leading_whitespace: bool,
+    pub arg_category: ScanfArgCategory,
+}
+
+/// Scanf handler variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ScanfHandler {
+    Invalid = 0,
+    SignedDecimal,
+    SignedAutoBase,
+    UnsignedDecimal,
+    UnsignedOctal,
+    UnsignedHex,
+    Float,
+    Character,
+    String,
+    Scanset,
+    CharsConsumed,
+    Pointer,
+}
+
+/// Assignment target category for scanf routes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ScanfArgCategory {
+    None = 0,
+    SignedInt,
+    UnsignedInt,
+    Float,
+    CharBuffer,
+    StringBuffer,
+    Store,
+    Pointer,
+}
+
 impl PrintfGrammar {
     /// Load grammar from JSON file.
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
@@ -315,6 +356,73 @@ pub fn generate_printf_table(grammar: &PrintfGrammar) -> [PrintfRoute; 256] {
     table
 }
 
+/// Generate the 256-entry dispatch table for scanf.
+pub fn generate_scanf_table(grammar: &ScanfGrammar) -> [ScanfRoute; 256] {
+    let mut table = [ScanfRoute {
+        handler: ScanfHandler::Invalid,
+        length_mask: 0,
+        skips_leading_whitespace: false,
+        arg_category: ScanfArgCategory::None,
+    }; 256];
+
+    for (spec, conv) in &grammar.conversion {
+        if spec.len() != 1 {
+            continue;
+        }
+        let byte = spec.as_bytes()[0] as usize;
+        if byte >= 256 {
+            continue;
+        }
+
+        let (handler, arg_category) = match conv.name.as_str() {
+            "signed_decimal" => (ScanfHandler::SignedDecimal, ScanfArgCategory::SignedInt),
+            "signed_integer_auto_base" => {
+                (ScanfHandler::SignedAutoBase, ScanfArgCategory::SignedInt)
+            }
+            "unsigned_decimal" => (ScanfHandler::UnsignedDecimal, ScanfArgCategory::UnsignedInt),
+            "unsigned_octal" => (ScanfHandler::UnsignedOctal, ScanfArgCategory::UnsignedInt),
+            "unsigned_hex" | "unsigned_hex_upper" => {
+                (ScanfHandler::UnsignedHex, ScanfArgCategory::UnsignedInt)
+            }
+            "float_fixed"
+            | "float_fixed_upper"
+            | "float_exp"
+            | "float_exp_upper"
+            | "float_general"
+            | "float_general_upper"
+            | "float_hex"
+            | "float_hex_upper" => (ScanfHandler::Float, ScanfArgCategory::Float),
+            "character" => (ScanfHandler::Character, ScanfArgCategory::CharBuffer),
+            "string" => (ScanfHandler::String, ScanfArgCategory::StringBuffer),
+            "scanset" => (ScanfHandler::Scanset, ScanfArgCategory::StringBuffer),
+            "chars_consumed" => (ScanfHandler::CharsConsumed, ScanfArgCategory::Store),
+            "pointer" => (ScanfHandler::Pointer, ScanfArgCategory::Pointer),
+            _ => continue,
+        };
+
+        let length_mask = match handler {
+            ScanfHandler::SignedDecimal
+            | ScanfHandler::SignedAutoBase
+            | ScanfHandler::UnsignedDecimal
+            | ScanfHandler::UnsignedOctal
+            | ScanfHandler::UnsignedHex
+            | ScanfHandler::CharsConsumed => 0b0111_1111,
+            ScanfHandler::Float => 0b1000_0100,
+            ScanfHandler::Character | ScanfHandler::String | ScanfHandler::Scanset => 0b0000_0100,
+            ScanfHandler::Pointer | ScanfHandler::Invalid => 0,
+        };
+
+        table[byte] = ScanfRoute {
+            handler,
+            length_mask,
+            skips_leading_whitespace: conv.skips_leading_whitespace,
+            arg_category,
+        };
+    }
+
+    table
+}
+
 /// Emit Rust source code for the generated table.
 pub fn emit_printf_table_source(table: &[PrintfRoute; 256]) -> String {
     let mut output = String::new();
@@ -370,6 +478,79 @@ pub fn emit_printf_table_source(table: &[PrintfRoute; 256]) -> String {
     }
 
     output.push_str("];\n");
+    output
+}
+
+/// Emit Rust source code for the generated scanf table snapshot.
+pub fn emit_scanf_table_source(table: &[ScanfRoute; 256]) -> String {
+    let mut output = String::new();
+    output.push_str("// AUTO-GENERATED snapshot from tools/stdio_synth/spec/scanf_grammar.json.\n");
+    output.push_str("// DO NOT EDIT BY HAND UNLESS THE GENERATOR SHAPE CHANGES.\n\n");
+    output.push_str("use super::{ScanfArgCategory, ScanfHandler, ScanfRoute};\n\n");
+    output.push_str("const INVALID_ROUTE: ScanfRoute = ScanfRoute {\n");
+    output.push_str("    handler: ScanfHandler::Invalid,\n");
+    output.push_str("    length_mask: 0,\n");
+    output.push_str("    skips_leading_whitespace: false,\n");
+    output.push_str("    arg_category: ScanfArgCategory::None,\n");
+    output.push_str("};\n\n");
+    output.push_str("const fn route(\n");
+    output.push_str("    handler: ScanfHandler,\n");
+    output.push_str("    length_mask: u8,\n");
+    output.push_str("    skips_leading_whitespace: bool,\n");
+    output.push_str("    arg_category: ScanfArgCategory,\n");
+    output.push_str(") -> ScanfRoute {\n");
+    output.push_str("    ScanfRoute {\n");
+    output.push_str("        handler,\n");
+    output.push_str("        length_mask,\n");
+    output.push_str("        skips_leading_whitespace,\n");
+    output.push_str("        arg_category,\n");
+    output.push_str("    }\n");
+    output.push_str("}\n\n");
+    output.push_str("pub const SCANF_TABLE: [ScanfRoute; 256] = {\n");
+    output.push_str("    let mut table = [INVALID_ROUTE; 256];\n\n");
+
+    for (i, route) in table.iter().enumerate() {
+        if route.handler == ScanfHandler::Invalid {
+            continue;
+        }
+
+        let handler = match route.handler {
+            ScanfHandler::Invalid => "ScanfHandler::Invalid",
+            ScanfHandler::SignedDecimal => "ScanfHandler::SignedDecimal",
+            ScanfHandler::SignedAutoBase => "ScanfHandler::SignedAutoBase",
+            ScanfHandler::UnsignedDecimal => "ScanfHandler::UnsignedDecimal",
+            ScanfHandler::UnsignedOctal => "ScanfHandler::UnsignedOctal",
+            ScanfHandler::UnsignedHex => "ScanfHandler::UnsignedHex",
+            ScanfHandler::Float => "ScanfHandler::Float",
+            ScanfHandler::Character => "ScanfHandler::Character",
+            ScanfHandler::String => "ScanfHandler::String",
+            ScanfHandler::Scanset => "ScanfHandler::Scanset",
+            ScanfHandler::CharsConsumed => "ScanfHandler::CharsConsumed",
+            ScanfHandler::Pointer => "ScanfHandler::Pointer",
+        };
+        let arg_category = match route.arg_category {
+            ScanfArgCategory::None => "ScanfArgCategory::None",
+            ScanfArgCategory::SignedInt => "ScanfArgCategory::SignedInt",
+            ScanfArgCategory::UnsignedInt => "ScanfArgCategory::UnsignedInt",
+            ScanfArgCategory::Float => "ScanfArgCategory::Float",
+            ScanfArgCategory::CharBuffer => "ScanfArgCategory::CharBuffer",
+            ScanfArgCategory::StringBuffer => "ScanfArgCategory::StringBuffer",
+            ScanfArgCategory::Store => "ScanfArgCategory::Store",
+            ScanfArgCategory::Pointer => "ScanfArgCategory::Pointer",
+        };
+
+        output.push_str(&format!(
+            "    table[b'{}' as usize] = route({}, {:#010b}, {}, {});\n",
+            i as u8 as char,
+            handler,
+            route.length_mask,
+            route.skips_leading_whitespace,
+            arg_category
+        ));
+    }
+
+    output.push_str("\n    table\n");
+    output.push_str("};\n");
     output
 }
 
@@ -446,5 +627,36 @@ mod tests {
         let scanset = grammar.scanset.expect("scanset support");
         assert!(scanset.supports_negation);
         assert!(scanset.supports_ranges);
+    }
+
+    #[test]
+    fn generated_scanf_table_routes_core_specifiers() {
+        let table = generate_scanf_table(&load_scanf_grammar());
+
+        assert_eq!(table[b'd' as usize].handler, ScanfHandler::SignedDecimal);
+        assert_eq!(table[b'i' as usize].handler, ScanfHandler::SignedAutoBase);
+        assert_eq!(table[b's' as usize].handler, ScanfHandler::String);
+        assert_eq!(table[b'[' as usize].handler, ScanfHandler::Scanset);
+        assert_eq!(
+            table[b'd' as usize].arg_category,
+            ScanfArgCategory::SignedInt
+        );
+        assert_eq!(table[b'p' as usize].arg_category, ScanfArgCategory::Pointer);
+        assert!(table[b's' as usize].skips_leading_whitespace);
+        assert!(!table[b'c' as usize].skips_leading_whitespace);
+        assert_eq!(table[b'Q' as usize].handler, ScanfHandler::Invalid);
+    }
+
+    #[test]
+    fn emitted_scanf_source_is_deterministic() {
+        let grammar = load_scanf_grammar();
+        let table = generate_scanf_table(&grammar);
+        let emitted_once = emit_scanf_table_source(&table);
+        let emitted_twice = emit_scanf_table_source(&table);
+
+        assert_eq!(emitted_once, emitted_twice);
+        assert!(emitted_once.contains("pub const SCANF_TABLE: [ScanfRoute; 256]"));
+        assert!(emitted_once.contains("ScanfHandler::SignedDecimal"));
+        assert!(emitted_once.contains("ScanfHandler::Scanset"));
     }
 }
