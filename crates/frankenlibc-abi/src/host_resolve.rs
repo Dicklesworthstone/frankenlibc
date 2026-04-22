@@ -13,10 +13,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use frankenlibc_core::syscall as raw_syscall;
 
 static HOST_PTHREAD_CREATE: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_CANCEL: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_SETCANCELSTATE: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_SETCANCELTYPE: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_TESTCANCEL: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_JOIN: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_DETACH: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_EXIT: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_SELF: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_TRYJOIN_NP: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_TIMEDJOIN_NP: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_CLOCKJOIN_NP: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_EQUAL: AtomicUsize = AtomicUsize::new(0);
 static HOST_MALLOC: AtomicUsize = AtomicUsize::new(0);
 static HOST_CALLOC: AtomicUsize = AtomicUsize::new(0);
@@ -406,10 +413,17 @@ pub(crate) fn bootstrap_host_symbols() {
     let mut unresolved = 0usize;
     for (symbol, cache) in [
         ("pthread_create", &HOST_PTHREAD_CREATE),
+        ("pthread_cancel", &HOST_PTHREAD_CANCEL),
+        ("pthread_setcancelstate", &HOST_PTHREAD_SETCANCELSTATE),
+        ("pthread_setcanceltype", &HOST_PTHREAD_SETCANCELTYPE),
+        ("pthread_testcancel", &HOST_PTHREAD_TESTCANCEL),
         ("pthread_join", &HOST_PTHREAD_JOIN),
         ("pthread_detach", &HOST_PTHREAD_DETACH),
         ("pthread_exit", &HOST_PTHREAD_EXIT),
         ("pthread_self", &HOST_PTHREAD_SELF),
+        ("pthread_tryjoin_np", &HOST_PTHREAD_TRYJOIN_NP),
+        ("pthread_timedjoin_np", &HOST_PTHREAD_TIMEDJOIN_NP),
+        ("pthread_clockjoin_np", &HOST_PTHREAD_CLOCKJOIN_NP),
         ("pthread_equal", &HOST_PTHREAD_EQUAL),
         ("malloc", &HOST_MALLOC),
         ("calloc", &HOST_CALLOC),
@@ -465,6 +479,24 @@ pub(crate) fn host_pthread_create_raw() -> Option<
     load_host_symbol(&HOST_PTHREAD_CREATE).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
+pub(crate) fn host_pthread_cancel_raw() -> Option<unsafe extern "C" fn(libc::pthread_t) -> i32> {
+    load_host_symbol(&HOST_PTHREAD_CANCEL).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_setcancelstate_raw()
+-> Option<unsafe extern "C" fn(c_int, *mut c_int) -> i32> {
+    load_host_symbol(&HOST_PTHREAD_SETCANCELSTATE).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_setcanceltype_raw()
+-> Option<unsafe extern "C" fn(c_int, *mut c_int) -> i32> {
+    load_host_symbol(&HOST_PTHREAD_SETCANCELTYPE).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_testcancel_raw() -> Option<unsafe extern "C" fn()> {
+    load_host_symbol(&HOST_PTHREAD_TESTCANCEL).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
 pub(crate) fn host_pthread_join_raw()
 -> Option<unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> i32> {
     load_host_symbol(&HOST_PTHREAD_JOIN).map(|addr| unsafe { core::mem::transmute(addr) })
@@ -480,6 +512,22 @@ pub(crate) fn host_pthread_exit_raw() -> Option<unsafe extern "C" fn(*mut c_void
 
 pub(crate) fn host_pthread_self_raw() -> Option<unsafe extern "C" fn() -> libc::pthread_t> {
     load_host_symbol(&HOST_PTHREAD_SELF).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_tryjoin_np_raw()
+-> Option<unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> i32> {
+    load_host_symbol(&HOST_PTHREAD_TRYJOIN_NP).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_timedjoin_np_raw()
+-> Option<unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void, *const libc::timespec) -> i32> {
+    load_host_symbol(&HOST_PTHREAD_TIMEDJOIN_NP).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_clockjoin_np_raw() -> Option<
+    unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void, c_int, *const libc::timespec) -> i32,
+> {
+    load_host_symbol(&HOST_PTHREAD_CLOCKJOIN_NP).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_equal_raw()

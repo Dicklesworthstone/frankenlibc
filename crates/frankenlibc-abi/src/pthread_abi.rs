@@ -41,11 +41,18 @@ use frankenlibc_membrane::runtime_math::ApiFamily;
 
 use crate::errno_abi::set_abi_errno;
 use crate::host_resolve::{
+    host_pthread_cancel_raw as resolved_thread_cancel_raw,
+    host_pthread_clockjoin_np_raw as resolved_thread_clockjoin_np_raw,
     host_pthread_create_raw as resolved_thread_create_raw,
     host_pthread_detach_raw as resolved_thread_detach_raw,
     host_pthread_exit_raw as resolved_thread_exit_raw,
     host_pthread_join_raw as resolved_thread_join_raw,
     host_pthread_self_raw as resolved_thread_self_raw,
+    host_pthread_setcancelstate_raw as resolved_thread_setcancelstate_raw,
+    host_pthread_setcanceltype_raw as resolved_thread_setcanceltype_raw,
+    host_pthread_testcancel_raw as resolved_thread_testcancel_raw,
+    host_pthread_timedjoin_np_raw as resolved_thread_timedjoin_np_raw,
+    host_pthread_tryjoin_np_raw as resolved_thread_tryjoin_np_raw,
 };
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
@@ -3629,6 +3636,13 @@ pub unsafe extern "C" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
         return libc::ESRCH;
     }
 
+    if !force_native_threading_enabled()
+        && !is_managed_thread_handle(thread)
+        && let Some(host_cancel) = resolved_thread_cancel_raw()
+    {
+        return unsafe { host_cancel(thread) };
+    }
+
     // Validate that the target looks alive before enqueuing a cancel request.
     // Signal 0 performs existence checking without delivering a signal.
     let liveness = unsafe { pthread_kill(thread, 0) };
@@ -3656,6 +3670,13 @@ pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, oldstate: *mut c_i
         return libc::EINVAL;
     }
 
+    if !force_native_threading_enabled()
+        && current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_setcancelstate) = resolved_thread_setcancelstate_raw()
+    {
+        return unsafe { host_setcancelstate(state, oldstate) };
+    }
+
     let previous = THREAD_CANCEL_STATE.with(|cell| {
         let prev = cell.get();
         cell.set(state);
@@ -3678,6 +3699,13 @@ pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) 
         return libc::EINVAL;
     }
 
+    if !force_native_threading_enabled()
+        && current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_setcanceltype) = resolved_thread_setcanceltype_raw()
+    {
+        return unsafe { host_setcanceltype(typ, oldtype) };
+    }
+
     let previous = THREAD_CANCEL_TYPE.with(|cell| {
         let prev = cell.get();
         cell.set(typ);
@@ -3696,6 +3724,14 @@ pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_testcancel() {
+    if !force_native_threading_enabled()
+        && current_threading_backend() == THREAD_BACKEND_HOST
+        && let Some(host_testcancel) = resolved_thread_testcancel_raw()
+    {
+        unsafe { host_testcancel() };
+        return;
+    }
+
     if consume_pending_cancel_for_current_thread() {
         // PTHREAD_CANCELED is typically defined as ((void *) -1)
         unsafe { pthread_exit(!0usize as *mut std::ffi::c_void) };
@@ -5285,6 +5321,15 @@ pub unsafe extern "C" fn pthread_timedjoin_np(
     retval: *mut *mut c_void,
     abstime: *const libc::timespec,
 ) -> c_int {
+    if !force_native_threading_enabled() && !is_managed_thread_handle(thread) {
+        if abstime.is_null() {
+            return unsafe { pthread_join(thread, retval) };
+        }
+        if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {
+            return unsafe { host_timedjoin(thread, retval, abstime) };
+        }
+    }
+
     if abstime.is_null() {
         // NULL timeout = blocking join.
         return unsafe { native_pthread_join(thread, retval) };
@@ -5372,6 +5417,13 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
 ) -> c_int {
+    if !force_native_threading_enabled()
+        && !is_managed_thread_handle(thread)
+        && let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()
+    {
+        return unsafe { host_tryjoin(thread, retval) };
+    }
+
     let thread_key = thread as usize;
     let handle_ptr = thread as *mut ThreadHandle;
     let my_tid = core_self_tid();
@@ -5432,6 +5484,15 @@ pub unsafe extern "C" fn pthread_clockjoin_np(
     clockid: c_int,
     abstime: *const libc::timespec,
 ) -> c_int {
+    if !force_native_threading_enabled() && !is_managed_thread_handle(thread) {
+        if abstime.is_null() {
+            return unsafe { pthread_join(thread, retval) };
+        }
+        if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {
+            return unsafe { host_clockjoin(thread, retval, clockid, abstime) };
+        }
+    }
+
     if abstime.is_null() {
         return unsafe { native_pthread_join(thread, retval) };
     }
