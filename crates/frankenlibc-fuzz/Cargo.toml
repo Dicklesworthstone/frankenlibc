@@ -110,4 +110,14 @@ name = "fuzz_elf_loader"
 path = "fuzz_targets/fuzz_elf_loader.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_pattern_match"
+path = "fuzz_targets/fuzz_pattern_match.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_wordexp"
+path = "fuzz_targets/fuzz_wordexp.rs"
+doc = false
+
 [workspace]
