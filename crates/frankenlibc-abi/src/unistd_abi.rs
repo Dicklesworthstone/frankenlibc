@@ -7604,7 +7604,7 @@ pub unsafe extern "C" fn timer_gettime(timerid: *mut c_void, curr_value: *mut c_
         return -1;
     }
 
-    if curr_value.is_null() {
+    if !timerid.is_null() && curr_value.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
         return -1;
@@ -7617,6 +7617,7 @@ pub unsafe extern "C" fn timer_gettime(timerid: *mut c_void, curr_value: *mut c_
             -1
         }
     };
+
     runtime_policy::observe(ApiFamily::Time, decision.profile, 5, rc < 0);
     rc
 }

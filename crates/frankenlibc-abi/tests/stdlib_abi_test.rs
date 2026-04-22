@@ -1051,6 +1051,30 @@ fn timer_gettime_deleted_timer_handle_sets_einval() {
 }
 
 #[test]
+fn timer_gettime_null_timer_handle_sets_einval_like_host() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::timer_gettime(ptr::null_mut(), ptr::null_mut()) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { timer_gettime(ptr::null_mut(), ptr::null_mut()) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, -1);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EINVAL,
+        "unexpected errno from timer_gettime((timer_t)0, NULL): {abi_err}"
+    );
+}
+
+#[test]
 fn timer_invalid_inputs_match_kernel_syscalls() {
     let invalid_timer = (-1_isize) as *mut libc::c_void;
     let mut observed_curr: libc::itimerspec = unsafe { std::mem::zeroed() };
