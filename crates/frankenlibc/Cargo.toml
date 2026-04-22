@@ -8,12 +8,12 @@ license-file = "../../LICENSE"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-parking_lot = "0.12"
-thiserror = "2.0"
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
-criterion = "0.5"
-libc = "0.2"
+criterion = { workspace = true }
+libc = { workspace = true }
 
 [[bench]]
 name = "membrane_copy"
