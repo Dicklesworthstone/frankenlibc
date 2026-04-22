@@ -923,21 +923,15 @@ std::thread_local! {
     static TLS_ATEXIT_LIST: std::cell::RefCell<Vec<TlsAtExitEntry>> = const {
         std::cell::RefCell::new(Vec::new())
     };
-    static TLS_ATEXIT_CAPTURE_ENABLED: std::cell::Cell<bool> = const {
+    static TLS_ATEXIT_CAPTURE_FOR_TESTS: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+    static TLS_ATEXIT_REENTRY: std::cell::Cell<bool> = const {
         std::cell::Cell::new(false)
     };
 }
 
 static HOST_CXA_THREAD_ATEXIT_IMPL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-
-/// Reentry guard for `__cxa_thread_atexit_impl`.
-///
-/// First TLS access triggers initialization, which may call
-/// `__cxa_thread_atexit_impl` to register Rust's own TLS destructor.
-/// Without this guard, that re-enters `TLS_ATEXIT_LIST.with()` which
-/// tries to initialize TLS again → infinite recursion → stack overflow.
-static CXA_THREAD_ATEXIT_REENTRY: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
 
 unsafe fn host_cxa_thread_atexit_impl() -> Option<HostCxaThreadAtExitImplFn> {
     let ptr = *HOST_CXA_THREAD_ATEXIT_IMPL.get_or_init(|| unsafe {
@@ -958,8 +952,7 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
     obj: *mut c_void,
     _dso_handle: *mut c_void,
 ) -> c_int {
-    use std::sync::atomic::Ordering;
-    if !TLS_ATEXIT_CAPTURE_ENABLED.with(|capture| capture.get())
+    if !TLS_ATEXIT_CAPTURE_FOR_TESTS.with(|capture| capture.get())
         && let Some(host) = unsafe { host_cxa_thread_atexit_impl() }
     {
         return unsafe { host(dtor, obj, _dso_handle) };
@@ -970,17 +963,21 @@ pub unsafe extern "C" fn __cxa_thread_atexit_impl(
     // because our interposed dlsym also accesses TLS, creating another cycle.
     // On reentry, silently succeed without registering — the dropped destructor
     // is Rust's own TLS cleanup which is harmless to skip during init.
-    if CXA_THREAD_ATEXIT_REENTRY
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
+    if TLS_ATEXIT_REENTRY.with(|reentry| {
+        if reentry.get() {
+            true
+        } else {
+            reentry.set(true);
+            false
+        }
+    }) {
         return 0; // Silently drop reentrant registration
     }
     let result = TLS_ATEXIT_LIST.with(|list| {
         list.borrow_mut().push(TlsAtExitEntry { dtor, obj });
         0
     });
-    CXA_THREAD_ATEXIT_REENTRY.store(false, Ordering::Release);
+    TLS_ATEXIT_REENTRY.with(|reentry| reentry.set(false));
     result
 }
 
@@ -1000,11 +997,15 @@ pub(crate) fn invoke_tls_dtors() {
 }
 
 #[doc(hidden)]
-pub fn set_tls_dtor_capture_enabled_for_tests(enabled: bool) -> bool {
-    TLS_ATEXIT_CAPTURE_ENABLED.with(|capture| {
-        let previous = capture.get();
-        capture.set(enabled);
-        previous
+pub unsafe fn register_tls_dtor_for_tests(
+    dtor: unsafe extern "C" fn(*mut c_void),
+    obj: *mut c_void,
+) -> c_int {
+    TLS_ATEXIT_CAPTURE_FOR_TESTS.with(|capture| {
+        let previous = capture.replace(true);
+        let result = unsafe { __cxa_thread_atexit_impl(dtor, obj, std::ptr::null_mut()) };
+        capture.set(previous);
+        result
     })
 }
 

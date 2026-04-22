@@ -2830,9 +2830,7 @@ fn run_tls_dtor_test_thread(entry: extern "C" fn(*mut std::ffi::c_void) -> *mut 
 fn test_call_tls_dtors_noop_when_empty() {
     extern "C" fn entry(_arg: *mut std::ffi::c_void) -> *mut std::ffi::c_void {
         frankenlibc_abi::startup_abi::clear_tls_dtors_for_tests();
-        let previous = frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(true);
         unsafe { __call_tls_dtors() };
-        frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
         std::ptr::null_mut()
     }
 
@@ -2854,25 +2852,21 @@ fn test_call_tls_dtors_invokes_registered() {
         DTOR_COUNT.store(0, Ordering::SeqCst);
         REGISTER_RC.store(0, Ordering::SeqCst);
         frankenlibc_abi::startup_abi::clear_tls_dtors_for_tests();
-        let previous = frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(true);
 
         for _ in 0..3 {
             let rc = unsafe {
-                frankenlibc_abi::startup_abi::__cxa_thread_atexit_impl(
+                frankenlibc_abi::startup_abi::register_tls_dtor_for_tests(
                     test_dtor,
-                    std::ptr::null_mut(),
                     std::ptr::null_mut(),
                 )
             };
             if rc != 0 {
-                frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
                 REGISTER_RC.store(rc, Ordering::SeqCst);
                 return std::ptr::dangling_mut::<std::ffi::c_void>();
             }
         }
 
         unsafe { __call_tls_dtors() };
-        frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
         std::ptr::null_mut()
     }
 
@@ -2908,25 +2902,21 @@ fn test_call_tls_dtors_lifo_order() {
         ORDER_2.store(0, Ordering::SeqCst);
         REGISTER_RC.store(0, Ordering::SeqCst);
         frankenlibc_abi::startup_abi::clear_tls_dtors_for_tests();
-        let previous = frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(true);
 
         for i in 1u64..=3 {
             let rc = unsafe {
-                frankenlibc_abi::startup_abi::__cxa_thread_atexit_impl(
+                frankenlibc_abi::startup_abi::register_tls_dtor_for_tests(
                     order_dtor,
                     i as *mut std::ffi::c_void,
-                    std::ptr::null_mut(),
                 )
             };
             if rc != 0 {
-                frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
                 REGISTER_RC.store(rc, Ordering::SeqCst);
                 return std::ptr::dangling_mut::<std::ffi::c_void>();
             }
         }
 
         unsafe { __call_tls_dtors() };
-        frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
         std::ptr::null_mut()
     }
 
@@ -2957,17 +2947,11 @@ fn test_call_tls_dtors_drains_list() {
         AFTER_FIRST_CALL.store(0, Ordering::SeqCst);
         AFTER_SECOND_CALL.store(0, Ordering::SeqCst);
         frankenlibc_abi::startup_abi::clear_tls_dtors_for_tests();
-        let previous = frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(true);
 
         let rc = unsafe {
-            frankenlibc_abi::startup_abi::__cxa_thread_atexit_impl(
-                dtor2,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
+            frankenlibc_abi::startup_abi::register_tls_dtor_for_tests(dtor2, std::ptr::null_mut())
         };
         if rc != 0 {
-            frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
             REGISTER_RC.store(rc, Ordering::SeqCst);
             return std::ptr::dangling_mut::<std::ffi::c_void>();
         }
@@ -2977,7 +2961,6 @@ fn test_call_tls_dtors_drains_list() {
 
         unsafe { __call_tls_dtors() };
         AFTER_SECOND_CALL.store(DTOR2_COUNT.load(Ordering::SeqCst), Ordering::SeqCst);
-        frankenlibc_abi::startup_abi::set_tls_dtor_capture_enabled_for_tests(previous);
         std::ptr::null_mut()
     }
 
