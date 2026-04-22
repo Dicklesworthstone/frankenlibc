@@ -1009,6 +1009,35 @@ fn sched_rr_get_interval_negative_pid_null_output_sets_einval_like_host() {
 }
 
 #[test]
+fn sched_rr_get_interval_nonexistent_pid_valid_output_sets_esrch_like_host() {
+    let nonexistent_pid = libc::pid_t::MAX;
+    let mut host_tp = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::sched_rr_get_interval(nonexistent_pid, &mut host_tp) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    let mut abi_tp = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { sched_rr_get_interval(nonexistent_pid, &mut abi_tp) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::ESRCH);
+}
+
+#[test]
 fn timer_settime_gettime_getoverrun_and_delete_roundtrip() {
     let Some(timer_id) = open_test_timer() else {
         return;
