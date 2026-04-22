@@ -262,11 +262,20 @@ const MON_FULL_NAMES: [&str; 12] = [
 /// ISO 8601 week number and year calculation.
 ///
 /// Returns (iso_year, iso_week) where iso_week is 1-53.
+///
+/// Uses i64 arithmetic throughout because POSIX leaves the BrokenDownTime
+/// field ranges undefined (e.g. tm_yday is signed int) and out-of-range
+/// inputs from a callers like fuzz harnesses must not overflow i32
+/// (bd-7rxtm).
 fn iso_week(bd: &BrokenDownTime) -> (i64, i32) {
     let year = bd.tm_year as i64 + 1900;
-    let yday = bd.tm_yday;
+    let yday = bd.tm_yday as i64;
     // ISO weekday: Monday=1 .. Sunday=7
-    let wday_iso = if bd.tm_wday == 0 { 7 } else { bd.tm_wday };
+    let wday_iso = if bd.tm_wday == 0 {
+        7i64
+    } else {
+        bd.tm_wday as i64
+    };
     // Day of year of the Thursday in the same ISO week
     let thu_yday = yday - wday_iso + 4;
     // ISO year that Thursday belongs to
@@ -274,17 +283,17 @@ fn iso_week(bd: &BrokenDownTime) -> (i64, i32) {
     if thu_yday < 0 {
         // Thursday is in previous year
         iso_y -= 1;
-        let prev_days: i32 = if is_leap_year(iso_y) { 366 } else { 365 };
-        let week = (thu_yday + prev_days) / 7 + 1;
+        let prev_days: i64 = if is_leap_year(iso_y) { 366 } else { 365 };
+        let week = ((thu_yday + prev_days) / 7 + 1) as i32;
         return (iso_y, week);
     }
-    let year_days: i32 = if is_leap_year(year) { 366 } else { 365 };
+    let year_days: i64 = if is_leap_year(year) { 366 } else { 365 };
     if thu_yday >= year_days {
         // Thursday is in next year
         iso_y += 1;
         return (iso_y, 1);
     }
-    let week = thu_yday / 7 + 1;
+    let week = (thu_yday / 7 + 1) as i32;
     (iso_y, week)
 }
 
@@ -559,8 +568,10 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec!(u, 1);
             }
             b'U' => {
-                // Sunday-based week number
-                let wnum = (bd.tm_yday + 7 - bd.tm_wday) / 7;
+                // Sunday-based week number. Widen to i64 to absorb
+                // arbitrary out-of-range tm_yday/tm_wday without
+                // overflowing i32 (bd-7rxtm).
+                let wnum = (bd.tm_yday as i64 + 7 - bd.tm_wday as i64) / 7;
                 push_dec!(wnum, 2);
             }
             b'V' => {
@@ -571,9 +582,15 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec!(bd.tm_wday, 1);
             }
             b'W' => {
-                // Monday-based week number
-                let monday_wday = if bd.tm_wday == 0 { 6 } else { bd.tm_wday - 1 };
-                let wnum = (bd.tm_yday + 7 - monday_wday) / 7;
+                // Monday-based week number. Widen to i64 to absorb
+                // arbitrary out-of-range tm_yday/tm_wday without
+                // overflowing i32 (bd-7rxtm).
+                let monday_wday = if bd.tm_wday == 0 {
+                    6i64
+                } else {
+                    bd.tm_wday as i64 - 1
+                };
+                let wnum = (bd.tm_yday as i64 + 7 - monday_wday) / 7;
                 push_dec!(wnum, 2);
             }
             b'x' => {
@@ -922,5 +939,32 @@ mod tests {
         assert!(valid_clock_id_extended(CLOCK_BOOTTIME));
         assert!(!valid_clock_id_extended(99));
         assert!(!valid_clock_id_extended(-1));
+    }
+
+    /// Regression for bd-7rxtm: out-of-range BrokenDownTime fields
+    /// (which POSIX does not constrain at the API boundary) used to
+    /// overflow i32 inside iso_week / %U / %W formatting and panic
+    /// with debug_assertions. Surfaced via fuzz_strftime.
+    #[test]
+    fn format_strftime_does_not_overflow_on_extreme_tm_fields() {
+        let bd = BrokenDownTime {
+            tm_sec: i32::MIN,
+            tm_min: i32::MIN,
+            tm_hour: i32::MAX,
+            tm_mday: i32::MAX,
+            tm_mon: i32::MIN,
+            tm_year: 0,
+            tm_wday: i32::MAX,
+            tm_yday: i32::MIN,
+            tm_isdst: 0,
+        };
+        let mut buf = [0u8; 256];
+        // Each of the previously-overflowing specifiers must complete
+        // without panicking.
+        let _ = format_strftime(b"%V", &bd, &mut buf);
+        let _ = format_strftime(b"%U", &bd, &mut buf);
+        let _ = format_strftime(b"%W", &bd, &mut buf);
+        let _ = format_strftime(b"%G", &bd, &mut buf);
+        let _ = format_strftime(b"%g", &bd, &mut buf);
     }
 }
