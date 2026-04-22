@@ -5118,6 +5118,83 @@ fn pidfd_getfd_self_invalid_flags_is_einval() {
     );
 }
 
+/// bd-5h4xq: pidfd_open against a pid that exists nowhere surfaces
+/// ESRCH. Linux uses 999999999 (>= 1e9) which is far above
+/// /proc/sys/kernel/pid_max on any sane system, so the kernel's
+/// process-lookup step fails with no surviving target.
+#[test]
+fn pidfd_open_nonexistent_large_pid_is_esrch() {
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { pidfd_open(999_999_999, 0) };
+    let err = unsafe { *__errno_location() };
+
+    assert_eq!(rc, -1, "pidfd_open(999_999_999, 0) must fail");
+    assert_eq!(
+        err,
+        libc::ESRCH,
+        "pidfd_open(nonexistent pid) must set errno=ESRCH (host-parity), got {err}"
+    );
+}
+
+/// bd-6vfgs: pidfd_send_signal(self, 0, NULL, flags=1) succeeds even
+/// though the manpage reserves flags as "must be 0" — Linux's current
+/// sig=0 fast-path short-circuits the flags validation. Pinning this
+/// host-compatible tolerance so future impl tightening doesn't break
+/// existing consumers.
+#[test]
+fn pidfd_send_signal_self_null_signal_ignores_nonzero_flags() {
+    let self_fd = unsafe { pidfd_open(libc::getpid(), 0) };
+    if self_fd < 0 {
+        return;
+    }
+    unsafe {
+        *__errno_location() = libc::EAGAIN;
+    }
+    let rc = unsafe { pidfd_send_signal(self_fd, 0, ptr::null(), 1) };
+    let err = unsafe { *__errno_location() };
+    let close_rc = unsafe { libc::close(self_fd) };
+    assert_eq!(close_rc, 0);
+
+    assert_eq!(
+        rc, 0,
+        "pidfd_send_signal(self, 0, NULL, flags=1) must succeed (null-signal bypasses flags validation)"
+    );
+    assert_eq!(
+        err,
+        libc::EAGAIN,
+        "success path must not touch errno, got {err}"
+    );
+}
+
+/// bd-ttwfr: pidfd_getfd with BOTH invalid targetfd (-1) AND invalid
+/// flags (1) surfaces EINVAL, not EBADF — the kernel validates the
+/// flags word before the targetfd lookup. Complements bd-rcw4p
+/// (EBADF when only targetfd is bad) and bd-sh2ms (EINVAL when only
+/// flags is bad) by pinning the precedence rule.
+#[test]
+fn pidfd_getfd_self_invalid_targetfd_and_flags_is_einval() {
+    let self_fd = unsafe { pidfd_open(libc::getpid(), 0) };
+    if self_fd < 0 {
+        return;
+    }
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { pidfd_getfd(self_fd, -1, 1) };
+    let err = unsafe { *__errno_location() };
+    let close_rc = unsafe { libc::close(self_fd) };
+    assert_eq!(close_rc, 0);
+
+    assert_eq!(rc, -1, "pidfd_getfd(self, -1, 1) must fail");
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "pidfd_getfd(self, -1, 1) must set errno=EINVAL (flags validation wins over bad targetfd), got {err}"
+    );
+}
+
 #[test]
 fn sched_getcpu_success_does_not_set_errno() {
     unsafe {
