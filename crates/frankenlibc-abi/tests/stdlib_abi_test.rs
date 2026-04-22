@@ -384,6 +384,31 @@ fn sched_getaffinity_valid_size_null_mask_sets_efault_like_host() {
 }
 
 #[test]
+fn sched_getaffinity_invalid_pid_null_mask_sets_esrch_like_host() {
+    let _guard = SCHED_AFFINITY_TEST_GUARD
+        .lock()
+        .expect("affinity test guard lock should succeed");
+    let cpusetsize = std::mem::size_of::<libc::cpu_set_t>();
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::sched_getaffinity(-1, cpusetsize, ptr::null_mut()) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { sched_getaffinity(-1, cpusetsize, ptr::null_mut()) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::ESRCH);
+}
+
+#[test]
 fn strtoll_sets_endptr_to_first_unparsed_byte() {
     let mut endptr = ptr::null_mut();
 
