@@ -2489,6 +2489,16 @@ fn mode_is_hardened(mode: &str) -> bool {
     mode.eq_ignore_ascii_case("hardened")
 }
 
+/// Runtime representation of a printf argument as it will be pushed
+/// through the snprintf/fprintf vararg boundary.
+///
+/// `Long` and `Ulong` use `c_longlong` / `c_ulonglong` because on every
+/// ABI the conformance matrix currently targets (x86_64 Linux, aarch64
+/// Linux — both LP64) `c_long`, `c_longlong`, `ptrdiff_t`, `size_t`,
+/// and `intmax_t` all have the same size. The `LP64_ASSUMPTION` static
+/// assertion below fails the build on any target where that stops
+/// holding, which is the point where bd-1tvbi's split-by-ABI-width
+/// design becomes load-bearing.
 #[derive(Debug)]
 enum PrintfArg {
     Int(c_int),
@@ -2498,6 +2508,29 @@ enum PrintfArg {
     Str(CString),
     NullPtr,
 }
+
+/// Compile-time guardrail for the `PrintfArg::Long`/`Ulong` unification.
+///
+/// On any ABI where `c_long`, `size_t`, `ptrdiff_t`, or `intmax_t` is
+/// narrower than `c_longlong`, a %ld/%zd/%td/%jd/%q[duxo] in the
+/// format string would require the executor to push an ABI-specific
+/// width, not a uniform 64-bit slot. That refactor is bd-1tvbi's
+/// scope — this assertion makes the assumption explicit so the build
+/// fails the moment a caller picks a non-LP64 target.
+const _: () = {
+    assert!(
+        std::mem::size_of::<core::ffi::c_long>() == std::mem::size_of::<core::ffi::c_longlong>(),
+        "PrintfArg::Long assumes LP64-style `long` == `long long`; refactor bd-1tvbi before building for non-LP64 targets",
+    );
+    assert!(
+        std::mem::size_of::<usize>() == std::mem::size_of::<core::ffi::c_longlong>(),
+        "PrintfArg::Long/Ulong assumes size_t == long long; refactor bd-1tvbi before building for non-LP64 targets",
+    );
+    assert!(
+        std::mem::size_of::<isize>() == std::mem::size_of::<core::ffi::c_longlong>(),
+        "PrintfArg::Long assumes ptrdiff_t == long long; refactor bd-1tvbi before building for non-LP64 targets",
+    );
+};
 
 /// Promote PrintfArg values in-place to match the widths demanded by
 /// length modifiers in `fmt`. On 64-bit Linux a `%ld/%lld/%jd/%zd/%td`
