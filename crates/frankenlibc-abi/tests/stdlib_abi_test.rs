@@ -1149,6 +1149,28 @@ fn sched_getparam_negative_pid_null_output_sets_einval_like_host() {
 }
 
 #[test]
+fn sched_getparam_nonexistent_pid_null_output_sets_einval_like_host() {
+    let nonexistent_pid = libc::pid_t::MAX;
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::sched_getparam(nonexistent_pid, ptr::null_mut()) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { sched_getparam(nonexistent_pid, ptr::null_mut()) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EINVAL);
+}
+
+#[test]
 fn sched_getparam_nonexistent_pid_valid_output_sets_esrch_like_host() {
     let nonexistent_pid = libc::pid_t::MAX;
     let mut host_param = libc::sched_param { sched_priority: -1 };
