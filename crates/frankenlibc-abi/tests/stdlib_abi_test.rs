@@ -3964,6 +3964,50 @@ fn renameat2_invalid_flags_override_null_newpath_with_einval_like_host() {
 }
 
 #[test]
+fn renameat2_invalid_flags_override_null_oldpath_with_einval_like_host() {
+    let invalid_flags = 0x8000_0000_u32;
+    let dot = CString::new(".").unwrap();
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            ptr::null::<libc::c_char>(),
+            libc::AT_FDCWD,
+            dot.as_ptr(),
+            invalid_flags,
+        )
+    };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe {
+        renameat2(
+            libc::AT_FDCWD,
+            ptr::null(),
+            libc::AT_FDCWD,
+            dot.as_ptr(),
+            invalid_flags,
+        )
+    };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(libc::c_long::from(abi_rc), host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(
+        abi_err,
+        libc::EINVAL,
+        "unexpected errno from renameat2(AT_FDCWD, NULL, AT_FDCWD, \".\", 0x80000000): {abi_err}"
+    );
+}
+
+#[test]
 fn renameat2_null_oldpath_sets_efault() {
     let dot = CString::new(".").unwrap();
 
