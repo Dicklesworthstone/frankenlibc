@@ -3000,17 +3000,25 @@ fn eventfd_write_valid_fd_forbidden_all_ones_sets_einval() {
     assert!(fd >= 0, "eventfd should create a writable descriptor");
 
     unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc = unsafe { libc::eventfd_write(fd, u64::MAX) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
         *__errno_location() = 0;
     }
-    let rc = unsafe { eventfd_write(fd, u64::MAX) };
-    let err = unsafe { *__errno_location() };
+    let abi_rc = unsafe { eventfd_write(fd, u64::MAX) };
+    let abi_err = unsafe { *__errno_location() };
 
     unsafe {
         libc::close(fd);
     }
 
-    assert_eq!(rc, -1);
-    assert_eq!(err, libc::EINVAL);
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EINVAL);
 }
 
 #[test]
