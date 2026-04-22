@@ -210,6 +210,32 @@ fn sched_getaffinity_invalid_pid_zero_size_sets_einval() {
 }
 
 #[test]
+fn sched_getaffinity_zero_size_valid_mask_sets_einval_like_host() {
+    let _guard = SCHED_AFFINITY_TEST_GUARD
+        .lock()
+        .expect("affinity test guard lock should succeed");
+    let mut cpuset: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let host_rc =
+        unsafe { libc::sched_getaffinity(0, 0, (&mut cpuset as *mut libc::cpu_set_t).cast()) };
+    let host_err = unsafe { *libc::__errno_location() };
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let abi_rc = unsafe { sched_getaffinity(0, 0, (&mut cpuset as *mut libc::cpu_set_t).cast()) };
+    let abi_err = unsafe { *__errno_location() };
+
+    assert_eq!(host_rc, -1);
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_err, host_err);
+    assert_eq!(abi_err, libc::EINVAL);
+}
+
+#[test]
 fn sched_getaffinity_valid_size_null_mask_sets_efault_like_host() {
     let _guard = SCHED_AFFINITY_TEST_GUARD
         .lock()
