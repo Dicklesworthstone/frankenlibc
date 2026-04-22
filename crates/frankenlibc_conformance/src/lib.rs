@@ -2499,6 +2499,111 @@ enum PrintfArg {
     NullPtr,
 }
 
+/// Promote PrintfArg values in-place to match the widths demanded by
+/// length modifiers in `fmt`. On 64-bit Linux a `%ld/%lld/%jd/%zd/%td`
+/// arg is i64 via varargs (16 bytes for long double, which we cannot
+/// represent and thus skip). Without this pass the executor would
+/// pass c_int (4 bytes) and glibc's 8-byte read would see garbage in
+/// the upper 32 bits — bd-luc3d.
+fn promote_args_by_format(fmt: &str, args: &mut [PrintfArg]) {
+    let bytes = fmt.as_bytes();
+    let mut pos = 0;
+    let mut arg_idx = 0usize;
+
+    while pos < bytes.len() {
+        if bytes[pos] != b'%' {
+            pos += 1;
+            continue;
+        }
+        pos += 1;
+        if pos >= bytes.len() {
+            break;
+        }
+        if bytes[pos] == b'%' {
+            pos += 1;
+            continue;
+        }
+        while pos < bytes.len() && matches!(bytes[pos], b'-' | b'+' | b' ' | b'#' | b'0' | b'\'') {
+            pos += 1;
+        }
+        if pos < bytes.len() && bytes[pos] == b'*' {
+            arg_idx += 1;
+            pos += 1;
+        } else {
+            while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+                pos += 1;
+            }
+        }
+        if pos < bytes.len() && bytes[pos] == b'.' {
+            pos += 1;
+            if pos < bytes.len() && bytes[pos] == b'*' {
+                arg_idx += 1;
+                pos += 1;
+            } else {
+                while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+                    pos += 1;
+                }
+            }
+        }
+        let mut long_like = false;
+        if pos < bytes.len() {
+            match bytes[pos] {
+                b'l' => {
+                    long_like = true;
+                    pos += 1;
+                    if pos < bytes.len() && bytes[pos] == b'l' {
+                        pos += 1;
+                    }
+                }
+                b'j' | b'z' | b't' | b'q' => {
+                    long_like = true;
+                    pos += 1;
+                }
+                b'L' | b'h' => {
+                    pos += 1;
+                    if pos < bytes.len() && bytes[pos] == b'h' {
+                        pos += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+        let conv = bytes[pos];
+        pos += 1;
+        match conv {
+            b'%' | b'm' => {}
+            b'd' | b'i' if long_like => {
+                if let Some(slot) = args.get_mut(arg_idx)
+                    && let PrintfArg::Int(v) = *slot
+                {
+                    *slot = PrintfArg::Long(v as c_longlong);
+                }
+                arg_idx += 1;
+            }
+            b'u' | b'x' | b'X' | b'o' if long_like => {
+                if let Some(slot) = args.get_mut(arg_idx) {
+                    match *slot {
+                        PrintfArg::Int(v) => {
+                            *slot = PrintfArg::Ulong((v as i64) as u64);
+                        }
+                        PrintfArg::Long(v) => {
+                            *slot = PrintfArg::Ulong(v as u64);
+                        }
+                        _ => {}
+                    }
+                }
+                arg_idx += 1;
+            }
+            _ => {
+                arg_idx += 1;
+            }
+        }
+    }
+}
+
 fn parse_printf_args(inputs: &serde_json::Value) -> Result<Vec<PrintfArg>, String> {
     let Some(values) = inputs.get("args").and_then(serde_json::Value::as_array) else {
         return Ok(Vec::new());
@@ -2926,8 +3031,9 @@ fn execute_fprintf_case(
     };
     let format = parse_string(inputs, "format")?;
     let format_c =
-        CString::new(format).map_err(|_| String::from("format contains interior NUL"))?;
-    let args = parse_printf_args(inputs)?;
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
 
     let path_c = CString::new(path).expect("static path has no interior NUL");
     let mode_c = CString::new(open_mode).expect("static mode has no interior NUL");
@@ -2984,8 +3090,9 @@ fn execute_snprintf_case(
     let size = parse_usize(inputs, "size")?;
     let format = parse_string(inputs, "format")?;
     let format_c =
-        CString::new(format).map_err(|_| String::from("format contains interior NUL"))?;
-    let args = parse_printf_args(inputs)?;
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
 
     let mut impl_buf = vec![0 as c_char; size.max(1)];
     let _ = run_impl_snprintf(impl_buf.as_mut_ptr(), size, format_c.as_ptr(), &args)?;
@@ -3025,8 +3132,9 @@ fn execute_sprintf_case(
 
     let format = parse_string(inputs, "format")?;
     let format_c =
-        CString::new(format).map_err(|_| String::from("format contains interior NUL"))?;
-    let args = parse_printf_args(inputs)?;
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
 
     const SPRINTF_BUF_SIZE: usize = 4096;
     let mut impl_buf = vec![0 as c_char; SPRINTF_BUF_SIZE];

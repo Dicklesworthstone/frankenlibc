@@ -267,20 +267,11 @@ fn printf_conformance_covers_special_values() {
 /// rather than failing so dispatch/packaging coverage stays green; each
 /// underlying gap is tracked in its own bead.
 const KNOWN_IMPL_GAPS: &[(&str, &str)] = &[
-    // bd-luc3d: executor passes c_int/c_double without honoring length
-    // modifiers (%td needs ptrdiff_t/i64, %Lf needs long double/f80);
-    // glibc reads the wider width from varargs and host_parity
-    // collapses. Needs format-aware arg-width promotion.
-    ("sprintf_t_d", "bd-luc3d"),
+    // bd-luc3d: long double (%Lf/%Le) is 80-bit on x86_64 and has no
+    // Rust representation, so we cannot preserve it across the
+    // varargs boundary from a JSON f64 fixture value.
     ("sprintf_Lf_basic", "bd-luc3d"),
     ("sprintf_Le_basic", "bd-luc3d"),
-    ("sprintf_ll_d", "bd-luc3d"),
-    ("sprintf_j_d", "bd-luc3d"),
-    ("sprintf_llx_max", "bd-luc3d"),
-    ("sprintf_lld_negative", "bd-luc3d"),
-    ("sprintf_zd_negative", "bd-luc3d"),
-    ("sprintf_l_d", "bd-luc3d"),
-    ("sprintf_lo_max", "bd-luc3d"),
     // bd-qij6l: modern glibc disables %n in snprintf (FORTIFY); our
     // impl honors it. Parity check needs either fixture relaxation or
     // a host-side wrapper. sprintf_n_with_args also triggers a
