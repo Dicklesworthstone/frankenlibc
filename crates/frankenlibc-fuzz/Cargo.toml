@@ -36,6 +36,11 @@ path = "fuzz_targets/fuzz_printf.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_printf_adversarial"
+path = "fuzz_targets/fuzz_printf_adversarial.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_resolver"
 path = "fuzz_targets/fuzz_resolver.rs"
 doc = false
