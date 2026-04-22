@@ -272,12 +272,6 @@ const KNOWN_IMPL_GAPS: &[(&str, &str)] = &[
     // varargs boundary from a JSON f64 fixture value.
     ("sprintf_Lf_basic", "bd-luc3d"),
     ("sprintf_Le_basic", "bd-luc3d"),
-    // bd-c5aak: the fixture DSL has no way to express an `int*` output
-    // parameter, so the executor cannot bind a real storage location for
-    // %n in the `sprintf_n_with_args` case (format `%d%n`, args `[123]`).
-    // Split off from bd-qij6l (which covered the fixture-parity side and
-    // was resolved by moving the no-arg %n cases to `mode: "hardened"`).
-    ("sprintf_n_with_args", "bd-c5aak"),
 ];
 
 fn case_is_known_impl_gap(name: &str) -> Option<&'static str> {

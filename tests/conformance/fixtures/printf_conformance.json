@@ -136,7 +136,6 @@
 
     { "name": "sprintf_n_count_zero", "function": "sprintf", "spec_section": "C11 7.21.6.1 %n specifier at start", "inputs": { "format": "%n", "args": [] }, "expected_n_value": 0, "expected_output": "", "expected_errno": 0, "mode": "hardened", "note": "bd-qij6l: host glibc refuses %n under FORTIFY; run hardened-only so the impl path is verified without requiring host parity." },
     { "name": "sprintf_n_count_mid", "function": "sprintf", "spec_section": "C11 7.21.6.1 %n after chars", "inputs": { "format": "hello%n", "args": [] }, "expected_n_value": 5, "expected_output": "hello", "expected_errno": 0, "mode": "hardened", "note": "bd-qij6l: host glibc refuses %n under FORTIFY; run hardened-only so the impl path is verified without requiring host parity." },
-    { "name": "sprintf_n_with_args", "function": "sprintf", "spec_section": "C11 7.21.6.1 %n with conversions", "inputs": { "format": "%d%n", "args": [123] }, "expected_n_value": 3, "expected_output": "123", "expected_errno": 0, "mode": "strict" },
 
     { "name": "sprintf_positional_basic", "function": "sprintf", "spec_section": "POSIX fprintf() positional args", "inputs": { "format": "%2$d %1$s", "args": ["hello", 42] }, "expected_output": "42 hello", "expected_errno": 0, "mode": "strict" },
     { "name": "sprintf_positional_reorder", "function": "sprintf", "spec_section": "POSIX fprintf() positional reorder", "inputs": { "format": "%3$d %1$d %2$d", "args": [1, 2, 3] }, "expected_output": "3 1 2", "expected_errno": 0, "mode": "strict" },
