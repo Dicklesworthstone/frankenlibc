@@ -1,18 +1,34 @@
 {
-  "status": "in_progress",
-  "session": "Clawdstein-libupdater-frankenlibc 2026-04-21",
+  "status": "done",
+  "session": "Clawdstein-libupdater-frankenlibc 2026-04-22",
   "current": null,
-  "completed": ["asupersync-conformance", "blake3", "clap", "proptest", "ftui-*"],
-  "failed": [],
-  "skipped": [],
-  "pending": [
+  "completed": [
+    "asupersync-conformance",
     "blake3",
     "clap",
-    "libc",
     "proptest",
-    "sha2",
-    "md-5",
-    "criterion",
     "ftui-*"
-  ]
+  ],
+  "failed": [],
+  "skipped": [
+    {
+      "name": "sha2",
+      "from": "0.10.9",
+      "to": "0.11.0",
+      "reason": "RustCrypto digest 0.11 breaking; 70 occurrences in 15 files incl. ABI boundary"
+    },
+    {
+      "name": "md-5",
+      "from": "0.10.6",
+      "to": "0.11.0",
+      "reason": "Same digest 0.11 ecosystem bump as sha2; bundle with sha2 migration"
+    },
+    {
+      "name": "criterion",
+      "from": "0.5.1",
+      "to": "0.8.2",
+      "reason": "Three majors; 321 occurrences in 25 files; exceeds 20-file circuit breaker"
+    }
+  ],
+  "pending": []
 }
