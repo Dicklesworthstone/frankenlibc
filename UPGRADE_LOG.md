@@ -125,3 +125,23 @@
 **Skipped (needs human):** 3 (sha2, md-5, criterion — all exceed 20-file refactor circuit-breaker)
 **Failed:** 0
 **Circuit breaker:** clean finish (within 5-dep scope, no 5-consecutive-failure trigger).
+
+## 2026-04-22 — Exhaustive stable refresh + asupersync review
+
+- **Scope:** workspace root `Cargo.toml`, `crates/frankenlibc*/Cargo.toml`, `tools/stdio_synth/Cargo.toml`, and the code fallout needed to accept `sha2`/`md-5` 0.11 plus `criterion` 0.8.
+- **Manifest state:** workspace and leaf crates are now pinned to the current stable releases already available on crates.io for the tracked set:
+  `parking_lot 0.12.5`, `thiserror 2.0.18`, `serde 1.0.228`, `serde_json 1.0.149`, `serde_yaml 0.9.34`, `tracing 0.1.44`, `blake3 1.8.4`, `sha2 0.11.0`, `md-5 0.11.0`, `clap 4.6.1`, `criterion 0.8.2`, `libc 0.2.185`, `libm 0.2.16`, `proptest 1.11.0`, `libfuzzer-sys 0.4.12`, `arbitrary 1.4.2`, plus the existing `asupersync-conformance 0.3.1` / `ftui-* 0.3.1` companion-tooling line.
+- **Code fallout addressed:**
+  - `sha2` / `md-5` 0.11 digest outputs no longer implement `LowerHex`, so the workspace now hex-encodes finalized digests explicitly in build tooling and harness code instead of relying on `format!("{:x}", digest)`.
+  - `criterion` 0.8 deprecates `criterion::black_box`, so bench targets now use `std::hint::black_box`.
+- **Direct `asupersync = "0.3.1"` decision:** **not added**.
+  - `frankenlibc-membrane`, `frankenlibc-core`, and the ABI/runtime path are not Tokio-style async services and do not currently need a production async runtime dependency.
+  - The project contract in `AGENTS.md` keeps `/dp/asupersync` and `/dp/frankentui` in build/test-tooling roles only.
+  - The current benefit is already captured by `asupersync-conformance = "0.3.1"` in harness/tooling workflows; adding direct `asupersync` to membrane/core/runtime would violate the workspace’s runtime/tooling boundary without a concrete consumer.
+- **Validation via `rch` with `CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_cod`:**
+  - `cargo update` — success.
+  - `cargo check --workspace --all-targets` — success.
+  - `cargo fmt --check` — success (after running `cargo fmt` once to normalize import order).
+  - `cargo clippy --workspace --all-targets -- -D warnings` — success after remote `/tmp` pressure remediation by pruning only `"$CARGO_TARGET_DIR"/debug/incremental` and retrying with `CARGO_INCREMENTAL=0`.
+  - `cargo test --workspace` — **fails** in the current tree at `frankenlibc-abi/tests/iconv_abi_test.rs`, test `hardened_mode_iconv_invalid_utf8_reports_eilseq`, with a stack overflow / abort during the workspace run.
+- **Remote build-note:** the selected worker stores this target under `/data/tmp/cargo-target`; pruning `debug/incremental` reduced it from roughly `1.5G` to `866M`, which was enough for clippy but not enough to guarantee a fully stable workspace test rerun on every worker selection.
