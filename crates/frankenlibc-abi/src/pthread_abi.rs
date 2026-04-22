@@ -45,6 +45,7 @@ use crate::host_resolve::{
     host_pthread_detach_raw as resolved_thread_detach_raw,
     host_pthread_exit_raw as resolved_thread_exit_raw,
     host_pthread_join_raw as resolved_thread_join_raw,
+    host_pthread_self_raw as resolved_thread_self_raw,
 };
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
@@ -132,7 +133,12 @@ struct HostThreadStartContext {
     start_routine: StartRoutine,
     arg: *mut c_void,
     host_thread: AtomicUsize,
+    handoff_state: AtomicI32,
 }
+
+const HOST_THREAD_HANDOFF_PENDING: i32 = 0;
+const HOST_THREAD_HANDOFF_READY: i32 = 1;
+const HOST_THREAD_HANDOFF_SPIN_LIMIT: usize = 64;
 
 static THREAD_HANDLE_REGISTRY: LazyLock<Mutex<HashMap<usize, ManagedThreadRecord>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -789,6 +795,72 @@ fn wait_for_host_thread_registration(thread: libc::pthread_t) {
     }
 }
 
+fn publish_host_thread_handoff(
+    start_ctx: *const HostThreadStartContext,
+    host_thread: libc::pthread_t,
+) {
+    // SAFETY: the parent thread owns `start_ctx` until the child trampoline takes
+    // ownership, so publishing the host thread handle through the atomics is safe.
+    let start_ctx = unsafe { &*start_ctx };
+    start_ctx
+        .host_thread
+        .store(host_thread as usize, Ordering::Release);
+    start_ctx
+        .handoff_state
+        .store(HOST_THREAD_HANDOFF_READY, Ordering::Release);
+    #[cfg(target_os = "linux")]
+    {
+        let _ = futex_wake_private(&start_ctx.handoff_state, 1);
+    }
+}
+
+fn wait_for_host_thread_handoff(start_ctx: &HostThreadStartContext) -> libc::pthread_t {
+    for _ in 0..HOST_THREAD_HANDOFF_SPIN_LIMIT {
+        let raw = start_ctx.host_thread.load(Ordering::Acquire);
+        if raw != 0 {
+            return raw as libc::pthread_t;
+        }
+        core::hint::spin_loop();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        while start_ctx.handoff_state.load(Ordering::Acquire) == HOST_THREAD_HANDOFF_PENDING {
+            let rc = futex_wait_private(&start_ctx.handoff_state, HOST_THREAD_HANDOFF_PENDING);
+            if rc == 0 {
+                continue;
+            }
+            let errno = unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) };
+            if errno == libc::EAGAIN || errno == libc::EINTR {
+                continue;
+            }
+            break;
+        }
+        let raw = start_ctx.host_thread.load(Ordering::Acquire);
+        if raw != 0 {
+            return raw as libc::pthread_t;
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        for _ in 0..HOST_THREAD_HANDOFF_SPIN_LIMIT {
+            let raw = start_ctx.host_thread.load(Ordering::Acquire);
+            if raw != 0 {
+                return raw as libc::pthread_t;
+            }
+            raw_syscall::sys_sched_yield();
+        }
+    }
+
+    if let Some(host_self) = resolved_thread_self_raw() {
+        // SAFETY: the resolved host symbol points to `pthread_self`.
+        return unsafe { host_self() };
+    }
+
+    0
+}
+
 fn resolve_registered_host_thread_tid(thread: libc::pthread_t) -> Option<i32> {
     let thread_key = thread as usize;
     let tid = HOST_THREAD_TID_REGISTRY
@@ -1228,6 +1300,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             start_routine,
             arg,
             host_thread: AtomicUsize::new(0),
+            handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
         }));
         let mut host_thread: libc::pthread_t = 0;
         let rc = unsafe {
@@ -1243,12 +1316,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
         } else {
             // SAFETY: pthread_create validated `thread_out` as writable before dispatch.
             unsafe { *thread_out = host_thread };
-            // SAFETY: `start_ctx` remains owned by the child trampoline.
-            unsafe {
-                (*start_ctx)
-                    .host_thread
-                    .store(host_thread as usize, Ordering::Release)
-            };
+            publish_host_thread_handoff(start_ctx, host_thread);
             wait_for_host_thread_registration(host_thread);
         }
         return rc;
@@ -1359,6 +1427,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             start_routine,
             arg,
             host_thread: AtomicUsize::new(0),
+            handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
         }));
         let mut host_thread: libc::pthread_t = 0;
         unsafe {
@@ -1372,9 +1441,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
                 drop(Box::from_raw(start_ctx));
             } else {
                 *thread_out = host_thread;
-                (*start_ctx)
-                    .host_thread
-                    .store(host_thread as usize, Ordering::Release);
+                publish_host_thread_handoff(start_ctx, host_thread);
                 wait_for_host_thread_registration(host_thread);
             }
             create_rc
@@ -1391,15 +1458,11 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
 unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
     let start_ctx = unsafe { Box::from_raw(arg.cast::<HostThreadStartContext>()) };
     let _ = CURRENT_THREADING_BACKEND.try_with(|backend| backend.set(THREAD_BACKEND_HOST));
-    let host_thread = loop {
-        let raw = start_ctx.host_thread.load(Ordering::Acquire);
-        if raw != 0 {
-            break raw as libc::pthread_t;
-        }
-        core::hint::spin_loop();
-    };
-    let _ = CURRENT_PTHREAD_SELF_CACHE.try_with(|cache| cache.set(host_thread));
-    remember_host_thread_tid(host_thread, core_self_tid());
+    let host_thread = wait_for_host_thread_handoff(&start_ctx);
+    if host_thread != 0 {
+        let _ = CURRENT_PTHREAD_SELF_CACHE.try_with(|cache| cache.set(host_thread));
+        remember_host_thread_tid(host_thread, core_self_tid());
+    }
     let start_routine = start_ctx.start_routine;
     let start_arg = start_ctx.arg;
     drop(start_ctx);
@@ -5960,6 +6023,10 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::time::Duration;
 
+    unsafe extern "C" fn noop_host_start(_arg: *mut c_void) -> *mut c_void {
+        std::ptr::null_mut()
+    }
+
     fn alloc_mutex_ptr() -> *mut libc::pthread_mutex_t {
         let boxed: Box<libc::pthread_mutex_t> = Box::new(unsafe { std::mem::zeroed() });
         Box::into_raw(boxed)
@@ -6041,6 +6108,22 @@ mod tests {
             assert_eq!(pthread_mutex_destroy(mutex), 0);
             free_mutex_ptr(mutex);
         }
+    }
+
+    #[test]
+    fn host_thread_handoff_waiter_observes_parent_publication() {
+        let start_ctx = Arc::new(HostThreadStartContext {
+            start_routine: noop_host_start,
+            arg: std::ptr::null_mut(),
+            host_thread: AtomicUsize::new(0),
+            handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
+        });
+        let waiter_ctx = Arc::clone(&start_ctx);
+        let waiter = std::thread::spawn(move || wait_for_host_thread_handoff(&waiter_ctx));
+
+        publish_host_thread_handoff(Arc::as_ptr(&start_ctx), 0x1234usize as libc::pthread_t);
+
+        assert_eq!(waiter.join().unwrap(), 0x1234usize as libc::pthread_t);
     }
 
     fn reset_cancel_state_for_tests() {
