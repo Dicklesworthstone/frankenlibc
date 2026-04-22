@@ -126,6 +126,11 @@ path = "fuzz_targets/fuzz_open_syscalls.rs"
 doc = false
 
 [[bin]]
+name = "fuzz_read_write"
+path = "fuzz_targets/fuzz_read_write.rs"
+doc = false
+
+[[bin]]
 name = "fuzz_strftime"
 path = "fuzz_targets/fuzz_strftime.rs"
 doc = false
