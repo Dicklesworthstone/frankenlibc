@@ -962,11 +962,15 @@ fn scan_hex_float(
 fn scan_char(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     let n = spec.width.unwrap_or(1);
-    if pos + n > input.len() {
+    // Guard against pathological widths that overflow pos + n. Under
+    // debug_assertions `usize` add panics; in release it wraps and
+    // would skip the bounds check below, reading past input. (bd-35vob)
+    let end = pos.checked_add(n)?;
+    if end > input.len() {
         return None;
     }
-    let chars = input[pos..pos + n].to_vec();
-    Some((Some(ScanValue::Char(chars)), pos + n))
+    let chars = input[pos..end].to_vec();
+    Some((Some(ScanValue::Char(chars)), end))
 }
 
 /// Scan a string (%s). Skips whitespace, then reads non-whitespace.

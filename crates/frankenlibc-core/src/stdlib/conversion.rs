@@ -15,14 +15,14 @@ pub enum ConversionStatus {
 
 pub fn atoi(s: &[u8]) -> i32 {
     let (val, _, _) = strtol_impl(s, 10);
-    // Clamp to i32 range (C atoi is equivalent to (int)strtol which clamps).
-    if val > i32::MAX as i64 {
-        i32::MAX
-    } else if val < i32::MIN as i64 {
-        i32::MIN
-    } else {
-        val as i32
-    }
+    // POSIX SUSv4: atoi(str) ≡ (int) strtol(str, NULL, 10). The cast
+    // on 2's-complement targets (all supported archs) is a
+    // truncation, not a saturating clamp. The earlier clamp-to-
+    // INT_MAX logic diverged from glibc's observable behavior on
+    // overflow and tripped fuzz_stdlib's atoi-vs-strtol parity
+    // assertion (bd-ie8zc). C standard leaves overflow UB; POSIX
+    // pins it down to the (int)long_val cast result.
+    val as i32
 }
 
 pub fn atol(s: &[u8]) -> i64 {

@@ -3145,15 +3145,24 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                                     frankenlibc_membrane::runtime_math::MembraneAction::Repair(_)
                                 )
                             {
+                                // Only escalate to "skip the write" when we
+                                // have POSITIVE evidence the allocation is
+                                // too small. Absence of allocator tracking
+                                // (`known_remaining` returns None for stack
+                                // locals and external mallocs) is NOT
+                                // evidence of danger — the membrane's
+                                // decide() already ran; if its verdict was
+                                // non-Deny we trust the caller's pointer.
+                                // (bd-xx2j1: POSIX %n must write to the
+                                // count slot even for untracked pointers.)
                                 if let Some(rem) = crate::malloc_abi::known_remaining(ptr_val) {
                                     if rem < size {
                                         should_write = false;
                                         frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
                                     }
-                                } else {
-                                    should_write = false;
-                                    frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
                                 }
+                                // No `else` branch: untracked allocations
+                                // are not evidence of danger. (bd-xx2j1)
                             }
 
                             if should_write {

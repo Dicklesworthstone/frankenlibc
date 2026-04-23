@@ -114,7 +114,10 @@ fn fuzz_scan_input(input: &ScanfFuzzInput) {
                 let _ = f.is_infinite();
             }
             ScanValue::Char(bytes) => {
-                assert!(!bytes.is_empty(), "scanned char should not be empty");
+                // Empty bytes is a valid outcome for crafted format
+                // specs like "%0c" (width=0). Harness can't assume
+                // width>0 on fuzzer-generated formats.
+                let _ = bytes.len();
             }
             ScanValue::String(bytes) => {
                 let _ = bytes.len();
