@@ -12,8 +12,21 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicI32;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Serializes all gai_*/getaddrinfo_a tests in this binary.
+///
+/// host glibc's async-getaddrinfo machinery (gai_cancel, gai_error,
+/// gai_suspend, getaddrinfo_a) shares a single in-process request
+/// queue and a global state cache. Concurrent host gai_* calls in
+/// parallel test threads can mutate that state between our captured
+/// host snapshot and the matching abi snapshot, breaking the
+/// host-vs-abi parity assertions. Reproduced as bd-el0v8 — flaked
+/// `synchronous_gai_wrappers_match_host_degenerate_contracts` ~25%
+/// of stress runs at --test-threads=16.
+static GAI_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::glibc_internal_abi::__sysv_signal;
@@ -2498,6 +2511,7 @@ fn unshare_invalid_flags_sets_errno_like_host() {
 
 #[test]
 fn getaddrinfo_a_zero_item_requests_report_success_without_touching_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
@@ -2516,6 +2530,7 @@ fn getaddrinfo_a_zero_item_requests_report_success_without_touching_errno() {
 
 #[test]
 fn getaddrinfo_a_all_null_request_slots_report_success_without_touching_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
@@ -2534,6 +2549,7 @@ fn getaddrinfo_a_all_null_request_slots_report_success_without_touching_errno() 
 
 #[test]
 fn getaddrinfo_a_zeroed_gaicb_request_slots_report_success_without_touching_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut first: GaicbShape = unsafe { std::mem::zeroed() };
     let mut second: GaicbShape = unsafe { std::mem::zeroed() };
 
@@ -2576,6 +2592,7 @@ fn getaddrinfo_a_zeroed_gaicb_request_slots_report_success_without_touching_errn
 
 #[test]
 fn getaddrinfo_a_nowait_degenerate_requests_report_success_without_touching_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
@@ -2601,6 +2618,7 @@ fn getaddrinfo_a_nowait_degenerate_requests_report_success_without_touching_errn
 
 #[test]
 fn getaddrinfo_a_nowait_degenerate_requests_preserve_errno_like_host() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     type HostGetaddrinfoAFn =
         unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
 
@@ -2658,6 +2676,7 @@ fn getaddrinfo_a_nowait_degenerate_requests_preserve_errno_like_host() {
 
 #[test]
 fn getaddrinfo_a_wait_zero_requests_preserve_errno_like_host() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     type HostGetaddrinfoAFn =
         unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
 
@@ -2715,6 +2734,7 @@ fn getaddrinfo_a_wait_zero_requests_preserve_errno_like_host() {
 
 #[test]
 fn getaddrinfo_a_mode_semantics_match_host_across_empty_and_all_null_requests() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     type HostGetaddrinfoAFn =
         unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
 
@@ -2785,6 +2805,7 @@ fn getaddrinfo_a_mode_semantics_match_host_across_empty_and_all_null_requests() 
 
 #[test]
 fn getaddrinfo_a_invalid_modes_report_eai_system_with_einval_like_host() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     type HostGetaddrinfoAFn =
         unsafe extern "C" fn(c_int, *mut *mut c_void, c_int, *mut c_void) -> c_int;
 
@@ -2835,6 +2856,7 @@ fn getaddrinfo_a_invalid_modes_report_eai_system_with_einval_like_host() {
 
 #[test]
 fn getaddrinfo_a_non_null_requests_still_fall_back_to_eai_system() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         *__errno_location() = 0;
     }
@@ -2859,6 +2881,7 @@ fn getaddrinfo_a_non_null_requests_still_fall_back_to_eai_system() {
 
 #[test]
 fn gai_cancel_reports_all_done_for_synchronous_stub_handles() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
@@ -2876,6 +2899,7 @@ fn gai_cancel_reports_all_done_for_synchronous_stub_handles() {
 
 #[test]
 fn gai_error_stub_family_still_sets_errno_for_eai_system() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         *__errno_location() = 0;
     }
@@ -2900,6 +2924,7 @@ fn gai_error_stub_family_still_sets_errno_for_eai_system() {
 
 #[test]
 fn gai_error_zeroed_gaicb_reports_success_without_touching_errno() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut request: GaicbShape = unsafe { std::mem::zeroed() };
     unsafe {
         *__errno_location() = libc::E2BIG;
@@ -2911,6 +2936,7 @@ fn gai_error_zeroed_gaicb_reports_success_without_touching_errno() {
 
 #[test]
 fn gai_error_zeroed_gaicb_preserves_errno_like_host() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     type HostGaiErrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 
     let Some(host_gai_error) = (unsafe { load_host_symbol("gai_error") })
@@ -2939,6 +2965,7 @@ fn gai_error_zeroed_gaicb_preserves_errno_like_host() {
 
 #[test]
 fn gai_suspend_reports_all_done_for_synchronous_stub_handles() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         *__errno_location() = libc::E2BIG;
     }
@@ -2961,6 +2988,7 @@ fn gai_suspend_reports_all_done_for_synchronous_stub_handles() {
 
 #[test]
 fn gai_suspend_degenerate_requests_ignore_invalid_timeouts() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     const EMPTY_INVALID_NANOSECONDS_SENTINEL: c_int = libc::E2BIG;
     const EMPTY_INVALID_SECONDS_SENTINEL: c_int = libc::EOVERFLOW;
     const NULL_SLOT_INVALID_NANOSECONDS_SENTINEL: c_int = libc::ENAMETOOLONG;
@@ -3022,6 +3050,7 @@ fn gai_suspend_degenerate_requests_ignore_invalid_timeouts() {
 
 #[test]
 fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     type HostGaiCancelFn = unsafe extern "C" fn(*mut c_void) -> c_int;
     type HostGaiErrorFn = unsafe extern "C" fn(*mut c_void) -> c_int;
     type HostGaiSuspendFn =
@@ -3152,6 +3181,7 @@ fn synchronous_gai_wrappers_match_host_degenerate_contracts() {
 
 #[test]
 fn gai_suspend_all_null_request_timeouts_match_host_contract() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     type HostGaiSuspendFn =
         unsafe extern "C" fn(*const *const c_void, c_int, *const libc::timespec) -> c_int;
     const NULL_SLOT_INVALID_NANOSECONDS_SENTINEL: c_int = libc::ENOTRECOVERABLE;
