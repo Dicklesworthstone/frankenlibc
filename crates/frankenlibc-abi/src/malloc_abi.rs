@@ -64,10 +64,49 @@ pub struct HostAllocatorResolutionMetrics {
 // runtime init, format strings in mode/policy setup) before TLS becomes
 // available and the normal allocator path takes over.
 
-static NATIVE_MALLOC_REENTRY: AtomicBool = AtomicBool::new(false);
-static NATIVE_CALLOC_REENTRY: AtomicBool = AtomicBool::new(false);
-static NATIVE_REALLOC_REENTRY: AtomicBool = AtomicBool::new(false);
-static NATIVE_FREE_REENTRY: AtomicBool = AtomicBool::new(false);
+// Recursion guards for the host allocator trampolines. These are
+// thread-local so that two threads simultaneously calling our malloc do
+// NOT see each other's "in flight" state and spuriously fall through to
+// `bump_alloc`. A process-global AtomicBool here previously caused
+// cross-thread false positives that returned bump-arena pointers to
+// callers that expected real glibc allocations (bd-wbqeo, family of
+// bd-zgifl / bd-wkpcv).
+//
+// `Cell<bool>` has a trivial drop, so the thread_local does NOT
+// register through `__cxa_thread_atexit_impl` and cannot trigger the
+// init_array deadlock fixed in bd-yf86e.
+//
+// `try_with` returns Err during early bootstrap before TLS is set up
+// and during thread shutdown after TLS is torn down. We treat both as
+// "in reentry" so the bump fallback still rescues us in those windows.
+thread_local! {
+    static NATIVE_MALLOC_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
+    static NATIVE_CALLOC_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
+    static NATIVE_REALLOC_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
+    static NATIVE_FREE_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Try to enter a per-thread reentry-guarded section.
+/// Returns `true` if the thread was NOT already inside this section
+/// (caller must call `leave_reentry_guard` to clear); `false` if we
+/// are reentering or TLS is unavailable (caller should bump-fallback).
+#[inline]
+fn enter_reentry_guard(cell: &'static std::thread::LocalKey<Cell<bool>>) -> bool {
+    cell.try_with(|c| {
+        if c.get() {
+            false
+        } else {
+            c.set(true);
+            true
+        }
+    })
+    .unwrap_or(false)
+}
+
+#[inline]
+fn leave_reentry_guard(cell: &'static std::thread::LocalKey<Cell<bool>>) {
+    let _ = cell.try_with(|c| c.set(false));
+}
 
 static BUMP_POS: AtomicUsize = AtomicUsize::new(0);
 const BUMP_SIZE: usize = 256 * 1024 * 1024; // 256 MiB to cover strict preload startup.
@@ -392,10 +431,7 @@ pub fn malloc_htm_snapshot_for_tests() -> crate::htm_fast_path::HtmSiteSnapshot 
 
 #[inline]
 unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
-    if NATIVE_MALLOC_REENTRY
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
+    if !enter_reentry_guard(&NATIVE_MALLOC_REENTRY_TLS) {
         return unsafe { bump_alloc(size) };
     }
     let ptr = if let Some(&ptr) = HOST_MALLOC_FN.get() {
@@ -415,16 +451,13 @@ unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
     } else {
         unsafe { bump_alloc(size) }
     };
-    NATIVE_MALLOC_REENTRY.store(false, Ordering::Release);
+    leave_reentry_guard(&NATIVE_MALLOC_REENTRY_TLS);
     result
 }
 
 #[inline]
 unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
-    if NATIVE_CALLOC_REENTRY
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
+    if !enter_reentry_guard(&NATIVE_CALLOC_REENTRY_TLS) {
         let Some(total) = nmemb.checked_mul(size) else {
             return std::ptr::null_mut();
         };
@@ -455,7 +488,7 @@ unsafe fn native_libc_calloc(nmemb: usize, size: usize) -> *mut c_void {
             unsafe { bump_alloc(total) }
         }
     };
-    NATIVE_CALLOC_REENTRY.store(false, Ordering::Release);
+    leave_reentry_guard(&NATIVE_CALLOC_REENTRY_TLS);
     result
 }
 
@@ -474,10 +507,7 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         }
         return out;
     }
-    if NATIVE_REALLOC_REENTRY
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
+    if !enter_reentry_guard(&NATIVE_REALLOC_REENTRY_TLS) {
         return unsafe { bump_alloc(size) };
     }
     let host_ptr = if let Some(&host_ptr) = HOST_REALLOC_FN.get() {
@@ -506,7 +536,7 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     } else {
         unsafe { bump_alloc(size) }
     };
-    NATIVE_REALLOC_REENTRY.store(false, Ordering::Release);
+    leave_reentry_guard(&NATIVE_REALLOC_REENTRY_TLS);
     result
 }
 
@@ -515,10 +545,7 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
     if is_bump_ptr(ptr) {
         return; // Bump allocator: free is a no-op.
     }
-    if NATIVE_FREE_REENTRY
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
+    if !enter_reentry_guard(&NATIVE_FREE_REENTRY_TLS) {
         return; // Reentrant free of non-bump ptr: no-op to avoid recursion.
     }
     let host_ptr = if let Some(&host_ptr) = HOST_FREE_FN.get() {
@@ -536,7 +563,7 @@ unsafe fn native_libc_free(ptr: *mut c_void) {
         let host_free: HostFreeFn = unsafe { std::mem::transmute(host_ptr) };
         unsafe { host_free(ptr) };
     }
-    NATIVE_FREE_REENTRY.store(false, Ordering::Release);
+    leave_reentry_guard(&NATIVE_FREE_REENTRY_TLS);
 }
 
 #[inline]
@@ -563,21 +590,20 @@ unsafe fn native_libc_posix_memalign(
     0
 }
 
-static NATIVE_MEMALIGN_REENTRY: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static NATIVE_MEMALIGN_REENTRY_TLS: Cell<bool> = const { Cell::new(false) };
+}
 
 #[inline]
 unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
-    if NATIVE_MEMALIGN_REENTRY
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
+    if !enter_reentry_guard(&NATIVE_MEMALIGN_REENTRY_TLS) {
         return unsafe { bump_alloc_aligned(size, alignment) };
     }
     let result = match unsafe { host_memalign_fn() } {
         Some(host_memalign) => unsafe { host_memalign(alignment, size) },
         None => unsafe { bump_alloc_aligned(size, alignment) },
     };
-    NATIVE_MEMALIGN_REENTRY.store(false, Ordering::Release);
+    leave_reentry_guard(&NATIVE_MEMALIGN_REENTRY_TLS);
     result
 }
 

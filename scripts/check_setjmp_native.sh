@@ -28,9 +28,14 @@ echo "[setjmp-native] building release ABI library via rch" >"${TEST_LOG}"
 rch exec -- env CARGO_TARGET_DIR="${BUILD_TARGET_DIR}" cargo build -p frankenlibc-abi --release \
   >>"${TEST_LOG}" 2>&1
 
-if [[ ! -f "${LIB}" && -f "${BUILD_LIB}" ]]; then
+if [[ -f "${BUILD_LIB}" ]]; then
+  # Always overwrite LIB with the freshly-built BUILD_LIB so a stale copy
+  # left over from a prior cargo run cannot mask a current fix
+  # (regression source for bd-yf86e during sweep validation).
   mkdir -p "$(dirname "${LIB}")"
-  cp "${BUILD_LIB}" "${LIB}"
+  if [[ "${BUILD_LIB}" != "${LIB}" ]]; then
+    cp "${BUILD_LIB}" "${LIB}"
+  fi
 fi
 
 if [[ ! -f "${LIB}" ]]; then
