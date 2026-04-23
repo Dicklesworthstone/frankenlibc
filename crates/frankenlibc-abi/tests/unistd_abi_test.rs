@@ -60,12 +60,23 @@ const GAI_BADFLAGS_NEGATIVE_MODE: c_int = -1;
 const GAI_BADFLAGS_POSITIVE_MODE: c_int = 2;
 const GAI_EAI_ALLDONE: c_int = -103;
 
+/// Mirror of glibc's `struct gaicb` (netdb.h). The first 4 pointer
+/// fields are documented; glibc reads `__return` (and historically
+/// the 5 `__unused` int slots) when implementing `gai_error`. The
+/// previous 32-byte layout omitted these trailing fields, so
+/// host_gai_error read past the struct boundary into uninitialized
+/// stack memory under parallel test pressure — produced bd-el0v8's
+/// "left=0 right=2" / "left=0 right=121360248" flake. (bd-el0v8)
 #[repr(C)]
 struct GaicbShape {
     ar_name: *const c_char,
     ar_service: *const c_char,
     ar_request: *const c_void,
     ar_result: *mut c_void,
+    /// `__return` per glibc — gai_error returns this value.
+    __return: c_int,
+    /// `__glibc_reserved`/`__unused` 5-element int tail.
+    __unused: [c_int; 5],
 }
 
 #[repr(C)]
@@ -2865,6 +2876,8 @@ fn getaddrinfo_a_non_null_requests_still_fall_back_to_eai_system() {
         ar_service: std::ptr::null(),
         ar_request: std::ptr::null(),
         ar_result: std::ptr::null_mut(),
+        __return: 0,
+        __unused: [0; 5],
     };
     let mut requests = [(&mut request as *mut GaicbShape).cast::<c_void>()];
     let rc = unsafe {
@@ -2914,6 +2927,8 @@ fn gai_error_stub_family_still_sets_errno_for_eai_system() {
         ar_service: std::ptr::null(),
         ar_request: std::ptr::null(),
         ar_result: std::ptr::null_mut(),
+        __return: 0,
+        __unused: [0; 5],
     };
     assert_eq!(
         unsafe { gai_error((&request as *const GaicbShape).cast_mut().cast::<c_void>()) },
