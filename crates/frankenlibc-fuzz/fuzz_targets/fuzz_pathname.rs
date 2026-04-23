@@ -150,11 +150,12 @@ fn adv_realpath(input: &PathnameFuzzInput) {
         return;
     };
     // First variant: let realpath allocate its own result.
+    // realpath(path, NULL) returns a libc::malloc'd buffer that the caller
+    // must free. We free with libc::free to pair the allocation; LSan flags
+    // leaks from the harness as exit-status-77 crashes otherwise (bd-s83dv).
     let ret = unsafe { realpath(cs.as_ptr(), std::ptr::null_mut()) };
     if !ret.is_null() {
-        // realpath docs: returned buf must be freed with free(). We
-        // can't free safely without the ABI's free entrypoint; leak
-        // in the fuzz target is acceptable (libfuzzer resets state).
+        unsafe { libc::free(ret as *mut std::ffi::c_void) };
     }
     // Second variant: caller-supplied output buffer. POSIX says the
     // buffer must be at least PATH_MAX bytes; we give a larger buffer
@@ -173,7 +174,12 @@ fn adv_canonicalize_file_name(input: &PathnameFuzzInput) {
     let Some(cs) = CString::new(input.bytes.clone()).ok() else {
         return;
     };
-    let _ = unsafe { canonicalize_file_name(cs.as_ptr()) };
+    // canonicalize_file_name returns a libc::malloc'd buffer like realpath(x, NULL);
+    // free with libc::free to avoid LSan exit-status-77 (bd-s83dv).
+    let ret = unsafe { canonicalize_file_name(cs.as_ptr()) };
+    if !ret.is_null() {
+        unsafe { libc::free(ret as *mut std::ffi::c_void) };
+    }
 }
 
 // ------------------------------------------------------------------
