@@ -249,7 +249,12 @@ fn apply_op(op: &Op, table: &mut HandleTable) {
             // own close wrapper under the same name path here).
             let rc = unsafe { libc::close(fd) };
             assert!(rc == 0 || rc == -1, "close(pidfd) rc: {rc}");
-            table.pidfds[idx] = (fd, HandleState::Stale);
+            // Poison the fd so subsequent use_stale ops on this slot
+            // target -1 (always fails) instead of the just-closed fd
+            // integer which the kernel may reuse for a subsequent
+            // PidfdOpen. Same fd-reuse pattern as fuzz_socket
+            // MarkStale (bd-tw26d / 756dcfb1).
+            table.pidfds[idx] = (-1, HandleState::Stale);
         }
         Op::TimerCreate { clockid } => {
             if table.timers.len() >= MAX_HANDLES {
