@@ -2145,6 +2145,112 @@ fn xdr_short_boundaries() {
 }
 
 // ===========================================================================
+// 87. bd-bhqcn regression: wire-length vs stream-bound pre-malloc check
+// ===========================================================================
+//
+// An attacker-supplied length in the wire must not cause xdr_string /
+// xdr_bytes / xdr_array to allocate gigabytes before discovering the
+// stream is actually short. Crafted wires here declare u32::MAX or a
+// few-GiB length across a 16-byte stream; the parser must refuse
+// without ever calling malloc for the fraudulent length.
+
+#[test]
+fn xdr_wrapstring_rejects_oversized_wire_length_without_oom() {
+    // Stream: first 4 bytes = length of 0xFD000000 (~4.24 GiB) in
+    // big-endian, rest zeros. Stream size is 16 bytes total.
+    let mut buf = [0u8; 16];
+    buf[0] = 0xFD;
+
+    let mut xdr = XdrHandle::new();
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out_ptr: *mut c_char = std::ptr::null_mut();
+    let rc = unsafe { xdr_wrapstring(xdr.as_mut_ptr(), &mut out_ptr) };
+    // Must refuse — not crash/OOM. Pointer stays NULL so we do not
+    // attempt to free anything fictional.
+    assert_eq!(
+        rc, 0,
+        "xdr_wrapstring must refuse 4 GiB length from 16-byte stream"
+    );
+    assert!(
+        out_ptr.is_null(),
+        "xdr_wrapstring must not allocate on refusal"
+    );
+}
+
+#[test]
+fn xdr_bytes_rejects_oversized_wire_length_without_oom() {
+    // Same primitive as above, but through xdr_bytes with a large
+    // caller-supplied maxsize (the case where maxsize itself doesn't
+    // save us).
+    let mut buf = [0u8; 16];
+    buf[0] = 0x40; // 0x40000000 = 1 GiB
+
+    let mut xdr = XdrHandle::new();
+    xdr_decode(&mut xdr, &mut buf);
+    let mut out_ptr: *mut c_char = std::ptr::null_mut();
+    let mut out_len: c_uint = 0;
+    let rc = unsafe {
+        xdr_bytes(
+            xdr.as_mut_ptr(),
+            &mut out_ptr,
+            &mut out_len,
+            c_uint::MAX, // maxsize cap saturated
+        )
+    };
+    assert_eq!(
+        rc, 0,
+        "xdr_bytes must refuse 1 GiB length from 16-byte stream"
+    );
+    assert!(out_ptr.is_null(), "xdr_bytes must not allocate on refusal");
+}
+
+// ===========================================================================
+// 88. bd-bhqcn regression: xdr_array(elsize=0) heap-buffer-overflow
+// ===========================================================================
+//
+// xdr_array(elsize=0) with a non-zero count used to:
+// (1) skip the `c > u32::MAX / elsize` overflow guard (short-circuit
+//     on `elsize > 0`),
+// (2) compute `total_bytes = c * 0 = 0`,
+// (3) libc::malloc(0) → 1-byte allocation,
+// (4) call the per-element xdrproc on each of the `count` elements,
+// (5) each xdrproc (e.g. xdr_u_int) writes 4 bytes into the
+//     1-byte slot → heap-buffer-overflow.
+//
+// Fix: reject elsize=0 with non-zero count.
+
+#[test]
+fn xdr_array_rejects_elsize_zero_with_nonzero_count() {
+    let mut buf = [0u8; 16];
+    // First 4 bytes = count = 1 (big-endian).
+    buf[3] = 1;
+
+    let mut xdr = XdrHandle::new();
+    xdr_decode(&mut xdr, &mut buf);
+
+    let mut arrp: *mut c_char = std::ptr::null_mut();
+    let mut size: c_uint = 0;
+    unsafe extern "C" fn dummy_int_proc(xdrs: *mut c_void, objp: *mut c_void) -> c_int {
+        unsafe { xdr_int(xdrs, objp as *mut c_int) }
+    }
+    let rc = unsafe {
+        xdr_array(
+            xdr.as_mut_ptr(),
+            &mut arrp,
+            &mut size,
+            16,
+            0, // elsize = 0
+            dummy_int_proc as *mut c_void,
+        )
+    };
+    assert_eq!(rc, 0, "xdr_array must refuse elsize=0 with count>0");
+    assert!(
+        arrp.is_null(),
+        "xdr_array must not allocate when refusing elsize=0"
+    );
+}
+
+// ===========================================================================
 // 86. xdr_pmaplist deep-stream regression (bd-lc5ss)
 // ===========================================================================
 //
