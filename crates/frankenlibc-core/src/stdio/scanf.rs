@@ -1293,8 +1293,14 @@ mod tests {
             decimal.scan_operation_kind(),
             Some(ScanOperationKind::Int(IntScanKind::SignedDecimal))
         );
-        assert_eq!(string.scan_operation_kind(), Some(ScanOperationKind::String));
-        assert_eq!(scanset.scan_operation_kind(), Some(ScanOperationKind::Scanset));
+        assert_eq!(
+            string.scan_operation_kind(),
+            Some(ScanOperationKind::String)
+        );
+        assert_eq!(
+            scanset.scan_operation_kind(),
+            Some(ScanOperationKind::Scanset)
+        );
         assert!(decimal.skips_leading_whitespace);
         assert!(!scanset.skips_leading_whitespace);
         assert!(string.accepts_length(LengthMod::L));
@@ -1316,7 +1322,10 @@ mod tests {
         assert_eq!(specs.len(), 2);
         assert!(specs[0].writes_string_buffer());
         assert!(specs[0].skips_leading_whitespace());
-        assert_eq!(specs[0].scan_operation_kind(), Some(ScanOperationKind::String));
+        assert_eq!(
+            specs[0].scan_operation_kind(),
+            Some(ScanOperationKind::String)
+        );
         assert!(specs[1].writes_char_buffer());
         assert!(!specs[1].skips_leading_whitespace());
         assert_eq!(
