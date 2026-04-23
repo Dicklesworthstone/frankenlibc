@@ -140,6 +140,26 @@ enum UnsignedFormatKind {
     HexUpper,
 }
 
+impl UnsignedFormatKind {
+    fn int_base(self) -> (u64, bool) {
+        match self {
+            Self::Decimal => (10, false),
+            Self::Octal => (8, false),
+            Self::HexLower => (16, false),
+            Self::HexUpper => (16, true),
+        }
+    }
+
+    fn alt_prefix(self) -> &'static [u8] {
+        match self {
+            Self::Decimal => b"",
+            Self::Octal => b"0",
+            Self::HexLower => b"0x",
+            Self::HexUpper => b"0X",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RawValueRenderKind {
     SignedInt,
@@ -147,6 +167,22 @@ enum RawValueRenderKind {
     Float(FloatFormatKind),
     Character,
     Pointer,
+}
+
+impl RawValueRenderKind {
+    fn int_base(self) -> Option<(u64, bool)> {
+        match self {
+            Self::UnsignedInt(kind) => Some(kind.int_base()),
+            _ => None,
+        }
+    }
+
+    fn alt_prefix(self) -> Option<&'static [u8]> {
+        match self {
+            Self::UnsignedInt(kind) => Some(kind.alt_prefix()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -337,25 +373,18 @@ impl FormatSpec {
     }
 
     fn int_base(&self) -> (u64, bool) {
-        match self.raw_render_kind() {
-            Some(RawValueRenderKind::UnsignedInt(UnsignedFormatKind::Octal)) => (8, false),
-            Some(RawValueRenderKind::UnsignedInt(UnsignedFormatKind::HexLower)) => (16, false),
-            Some(RawValueRenderKind::UnsignedInt(UnsignedFormatKind::HexUpper)) => (16, true),
-            Some(RawValueRenderKind::UnsignedInt(UnsignedFormatKind::Decimal)) => (10, false),
-            _ => (10, false),
-        }
+        self.raw_render_kind()
+            .and_then(RawValueRenderKind::int_base)
+            .unwrap_or((10, false))
     }
 
     fn alt_prefix(&self) -> &'static [u8] {
         if !self.flags.alt_form {
             return b"";
         }
-        match self.raw_render_kind() {
-            Some(RawValueRenderKind::UnsignedInt(UnsignedFormatKind::Octal)) => b"0",
-            Some(RawValueRenderKind::UnsignedInt(UnsignedFormatKind::HexLower)) => b"0x",
-            Some(RawValueRenderKind::UnsignedInt(UnsignedFormatKind::HexUpper)) => b"0X",
-            _ => b"",
-        }
+        self.raw_render_kind()
+            .and_then(RawValueRenderKind::alt_prefix)
+            .unwrap_or(b"")
     }
 
     pub fn render_value_arg(&self, raw: u64, buf: &mut Vec<u8>) -> bool {
@@ -1407,6 +1436,12 @@ mod tests {
                 UnsignedFormatKind::HexUpper
             ))
         );
+        assert_eq!(
+            printf_route(b'X')
+                .and_then(PrintfRoute::raw_render_kind)
+                .and_then(RawValueRenderKind::int_base),
+            Some((16, true))
+        );
         assert!(printf_route(b'Q').is_none());
     }
 
@@ -1497,6 +1532,11 @@ mod tests {
             Some(RawValueRenderKind::UnsignedInt(
                 UnsignedFormatKind::HexLower
             ))
+        );
+        assert_eq!(
+            hex.raw_render_kind()
+                .and_then(RawValueRenderKind::alt_prefix),
+            Some(&b"0x"[..])
         );
     }
 
