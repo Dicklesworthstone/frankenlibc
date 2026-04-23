@@ -133,6 +133,14 @@ enum FloatFormatKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnsignedFormatKind {
+    Decimal,
+    Octal,
+    HexLower,
+    HexUpper,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RawValueRenderKind {
     SignedInt,
     UnsignedInt,
@@ -228,6 +236,16 @@ impl PrintfRoute {
         }
     }
 
+    fn unsigned_format_kind(self) -> Option<UnsignedFormatKind> {
+        match self.handler {
+            PrintfHandler::UnsignedDecimal => Some(UnsignedFormatKind::Decimal),
+            PrintfHandler::UnsignedOctal => Some(UnsignedFormatKind::Octal),
+            PrintfHandler::UnsignedHexLower => Some(UnsignedFormatKind::HexLower),
+            PrintfHandler::UnsignedHexUpper => Some(UnsignedFormatKind::HexUpper),
+            _ => None,
+        }
+    }
+
     fn is_string_arg(self) -> bool {
         matches!(self.arg_category, ArgCategory::String)
     }
@@ -240,26 +258,6 @@ impl PrintfRoute {
         matches!(self.handler, PrintfHandler::StoreCount)
     }
 
-    fn int_base(self) -> (u64, bool) {
-        match self.handler {
-            PrintfHandler::UnsignedOctal => (8, false),
-            PrintfHandler::UnsignedHexLower => (16, false),
-            PrintfHandler::UnsignedHexUpper => (16, true),
-            _ => (10, false),
-        }
-    }
-
-    fn alt_prefix(self, alt_form: bool) -> &'static [u8] {
-        if !alt_form {
-            return b"";
-        }
-        match self.handler {
-            PrintfHandler::UnsignedOctal => b"0",
-            PrintfHandler::UnsignedHexLower => b"0x",
-            PrintfHandler::UnsignedHexUpper => b"0X",
-            _ => b"",
-        }
-    }
 }
 
 mod generated_printf_tables {
@@ -353,13 +351,29 @@ impl FormatSpec {
         self.route().and_then(PrintfRoute::raw_render_kind)
     }
 
+    fn unsigned_format_kind(&self) -> Option<UnsignedFormatKind> {
+        self.route().and_then(PrintfRoute::unsigned_format_kind)
+    }
+
     fn int_base(&self) -> (u64, bool) {
-        self.route().map_or((10, false), PrintfRoute::int_base)
+        match self.unsigned_format_kind() {
+            Some(UnsignedFormatKind::Octal) => (8, false),
+            Some(UnsignedFormatKind::HexLower) => (16, false),
+            Some(UnsignedFormatKind::HexUpper) => (16, true),
+            Some(UnsignedFormatKind::Decimal) | None => (10, false),
+        }
     }
 
     fn alt_prefix(&self) -> &'static [u8] {
-        self.route()
-            .map_or(b"", |route| route.alt_prefix(self.flags.alt_form))
+        if !self.flags.alt_form {
+            return b"";
+        }
+        match self.unsigned_format_kind() {
+            Some(UnsignedFormatKind::Octal) => b"0",
+            Some(UnsignedFormatKind::HexLower) => b"0x",
+            Some(UnsignedFormatKind::HexUpper) => b"0X",
+            Some(UnsignedFormatKind::Decimal) | None => b"",
+        }
     }
 
     pub fn render_value_arg(&self, raw: u64, buf: &mut Vec<u8>) -> bool {
@@ -1392,6 +1406,7 @@ mod tests {
             signed.raw_render_kind(),
             Some(RawValueRenderKind::SignedInt)
         );
+        assert_eq!(signed.unsigned_format_kind(), None);
         assert!(signed.accepts_length(LengthMod::L));
         assert!(!signed.accepts_length(LengthMod::BigL));
         assert_eq!(floating.handler, PrintfHandler::FloatGeneral);
@@ -1400,6 +1415,10 @@ mod tests {
         assert_eq!(floating.float_format_kind(), Some(FloatFormatKind::General));
         assert_eq!(literal.handler, PrintfHandler::LiteralPercent);
         assert!(literal.is_literal_percent());
+        assert_eq!(
+            printf_route(b'X').and_then(PrintfRoute::unsigned_format_kind),
+            Some(UnsignedFormatKind::HexUpper)
+        );
         assert!(printf_route(b'Q').is_none());
     }
 
@@ -1458,16 +1477,28 @@ mod tests {
         assert_eq!(signed.value_arg_kind(), Some(ValueArgKind::Gp));
         assert!(!signed.value_arg_is_string());
         assert!(!signed.stores_count());
+        assert_eq!(signed.unsigned_format_kind(), None);
         assert!(string.value_arg_is_string());
         assert_eq!(string.value_arg_kind(), Some(ValueArgKind::Gp));
         assert_eq!(float.value_arg_kind(), Some(ValueArgKind::Fp));
         assert!(float.value_arg_is_float());
+        assert_eq!(float.unsigned_format_kind(), None);
         assert!(store.stores_count());
         assert_eq!(store.value_arg_kind(), Some(ValueArgKind::Gp));
         assert!(percent.is_literal_percent());
         assert!(errno.is_errno_message());
         assert!(!errno.consumes_value_arg());
         assert_eq!(errno.value_arg_kind(), None);
+
+        let hex = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::None,
+            b'x',
+            None,
+        );
+        assert_eq!(hex.unsigned_format_kind(), Some(UnsignedFormatKind::HexLower));
     }
 
     #[test]
