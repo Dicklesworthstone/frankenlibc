@@ -1357,6 +1357,27 @@ pub unsafe extern "C" fn xdr_vector(
     XDR_TRUE
 }
 
+// Per-thread recursion-depth counter for xdr_reference. Caps the
+// nesting depth a wire stream can drive through caller-supplied
+// recursive procs (e.g., generated stubs for self-referential XDR
+// types like `struct tree { tree *left; tree *right; }`). Without
+// this cap, a malicious stream of repeated `more=1` flags walks
+// xdr_pointer → xdr_reference → user_proc → xdr_pointer recursion
+// arbitrarily deep and exhausts the thread stack. (bd-xpgak)
+//
+// 256 is a generous practical ceiling — real RPC schemas rarely
+// nest more than a handful of pointers deep. `Cell<u32>` has a
+// trivial drop so this thread_local does NOT register through
+// __cxa_thread_atexit_impl (avoids the bd-yf86e init-array
+// deadlock class).
+const XDR_REFERENCE_DEPTH_LIMIT: u32 = 256;
+
+std::thread_local! {
+    static XDR_REFERENCE_DEPTH: std::cell::Cell<u32> = const {
+        std::cell::Cell::new(0)
+    };
+}
+
 /// Serialize a non-null pointer to an object (allocate on decode).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_reference(
@@ -1365,15 +1386,35 @@ pub unsafe extern "C" fn xdr_reference(
     size: c_uint,
     proc_: *mut c_void,
 ) -> c_int {
+    // Bounded recursion depth: caller-supplied procs may recursively
+    // invoke xdr_pointer/xdr_reference; cap at 256 to prevent
+    // wire-controlled stack exhaustion. (bd-xpgak)
+    let depth_ok = XDR_REFERENCE_DEPTH
+        .try_with(|cell| {
+            let current = cell.get();
+            if current >= XDR_REFERENCE_DEPTH_LIMIT {
+                false
+            } else {
+                cell.set(current + 1);
+                true
+            }
+        })
+        .unwrap_or(false);
+    if !depth_ok {
+        return XDR_FALSE;
+    }
+
     let x = xdrs as *mut Xdr;
     let op = unsafe { (*x).x_op };
     if unsafe { (*pp).is_null() } {
         if op != XDR_DECODE {
+            let _ = XDR_REFERENCE_DEPTH.try_with(|c| c.set(c.get() - 1));
             return XDR_FALSE;
         }
         // mem_alloc semantics: caller frees via libc free (bd-zgifl).
         let buf = unsafe { libc::malloc(size as usize) as *mut c_char };
         if buf.is_null() {
+            let _ = XDR_REFERENCE_DEPTH.try_with(|c| c.set(c.get() - 1));
             return XDR_FALSE;
         }
         unsafe {
@@ -1391,6 +1432,7 @@ pub unsafe extern "C" fn xdr_reference(
             }
         }
     }
+    let _ = XDR_REFERENCE_DEPTH.try_with(|c| c.set(c.get() - 1));
     result
 }
 

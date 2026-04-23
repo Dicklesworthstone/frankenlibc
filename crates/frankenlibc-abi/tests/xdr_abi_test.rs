@@ -2251,6 +2251,96 @@ fn xdr_array_rejects_elsize_zero_with_nonzero_count() {
 }
 
 // ===========================================================================
+// 89. bd-xpgak regression: xdr_reference depth limit on recursive procs
+// ===========================================================================
+//
+// Caller-supplied recursive procs (e.g., generated stubs for self-
+// referential XDR types) used to recurse without bound through
+// xdr_pointer → xdr_reference → user_proc → xdr_pointer. A wire stream
+// of N "more=1" flags consumed N stack frames. Depth limit (256) must
+// refuse the over-deep input with XDR_FALSE without crashing.
+
+use frankenlibc_abi::rpc_abi::{xdr_int as xdr_int_ext, xdr_pointer as xdr_pointer_ext};
+
+#[repr(C)]
+struct RecursiveNode {
+    value: c_int,
+    _pad: c_int,
+    next: *mut RecursiveNode,
+}
+
+unsafe extern "C" fn recursive_proc(xdrs: *mut c_void, p: *mut c_void) -> c_int {
+    let n = p as *mut RecursiveNode;
+    if unsafe { xdr_int_ext(xdrs, &mut (*n).value as *mut c_int) } != 1 {
+        return 0;
+    }
+    // Recursive descent through the pointer field — would stack-overflow
+    // without the bd-xpgak depth limit.
+    unsafe {
+        xdr_pointer_ext(
+            xdrs,
+            (&mut (*n).next as *mut *mut RecursiveNode).cast(),
+            std::mem::size_of::<RecursiveNode>() as c_uint,
+            recursive_proc as *mut c_void,
+        )
+    }
+}
+
+#[test]
+fn xdr_reference_depth_limit_refuses_deep_recursive_wire_without_overflow() {
+    // Build a wire stream of 1024 RecursiveNodes (way past the 256
+    // depth limit). Each node = 4 bytes value + xdr_pointer (4 byte
+    // more flag). Last node has more=0 to terminate.
+    const ENTRIES: usize = 1024;
+    // Per node: more=1 (4) + value (4) = 8 bytes; final: more=0 (4)
+    let total = ENTRIES * 8 + 4;
+    let mut buf = vec![0u8; total];
+    // First more flag is implicit (xdr_pointer reads it after we call it
+    // from the test). The schema is: pointer→[more, recursive_proc],
+    // recursive_proc encodes [value, pointer→[more, recursive_proc...]].
+    // For simplicity hand-encode big-endian:
+    // outer pointer: more=1 (4), then recursive_proc body (value=42, more=1, value=42, more=1, ...)
+    let mut off = 0;
+    buf[off..off + 4].copy_from_slice(&1u32.to_be_bytes()); // outer more=1
+    off += 4;
+    for _ in 0..ENTRIES {
+        buf[off..off + 4].copy_from_slice(&42u32.to_be_bytes()); // value
+        off += 4;
+        buf[off..off + 4].copy_from_slice(&1u32.to_be_bytes()); // next more=1
+        off += 4;
+    }
+    // Last more flag overwritten as 0 (terminator).
+    let last_more = off - 4;
+    buf[last_more..last_more + 4].copy_from_slice(&0u32.to_be_bytes());
+
+    let mut xdr = XdrHandle::new();
+    xdr_decode(&mut xdr, &mut buf);
+
+    let mut head: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe {
+        xdr_pointer_ext(
+            xdr.as_mut_ptr(),
+            &mut head as *mut *mut c_void as *mut *mut c_char,
+            std::mem::size_of::<RecursiveNode>() as c_uint,
+            recursive_proc as *mut c_void,
+        )
+    };
+    // Must refuse — depth limit hit. Return code is 0 (XDR_FALSE).
+    // The test must not crash with stack overflow.
+    assert_eq!(
+        rc, 0,
+        "xdr_pointer must refuse 1024-deep recursive stream (depth limit = 256)"
+    );
+    // Note: head may be partially populated up to depth 256 — that's
+    // expected behavior of XDR's allocate-as-you-go contract. We don't
+    // free the partial chain because doing so would also recurse and
+    // is the caller's responsibility per the XDR mem_alloc/mem_free
+    // contract; this test is purely a stack-overflow guard, not a
+    // memory-leak harness.
+    let _ = head;
+}
+
+// ===========================================================================
 // 86. xdr_pmaplist deep-stream regression (bd-lc5ss)
 // ===========================================================================
 //
