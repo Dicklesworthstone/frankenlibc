@@ -35,7 +35,8 @@ use frankenlibc_abi::glibc_internal_abi::setaliasent as abi_setaliasent;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
     FTSENT as AbiFtsEnt, access, alarm, chdir, chmod, chown, close, creat, eaccess, endaliasent,
-    ether_line, euidaccess, faccessat, fchmod, fchown, fdatasync, fgetgrent_r, fgetpwent_r,
+    aio_suspend, ether_line, euidaccess, faccessat, fchmod, fchown, fdatasync, fgetgrent_r,
+    fgetpwent_r,
     fgetspent, fgetspent_r, flock, fstat, fsync, ftruncate, fts_children as abi_fts_children,
     fts_close as abi_fts_close, fts_open as abi_fts_open, fts_read as abi_fts_read,
     fts_set as abi_fts_set, gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname,
@@ -4894,4 +4895,61 @@ fn mkfifo_creates_named_pipe() {
     assert!(meta.file_type().is_fifo());
 
     let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// aio_suspend timespec validation (bd-4rdz8)
+//
+// POSIX requires aio_suspend to fail with EINVAL when tv_nsec is out of
+// [0, 999_999_999] or when the timespec is otherwise unusable. Prior to
+// bd-4rdz8 the implementation cast `ts.tv_sec as u64` and would then
+// `Instant + Duration`, which panics (process abort) for a negative
+// tv_sec reinterpreted as ~u64::MAX. These tests pin the EINVAL contract.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn aio_suspend_rejects_negative_tv_sec_without_panic() {
+    let cb: *const c_void = std::ptr::null();
+    let list = [&cb as *const *const c_void as *const c_void];
+    let ts = libc::timespec {
+        tv_sec: -1,
+        tv_nsec: 0,
+    };
+    let rc = unsafe { aio_suspend(list.as_ptr() as *const *const c_void, 1, &ts) };
+    assert_eq!(rc, -1, "aio_suspend with tv_sec<0 must return -1 (EINVAL)");
+}
+
+#[test]
+fn aio_suspend_rejects_negative_tv_nsec() {
+    let cb: *const c_void = std::ptr::null();
+    let list = [&cb as *const *const c_void as *const c_void];
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: -1,
+    };
+    let rc = unsafe { aio_suspend(list.as_ptr() as *const *const c_void, 1, &ts) };
+    assert_eq!(rc, -1, "aio_suspend with tv_nsec<0 must return -1 (EINVAL)");
+}
+
+#[test]
+fn aio_suspend_rejects_oversize_tv_nsec() {
+    let cb: *const c_void = std::ptr::null();
+    let list = [&cb as *const *const c_void as *const c_void];
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000_000_000,
+    };
+    let rc = unsafe { aio_suspend(list.as_ptr() as *const *const c_void, 1, &ts) };
+    assert_eq!(
+        rc, -1,
+        "aio_suspend with tv_nsec >= 1_000_000_000 must return -1 (EINVAL)"
+    );
+}
+
+#[test]
+fn aio_suspend_rejects_empty_list_before_timeout() {
+    // nent <= 0 is its own EINVAL path that must trigger before we ever
+    // look at the timespec — adversarial timestamps should not affect it.
+    let rc = unsafe { aio_suspend(std::ptr::null(), 0, std::ptr::null()) };
+    assert_eq!(rc, -1);
 }

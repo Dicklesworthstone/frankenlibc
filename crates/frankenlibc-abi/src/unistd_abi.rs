@@ -7935,8 +7935,21 @@ pub unsafe extern "C" fn aio_suspend(
         None
     } else {
         let ts = unsafe { *timeout };
+        // POSIX: aio_suspend with invalid timeout fields must fail with EINVAL.
+        // A negative tv_sec or tv_nsec outside [0, 999_999_999] would otherwise
+        // silently wrap through `as u64` / `as u32` and cause `Instant + Duration`
+        // to panic with 'overflow when adding duration to instant', aborting the
+        // process. (bd-4rdz8)
+        if ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1_000_000_000 {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
         let dur = std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32);
-        Some(std::time::Instant::now() + dur)
+        // For very large but technically valid tv_sec values, `Instant + dur`
+        // can still overflow. Fall back to None (poll indefinitely) instead of
+        // panicking — POSIX does not bound tv_sec, and treating an unreachable
+        // deadline as "no timeout" is the safest approximation.
+        std::time::Instant::now().checked_add(dur)
     };
 
     let (lock, cvar) = &*AIO_NOTIFY;
