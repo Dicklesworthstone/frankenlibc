@@ -281,13 +281,18 @@ fn apply_op(op: &Op, table: &mut HandleTable) {
             let Some((id, state, _idx)) = table.pick_timer(*slot) else {
                 return;
             };
+            // i64::abs() panics in debug mode for i64::MIN (overflow).
+            // cargo-fuzz compiles with -Cdebug-assertions for ASan, so
+            // a fuzzer-generated i64::MIN sec/interval triggers a
+            // libFuzzer "deadly signal". Use saturating_abs which
+            // clamps to i64::MAX instead of panicking.
             let new_value = libc::itimerspec {
                 it_interval: libc::timespec {
-                    tv_sec: interval_sec.abs() % 10,
+                    tv_sec: interval_sec.saturating_abs() % 10,
                     tv_nsec: clamp_nsec(*interval_nsec),
                 },
                 it_value: libc::timespec {
-                    tv_sec: sec.abs() % 10,
+                    tv_sec: sec.saturating_abs() % 10,
                     tv_nsec: clamp_nsec(*nsec),
                 },
             };

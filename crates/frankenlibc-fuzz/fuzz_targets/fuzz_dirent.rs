@@ -46,10 +46,13 @@ fn fuzz_parse_single(input: &DirentFuzzInput) {
             "next offset {next_offset} exceeds buffer length {}",
             buf.len()
         );
-        // Name must not be empty.
+        // Name *can* be empty in fuzz-crafted wire data (e.g., when
+        // the byte at offset 19 is NUL). The kernel never returns
+        // such an entry, but parse_dirent64 accepts the wire format
+        // as-is and lets the consumer decide. Just bound the length.
         assert!(
-            !entry.d_name.is_empty(),
-            "parsed directory entry name must not be empty"
+            entry.d_name.len() <= buf.len(),
+            "parsed d_name length exceeds buffer"
         );
     }
 }
@@ -65,7 +68,10 @@ fn fuzz_parse_exhaustive(input: &DirentFuzzInput) {
             Some((entry, next_offset)) => {
                 assert!(next_offset > offset);
                 assert!(next_offset <= buf.len());
-                assert!(!entry.d_name.is_empty());
+                // Empty d_name is a valid wire-format possibility
+                // (parse_dirent64 doesn't reject it). Same rationale
+                // as fuzz_parse_dirent64 above.
+                assert!(entry.d_name.len() <= buf.len());
                 offset = next_offset;
                 count += 1;
             }

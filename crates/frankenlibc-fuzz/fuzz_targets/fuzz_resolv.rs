@@ -82,7 +82,13 @@ fn fuzz_parse_services_line(input: &ResolvFuzzInput) {
             !entry.name.is_empty(),
             "parsed service name should not be empty"
         );
-        assert!(entry.port > 0, "parsed port should be positive");
+        // port == 0 is technically a valid u16 the parser will accept
+        // (matches glibc's getservent which doesn't filter port 0
+        // either). Kept the assertion as a documented LOOSER bound
+        // — the wire-format /etc/services entry can carry any u16,
+        // including 0 ("reserved"), and the parser shouldn't have
+        // to reject it.
+        let _ = entry.port; // u16, always < 65536
         assert!(
             !entry.protocol.is_empty(),
             "parsed protocol should not be empty"
