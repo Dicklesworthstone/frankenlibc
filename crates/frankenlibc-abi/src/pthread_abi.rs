@@ -4332,6 +4332,7 @@ pub unsafe extern "C" fn pthread_atfork(
 
 /// Fork handler triple registered by `pthread_atfork`.
 #[allow(dead_code)]
+#[derive(Clone, Copy)]
 struct AtforkHandlers {
     prepare: Option<unsafe extern "C" fn()>,
     parent: Option<unsafe extern "C" fn()>,
@@ -4346,14 +4347,19 @@ static ATFORK_HANDLERS: LazyLock<Mutex<Vec<AtforkHandlers>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 
 /// Called before fork (from our fork() wrapper) — runs prepare handlers in LIFO order.
+// Snapshot-and-release: never invoke user callbacks while holding ATFORK_HANDLERS.
+// A handler that transitively calls pthread_atfork would self-deadlock on the
+// non-recursive Mutex otherwise (bd-sq7ae).
 #[allow(dead_code)]
 pub(crate) fn run_atfork_prepare() {
-    if let Ok(handlers) = ATFORK_HANDLERS.lock() {
-        for h in handlers.iter().rev() {
-            if let Some(f) = h.prepare {
-                // SAFETY: caller registered a valid function pointer.
-                unsafe { f() };
-            }
+    let snapshot: Vec<AtforkHandlers> = match ATFORK_HANDLERS.lock() {
+        Ok(g) => g.clone(),
+        Err(_) => return,
+    };
+    for h in snapshot.iter().rev() {
+        if let Some(f) = h.prepare {
+            // SAFETY: caller registered a valid function pointer.
+            unsafe { f() };
         }
     }
 }
@@ -4361,12 +4367,14 @@ pub(crate) fn run_atfork_prepare() {
 /// Called after fork in parent — runs parent handlers in registration order.
 #[allow(dead_code)]
 pub(crate) fn run_atfork_parent() {
-    if let Ok(handlers) = ATFORK_HANDLERS.lock() {
-        for h in handlers.iter() {
-            if let Some(f) = h.parent {
-                // SAFETY: caller registered a valid function pointer.
-                unsafe { f() };
-            }
+    let snapshot: Vec<AtforkHandlers> = match ATFORK_HANDLERS.lock() {
+        Ok(g) => g.clone(),
+        Err(_) => return,
+    };
+    for h in snapshot.iter() {
+        if let Some(f) = h.parent {
+            // SAFETY: caller registered a valid function pointer.
+            unsafe { f() };
         }
     }
 }
@@ -4374,12 +4382,14 @@ pub(crate) fn run_atfork_parent() {
 /// Called after fork in child — runs child handlers in registration order.
 #[allow(dead_code)]
 pub(crate) fn run_atfork_child() {
-    if let Ok(handlers) = ATFORK_HANDLERS.lock() {
-        for h in handlers.iter() {
-            if let Some(f) = h.child {
-                // SAFETY: caller registered a valid function pointer.
-                unsafe { f() };
-            }
+    let snapshot: Vec<AtforkHandlers> = match ATFORK_HANDLERS.lock() {
+        Ok(g) => g.clone(),
+        Err(_) => return,
+    };
+    for h in snapshot.iter() {
+        if let Some(f) = h.child {
+            // SAFETY: caller registered a valid function pointer.
+            unsafe { f() };
         }
     }
 }
@@ -6287,4 +6297,31 @@ mod tests {
             assert!(!current_thread_pending_cancel());
         }
     }
+
+}
+
+// Test-only hook: integration tests in `tests/pthread_abi_test.rs` drive the
+// atfork runners directly to cover re-entrant registration (bd-sq7ae). The
+// inline `#[cfg(test)] mod tests` above is dead code because the parent module
+// is gated with `#[cfg(not(test))]` at the crate root — integration tests see
+// the crate compiled without `cfg(test)`, so this item is visible there.
+#[doc(hidden)]
+pub fn __test_run_atfork_prepare() {
+    run_atfork_prepare();
+}
+
+#[doc(hidden)]
+pub fn __test_atfork_handlers_len() -> usize {
+    ATFORK_HANDLERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .len()
+}
+
+#[doc(hidden)]
+pub fn __test_atfork_handlers_clear() {
+    ATFORK_HANDLERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
 }

@@ -1929,6 +1929,47 @@ fn atfork_register_succeeds() {
     assert_eq!(rc, 0, "pthread_atfork should succeed");
 }
 
+// Regression: bd-sq7ae. Before the snapshot-and-release fix, the atfork runner
+// held ATFORK_HANDLERS across user-callback execution, so a callback that
+// transitively called pthread_atfork re-locked a non-recursive Mutex on the
+// same thread and deadlocked. With the fix, the runner clones the handler list
+// under the lock, releases, then iterates — the re-entrant registration lands
+// and is observable as a new entry in the registry.
+extern "C" fn atfork_reentrant_prepare_nop() {}
+extern "C" fn atfork_reentrant_prepare_registers_another() {
+    unsafe {
+        let _ = pthread_atfork(Some(atfork_reentrant_prepare_nop), None, None);
+    }
+}
+
+#[test]
+fn atfork_prepare_does_not_self_deadlock_on_reentrant_registration() {
+    use frankenlibc_abi::pthread_abi::{
+        __test_atfork_handlers_clear, __test_atfork_handlers_len, __test_run_atfork_prepare,
+    };
+
+    __test_atfork_handlers_clear();
+    let rc = unsafe {
+        pthread_atfork(
+            Some(atfork_reentrant_prepare_registers_another),
+            None,
+            None,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(__test_atfork_handlers_len(), 1);
+
+    // Would hang before bd-sq7ae.
+    __test_run_atfork_prepare();
+
+    assert_eq!(
+        __test_atfork_handlers_len(),
+        2,
+        "re-entrant pthread_atfork from a prepare handler should append"
+    );
+    __test_atfork_handlers_clear();
+}
+
 // ===========================================================================
 // __pthread_* internal aliases
 // ===========================================================================
