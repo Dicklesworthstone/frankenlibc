@@ -1364,28 +1364,41 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
     // C11 7.21.6.1 para 8: use %e style iff exp < -4 OR exp >= precision;
     // otherwise %f. The lower bound is -4 (not -1): e.g. 0.0001234 has
     // exp = -4 and precision = 6, so it must render as "0.0001234".
-    if exp >= -4 && exp < p as i32 {
+    let use_f_style = exp >= -4 && exp < p as i32;
+    if use_f_style {
         // Use %f style.
         let frac_digits = (p as i32 - 1 - exp).max(0) as usize;
         let mut s = alloc::format!("{:.prec$}", value, prec = frac_digits);
-        if !alt_form {
-            strip_trailing_zeros(&mut s);
-        }
-        s
-    } else {
-        // Use %e style.
-        let mut s = format_e(value, p.saturating_sub(1), uppercase, alt_form);
-        if !alt_form {
-            // Strip trailing zeros from the mantissa part (before 'e'/'E').
-            if let Some(e_pos) = s.bytes().position(|b| b == b'e' || b == b'E') {
-                let mut mantissa = s[..e_pos].to_string();
-                strip_trailing_zeros(&mut mantissa);
-                let exp_part = &s[e_pos..];
-                s = alloc::format!("{mantissa}{exp_part}");
+        // Rounding can push the integer part up a decade (e.g. 999999.5
+        // with precision 6 rounds to 1000000, which now has 7 digits and
+        // violates the precision contract). Glibc switches to %e style
+        // in that case (bd-ju24y). Detect by counting the integer-part
+        // digits of the rendered value.
+        let int_digits = match s.bytes().position(|b| b == b'.') {
+            Some(dot) => dot,
+            None => s.len(),
+        };
+        if int_digits > p {
+            // Fall through to %e style below.
+        } else {
+            if !alt_form {
+                strip_trailing_zeros(&mut s);
             }
+            return s;
         }
-        s
     }
+    // Use %e style.
+    let mut s = format_e(value, p.saturating_sub(1), uppercase, alt_form);
+    if !alt_form {
+        // Strip trailing zeros from the mantissa part (before 'e'/'E').
+        if let Some(e_pos) = s.bytes().position(|b| b == b'e' || b == b'E') {
+            let mut mantissa = s[..e_pos].to_string();
+            strip_trailing_zeros(&mut mantissa);
+            let exp_part = &s[e_pos..];
+            s = alloc::format!("{mantissa}{exp_part}");
+        }
+    }
+    s
 }
 
 /// `%a` / `%A` formatting: hexadecimal floating-point.
@@ -2197,5 +2210,20 @@ mod tests {
         let mut buf = Vec::new();
         format_signed(i64::MIN, &spec, &mut buf);
         assert_eq!(&buf, b"-9223372036854775808");
+    }
+
+    // Regression for bd-ju24y. Values whose rounded %f-style representation
+    // has more integer digits than the %g precision must switch to %e style,
+    // matching glibc. Before the fix, format_g(999999.5, 6, _, _) returned
+    // "1000000" (7 digits, violating the precision-6 contract); now it
+    // returns "1e+06".
+    #[test]
+    fn test_g_rounding_overflow_switches_to_e() {
+        assert_eq!(format_g(999999.5, 6, false, false), "1e+06");
+        // Control: values that don't cross a decade stay in %f.
+        assert_eq!(format_g(99999.5, 6, false, false), "99999.5");
+        assert_eq!(format_g(9999.5, 6, false, false), "9999.5");
+        // Uppercase variant.
+        assert_eq!(format_g(999999.5, 6, true, false), "1E+06");
     }
 }
