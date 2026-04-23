@@ -1074,7 +1074,7 @@ fn xdrmem_remaining_bytes(xdrs: *mut c_void) -> Option<c_uint> {
     // SAFETY: xdrs is a caller-owned Xdr handle; we read the immutable
     // ops vtable pointer and the length-of-remaining-bytes counter.
     let ops = unsafe { (*x).x_ops };
-    if ops == &XDRMEM_OPS as *const XdrOps {
+    if std::ptr::eq(ops, &XDRMEM_OPS as *const XdrOps) {
         Some(unsafe { (*x).x_handy })
     } else {
         None
