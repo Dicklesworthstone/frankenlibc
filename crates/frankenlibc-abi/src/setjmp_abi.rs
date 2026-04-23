@@ -457,6 +457,7 @@ mod tests {
     fn capture_env_records_registry_entry_and_context_metadata() {
         let mut marker = [0u64; 16]; // 128 bytes
         let env_addr = marker.as_mut_ptr().cast::<c_void>() as usize;
+        let _entry = RegistryEntryGuard { env_addr };
         let ret = capture_env(env_addr, SafetyLevel::Strict, false).unwrap();
         assert_eq!(ret, 0);
 
@@ -469,6 +470,7 @@ mod tests {
     fn sigsetjmp_capture_tracks_mask_flag() {
         let mut marker = [0u64; 16];
         let env_addr = marker.as_mut_ptr().cast::<c_void>() as usize;
+        let _entry = RegistryEntryGuard { env_addr };
         let ret = capture_env(env_addr, SafetyLevel::Hardened, true).unwrap();
         assert_eq!(ret, 0);
 
@@ -481,6 +483,7 @@ mod tests {
     fn restore_env_normalizes_zero_to_one_and_reports_mask_restore() {
         let mut marker = [0u64; 16];
         let env_addr = marker.as_mut_ptr().cast::<c_void>() as usize;
+        let _entry = RegistryEntryGuard { env_addr };
         capture_env(env_addr, SafetyLevel::Strict, true).unwrap();
 
         let (normalized_value, mask_restored) =
@@ -493,14 +496,45 @@ mod tests {
     fn restore_env_missing_context_returns_einval() {
         let mut valid_but_missing = [0u64; 16];
         let missing_env = valid_but_missing.as_mut_ptr().cast::<c_void>() as usize;
+        // Pre-clean: a stale entry at this address (from a prior test on
+        // the same worker that allocated `marker` in the same stack
+        // frame) would make this test fail because lookup would succeed
+        // when it should not. (bd-7v4oe)
+        {
+            let mut guard = registry().lock().unwrap_or_else(|e| e.into_inner());
+            guard.remove(&missing_env);
+        }
         let err = restore_env(missing_env, 7, SafetyLevel::Strict).unwrap_err();
         assert_eq!(err, errno::EINVAL);
+    }
+
+    /// RAII guard that removes the test's registry entry on drop.
+    ///
+    /// Without this, sequential tests on the same parallel worker
+    /// reuse the same stack addresses for `marker`, leaving the
+    /// registry populated with the prior test's entry. Under
+    /// `--test-threads=N` >= 4 a stale entry can cause restore_env
+    /// to compare freshly-captured mem_bytes against the old
+    /// entry's bytes (caching/ordering on the cross-thread mutex)
+    /// and return EFAULT instead of triggering the deferred-ENOSYS
+    /// panic the tests assert on. (bd-7v4oe)
+    struct RegistryEntryGuard {
+        env_addr: usize,
+    }
+    impl Drop for RegistryEntryGuard {
+        fn drop(&mut self) {
+            let mut guard = registry().lock().unwrap_or_else(|e| e.into_inner());
+            guard.remove(&self.env_addr);
+        }
     }
 
     #[test]
     fn longjmp_entrypoint_terminates_with_enosys_payload_in_tests() {
         let mut marker = [0u64; 16];
         let env_ptr = marker.as_mut_ptr().cast::<c_void>();
+        let _entry = RegistryEntryGuard {
+            env_addr: env_ptr as usize,
+        };
         capture_entrypoint(env_ptr, false);
 
         let result = std::panic::catch_unwind(|| {
@@ -526,6 +560,9 @@ mod tests {
     fn siglongjmp_entrypoint_terminates_with_mask_restore_metadata_in_tests() {
         let mut marker = [0u64; 16];
         let env_ptr = marker.as_mut_ptr().cast::<c_void>();
+        let _entry = RegistryEntryGuard {
+            env_addr: env_ptr as usize,
+        };
         capture_entrypoint(env_ptr, true);
 
         let result = std::panic::catch_unwind(|| {
