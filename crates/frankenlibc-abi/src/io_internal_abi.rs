@@ -2048,9 +2048,17 @@ pub unsafe extern "C" fn _IO_wfile_jumps_get() -> *mut c_void {
 
 /// `_IO_adjust_column` — adjust column counter after output.
 ///
-/// Scans `count` bytes of `line`, resetting the column to 0 on newline and
-/// incrementing by 1 for each tab stop (8-column aligned) or other byte.
-/// This is a pure algorithmic function with no glibc dependency.
+/// Matches glibc's libio/genops.c semantics (bd-ryp2g): scan backward
+/// from the end of the buffer for the last `\n`. If found, return the
+/// number of bytes that follow it (i.e. the new column position). If
+/// not found, return `start + count` saturated to `c_int`.
+///
+/// Notably tabs and carriage returns are NOT special-cased here —
+/// glibc treats them as ordinary characters for the column-after-
+/// last-newline reporting. The previous implementation tracked tabs
+/// to 8-column boundaries and zeroed on `\r`, which diverged from
+/// the documented glibc behavior and broke ABI parity for callers
+/// that mix this counter with raw text offsets.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _IO_adjust_column(col: c_int, line: *const c_char, count: c_int) -> c_int {
     if line.is_null() || count <= 0 {
@@ -2070,17 +2078,26 @@ pub unsafe extern "C" fn _IO_adjust_column(col: c_int, line: *const c_char, coun
         return col;
     }
 
-    let mut c = col as u32;
-    for i in 0..count as usize {
-        let byte = unsafe { *line.add(i) } as u8;
-        match byte {
-            b'\n' | b'\r' => c = 0,
-            b'\t' => c = (c + 8) & !7,
-            _ => c += 1,
+    let count_us = count as usize;
+    let result = {
+        let mut found: Option<usize> = None;
+        // SAFETY: caller asserts `line` is readable for `count` bytes;
+        // membrane policy already accepted the (line, count) range.
+        for i in (0..count_us).rev() {
+            if unsafe { *line.add(i) } == b'\n' as c_char {
+                found = Some(i);
+                break;
+            }
         }
-    }
+        match found {
+            Some(nl_pos) => count_us - nl_pos - 1,
+            None => (col as usize).saturating_add(count_us),
+        }
+    };
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
-    c as c_int
+    // Saturate to c_int range; counter is per-stream and a bogus
+    // negative result would corrupt the stream's column tracker.
+    result.min(c_int::MAX as usize) as c_int
 }
 
 /// `_IO_adjust_wcolumn` — adjust wide column counter after output.
@@ -2110,18 +2127,27 @@ pub unsafe extern "C" fn _IO_adjust_wcolumn(
         return col;
     }
 
+    // Mirror `_IO_adjust_column` semantics for wide chars (bd-ryp2g):
+    // scan backward for the last `\n` (wchar_t 0x0A) and report the
+    // count of wchar_ts past it; otherwise return `col + count`.
     let wchars = line as *const i32;
-    let mut c = col as u32;
-    for i in 0..count as usize {
-        let wch = unsafe { *wchars.add(i) } as u32;
-        match wch {
-            0x0A | 0x0D => c = 0,     // '\n' | '\r'
-            0x09 => c = (c + 8) & !7, // '\t'
-            _ => c += 1,
+    let count_us = count as usize;
+    let result = {
+        let mut found: Option<usize> = None;
+        // SAFETY: membrane policy accepted (line, count*4) range.
+        for i in (0..count_us).rev() {
+            if unsafe { *wchars.add(i) } == 0x0A {
+                found = Some(i);
+                break;
+            }
         }
-    }
+        match found {
+            Some(nl_pos) => count_us - nl_pos - 1,
+            None => (col as usize).saturating_add(count_us),
+        }
+    };
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
-    c as c_int
+    result.min(c_int::MAX as usize) as c_int
 }
 
 // ---------------------------------------------------------------------------

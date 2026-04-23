@@ -967,3 +967,92 @@ fn chain_io_file_layout_lock_ptr_is_valid() {
         "_lock via layout should match lock_ptr()"
     );
 }
+
+// ===========================================================================
+// _IO_adjust_column / _IO_adjust_wcolumn glibc-parity regression (bd-ryp2g)
+// ===========================================================================
+//
+// glibc's libio/genops.c semantics:
+//   - find the LAST '\n' in [line, line+count)
+//   - if found: return count - (position_of_last_newline) - 1
+//   - if not found: return start + count
+//
+// Tabs and CR are NOT special-cased; the previous frankenlibc impl
+// expanded tabs to 8-column boundaries and zeroed on CR, which broke
+// ABI compat with glibc-linked third-party libraries.
+
+use frankenlibc_abi::io_internal_abi::{_IO_adjust_column, _IO_adjust_wcolumn};
+
+#[test]
+fn io_adjust_column_no_newline_adds_count() {
+    let buf = b"hello world";
+    let result = unsafe { _IO_adjust_column(7, buf.as_ptr() as *const c_char, buf.len() as c_int) };
+    assert_eq!(
+        result,
+        7 + buf.len() as c_int,
+        "no-newline path must return start + count"
+    );
+}
+
+#[test]
+fn io_adjust_column_with_newline_returns_distance_from_last() {
+    // "a\nbcd" — last '\n' at index 1, count = 5, return 5 - 1 - 1 = 3
+    let buf = b"a\nbcd";
+    let result = unsafe { _IO_adjust_column(99, buf.as_ptr() as *const c_char, buf.len() as c_int) };
+    assert_eq!(result, 3, "must report bytes after last \\n, ignoring start");
+}
+
+#[test]
+fn io_adjust_column_does_not_special_case_tab_or_cr() {
+    // Buffer of just CR + tab + 'x' — no '\n', so result = start + count = 4
+    // Old impl would have: c=1; '\r'→0; '\t'→(0+8)&!7=8; 'x'→9 → returned 9.
+    // glibc impl returns: 1 + 3 = 4.
+    let buf = b"\r\tx";
+    let result = unsafe { _IO_adjust_column(1, buf.as_ptr() as *const c_char, buf.len() as c_int) };
+    assert_eq!(
+        result, 4,
+        "neither \\r nor \\t should be special-cased outside the last-newline scan"
+    );
+}
+
+#[test]
+fn io_adjust_column_null_or_zero_count_returns_start_unchanged() {
+    let buf = [0u8; 1];
+    assert_eq!(unsafe { _IO_adjust_column(42, std::ptr::null(), 1) }, 42);
+    assert_eq!(
+        unsafe { _IO_adjust_column(42, buf.as_ptr() as *const c_char, 0) },
+        42
+    );
+    assert_eq!(
+        unsafe { _IO_adjust_column(42, buf.as_ptr() as *const c_char, -1) },
+        42
+    );
+}
+
+#[test]
+fn io_adjust_wcolumn_mirrors_glibc_semantics() {
+    // wide chars: 'a', '\n', 'b', 'c'
+    let buf: [i32; 4] = [b'a' as i32, 0x0A, b'b' as i32, b'c' as i32];
+    let result = unsafe {
+        _IO_adjust_wcolumn(
+            10,
+            buf.as_ptr() as *const c_void,
+            buf.len() as c_int,
+        )
+    };
+    // last '\n' at wchar index 1, count = 4, return 4 - 1 - 1 = 2
+    assert_eq!(result, 2);
+}
+
+#[test]
+fn io_adjust_wcolumn_no_newline_path() {
+    let buf: [i32; 3] = [b'x' as i32, b'y' as i32, b'z' as i32];
+    let result = unsafe {
+        _IO_adjust_wcolumn(
+            5,
+            buf.as_ptr() as *const c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert_eq!(result, 8, "must return start + count when no \\n is present");
+}
