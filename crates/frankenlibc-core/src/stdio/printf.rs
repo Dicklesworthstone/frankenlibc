@@ -206,16 +206,6 @@ impl PrintfRoute {
         }
     }
 
-    fn float_format_kind(self) -> Option<FloatFormatKind> {
-        match self.handler {
-            PrintfHandler::FloatFixed => Some(FloatFormatKind::Fixed),
-            PrintfHandler::FloatExp => Some(FloatFormatKind::Exp),
-            PrintfHandler::FloatGeneral => Some(FloatFormatKind::General),
-            PrintfHandler::FloatHex => Some(FloatFormatKind::Hex),
-            _ => None,
-        }
-    }
-
     fn raw_render_kind(self) -> Option<RawValueRenderKind> {
         match self.handler {
             PrintfHandler::SignedDecimal => Some(RawValueRenderKind::SignedInt),
@@ -231,10 +221,12 @@ impl PrintfRoute {
             PrintfHandler::UnsignedHexUpper => Some(RawValueRenderKind::UnsignedInt(
                 UnsignedFormatKind::HexUpper,
             )),
-            PrintfHandler::FloatFixed
-            | PrintfHandler::FloatExp
-            | PrintfHandler::FloatGeneral
-            | PrintfHandler::FloatHex => self.float_format_kind().map(RawValueRenderKind::Float),
+            PrintfHandler::FloatFixed => Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)),
+            PrintfHandler::FloatExp => Some(RawValueRenderKind::Float(FloatFormatKind::Exp)),
+            PrintfHandler::FloatGeneral => {
+                Some(RawValueRenderKind::Float(FloatFormatKind::General))
+            }
+            PrintfHandler::FloatHex => Some(RawValueRenderKind::Float(FloatFormatKind::Hex)),
             PrintfHandler::Character => Some(RawValueRenderKind::Character),
             PrintfHandler::Pointer => Some(RawValueRenderKind::Pointer),
             PrintfHandler::String
@@ -338,10 +330,6 @@ impl FormatSpec {
 
     pub fn stores_count(&self) -> bool {
         self.route().is_some_and(PrintfRoute::is_store_count)
-    }
-
-    fn float_format_kind(&self) -> Option<FloatFormatKind> {
-        self.route().and_then(PrintfRoute::float_format_kind)
     }
 
     fn raw_render_kind(&self) -> Option<RawValueRenderKind> {
@@ -721,11 +709,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
 
 fn printf_route(conversion: u8) -> Option<PrintfRoute> {
     let route = PRINTF_TABLE[conversion as usize];
-    if !route.is_valid() {
-        None
-    } else {
-        Some(route)
-    }
+    if !route.is_valid() { None } else { Some(route) }
 }
 
 /// Iterate over segments of a printf format string.
@@ -871,11 +855,7 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         // Octal: only add '0' if first digit wouldn't already be 0
         let first_digit_is_zero =
             zero_prefix_count > 0 || (digit_count > 0 && digit_slice[0] == b'0');
-        if first_digit_is_zero {
-            b""
-        } else {
-            b"0"
-        }
+        if first_digit_is_zero { b"" } else { b"0" }
     } else {
         spec.alt_prefix()
     };
@@ -969,21 +949,23 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let abs = value.abs();
 
     // Generate digit string.
-    let body = match spec.float_format_kind() {
-        Some(FloatFormatKind::Fixed) => format_f(abs, precision, spec.flags.alt_form),
-        Some(FloatFormatKind::Exp) => format_e(
+    let body = match spec.raw_render_kind() {
+        Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)) => {
+            format_f(abs, precision, spec.flags.alt_form)
+        }
+        Some(RawValueRenderKind::Float(FloatFormatKind::Exp)) => format_e(
             abs,
             precision,
             spec.conversion.is_ascii_uppercase(),
             spec.flags.alt_form,
         ),
-        Some(FloatFormatKind::General) => format_g(
+        Some(RawValueRenderKind::Float(FloatFormatKind::General)) => format_g(
             abs,
             precision,
             spec.conversion.is_ascii_uppercase(),
             spec.flags.alt_form,
         ),
-        Some(FloatFormatKind::Hex) => format_a(
+        Some(RawValueRenderKind::Float(FloatFormatKind::Hex)) => format_a(
             abs,
             precision,
             spec.conversion.is_ascii_uppercase(),
@@ -1408,16 +1390,15 @@ mod tests {
             signed.raw_render_kind(),
             Some(RawValueRenderKind::SignedInt)
         );
-        assert_eq!(
-            signed.raw_render_kind(),
-            Some(RawValueRenderKind::SignedInt)
-        );
         assert!(signed.accepts_length(LengthMod::L));
         assert!(!signed.accepts_length(LengthMod::BigL));
         assert_eq!(floating.handler, PrintfHandler::FloatGeneral);
         assert_eq!(floating.arg_category, ArgCategory::Float);
         assert_eq!(floating.value_arg_kind(), Some(ValueArgKind::Fp));
-        assert_eq!(floating.float_format_kind(), Some(FloatFormatKind::General));
+        assert_eq!(
+            floating.raw_render_kind(),
+            Some(RawValueRenderKind::Float(FloatFormatKind::General))
+        );
         assert_eq!(literal.handler, PrintfHandler::LiteralPercent);
         assert!(literal.is_literal_percent());
         assert_eq!(
