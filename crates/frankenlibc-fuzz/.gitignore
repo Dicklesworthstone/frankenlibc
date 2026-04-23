@@ -1,3 +1,9 @@
 target
 Cargo.lock
 artifacts/
+
+# Auto-generated coverage entries from libfuzzer runs are not committed —
+# only hand-crafted `seed_*` entries are. Without this exclusion, a
+# `git add corpus/` after a fuzz session would commit thousands of
+# crypto-hash-named files.
+corpus/*/[0-9a-f]*
