@@ -188,6 +188,14 @@ fn run(scen: Scenario) {
                 let _ = unsafe { xdr_opaque(xp, local.as_mut_ptr() as *mut c_char, declared_len) };
             }
             Op::BytesEncode { data, maxsize } => {
+                // *Encode ops are only meaningful in ENCODE mode. In
+                // DECODE mode xdr_bytes treats *sp as a write target
+                // and writes wire-controlled bytes into the local
+                // buffer — out-of-bounds if the wire length exceeds
+                // local.len(). Skip the bogus mode combo.
+                if mode != XDR_ENCODE {
+                    continue;
+                }
                 let mut local = data;
                 if local.len() > MAX_BUF {
                     local.truncate(MAX_BUF);
@@ -199,6 +207,9 @@ fn run(scen: Scenario) {
                 };
             }
             Op::BytesDecode { maxsize } => {
+                if mode != XDR_DECODE {
+                    continue;
+                }
                 let mut p: *mut c_char = std::ptr::null_mut();
                 let mut len: c_uint = 0;
                 let ok = unsafe {
@@ -212,6 +223,9 @@ fn run(scen: Scenario) {
                 }
             }
             Op::StringEncode { s, maxsize } => {
+                if mode != XDR_ENCODE {
+                    continue;
+                }
                 let bytes = s.into_bytes();
                 let mut local: Vec<u8> = bytes.into_iter().filter(|&b| b != 0).collect();
                 local.push(0); // NUL-terminate
@@ -225,6 +239,9 @@ fn run(scen: Scenario) {
                 };
             }
             Op::StringDecode { maxsize } => {
+                if mode != XDR_DECODE {
+                    continue;
+                }
                 let mut p: *mut c_char = std::ptr::null_mut();
                 let ok = unsafe {
                     xdr_string(xp, &mut p, maxsize.min(MAX_STRING_MAX))
@@ -246,6 +263,9 @@ fn run(scen: Scenario) {
                 }
             }
             Op::WrapstringEncode { s } => {
+                if mode != XDR_ENCODE {
+                    continue;
+                }
                 let mut local: Vec<u8> = s.into_bytes().into_iter().filter(|&b| b != 0).collect();
                 local.push(0);
                 if local.len() > MAX_BUF {
@@ -256,6 +276,9 @@ fn run(scen: Scenario) {
                 let _ = unsafe { xdr_wrapstring(xp, &mut p) };
             }
             Op::WrapstringDecode => {
+                if mode != XDR_DECODE {
+                    continue;
+                }
                 let mut p: *mut c_char = std::ptr::null_mut();
                 let ok = unsafe { xdr_wrapstring(xp, &mut p) };
                 if ok == 1 && !p.is_null() {
@@ -263,6 +286,9 @@ fn run(scen: Scenario) {
                 }
             }
             Op::ArrayIntEncode { count, maxsize } => {
+                if mode != XDR_ENCODE {
+                    continue;
+                }
                 let mut elems: Vec<c_int> = (0..(count as usize).min(MAX_ARRAY_MAX as usize))
                     .map(|i| i as c_int)
                     .collect();
@@ -286,6 +312,9 @@ fn run(scen: Scenario) {
                 maxsize,
                 elsize_override,
             } => {
+                if mode != XDR_DECODE {
+                    continue;
+                }
                 let mut arrp: *mut c_char = std::ptr::null_mut();
                 let mut size: c_uint = 0;
                 // The canonical elsize for c_int is 4; fuzz with occasional
