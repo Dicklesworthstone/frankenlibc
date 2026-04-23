@@ -770,9 +770,19 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
     frankenlibc_core::stdlib::run_atexit_handlers();
 
     // 2. Run on_exit handlers (in reverse registration order, per glibc convention).
-    {
-        let handlers = ON_EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-        for entry in handlers.iter().rev() {
+    //    POSIX/glibc: a handler may register another via on_exit; the new
+    //    registration must also run. Swap-extract under the lock, release,
+    //    then iterate — invoking user callbacks while holding the Mutex would
+    //    self-deadlock on re-entrant on_exit (bd-3jpoz).
+    loop {
+        let batch: Vec<OnExitEntry> = {
+            let mut guard = ON_EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.is_empty() {
+                break;
+            }
+            std::mem::take(&mut *guard)
+        };
+        for entry in batch.into_iter().rev() {
             unsafe { (entry.func)(status, entry.arg) };
         }
     }
@@ -2352,11 +2362,22 @@ pub unsafe extern "C" fn at_quick_exit(func: Option<unsafe extern "C" fn()>) -> 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn quick_exit(status: c_int) -> ! {
     // Call registered quick_exit handlers in reverse order.
-    let handlers = QUICK_EXIT_HANDLERS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    for func in handlers.iter().rev() {
-        unsafe { func() };
+    // Swap-extract under the lock, release, then iterate. Invoking user
+    // callbacks while holding QUICK_EXIT_HANDLERS would self-deadlock if a
+    // handler transitively called at_quick_exit (bd-3jpoz).
+    loop {
+        let batch: Vec<unsafe extern "C" fn()> = {
+            let mut guard = QUICK_EXIT_HANDLERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if guard.is_empty() {
+                break;
+            }
+            std::mem::take(&mut *guard)
+        };
+        for func in batch.into_iter().rev() {
+            unsafe { func() };
+        }
     }
     frankenlibc_core::syscall::sys_exit_group(status)
 }
