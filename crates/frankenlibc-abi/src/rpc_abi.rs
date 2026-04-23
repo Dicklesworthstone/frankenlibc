@@ -1412,7 +1412,13 @@ pub unsafe extern "C" fn xdr_reference(
             return XDR_FALSE;
         }
         // mem_alloc semantics: caller frees via libc free (bd-zgifl).
-        let buf = unsafe { libc::malloc(size as usize) as *mut c_char };
+        // Use calloc not malloc so recursive procs that read inner
+        // pointer fields (e.g., a `next` link in a self-referential
+        // struct) see a well-defined NULL — otherwise the caller's
+        // first xdr_pointer call on `&buf->next` reads uninitialized
+        // memory as a "pointer" and tries to use it. Mirrors glibc's
+        // xdr_reference + memset(buf, 0, size) idiom.
+        let buf = unsafe { libc::calloc(1, size as usize) as *mut c_char };
         if buf.is_null() {
             let _ = XDR_REFERENCE_DEPTH.try_with(|c| c.set(c.get() - 1));
             return XDR_FALSE;
@@ -1829,32 +1835,44 @@ pub unsafe extern "C" fn xdr_pmap(xdrs: *mut c_void, regs: *mut c_void) -> c_int
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_pmaplist(xdrs: *mut c_void, rp: *mut c_void) -> c_int {
     let x = xdrs as *mut Xdr;
-    let freeing = unsafe { (*x).x_op } == XDR_FREE;
-    let mut cursor: *mut *mut PmapList = rp.cast();
+    let op = unsafe { (*x).x_op };
 
+    // XDR_FREE walks the list using only the in-memory pml_next chain,
+    // freeing each entry directly. We can't use the same cursor pattern
+    // as ENCODE/DECODE because xdr_reference (in XDR_FREE mode) frees
+    // the entry pointed to by `*cursor` then sets `*cursor = null`,
+    // dangling any reference into the just-freed entry's pml_next
+    // field that we'd want to use as the next cursor. Iterate by
+    // copying the pml_next VALUE into a local before the free.
+    if op == XDR_FREE {
+        let head_slot: *mut *mut PmapList = rp.cast();
+        let mut node = unsafe { *head_slot };
+        unsafe {
+            *head_slot = std::ptr::null_mut();
+        }
+        while !node.is_null() {
+            // SAFETY: node is a valid PmapList pointer we're about to free.
+            let next = unsafe { (*node).pml_next };
+            unsafe { libc::free(node.cast()) };
+            node = next;
+        }
+        return XDR_TRUE;
+    }
+
+    // ENCODE/DECODE share the cursor pattern. Walk via xdr_bool more-
+    // flag + xdr_reference per entry, advancing through pml_next.
+    let mut cursor: *mut *mut PmapList = rp.cast();
     loop {
-        // Encode: 1 if list still has entries, 0 if at end.
-        // Decode: read same flag from wire.
         let mut more: c_int = if unsafe { !(*cursor).is_null() } { 1 } else { 0 };
         if unsafe { xdr_bool(xdrs, &mut more) } != XDR_TRUE {
             return XDR_FALSE;
         }
         if more == 0 {
-            if !freeing {
-                unsafe {
-                    *cursor = std::ptr::null_mut();
-                }
+            unsafe {
+                *cursor = std::ptr::null_mut();
             }
             return XDR_TRUE;
         }
-        // Stash the next-pointer location BEFORE xdr_reference walks
-        // through the entry: in XDR_FREE mode the entry is freed and
-        // we'd UAF the pml_next field if we read it after the call.
-        let saved_next = if freeing {
-            unsafe { &mut (**cursor).pml_next as *mut *mut PmapList }
-        } else {
-            std::ptr::null_mut()
-        };
         if unsafe {
             xdr_reference(
                 xdrs,
@@ -1866,23 +1884,15 @@ pub unsafe extern "C" fn xdr_pmaplist(xdrs: *mut c_void, rp: *mut c_void) -> c_i
         {
             return XDR_FALSE;
         }
-        // xdr_reference allocates `sizeof(PmapList)` bytes (40) but
-        // xdr_pmap only initializes the first 32 (pm_prog..pm_port).
-        // The pml_next field stays uninitialized — null it explicitly
-        // before we cursor-into it on the next iteration, otherwise
-        // both the encode-side `*cursor.is_null()` peek and the
-        // tail-of-list `*cursor = null` write target undefined
-        // memory.
-        if !freeing {
-            unsafe {
-                (**cursor).pml_next = std::ptr::null_mut();
-            }
+        // xdr_reference allocates `sizeof(PmapList)` (40) but xdr_pmap
+        // only initializes the first 32 (pm_prog..pm_port). Explicitly
+        // null pml_next so the next iteration's `(*cursor).is_null()`
+        // peek and the tail-of-list `*cursor = null` write target
+        // initialized memory.
+        unsafe {
+            (**cursor).pml_next = std::ptr::null_mut();
+            cursor = &mut (**cursor).pml_next as *mut *mut PmapList;
         }
-        cursor = if freeing {
-            saved_next
-        } else {
-            unsafe { &mut (**cursor).pml_next as *mut *mut PmapList }
-        };
     }
 }
 
