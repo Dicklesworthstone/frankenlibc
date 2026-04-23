@@ -149,6 +149,7 @@ fn temp_path(tag: &str) -> PathBuf {
     path
 }
 
+#[allow(dead_code)] // kept for future tests that need /tmp enumeration
 fn temp_dir_entries_with_prefix(prefix: &str) -> Vec<PathBuf> {
     let mut matches = Vec::new();
     let tmp_dir = std::env::temp_dir();
@@ -1668,7 +1669,16 @@ fn tmpfile_creates_writable_anonymous_stream() {
 
 #[test]
 fn tmpfile_closes_without_leaking_named_tmp_entries() {
-    let before = temp_dir_entries_with_prefix("frankenlibc_");
+    // The "(deleted)" check on /proc/self/fd/N below is the
+    // authoritative oracle for "tmpfile unlinked its backing file
+    // while open" — POSIX requires the file be unreachable from any
+    // pathname the moment tmpfile() returns. The previous
+    // before/after enumeration of `frankenlibc_*` entries was
+    // redundant (tmpfile uses glibc's own `tmpXXXXXX` naming, never
+    // `frankenlibc_`) and was the source of bd-el0v8 flakiness:
+    // any concurrent test using `temp_path()` would create a
+    // frankenlibc_-prefixed file that flickered through the snapshot
+    // window. Drop the snapshot.
 
     let stream = unsafe { tmpfile() };
     assert!(!stream.is_null());
@@ -1691,12 +1701,6 @@ fn tmpfile_closes_without_leaking_named_tmp_entries() {
 
     assert_eq!(unsafe { fputs(c"tmpfile-cleanup".as_ptr(), stream) }, 0);
     assert_eq!(unsafe { fclose(stream) }, 0);
-
-    let after = temp_dir_entries_with_prefix("frankenlibc_");
-    assert_eq!(
-        after, before,
-        "tmpfile must not leave residual named files in /tmp"
-    );
 }
 
 #[test]
