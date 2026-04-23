@@ -70,6 +70,14 @@ struct CondSlot {
     cond: Box<libc::pthread_cond_t>,
     mutex: Box<libc::pthread_mutex_t>,
     state: State,
+    /// Clock the cond was attached to via condattr_setclock at
+    /// init time. TimedwaitShortTimeout must build the absolute
+    /// deadline against THIS clock, not whatever
+    /// CLOCK_REALTIME-by-default the harness initially used.
+    /// Otherwise a CLOCK_MONOTONIC cond gets a CLOCK_REALTIME
+    /// abstime far in the future and timedwait blocks for
+    /// decades — manifests as a libFuzzer "timeout" report.
+    clock: libc::clockid_t,
 }
 
 fn init_hardened_mode() {
@@ -94,7 +102,12 @@ fn new_cond_slot() -> CondSlot {
         unsafe { Box::new(MaybeUninit::zeroed().assume_init()) };
     let mutex: Box<libc::pthread_mutex_t> =
         unsafe { Box::new(MaybeUninit::zeroed().assume_init()) };
-    CondSlot { cond, mutex, state: State::Live }
+    CondSlot {
+        cond,
+        mutex,
+        state: State::Live,
+        clock: libc::CLOCK_REALTIME,
+    }
 }
 
 fn pick_slot(table: &mut [CondSlot], slot: u8) -> Option<&mut CondSlot> {
@@ -166,7 +179,8 @@ fn apply_init_with_attr(table: &mut Vec<CondSlot>, clock_sel: u8, pshared: bool)
         return;
     }
     let mut attr = unsafe { attr.assume_init() };
-    let _ = unsafe { pthread_condattr_setclock(&mut attr, pick_clock(clock_sel)) };
+    let chosen_clock = pick_clock(clock_sel);
+    let _ = unsafe { pthread_condattr_setclock(&mut attr, chosen_clock) };
     let pshared_v = if pshared {
         libc::PTHREAD_PROCESS_SHARED
     } else {
@@ -175,6 +189,7 @@ fn apply_init_with_attr(table: &mut Vec<CondSlot>, clock_sel: u8, pshared: bool)
     let _ = unsafe { pthread_condattr_setpshared(&mut attr, pshared_v) };
 
     let mut slot = new_cond_slot();
+    slot.clock = chosen_clock;
     let rc_m = unsafe { pthread_mutex_init(&mut *slot.mutex, std::ptr::null()) };
     assert_eq!(rc_m, 0);
     let rc_c = unsafe { pthread_cond_init(&mut *slot.cond, &attr) };
@@ -242,9 +257,14 @@ fn apply_op(op: &Op, table: &mut Vec<CondSlot>) {
             }
             // Build a near-future absolute deadline. nsec_offset capped
             // to < 1s so we never block the harness for more than a
-            // millisecond of wall clock.
+            // millisecond of wall clock. Critically, query the cond's
+            // CONFIGURED clock — pthread_cond_timedwait interprets
+            // abstime against the clock the cond was attached to via
+            // condattr_setclock; mixing CLOCK_REALTIME abstime with a
+            // CLOCK_MONOTONIC cond made the deadline ~50 years away
+            // and the harness timed out.
             let mut now: libc::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-            unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut now) };
+            unsafe { libc::clock_gettime(s.clock, &mut now) };
             let nsec_add = ((*nsec_offset % 1_000_000) as i64).min(999_000);
             let abs = libc::timespec {
                 tv_sec: now.tv_sec,

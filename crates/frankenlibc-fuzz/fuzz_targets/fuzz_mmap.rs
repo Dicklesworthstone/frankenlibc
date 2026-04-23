@@ -272,8 +272,20 @@ fn apply_op(op: &Op, table: &mut Vec<Mapping>) {
             }
             assert!(rc == 0 || rc == -1, "mprotect rc out of contract: {rc}");
             if rc == 0 {
+                let was_writable = m.prot & libc::PROT_WRITE != 0;
+                let now_writable = prot & libc::PROT_WRITE != 0;
                 m.prot = prot;
                 table[idx] = m;
+                // Initial Map only stamps guards if the original prot had
+                // PROT_WRITE. If a non-writable mapping later gains
+                // PROT_WRITE via mprotect, the guard bytes were never
+                // written and the cleanup check_guards reads zeros (or
+                // whatever the page-fault zero-fill produced) and asserts
+                // "guard head corrupted". Re-stamp here whenever we gain
+                // PROT_WRITE.
+                if !was_writable && now_writable {
+                    write_guards(&m);
+                }
             }
         }
         Op::Sync { slot, flags_sel } => {

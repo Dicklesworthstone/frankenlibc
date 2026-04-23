@@ -131,6 +131,20 @@ fn apply_sigsetjmp_rt(val: i32, savemask: bool, use_siglongjmp: bool) {
 }
 
 fuzz_target!(|input: SetjmpFuzzInput| {
+    // cargo-fuzz compiles the target with --release but with
+    // `-Cdebug-assertions` for ASan. Under `debug_assertions=true`
+    // frankenlibc's setjmp ABI takes the deferred-transfer path
+    // which panic!s instead of performing a real longjmp. The
+    // round-trip contract this harness asserts assumes native
+    // setjmp/longjmp (release-without-debug-assertions) — the
+    // native x86_64 global_asm! implementation at
+    // crates/frankenlibc-abi/src/setjmp_abi.rs:241. Skip entirely
+    // when debug_assertions are on; the LD_PRELOAD smoke in
+    // scripts/check_setjmp_native.sh covers the native path.
+    if cfg!(debug_assertions) {
+        return;
+    }
+
     if input.ops.len() > 16 {
         return;
     }
