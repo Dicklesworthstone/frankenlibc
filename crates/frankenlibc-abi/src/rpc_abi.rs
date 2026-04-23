@@ -1778,31 +1778,69 @@ pub unsafe extern "C" fn xdr_pmap(xdrs: *mut c_void, regs: *mut c_void) -> c_int
 }
 
 /// Helper: serialize one PmapList entry.
-unsafe extern "C" fn xdr_pmap_list_entry(xdrs: *mut c_void, p: *mut c_void) -> c_int {
-    let e = p as *mut PmapList;
-    if unsafe { xdr_pmap(xdrs, (&mut (*e).pml_map as *mut Pmap).cast()) } != XDR_TRUE {
-        return XDR_FALSE;
-    }
-    unsafe {
-        xdr_pointer(
-            xdrs,
-            (&mut (*e).pml_next as *mut *mut PmapList).cast(),
-            std::mem::size_of::<PmapList>() as c_uint,
-            xdr_pmap_list_entry as *mut c_void,
-        )
-    }
-}
-
 /// Serialize a linked list of portmap entries.
+///
+/// Iterative implementation mirroring glibc's `xdr_pmaplist`
+/// (sunrpc/pmap_prot2.c). The previous recursion-via-xdr_pointer
+/// implementation was vulnerable to unbounded stack growth on
+/// attacker-controlled wire streams (bd-lc5ss).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_pmaplist(xdrs: *mut c_void, rp: *mut c_void) -> c_int {
-    unsafe {
-        xdr_pointer(
-            xdrs,
-            rp as *mut *mut c_char,
-            std::mem::size_of::<PmapList>() as c_uint,
-            xdr_pmap_list_entry as *mut c_void,
-        )
+    let x = xdrs as *mut Xdr;
+    let freeing = unsafe { (*x).x_op } == XDR_FREE;
+    let mut cursor: *mut *mut PmapList = rp.cast();
+
+    loop {
+        // Encode: 1 if list still has entries, 0 if at end.
+        // Decode: read same flag from wire.
+        let mut more: c_int = if unsafe { !(*cursor).is_null() } { 1 } else { 0 };
+        if unsafe { xdr_bool(xdrs, &mut more) } != XDR_TRUE {
+            return XDR_FALSE;
+        }
+        if more == 0 {
+            if !freeing {
+                unsafe {
+                    *cursor = std::ptr::null_mut();
+                }
+            }
+            return XDR_TRUE;
+        }
+        // Stash the next-pointer location BEFORE xdr_reference walks
+        // through the entry: in XDR_FREE mode the entry is freed and
+        // we'd UAF the pml_next field if we read it after the call.
+        let saved_next = if freeing {
+            unsafe { &mut (**cursor).pml_next as *mut *mut PmapList }
+        } else {
+            std::ptr::null_mut()
+        };
+        if unsafe {
+            xdr_reference(
+                xdrs,
+                cursor as *mut *mut c_char,
+                std::mem::size_of::<PmapList>() as c_uint,
+                xdr_pmap as *mut c_void,
+            )
+        } != XDR_TRUE
+        {
+            return XDR_FALSE;
+        }
+        // xdr_reference allocates `sizeof(PmapList)` bytes (40) but
+        // xdr_pmap only initializes the first 32 (pm_prog..pm_port).
+        // The pml_next field stays uninitialized — null it explicitly
+        // before we cursor-into it on the next iteration, otherwise
+        // both the encode-side `*cursor.is_null()` peek and the
+        // tail-of-list `*cursor = null` write target undefined
+        // memory.
+        if !freeing {
+            unsafe {
+                (**cursor).pml_next = std::ptr::null_mut();
+            }
+        }
+        cursor = if freeing {
+            saved_next
+        } else {
+            unsafe { &mut (**cursor).pml_next as *mut *mut PmapList }
+        };
     }
 }
 

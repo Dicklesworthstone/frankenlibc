@@ -2143,3 +2143,66 @@ fn xdr_short_boundaries() {
         assert_eq!(out, val, "xdr_short round-trip failed for {val}");
     }
 }
+
+// ===========================================================================
+// 86. xdr_pmaplist deep-stream regression (bd-lc5ss)
+// ===========================================================================
+//
+// xdr_pmaplist used to recurse via xdr_pointer chasing — a malicious
+// wire stream of N "more=1" flags would consume N stack frames and
+// SIGSEGV the process. Iterative implementation must handle a stream
+// far larger than any plausible thread-stack budget without
+// overflowing.
+#[test]
+fn xdr_pmaplist_deep_stream_does_not_overflow_stack() {
+    // 50_000 entries: each PmapList is 5 u32s on the wire (more=1
+    // + pm_prog + pm_vers + pm_prot + pm_port) = 20 bytes. The
+    // recursive impl would have eaten ~hundreds of bytes per level
+    // for ~10 MiB of stack at this depth — well past the default
+    // 8 MiB and certainly past CI worker defaults. Iterative impl
+    // uses one stack frame total.
+    const ENTRIES: usize = 50_000;
+    let bytes_per_entry = 4 * 5; // more flag + 4 Pmap fields
+    let total = bytes_per_entry * ENTRIES + 4; // + trailing more=0
+    let mut buf = vec![0u8; total];
+
+    // Hand-encode: ENTRIES copies of (more=1, prog, vers, prot, port)
+    // followed by more=0. Big-endian u32s.
+    for i in 0..ENTRIES {
+        let off = i * bytes_per_entry;
+        buf[off..off + 4].copy_from_slice(&1u32.to_be_bytes()); // more=1
+        buf[off + 4..off + 8].copy_from_slice(&100000u32.to_be_bytes()); // pm_prog
+        buf[off + 8..off + 12].copy_from_slice(&2u32.to_be_bytes()); // pm_vers
+        buf[off + 12..off + 16].copy_from_slice(&17u32.to_be_bytes()); // pm_prot
+        buf[off + 16..off + 20].copy_from_slice(&111u32.to_be_bytes()); // pm_port
+    }
+    // trailing more=0
+    let tail = ENTRIES * bytes_per_entry;
+    buf[tail..tail + 4].copy_from_slice(&0u32.to_be_bytes());
+
+    let mut xdr = XdrHandle::new();
+    xdr_decode(&mut xdr, &mut buf);
+
+    // *rp starts NULL; the iterative parser walks forward, mallocs
+    // each entry, and links them. We just verify it doesn't crash —
+    // no oracle on the linked list contents (would require freeing
+    // it, which would also need iterative free, which we test by
+    // not crashing).
+    let mut head: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe { xdr_pmaplist(xdr.as_mut_ptr(), &mut head as *mut *mut c_void as *mut c_void) };
+    assert_eq!(rc, 1, "xdr_pmaplist failed on deep stream");
+
+    // Free via xdr_pmaplist with XDR_FREE op — also must be iterative.
+    let mut free_xdr = XdrHandle::new();
+    unsafe {
+        xdrmem_create(
+            free_xdr.as_mut_ptr(),
+            buf.as_mut_ptr().cast(),
+            buf.len() as c_uint,
+            XDR_FREE,
+        );
+    }
+    let rc_free =
+        unsafe { xdr_pmaplist(free_xdr.as_mut_ptr(), &mut head as *mut *mut c_void as *mut c_void) };
+    assert_eq!(rc_free, 1, "xdr_pmaplist free failed on deep list");
+}
