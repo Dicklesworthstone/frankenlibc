@@ -163,15 +163,21 @@ fn apply_op(op: &Op, table: &mut Vec<Handle>) {
             let Some((_, h)) = pick_slot(table, *slot) else {
                 return;
             };
+            // dlsym on a dlclose'd handle is UB per POSIX and SEGVs in ld-linux
+            // in glibc. Skip stale slots; only exercise live handles (bd-cgodw).
+            if h.state != State::Live {
+                return;
+            }
             let sym = pick_sym(*sym_sel);
             let _ = unsafe { dlsym(h.ptr, sym) };
-            // We don't assert on the pointer value (stale handle may
-            // return NULL or arbitrary); just crash-detect.
         }
         Op::SymFuzz { slot, symbol } => {
             let Some((_, h)) = pick_slot(table, *slot) else {
                 return;
             };
+            if h.state != State::Live {
+                return;
+            }
             // Fuzzer-supplied symbol name with NULs stripped.
             let sym_c = sanitize_cstring(symbol, 128);
             let _ = unsafe { dlsym(h.ptr, sym_c.as_ptr()) };
@@ -192,12 +198,18 @@ fn apply_op(op: &Op, table: &mut Vec<Handle>) {
             let Some((idx, mut h)) = pick_slot(table, *slot) else {
                 return;
             };
+            // dlclose on an already-closed handle is UB; in glibc it corrupts
+            // loader state and manifests as a later-SEGV in dlsym on an
+            // unrelated LIVE handle (bd-cgodw). Skip stale slots.
+            if h.state != State::Live {
+                return;
+            }
             let rc = unsafe { dlclose(h.ptr) };
             assert!(
                 rc == 0 || rc == -1,
                 "dlclose rc out of contract: {rc}"
             );
-            if h.state == State::Live && rc == 0 {
+            if rc == 0 {
                 h.state = State::Stale;
                 table[idx] = h;
             }
@@ -206,6 +218,9 @@ fn apply_op(op: &Op, table: &mut Vec<Handle>) {
             let Some((_, h)) = pick_slot(table, *slot) else {
                 return;
             };
+            if h.state != State::Live {
+                return;
+            }
             // Get a symbol address via dlsym, then check dladdr resolves it.
             let sym = pick_sym(*sym_sel);
             let addr = unsafe { dlsym(h.ptr, sym) };
