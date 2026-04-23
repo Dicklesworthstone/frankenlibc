@@ -372,6 +372,10 @@ impl FormatSpec {
         matches!(self.value_arg_kind(), Some(ValueArgKind::Fp))
     }
 
+    pub fn value_arg_is_gp(&self) -> bool {
+        matches!(self.value_arg_kind(), Some(ValueArgKind::Gp))
+    }
+
     pub fn value_arg_is_string(&self) -> bool {
         self.route().is_some_and(PrintfRoute::is_string_arg)
     }
@@ -1524,6 +1528,7 @@ mod tests {
 
         assert!(signed.consumes_value_arg());
         assert_eq!(signed.value_arg_kind(), Some(ValueArgKind::Gp));
+        assert!(signed.value_arg_is_gp());
         assert!(!signed.value_arg_is_string());
         assert!(!signed.stores_count());
         assert_eq!(
@@ -1532,18 +1537,22 @@ mod tests {
         );
         assert!(string.value_arg_is_string());
         assert_eq!(string.value_arg_kind(), Some(ValueArgKind::Gp));
+        assert!(string.value_arg_is_gp());
         assert_eq!(float.value_arg_kind(), Some(ValueArgKind::Fp));
         assert!(float.value_arg_is_float());
+        assert!(!float.value_arg_is_gp());
         assert_eq!(
             float.raw_render_kind(),
             Some(RawValueRenderKind::Float(FloatFormatKind::Fixed))
         );
         assert!(store.stores_count());
         assert_eq!(store.value_arg_kind(), Some(ValueArgKind::Gp));
+        assert!(store.value_arg_is_gp());
         assert!(percent.is_literal_percent());
         assert!(errno.is_errno_message());
         assert!(!errno.consumes_value_arg());
         assert_eq!(errno.value_arg_kind(), None);
+        assert!(!errno.value_arg_is_gp());
 
         let hex = FormatSpec::new(
             FormatFlags::default(),

@@ -3068,16 +3068,12 @@ macro_rules! extract_va_args {
                         $buf[_idx] = (raw as i64) as u64;
                         _idx += 1;
                     }
-                    match spec.value_arg_kind() {
-                        Some(ValueArgKind::Fp) if _idx < $extract_count => {
-                            $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
-                            _idx += 1;
-                        }
-                        Some(ValueArgKind::Gp) if _idx < $extract_count => {
-                            $buf[_idx] = unsafe { $args.arg::<u64>() };
-                            _idx += 1;
-                        }
-                        _ => {}
+                    if spec.value_arg_is_float() && _idx < $extract_count {
+                        $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                        _idx += 1;
+                    } else if spec.value_arg_is_gp() && _idx < $extract_count {
+                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        _idx += 1;
                     }
                 }
             }
@@ -3850,18 +3846,14 @@ pub(crate) unsafe fn vprintf_extract_args(
                         unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
                     idx += 1;
                 }
-                match spec.value_arg_kind() {
-                    Some(ValueArgKind::Fp) if idx < extract_count => {
-                        buf[idx] =
-                            unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
-                        idx += 1;
-                    }
-                    Some(ValueArgKind::Gp) if idx < extract_count => {
-                        buf[idx] =
-                            unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
-                        idx += 1;
-                    }
-                    _ => {}
+                if spec.value_arg_is_float() && idx < extract_count {
+                    buf[idx] =
+                        unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                    idx += 1;
+                } else if spec.value_arg_is_gp() && idx < extract_count {
+                    buf[idx] =
+                        unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) };
+                    idx += 1;
                 }
             }
         }
