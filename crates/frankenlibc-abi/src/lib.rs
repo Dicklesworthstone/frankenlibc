@@ -25,6 +25,21 @@
 //! In **hardened** mode, the membrane validates AND applies deterministic healing
 //! (clamp, truncate, quarantine, safe-default) for unsafe patterns.
 
+// Architecture support matrix (bd-10pq). The ABI has inline asm
+// (setjmp_abi.rs global_asm!), x86-specific intrinsics (RTM in
+// htm_fast_path), and raw-syscall sequences that assume a
+// specific ABI register layout. Until each ISA has its own
+// validated code-path, fail at compile time with a clear
+// message rather than silently producing a broken .so.
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+compile_error!(
+    "frankenlibc-abi currently supports only target_arch = \"x86_64\" \
+    (primary) and \"aarch64\" (active bring-up). RISC-V and other \
+    ISAs are tracked under bd-10pq — they need per-ISA inline asm \
+    (setjmp_abi), intrinsic replacements (htm_fast_path), and \
+    raw-syscall sequences before this crate can build on them."
+);
+
 #[macro_use]
 mod macros;
 

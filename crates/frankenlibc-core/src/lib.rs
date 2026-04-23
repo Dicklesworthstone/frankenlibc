@@ -7,6 +7,18 @@
 
 #![deny(unsafe_code)]
 
+// Architecture support (bd-10pq): the `syscall` module gates below
+// on x86_64 / aarch64 because each ISA needs its own validated
+// register layout. Fail fast on other ISAs with a pointer to the
+// tracking bead so build output is actionable.
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+compile_error!(
+    "frankenlibc-core currently supports only target_arch = \"x86_64\" \
+    and \"aarch64\". Multi-ISA tracking: bd-10pq. Each new ISA needs \
+    per-arch raw-syscall register conventions in src/syscall/ before \
+    this crate can build on it."
+);
+
 pub mod ctype;
 pub mod dirent;
 pub mod dlfcn;
