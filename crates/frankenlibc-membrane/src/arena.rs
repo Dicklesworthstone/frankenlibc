@@ -71,6 +71,39 @@ impl ArenaShard {
     }
 }
 
+impl Drop for ArenaShard {
+    fn drop(&mut self) {
+        // Reclaim any still-live and quarantined allocations. Without this,
+        // dropping the arena leaks every outstanding raw_base (bd-q9x3h).
+        // AllocationArena is typically a process-lifetime singleton in frankenlibc,
+        // so in production this runs only at exit; in tests and fuzz harnesses
+        // it runs per iteration and was the source of LSan exit-status-77.
+        for slot in self.slots.iter() {
+            // Skip slots already freed or moved to quarantine (the quarantine
+            // drain below owns the dealloc for Quarantined slots); Invalid
+            // slots never had backing memory.
+            match slot.state {
+                SafetyState::Freed | SafetyState::Invalid | SafetyState::Quarantined => continue,
+                _ => {}
+            }
+            // Reconstruct the layout used at allocation time.
+            let offset = slot.user_base.saturating_sub(slot.raw_base);
+            let total_size = offset + slot.user_size + CANARY_SIZE;
+            let align = offset.max(1);
+            if let Ok(layout) = std::alloc::Layout::from_size_align(total_size, align) {
+                // SAFETY: slot.raw_base was returned by std::alloc::alloc with this layout.
+                unsafe { std::alloc::dealloc(slot.raw_base as *mut u8, layout) };
+            }
+        }
+        while let Some(entry) = self.quarantine.pop_front() {
+            if let Ok(layout) = std::alloc::Layout::from_size_align(entry.total_size, entry.align) {
+                // SAFETY: entry.raw_base was returned by std::alloc::alloc with this layout.
+                unsafe { std::alloc::dealloc(entry.raw_base as *mut u8, layout) };
+            }
+        }
+    }
+}
+
 use std::sync::Arc;
 
 use crate::ebr::QuarantineEbr;
