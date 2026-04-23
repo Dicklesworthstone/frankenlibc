@@ -89,10 +89,10 @@ fn fuzz_renameat2(input: &ErrnoPrecedenceInput) {
     };
 
     let flags = rename_flags(input.flag_bits);
-    let oldpath_abi = case.oldpath_abi.as_ref().map_or(ptr::null(), CString::as_ptr);
-    let newpath_abi = case.newpath_abi.as_ref().map_or(ptr::null(), CString::as_ptr);
-    let oldpath_host = case.oldpath_host.as_ref().map_or(ptr::null(), CString::as_ptr);
-    let newpath_host = case.newpath_host.as_ref().map_or(ptr::null(), CString::as_ptr);
+    let oldpath_abi = case.oldpath_abi.as_ref().map_or(ptr::null(), |s| s.as_ptr());
+    let newpath_abi = case.newpath_abi.as_ref().map_or(ptr::null(), |s| s.as_ptr());
+    let oldpath_host = case.oldpath_host.as_ref().map_or(ptr::null(), |s| s.as_ptr());
+    let newpath_host = case.newpath_host.as_ref().map_or(ptr::null(), |s| s.as_ptr());
 
     let (abi_rc, abi_errno) = call_abi_renameat2(
         case.olddirfd_abi,
