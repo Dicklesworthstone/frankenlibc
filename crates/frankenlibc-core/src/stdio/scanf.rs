@@ -53,6 +53,26 @@ pub enum ScanArgKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntScanKind {
+    SignedDecimal,
+    SignedAutoBase,
+    UnsignedDecimal,
+    UnsignedOctal,
+    UnsignedHex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScanOperationKind {
+    Int(IntScanKind),
+    Float,
+    Character,
+    String,
+    Scanset,
+    CharsConsumed,
+    Pointer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ScanfRoute {
     handler: ScanfHandler,
     length_mask: u8,
@@ -98,6 +118,27 @@ impl ScanfRoute {
             ScanfArgCategory::StringBuffer => Some(ScanArgKind::StringBuffer),
             ScanfArgCategory::Store => Some(ScanArgKind::Store),
             ScanfArgCategory::Pointer => Some(ScanArgKind::Pointer),
+        }
+    }
+
+    fn scan_operation_kind(self) -> Option<ScanOperationKind> {
+        match self.handler {
+            ScanfHandler::Invalid => None,
+            ScanfHandler::SignedDecimal => Some(ScanOperationKind::Int(IntScanKind::SignedDecimal)),
+            ScanfHandler::SignedAutoBase => {
+                Some(ScanOperationKind::Int(IntScanKind::SignedAutoBase))
+            }
+            ScanfHandler::UnsignedDecimal => {
+                Some(ScanOperationKind::Int(IntScanKind::UnsignedDecimal))
+            }
+            ScanfHandler::UnsignedOctal => Some(ScanOperationKind::Int(IntScanKind::UnsignedOctal)),
+            ScanfHandler::UnsignedHex => Some(ScanOperationKind::Int(IntScanKind::UnsignedHex)),
+            ScanfHandler::Float => Some(ScanOperationKind::Float),
+            ScanfHandler::Character => Some(ScanOperationKind::Character),
+            ScanfHandler::String => Some(ScanOperationKind::String),
+            ScanfHandler::Scanset => Some(ScanOperationKind::Scanset),
+            ScanfHandler::CharsConsumed => Some(ScanOperationKind::CharsConsumed),
+            ScanfHandler::Pointer => Some(ScanOperationKind::Pointer),
         }
     }
 }
@@ -187,8 +228,8 @@ impl ScanSpec {
         matches!(self.arg_kind(), Some(ScanArgKind::Pointer))
     }
 
-    fn handler(&self) -> Option<ScanfHandler> {
-        self.route.is_valid().then_some(self.route.handler)
+    fn scan_operation_kind(&self) -> Option<ScanOperationKind> {
+        self.route.scan_operation_kind()
     }
 
     fn bind_route(&mut self) -> bool {
@@ -203,19 +244,32 @@ impl ScanSpec {
     }
 
     fn scan_at(&self, input: &[u8], pos: usize) -> Option<(Option<ScanValue>, usize)> {
-        match self.handler()? {
-            ScanfHandler::SignedDecimal => scan_int(input, pos, self, 10, true),
-            ScanfHandler::SignedAutoBase => scan_int_auto(input, pos, self),
-            ScanfHandler::UnsignedDecimal => scan_int(input, pos, self, 10, false),
-            ScanfHandler::UnsignedOctal => scan_int(input, pos, self, 8, false),
-            ScanfHandler::UnsignedHex => scan_int(input, pos, self, 16, false),
-            ScanfHandler::Float => scan_float(input, pos, self),
-            ScanfHandler::Character => scan_char(input, pos, self),
-            ScanfHandler::String => scan_string(input, pos, self),
-            ScanfHandler::Scanset => scan_scanset(input, pos, self),
-            ScanfHandler::CharsConsumed => Some((Some(ScanValue::CharsConsumed(pos)), pos)),
-            ScanfHandler::Pointer => scan_pointer(input, pos, self),
-            ScanfHandler::Invalid => None,
+        self.scan_operation_kind()?.scan(input, pos, self)
+    }
+}
+
+impl IntScanKind {
+    fn scan(self, input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
+        match self {
+            IntScanKind::SignedDecimal => scan_int(input, pos, spec, 10, true),
+            IntScanKind::SignedAutoBase => scan_int_auto(input, pos, spec),
+            IntScanKind::UnsignedDecimal => scan_int(input, pos, spec, 10, false),
+            IntScanKind::UnsignedOctal => scan_int(input, pos, spec, 8, false),
+            IntScanKind::UnsignedHex => scan_int(input, pos, spec, 16, false),
+        }
+    }
+}
+
+impl ScanOperationKind {
+    fn scan(self, input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
+        match self {
+            ScanOperationKind::Int(kind) => kind.scan(input, pos, spec),
+            ScanOperationKind::Float => scan_float(input, pos, spec),
+            ScanOperationKind::Character => scan_char(input, pos, spec),
+            ScanOperationKind::String => scan_string(input, pos, spec),
+            ScanOperationKind::Scanset => scan_scanset(input, pos, spec),
+            ScanOperationKind::CharsConsumed => Some((Some(ScanValue::CharsConsumed(pos)), pos)),
+            ScanOperationKind::Pointer => scan_pointer(input, pos, spec),
         }
     }
 }
@@ -1235,6 +1289,12 @@ mod tests {
         assert_eq!(decimal.arg_kind(), Some(ScanArgKind::SignedInt));
         assert_eq!(string.arg_kind(), Some(ScanArgKind::StringBuffer));
         assert_eq!(scanset.arg_kind(), Some(ScanArgKind::StringBuffer));
+        assert_eq!(
+            decimal.scan_operation_kind(),
+            Some(ScanOperationKind::Int(IntScanKind::SignedDecimal))
+        );
+        assert_eq!(string.scan_operation_kind(), Some(ScanOperationKind::String));
+        assert_eq!(scanset.scan_operation_kind(), Some(ScanOperationKind::Scanset));
         assert!(decimal.skips_leading_whitespace);
         assert!(!scanset.skips_leading_whitespace);
         assert!(string.accepts_length(LengthMod::L));
@@ -1256,8 +1316,13 @@ mod tests {
         assert_eq!(specs.len(), 2);
         assert!(specs[0].writes_string_buffer());
         assert!(specs[0].skips_leading_whitespace());
+        assert_eq!(specs[0].scan_operation_kind(), Some(ScanOperationKind::String));
         assert!(specs[1].writes_char_buffer());
         assert!(!specs[1].skips_leading_whitespace());
+        assert_eq!(
+            specs[1].scan_operation_kind(),
+            Some(ScanOperationKind::Character)
+        );
     }
 
     #[test]
