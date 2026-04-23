@@ -20,7 +20,11 @@ TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-300}"
 STRESS_SEED="${FRANKENLIBC_THREAD_STRESS_SEED:-4242}"
 FANOUT_ITERS="${FLC_BD1F35_FANOUT_ITERS:-3}"
 DETACH_JOIN_ITERS="${FLC_BD1F35_DETACH_JOIN_ITERS:-3}"
-THREAD_STRESS_TARGET_DIR="${FLC_BD1F35_CARGO_TARGET_DIR:-/data/tmp/cargo-target-bd1f35}"
+# Default the cargo target directory to a path under the user's home cache so
+# the gate works on rch remote workers where /data/tmp is not writable. Caller
+# can still override via FLC_BD1F35_CARGO_TARGET_DIR or by setting a per-host
+# CARGO_TARGET_DIR upstream of the script.
+THREAD_STRESS_TARGET_DIR="${FLC_BD1F35_CARGO_TARGET_DIR:-${CARGO_TARGET_DIR:-${HOME}/.cache/frankenlibc/cargo-target-bd1f35}}"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "FAIL: jq is required" >&2
