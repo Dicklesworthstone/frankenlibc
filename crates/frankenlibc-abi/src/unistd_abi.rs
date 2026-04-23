@@ -3659,9 +3659,36 @@ pub unsafe extern "C" fn arc4random() -> u32 {
 }
 
 /// BSD `arc4random_buf` — fill buffer with random bytes.
+///
+/// BSD contract: this function never fails and the entire buffer must be
+/// populated with strong random bytes. Linux `getrandom(2)` guarantees a
+/// full read only for sizes <= 256; larger requests may short-read when
+/// a signal interrupts the syscall, so loop until the whole buffer is
+/// filled, retrying on EINTR. On any other error we fall back to a
+/// /dev/urandom read so the caller still gets entropy. (bd-ubkl7)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn arc4random_buf(buf: *mut c_void, nbytes: usize) {
-    let _ = unsafe { syscall::sys_getrandom(buf as *mut u8, nbytes, 0) };
+    if nbytes == 0 || buf.is_null() {
+        return;
+    }
+    let mut written: usize = 0;
+    while written < nbytes {
+        let remaining = nbytes - written;
+        let dst = unsafe { (buf as *mut u8).add(written) };
+        match unsafe { syscall::sys_getrandom(dst, remaining, 0) } {
+            Ok(n) if n > 0 => {
+                written += n as usize;
+            }
+            Ok(_) => {
+                // Zero-byte "success" would be an infinite loop.
+                break;
+            }
+            Err(e) if e == errno::EINTR => {
+                continue;
+            }
+            Err(_) => break,
+        }
+    }
 }
 
 /// BSD `arc4random_uniform` — return a uniform random value less than `upper_bound`.

@@ -35,8 +35,8 @@ use frankenlibc_abi::glibc_internal_abi::setaliasent as abi_setaliasent;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
     FTSENT as AbiFtsEnt, access, alarm, chdir, chmod, chown, close, creat, eaccess, endaliasent,
-    aio_suspend, ether_line, euidaccess, faccessat, fchmod, fchown, fdatasync, fgetgrent_r,
-    fgetpwent_r,
+    aio_suspend, arc4random_buf, ether_line, euidaccess, faccessat, fchmod, fchown, fdatasync,
+    fgetgrent_r, fgetpwent_r,
     fgetspent, fgetspent_r, flock, fstat, fsync, ftruncate, fts_children as abi_fts_children,
     fts_close as abi_fts_close, fts_open as abi_fts_open, fts_read as abi_fts_read,
     fts_set as abi_fts_set, gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname,
@@ -4952,4 +4952,55 @@ fn aio_suspend_rejects_empty_list_before_timeout() {
     // look at the timespec — adversarial timestamps should not affect it.
     let rc = unsafe { aio_suspend(std::ptr::null(), 0, std::ptr::null()) };
     assert_eq!(rc, -1);
+}
+
+// ---------------------------------------------------------------------------
+// arc4random_buf short-read contract (bd-ubkl7)
+//
+// Linux getrandom(2) may short-read for nbytes > 256. arc4random_buf must
+// loop until the whole buffer is filled; leaving a trailing window
+// uninitialized would be a security defect (caller treats it as entropy).
+// The test initializes the buffer to a sentinel and then asserts no byte
+// retains the sentinel after arc4random_buf completes — statistically a
+// 1_024-byte /dev/urandom read will overwrite every byte (probability of a
+// single byte matching 0xA5 is 1/256; probability that ALL 1024 coincide
+// with the sentinel is (1/256)^1024 ≈ 0). The 0-byte request must be a
+// no-op and must not touch the buffer.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn arc4random_buf_fills_entire_buffer_past_256_bytes() {
+    const N: usize = 1024;
+    let mut buf = [0xA5_u8; N];
+    unsafe { arc4random_buf(buf.as_mut_ptr() as *mut c_void, N) };
+    // A correct implementation MUST overwrite every byte. Find any byte that
+    // still carries the 0xA5 sentinel — a single hit is allowed (random
+    // matches happen), but a contiguous trailing window >= 16 bytes of
+    // sentinels is the short-read signature the bug would produce.
+    let mut trailing = 0usize;
+    for &b in buf.iter().rev() {
+        if b == 0xA5 {
+            trailing += 1;
+        } else {
+            break;
+        }
+    }
+    assert!(
+        trailing < 16,
+        "arc4random_buf left {trailing} trailing bytes at the 0xA5 sentinel — looks like a short-read bug"
+    );
+}
+
+#[test]
+fn arc4random_buf_zero_size_is_noop() {
+    let mut buf = [0xA5_u8; 4];
+    unsafe { arc4random_buf(buf.as_mut_ptr() as *mut c_void, 0) };
+    assert_eq!(buf, [0xA5; 4], "arc4random_buf(_, 0) must not write");
+}
+
+#[test]
+fn arc4random_buf_null_pointer_is_noop() {
+    // Null buffer is an invalid request but must not crash.
+    unsafe { arc4random_buf(std::ptr::null_mut(), 0) };
+    unsafe { arc4random_buf(std::ptr::null_mut(), 64) };
 }
