@@ -1056,6 +1056,39 @@ pub unsafe extern "C" fn xdr_opaque(xdrs: *mut c_void, cp: *mut c_char, cnt: c_u
     }
 }
 
+/// Return the remaining unread byte count for an `xdrmem` stream, or
+/// `None` if the stream uses a different backend (rec/stdio) where the
+/// remaining length is not directly observable.
+///
+/// Used by xdr_string / xdr_bytes / xdr_array DECODE paths to bound
+/// caller-supplied lengths against the actual stream size BEFORE
+/// allocating, defending against attacker-supplied 4 GiB length lies
+/// that pass `maxsize` checks (bd-bhqcn, CVE-2017-17807 / -2020-25645
+/// / -2022-23219 family).
+#[inline]
+fn xdrmem_remaining_bytes(xdrs: *mut c_void) -> Option<c_uint> {
+    let x = xdrs as *mut Xdr;
+    if x.is_null() {
+        return None;
+    }
+    // SAFETY: xdrs is a caller-owned Xdr handle; we read the immutable
+    // ops vtable pointer and the length-of-remaining-bytes counter.
+    let ops = unsafe { (*x).x_ops };
+    if ops == &XDRMEM_OPS as *const XdrOps {
+        Some(unsafe { (*x).x_handy })
+    } else {
+        None
+    }
+}
+
+/// Round `n` up to the next multiple of 4 (XDR's natural unit), saturating
+/// at u32::MAX so we never wrap around. The decoded payload of a length-
+/// prefixed XDR opaque is always 4-byte padded.
+#[inline]
+fn xdr_padded_len(n: c_uint) -> c_uint {
+    n.saturating_add(3) & !3
+}
+
 /// Serialize counted bytes (length-prefixed, malloc on decode).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn xdr_bytes(
@@ -1086,6 +1119,17 @@ pub unsafe extern "C" fn xdr_bytes(
             }
             if len == 0 {
                 return XDR_TRUE;
+            }
+            // Defense in depth (bd-bhqcn): for xdrmem streams, refuse a
+            // decoded length whose padded payload cannot fit in the
+            // remaining stream. xdr_opaque would later catch this via
+            // xgb, but only after we've already malloc'd the
+            // attacker-supplied size — a 4 GiB length lie would OOM
+            // before reaching the stream check.
+            if let Some(remaining) = xdrmem_remaining_bytes(xdrs)
+                && xdr_padded_len(len) > remaining
+            {
+                return XDR_FALSE;
             }
             if unsafe { (*sp).is_null() } {
                 // Caller frees via libc::free per RFC 1832 mem_free contract;
@@ -1148,6 +1192,16 @@ pub unsafe extern "C" fn xdr_string(
         return XDR_FALSE;
     }
     if size > maxsize {
+        return XDR_FALSE;
+    }
+    // Defense in depth (bd-bhqcn): refuse a decoded length whose
+    // padded payload would overrun the xdrmem stream. xdr_wrapstring
+    // passes maxsize=u32::MAX per RFC contract, so the maxsize check
+    // alone leaves a 4 GiB allocation primitive for attackers.
+    if op == XDR_DECODE
+        && let Some(remaining) = xdrmem_remaining_bytes(xdrs)
+        && xdr_padded_len(size) > remaining
+    {
         return XDR_FALSE;
     }
     if op == XDR_DECODE && unsafe { (*sp).is_null() } {
@@ -1221,7 +1275,29 @@ pub unsafe extern "C" fn xdr_array(
     if c == 0 {
         return XDR_TRUE;
     }
+    // Reject elsize=0 outright: an array of zero-size elements is
+    // nonsensical, but a caller (or attacker who controls a
+    // generated-stub call site) supplying elsize=0 with a non-zero
+    // count drops the overflow check below and ends up calling the
+    // per-element proc on a 1-byte malloc, causing the element proc
+    // to write past the allocation. Found by fuzz_xdr (bd-bhqcn).
+    if elsize == 0 && c != 0 && op != XDR_FREE {
+        return XDR_FALSE;
+    }
     if elsize > 0 && c > u32::MAX / elsize && op != XDR_FREE {
+        return XDR_FALSE;
+    }
+    // Defense in depth (bd-bhqcn): refuse an attacker-supplied count
+    // whose total wire footprint cannot fit in the remaining xdrmem
+    // stream. We treat each element as at least `elsize` wire bytes —
+    // the per-element xdr proc may consume more (variable-length
+    // members), but cannot consume less, so this is a sound lower
+    // bound for the malloc-blocking check.
+    if op == XDR_DECODE
+        && elsize > 0
+        && let Some(remaining) = xdrmem_remaining_bytes(xdrs)
+        && (c as u64).saturating_mul(elsize as u64) > remaining as u64
+    {
         return XDR_FALSE;
     }
     let target = if op == XDR_DECODE && unsafe { (*arrp).is_null() } {

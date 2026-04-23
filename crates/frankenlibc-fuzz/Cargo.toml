@@ -230,4 +230,9 @@ name = "fuzz_strftime"
 path = "fuzz_targets/fuzz_strftime.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_xdr"
+path = "fuzz_targets/fuzz_xdr.rs"
+doc = false
+
 [workspace]
