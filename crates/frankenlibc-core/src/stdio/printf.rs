@@ -1037,6 +1037,12 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         Precision::None => 6, // POSIX default
         Precision::FromArg | Precision::FromArgPosition(_) => 6,
     };
+    // Rust's core::fmt stores precision as u16 internally and panics with
+    // "Formatting argument out of range" for precision >= 65536. Cap to
+    // 65535 to prevent a process abort from any adversarial `%.99999f`-style
+    // format string. Formats above this already panic with today's code, so
+    // capping loses no currently-working behavior. (bd-h7ede)
+    let precision = precision.min(65_535);
 
     // Handle special values.
     if value.is_nan() || value.is_infinite() {
@@ -2225,5 +2231,56 @@ mod tests {
         assert_eq!(format_g(9999.5, 6, false, false), "9999.5");
         // Uppercase variant.
         assert_eq!(format_g(999999.5, 6, true, false), "1E+06");
+    }
+
+    // Regression for bd-h7ede. Rust's core::fmt stores precision as u16 and
+    // panics ("Formatting argument out of range") for precision >= 65536.
+    // format_float must cap precision before it reaches format!/%.*f, or any
+    // C caller with a format like `%.99999f` would abort the process.
+    #[test]
+    fn format_float_does_not_panic_on_huge_precision() {
+        // Exercise %f, %e, %g, %a at prec = 65536 (the first panicking value)
+        // and at prec = usize::MAX / 2 (pathological) — neither must panic.
+        for prec in [65_536usize, 100_000, usize::MAX / 2] {
+            for conv in [b'f', b'e', b'g', b'a', b'F', b'E', b'G', b'A'] {
+                let spec = FormatSpec::new(
+                    FormatFlags::default(),
+                    Width::None,
+                    Precision::Fixed(prec),
+                    LengthMod::None,
+                    conv,
+                    None,
+                );
+                let mut buf = Vec::new();
+                // Must return without panicking. Output is allowed to be
+                // truncated — we only pin the no-abort contract.
+                format_float(1.5_f64, &spec, &mut buf);
+                assert!(
+                    !buf.is_empty(),
+                    "%{}: format_float produced empty output at prec={prec}",
+                    conv as char
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn format_float_still_honors_precision_up_to_cap() {
+        // At prec = 65535 (the cap) the formatter must still produce the
+        // requested number of fractional digits — capping to 65535 preserves
+        // currently-working behavior.
+        let spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::Fixed(65_535),
+            LengthMod::None,
+            b'f',
+            None,
+        );
+        let mut buf = Vec::new();
+        format_float(1.0_f64, &spec, &mut buf);
+        // "1." + 65535 '0's = 65537 bytes.
+        assert_eq!(buf.len(), 65_537);
+        assert_eq!(&buf[..2], b"1.");
     }
 }
