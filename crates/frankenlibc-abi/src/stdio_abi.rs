@@ -2961,7 +2961,6 @@ use frankenlibc_core::stdio::{
 
 /// Maximum variadic arguments we extract per printf call.
 pub(crate) const MAX_VA_ARGS: usize = 32;
-pub(crate) use frankenlibc_core::stdio::ValueArgKind as PrintfArgKind;
 
 pub(crate) fn positional_printf_arg_plan(
     segments: &[FormatSegment<'_>],

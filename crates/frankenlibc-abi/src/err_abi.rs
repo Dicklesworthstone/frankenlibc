@@ -8,6 +8,8 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
+use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
+
 // ---------------------------------------------------------------------------
 // Program name helper
 // ---------------------------------------------------------------------------
@@ -92,16 +94,16 @@ macro_rules! extract_err_args {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         use frankenlibc_core::stdio::printf::FormatSegment;
         let mut _idx = 0usize;
-        if let Some(_plan) = super::stdio_abi::positional_printf_arg_plan($segments) {
+        if let Some(_plan) = positional_printf_arg_plan($segments) {
             for _kind in _plan.iter().take($extract_count) {
                 match _kind {
-                    super::stdio_abi::PrintfArgKind::Gp => {
+                    ValueArgKind::Gp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<u64>() };
                             _idx += 1;
                         }
                     }
-                    super::stdio_abi::PrintfArgKind::Fp => {
+                    ValueArgKind::Fp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
                             _idx += 1;
@@ -148,7 +150,7 @@ fn vformat_and_write(fmt: *const c_char, ap: *mut c_void, with_errno: bool) {
     let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
     use frankenlibc_core::stdio::printf::parse_format_string;
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe {
         super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count);
@@ -170,7 +172,7 @@ pub unsafe extern "C" fn warn(fmt: *const c_char, mut args: ...) {
     let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
     use frankenlibc_core::stdio::printf::parse_format_string;
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
     write_err_message(fmt_bytes, &arg_buf, extract_count, true);
@@ -200,7 +202,7 @@ pub unsafe extern "C" fn warnx(fmt: *const c_char, mut args: ...) {
     let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
     use frankenlibc_core::stdio::printf::parse_format_string;
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
     write_err_message(fmt_bytes, &arg_buf, extract_count, false);
@@ -229,7 +231,7 @@ pub unsafe extern "C" fn err(eval: c_int, fmt: *const c_char, mut args: ...) -> 
         let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
         use frankenlibc_core::stdio::printf::parse_format_string;
         let segments = parse_format_string(fmt_bytes);
-        let extract_count = super::stdio_abi::count_printf_args(&segments);
+        let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
         let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
         extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
         write_err_message(fmt_bytes, &arg_buf, extract_count, true);
@@ -261,7 +263,7 @@ pub unsafe extern "C" fn errx(eval: c_int, fmt: *const c_char, mut args: ...) ->
         let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
         use frankenlibc_core::stdio::printf::parse_format_string;
         let segments = parse_format_string(fmt_bytes);
-        let extract_count = super::stdio_abi::count_printf_args(&segments);
+        let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
         let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
         extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
         write_err_message(fmt_bytes, &arg_buf, extract_count, false);

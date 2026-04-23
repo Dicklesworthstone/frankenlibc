@@ -10,6 +10,7 @@ use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::stdio::StdioStream;
 use frankenlibc_core::stdio::printf::{FormatSegment, parse_format_string};
+use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -2523,16 +2524,16 @@ use frankenlibc_core::stdio::scanf::{ScanDirective, ScanValue};
 macro_rules! extract_wprintf_args {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         let mut _idx = 0usize;
-        if let Some(_plan) = super::stdio_abi::positional_printf_arg_plan($segments) {
+        if let Some(_plan) = positional_printf_arg_plan($segments) {
             for _kind in _plan.iter().take($extract_count) {
                 match _kind {
-                    super::stdio_abi::PrintfArgKind::Gp => {
+                    ValueArgKind::Gp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<u64>() };
                             _idx += 1;
                         }
                     }
-                    super::stdio_abi::PrintfArgKind::Fp => {
+                    ValueArgKind::Fp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
                             _idx += 1;
@@ -3040,7 +3041,7 @@ pub unsafe extern "C" fn swprintf(
     }
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let segments = parse_format_string(&fmt_narrow);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
@@ -3069,7 +3070,7 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
     }
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let segments = parse_format_string(&fmt_narrow);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
@@ -3096,7 +3097,7 @@ pub unsafe extern "C" fn fwprintf(
     }
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let segments = parse_format_string(&fmt_narrow);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
@@ -3126,7 +3127,7 @@ pub unsafe extern "C" fn vswprintf(
     }
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let segments = parse_format_string(&fmt_narrow);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
@@ -3156,7 +3157,7 @@ pub unsafe extern "C" fn vwprintf(
     }
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let segments = parse_format_string(&fmt_narrow);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
@@ -3183,7 +3184,7 @@ pub unsafe extern "C" fn vfwprintf(
     }
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let segments = parse_format_string(&fmt_narrow);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 

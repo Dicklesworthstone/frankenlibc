@@ -7,6 +7,7 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
 use frankenlibc_core::errno;
+use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
 use frankenlibc_core::syscall;
 use frankenlibc_core::unistd as unistd_core;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
@@ -2649,16 +2650,16 @@ macro_rules! extract_syslog_args {
     ($segments:expr, $args:expr, $buf:expr, $extract_count:expr) => {{
         use frankenlibc_core::stdio::printf::FormatSegment;
         let mut _idx = 0usize;
-        if let Some(_plan) = super::stdio_abi::positional_printf_arg_plan($segments) {
+        if let Some(_plan) = positional_printf_arg_plan($segments) {
             for _kind in _plan.iter().take($extract_count) {
                 match _kind {
-                    super::stdio_abi::PrintfArgKind::Gp => {
+                    ValueArgKind::Gp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<u64>() };
                             _idx += 1;
                         }
                     }
-                    super::stdio_abi::PrintfArgKind::Fp => {
+                    ValueArgKind::Fp => {
                         if _idx < $extract_count {
                             $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
                             _idx += 1;
@@ -2718,7 +2719,7 @@ pub unsafe extern "C" fn syslog(priority: c_int, format: *const c_char, mut args
     let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(format) };
     use frankenlibc_core::stdio::printf::parse_format_string;
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
     let rendered =
@@ -2746,7 +2747,7 @@ pub unsafe extern "C" fn vsyslog(priority: c_int, format: *const c_char, ap: *mu
     let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(format) };
     use frankenlibc_core::stdio::printf::parse_format_string;
     let segments = parse_format_string(fmt_bytes);
-    let extract_count = super::stdio_abi::count_printf_args(&segments);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
     let rendered =
