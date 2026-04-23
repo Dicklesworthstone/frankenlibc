@@ -368,6 +368,22 @@ impl FormatSpec {
         self.route().and_then(PrintfRoute::value_arg_kind)
     }
 
+    pub fn positional_width_arg_kind(&self) -> Option<(usize, ValueArgKind)> {
+        self.width
+            .position()
+            .map(|position| (position, ValueArgKind::Gp))
+    }
+
+    pub fn positional_precision_arg_kind(&self) -> Option<(usize, ValueArgKind)> {
+        self.precision
+            .position()
+            .map(|position| (position, ValueArgKind::Gp))
+    }
+
+    pub fn positional_value_arg_kind(&self) -> Option<(usize, ValueArgKind)> {
+        self.value_position.zip(self.value_arg_kind())
+    }
+
     pub fn value_arg_is_float(&self) -> bool {
         matches!(self.value_arg_kind(), Some(ValueArgKind::Fp))
     }
@@ -1525,6 +1541,14 @@ mod tests {
             b'm',
             None,
         );
+        let positional = FormatSpec::new(
+            FormatFlags::default(),
+            Width::FromArgPosition(2),
+            Precision::FromArgPosition(4),
+            LengthMod::None,
+            b'd',
+            Some(3),
+        );
 
         assert!(signed.consumes_value_arg());
         assert_eq!(signed.value_arg_kind(), Some(ValueArgKind::Gp));
@@ -1553,6 +1577,19 @@ mod tests {
         assert!(!errno.consumes_value_arg());
         assert_eq!(errno.value_arg_kind(), None);
         assert!(!errno.value_arg_is_gp());
+        assert_eq!(
+            positional.positional_width_arg_kind(),
+            Some((2, ValueArgKind::Gp))
+        );
+        assert_eq!(
+            positional.positional_precision_arg_kind(),
+            Some((4, ValueArgKind::Gp))
+        );
+        assert_eq!(
+            positional.positional_value_arg_kind(),
+            Some((3, ValueArgKind::Gp))
+        );
+        assert_eq!(errno.positional_value_arg_kind(), None);
 
         let hex = FormatSpec::new(
             FormatFlags::default(),

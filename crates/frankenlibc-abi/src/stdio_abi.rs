@@ -2985,15 +2985,13 @@ pub(crate) fn positional_printf_arg_plan(
 
     for seg in segments {
         if let FormatSegment::Spec(spec) = seg {
-            if let Some(position) = spec.width.position() {
-                assign(position, ValueArgKind::Gp);
+            if let Some((position, kind)) = spec.positional_width_arg_kind() {
+                assign(position, kind);
             }
-            if let Some(position) = spec.precision.position() {
-                assign(position, ValueArgKind::Gp);
+            if let Some((position, kind)) = spec.positional_precision_arg_kind() {
+                assign(position, kind);
             }
-            if let Some(position) = spec.value_position
-                && let Some(kind) = spec.value_arg_kind()
-            {
+            if let Some((position, kind)) = spec.positional_value_arg_kind() {
                 assign(position, kind);
             }
         }
