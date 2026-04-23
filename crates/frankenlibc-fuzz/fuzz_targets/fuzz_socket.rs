@@ -509,9 +509,17 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
                 return;
             }
             // Close the fd so subsequent ops exercise the stale-fd path.
+            // Then poison the slot's fd to a sentinel that the kernel
+            // never returns (-1). Without this, a later `Socket` op can
+            // reuse the just-closed fd number for a different slot, and
+            // the stale slot's stored fd would now refer to that NEW
+            // valid socket — the "stale shutdown must fail" assertion
+            // then fails because shutdown succeeds on the reused fd.
+            // This is the bd-yfsoc fuzz-harness fix.
             unsafe {
                 libc::close(s.fd);
             }
+            s.fd = -1;
             s.state = State::Stale;
             table[idx] = s;
         }
