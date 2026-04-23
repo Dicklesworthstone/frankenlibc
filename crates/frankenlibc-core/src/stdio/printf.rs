@@ -158,6 +158,25 @@ impl UnsignedFormatKind {
             Self::HexUpper => b"0X",
         }
     }
+
+    fn formatted_prefix(
+        self,
+        value: u64,
+        alt_form: bool,
+        first_digit_is_zero: bool,
+    ) -> &'static [u8] {
+        if !alt_form || value == 0 {
+            return b"";
+        }
+        match self {
+            Self::Octal if first_digit_is_zero => b"",
+            _ => self.alt_prefix(),
+        }
+    }
+
+    fn preserves_single_zero_when_suppressed(self, alt_form: bool) -> bool {
+        alt_form && matches!(self, Self::Octal)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,18 +189,19 @@ enum RawValueRenderKind {
 }
 
 impl RawValueRenderKind {
-    fn int_base(self) -> Option<(u64, bool)> {
+    fn unsigned_kind(self) -> Option<UnsignedFormatKind> {
         match self {
-            Self::UnsignedInt(kind) => Some(kind.int_base()),
+            Self::UnsignedInt(kind) => Some(kind),
             _ => None,
         }
     }
 
+    fn int_base(self) -> Option<(u64, bool)> {
+        self.unsigned_kind().map(UnsignedFormatKind::int_base)
+    }
+
     fn alt_prefix(self) -> Option<&'static [u8]> {
-        match self {
-            Self::UnsignedInt(kind) => Some(kind.alt_prefix()),
-            _ => None,
-        }
+        self.unsigned_kind().map(UnsignedFormatKind::alt_prefix)
     }
 }
 
@@ -868,6 +888,9 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let mut digits = [0u8; 64];
     let digit_count = render_digits(value, base, uppercase, &mut digits);
     let digit_slice = &digits[64 - digit_count..];
+    let unsigned_kind = spec
+        .raw_render_kind()
+        .and_then(RawValueRenderKind::unsigned_kind);
 
     let precision = match spec.precision {
         Precision::Fixed(p) => p,
@@ -878,22 +901,19 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // For octal with # flag: only add "0" prefix if precision doesn't already
     // ensure a leading zero. Per C11 7.21.6.1: "For o conversion, it increases
     // the precision, if and only if necessary, to force the first digit to be zero"
-    let prefix: &[u8] = if value == 0 {
-        b""
-    } else if spec.flags.alt_form && spec.alt_prefix() == b"0" {
-        // Octal: only add '0' if first digit wouldn't already be 0
-        let first_digit_is_zero =
-            zero_prefix_count > 0 || (digit_count > 0 && digit_slice[0] == b'0');
-        if first_digit_is_zero { b"" } else { b"0" }
-    } else {
-        spec.alt_prefix()
-    };
+    let first_digit_is_zero = zero_prefix_count > 0 || (digit_count > 0 && digit_slice[0] == b'0');
+    let prefix: &[u8] = unsigned_kind
+        .map(|kind| kind.formatted_prefix(value, spec.flags.alt_form, first_digit_is_zero))
+        .unwrap_or(b"");
 
     let content_len = prefix.len() + zero_prefix_count + digit_count;
 
     let mut suppress_zero = value == 0 && matches!(spec.precision, Precision::Fixed(0));
     // POSIX: For 'o' conversion with '#', if the value and precision are both 0, a single 0 is printed.
-    if suppress_zero && spec.flags.alt_form && spec.alt_prefix() == b"0" {
+    if suppress_zero
+        && unsigned_kind
+            .is_some_and(|kind| kind.preserves_single_zero_when_suppressed(spec.flags.alt_form))
+    {
         suppress_zero = false;
     }
 
@@ -1442,6 +1462,12 @@ mod tests {
                 .and_then(RawValueRenderKind::int_base),
             Some((16, true))
         );
+        assert_eq!(
+            printf_route(b'o')
+                .and_then(PrintfRoute::raw_render_kind)
+                .and_then(RawValueRenderKind::unsigned_kind),
+            Some(UnsignedFormatKind::Octal)
+        );
         assert!(printf_route(b'Q').is_none());
     }
 
@@ -1537,6 +1563,23 @@ mod tests {
             hex.raw_render_kind()
                 .and_then(RawValueRenderKind::alt_prefix),
             Some(&b"0x"[..])
+        );
+        assert_eq!(
+            FormatSpec::new(
+                FormatFlags {
+                    alt_form: true,
+                    ..FormatFlags::default()
+                },
+                Width::None,
+                Precision::Fixed(0),
+                LengthMod::None,
+                b'o',
+                None,
+            )
+            .raw_render_kind()
+            .and_then(RawValueRenderKind::unsigned_kind)
+            .map(|kind| kind.preserves_single_zero_when_suppressed(true)),
+            Some(true)
         );
     }
 
