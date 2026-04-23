@@ -303,12 +303,23 @@ fn apply_op(op: &Op, table: &mut Vec<Mapping>) {
             let Some((_, m)) = pick_slot(table, *slot) else {
                 return;
             };
-            let rc = unsafe { madvise(m.addr, m.len, pick_advise(*advice_sel)) };
+            let advice = pick_advise(*advice_sel);
+            let rc = unsafe { madvise(m.addr, m.len, advice) };
             if m.state == MapState::Stale {
                 assert_eq!(rc, -1, "madvise on stale mapping must fail");
                 return;
             }
             assert!(rc == 0 || rc == -1, "madvise rc out of contract: {rc}");
+            // Destructive advises zero / discard the pages on private
+            // anonymous mappings, wiping our guard bytes. Re-stamp so
+            // the cleanup check_guards doesn't false-positive.
+            if rc == 0
+                && (advice == libc::MADV_DONTNEED
+                    || advice == libc::MADV_FREE
+                    || advice == libc::MADV_REMOVE)
+            {
+                write_guards(&m);
+            }
         }
         Op::Remap {
             slot,
@@ -372,6 +383,14 @@ fn apply_op(op: &Op, table: &mut Vec<Mapping>) {
             let rc = unsafe { munmap(m.addr, m.len) };
             if rc == 0 {
                 m.state = MapState::Stale;
+                // Poison the address so subsequent Unmap/mprotect/etc on
+                // the stale slot target an address the kernel never
+                // returns. Without this, the kernel may reuse the just-
+                // freed virtual range for the next Op::Map and the
+                // "munmap on stale must fail" assertion breaks because
+                // munmap(reused-addr) succeeds. Same root pattern as
+                // fuzz_socket fd-reuse (756dcfb1).
+                m.addr = MAP_FAILED;
                 table[idx] = m;
             }
         }
