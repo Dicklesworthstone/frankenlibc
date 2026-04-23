@@ -3017,6 +3017,25 @@ macro_rules! extract_va_args {
     }};
 }
 
+/// Convert a printf-produced output length into the printf-family return value.
+///
+/// POSIX/C11 snprintf (and the related sprintf/vsprintf/vsnprintf family) require
+/// the return type `int`. If the number of bytes that *would* be written exceeds
+/// `INT_MAX`, POSIX says the call shall fail with `EOVERFLOW` and return -1
+/// (C11 7.21.6.5 p2, POSIX.1-2024). Silently casting via `as c_int` truncates —
+/// callers that use the return to size buffers would then under-allocate
+/// (bd-5t6zo).
+#[inline]
+fn printf_result_to_c_int(total_len: usize) -> c_int {
+    match c_int::try_from(total_len) {
+        Ok(n) => n,
+        Err(_) => {
+            unsafe { set_abi_errno(errno::EOVERFLOW) };
+            -1
+        }
+    }
+}
+
 /// Internal: render a parsed format string with a raw argument pointer array.
 ///
 /// `args` is a pointer to a contiguous array of `u64` values that were pushed
@@ -3281,7 +3300,7 @@ pub unsafe extern "C" fn snprintf(
         runtime_policy::scaled_cost(15, total_len),
         false,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 /// POSIX `sprintf`.
@@ -3351,7 +3370,7 @@ pub unsafe extern "C" fn sprintf(
         runtime_policy::scaled_cost(15, total_len),
         adverse,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 /// POSIX `fprintf`.
@@ -3401,7 +3420,7 @@ pub unsafe extern "C" fn fprintf(
                 runtime_policy::scaled_cost(15, total_len),
                 adverse,
             );
-            return if adverse { -1 } else { total_len as c_int };
+            return if adverse { -1 } else { printf_result_to_c_int(total_len) };
         }
 
         let write_result = match s.buffer_write(&rendered) {
@@ -3481,7 +3500,7 @@ pub unsafe extern "C" fn fprintf(
                 written < rendered.len(),
             );
             return if written == rendered.len() {
-                total_len as c_int
+                printf_result_to_c_int(total_len)
             } else {
                 -1
             };
@@ -3496,7 +3515,7 @@ pub unsafe extern "C" fn fprintf(
         runtime_policy::scaled_cost(15, total_len),
         false,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 /// POSIX `printf`.
@@ -3546,7 +3565,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
                 runtime_policy::scaled_cost(15, total_len),
                 adverse,
             );
-            return if adverse { -1 } else { total_len as c_int };
+            return if adverse { -1 } else { printf_result_to_c_int(total_len) };
         }
 
         let write_result = match s.buffer_write(&rendered) {
@@ -3624,7 +3643,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
                 written < rendered.len(),
             );
             return if written == rendered.len() {
-                total_len as c_int
+                printf_result_to_c_int(total_len)
             } else {
                 -1
             };
@@ -3639,7 +3658,7 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
         runtime_policy::scaled_cost(15, total_len),
         false,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 /// POSIX `dprintf`.
@@ -3671,7 +3690,7 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
         runtime_policy::scaled_cost(15, total_len),
         adverse,
     );
-    if adverse { -1 } else { total_len as c_int }
+    if adverse { -1 } else { printf_result_to_c_int(total_len) }
 }
 
 /// GNU `asprintf`.
@@ -3724,7 +3743,7 @@ pub unsafe extern "C" fn asprintf(
         runtime_policy::scaled_cost(15, total_len),
         false,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 // ===========================================================================
@@ -3902,7 +3921,7 @@ pub unsafe extern "C" fn vsnprintf(
         runtime_policy::scaled_cost(15, total_len),
         false,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 #[doc(hidden)]
@@ -3981,7 +4000,7 @@ pub unsafe extern "C" fn vsprintf(
         runtime_policy::scaled_cost(15, total_len),
         adverse,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 /// POSIX `vfprintf` — format to stream from va_list.
@@ -4030,7 +4049,7 @@ pub unsafe extern "C" fn vfprintf(
                 runtime_policy::scaled_cost(15, total_len),
                 adverse,
             );
-            return if adverse { -1 } else { total_len as c_int };
+            return if adverse { -1 } else { printf_result_to_c_int(total_len) };
         }
 
         let write_result = match s.buffer_write(&rendered) {
@@ -4109,7 +4128,7 @@ pub unsafe extern "C" fn vfprintf(
                 written < rendered.len(),
             );
             return if written == rendered.len() {
-                total_len as c_int
+                printf_result_to_c_int(total_len)
             } else {
                 -1
             };
@@ -4124,7 +4143,7 @@ pub unsafe extern "C" fn vfprintf(
         runtime_policy::scaled_cost(15, total_len),
         false,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 /// POSIX `vprintf` — format to stdout from va_list.
@@ -4171,7 +4190,7 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
                 runtime_policy::scaled_cost(15, total_len),
                 adverse,
             );
-            return if adverse { -1 } else { total_len as c_int };
+            return if adverse { -1 } else { printf_result_to_c_int(total_len) };
         }
 
         let write_result = match s.buffer_write(&rendered) {
@@ -4249,7 +4268,7 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
                 written < rendered.len(),
             );
             return if written == rendered.len() {
-                total_len as c_int
+                printf_result_to_c_int(total_len)
             } else {
                 -1
             };
@@ -4264,7 +4283,7 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
         runtime_policy::scaled_cost(15, total_len),
         false,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 /// POSIX `vdprintf` — format to file descriptor from va_list.
@@ -4312,7 +4331,7 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_v
         runtime_policy::scaled_cost(15, total_len),
         adverse,
     );
-    if adverse { -1 } else { total_len as c_int }
+    if adverse { -1 } else { printf_result_to_c_int(total_len) }
 }
 
 /// GNU `vasprintf` — allocate and format from va_list.
@@ -4363,7 +4382,7 @@ pub unsafe extern "C" fn vasprintf(
         runtime_policy::scaled_cost(15, total_len),
         false,
     );
-    total_len as c_int
+    printf_result_to_c_int(total_len)
 }
 
 // ===========================================================================
