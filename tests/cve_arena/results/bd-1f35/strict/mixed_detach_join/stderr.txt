@@ -1,12 +1,6 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-67b2de910c78a662)
-error: test failed, to rerun pass `-p frankenlibc-abi --test pthread_thread_lifecycle_test`
-
-Caused by:
-  process didn't exit successfully: `/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-67b2de910c78a662 pthread_detach_makes_subsequent_join_fail_with_esrch --exact --nocapture --test-threads=1` (signal: 11, SIGSEGV: invalid memory reference)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
-     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-67b2de910c78a662)
-error: test failed, to rerun pass `-p frankenlibc-abi --test pthread_thread_lifecycle_test`
-
-Caused by:
-  process didn't exit successfully: `/data/tmp/cargo-target-bd1f35/debug/deps/pthread_thread_lifecycle_test-67b2de910c78a662 pthread_detach_makes_subsequent_join_fail_with_esrch --exact --nocapture --test-threads=1` (signal: 11, SIGSEGV: invalid memory reference)
+warning: frankenlibc-core@0.1.0: No SMT solver found for /tmp/rch_target_frankenlibc_cc/debug/build/frankenlibc-core-14c0c4b13ffdf56c/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running tests/pthread_thread_lifecycle_test.rs (/tmp/rch_target_frankenlibc_cc/debug/deps/pthread_thread_lifecycle_test-70b7baae7a621b05)
+warning: frankenlibc-core@0.1.0: No SMT solver found for /tmp/rch_target_frankenlibc_cc/debug/build/frankenlibc-core-14c0c4b13ffdf56c/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running tests/pthread_thread_lifecycle_test.rs (/tmp/rch_target_frankenlibc_cc/debug/deps/pthread_thread_lifecycle_test-70b7baae7a621b05)
