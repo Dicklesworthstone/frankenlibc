@@ -368,7 +368,13 @@ fn apply_op(op: &Op, table: &mut HandleTable) {
             if state == HandleState::Stale {
                 assert_eq!(rc, -1, "timer_delete must fail on stale id ({id})");
             } else if rc == 0 {
-                table.timers[idx] = (id, HandleState::Stale);
+                // Poison the id so subsequent ops on this slot target
+                // the never-valid -1 instead of the just-freed id.
+                // Kernel reuses timer ids; without this the next
+                // TimerCreate can grab the same numeric id and the
+                // stale-must-fail assertion trips (bd-reb0e, same
+                // class as bd-2t616 PidfdClose + bd-tw26d fuzz_socket).
+                table.timers[idx] = (-1, HandleState::Stale);
             }
         }
     }
