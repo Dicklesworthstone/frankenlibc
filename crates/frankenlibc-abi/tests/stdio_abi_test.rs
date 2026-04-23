@@ -129,6 +129,14 @@ const IONBF: i32 = 2;
 static NEXT_TMP_ID: AtomicU64 = AtomicU64::new(0);
 static STDOUT_REDIRECT_LOCK: Mutex<()> = Mutex::new(());
 
+/// Serializes tests that assert specific addresses are absent from the
+/// native stream registry after fclose. Without this, a parallel test
+/// can fmemopen a NEW stream that happens to land at the same address
+/// as the just-freed stream from another test, making the
+/// `verify_native_file(stream).is_none()` post-fclose check spuriously
+/// fail. (bd-el0v8)
+static STREAM_REGISTRY_PROBE_LOCK: Mutex<()> = Mutex::new(());
+
 fn temp_path(tag: &str) -> PathBuf {
     let id = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
@@ -2106,6 +2114,13 @@ fn vsnprintf_truncates_correctly() {
 
 #[test]
 fn fmemopen_write_creates_stream() {
+    // bd-el0v8: serialize against other parallel tests that allocate
+    // streams. Address reuse by glibc malloc would otherwise let
+    // another in-flight stream land at the just-freed address and
+    // make the "not in registry after fclose" assertion racy.
+    let _registry_probe = STREAM_REGISTRY_PROBE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut buf = [0u8; 64];
     let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w+".as_ptr()) };
     // fmemopen may not work fully without LD_PRELOAD, just check it returns something
