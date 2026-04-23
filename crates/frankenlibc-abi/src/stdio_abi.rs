@@ -2966,65 +2966,12 @@ pub(crate) use frankenlibc_core::stdio::ValueArgKind as PrintfArgKind;
 pub(crate) fn positional_printf_arg_plan(
     segments: &[FormatSegment<'_>],
 ) -> Option<Vec<ValueArgKind>> {
-    let mut any_positional = false;
-    let mut plan: Vec<Option<ValueArgKind>> = Vec::new();
-
-    let mut assign = |position: usize, kind: ValueArgKind| {
-        if position == 0 {
-            return;
-        }
-        any_positional = true;
-        let slot = position - 1;
-        if slot >= plan.len() {
-            plan.resize(slot + 1, None);
-        }
-        if plan[slot].is_none() {
-            plan[slot] = Some(kind);
-        }
-    };
-
-    for seg in segments {
-        if let FormatSegment::Spec(spec) = seg {
-            if let Some((position, kind)) = spec.positional_width_arg_kind() {
-                assign(position, kind);
-            }
-            if let Some((position, kind)) = spec.positional_precision_arg_kind() {
-                assign(position, kind);
-            }
-            if let Some((position, kind)) = spec.positional_value_arg_kind() {
-                assign(position, kind);
-            }
-        }
-    }
-
-    any_positional.then(|| {
-        plan.into_iter()
-            .map(|kind| kind.unwrap_or(ValueArgKind::Gp))
-            .collect()
-    })
+    frankenlibc_core::stdio::positional_printf_arg_plan(segments)
 }
 
 /// Count how many variadic arguments a parsed format string needs.
 pub(crate) fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
-    if let Some(plan) = positional_printf_arg_plan(segments) {
-        return plan.len().min(MAX_VA_ARGS);
-    }
-
-    let mut needed = 0usize;
-    for seg in segments {
-        if let FormatSegment::Spec(spec) = seg {
-            if spec.width.uses_arg() {
-                needed += 1;
-            }
-            if spec.precision.uses_arg() {
-                needed += 1;
-            }
-            if spec.consumes_value_arg() {
-                needed += 1;
-            }
-        }
-    }
-    needed.min(MAX_VA_ARGS)
+    frankenlibc_core::stdio::count_printf_args(segments).min(MAX_VA_ARGS)
 }
 
 /// Extract variadic arguments from `$args` into `$buf`, guided by `$segments`.

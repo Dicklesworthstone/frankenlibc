@@ -474,6 +474,67 @@ impl FormatSpec {
     }
 }
 
+pub fn positional_printf_arg_plan(segments: &[FormatSegment<'_>]) -> Option<Vec<ValueArgKind>> {
+    let mut any_positional = false;
+    let mut plan: Vec<Option<ValueArgKind>> = Vec::new();
+
+    let mut assign = |position: usize, kind: ValueArgKind| {
+        if position == 0 {
+            return;
+        }
+        any_positional = true;
+        let slot = position - 1;
+        if slot >= plan.len() {
+            plan.resize(slot + 1, None);
+        }
+        if plan[slot].is_none() {
+            plan[slot] = Some(kind);
+        }
+    };
+
+    for seg in segments {
+        if let FormatSegment::Spec(spec) = seg {
+            if let Some((position, kind)) = spec.positional_width_arg_kind() {
+                assign(position, kind);
+            }
+            if let Some((position, kind)) = spec.positional_precision_arg_kind() {
+                assign(position, kind);
+            }
+            if let Some((position, kind)) = spec.positional_value_arg_kind() {
+                assign(position, kind);
+            }
+        }
+    }
+
+    any_positional.then(|| {
+        plan.into_iter()
+            .map(|kind| kind.unwrap_or(ValueArgKind::Gp))
+            .collect()
+    })
+}
+
+pub fn count_printf_args(segments: &[FormatSegment<'_>]) -> usize {
+    if let Some(plan) = positional_printf_arg_plan(segments) {
+        return plan.len();
+    }
+
+    let mut needed = 0usize;
+    for seg in segments {
+        if let FormatSegment::Spec(spec) = seg {
+            if spec.width.uses_arg() {
+                needed += 1;
+            }
+            if spec.precision.uses_arg() {
+                needed += 1;
+            }
+            if spec.consumes_value_arg() {
+                needed += 1;
+            }
+        }
+    }
+    needed
+}
+
 // ---------------------------------------------------------------------------
 // Format argument types (for safe rendering)
 // ---------------------------------------------------------------------------
@@ -1667,6 +1728,25 @@ mod tests {
         buf.clear();
         assert!(!string.render_value_arg(0x1234, &mut buf));
         assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_printf_arg_plan_helpers_cover_gp_and_fp_positions() {
+        let segments = parse_format_string(b"%2$.*1$f %4$*3$s");
+        assert_eq!(
+            positional_printf_arg_plan(&segments),
+            Some(vec![
+                ValueArgKind::Gp,
+                ValueArgKind::Fp,
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+            ])
+        );
+        assert_eq!(count_printf_args(&segments), 4);
+
+        let sequential = parse_format_string(b"%*.*f %s");
+        assert_eq!(positional_printf_arg_plan(&sequential), None);
+        assert_eq!(count_printf_args(&sequential), 4);
     }
 
     #[test]
