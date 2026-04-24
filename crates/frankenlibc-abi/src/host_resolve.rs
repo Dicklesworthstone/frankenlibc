@@ -181,27 +181,17 @@ fn parse_maps_line(line: &str) -> Option<(usize, [u8; 512])> {
     if !line.contains("libc.so") {
         return None;
     }
-    let mut parts = line.split_whitespace();
-    let range = parts.next()?;
-    let perms = parts.next()?;
-    let offset = parts.next()?;
-    let _dev = parts.next()?;
-    let _inode = parts.next()?;
-    let path_part = parts.next()?;
-    if parts.next().is_some() {
+    let entry = frankenlibc_core::proc_maps::parse_maps_line(line)?;
+    if !entry.perms.starts_with("r--p") || entry.offset != 0 {
         return None;
     }
-    if !perms.starts_with("r--p") || offset != "00000000" {
-        return None;
-    }
-    let dash = range.find('-')?;
-    let base = usize::from_str_radix(&range[..dash], 16).ok()?;
+    let path_part = entry.path?;
     let mut path = [0u8; 512];
     let bytes = path_part.as_bytes();
     let len = bytes.len().min(path.len().saturating_sub(1));
     path[..len].copy_from_slice(&bytes[..len]);
     path[len] = 0;
-    Some((base, path))
+    Some((entry.start, path))
 }
 
 fn loaded_glibc_image() -> Option<(usize, [u8; 512])> {

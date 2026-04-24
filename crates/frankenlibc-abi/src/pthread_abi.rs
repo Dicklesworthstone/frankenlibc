@@ -1001,13 +1001,9 @@ fn stack_bounds_from_proc_maps(tid: i32) -> Option<(usize, usize)> {
 }
 
 /// Extract (start_addr, end_addr) from a `/proc/self/maps` line.
-/// Format: `start-end perms offset dev inode [pathname]`
+/// Delegates to the shared core helper.
 fn parse_maps_range(line: &str) -> Option<(usize, usize)> {
-    let range = line.split_whitespace().next()?;
-    let mut parts = range.split('-');
-    let start = usize::from_str_radix(parts.next()?, 16).ok()?;
-    let end = usize::from_str_radix(parts.next()?, 16).ok()?;
-    Some((start, end))
+    frankenlibc_core::proc_maps::parse_maps_range(line)
 }
 
 fn detached_thread_tid_snapshot(handle_ptr: *mut ThreadHandle) -> Option<i32> {
