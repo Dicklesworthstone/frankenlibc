@@ -2,7 +2,7 @@
   "index_version": 1,
   "run_id": "bd1f35-thread-stress-v1",
   "bead_id": "bd-1f35",
-  "generated_utc": "2026-04-24T16:20:14.567Z",
+  "generated_utc": "2026-04-24T21:41:16.928Z",
   "artifacts": [
     {
       "path": "tests/conformance/pthread_thread_stress_scenarios.v1.json",
@@ -63,7 +63,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/hardened/mixed_detach_join/stderr.txt",
       "kind": "report",
-      "sha256": "34e02f64f4856658d5c80188d71bbb72dc78399224d23c0241aea5503afa7209",
+      "sha256": "12af1990795c75f991c698198a7c201cf584a7b0d8769979c34758788713d0cf",
       "size_bytes": 852,
       "description": "bd-1f35 pthread stress artifact"
     },
@@ -77,7 +77,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/report.json",
       "kind": "report",
-      "sha256": "99f5d7d74462f603fc3eed2477ce2ad79f54392502363dfae0e766cdf4471831",
+      "sha256": "f2a027a305b4c36a4e88e2e44eacbb83725b9bc908394ec942aab7c7f12c94b7",
       "size_bytes": 3733,
       "description": "bd-1f35 pthread stress artifact"
     },
@@ -98,7 +98,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/strict/create_join_churn/stderr.txt",
       "kind": "report",
-      "sha256": "a4dfbfc45c06321fb8b420ed9c8760696bbf7d209da68430cf7d09c29b53884b",
+      "sha256": "12af1990795c75f991c698198a7c201cf584a7b0d8769979c34758788713d0cf",
       "size_bytes": 852,
       "description": "bd-1f35 pthread stress artifact"
     },
@@ -140,7 +140,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/trace.jsonl",
       "kind": "log",
-      "sha256": "200e9d39e7d7e274226c2f9c0394de5094ca2ce5784fbc999b71ac9dd510c7e8",
+      "sha256": "4bb0b3aae4b6ead8114c54ebdccc1418828b39e22c8e4c6106fce366c8f3774d",
       "size_bytes": 13684,
       "description": "bd-1f35 pthread stress artifact"
     }

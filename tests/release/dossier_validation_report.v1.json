@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-24T16:23:27Z",
+  "generated_at": "2026-04-24T21:44:17Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "5945c3fb4ee27faca8d61c0448a5e76fb076d38c2763a60316cf5cadeeced135",
+      "sha256": "7b5cb9270b8519fed0e28a4c868b841cd47072189674655d724268e49bb57ca3",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "f8abfb089a36e0889fc1b02b02ff8e407f3d3bd016d9080ffde99bc30a7697c9",
+      "sha256": "a8ca225a543f8d64868b3b24cfd57bf46079746402eb4da615abff27799f18ad",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "5c83edaead786e29759503c2c03ce45a679a7e096fce92e4ecf69f746f3c3737",
+      "sha256": "c18aa9629410822f036b3605321c37eb44da15841f6d23af28f2b656fabfea58",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -230,7 +230,7 @@
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "5945c3fb4ee27faca8d61c0448a5e76fb076d38c2763a60316cf5cadeeced135",
+      "sha256": "7b5cb9270b8519fed0e28a4c868b841cd47072189674655d724268e49bb57ca3",
       "size_bytes": 5609
     },
     "replacement_levels": {
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "f8abfb089a36e0889fc1b02b02ff8e407f3d3bd016d9080ffde99bc30a7697c9",
+      "sha256": "a8ca225a543f8d64868b3b24cfd57bf46079746402eb4da615abff27799f18ad",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "5c83edaead786e29759503c2c03ce45a679a7e096fce92e4ecf69f746f3c3737",
+      "sha256": "c18aa9629410822f036b3605321c37eb44da15841f6d23af28f2b656fabfea58",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
