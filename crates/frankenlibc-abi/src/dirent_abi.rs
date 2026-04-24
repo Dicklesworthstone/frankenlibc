@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void};
 use std::os::raw::c_long;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use frankenlibc_core::dirent as dirent_core;
 use frankenlibc_core::errno;
@@ -28,7 +28,23 @@ struct DirState {
 }
 
 /// Global registry of open directory streams, keyed by a unique handle.
-static DIR_REGISTRY: Mutex<Option<HashMap<usize, DirState>>> = Mutex::new(None);
+type SharedDirState = Arc<Mutex<DirState>>;
+
+static DIR_REGISTRY: Mutex<Option<HashMap<usize, SharedDirState>>> = Mutex::new(None);
+
+fn lock_registry() -> MutexGuard<'static, Option<HashMap<usize, SharedDirState>>> {
+    DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn lock_state(state: &SharedDirState) -> MutexGuard<'_, DirState> {
+    state.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn lookup_dir_state(handle: usize) -> Option<SharedDirState> {
+    lock_registry()
+        .as_ref()
+        .and_then(|map| map.get(&handle).cloned())
+}
 
 fn next_handle() -> usize {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -112,9 +128,9 @@ pub unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
         last_d_off: 0,
     };
 
-    let mut registry = DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+    let mut registry = lock_registry();
     let map = registry.get_or_insert_with(HashMap::new);
-    map.insert(handle, state);
+    map.insert(handle, Arc::new(Mutex::new(state)));
 
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
     handle as *mut DIR
@@ -150,17 +166,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
     }
 
     let handle = dirp as usize;
-    let mut registry = DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    let map = match registry.as_mut() {
-        Some(m) => m,
-        None => {
-            unsafe { set_abi_errno(errno::EBADF) };
-            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
-            return std::ptr::null_mut();
-        }
-    };
-
-    let state = match map.get_mut(&handle) {
+    let state = match lookup_dir_state(handle) {
         Some(s) => s,
         None => {
             unsafe { set_abi_errno(errno::EBADF) };
@@ -168,6 +174,7 @@ pub unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut libc::dirent {
             return std::ptr::null_mut();
         }
     };
+    let mut state = lock_state(&state);
 
     if state.offset < state.valid_bytes
         && let Some((entry, next_off)) =
@@ -252,12 +259,15 @@ pub unsafe extern "C" fn closedir(dirp: *mut DIR) -> c_int {
     }
 
     let handle = dirp as usize;
-    let mut registry = DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    let state = registry.as_mut().and_then(|m| m.remove(&handle));
+    let state = {
+        let mut registry = lock_registry();
+        registry.as_mut().and_then(|m| m.remove(&handle))
+    };
 
     match state {
-        Some(s) => {
-            let rc = match syscall::sys_close(s.fd) {
+        Some(state) => {
+            let state = lock_state(&state);
+            let rc = match syscall::sys_close(state.fd) {
                 Ok(()) => 0,
                 Err(e) => {
                     unsafe { set_abi_errno(e) };
@@ -295,10 +305,8 @@ pub unsafe extern "C" fn seekdir(dirp: *mut DIR, loc: c_long) {
         return;
     }
     let handle = dirp as usize;
-    let mut registry = DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(map) = registry.as_mut()
-        && let Some(state) = map.get_mut(&handle)
-    {
+    if let Some(state) = lookup_dir_state(handle) {
+        let mut state = lock_state(&state);
         let _ = syscall::sys_lseek(state.fd, loc, libc::SEEK_SET);
         state.offset = 0;
         state.valid_bytes = 0;
@@ -321,9 +329,8 @@ pub unsafe extern "C" fn telldir(dirp: *mut DIR) -> c_long {
         return -1;
     }
     let handle = dirp as usize;
-    let registry = DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    match registry.as_ref().and_then(|m| m.get(&handle)) {
-        Some(state) => state.last_d_off,
+    match lookup_dir_state(handle) {
+        Some(state) => lock_state(&state).last_d_off,
         None => {
             unsafe { set_abi_errno(errno::EBADF) };
             -1
@@ -342,10 +349,8 @@ pub unsafe extern "C" fn rewinddir(dirp: *mut DIR) {
         return;
     }
     let handle = dirp as usize;
-    let mut registry = DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(map) = registry.as_mut()
-        && let Some(state) = map.get_mut(&handle)
-    {
+    if let Some(state) = lookup_dir_state(handle) {
+        let mut state = lock_state(&state);
         let _ = syscall::sys_lseek(state.fd, 0, libc::SEEK_SET);
         state.offset = 0;
         state.valid_bytes = 0;
@@ -677,9 +682,9 @@ pub unsafe extern "C" fn fdopendir(fd: c_int) -> *mut libc::DIR {
         last_d_off: 0,
     };
 
-    let mut registry = DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
+    let mut registry = lock_registry();
     let map = registry.get_or_insert_with(HashMap::new);
-    map.insert(handle, state);
+    map.insert(handle, Arc::new(Mutex::new(state)));
 
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, false);
     handle as *mut libc::DIR
@@ -696,9 +701,8 @@ pub unsafe extern "C" fn dirfd(dirp: *mut libc::DIR) -> c_int {
     }
 
     let handle = dirp as usize;
-    let registry = DIR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner());
-    match registry.as_ref().and_then(|m| m.get(&handle)) {
-        Some(state) => state.fd,
+    match lookup_dir_state(handle) {
+        Some(state) => lock_state(&state).fd,
         None => {
             unsafe { set_abi_errno(errno::EBADF) };
             -1

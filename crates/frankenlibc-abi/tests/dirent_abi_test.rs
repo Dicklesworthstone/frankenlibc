@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 use std::ffi::{CStr, CString, c_void};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::thread;
 
 use frankenlibc_abi::dirent_abi::*;
 
@@ -515,6 +516,41 @@ fn opendir_multiple_dirs() {
     assert!(!ent1.is_null());
     let ent2 = unsafe { readdir(dirp2) };
     assert!(!ent2.is_null());
+
+    unsafe {
+        closedir(dirp1);
+        closedir(dirp2);
+    }
+    cleanup_test_dir(&base1);
+    cleanup_test_dir(&base2);
+}
+
+#[test]
+fn readdir_independent_dirs_can_run_concurrently() {
+    let (path1, base1) = make_test_dir();
+    let (path2, base2) = make_test_dir();
+
+    let dirp1 = unsafe { opendir(path1.as_ptr()) };
+    let dirp2 = unsafe { opendir(path2.as_ptr()) };
+    assert!(!dirp1.is_null());
+    assert!(!dirp2.is_null());
+
+    let dirp1_addr = dirp1 as usize;
+    let dirp2_addr = dirp2 as usize;
+    let worker1 = thread::spawn(move || unsafe { collect_names(dirp1_addr as *mut DIR) });
+    let worker2 = thread::spawn(move || unsafe { collect_names(dirp2_addr as *mut DIR) });
+
+    let names1 = match worker1.join() {
+        Ok(names) => names,
+        Err(payload) => std::panic::resume_unwind(payload),
+    };
+    let names2 = match worker2.join() {
+        Ok(names) => names,
+        Err(payload) => std::panic::resume_unwind(payload),
+    };
+
+    assert!(names1.contains(&"aaa.txt".to_string()));
+    assert!(names2.contains(&"aaa.txt".to_string()));
 
     unsafe {
         closedir(dirp1);
