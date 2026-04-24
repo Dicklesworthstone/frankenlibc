@@ -20,7 +20,11 @@ pub fn lfind_index<F: FnMut(&[u8], usize) -> bool>(
     if width == 0 {
         return None;
     }
-    if nel.checked_mul(width).map(|n| n > base.len()).unwrap_or(true) {
+    if nel
+        .checked_mul(width)
+        .map(|n| n > base.len())
+        .unwrap_or(true)
+    {
         // Defensive: caller's nel*width exceeds the slice we were given.
         return None;
     }

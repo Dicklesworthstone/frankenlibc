@@ -5,13 +5,9 @@
 //! the abi layer adapts NUL-terminated C strings via
 //! `CStr::to_bytes()`.
 //!
-//! Supported pattern syntax:
-//!   - literal bytes
-//!   - `?`         — one byte (constrained by flags)
-//!   - `*`         — zero or more bytes (constrained by flags)
-//!   - `[...]`     — character class with optional ranges and `!`/`^`
-//!                   negation
-//!   - `\X`        — literal X (unless [`FnmatchFlags::NOESCAPE`])
+//! Supported pattern syntax: literal bytes, `?`, `*`, bracket classes
+//! with optional ranges and `!`/`^` negation, and `\X` escapes unless
+//! [`FnmatchFlags::NOESCAPE`] is set.
 //!
 //! Flag bits match POSIX/glibc `<fnmatch.h>` so the abi layer can pass
 //! the user's `c_int` flags through unchanged.
@@ -67,12 +63,11 @@ impl core::ops::BitOrAssign for FnmatchFlags {
 
 /// Pre-classification of a `[...]` bracket expression. POSIX leaves
 /// unterminated bracket behavior implementation-defined; this matches
-/// glibc:
-///   - `Terminated`: closed `]` found, parse as bracket
-///   - `LiteralFallback`: unterminated, treat the leading `[` as a
-///                        literal character
-///   - `Invalid`: unterminated, with the final content byte being `-`
-///                (incomplete range) — match fails
+/// glibc.
+///
+/// `Terminated`: closed `]` found, parse as bracket.
+/// `LiteralFallback`: unterminated, treat the leading `[` as a literal.
+/// `Invalid`: unterminated with final content byte `-`; match fails.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BracketShape {
     Terminated,
@@ -178,10 +173,10 @@ fn fnmatch_inner(
                     pi += 1;
                 }
 
-                if let Some(c) = sc {
-                    if leading_period_blocked(c, si) {
-                        return false;
-                    }
+                if let Some(c) = sc
+                    && leading_period_blocked(c, si)
+                {
+                    return false;
                 }
 
                 // If pattern is exhausted after the '*', match the rest.
@@ -293,10 +288,7 @@ fn fnmatch_inner(
                         // Range: low '-' high (where high is not ']' / EOF)
                         let next = pat.get(pi);
                         let nextnext = pat.get(pi + 1);
-                        if next == Some(&b'-')
-                            && nextnext != Some(&b']')
-                            && nextnext.is_some()
-                        {
+                        if next == Some(&b'-') && nextnext != Some(&b']') && nextnext.is_some() {
                             pi += 1; // skip '-'
                             let mut high = pat.get(pi).copied().unwrap_or(0);
                             if high == b'\\' && !noescape {
@@ -309,15 +301,26 @@ fn fnmatch_inner(
                             pi += 1;
 
                             let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
-                            let low_cmp = if casefold { low.to_ascii_lowercase() } else { low };
-                            let high_cmp =
-                                if casefold { high.to_ascii_lowercase() } else { high };
+                            let low_cmp = if casefold {
+                                low.to_ascii_lowercase()
+                            } else {
+                                low
+                            };
+                            let high_cmp = if casefold {
+                                high.to_ascii_lowercase()
+                            } else {
+                                high
+                            };
                             if test_ch >= low_cmp && test_ch <= high_cmp {
                                 matched = true;
                             }
                         } else {
                             let test_ch = if casefold { c.to_ascii_lowercase() } else { c };
-                            let low_cmp = if casefold { low.to_ascii_lowercase() } else { low };
+                            let low_cmp = if casefold {
+                                low.to_ascii_lowercase()
+                            } else {
+                                low
+                            };
                             if test_ch == low_cmp {
                                 matched = true;
                             }

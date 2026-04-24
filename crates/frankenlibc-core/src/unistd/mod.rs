@@ -225,6 +225,12 @@ pub fn dirname_range(path: &[u8]) -> (usize, usize) {
         return (0, 0); // caller should substitute "."
     }
 
+    // Glibc preserves exactly two leading slashes as an implementation-defined
+    // network-root form, while collapsing longer slash runs to "/".
+    if path == b"//" {
+        return (0, 2);
+    }
+
     // Strip trailing slashes
     let mut end = path.len();
     while end > 0 && path[end - 1] == b'/' {
@@ -579,6 +585,13 @@ mod tests {
         let path = b"/";
         let (s, e) = dirname_range(path);
         assert_eq!(&path[s..e], b"/");
+    }
+
+    #[test]
+    fn dirname_double_slash() {
+        let path = b"//";
+        let (s, e) = dirname_range(path);
+        assert_eq!(&path[s..e], b"//");
     }
 
     #[test]

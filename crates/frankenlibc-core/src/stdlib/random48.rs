@@ -153,9 +153,19 @@ pub fn lcong48(param: &[u16; 7]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static RANDOM48_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn random48_lock() -> MutexGuard<'static, ()> {
+        RANDOM48_TEST_LOCK
+            .lock()
+            .expect("random48 test lock should not be poisoned")
+    }
 
     #[test]
     fn test_srand48_deterministic() {
+        let _lock = random48_lock();
         srand48(42);
         let a = drand48();
         srand48(42);
@@ -165,6 +175,7 @@ mod tests {
 
     #[test]
     fn test_drand48_range() {
+        let _lock = random48_lock();
         srand48(1);
         for _ in 0..100 {
             let v = drand48();
@@ -174,6 +185,7 @@ mod tests {
 
     #[test]
     fn test_lrand48_range() {
+        let _lock = random48_lock();
         srand48(1);
         for _ in 0..100 {
             let v = lrand48();
@@ -183,6 +195,7 @@ mod tests {
 
     #[test]
     fn test_mrand48_range() {
+        let _lock = random48_lock();
         srand48(1);
         for _ in 0..100 {
             let v = mrand48();
@@ -220,6 +233,7 @@ mod tests {
 
     #[test]
     fn test_seed48_returns_old_state() {
+        let _lock = random48_lock();
         srand48(100);
         // Advance once to get a known state.
         let _ = drand48();
@@ -231,6 +245,7 @@ mod tests {
 
     #[test]
     fn test_lcong48_sets_params_without_panic() {
+        let _lock = random48_lock();
         // Verify lcong48 accepts custom parameters and subsequent
         // drand48 calls produce values in range (exact sequence is
         // non-deterministic under parallel test execution due to shared state).
