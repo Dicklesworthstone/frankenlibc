@@ -34,24 +34,23 @@ use frankenlibc_abi::glibc_internal_abi::getdate_err;
 use frankenlibc_abi::glibc_internal_abi::setaliasent as abi_setaliasent;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
-    FTSENT as AbiFtsEnt, access, alarm, chdir, chmod, chown, close, creat, eaccess, endaliasent,
-    aio_suspend, arc4random_buf, ether_line, euidaccess, faccessat, fchmod, fchown, fdatasync,
-    fgetgrent_r, fgetpwent_r,
-    fgetspent, fgetspent_r, flock, fstat, fsync, ftruncate, fts_children as abi_fts_children,
-    fts_close as abi_fts_close, fts_open as abi_fts_open, fts_read as abi_fts_read,
-    fts_set as abi_fts_set, gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname,
-    getaliasbyname_r, getaliasent, getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid,
-    getfsent, getfsfile, getfsspec, getgid, gethostbyname2, gethostbyname2_r, gethostent_r,
-    gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid,
-    getppid, getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent,
-    getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline,
-    getutline_r, glob64, globfree64, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo,
-    mount_setattr, msgrcv, msgsnd, open, pathconf, pidfd_getfd, process_madvise, process_mrelease,
-    process_vm_readv, process_vm_writev, read, readlink, rename, rmdir, semctl, semop, setfsent,
-    sethostent, setnetent, setnetgrent, setns, setprotoent, setservent, setttyent, setutent, shmdt,
-    sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf,
-    truncate, umask, uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname,
-    wordexp as abi_wordexp, wordfree as abi_wordfree, write,
+    FTSENT as AbiFtsEnt, access, aio_suspend, alarm, arc4random_buf, chdir, chmod, chown, close,
+    creat, eaccess, endaliasent, ether_line, euidaccess, faccessat, fchmod, fchown, fdatasync,
+    fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, fstat, fsync, ftruncate,
+    fts_children as abi_fts_children, fts_close as abi_fts_close, fts_open as abi_fts_open,
+    fts_read as abi_fts_read, fts_set as abi_fts_set, gai_cancel, gai_error, gai_suspend,
+    getaddrinfo_a, getaliasbyname, getaliasbyname_r, getaliasent, getaliasent_r, getcwd, getdate,
+    getdate_r, getegid, geteuid, getfsent, getfsfile, getfsspec, getgid, gethostbyname2,
+    gethostbyname2_r, gethostent_r, gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r,
+    getnetgrent, getnetgrent_r, getpid, getppid, getprotobyname_r, getprotobynumber_r, getprotoent,
+    getprotoent_r, getservent, getservent_r, getttyent, getttynam, getuid, getutent_r, getutid,
+    getutid_r, getutline, getutline_r, glob64, globfree64, gsignal, isatty, link, logout, lseek,
+    lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd, open, pathconf, pidfd_getfd,
+    process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read, readlink, rename,
+    rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent, setns, setprotoent,
+    setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat,
+    strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, unshare, updwtmp,
+    updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -4915,7 +4914,7 @@ fn aio_suspend_rejects_negative_tv_sec_without_panic() {
         tv_sec: -1,
         tv_nsec: 0,
     };
-    let rc = unsafe { aio_suspend(list.as_ptr() as *const *const c_void, 1, &ts) };
+    let rc = unsafe { aio_suspend(list.as_ptr(), 1, &ts) };
     assert_eq!(rc, -1, "aio_suspend with tv_sec<0 must return -1 (EINVAL)");
 }
 
@@ -4927,7 +4926,7 @@ fn aio_suspend_rejects_negative_tv_nsec() {
         tv_sec: 0,
         tv_nsec: -1,
     };
-    let rc = unsafe { aio_suspend(list.as_ptr() as *const *const c_void, 1, &ts) };
+    let rc = unsafe { aio_suspend(list.as_ptr(), 1, &ts) };
     assert_eq!(rc, -1, "aio_suspend with tv_nsec<0 must return -1 (EINVAL)");
 }
 
@@ -4939,7 +4938,7 @@ fn aio_suspend_rejects_oversize_tv_nsec() {
         tv_sec: 0,
         tv_nsec: 1_000_000_000,
     };
-    let rc = unsafe { aio_suspend(list.as_ptr() as *const *const c_void, 1, &ts) };
+    let rc = unsafe { aio_suspend(list.as_ptr(), 1, &ts) };
     assert_eq!(
         rc, -1,
         "aio_suspend with tv_nsec >= 1_000_000_000 must return -1 (EINVAL)"
