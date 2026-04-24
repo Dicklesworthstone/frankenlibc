@@ -1179,6 +1179,30 @@ fn fallback_size(ptr: *mut c_void) -> Option<usize> {
     None
 }
 
+fn fallback_remaining(addr: usize) -> Option<usize> {
+    if addr <= FALLBACK_SLOT_TOMBSTONE {
+        return None;
+    }
+    let _guard = lock_fallback_alloc_table();
+    for idx in 0..FALLBACK_ALLOC_TABLE_SLOTS {
+        let base = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        if base <= FALLBACK_SLOT_TOMBSTONE {
+            continue;
+        }
+        let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
+        if size == 0 {
+            continue;
+        }
+        let Some(end) = base.checked_add(size) else {
+            continue;
+        };
+        if base <= addr && addr <= end {
+            return Some(end - addr);
+        }
+    }
+    None
+}
+
 #[must_use]
 pub(crate) fn in_allocator_reentry_context() -> bool {
     ALLOCATOR_REENTRY_DEPTH
@@ -1312,7 +1336,9 @@ pub(crate) fn check_ownership(addr: usize) -> bool {
 /// Returns `None` if the pipeline is not yet initialized (reentrant guard).
 #[must_use]
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
-    validate_ptr(addr).and_then(|abs| abs.remaining)
+    validate_ptr(addr)
+        .and_then(|abs| abs.remaining)
+        .or_else(|| fallback_remaining(addr))
 }
 
 // ---------------------------------------------------------------------------
@@ -1405,7 +1431,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let out = unsafe { native_libc_malloc(req) };
-            fallback_insert(out);
+            fallback_insert_sized(out, req);
             out
         }
     };

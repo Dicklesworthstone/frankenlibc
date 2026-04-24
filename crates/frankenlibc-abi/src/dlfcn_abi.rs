@@ -331,6 +331,13 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
             return std::ptr::null_mut();
         }
+        let (symbol_len, symbol_terminated) = unsafe {
+            crate::util::scan_c_string(symbol, crate::malloc_abi::known_remaining(symbol as usize))
+        };
+        if !symbol_terminated {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            return std::ptr::null_mut();
+        }
         if !is_main_program_handle(handle) {
             let host_handle = if is_rtld_default(handle) {
                 libc::RTLD_DEFAULT
@@ -347,7 +354,7 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             }
             return sym;
         }
-        let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
+        let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
         let sym = unsafe { resolve_main_program_symbol(symbol, symbol_name) };
         if sym.is_null() {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
@@ -357,7 +364,7 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         return sym;
     }
 
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Loader, handle as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
@@ -378,7 +385,6 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
     // only fired in hardened mode and let strict mode fall through to
     // host_dlsym(symbol)/CStr::from_ptr(symbol) — both unbounded reads of
     // user-supplied memory. (REVIEW round 4: same defense class as bd-z4k96.)
-    let _ = mode;
     if !terminated {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
@@ -453,6 +459,19 @@ pub unsafe extern "C" fn dlvsym(
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
             return std::ptr::null_mut();
         }
+        let (symbol_len, symbol_terminated) = unsafe {
+            crate::util::scan_c_string(symbol, crate::malloc_abi::known_remaining(symbol as usize))
+        };
+        let (version_len, version_terminated) = unsafe {
+            crate::util::scan_c_string(
+                version,
+                crate::malloc_abi::known_remaining(version as usize),
+            )
+        };
+        if !symbol_terminated || !version_terminated {
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            return std::ptr::null_mut();
+        }
         if !is_main_program_handle(handle) {
             let host_handle = if is_rtld_default(handle) {
                 libc::RTLD_DEFAULT
@@ -470,8 +489,8 @@ pub unsafe extern "C" fn dlvsym(
             }
             return sym;
         }
-        let symbol_name = unsafe { CStr::from_ptr(symbol) }.to_bytes();
-        let version_name = unsafe { CStr::from_ptr(version) }.to_bytes();
+        let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
+        let version_name = unsafe { std::slice::from_raw_parts(version as *const u8, version_len) };
         let sym = unsafe {
             resolve_main_program_versioned_symbol(symbol, version, symbol_name, version_name)
         };
@@ -484,7 +503,7 @@ pub unsafe extern "C" fn dlvsym(
         };
     }
 
-    let (mode, decision) =
+    let (_, decision) =
         runtime_policy::decide(ApiFamily::Loader, handle as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
@@ -507,7 +526,10 @@ pub unsafe extern "C" fn dlvsym(
             crate::malloc_abi::known_remaining(version as usize),
         )
     };
-    if (!symbol_terminated || !version_terminated) && mode.heals_enabled() {
+    // Reject unterminated caller strings in every mode. Passing these through
+    // to host dlvsym would let the dynamic linker walk beyond known allocation
+    // bounds before it finds an accidental NUL.
+    if !symbol_terminated || !version_terminated {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return std::ptr::null_mut();

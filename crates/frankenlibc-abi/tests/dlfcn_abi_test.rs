@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use frankenlibc_abi::dlfcn_abi::{
     dl_iterate_phdr, dladdr, dlclose, dlerror, dlopen, dlsym, dlvsym,
 };
+use frankenlibc_abi::malloc_abi::{free, malloc};
 
 static TEST_GUARD: Mutex<()> = Mutex::new(());
 
@@ -361,6 +362,55 @@ fn dlvsym_unsupported_version_returns_null() {
         sym.is_null(),
         "unsupported versions should not resolve native symbols"
     );
+}
+
+#[test]
+fn dlsym_and_dlvsym_reject_unterminated_names_in_bootstrap_passthrough() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    unsafe {
+        let unterminated_symbol = malloc(6).cast::<u8>();
+        assert!(!unterminated_symbol.is_null());
+        std::ptr::copy_nonoverlapping(b"malloc".as_ptr(), unterminated_symbol, 6);
+
+        let sym = dlsym(libc::RTLD_DEFAULT, unterminated_symbol.cast());
+        assert!(
+            sym.is_null(),
+            "dlsym should reject an unterminated symbol buffer"
+        );
+        let err_ptr = dlerror();
+        assert!(!err_ptr.is_null());
+
+        let version = CString::new("GLIBC_2.2.5").unwrap();
+        let sym = dlvsym(
+            libc::RTLD_DEFAULT,
+            unterminated_symbol.cast(),
+            version.as_ptr(),
+        );
+        assert!(
+            sym.is_null(),
+            "dlvsym should reject an unterminated symbol buffer"
+        );
+        let err_ptr = dlerror();
+        assert!(!err_ptr.is_null());
+        free(unterminated_symbol.cast());
+
+        let sym_name = CString::new("malloc").unwrap();
+        let unterminated_version = malloc(11).cast::<u8>();
+        assert!(!unterminated_version.is_null());
+        std::ptr::copy_nonoverlapping(b"GLIBC_2.2.5".as_ptr(), unterminated_version, 11);
+        let sym = dlvsym(
+            libc::RTLD_DEFAULT,
+            sym_name.as_ptr(),
+            unterminated_version.cast(),
+        );
+        assert!(
+            sym.is_null(),
+            "dlvsym should reject an unterminated version buffer"
+        );
+        let err_ptr = dlerror();
+        assert!(!err_ptr.is_null());
+        free(unterminated_version.cast());
+    }
 }
 
 #[test]
