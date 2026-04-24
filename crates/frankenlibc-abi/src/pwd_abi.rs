@@ -663,45 +663,70 @@ thread_local! {
     static SHADOW_CACHE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
-fn parse_shadow_field(s: &str) -> i64 {
-    if s.is_empty() {
-        -1
-    } else {
-        s.parse::<i64>().unwrap_or(-1)
-    }
-}
-
-/// Fill SpwdEntry from a shadow line. Returns true on success.
+/// Pack the name+passwd from a parsed [`ShadowEntry`] into the
+/// thread-local TLS buffer and copy the seven numeric fields into
+/// the layout-stable SpwdEntry. Returns false if the line was
+/// malformed (parser returned None).
 fn fill_shadow_entry(line: &str, buf: &mut Vec<u8>, entry: &mut SpwdEntry) -> bool {
-    let parts: Vec<&str> = line.split(':').collect();
-    if parts.len() < 8 {
+    let Some(parsed) = frankenlibc_core::pwd::shadow::parse_shadow_line(line.as_bytes()) else {
         return false;
-    }
+    };
 
     buf.clear();
-    // Pack name and password into buf as null-terminated strings
-    let name = parts[0];
-    let pass = parts[1];
-    buf.extend_from_slice(name.as_bytes());
+    buf.extend_from_slice(&parsed.name);
     buf.push(0);
     let pass_offset = buf.len();
-    buf.extend_from_slice(pass.as_bytes());
+    buf.extend_from_slice(&parsed.passwd);
     buf.push(0);
 
     entry.sp_namp = buf.as_mut_ptr() as *mut c_char;
     entry.sp_pwdp = unsafe { buf.as_mut_ptr().add(pass_offset) as *mut c_char };
-    entry.sp_lstchg = parse_shadow_field(parts[2]);
-    entry.sp_min = parse_shadow_field(parts[3]);
-    entry.sp_max = parse_shadow_field(parts[4]);
-    entry.sp_warn = parse_shadow_field(parts[5]);
-    entry.sp_inact = parse_shadow_field(parts[6]);
-    entry.sp_expire = parse_shadow_field(parts[7]);
-    entry.sp_flag = if parts.len() > 8 {
-        parts[8].parse::<u64>().unwrap_or(0)
-    } else {
-        0
-    };
+    entry.sp_lstchg = parsed.lstchg;
+    entry.sp_min = parsed.min;
+    entry.sp_max = parsed.max;
+    entry.sp_warn = parsed.warn;
+    entry.sp_inact = parsed.inact;
+    entry.sp_expire = parsed.expire;
+    entry.sp_flag = parsed.flag;
     true
+}
+
+/// Pack the name+passwd from a parsed [`ShadowEntry`] into a
+/// caller-supplied buffer and write the seven numeric fields into
+/// `*sp`. Returns 0 on success, ERANGE if the buffer is too small,
+/// or ENOENT if the line was malformed.
+unsafe fn fill_shadow_entry_caller(
+    line: &str,
+    sp: *mut SpwdEntry,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    let Some(parsed) = frankenlibc_core::pwd::shadow::parse_shadow_line(line.as_bytes()) else {
+        return libc::ENOENT;
+    };
+    let needed = parsed.name.len() + 1 + parsed.passwd.len() + 1;
+    if needed > buflen {
+        return libc::ERANGE;
+    }
+    let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen) };
+    buf_slice[..parsed.name.len()].copy_from_slice(&parsed.name);
+    buf_slice[parsed.name.len()] = 0;
+    let pass_off = parsed.name.len() + 1;
+    buf_slice[pass_off..pass_off + parsed.passwd.len()].copy_from_slice(&parsed.passwd);
+    buf_slice[pass_off + parsed.passwd.len()] = 0;
+
+    unsafe {
+        (*sp).sp_namp = buf;
+        (*sp).sp_pwdp = buf.add(pass_off);
+        (*sp).sp_lstchg = parsed.lstchg;
+        (*sp).sp_min = parsed.min;
+        (*sp).sp_max = parsed.max;
+        (*sp).sp_warn = parsed.warn;
+        (*sp).sp_inact = parsed.inact;
+        (*sp).sp_expire = parsed.expire;
+        (*sp).sp_flag = parsed.flag;
+    }
+    0
 }
 
 /// `getspnam` — look up a shadow entry by login name.
@@ -779,44 +804,13 @@ pub unsafe extern "C" fn getspnam_r(
         if let Some(colon) = line.find(':')
             && &line[..colon] == name_str
         {
-            let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() < 8 {
-                return libc::ENOENT;
-            }
-
-            // Pack into caller's buffer
-            let name_bytes = parts[0].as_bytes();
-            let pass_bytes = parts[1].as_bytes();
-            let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
-            if needed > buflen {
-                return libc::ERANGE;
-            }
-
-            let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-            buf_slice[..name_bytes.len()].copy_from_slice(name_bytes);
-            buf_slice[name_bytes.len()] = 0;
-            let pass_off = name_bytes.len() + 1;
-            buf_slice[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
-            buf_slice[pass_off + pass_bytes.len()] = 0;
-
-            let sp = spbuf as *mut SpwdEntry;
-            unsafe {
-                (*sp).sp_namp = buf;
-                (*sp).sp_pwdp = buf.add(pass_off);
-                (*sp).sp_lstchg = parse_shadow_field(parts[2]);
-                (*sp).sp_min = parse_shadow_field(parts[3]);
-                (*sp).sp_max = parse_shadow_field(parts[4]);
-                (*sp).sp_warn = parse_shadow_field(parts[5]);
-                (*sp).sp_inact = parse_shadow_field(parts[6]);
-                (*sp).sp_expire = parse_shadow_field(parts[7]);
-                (*sp).sp_flag = if parts.len() > 8 {
-                    parts[8].parse::<u64>().unwrap_or(0)
-                } else {
-                    0
-                };
-                *result = spbuf;
+            let rc = unsafe {
+                fill_shadow_entry_caller(line, spbuf as *mut SpwdEntry, buf, buflen)
             };
-            return 0;
+            if rc == 0 {
+                unsafe { *result = spbuf };
+            }
+            return rc;
         }
     }
     libc::ENOENT
@@ -896,45 +890,16 @@ pub unsafe extern "C" fn getspent_r(
             let line = &cache[*idx];
             *idx += 1;
 
-            let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() < 8 {
-                return libc::ENOENT;
-            }
-
-            let name_bytes = parts[0].as_bytes();
-            let pass_bytes = parts[1].as_bytes();
-            let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
-            if needed > buflen {
-                // Rewind so caller can retry with larger buffer
-                *idx -= 1;
-                return libc::ERANGE;
-            }
-
-            let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen) };
-            buf_slice[..name_bytes.len()].copy_from_slice(name_bytes);
-            buf_slice[name_bytes.len()] = 0;
-            let pass_off = name_bytes.len() + 1;
-            buf_slice[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
-            buf_slice[pass_off + pass_bytes.len()] = 0;
-
-            let sp = spbuf as *mut SpwdEntry;
-            unsafe {
-                (*sp).sp_namp = buf;
-                (*sp).sp_pwdp = buf.add(pass_off);
-                (*sp).sp_lstchg = parse_shadow_field(parts[2]);
-                (*sp).sp_min = parse_shadow_field(parts[3]);
-                (*sp).sp_max = parse_shadow_field(parts[4]);
-                (*sp).sp_warn = parse_shadow_field(parts[5]);
-                (*sp).sp_inact = parse_shadow_field(parts[6]);
-                (*sp).sp_expire = parse_shadow_field(parts[7]);
-                (*sp).sp_flag = if parts.len() > 8 {
-                    parts[8].parse::<u64>().unwrap_or(0)
-                } else {
-                    0
-                };
-                *result = spbuf;
+            let rc = unsafe {
+                fill_shadow_entry_caller(line, spbuf as *mut SpwdEntry, buf, buflen)
             };
-            0
+            if rc == libc::ERANGE {
+                // Rewind so caller can retry with a larger buffer.
+                *idx -= 1;
+            } else if rc == 0 {
+                unsafe { *result = spbuf };
+            }
+            rc
         })
     })
 }

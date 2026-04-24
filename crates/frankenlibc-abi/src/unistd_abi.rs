@@ -14884,47 +14884,34 @@ pub unsafe extern "C" fn fgetspent(stream: *mut c_void) -> *mut libc::spwd {
             return std::ptr::null_mut();
         }
         let len = unsafe { crate::string_abi::strlen(line_ptr) };
-        let line = unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
+        let line_bytes = unsafe { std::slice::from_raw_parts(line_ptr as *const u8, len) };
+        let Some(parsed) = frankenlibc_core::pwd::shadow::parse_shadow_line(line_bytes) else {
+            continue;
         };
-        let line = line.trim_end_matches('\n');
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() < 8 {
-            continue;
-        }
 
         return BUF.with(|buf| {
             ENTRY.with(|entry| {
                 let mut buf = buf.borrow_mut();
                 let mut entry = entry.borrow_mut();
-                let name_bytes = parts[0].as_bytes();
-                let pass_bytes = parts[1].as_bytes();
-                let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
+                let needed = parsed.name.len() + 1 + parsed.passwd.len() + 1;
                 if needed > buf.len() {
                     return std::ptr::null_mut();
                 }
-                buf[..name_bytes.len()].copy_from_slice(name_bytes);
-                buf[name_bytes.len()] = 0;
-                let pass_off = name_bytes.len() + 1;
-                buf[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
-                buf[pass_off + pass_bytes.len()] = 0;
+                buf[..parsed.name.len()].copy_from_slice(&parsed.name);
+                buf[parsed.name.len()] = 0;
+                let pass_off = parsed.name.len() + 1;
+                buf[pass_off..pass_off + parsed.passwd.len()].copy_from_slice(&parsed.passwd);
+                buf[pass_off + parsed.passwd.len()] = 0;
 
                 entry.sp_namp = buf.as_mut_ptr() as *mut c_char;
                 entry.sp_pwdp = buf[pass_off..].as_mut_ptr() as *mut c_char;
-                entry.sp_lstchg = parts[2].parse().unwrap_or(-1);
-                entry.sp_min = parts[3].parse().unwrap_or(-1);
-                entry.sp_max = parts[4].parse().unwrap_or(-1);
-                entry.sp_warn = parts[5].parse().unwrap_or(-1);
-                entry.sp_inact = parts[6].parse().unwrap_or(-1);
-                entry.sp_expire = parts[7].parse().unwrap_or(-1);
-                entry.sp_flag = if parts.len() > 8 {
-                    parts[8].parse().unwrap_or(0)
-                } else {
-                    0
-                };
+                entry.sp_lstchg = parsed.lstchg;
+                entry.sp_min = parsed.min;
+                entry.sp_max = parsed.max;
+                entry.sp_warn = parsed.warn;
+                entry.sp_inact = parsed.inact;
+                entry.sp_expire = parsed.expire;
+                entry.sp_flag = parsed.flag;
                 &mut *entry as *mut libc::spwd
             })
         });
@@ -14960,47 +14947,32 @@ pub unsafe extern "C" fn fgetspent_r(
             return libc::ENOENT;
         }
         let len = unsafe { crate::string_abi::strlen(line_ptr) };
-        let line = unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(line_ptr as *const u8, len))
+        let line_bytes = unsafe { std::slice::from_raw_parts(line_ptr as *const u8, len) };
+        let Some(parsed) = frankenlibc_core::pwd::shadow::parse_shadow_line(line_bytes) else {
+            continue;
         };
-        let line = line.trim_end_matches('\n');
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() < 8 {
-            continue;
-        }
-
-        let name_bytes = parts[0].as_bytes();
-        let pass_bytes = parts[1].as_bytes();
-        let needed = name_bytes.len() + 1 + pass_bytes.len() + 1;
+        let needed = parsed.name.len() + 1 + parsed.passwd.len() + 1;
         if needed > buflen {
             return libc::ERANGE;
         }
-
         let buf_slice = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
-        buf_slice[..name_bytes.len()].copy_from_slice(name_bytes);
-        buf_slice[name_bytes.len()] = 0;
-        let pass_off = name_bytes.len() + 1;
-        buf_slice[pass_off..pass_off + pass_bytes.len()].copy_from_slice(pass_bytes);
-        buf_slice[pass_off + pass_bytes.len()] = 0;
+        buf_slice[..parsed.name.len()].copy_from_slice(&parsed.name);
+        buf_slice[parsed.name.len()] = 0;
+        let pass_off = parsed.name.len() + 1;
+        buf_slice[pass_off..pass_off + parsed.passwd.len()].copy_from_slice(&parsed.passwd);
+        buf_slice[pass_off + parsed.passwd.len()] = 0;
 
         let sp = result_buf;
         unsafe {
             (*sp).sp_namp = buffer;
             (*sp).sp_pwdp = buffer.add(pass_off);
-            (*sp).sp_lstchg = parts[2].parse().unwrap_or(-1);
-            (*sp).sp_min = parts[3].parse().unwrap_or(-1);
-            (*sp).sp_max = parts[4].parse().unwrap_or(-1);
-            (*sp).sp_warn = parts[5].parse().unwrap_or(-1);
-            (*sp).sp_inact = parts[6].parse().unwrap_or(-1);
-            (*sp).sp_expire = parts[7].parse().unwrap_or(-1);
-            (*sp).sp_flag = if parts.len() > 8 {
-                parts[8].parse().unwrap_or(0)
-            } else {
-                0
-            };
+            (*sp).sp_lstchg = parsed.lstchg;
+            (*sp).sp_min = parsed.min;
+            (*sp).sp_max = parsed.max;
+            (*sp).sp_warn = parsed.warn;
+            (*sp).sp_inact = parsed.inact;
+            (*sp).sp_expire = parsed.expire;
+            (*sp).sp_flag = parsed.flag;
             *result = sp;
         }
         return 0;
