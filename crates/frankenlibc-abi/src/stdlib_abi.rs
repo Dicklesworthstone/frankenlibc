@@ -3245,23 +3245,28 @@ pub unsafe extern "C" fn __assert_perror_fail(
     line: c_uint,
     function: *const c_char,
 ) -> ! {
-    let f = if file.is_null() {
-        c"??"
-    } else {
-        unsafe { core::ffi::CStr::from_ptr(file) }
-    };
-    let func = if function.is_null() {
-        c"??"
-    } else {
-        unsafe { core::ffi::CStr::from_ptr(function) }
-    };
+    // Mirror __assert_fail's hardening: bound every string pointer through
+    // scan_c_string + known_remaining so a caller that passes a non-NUL-
+    // terminated pointer cannot walk arbitrary process memory here. Without
+    // this guard, CStr::from_ptr walks unbounded — an info-leak / segfault
+    // vector reachable from the libc.so boundary. (bd-9bijw)
+    fn read_bounded(ptr: *const c_char) -> String {
+        if ptr.is_null() {
+            return "??".to_string();
+        }
+        let (len, terminated) =
+            unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+        if !terminated {
+            return "??".to_string();
+        }
+        let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+    let f = read_bounded(file);
+    let func = read_bounded(function);
     let msg = std::io::Error::from_raw_os_error(errnum);
     let msg_str = format!(
-        "{}: {}: {}: Unexpected error: {}.\n",
-        f.to_str().unwrap_or("??"),
-        line,
-        func.to_str().unwrap_or("??"),
-        msg
+        "{f}: {line}: {func}: Unexpected error: {msg}.\n"
     );
     unsafe {
         crate::unistd_abi::sys_write_fd(
