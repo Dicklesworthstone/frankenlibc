@@ -418,6 +418,17 @@ def main():
     for f in all_findings:
         by_severity[f.get("severity", "unknown")] += 1
         by_verdict[f.get("verdict", "unknown")] += 1
+    by_severity_summary = {
+        severity: by_severity.get(severity, 0)
+        for severity in [
+            SEVERITY_CRITICAL,
+            SEVERITY_ERROR,
+            SEVERITY_WARNING,
+            SEVERITY_INFO,
+        ]
+    }
+    for severity in sorted(set(by_severity) - set(by_severity_summary)):
+        by_severity_summary[severity] = by_severity[severity]
 
     # Reports loaded
     reports_loaded = {
@@ -448,7 +459,7 @@ def main():
         "summary": {
             "overall_verdict": "pass" if overall_pass else "fail",
             "total_findings": len(all_findings),
-            "by_severity": dict(sorted(by_severity.items())),
+            "by_severity": by_severity_summary,
             "by_verdict": dict(sorted(by_verdict.items())),
             "reports_loaded": sum(1 for v in reports_loaded.values() if v),
             "reports_total": len(reports_loaded),

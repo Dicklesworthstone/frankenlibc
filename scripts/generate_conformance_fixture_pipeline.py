@@ -31,7 +31,15 @@ def load_json_file(path):
         return json.load(f)
 
 
-REQUIRED_CASE_FIELDS = ["name", "function", "inputs", "expected_output", "mode"]
+REQUIRED_CASE_FIELDS = ["name", "function", "inputs", "mode"]
+EXPECTED_CONTRACT_FIELDS = {
+    "expected_output",
+    "expected_output_bytes",
+    "expected_output_pattern",
+    "expected_return",
+    "expected_values",
+    "expected_n_value",
+}
 VALID_MODES = {"strict", "hardened", "both"}
 MIN_CASES_THRESHOLD = 10
 MIN_COVERAGE_PCT = 5.0
@@ -59,6 +67,9 @@ def validate_fixture_file(fixture_path):
             for field in REQUIRED_CASE_FIELDS:
                 if field not in case:
                     issues.append(f"Case {i}: missing required field '{field}'")
+
+            if not any(field in case for field in EXPECTED_CONTRACT_FIELDS):
+                issues.append(f"Case {i}: missing output/return expectation field")
 
             mode = case.get("mode", "")
             if mode and mode not in VALID_MODES:

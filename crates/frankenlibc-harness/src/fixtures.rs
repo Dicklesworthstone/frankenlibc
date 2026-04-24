@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// A single fixture test case.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "RawFixtureCase")]
 pub struct FixtureCase {
     /// Case identifier.
     pub name: String,
@@ -22,6 +23,59 @@ pub struct FixtureCase {
     pub expected_errno: i32,
     /// Whether this tests strict or hardened behavior.
     pub mode: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawFixtureCase {
+    name: String,
+    function: String,
+    spec_section: String,
+    inputs: serde_json::Value,
+    #[serde(default, deserialize_with = "deserialize_present_value")]
+    expected_output: Option<serde_json::Value>,
+    #[serde(default)]
+    expected_output_bytes: Option<serde_json::Value>,
+    #[serde(default)]
+    expected_output_pattern: Option<serde_json::Value>,
+    #[serde(default)]
+    expected_return: Option<serde_json::Value>,
+    #[serde(default)]
+    expected_values: Option<serde_json::Value>,
+    #[serde(default)]
+    expected_n_value: Option<serde_json::Value>,
+    #[serde(default)]
+    expected_errno: i32,
+    mode: String,
+}
+
+fn deserialize_present_value<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    serde_json::Value::deserialize(deserializer).map(Some)
+}
+
+impl TryFrom<RawFixtureCase> for FixtureCase {
+    type Error = String;
+
+    fn try_from(raw: RawFixtureCase) -> Result<Self, Self::Error> {
+        let expected_output = expected_output_from_raw_case(&raw).ok_or_else(|| {
+            format!(
+                "fixture case {} is missing an expected output contract",
+                raw.name
+            )
+        })?;
+
+        Ok(Self {
+            name: raw.name,
+            function: raw.function,
+            spec_section: raw.spec_section,
+            inputs: raw.inputs,
+            expected_output,
+            expected_errno: raw.expected_errno,
+            mode: raw.mode,
+        })
+    }
 }
 
 /// A collection of fixture cases for a function family.
@@ -62,14 +116,6 @@ impl FixtureSet {
         let set = Self::from_json(&content)?;
         Ok(set)
     }
-}
-
-fn deserialize_expected_output<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    Ok(normalize_expected_output_value(&value))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -166,6 +212,85 @@ pub(crate) fn normalize_expected_output_value(value: &serde_json::Value) -> Stri
         return text.to_string();
     }
     serde_json::to_string(value).unwrap_or_else(|_| String::from("null"))
+}
+
+fn expected_output_from_raw_case(raw: &RawFixtureCase) -> Option<String> {
+    if let Some(value) = &raw.expected_output {
+        return Some(normalize_expected_output_value(value));
+    }
+
+    if let (Some(expected_return), Some(expected_values)) =
+        (&raw.expected_return, &raw.expected_values)
+    {
+        return Some(format_return_and_values(expected_return, expected_values));
+    }
+
+    if let Some(value) = &raw.expected_output_bytes {
+        return Some(normalize_expected_output_value(value));
+    }
+
+    if let Some(value) = &raw.expected_output_pattern {
+        return Some(normalize_expected_output_value(value));
+    }
+
+    if let Some(value) = &raw.expected_return {
+        if raw.function == "snprintf"
+            && raw.inputs.get("size").and_then(serde_json::Value::as_u64) == Some(0)
+        {
+            return Some(String::new());
+        }
+        return Some(normalize_expected_output_value(value));
+    }
+
+    raw.expected_n_value
+        .as_ref()
+        .map(normalize_expected_output_value)
+}
+
+fn format_return_and_values(
+    expected_return: &serde_json::Value,
+    expected_values: &serde_json::Value,
+) -> String {
+    let values = expected_values
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(format_sequence_expected_value)
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_else(|| normalize_expected_output_value(expected_values));
+
+    format!(
+        "{}:[{}]",
+        normalize_expected_output_value(expected_return),
+        values
+    )
+}
+
+fn format_sequence_expected_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => format!("\"{text}\""),
+        serde_json::Value::Number(number) => {
+            if let Some(integer) = number.as_i64() {
+                integer.to_string()
+            } else if let Some(integer) = number.as_u64() {
+                integer.to_string()
+            } else if let Some(float) = number.as_f64() {
+                let rounded = (float * 1e6).round() / 1e6;
+                if rounded == 0.0 {
+                    "0".to_string()
+                } else {
+                    let text = format!("{rounded}");
+                    text.trim_end_matches('0').trim_end_matches('.').to_string()
+                }
+            } else {
+                number.to_string()
+            }
+        }
+        _ => normalize_expected_output_value(value),
+    }
 }
 
 #[cfg(test)]
@@ -342,6 +467,103 @@ mod tests {
         .expect("fixture should deserialize");
 
         assert_eq!(fixture.cases[0].expected_output, "[65,66,67]");
+    }
+
+    #[test]
+    fn fixture_case_accepts_expected_return_and_values_contract() {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"scanf_conformance",
+                "captured_at":"2026-04-14T00:00:00Z",
+                "cases":[
+                    {
+                        "name":"sscanf_pair",
+                        "function":"sscanf",
+                        "spec_section":"C11 7.21.6.2",
+                        "inputs":{"input":"42 ok","format":"%d %s"},
+                        "expected_return":2,
+                        "expected_values":[42,"ok"],
+                        "mode":"strict"
+                    }
+                ]
+            }"#,
+        )
+        .expect("fixture should deserialize");
+
+        assert_eq!(fixture.cases[0].expected_output, "2:[42,\"ok\"]");
+    }
+
+    #[test]
+    fn fixture_case_accepts_expected_return_only_contract() {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"errno_ops",
+                "captured_at":"2026-04-15T00:50:00Z",
+                "cases":[
+                    {
+                        "name":"strerror_r_null_buffer",
+                        "function":"strerror_r",
+                        "spec_section":"POSIX.1 strerror_r",
+                        "inputs":{"errnum":22,"buf":null},
+                        "expected_return":22,
+                        "mode":"strict"
+                    }
+                ]
+            }"#,
+        )
+        .expect("fixture should deserialize");
+
+        assert_eq!(fixture.cases[0].expected_output, "22");
+    }
+
+    #[test]
+    fn fixture_case_accepts_expected_bytes_contract() {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"printf_conformance",
+                "captured_at":"2026-04-14T00:00:00Z",
+                "cases":[
+                    {
+                        "name":"sprintf_c_nul",
+                        "function":"sprintf",
+                        "spec_section":"C11 7.21.6.1",
+                        "inputs":{"format":"a%cb","args":[0]},
+                        "expected_output_bytes":[97,0,98],
+                        "mode":"strict"
+                    }
+                ]
+            }"#,
+        )
+        .expect("fixture should deserialize");
+
+        assert_eq!(fixture.cases[0].expected_output, "[97,0,98]");
+    }
+
+    #[test]
+    fn fixture_case_accepts_expected_pattern_contract() {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"printf_conformance",
+                "captured_at":"2026-04-14T00:00:00Z",
+                "cases":[
+                    {
+                        "name":"sprintf_p_basic",
+                        "function":"sprintf",
+                        "spec_section":"C11 7.21.6.1",
+                        "inputs":{"format":"%p","args":["0x12345678"]},
+                        "expected_output_pattern":"^0x[0-9a-f]+$",
+                        "mode":"strict"
+                    }
+                ]
+            }"#,
+        )
+        .expect("fixture should deserialize");
+
+        assert_eq!(fixture.cases[0].expected_output, "^0x[0-9a-f]+$");
     }
 
     #[test]
