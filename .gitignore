@@ -83,8 +83,8 @@ crates/*/target/
 target-codex*/
 target_*/
 
-# Claude local settings
-.claude/settings.local.json
+# Claude local settings + agent scratch dir (scheduled_tasks.lock, settings.local.json, etc.)
+.claude/
 
 # Agent mail project identity
 .agent-mail-project-id
@@ -111,6 +111,7 @@ storage.recovered.sqlite3
 .beads/beads.db.stale_*
 .beads/recovery_*/
 .beads_snapshot_*/
+.beads.snapshot_*/
 
 # Ephemeral scratch files
 baseline_decisions
