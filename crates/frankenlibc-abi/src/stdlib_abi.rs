@@ -1825,22 +1825,28 @@ pub unsafe extern "C" fn clearenv() -> c_int {
     }
 
     let mut names = Vec::<Vec<u8>>::new();
-    // SAFETY: HOST_ENVIRON is owned by libc; we only read and copy entry names.
-    unsafe {
-        let mut cursor = HOST_ENVIRON;
-        if !cursor.is_null() {
-            while !(*cursor).is_null() {
-                let entry = std::ffi::CStr::from_ptr(*cursor).to_bytes();
-                if let Some(eq_pos) = entry.iter().position(|&b| b == b'=') {
-                    let name = &entry[..eq_pos];
-                    if frankenlibc_core::stdlib::valid_env_name(name) {
-                        let mut owned = Vec::with_capacity(name.len() + 1);
-                        owned.extend_from_slice(name);
-                        owned.push(0);
-                        names.push(owned);
+    // Take ENVIRON_LOCK around the snapshot walk so a concurrent setenv that
+    // host_passthrough_realloc()s HOST_ENVIRON cannot UAF the cursor here.
+    // (REVIEW round 3, same class as the native_getenv fix.)
+    {
+        let _lock = ENVIRON_LOCK.lock();
+        // SAFETY: HOST_ENVIRON is owned by libc; we only read and copy entry names.
+        unsafe {
+            let mut cursor = HOST_ENVIRON;
+            if !cursor.is_null() {
+                while !(*cursor).is_null() {
+                    let entry = std::ffi::CStr::from_ptr(*cursor).to_bytes();
+                    if let Some(eq_pos) = entry.iter().position(|&b| b == b'=') {
+                        let name = &entry[..eq_pos];
+                        if frankenlibc_core::stdlib::valid_env_name(name) {
+                            let mut owned = Vec::with_capacity(name.len() + 1);
+                            owned.extend_from_slice(name);
+                            owned.push(0);
+                            names.push(owned);
+                        }
                     }
+                    cursor = cursor.add(1);
                 }
-                cursor = cursor.add(1);
             }
         }
     }
