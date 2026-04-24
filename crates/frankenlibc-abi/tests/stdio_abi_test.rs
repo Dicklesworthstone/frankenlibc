@@ -2221,13 +2221,59 @@ fn fmemopen_fseek_syncs_pending_write() {
 }
 
 #[test]
-fn fmemopen_truncate_clears_caller_buffer() {
+fn fmemopen_wplus_truncate_sets_initial_nul_only() {
     let mut buf = [b'Z'; 8];
     let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w+".as_ptr()) };
     if stream.is_null() {
         return;
     }
-    assert!(buf.iter().all(|&b| b == 0));
+    assert_eq!(buf, [0, b'Z', b'Z', b'Z', b'Z', b'Z', b'Z', b'Z']);
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(buf, [0, b'Z', b'Z', b'Z', b'Z', b'Z', b'Z', b'Z']);
+}
+
+#[test]
+fn fmemopen_w_truncate_without_write_leaves_caller_buffer_unchanged() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    assert_eq!(&buf, b"ABCDEFGH");
+}
+
+#[test]
+fn fmemopen_w_truncate_defers_caller_buffer_change_until_flush() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    assert_eq!(&buf, b"ABCDEFGH");
+    let payload = b"xy";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"xy\0DEFGH");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_append_flush_writes_nul_after_appended_content() {
+    let mut buf = *b"ABC\0ZZZZ";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"a".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"xy";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABC\0ZZZZ");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"ABCxy\0ZZ");
     assert_eq!(unsafe { fclose(stream) }, 0);
 }
 

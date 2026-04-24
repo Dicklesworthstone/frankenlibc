@@ -5950,6 +5950,11 @@ unsafe fn sync_fmemopen_full(id: usize, stream: &StdioStream) {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), info.buf, len);
             }
         }
+        if len < info.size && (len > 0 || stream.is_readable()) {
+            unsafe {
+                *info.buf.add(len) = 0;
+            }
+        }
     }
 }
 
@@ -6214,9 +6219,9 @@ pub unsafe extern "C" fn fmemopen(
                 size,
             },
         );
-        if open_flags.truncate {
+        if open_flags.truncate && open_flags.readable && size > 0 {
             unsafe {
-                std::ptr::write_bytes(buf.cast::<u8>(), 0, size);
+                *buf.cast::<u8>() = 0;
             }
         }
     }
