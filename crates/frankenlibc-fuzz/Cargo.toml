@@ -280,4 +280,9 @@ name = "fuzz_io_uring"
 path = "fuzz_targets/fuzz_io_uring.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_security_syscalls"
+path = "fuzz_targets/fuzz_security_syscalls.rs"
+doc = false
+
 [workspace]
