@@ -8189,21 +8189,10 @@ pub unsafe extern "C" fn hasmntopt(mnt: *const c_void, opt: *const c_char) -> *m
     }
     let opts = unsafe { std::ffi::CStr::from_ptr(opts_ptr) }.to_bytes();
     let needle = unsafe { std::ffi::CStr::from_ptr(opt) }.to_bytes();
-    if needle.is_empty() {
-        return std::ptr::null_mut();
+    match frankenlibc_core::mntent::has_mnt_opt(opts, needle) {
+        Some(off) => unsafe { opts_ptr.add(off) as *mut c_char },
+        None => std::ptr::null_mut(),
     }
-    // Search for needle as a comma-delimited token within opts
-    for (i, window) in opts.windows(needle.len()).enumerate() {
-        if window == needle {
-            // Check that it's a whole token (bounded by comma, start, or end)
-            let at_start = i == 0 || opts[i - 1] == b',';
-            let at_end = i + needle.len() == opts.len() || opts[i + needle.len()] == b',';
-            if at_start && at_end {
-                return unsafe { opts_ptr.add(i) as *mut c_char };
-            }
-        }
-    }
-    std::ptr::null_mut()
 }
 
 /// GNU `getmntent_r` — reentrant mount entry reader.
@@ -8236,86 +8225,39 @@ pub unsafe extern "C" fn getmntent_r(
         if bytes_read == 0 {
             return std::ptr::null_mut(); // EOF
         }
-        // Strip trailing newline/CR
-        while ms.line_buf.last() == Some(&b'\n') || ms.line_buf.last() == Some(&b'\r') {
-            ms.line_buf.pop();
-        }
-        // Skip comments and blank lines
-        let first = ms.line_buf.iter().position(|&b| b != b' ' && b != b'\t');
-        if first.is_none_or(|i| ms.line_buf[i] == b'#') {
+        let Some(fields) = frankenlibc_core::mntent::parse_mntent_line(&ms.line_buf) else {
             continue;
-        }
+        };
 
-        // Parse: fsname dir type opts [freq [passno]]
-        let line = &ms.line_buf;
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t')
-            .filter(|f| !f.is_empty());
-
-        let fsname = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let dir = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let mtype = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let opts = match fields.next() {
-            Some(f) => f,
-            None => continue,
-        };
-        let freq_s = fields.next().unwrap_or(b"0");
-        let passno_s = fields.next().unwrap_or(b"0");
-
-        // Check if all strings fit in caller's buffer
-        let needed = fsname.len() + 1 + dir.len() + 1 + mtype.len() + 1 + opts.len() + 1;
+        // Check whether all four NUL-terminated strings fit in caller's buffer.
+        let needed = fields.fsname.len()
+            + 1
+            + fields.dir.len()
+            + 1
+            + fields.mtype.len()
+            + 1
+            + fields.opts.len()
+            + 1;
         if needed > buflen_u {
             continue;
         }
 
-        // Pack NUL-terminated strings into caller buffer
+        // Pack NUL-terminated strings into caller buffer.
         let buf_u8 = buf as *mut u8;
         let mut off = 0usize;
-
-        let fsname_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
-        unsafe {
-            std::ptr::copy_nonoverlapping(fsname.as_ptr(), buf_u8.add(off), fsname.len());
-            *buf_u8.add(off + fsname.len()) = 0;
-        }
-        off += fsname.len() + 1;
-
-        let dir_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
-        unsafe {
-            std::ptr::copy_nonoverlapping(dir.as_ptr(), buf_u8.add(off), dir.len());
-            *buf_u8.add(off + dir.len()) = 0;
-        }
-        off += dir.len() + 1;
-
-        let type_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
-        unsafe {
-            std::ptr::copy_nonoverlapping(mtype.as_ptr(), buf_u8.add(off), mtype.len());
-            *buf_u8.add(off + mtype.len()) = 0;
-        }
-        off += mtype.len() + 1;
-
-        let opts_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
-        unsafe {
-            std::ptr::copy_nonoverlapping(opts.as_ptr(), buf_u8.add(off), opts.len());
-            *buf_u8.add(off + opts.len()) = 0;
-        }
-
-        let freq: c_int = std::str::from_utf8(freq_s)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        let passno: c_int = std::str::from_utf8(passno_s)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+        let mut pack = |bytes: &[u8]| -> *mut c_char {
+            let p = unsafe { buf_u8.add(off) } as *mut c_char;
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_u8.add(off), bytes.len());
+                *buf_u8.add(off + bytes.len()) = 0;
+            }
+            off += bytes.len() + 1;
+            p
+        };
+        let fsname_ptr = pack(fields.fsname);
+        let dir_ptr = pack(fields.dir);
+        let type_ptr = pack(fields.mtype);
+        let opts_ptr = pack(fields.opts);
 
         // Fill mntent struct: { *fsname, *dir, *type, *opts, freq, passno }
         let ent = mntbuf as *mut *mut c_char;
@@ -8325,8 +8267,8 @@ pub unsafe extern "C" fn getmntent_r(
             *ent.add(2) = type_ptr;
             *ent.add(3) = opts_ptr;
             let int_ptr = ent.add(4) as *mut c_int;
-            *int_ptr = freq;
-            *int_ptr.add(1) = passno;
+            *int_ptr = fields.freq as c_int;
+            *int_ptr.add(1) = fields.passno as c_int;
         }
 
         return mntbuf;
@@ -8358,16 +8300,22 @@ pub unsafe extern "C" fn addmntent(stream: *mut c_void, mnt: *const c_void) -> c
         return 1;
     }
 
-    let fsname_s = unsafe { std::ffi::CStr::from_ptr(fsname) }.to_string_lossy();
-    let dir_s = unsafe { std::ffi::CStr::from_ptr(dir) }.to_string_lossy();
-    let type_s = unsafe { std::ffi::CStr::from_ptr(mtype) }.to_string_lossy();
-    let opts_s = unsafe { std::ffi::CStr::from_ptr(opts) }.to_string_lossy();
-
-    let line = format!("{fsname_s} {dir_s} {type_s} {opts_s} {freq} {passno}\n");
+    let fields = frankenlibc_core::mntent::MntFields {
+        fsname: unsafe { std::ffi::CStr::from_ptr(fsname) }.to_bytes(),
+        dir: unsafe { std::ffi::CStr::from_ptr(dir) }.to_bytes(),
+        mtype: unsafe { std::ffi::CStr::from_ptr(mtype) }.to_bytes(),
+        opts: unsafe { std::ffi::CStr::from_ptr(opts) }.to_bytes(),
+        freq: freq as i32,
+        passno: passno as i32,
+    };
+    let mut line = Vec::with_capacity(
+        fields.fsname.len() + fields.dir.len() + fields.mtype.len() + fields.opts.len() + 16,
+    );
+    frankenlibc_core::mntent::format_mntent_line(&fields, &mut line);
 
     // Write to the underlying file (accessed via BufReader::get_mut).
     let ms = unsafe { &mut *(stream as *mut MntStream) };
-    match ms.reader.get_mut().write_all(line.as_bytes()) {
+    match ms.reader.get_mut().write_all(&line) {
         Ok(()) => 0,
         Err(_) => 1,
     }
