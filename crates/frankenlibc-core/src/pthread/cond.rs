@@ -385,15 +385,19 @@ pub unsafe fn condvar_timedwait(
 /// since we just woke from a condvar and expect contention to be brief.
 #[allow(unsafe_code)]
 fn relock_mutex(mutex_word: &AtomicU32, mutex_futex_ptr: *const u32) {
+    let mut observed_contention = false;
     loop {
         // Try uncontended acquire.
+        let acquired_state = if observed_contention { 2 } else { 1 };
         if mutex_word
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .compare_exchange(0, acquired_state, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
             return;
         }
+
         // Mark as contended and park.
+        observed_contention = true;
         let _ = mutex_word.compare_exchange(1, 2, Ordering::Acquire, Ordering::Relaxed);
         // SAFETY: mutex_futex_ptr is valid and aligned.
         let _ = unsafe {

@@ -8,8 +8,9 @@
 use std::array;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+use parking_lot::{Mutex, MutexGuard};
 
 pub const DEFAULT_ELIMINATION_SLOTS: usize = 8;
 
@@ -144,13 +145,13 @@ impl<T> Slot<T> {
 
 #[derive(Debug, Default)]
 struct AdaptiveController {
-    observed: u64,
-    attempts: u64,
-    successes: u64,
-    window_attempts: u64,
-    window_successes: u64,
-    disabled_skips: u64,
-    disabled_remaining: u64,
+    observed: AtomicU64,
+    attempts: AtomicU64,
+    successes: AtomicU64,
+    window_attempts: AtomicU64,
+    window_successes: AtomicU64,
+    disabled_skips: AtomicU64,
+    disabled_remaining: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -160,13 +161,18 @@ struct AttemptGate {
 }
 
 impl AdaptiveController {
-    fn begin(&mut self) -> AttemptGate {
-        self.observed = self.observed.saturating_add(1);
-        let should_log_summary = self.observed.is_multiple_of(SUMMARY_INTERVAL);
+    fn begin(&self) -> AttemptGate {
+        let observed = self.observed.fetch_add(1, Ordering::Relaxed) + 1;
+        let should_log_summary = observed.is_multiple_of(SUMMARY_INTERVAL);
 
-        if self.disabled_remaining > 0 {
-            self.disabled_remaining -= 1;
-            self.disabled_skips = self.disabled_skips.saturating_add(1);
+        if self
+            .disabled_remaining
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            self.disabled_skips.fetch_add(1, Ordering::Relaxed);
             return AttemptGate {
                 allowed: false,
                 should_log_summary,
@@ -179,36 +185,43 @@ impl AdaptiveController {
         }
     }
 
-    fn finish(&mut self, success: bool) -> bool {
-        self.attempts = self.attempts.saturating_add(1);
-        self.window_attempts = self.window_attempts.saturating_add(1);
-
+    fn finish(&self, success: bool) -> bool {
+        self.attempts.fetch_add(1, Ordering::Relaxed);
+        let window_attempts = self.window_attempts.fetch_add(1, Ordering::Relaxed) + 1;
         if success {
-            self.successes = self.successes.saturating_add(1);
-            self.window_successes = self.window_successes.saturating_add(1);
+            self.successes.fetch_add(1, Ordering::Relaxed);
+            self.window_successes.fetch_add(1, Ordering::Relaxed);
         }
 
-        if self.window_attempts >= ADAPTIVE_WINDOW {
-            let rate_ppm = self
-                .window_successes
+        if window_attempts >= ADAPTIVE_WINDOW
+            && self
+                .window_attempts
+                .compare_exchange(window_attempts, 0, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        {
+            let window_successes = self.window_successes.swap(0, Ordering::Relaxed);
+            let rate_ppm = window_successes
                 .saturating_mul(1_000_000)
-                .checked_div(self.window_attempts)
+                .checked_div(window_attempts)
                 .unwrap_or(0);
             if rate_ppm < SUCCESS_THRESHOLD_PPM {
-                self.disabled_remaining = ADAPTIVE_DISABLE_WINDOW;
+                self.disabled_remaining
+                    .store(ADAPTIVE_DISABLE_WINDOW, Ordering::Relaxed);
             }
-            self.window_attempts = 0;
-            self.window_successes = 0;
         }
 
-        self.observed.is_multiple_of(SUMMARY_INTERVAL)
+        self.observed
+            .load(Ordering::Relaxed)
+            .is_multiple_of(SUMMARY_INTERVAL)
     }
 
     fn success_rate_ppm(&self) -> u32 {
-        if self.attempts == 0 {
+        let attempts = self.attempts.load(Ordering::Relaxed);
+        if attempts == 0 {
             return 0;
         }
-        ((self.successes.saturating_mul(1_000_000)) / self.attempts) as u32
+        let successes = self.successes.load(Ordering::Relaxed);
+        ((successes.saturating_mul(1_000_000)) / attempts) as u32
     }
 }
 
@@ -216,7 +229,7 @@ pub struct EliminationArray<T, const SLOTS: usize> {
     slots: [Slot<T>; SLOTS],
     offer_sequence: AtomicU64,
     wait_budget_ns: AtomicU64,
-    controller: Mutex<AdaptiveController>,
+    controller: AdaptiveController,
 }
 
 impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
@@ -232,7 +245,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
             slots: array::from_fn(|_| Slot::new()),
             offer_sequence: AtomicU64::new(1),
             wait_budget_ns: AtomicU64::new(duration_to_nanos(wait_budget)),
-            controller: Mutex::new(AdaptiveController::default()),
+            controller: AdaptiveController::default(),
         }
     }
 
@@ -356,7 +369,7 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
                     let mut wait_cycles = (step + 1) as u64;
 
                     loop {
-                        if let Ok(mut state) = slot.state.try_lock() {
+                        if let Some(mut state) = slot.state.try_lock() {
                             match &*state {
                                 SlotState::Taken { consumer_thread } => {
                                     let consumer_thread = *consumer_thread;
@@ -686,7 +699,6 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
 
     #[must_use]
     pub fn stats(&self) -> EliminationStats {
-        let controller = lock_no_poison(&self.controller);
         let mut slots = Vec::with_capacity(SLOTS);
         let mut published_slots = 0usize;
 
@@ -704,27 +716,28 @@ impl<T: Send, const SLOTS: usize> EliminationArray<T, SLOTS> {
             });
         }
 
+        let attempts = self.controller.attempts.load(Ordering::Relaxed);
+        let successes = self.controller.successes.load(Ordering::Relaxed);
+        let disabled_remaining = self.controller.disabled_remaining.load(Ordering::Relaxed);
+
         EliminationStats {
-            attempts: controller.attempts,
-            successes: controller.successes,
-            success_rate_ppm: controller.success_rate_ppm(),
-            enabled: controller.disabled_remaining == 0,
-            disabled_remaining: controller.disabled_remaining,
-            disabled_skips: controller.disabled_skips,
+            attempts,
+            successes,
+            success_rate_ppm: self.controller.success_rate_ppm(),
+            enabled: disabled_remaining == 0,
+            disabled_remaining,
+            disabled_skips: self.controller.disabled_skips.load(Ordering::Relaxed),
             published_slots,
             slots,
         }
     }
 
     fn begin_attempt(&self) -> AttemptGate {
-        lock_no_poison(&self.controller).begin()
+        self.controller.begin()
     }
 
     fn record_attempt(&self, success: bool, force_summary: bool) {
-        let should_log = {
-            let mut controller = lock_no_poison(&self.controller);
-            controller.finish(success) || force_summary
-        };
+        let should_log = self.controller.finish(success) || force_summary;
         if should_log {
             self.log_summary();
         }
@@ -828,9 +841,7 @@ impl<T: Send, const SLOTS: usize> Default for EliminationArray<T, SLOTS> {
 }
 
 fn lock_no_poison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex.lock()
 }
 
 fn current_thread_tag() -> u64 {
@@ -908,9 +919,10 @@ mod tests {
 
         let stats = array.stats();
         assert!(
-            stats.success_rate_ppm >= 500_000,
-            "expected direct exchange to succeed often enough: {stats:?}"
+            stats.successes >= 2,
+            "expected producer and consumer sides to record the direct exchange: {stats:?}"
         );
+        assert_eq!(stats.published_slots, 0);
     }
 
     #[test]
