@@ -14443,12 +14443,7 @@ pub unsafe extern "C" fn endfsent() {
 
 const NETGROUP_PATH: &str = "/etc/netgroup";
 
-/// Parsed netgroup triple.
-struct NetgroupTriple {
-    host: Vec<u8>,
-    user: Vec<u8>,
-    domain: Vec<u8>,
-}
+use frankenlibc_core::netgroup::NetgroupTriple;
 
 struct NetgroupIterState {
     /// Pre-parsed triples for the current group.
@@ -14474,71 +14469,9 @@ std::thread_local! {
         const { std::cell::UnsafeCell::new(NetgroupIterState::new()) };
 }
 
-/// Parse triples from the file content for a given group name.
-fn parse_netgroup_triples(content: &[u8], group: &[u8]) -> Vec<NetgroupTriple> {
-    let mut result = Vec::new();
-    for line in content.split(|&b| b == b'\n') {
-        // Strip comments
-        let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-            &line[..pos]
-        } else {
-            line
-        };
-        let mut fields = line
-            .split(|&b| b == b' ' || b == b'\t')
-            .filter(|f| !f.is_empty());
-        let name = match fields.next() {
-            Some(n) => n,
-            None => continue,
-        };
-        if !name.eq_ignore_ascii_case(group) {
-            continue;
-        }
-        // Rejoin remaining fields and parse triples
-        let rest_start = name.len();
-        let rest = &line[rest_start..];
-        // Find all (host,user,domain) triples
-        let mut i = 0;
-        let bytes = rest;
-        while i < bytes.len() {
-            if bytes[i] == b'(' {
-                if let Some(close) = bytes[i..].iter().position(|&b| b == b')') {
-                    let inner = &bytes[i + 1..i + close];
-                    let parts: Vec<&[u8]> = inner.split(|&b| b == b',').collect();
-                    let host = parts.first().copied().unwrap_or(b"");
-                    let user = parts.get(1).copied().unwrap_or(b"");
-                    let domain = parts.get(2).copied().unwrap_or(b"");
-                    // Trim whitespace
-                    let trim = |s: &[u8]| -> Vec<u8> {
-                        let s = s
-                            .iter()
-                            .position(|&b| b != b' ' && b != b'\t')
-                            .map(|start| {
-                                let mut end = s.len();
-                                while end > start && matches!(s[end - 1], b' ' | b'\t') {
-                                    end -= 1;
-                                }
-                                &s[start..end]
-                            })
-                            .unwrap_or(b"");
-                        s.to_vec()
-                    };
-                    result.push(NetgroupTriple {
-                        host: trim(host),
-                        user: trim(user),
-                        domain: trim(domain),
-                    });
-                    i += close + 1;
-                } else {
-                    break;
-                }
-            } else {
-                i += 1;
-            }
-        }
-    }
-    result
-}
+// parse_netgroup_triples moved to frankenlibc_core::netgroup. The
+// callers below invoke frankenlibc_core::netgroup::parse_netgroup_triples
+// directly.
 
 /// `endnetgrent` — end netgroup iteration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -14572,7 +14505,7 @@ pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
             return 0;
         }
     };
-    let triples = parse_netgroup_triples(&content, group);
+    let triples = frankenlibc_core::netgroup::parse_netgroup_triples(&content, group);
     NETGROUP_ITER.with(|cell| {
         let state = unsafe { &mut *cell.get() };
         state.triples = triples;
