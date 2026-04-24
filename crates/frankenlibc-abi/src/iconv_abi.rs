@@ -10,7 +10,7 @@
 //! and tracks descriptor validity to avoid invalid/double-close behavior.
 
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_void};
 use std::slice;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
@@ -19,7 +19,29 @@ use frankenlibc_core::iconv::{self, IconvDescriptor};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::scan_c_string;
+
+/// Read a user-supplied C string pointer with a known-region bound so a
+/// non-NUL-terminated argument cannot walk arbitrary process memory through
+/// `CStr::from_ptr`. Returns `None` for null or unterminated input.
+///
+/// Mirrors the locale_abi defense (bd-z4k96): an attacker-controlled or
+/// corrupted encoding-name pointer must not crash or leak memory across the
+/// libc.so boundary.
+#[inline]
+unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+    Some(bytes.to_vec())
+}
 
 const ICONV_ERROR_VALUE: usize = usize::MAX;
 
@@ -123,12 +145,23 @@ pub unsafe extern "C" fn iconv_open(tocode: *const c_char, fromcode: *const c_ch
         return iconv_error_handle();
     }
 
-    // SAFETY: non-null pointers are treated as C strings by iconv contract.
-    let to = unsafe { CStr::from_ptr(tocode) }.to_bytes();
-    // SAFETY: non-null pointers are treated as C strings by iconv contract.
-    let from = unsafe { CStr::from_ptr(fromcode) }.to_bytes();
+    // Bounded reads reject non-NUL-terminated pointers at the boundary
+    // instead of walking memory through CStr::from_ptr. Same defense
+    // class as bd-z4k96 for setlocale/textdomain/bindtextdomain/newlocale.
+    let Some(to) = (unsafe { read_bounded_cstr(tocode) }) else {
+        // SAFETY: sets thread-local errno.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
+        return iconv_error_handle();
+    };
+    let Some(from) = (unsafe { read_bounded_cstr(fromcode) }) else {
+        // SAFETY: sets thread-local errno.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
+        return iconv_error_handle();
+    };
 
-    match iconv::iconv_open_detailed(to, from) {
+    match iconv::iconv_open_detailed(&to, &from) {
         Ok((desc, _dispatch)) => {
             let raw = register_handle(desc);
             runtime_policy::observe(ApiFamily::Locale, decision.profile, 12, false);
