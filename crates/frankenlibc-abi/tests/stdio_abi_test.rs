@@ -71,6 +71,7 @@ use frankenlibc_abi::stdio_abi::{
     fread_unlocked,
     freopen,
     freopen64,
+    fscanf,
     fseek,
     fseeko,
     fseeko64,
@@ -747,6 +748,18 @@ fn rejects_invalid_open_mode_and_null_stream_handles() {
     assert_eq!(unsafe { fclose(std::ptr::null_mut()) }, libc::EOF);
     // SAFETY: null stream is explicitly rejected by ABI functions.
     assert_eq!(unsafe { fileno(std::ptr::null_mut()) }, -1);
+    let mut scanned = 0;
+    // SAFETY: null stream is explicitly rejected before scanning writes.
+    assert_eq!(
+        unsafe {
+            fscanf(
+                std::ptr::null_mut(),
+                c"%d".as_ptr(),
+                &mut scanned as *mut c_int,
+            )
+        },
+        -1
+    );
 }
 
 #[test]
@@ -2176,16 +2189,34 @@ fn fmemopen_write_creates_stream() {
 }
 
 #[test]
-fn fmemopen_writes_update_caller_buffer() {
-    let mut buf = [0u8; 16];
-    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w+".as_ptr()) };
+fn fmemopen_writes_sync_on_flush_not_immediately() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r+".as_ptr()) };
     if stream.is_null() {
         return;
     }
-    let payload = b"fmem";
+    let payload = b"xyz";
     let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
     assert_eq!(wrote, payload.len());
-    assert_eq!(&buf[..payload.len()], payload);
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"xyzDEFGH");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_fseek_syncs_pending_write() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r+".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"xyz";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+    assert_eq!(&buf, b"xyzDEFGH");
     assert_eq!(unsafe { fclose(stream) }, 0);
 }
 

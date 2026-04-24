@@ -19,8 +19,7 @@ unsafe extern "C" {
     fn epoll_create(size: c_int) -> c_int;
     fn epoll_create1(flags: c_int) -> c_int;
     fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: *mut EpollEvent) -> c_int;
-    fn epoll_wait(epfd: c_int, events: *mut EpollEvent, maxevents: c_int, timeout: c_int)
-    -> c_int;
+    fn epoll_wait(epfd: c_int, events: *mut EpollEvent, maxevents: c_int, timeout: c_int) -> c_int;
 }
 
 const EPOLL_CTL_ADD: c_int = 1;
@@ -155,12 +154,15 @@ fn diff_epoll_ctl_add_then_wait_readable() {
         } else {
             unsafe { epoll_ctl(efd, EPOLL_CTL_ADD, a, &mut ev as *mut _) }
         };
-        assert_eq!(r_ctl, 0, "epoll_ctl ADD via {}", if use_fl { "fl" } else { "lc" });
+        assert_eq!(
+            r_ctl,
+            0,
+            "epoll_ctl ADD via {}",
+            if use_fl { "fl" } else { "lc" }
+        );
         let mut out = vec![EpollEvent::default(); 4];
         let n = if use_fl {
-            unsafe {
-                fl::epoll_wait(efd, out.as_mut_ptr() as *mut _, out.len() as c_int, 100)
-            }
+            unsafe { fl::epoll_wait(efd, out.as_mut_ptr() as *mut _, out.len() as c_int, 100) }
         } else {
             unsafe { epoll_wait(efd, out.as_mut_ptr(), out.len() as c_int, 100) }
         };

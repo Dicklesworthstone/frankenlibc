@@ -179,8 +179,7 @@ fn diff_fstatat_symlink_nofollow() {
 
     let mut s_fl: libc::stat = unsafe { core::mem::zeroed() };
     let mut s_lc: libc::stat = unsafe { core::mem::zeroed() };
-    let r_fl =
-        unsafe { fl::fstatat(AT_FDCWD, cpath.as_ptr(), &mut s_fl, AT_SYMLINK_NOFOLLOW) };
+    let r_fl = unsafe { fl::fstatat(AT_FDCWD, cpath.as_ptr(), &mut s_fl, AT_SYMLINK_NOFOLLOW) };
     let r_lc = unsafe { fstatat(AT_FDCWD, cpath.as_ptr(), &mut s_lc, AT_SYMLINK_NOFOLLOW) };
 
     assert_eq!(r_fl, r_lc, "fstatat symlink return");
@@ -228,7 +227,11 @@ fn diff_statx_basic_stats() {
     if r_fl == 0 && r_lc == 0 {
         let pairs: &[(&str, u64, u64)] = &[
             ("stx_mask", x_fl.stx_mask as u64, x_lc.stx_mask as u64),
-            ("stx_blksize", x_fl.stx_blksize as u64, x_lc.stx_blksize as u64),
+            (
+                "stx_blksize",
+                x_fl.stx_blksize as u64,
+                x_lc.stx_blksize as u64,
+            ),
             ("stx_size", x_fl.stx_size, x_lc.stx_size),
             ("stx_mode", x_fl.stx_mode as u64, x_lc.stx_mode as u64),
             ("stx_nlink", x_fl.stx_nlink as u64, x_lc.stx_nlink as u64),

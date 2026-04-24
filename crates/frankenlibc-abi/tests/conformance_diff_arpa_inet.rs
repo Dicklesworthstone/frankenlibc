@@ -48,7 +48,7 @@ fn diff_byte_order_conversions() {
     let u32s: &[u32] = &[0, 1, 0xFF, 0x100, 0xCAFEBABE, 0xFFFFFFFE, 0xFFFFFFFF];
     for &v in u16s {
         let fl_v = unsafe { fl::htons(v) };
-        let lc_v = unsafe { libc::htons(v) };
+        let lc_v = libc::htons(v);
         if fl_v != lc_v {
             divs.push(Divergence {
                 function: "htons",
@@ -59,7 +59,7 @@ fn diff_byte_order_conversions() {
             });
         }
         let fl_back = unsafe { fl::ntohs(fl_v) };
-        let lc_back = unsafe { libc::ntohs(lc_v) };
+        let lc_back = libc::ntohs(lc_v);
         if fl_back != v || lc_back != v {
             divs.push(Divergence {
                 function: "ntohs",
@@ -72,7 +72,7 @@ fn diff_byte_order_conversions() {
     }
     for &v in u32s {
         let fl_v = unsafe { fl::htonl(v) };
-        let lc_v = unsafe { libc::htonl(v) };
+        let lc_v = libc::htonl(v);
         if fl_v != lc_v {
             divs.push(Divergence {
                 function: "htonl",
@@ -83,7 +83,7 @@ fn diff_byte_order_conversions() {
             });
         }
         let fl_back = unsafe { fl::ntohl(fl_v) };
-        let lc_back = unsafe { libc::ntohl(lc_v) };
+        let lc_back = libc::ntohl(lc_v);
         if fl_back != v || lc_back != v {
             divs.push(Divergence {
                 function: "ntohl",
@@ -94,7 +94,11 @@ fn diff_byte_order_conversions() {
             });
         }
     }
-    assert!(divs.is_empty(), "byte-order divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "byte-order divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -108,13 +112,13 @@ const INET_PTON_V4_CASES: &[&[u8]] = &[
     b"192.168.1.1",
     b"10.0.0.42",
     b"1.2.3.4",
-    b"256.0.0.0",            // invalid octet > 255
-    b"1.2.3",                // missing octet
-    b"1.2.3.4.5",            // too many octets
-    b"a.b.c.d",              // non-numeric
-    b"",                     // empty
-    b"127.0.0.01",           // glibc accepts leading zero; some impls reject
-    b" 127.0.0.1",           // leading whitespace
+    b"256.0.0.0",  // invalid octet > 255
+    b"1.2.3",      // missing octet
+    b"1.2.3.4.5",  // too many octets
+    b"a.b.c.d",    // non-numeric
+    b"",           // empty
+    b"127.0.0.01", // glibc accepts leading zero; some impls reject
+    b" 127.0.0.1", // leading whitespace
 ];
 
 #[test]
@@ -162,7 +166,11 @@ fn diff_inet_pton_v4_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "inet_pton v4 divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "inet_pton v4 divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 const INET_PTON_V6_CASES: &[&[u8]] = &[
@@ -172,10 +180,10 @@ const INET_PTON_V6_CASES: &[&[u8]] = &[
     b"fe80::1",
     b"2001:0db8:85a3:0000:0000:8a2e:0370:7334",
     b"2001:db8::",
-    b"::ffff:192.0.2.128",      // IPv4-mapped
-    b"abcd",                     // invalid
-    b"",                         // empty
-    b":::",                      // too many colons
+    b"::ffff:192.0.2.128", // IPv4-mapped
+    b"abcd",               // invalid
+    b"",                   // empty
+    b":::",                // too many colons
 ];
 
 #[test]
@@ -223,7 +231,11 @@ fn diff_inet_pton_v6_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "inet_pton v6 divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "inet_pton v6 divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -285,7 +297,11 @@ fn diff_inet_ntop_v4_roundtrip() {
             }
         }
     }
-    assert!(divs.is_empty(), "inet_ntop v4 divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "inet_ntop v4 divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -293,9 +309,11 @@ fn diff_inet_ntop_v6_roundtrip() {
     let mut divs = Vec::new();
     let v6_addrs: &[[u8; 16]] = &[
         [0u8; 16],
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],          // ::1
-        [0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],   // fe80::1
-        [0x20, 0x01, 0x0d, 0xb8, 0x85, 0xa3, 0, 0, 0, 0, 0x8a, 0x2e, 0x03, 0x70, 0x73, 0x34],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], // ::1
+        [0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], // fe80::1
+        [
+            0x20, 0x01, 0x0d, 0xb8, 0x85, 0xa3, 0, 0, 0, 0, 0x8a, 0x2e, 0x03, 0x70, 0x73, 0x34,
+        ],
     ];
     for addr in v6_addrs {
         let mut fl_buf = vec![0i8; 64];
@@ -340,7 +358,11 @@ fn diff_inet_ntop_v6_roundtrip() {
             }
         }
     }
-    assert!(divs.is_empty(), "inet_ntop v6 divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "inet_ntop v6 divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -384,7 +406,11 @@ fn diff_inet_aton_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "inet_aton divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "inet_aton divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

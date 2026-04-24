@@ -133,10 +133,7 @@ fn diff_aio_write_then_complete() {
             "aio_error completion match: fl={err_fl}, lc={err_lc}"
         );
         if err_fl == 0 && err_lc == 0 {
-            assert_eq!(
-                n_fl, n_lc,
-                "aio_return byte count: fl={n_fl}, lc={n_lc}"
-            );
+            assert_eq!(n_fl, n_lc, "aio_return byte count: fl={n_fl}, lc={n_lc}");
             assert_eq!(
                 n_fl,
                 payload.len() as isize,
@@ -150,10 +147,7 @@ fn diff_aio_write_then_complete() {
 fn diff_aio_read_then_complete() {
     let path = unique_tempfile("read");
     std::fs::write(&path, b"sync read content").unwrap();
-    let f = std::fs::OpenOptions::new()
-        .read(true)
-        .open(&path)
-        .unwrap();
+    let f = std::fs::OpenOptions::new().read(true).open(&path).unwrap();
     let fd = f.as_raw_fd();
 
     // fl run
@@ -193,10 +187,7 @@ fn diff_aio_read_then_complete() {
         "aio_read submit success-match: fl={r_sub_fl}, lc={r_sub_lc}"
     );
     if r_sub_fl == 0 && r_sub_lc == 0 && err_fl == 0 && err_lc == 0 {
-        assert_eq!(
-            n_fl, n_lc,
-            "aio_return byte count: fl={n_fl}, lc={n_lc}"
-        );
+        assert_eq!(n_fl, n_lc, "aio_return byte count: fl={n_fl}, lc={n_lc}");
         assert_eq!(
             buf_fl[..n_fl as usize],
             buf_lc[..n_lc as usize],
@@ -324,7 +315,5 @@ fn diff_aio_cancel_after_submit() {
 
 #[test]
 fn aio_diff_coverage_report() {
-    eprintln!(
-        "{{\"family\":\"aio.h\",\"reference\":\"glibc\",\"functions\":5,\"divergences\":0}}",
-    );
+    eprintln!("{{\"family\":\"aio.h\",\"reference\":\"glibc\",\"functions\":5,\"divergences\":0}}",);
 }

@@ -269,7 +269,7 @@ fn diff_getloadavg_three_values() {
                 case: format!("buf[{i}]"),
                 field: "fl_value_sanity",
                 frankenlibc: format!("{fl_v}"),
-                glibc: format!("(non-negative finite required)"),
+                glibc: "(non-negative finite required)".to_string(),
             });
         }
         if !lc_v.is_finite() || *lc_v < 0.0 {
@@ -277,7 +277,7 @@ fn diff_getloadavg_three_values() {
                 function: "getloadavg",
                 case: format!("buf[{i}]"),
                 field: "lc_value_sanity",
-                frankenlibc: format!("(reference)"),
+                frankenlibc: "(reference)".to_string(),
                 glibc: format!("{lc_v}"),
             });
         }

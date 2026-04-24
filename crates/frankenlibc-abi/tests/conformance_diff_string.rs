@@ -86,10 +86,10 @@ const STRCHR_CASES: &[(&[u8], i32)] = &[
     (b"hello", b'h' as i32),
     (b"hello", b'o' as i32),
     (b"hello", b'z' as i32),
-    (b"hello", 0),                          // search for NUL → must point at terminator
-    (b"abcabc", b'b' as i32),               // first occurrence
-    (b"\xff\xfe\xfd", 0xff_i32),            // high-bit byte (POSIX: low 8 bits used)
-    (b"\xff\xfe\xfd", 0x1ff_i32),           // wide value: low 8 bits = 0xff, must match
+    (b"hello", 0),                // search for NUL → must point at terminator
+    (b"abcabc", b'b' as i32),     // first occurrence
+    (b"\xff\xfe\xfd", 0xff_i32),  // high-bit byte (POSIX: low 8 bits used)
+    (b"\xff\xfe\xfd", 0x1ff_i32), // wide value: low 8 bits = 0xff, must match
     (b"longer string with many letters", b's' as i32),
 ];
 
@@ -112,7 +112,11 @@ fn diff_strchr_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strchr divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strchr divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -134,7 +138,11 @@ fn diff_strrchr_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strrchr divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strrchr divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -142,19 +150,19 @@ fn diff_strrchr_cases() {
 // ===========================================================================
 
 const STRSTR_CASES: &[(&[u8], &[u8])] = &[
-    (b"", b""),                             // POSIX: empty needle returns haystack
-    (b"hello", b""),                        // empty needle, non-empty haystack
-    (b"", b"x"),                            // non-empty needle, empty haystack
-    (b"hello", b"hello"),                   // equal
+    (b"", b""),           // POSIX: empty needle returns haystack
+    (b"hello", b""),      // empty needle, non-empty haystack
+    (b"", b"x"),          // non-empty needle, empty haystack
+    (b"hello", b"hello"), // equal
     (b"hello world", b"world"),
     (b"hello world", b"hello"),
     (b"hello world", b" "),
-    (b"abcabc", b"bc"),                     // first match
-    (b"aaaaa", b"aaa"),                     // overlapping needle
-    (b"hello", b"x"),                       // no match
+    (b"abcabc", b"bc"), // first match
+    (b"aaaaa", b"aaa"), // overlapping needle
+    (b"hello", b"x"),   // no match
     (b"the quick brown fox", b"quick"),
     (b"the quick brown fox", b"slow"),
-    (b"abc", b"abcd"),                      // needle longer than haystack
+    (b"abc", b"abcd"), // needle longer than haystack
 ];
 
 #[test]
@@ -178,7 +186,11 @@ fn diff_strstr_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strstr divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strstr divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -187,15 +199,15 @@ fn diff_strstr_cases() {
 
 const PBRK_CASES: &[(&[u8], &[u8])] = &[
     (b"", b""),
-    (b"hello", b""),                        // empty accept set: spans 0
+    (b"hello", b""), // empty accept set: spans 0
     (b"", b"abc"),
-    (b"hello", b"aeiou"),                   // first vowel
-    (b"hello", b"xyz"),                     // none match
-    (b"123abc", b"0123456789"),             // digit prefix
-    (b"abcdef", b"fedcba"),                 // every char in accept
-    (b"abc def", b" "),                     // single delimiter
-    (b"  leading", b" "),                   // leading whitespace
-    (b"\t\n\r ", b" \t\n\r"),               // all whitespace
+    (b"hello", b"aeiou"),       // first vowel
+    (b"hello", b"xyz"),         // none match
+    (b"123abc", b"0123456789"), // digit prefix
+    (b"abcdef", b"fedcba"),     // every char in accept
+    (b"abc def", b" "),         // single delimiter
+    (b"  leading", b" "),       // leading whitespace
+    (b"\t\n\r ", b" \t\n\r"),   // all whitespace
 ];
 
 #[test]
@@ -219,7 +231,11 @@ fn diff_strpbrk_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strpbrk divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strpbrk divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -241,7 +257,11 @@ fn diff_strspn_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strspn divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strspn divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -263,7 +283,11 @@ fn diff_strcspn_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strcspn divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strcspn divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -297,7 +321,11 @@ fn diff_strnlen_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strnlen divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strnlen divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -307,14 +335,14 @@ fn diff_strnlen_cases() {
 const MEMCHR_CASES: &[(&[u8], i32, usize)] = &[
     (b"", b'a' as i32, 0),
     (b"hello", b'l' as i32, 5),
-    (b"hello", b'l' as i32, 2),             // bound cuts off match
-    (b"hello", b'l' as i32, 3),             // bound includes first match
-    (b"hello", b'z' as i32, 5),             // no match
-    (b"\x00abc", 0, 4),                     // search for NUL byte
-    (b"abc\x00def", 0, 7),                  // NUL in middle
-    (b"\xff\xfe", 0xff, 2),                 // high byte
-    (b"abcabc", b'b' as i32, 6),            // first occurrence
-    (b"aaaa", b'a' as i32, 0),              // zero bound
+    (b"hello", b'l' as i32, 2),  // bound cuts off match
+    (b"hello", b'l' as i32, 3),  // bound includes first match
+    (b"hello", b'z' as i32, 5),  // no match
+    (b"\x00abc", 0, 4),          // search for NUL byte
+    (b"abc\x00def", 0, 7),       // NUL in middle
+    (b"\xff\xfe", 0xff, 2),      // high byte
+    (b"abcabc", b'b' as i32, 6), // first occurrence
+    (b"aaaa", b'a' as i32, 0),   // zero bound
 ];
 
 #[test]
@@ -343,7 +371,11 @@ fn diff_memchr_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "memchr divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "memchr divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -351,16 +383,16 @@ fn diff_memchr_cases() {
 // ===========================================================================
 
 const MEMCMP_CASES: &[(&[u8], &[u8], usize)] = &[
-    (b"abc", b"abc", 3),                    // equal
-    (b"abc", b"abd", 3),                    // a < b
-    (b"abd", b"abc", 3),                    // a > b
-    (b"abc", b"abd", 2),                    // bound stops before diff → equal
-    (b"", b"", 0),                          // empty, zero bound
-    (b"abc", b"abc", 0),                    // zero bound
-    (b"\xff\xff", b"\x00\x00", 2),          // unsigned compare: 0xff > 0x00
-    (b"\x80", b"\x7f", 1),                  // boundary
-    (b"abc\x00def", b"abc\x00xyz", 7),      // NUL in middle, then diff
-    (b"abc\x00def", b"abc\x00def", 7),      // identical with embedded NUL
+    (b"abc", b"abc", 3),               // equal
+    (b"abc", b"abd", 3),               // a < b
+    (b"abd", b"abc", 3),               // a > b
+    (b"abc", b"abd", 2),               // bound stops before diff → equal
+    (b"", b"", 0),                     // empty, zero bound
+    (b"abc", b"abc", 0),               // zero bound
+    (b"\xff\xff", b"\x00\x00", 2),     // unsigned compare: 0xff > 0x00
+    (b"\x80", b"\x7f", 1),             // boundary
+    (b"abc\x00def", b"abc\x00xyz", 7), // NUL in middle, then diff
+    (b"abc\x00def", b"abc\x00def", 7), // identical with embedded NUL
 ];
 
 fn sign(x: c_int) -> c_int {
@@ -384,7 +416,11 @@ fn diff_memcmp_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "memcmp divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "memcmp divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================

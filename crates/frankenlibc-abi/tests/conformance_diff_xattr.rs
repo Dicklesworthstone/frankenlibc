@@ -18,12 +18,8 @@ use std::os::fd::AsRawFd;
 use frankenlibc_abi::unistd_abi as fl;
 
 unsafe extern "C" {
-    fn getxattr(
-        path: *const c_char,
-        name: *const c_char,
-        value: *mut c_void,
-        size: usize,
-    ) -> isize;
+    fn getxattr(path: *const c_char, name: *const c_char, value: *mut c_void, size: usize)
+    -> isize;
     fn setxattr(
         path: *const c_char,
         name: *const c_char,
@@ -34,13 +30,6 @@ unsafe extern "C" {
     fn listxattr(path: *const c_char, list: *mut c_char, size: usize) -> isize;
     fn removexattr(path: *const c_char, name: *const c_char) -> c_int;
     fn fgetxattr(fd: c_int, name: *const c_char, value: *mut c_void, size: usize) -> isize;
-    fn fsetxattr(
-        fd: c_int,
-        name: *const c_char,
-        value: *const c_void,
-        size: usize,
-        flags: c_int,
-    ) -> c_int;
 }
 
 const ENOTSUP: c_int = libc::ENOTSUP;
@@ -100,9 +89,7 @@ fn diff_setxattr_then_getxattr_path() {
     let path = unique_tempfile("path");
     std::fs::write(&path, b"x").unwrap();
     if !xattrs_supported(&path) {
-        eprintln!(
-            "{{\"family\":\"sys/xattr.h\",\"skip\":\"filesystem returns ENOTSUP\"}}"
-        );
+        eprintln!("{{\"family\":\"sys/xattr.h\",\"skip\":\"filesystem returns ENOTSUP\"}}");
         let _ = std::fs::remove_file(&path);
         return;
     }
@@ -243,8 +230,7 @@ fn diff_setxattr_then_listxattr_path() {
     if n_size_fl > 0 {
         let mut buf_fl = vec![0i8; n_size_fl as usize + 64];
         let mut buf_lc = vec![0i8; n_size_lc as usize + 64];
-        let n_fl =
-            unsafe { fl::listxattr(cpath.as_ptr(), buf_fl.as_mut_ptr(), buf_fl.len()) };
+        let n_fl = unsafe { fl::listxattr(cpath.as_ptr(), buf_fl.as_mut_ptr(), buf_fl.len()) };
         let n_lc = unsafe { listxattr(cpath.as_ptr(), buf_lc.as_mut_ptr(), buf_lc.len()) };
         // Parse NUL-separated names into a sorted set
         let parse = |b: &[i8], n: usize| -> Vec<String> {
@@ -304,12 +290,7 @@ fn diff_fxattr_round_trip() {
         let _ = std::fs::remove_file(&path);
         return; // ENOTSUP
     }
-    let _ = unsafe {
-        removexattr(
-            cpath.as_ptr(),
-            CString::new("user.probe").unwrap().as_ptr(),
-        )
-    };
+    let _ = unsafe { removexattr(cpath.as_ptr(), CString::new("user.probe").unwrap().as_ptr()) };
     let mut divs = Vec::new();
     let fd = f.as_raw_fd();
     let cname = CString::new("user.fxattr_test").unwrap();
@@ -334,7 +315,14 @@ fn diff_fxattr_round_trip() {
         });
     }
     let mut buf = vec![0u8; 64];
-    let n_lc = unsafe { fgetxattr(fd, cname.as_ptr(), buf.as_mut_ptr() as *mut c_void, buf.len()) };
+    let n_lc = unsafe {
+        fgetxattr(
+            fd,
+            cname.as_ptr(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+        )
+    };
     if n_lc != value.len() as isize {
         divs.push(Divergence {
             function: "fgetxattr",

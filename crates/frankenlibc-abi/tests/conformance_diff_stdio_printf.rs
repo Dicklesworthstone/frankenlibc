@@ -19,8 +19,8 @@
 //!
 //! Bead: CONFORMANCE: libc stdio.h snprintf+sscanf diff matrix.
 
-use std::ffi::c_int;
 use std::ffi::c_char;
+use std::ffi::c_int;
 
 use frankenlibc_abi::stdio_abi as fl;
 
@@ -44,7 +44,7 @@ fn render_divs(divs: &[Divergence]) -> String {
     out
 }
 
-fn buf_used<'a>(buf: &'a [u8]) -> &'a [u8] {
+fn buf_used(buf: &[u8]) -> &[u8] {
     let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     &buf[..n]
 }
@@ -62,15 +62,15 @@ fn diff_snprintf_int_specifiers() {
         (b"%d\0", 42),
         (b"%d\0", -2147483648),
         (b"%d\0", 2147483647),
-        (b"%5d\0", 42),                  // width
-        (b"%-5d|\0", 42),                // left-align
-        (b"%05d\0", 42),                 // zero-pad
-        (b"%+d\0", 42),                  // explicit sign
-        (b"% d\0", 42),                  // space sign
+        (b"%5d\0", 42),   // width
+        (b"%-5d|\0", 42), // left-align
+        (b"%05d\0", 42),  // zero-pad
+        (b"%+d\0", 42),   // explicit sign
+        (b"% d\0", 42),   // space sign
         (b"%x\0", 0xABCD),
         (b"%X\0", 0xABCD),
-        (b"%#x\0", 0xABCD),              // alt form
-        (b"%08x\0", 0xABCD),             // zero-pad hex
+        (b"%#x\0", 0xABCD),  // alt form
+        (b"%08x\0", 0xABCD), // zero-pad hex
         (b"%o\0", 0o755),
         (b"%u\0", 4294967295u32 as i32), // max unsigned
         (b"%.5d\0", 42),                 // precision: zero-pad to N digits
@@ -96,7 +96,11 @@ fn diff_snprintf_int_specifiers() {
         };
         let s_fl = buf_used(&buf_fl);
         let s_lc = buf_used(&buf_lc);
-        let case = format!("({:?}, {})", String::from_utf8_lossy(&fmt[..fmt.len()-1]), val);
+        let case = format!(
+            "({:?}, {})",
+            String::from_utf8_lossy(&fmt[..fmt.len() - 1]),
+            val
+        );
         if n_fl != n_lc {
             divs.push(Divergence {
                 function: "snprintf",
@@ -116,7 +120,11 @@ fn diff_snprintf_int_specifiers() {
             });
         }
     }
-    assert!(divs.is_empty(), "snprintf int divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "snprintf int divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -128,14 +136,14 @@ fn diff_snprintf_string_specifiers() {
     let mut divs = Vec::new();
     let cases: &[(&[u8], &[u8])] = &[
         (b"%s\0", b"hello\0"),
-        (b"%s\0", b"\0"),                    // empty
-        (b"|%10s|\0", b"hi\0"),              // width
-        (b"|%-10s|\0", b"hi\0"),             // left-align
-        (b"%.3s\0", b"hello\0"),             // precision: max chars
-        (b"%5.3s\0", b"hello\0"),            // width + precision
-        (b"%c\0", b"A\0"),                   // single char (passed as int)
-        (b"%%\0", b"\0"),                    // literal %
-        (b"prefix-%s-suffix\0", b"X\0"),     // surrounding text
+        (b"%s\0", b"\0"),                // empty
+        (b"|%10s|\0", b"hi\0"),          // width
+        (b"|%-10s|\0", b"hi\0"),         // left-align
+        (b"%.3s\0", b"hello\0"),         // precision: max chars
+        (b"%5.3s\0", b"hello\0"),        // width + precision
+        (b"%c\0", b"A\0"),               // single char (passed as int)
+        (b"%%\0", b"\0"),                // literal %
+        (b"prefix-%s-suffix\0", b"X\0"), // surrounding text
     ];
     for (fmt, val) in cases {
         let mut buf_fl = vec![0u8; 64];
@@ -146,30 +154,46 @@ fn diff_snprintf_string_specifiers() {
             // Pass the first byte as int.
             let c_arg = val[0] as c_int;
             let n_fl = unsafe {
-                fl::snprintf(buf_fl.as_mut_ptr() as *mut c_char, buf_fl.len(),
-                             fmt.as_ptr() as *const c_char, c_arg)
+                fl::snprintf(
+                    buf_fl.as_mut_ptr() as *mut c_char,
+                    buf_fl.len(),
+                    fmt.as_ptr() as *const c_char,
+                    c_arg,
+                )
             };
             let n_lc = unsafe {
-                libc::snprintf(buf_lc.as_mut_ptr() as *mut c_char, buf_lc.len(),
-                               fmt.as_ptr() as *const c_char, c_arg)
+                libc::snprintf(
+                    buf_lc.as_mut_ptr() as *mut c_char,
+                    buf_lc.len(),
+                    fmt.as_ptr() as *const c_char,
+                    c_arg,
+                )
             };
             (n_fl, n_lc)
         } else {
             // %s or no conversion.
             let s = val.as_ptr() as *const c_char;
             let n_fl = unsafe {
-                fl::snprintf(buf_fl.as_mut_ptr() as *mut c_char, buf_fl.len(),
-                             fmt.as_ptr() as *const c_char, s)
+                fl::snprintf(
+                    buf_fl.as_mut_ptr() as *mut c_char,
+                    buf_fl.len(),
+                    fmt.as_ptr() as *const c_char,
+                    s,
+                )
             };
             let n_lc = unsafe {
-                libc::snprintf(buf_lc.as_mut_ptr() as *mut c_char, buf_lc.len(),
-                               fmt.as_ptr() as *const c_char, s)
+                libc::snprintf(
+                    buf_lc.as_mut_ptr() as *mut c_char,
+                    buf_lc.len(),
+                    fmt.as_ptr() as *const c_char,
+                    s,
+                )
             };
             (n_fl, n_lc)
         };
         let s_fl = buf_used(&buf_fl);
         let s_lc = buf_used(&buf_lc);
-        let case = format!("({:?})", String::from_utf8_lossy(&fmt[..fmt.len()-1]));
+        let case = format!("({:?})", String::from_utf8_lossy(&fmt[..fmt.len() - 1]));
         if n_fl != n_lc || s_fl != s_lc {
             divs.push(Divergence {
                 function: "snprintf",
@@ -180,7 +204,11 @@ fn diff_snprintf_string_specifiers() {
             });
         }
     }
-    assert!(divs.is_empty(), "snprintf string divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "snprintf string divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -196,12 +224,20 @@ fn diff_snprintf_truncation() {
         let mut buf_fl = vec![0xCDu8; 32];
         let mut buf_lc = vec![0xCDu8; 32];
         let r_fl = unsafe {
-            fl::snprintf(buf_fl.as_mut_ptr() as *mut c_char, n,
-                         fmt.as_ptr() as *const c_char, val)
+            fl::snprintf(
+                buf_fl.as_mut_ptr() as *mut c_char,
+                n,
+                fmt.as_ptr() as *const c_char,
+                val,
+            )
         };
         let r_lc = unsafe {
-            libc::snprintf(buf_lc.as_mut_ptr() as *mut c_char, n,
-                           fmt.as_ptr() as *const c_char, val)
+            libc::snprintf(
+                buf_lc.as_mut_ptr() as *mut c_char,
+                n,
+                fmt.as_ptr() as *const c_char,
+                val,
+            )
         };
         if r_fl != r_lc {
             divs.push(Divergence {
@@ -224,7 +260,11 @@ fn diff_snprintf_truncation() {
             });
         }
     }
-    assert!(divs.is_empty(), "snprintf truncation divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "snprintf truncation divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -236,32 +276,44 @@ fn diff_snprintf_float_specifiers() {
     let mut divs = Vec::new();
     let cases: &[(&[u8], f64)] = &[
         (b"%f\0", 0.0),
-        (b"%f\0", 3.14159),
+        (b"%f\0", std::f64::consts::PI),
         (b"%f\0", -2.5),
-        (b"%.2f\0", 3.14159),
-        (b"%10.3f\0", 3.14159),
-        (b"%-10.3f|\0", 3.14159),
+        (b"%.2f\0", std::f64::consts::PI),
+        (b"%10.3f\0", std::f64::consts::PI),
+        (b"%-10.3f|\0", std::f64::consts::PI),
         (b"%e\0", 1.5e10),
         (b"%E\0", 1.5e-10),
         (b"%.4e\0", 1234567.89),
         (b"%g\0", 0.0001),
         (b"%g\0", 1234567.0),
-        (b"%.3g\0", 3.14159),
+        (b"%.3g\0", std::f64::consts::PI),
     ];
     for (fmt, val) in cases {
         let mut buf_fl = vec![0u8; 64];
         let mut buf_lc = vec![0u8; 64];
         let n_fl = unsafe {
-            fl::snprintf(buf_fl.as_mut_ptr() as *mut c_char, buf_fl.len(),
-                         fmt.as_ptr() as *const c_char, *val)
+            fl::snprintf(
+                buf_fl.as_mut_ptr() as *mut c_char,
+                buf_fl.len(),
+                fmt.as_ptr() as *const c_char,
+                *val,
+            )
         };
         let n_lc = unsafe {
-            libc::snprintf(buf_lc.as_mut_ptr() as *mut c_char, buf_lc.len(),
-                           fmt.as_ptr() as *const c_char, *val)
+            libc::snprintf(
+                buf_lc.as_mut_ptr() as *mut c_char,
+                buf_lc.len(),
+                fmt.as_ptr() as *const c_char,
+                *val,
+            )
         };
         let s_fl = buf_used(&buf_fl);
         let s_lc = buf_used(&buf_lc);
-        let case = format!("({:?}, {})", String::from_utf8_lossy(&fmt[..fmt.len()-1]), val);
+        let case = format!(
+            "({:?}, {})",
+            String::from_utf8_lossy(&fmt[..fmt.len() - 1]),
+            val
+        );
         if n_fl != n_lc || s_fl != s_lc {
             divs.push(Divergence {
                 function: "snprintf",
@@ -272,7 +324,11 @@ fn diff_snprintf_float_specifiers() {
             });
         }
     }
-    assert!(divs.is_empty(), "snprintf float divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "snprintf float divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -285,28 +341,41 @@ fn diff_sscanf_int_cases() {
     let cases: &[(&[u8], &[u8])] = &[
         (b"42\0", b"%d\0"),
         (b"-7\0", b"%d\0"),
-        (b"  123  abc\0", b"%d\0"),       // leading ws, trailing garbage
+        (b"  123  abc\0", b"%d\0"), // leading ws, trailing garbage
         (b"0x1F\0", b"%x\0"),
         (b"1234\0", b"%i\0"),
         (b"0xff\0", b"%i\0"),
-        (b"  abc\0", b"%d\0"),            // no digits → match count 0
-        (b"\0", b"%d\0"),                  // empty input
-        (b"1 2 3\0", b"%d %d %d\0"),       // multi
+        (b"  abc\0", b"%d\0"),       // no digits → match count 0
+        (b"\0", b"%d\0"),            // empty input
+        (b"1 2 3\0", b"%d %d %d\0"), // multi
     ];
     for (input, fmt) in cases {
         // For multi-arg cases we need 3 ints; use a fixed buffer of 4.
         let mut got_fl = [0i32; 4];
         let mut got_lc = [0i32; 4];
         let n_fl = unsafe {
-            fl::sscanf(input.as_ptr() as *const c_char, fmt.as_ptr() as *const c_char,
-                       &mut got_fl[0] as *mut i32, &mut got_fl[1] as *mut i32, &mut got_fl[2] as *mut i32)
+            fl::sscanf(
+                input.as_ptr() as *const c_char,
+                fmt.as_ptr() as *const c_char,
+                &mut got_fl[0] as *mut i32,
+                &mut got_fl[1] as *mut i32,
+                &mut got_fl[2] as *mut i32,
+            )
         };
         let n_lc = unsafe {
-            libc::sscanf(input.as_ptr() as *const c_char, fmt.as_ptr() as *const c_char,
-                         &mut got_lc[0] as *mut i32, &mut got_lc[1] as *mut i32, &mut got_lc[2] as *mut i32)
+            libc::sscanf(
+                input.as_ptr() as *const c_char,
+                fmt.as_ptr() as *const c_char,
+                &mut got_lc[0] as *mut i32,
+                &mut got_lc[1] as *mut i32,
+                &mut got_lc[2] as *mut i32,
+            )
         };
-        let case = format!("input={:?} fmt={:?}", String::from_utf8_lossy(&input[..input.len()-1]),
-                           String::from_utf8_lossy(&fmt[..fmt.len()-1]));
+        let case = format!(
+            "input={:?} fmt={:?}",
+            String::from_utf8_lossy(&input[..input.len() - 1]),
+            String::from_utf8_lossy(&fmt[..fmt.len() - 1])
+        );
         if n_fl != n_lc {
             divs.push(Divergence {
                 function: "sscanf",
@@ -326,7 +395,11 @@ fn diff_sscanf_int_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "sscanf int divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "sscanf int divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================

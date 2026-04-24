@@ -121,7 +121,11 @@ fn diff_empty_directory() {
     let dir = temp_dir("empty");
     let fl_set = walk_fl(&dir).expect("fl walk");
     let lc_set = walk_lc(&dir).expect("lc walk");
-    assert!(fl_set.is_empty(), "FrankenLibC saw entries in empty dir: {:?}", fl_set);
+    assert!(
+        fl_set.is_empty(),
+        "FrankenLibC saw entries in empty dir: {:?}",
+        fl_set
+    );
     assert_eq!(fl_set, lc_set, "empty dir set diverges");
 }
 
@@ -154,7 +158,11 @@ fn diff_mixed_directory() {
             glibc: format!("only_in_glibc={:?}", only_lc),
         });
     }
-    assert!(divs.is_empty(), "mixed dir divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "mixed dir divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -169,8 +177,18 @@ fn diff_many_entries() {
     }
     let fl_set = walk_fl(&dir).expect("fl walk");
     let lc_set = walk_lc(&dir).expect("lc walk");
-    assert_eq!(fl_set.len(), 200, "FrankenLibC missed entries: {} of 200", fl_set.len());
-    assert_eq!(lc_set.len(), 200, "glibc missed entries: {} of 200", lc_set.len());
+    assert_eq!(
+        fl_set.len(),
+        200,
+        "FrankenLibC missed entries: {} of 200",
+        fl_set.len()
+    );
+    assert_eq!(
+        lc_set.len(),
+        200,
+        "glibc missed entries: {} of 200",
+        lc_set.len()
+    );
     assert_eq!(fl_set, lc_set, "many-entry set diverges");
 }
 
@@ -219,22 +237,44 @@ fn diff_rewinddir_replays_walk() {
         let mut first = Vec::new();
         loop {
             let entry = unsafe { fl::readdir(dirp) };
-            if entry.is_null() { break; }
-            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()).to_bytes().to_vec() };
+            if entry.is_null() {
+                break;
+            }
+            let name = unsafe {
+                std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                    .to_bytes()
+                    .to_vec()
+            };
             first.push(name);
         }
-        unsafe { fl::rewinddir(dirp); }
+        unsafe {
+            fl::rewinddir(dirp);
+        }
         let mut second = Vec::new();
         loop {
             let entry = unsafe { fl::readdir(dirp) };
-            if entry.is_null() { break; }
-            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()).to_bytes().to_vec() };
+            if entry.is_null() {
+                break;
+            }
+            let name = unsafe {
+                std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                    .to_bytes()
+                    .to_vec()
+            };
             second.push(name);
         }
-        unsafe { fl::closedir(dirp); }
-        assert_eq!(first.len(), second.len(), "fl: rewind didn't replay full walk");
-        let mut a = first.clone(); a.sort();
-        let mut b = second.clone(); b.sort();
+        unsafe {
+            fl::closedir(dirp);
+        }
+        assert_eq!(
+            first.len(),
+            second.len(),
+            "fl: rewind didn't replay full walk"
+        );
+        let mut a = first.clone();
+        a.sort();
+        let mut b = second.clone();
+        b.sort();
         assert_eq!(a, b, "fl: rewind set diverges");
         first
     }
@@ -245,31 +285,60 @@ fn diff_rewinddir_replays_walk() {
         let mut first = Vec::new();
         loop {
             let entry = unsafe { libc::readdir(dirp) };
-            if entry.is_null() { break; }
-            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()).to_bytes().to_vec() };
+            if entry.is_null() {
+                break;
+            }
+            let name = unsafe {
+                std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                    .to_bytes()
+                    .to_vec()
+            };
             first.push(name);
         }
-        unsafe { libc::rewinddir(dirp); }
+        unsafe {
+            libc::rewinddir(dirp);
+        }
         let mut second = Vec::new();
         loop {
             let entry = unsafe { libc::readdir(dirp) };
-            if entry.is_null() { break; }
-            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()).to_bytes().to_vec() };
+            if entry.is_null() {
+                break;
+            }
+            let name = unsafe {
+                std::ffi::CStr::from_ptr((*entry).d_name.as_ptr())
+                    .to_bytes()
+                    .to_vec()
+            };
             second.push(name);
         }
-        unsafe { libc::closedir(dirp); }
-        assert_eq!(first.len(), second.len(), "lc: rewind didn't replay full walk");
-        let mut a = first.clone(); a.sort();
-        let mut b = second.clone(); b.sort();
+        unsafe {
+            libc::closedir(dirp);
+        }
+        assert_eq!(
+            first.len(),
+            second.len(),
+            "lc: rewind didn't replay full walk"
+        );
+        let mut a = first.clone();
+        a.sort();
+        let mut b = second.clone();
+        b.sort();
         assert_eq!(a, b, "lc: rewind set diverges");
         first
     }
 
     let fl_first = walk_with_rewind_fl(&dir);
     let lc_first = walk_with_rewind_lc(&dir);
-    let mut a: Vec<_> = fl_first.into_iter().filter(|n| n != b"." && n != b"..").collect();
-    let mut b: Vec<_> = lc_first.into_iter().filter(|n| n != b"." && n != b"..").collect();
-    a.sort(); b.sort();
+    let mut a: Vec<_> = fl_first
+        .into_iter()
+        .filter(|n| n != b"." && n != b"..")
+        .collect();
+    let mut b: Vec<_> = lc_first
+        .into_iter()
+        .filter(|n| n != b"." && n != b"..")
+        .collect();
+    a.sort();
+    b.sort();
     assert_eq!(a, b, "rewinddir cross-impl set diverges");
 }
 
@@ -281,10 +350,16 @@ fn diff_rewinddir_replays_walk() {
 fn diff_opendir_missing_path() {
     use frankenlibc_abi::errno_abi::__errno_location;
     let bogus = CString::new("/nonexistent/path/franken_test_xyz").unwrap();
-    unsafe { *__errno_location() = 0; *libc::__errno_location() = 0; }
+    unsafe {
+        *__errno_location() = 0;
+        *libc::__errno_location() = 0;
+    }
     let p_fl = unsafe { fl::opendir(bogus.as_ptr()) };
     let er_fl = unsafe { *__errno_location() };
-    unsafe { *__errno_location() = 0; *libc::__errno_location() = 0; }
+    unsafe {
+        *__errno_location() = 0;
+        *libc::__errno_location() = 0;
+    }
     let p_lc = unsafe { libc::opendir(bogus.as_ptr()) };
     let er_lc = unsafe { *libc::__errno_location() };
     let mut divs = Vec::new();
@@ -306,9 +381,21 @@ fn diff_opendir_missing_path() {
             glibc: format!("{er_lc}"),
         });
     }
-    if !p_fl.is_null() { unsafe { fl::closedir(p_fl); } }
-    if !p_lc.is_null() { unsafe { libc::closedir(p_lc); } }
-    assert!(divs.is_empty(), "opendir missing divergences:\n{}", render_divs(&divs));
+    if !p_fl.is_null() {
+        unsafe {
+            fl::closedir(p_fl);
+        }
+    }
+    if !p_lc.is_null() {
+        unsafe {
+            libc::closedir(p_lc);
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "opendir missing divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

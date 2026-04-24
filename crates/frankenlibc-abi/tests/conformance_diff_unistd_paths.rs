@@ -113,7 +113,11 @@ fn diff_access_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "access divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "access divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -169,7 +173,11 @@ fn diff_rename_cases() {
             glibc: format!("rc={lc_r} errno={lc_err}"),
         });
     }
-    assert!(divs.is_empty(), "rename divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "rename divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -212,7 +220,11 @@ fn diff_unlink_cases() {
             glibc: format!("rc={lc_r} errno={lc_err}"),
         });
     }
-    assert!(divs.is_empty(), "unlink divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "unlink divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -303,12 +315,10 @@ fn diff_symlink_readlink_cases() {
             });
         }
         if n_fl > 0 && n_lc > 0 {
-            let s_fl = unsafe {
-                std::slice::from_raw_parts(buf_fl.as_ptr() as *const u8, n_fl as usize)
-            };
-            let s_lc = unsafe {
-                std::slice::from_raw_parts(buf_lc.as_ptr() as *const u8, n_lc as usize)
-            };
+            let s_fl =
+                unsafe { std::slice::from_raw_parts(buf_fl.as_ptr() as *const u8, n_fl as usize) };
+            let s_lc =
+                unsafe { std::slice::from_raw_parts(buf_lc.as_ptr() as *const u8, n_lc as usize) };
             if s_fl != s_lc {
                 divs.push(Divergence {
                     function: "readlink",
@@ -342,7 +352,11 @@ fn diff_symlink_readlink_cases() {
         });
     }
 
-    assert!(divs.is_empty(), "symlink/readlink divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "symlink/readlink divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -403,7 +417,11 @@ fn diff_truncate_cases() {
             glibc: format!("rc={lc_r} errno={lc_err}"),
         });
     }
-    assert!(divs.is_empty(), "truncate divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "truncate divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -457,7 +475,11 @@ fn diff_getcwd_cases() {
             glibc: format!("null={} errno={lc_err}", r_lc.is_null()),
         });
     }
-    assert!(divs.is_empty(), "getcwd divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "getcwd divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================

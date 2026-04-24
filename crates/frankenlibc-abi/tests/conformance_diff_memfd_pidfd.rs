@@ -29,7 +29,12 @@ fn libc_pidfd_open(pid: libc::pid_t, flags: c_uint) -> c_int {
     unsafe { syscall(SYS_PIDFD_OPEN, pid as i64, flags as i64) as c_int }
 }
 
-fn libc_pidfd_send_signal(pidfd: c_int, sig: c_int, info: *mut libc::siginfo_t, flags: c_uint) -> c_int {
+fn libc_pidfd_send_signal(
+    pidfd: c_int,
+    sig: c_int,
+    info: *mut libc::siginfo_t,
+    flags: c_uint,
+) -> c_int {
     unsafe {
         syscall(
             SYS_PIDFD_SEND_SIGNAL,
@@ -95,17 +100,14 @@ fn diff_memfd_create_writable_round_trip() {
             return Vec::new();
         }
         let _ = unsafe {
-            libc::write(fd, payload.as_ptr() as *const std::ffi::c_void, payload.len())
-        };
-        let mut buf = vec![0u8; payload.len()];
-        let _ = unsafe {
-            libc::pread(
+            libc::write(
                 fd,
-                buf.as_mut_ptr() as *mut std::ffi::c_void,
-                buf.len(),
-                0,
+                payload.as_ptr() as *const std::ffi::c_void,
+                payload.len(),
             )
         };
+        let mut buf = vec![0u8; payload.len()];
+        let _ = unsafe { libc::pread(fd, buf.as_mut_ptr() as *mut std::ffi::c_void, buf.len(), 0) };
         unsafe { libc::close(fd) };
         buf
     };

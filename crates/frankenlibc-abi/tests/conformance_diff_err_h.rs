@@ -14,6 +14,7 @@
 //! Bead: CONFORMANCE: libc err.h diff matrix.
 
 use std::ffi::{CString, c_char, c_int, c_void};
+use std::process::Command;
 use std::sync::Mutex;
 
 use frankenlibc_abi::err_abi as fl;
@@ -27,8 +28,6 @@ unsafe extern "C" {
     fn dup(fd: c_int) -> c_int;
     fn dup2(oldfd: c_int, newfd: c_int) -> c_int;
     fn close(fd: c_int) -> c_int;
-    fn fork() -> c_int;
-    fn waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int;
     fn read(fd: c_int, buf: *mut c_void, n: usize) -> isize;
 }
 
@@ -220,51 +219,53 @@ enum ErrImpl {
     Libc,
 }
 
-fn fork_run_errx(eval: c_int, fmt: &str, which: ErrImpl) -> (c_int, Vec<u8>) {
-    let mut fds: [c_int; 2] = [0, 0];
-    if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
+fn command_run_errx(eval: c_int, fmt: &str, which: ErrImpl) -> (c_int, Vec<u8>) {
+    let Ok(current_exe) = std::env::current_exe() else {
         return (-1, Vec::new());
-    }
-    let cfmt = CString::new(fmt).unwrap();
-    let pid = unsafe { fork() };
-    if pid == 0 {
-        unsafe {
-            dup2(fds[1], 2);
-            close(fds[1]);
-            close(fds[0]);
-        }
-        match which {
-            ErrImpl::Fl => unsafe { fl::errx(eval, cfmt.as_ptr()) },
-            ErrImpl::Libc => unsafe { errx(eval, cfmt.as_ptr()) },
-        }
-    }
-    unsafe {
-        close(fds[1]);
-    }
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 4096];
-    loop {
-        let n = unsafe { read(fds[0], chunk.as_mut_ptr() as *mut c_void, chunk.len()) };
-        if n <= 0 {
-            break;
-        }
-        buf.extend_from_slice(&chunk[..n as usize]);
-    }
-    unsafe {
-        close(fds[0]);
-    }
-    let mut status: c_int = 0;
-    let _ = unsafe { waitpid(pid, &mut status as *mut c_int, 0) };
-    let exit_code = if (status & 0x7f) == 0 {
-        (status >> 8) & 0xff
-    } else {
-        -1
     };
-    (exit_code, buf)
+    let which = match which {
+        ErrImpl::Fl => "fl",
+        ErrImpl::Libc => "libc",
+    };
+    let output = Command::new(current_exe)
+        .args([
+            "--exact",
+            "errx_child_invocation",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env("FRANKENLIBC_ERRX_HELPER", which)
+        .env("FRANKENLIBC_ERRX_EVAL", eval.to_string())
+        .env("FRANKENLIBC_ERRX_FMT", fmt)
+        .output();
+    match output {
+        Ok(output) => (output.status.code().unwrap_or(-1), output.stderr),
+        Err(_) => (-1, Vec::new()),
+    }
+}
+
+#[test]
+fn errx_child_invocation() {
+    let Ok(which) = std::env::var("FRANKENLIBC_ERRX_HELPER") else {
+        return;
+    };
+    let eval = std::env::var("FRANKENLIBC_ERRX_EVAL")
+        .ok()
+        .and_then(|s| s.parse::<c_int>().ok())
+        .unwrap_or(1);
+    let fmt = std::env::var("FRANKENLIBC_ERRX_FMT").unwrap_or_else(|_| "errx helper".into());
+    let cfmt = CString::new(fmt).unwrap();
+    match which.as_str() {
+        "fl" => unsafe { fl::errx(eval, cfmt.as_ptr()) },
+        "libc" => unsafe { errx(eval, cfmt.as_ptr()) },
+        _ => {}
+    }
 }
 
 #[test]
 fn diff_errx_exit_and_body() {
+    let _g = IO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut divs = Vec::new();
     let cases: &[(c_int, &str)] = &[
         (1, "fatal: config missing"),
@@ -272,8 +273,8 @@ fn diff_errx_exit_and_body() {
         (42, "custom exit code"),
     ];
     for (eval, fmt) in cases {
-        let (code_fl, out_fl) = fork_run_errx(*eval, fmt, ErrImpl::Fl);
-        let (code_lc, out_lc) = fork_run_errx(*eval, fmt, ErrImpl::Libc);
+        let (code_fl, out_fl) = command_run_errx(*eval, fmt, ErrImpl::Fl);
+        let (code_lc, out_lc) = command_run_errx(*eval, fmt, ErrImpl::Libc);
         if code_fl != code_lc {
             divs.push(Divergence {
                 function: "errx",

@@ -72,10 +72,16 @@ fn diff_sigemptyset() {
     let mut lc_set: libc::sigset_t = unsafe { core::mem::zeroed() };
     // Pre-populate both with garbage to detect lazy clearing.
     unsafe {
-        std::ptr::write_bytes(&mut fl_set as *mut libc::sigset_t as *mut u8, 0xAB,
-                              std::mem::size_of::<libc::sigset_t>());
-        std::ptr::write_bytes(&mut lc_set as *mut libc::sigset_t as *mut u8, 0xAB,
-                              std::mem::size_of::<libc::sigset_t>());
+        std::ptr::write_bytes(
+            &mut fl_set as *mut libc::sigset_t as *mut u8,
+            0xAB,
+            std::mem::size_of::<libc::sigset_t>(),
+        );
+        std::ptr::write_bytes(
+            &mut lc_set as *mut libc::sigset_t as *mut u8,
+            0xAB,
+            std::mem::size_of::<libc::sigset_t>(),
+        );
     }
     let r_fl = unsafe { fl::sigemptyset(&mut fl_set) };
     let r_lc = unsafe { libc::sigemptyset(&mut lc_set) };
@@ -97,7 +103,11 @@ fn diff_sigemptyset() {
             glibc: format!("{:?}", sigset_bytes(&lc_set)),
         });
     }
-    assert!(divs.is_empty(), "sigemptyset divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "sigemptyset divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -136,7 +146,11 @@ fn diff_sigfillset() {
             });
         }
     }
-    assert!(divs.is_empty(), "sigfillset divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "sigfillset divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -220,7 +234,11 @@ fn diff_sigaddset_sigdelset_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "sigaddset/sigdelset divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "sigaddset/sigdelset divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -249,7 +267,11 @@ fn diff_sigaddset_invalid_signal() {
             });
         }
     }
-    assert!(divs.is_empty(), "sigaddset(invalid) divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "sigaddset(invalid) divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -288,7 +310,11 @@ fn diff_strsignal_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "strsignal divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strsignal divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -334,7 +360,11 @@ fn diff_sigset_compose_membership() {
             glibc: format!("{:?}", &sigset_bytes(&lc_set)[..16]),
         });
     }
-    assert!(divs.is_empty(), "sigset compose divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "sigset compose divergences:\n{}",
+        render_divs(&divs)
+    );
     let _ = MaybeUninit::<c_void>::uninit;
 }
 

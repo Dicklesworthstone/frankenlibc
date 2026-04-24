@@ -43,11 +43,18 @@ unsafe fn clear_errno_both() {
         *libc::__errno_location() = 0;
     }
 }
-unsafe fn read_fl_errno() -> c_int { unsafe { *__errno_location() } }
-unsafe fn read_lc_errno() -> c_int { unsafe { *libc::__errno_location() } }
+unsafe fn read_fl_errno() -> c_int {
+    unsafe { *__errno_location() }
+}
+unsafe fn read_lc_errno() -> c_int {
+    unsafe { *libc::__errno_location() }
+}
 
 fn empty_rlimit() -> libc::rlimit {
-    libc::rlimit { rlim_cur: 0, rlim_max: 0 }
+    libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    }
 }
 
 fn empty_rusage() -> libc::rusage {
@@ -113,7 +120,11 @@ fn diff_getrlimit_cases() {
             glibc: format!("rc={r_lc} errno={er_lc}"),
         });
     }
-    assert!(divs.is_empty(), "getrlimit divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "getrlimit divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -128,7 +139,11 @@ fn diff_setrlimit_roundtrip() {
     // We must restore the original at end of test.
     let mut prior = empty_rlimit();
     let _ = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut prior) };
-    let target_soft = if prior.rlim_cur > 1024 { 1024 } else { prior.rlim_cur };
+    let target_soft = if prior.rlim_cur > 1024 {
+        1024
+    } else {
+        prior.rlim_cur
+    };
     let new_lim = libc::rlimit {
         rlim_cur: target_soft,
         rlim_max: prior.rlim_max,
@@ -177,7 +192,11 @@ fn diff_setrlimit_roundtrip() {
             glibc: format!("cur={} max={}", after_lc.rlim_cur, after_lc.rlim_max),
         });
     }
-    assert!(divs.is_empty(), "setrlimit divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "setrlimit divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -209,7 +228,8 @@ fn diff_getrusage_self_and_children() {
             // (or very close) value. Allow a small delta — the second call
             // can grow RSS by a page or two.
             let delta = (fl_buf.ru_maxrss - lc_buf.ru_maxrss).abs();
-            if delta > 64 {  // 64 KiB tolerance
+            if delta > 64 {
+                // 64 KiB tolerance
                 divs.push(Divergence {
                     function: "getrusage",
                     case: format!("who={}", who),
@@ -238,7 +258,11 @@ fn diff_getrusage_self_and_children() {
             glibc: format!("rc={r_lc} errno={er_lc}"),
         });
     }
-    assert!(divs.is_empty(), "getrusage divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "getrusage divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -273,7 +297,11 @@ fn diff_getpriority_self() {
             glibc: format!("{er_lc}"),
         });
     }
-    assert!(divs.is_empty(), "getpriority divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "getpriority divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

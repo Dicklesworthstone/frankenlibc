@@ -74,19 +74,19 @@ const ATOI_CASES: &[&[u8]] = &[
     b"42",
     b"-7",
     b"+99",
-    b"  123",            // leading whitespace
-    b"\t\n 45",          // mixed leading whitespace
+    b"  123",   // leading whitespace
+    b"\t\n 45", // mixed leading whitespace
     b"0",
     b"-0",
-    b"abc",              // pure garbage
-    b"",                 // empty
-    b"-",                // sign only
-    b"+",                // sign only
-    b"123abc",           // trailing garbage
-    b"  -456xyz",        // leading ws + sign + trailing
-    b"2147483647",       // INT_MAX
-    b"-2147483648",      // INT_MIN
-    b"2147483648",       // overflow (atoi UB; impls usually saturate or wrap)
+    b"abc",         // pure garbage
+    b"",            // empty
+    b"-",           // sign only
+    b"+",           // sign only
+    b"123abc",      // trailing garbage
+    b"  -456xyz",   // leading ws + sign + trailing
+    b"2147483647",  // INT_MAX
+    b"-2147483648", // INT_MIN
+    b"2147483648",  // overflow (atoi UB; impls usually saturate or wrap)
 ];
 
 #[test]
@@ -155,7 +155,11 @@ fn diff_atoll_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "atoll divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "atoll divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -170,26 +174,26 @@ const STRTOL_CASES: &[(&[u8], c_int)] = &[
     (b"-42", 0),
     (b"0x1F", 0),
     (b"0X1f", 0),
-    (b"017", 0),                         // octal via leading 0
+    (b"017", 0), // octal via leading 0
     (b"0", 10),
     (b"  42", 10),
     (b"\t\n+42", 10),
-    (b"-2147483648", 10),                // INT32_MIN
-    (b"2147483647", 10),                 // INT32_MAX
-    (b"9223372036854775807", 10),        // LLONG_MAX (also fits long on 64-bit)
-    (b"9223372036854775808", 10),        // overflow on long → ERANGE + LONG_MAX
-    (b"-9223372036854775808", 10),       // LLONG_MIN
-    (b"-9223372036854775809", 10),       // underflow on long → ERANGE + LONG_MIN
+    (b"-2147483648", 10),          // INT32_MIN
+    (b"2147483647", 10),           // INT32_MAX
+    (b"9223372036854775807", 10),  // LLONG_MAX (also fits long on 64-bit)
+    (b"9223372036854775808", 10),  // overflow on long → ERANGE + LONG_MAX
+    (b"-9223372036854775808", 10), // LLONG_MIN
+    (b"-9223372036854775809", 10), // underflow on long → ERANGE + LONG_MIN
     (b"FFFF", 16),
     (b"-ff", 16),
-    (b"0x", 0),                          // bare 0x → consume only "0"
-    (b"0xZZ", 0),                        // 0x with invalid hex → consume "0"
-    (b"  +1xy", 10),                     // ws + sign + digit + garbage
-    (b"", 10),                           // empty
-    (b"abc", 10),                        // no digits
-    (b"   ", 10),                        // whitespace only
-    (b"123", 36),                        // base 36 max
-    (b"zz", 36),                         // base 36 letters
+    (b"0x", 0),      // bare 0x → consume only "0"
+    (b"0xZZ", 0),    // 0x with invalid hex → consume "0"
+    (b"  +1xy", 10), // ws + sign + digit + garbage
+    (b"", 10),       // empty
+    (b"abc", 10),    // no digits
+    (b"   ", 10),    // whitespace only
+    (b"123", 36),    // base 36 max
+    (b"zz", 36),     // base 36 letters
 ];
 
 fn diff_strtol_one(
@@ -271,7 +275,11 @@ fn diff_strtol_cases() {
             |p, e, b| unsafe { libc::strtol(p, e, b) as i64 },
         ));
     }
-    assert!(divs.is_empty(), "strtol divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strtol divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -286,7 +294,11 @@ fn diff_strtoll_cases() {
             |p, e, b| unsafe { libc::strtoll(p, e, b) },
         ));
     }
-    assert!(divs.is_empty(), "strtoll divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strtoll divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 const STRTOUL_CASES: &[(&[u8], c_int)] = &[
@@ -297,10 +309,10 @@ const STRTOUL_CASES: &[(&[u8], c_int)] = &[
     (b"42", 10),
     (b"  42", 10),
     (b"+42", 10),
-    (b"-1", 10),                          // POSIX: strtoul("-1") returns ULONG_MAX
-    (b"4294967295", 10),                  // UINT32_MAX
-    (b"18446744073709551615", 10),        // UINT64_MAX = ULONG_MAX on 64-bit
-    (b"18446744073709551616", 10),        // overflow → ERANGE + ULONG_MAX
+    (b"-1", 10),                   // POSIX: strtoul("-1") returns ULONG_MAX
+    (b"4294967295", 10),           // UINT32_MAX
+    (b"18446744073709551615", 10), // UINT64_MAX = ULONG_MAX on 64-bit
+    (b"18446744073709551616", 10), // overflow → ERANGE + ULONG_MAX
     (b"FFFFFFFF", 16),
     (b"0xFFFFFFFFFFFFFFFF", 0),
     (b"", 10),
@@ -356,7 +368,11 @@ fn diff_strtoul_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strtoul divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strtoul divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -407,7 +423,11 @@ fn diff_strtoull_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strtoull divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strtoull divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -420,27 +440,30 @@ const STRTOD_CASES: &[&[u8]] = &[
     b"3.14",
     b"-3.14",
     b"+3.14",
-    b"  3.14",                            // leading whitespace
+    b"  3.14", // leading whitespace
     b"\t\n+3.14",
     b"1e10",
     b"1E-5",
     b"-1.5e+3",
-    b".5",                                // leading decimal
-    b"5.",                                // trailing decimal
-    b"0x1.8p+1",                          // hex float = 3.0
-    b"0X1P0",                             // hex float = 1.0
+    b".5",       // leading decimal
+    b"5.",       // trailing decimal
+    b"0x1.8p+1", // hex float = 3.0
+    b"0X1P0",    // hex float = 1.0
     b"INF",
     b"-INF",
     b"infinity",
     b"NAN",
     b"-nan",
-    b"1.7976931348623157e308",            // ~DBL_MAX
-    b"1e400",                             // overflow → INF + ERANGE
-    b"1e-400",                            // underflow → 0 + ERANGE
-    b"abc",                               // no digits
-    b"",                                  // empty
-    b"  ",                                // whitespace only
-    b"3.14abc",                           // trailing garbage
+    b"1.7976931348623157e308", // ~DBL_MAX
+    b"1e400",                  // overflow → INF + ERANGE
+    b"1e-400",                 // underflow → 0 + ERANGE
+    b"1e-320",                 // subnormal underflow → nonzero + ERANGE
+    b"0e-400",                 // exact zero, exponent digits are not underflow
+    b"0x0p-9999",              // exact hex zero, no ERANGE
+    b"abc",                    // no digits
+    b"",                       // empty
+    b"  ",                     // whitespace only
+    b"3.14abc",                // trailing garbage
 ];
 
 /// f64 comparison that treats NaN as equal to NaN.
@@ -468,7 +491,7 @@ fn diff_strtod_cases() {
         let case = format!("{:?}", input);
 
         // For NaN, sign + bits can vary across libcs. Treat NaN==NaN.
-        if !f64_bit_equal(fl_v, lc_v) && !(fl_v.is_nan() && lc_v.is_nan()) {
+        if !(f64_bit_equal(fl_v, lc_v) || fl_v.is_nan() && lc_v.is_nan()) {
             divs.push(Divergence {
                 function: "strtod",
                 case: case.clone(),
@@ -498,7 +521,83 @@ fn diff_strtod_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strtod divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strtod divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+const STRTOF_CASES: &[&[u8]] = &[
+    b"0",
+    b"3.5",
+    b"1e-45", // subnormal underflow → nonzero + ERANGE
+    b"1e-50", // underflow → zero + ERANGE
+    b"0e-50", // exact zero, no ERANGE
+    b"1e39",  // overflow → INF + ERANGE
+    b"inf",   // literal infinity, no ERANGE
+    b"nan",   // NaN payload/sign details are implementation-defined
+    b"3.5garbage",
+];
+
+fn f32_bit_equal(a: f32, b: f32) -> bool {
+    a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan())
+}
+
+#[test]
+fn diff_strtof_cases() {
+    let mut divs = Vec::new();
+    for input in STRTOF_CASES {
+        let buf = cstr(input);
+        let p = buf.as_ptr() as *const c_char;
+        let mut fl_end: *mut c_char = ptr::null_mut();
+        let mut lc_end: *mut c_char = ptr::null_mut();
+        unsafe { clear_errno_both() };
+        let fl_v = unsafe { fl::strtof(p, &mut fl_end) };
+        let fl_err = unsafe { read_fl_errno() };
+        unsafe { clear_errno_both() };
+        let lc_v = unsafe { libc::strtof(p, &mut lc_end) };
+        let lc_err = unsafe { read_lc_errno() };
+
+        let fl_off = unsafe { (fl_end as *const c_char).offset_from(p) };
+        let lc_off = unsafe { (lc_end as *const c_char).offset_from(p) };
+        let case = format!("{:?}", input);
+
+        if !f32_bit_equal(fl_v, lc_v) {
+            divs.push(Divergence {
+                function: "strtof",
+                case: case.clone(),
+                field: "return_bits",
+                frankenlibc: format!("{:#x} ({})", fl_v.to_bits(), fl_v),
+                glibc: format!("{:#x} ({})", lc_v.to_bits(), lc_v),
+            });
+        }
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "strtof",
+                case: case.clone(),
+                field: "endptr_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+        let fl_erange = fl_err == libc::ERANGE;
+        let lc_erange = lc_err == libc::ERANGE;
+        if fl_erange != lc_erange {
+            divs.push(Divergence {
+                function: "strtof",
+                case,
+                field: "errno_ERANGE",
+                frankenlibc: format!("{fl_err}"),
+                glibc: format!("{lc_err}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strtof divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -510,9 +609,10 @@ fn stdlib_numeric_diff_coverage_report() {
     let total = ATOI_CASES.len() * 3            // atoi + atol + atoll
         + STRTOL_CASES.len() * 2                 // strtol + strtoll
         + STRTOUL_CASES.len() * 2                // strtoul + strtoull
-        + STRTOD_CASES.len();                    // strtod
+        + STRTOD_CASES.len()                     // strtod
+        + STRTOF_CASES.len(); // strtof
     eprintln!(
-        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":8,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":9,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }

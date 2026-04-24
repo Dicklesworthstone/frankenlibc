@@ -80,10 +80,7 @@ fn diff_attr_detachstate_round_trip() {
     for want in &[PTHREAD_CREATE_JOINABLE, PTHREAD_CREATE_DETACHED] {
         let g_fl = run(true, *want);
         let g_lc = run(false, *want);
-        assert_eq!(
-            g_fl, g_lc,
-            "detachstate {want}: fl={g_fl}, lc={g_lc}"
-        );
+        assert_eq!(g_fl, g_lc, "detachstate {want}: fl={g_fl}, lc={g_lc}");
         assert_eq!(g_fl, *want, "detachstate round-trip {want}");
     }
 }

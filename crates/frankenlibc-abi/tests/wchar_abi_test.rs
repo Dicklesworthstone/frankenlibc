@@ -893,6 +893,33 @@ fn swscanf_parses_integer() {
     assert_eq!(val, 42);
 }
 
+#[test]
+fn wide_vscanf_null_va_list_fails_closed() {
+    let input = wstr(b"42");
+    let fmt = wstr(b"%d");
+
+    let rc = unsafe {
+        vswscanf(
+            input.as_ptr() as *const libc::wchar_t,
+            fmt.as_ptr() as *const libc::wchar_t,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, libc::EOF);
+
+    let rc = unsafe { vwscanf(fmt.as_ptr() as *const libc::wchar_t, std::ptr::null_mut()) };
+    assert_eq!(rc, libc::EOF);
+
+    let rc = unsafe {
+        vfwscanf(
+            std::ptr::null_mut(),
+            fmt.as_ptr() as *const libc::wchar_t,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, libc::EOF);
+}
+
 // ── c32rtomb / mbrtoc32 ────────────────────────────────────────────────────
 
 #[test]

@@ -39,7 +39,6 @@ fn render_divs(divs: &[Divergence]) -> String {
 }
 
 trait MutexBackend {
-    fn name() -> &'static str;
     unsafe fn init(m: *mut libc::pthread_mutex_t, attr: *const libc::pthread_mutexattr_t) -> c_int;
     unsafe fn destroy(m: *mut libc::pthread_mutex_t) -> c_int;
     unsafe fn lock(m: *mut libc::pthread_mutex_t) -> c_int;
@@ -54,9 +53,6 @@ struct FlBackend;
 struct LcBackend;
 
 impl MutexBackend for FlBackend {
-    fn name() -> &'static str {
-        "frankenlibc"
-    }
     unsafe fn init(m: *mut libc::pthread_mutex_t, attr: *const libc::pthread_mutexattr_t) -> c_int {
         unsafe { fl::pthread_mutex_init(m, attr) }
     }
@@ -84,9 +80,6 @@ impl MutexBackend for FlBackend {
 }
 
 impl MutexBackend for LcBackend {
-    fn name() -> &'static str {
-        "glibc"
-    }
     unsafe fn init(m: *mut libc::pthread_mutex_t, attr: *const libc::pthread_mutexattr_t) -> c_int {
         unsafe { libc::pthread_mutex_init(m, attr) }
     }
@@ -250,7 +243,6 @@ fn diff_pthread_mutex_recursive_scenario() {
 // ===========================================================================
 
 trait RwlockBackend {
-    fn name() -> &'static str;
     unsafe fn init(
         rw: *mut libc::pthread_rwlock_t,
         attr: *const libc::pthread_rwlockattr_t,
@@ -267,9 +259,6 @@ struct FlRw;
 struct LcRw;
 
 impl RwlockBackend for FlRw {
-    fn name() -> &'static str {
-        "frankenlibc"
-    }
     unsafe fn init(
         rw: *mut libc::pthread_rwlock_t,
         attr: *const libc::pthread_rwlockattr_t,
@@ -297,9 +286,6 @@ impl RwlockBackend for FlRw {
 }
 
 impl RwlockBackend for LcRw {
-    fn name() -> &'static str {
-        "glibc"
-    }
     unsafe fn init(
         rw: *mut libc::pthread_rwlock_t,
         attr: *const libc::pthread_rwlockattr_t,

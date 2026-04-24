@@ -42,8 +42,6 @@ struct RegMatch {
 
 const REG_EXTENDED: c_int = 1;
 const REG_ICASE: c_int = 2;
-const REG_NOSUB: c_int = 4;
-const REG_NEWLINE: c_int = 8;
 
 #[derive(Debug)]
 struct Divergence {
@@ -53,6 +51,8 @@ struct Divergence {
     frankenlibc: String,
     glibc: String,
 }
+
+type RegexRun = ((c_int, c_int), (c_int, c_int), Vec<RegMatch>, Vec<RegMatch>);
 
 fn render_divs(divs: &[Divergence]) -> String {
     let mut out = String::new();
@@ -65,12 +65,7 @@ fn render_divs(divs: &[Divergence]) -> String {
     out
 }
 
-fn run_match(
-    pattern: &str,
-    input: &str,
-    cflags: c_int,
-    nmatch: usize,
-) -> ((c_int, c_int), (c_int, c_int), Vec<RegMatch>, Vec<RegMatch>) {
+fn run_match(pattern: &str, input: &str, cflags: c_int, nmatch: usize) -> RegexRun {
     let cpat = CString::new(pattern).unwrap();
     let cinp = CString::new(input).unwrap();
 

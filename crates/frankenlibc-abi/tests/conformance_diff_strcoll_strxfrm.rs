@@ -156,7 +156,7 @@ fn diff_strxfrm_c_locale_ordering() {
                 function: "strxfrm",
                 case: format!("({a:?}, {b:?})"),
                 field: "lc: strcmp(xfrm) sign != strcoll sign (sanity)",
-                frankenlibc: format!("(reference-only check)"),
+                frankenlibc: "(reference-only check)".to_string(),
                 glibc: format!("xfrm-cmp={cmp_lc}, coll={coll_lc}"),
             });
         }

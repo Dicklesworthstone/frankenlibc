@@ -88,7 +88,10 @@ fn diff_sigaltstack_set_then_disable() {
     // Restore original (best effort — original may have been "disabled")
     let _ = unsafe { sigaltstack(&orig, std::ptr::null_mut()) };
 
-    assert_eq!(r_set_fl, r_set_lc, "set return: fl={r_set_fl}, lc={r_set_lc}");
+    assert_eq!(
+        r_set_fl, r_set_lc,
+        "set return: fl={r_set_fl}, lc={r_set_lc}"
+    );
     assert_eq!(
         r_disable_fl, r_disable_lc,
         "disable return: fl={r_disable_fl}, lc={r_disable_lc}"

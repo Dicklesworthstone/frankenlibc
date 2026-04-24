@@ -50,8 +50,12 @@ fn diff_realpath_known_path() {
         "realpath /tmp null-match: fl={r_fl:?}, lc={r_lc:?}"
     );
     if !r_fl.is_null() && !r_lc.is_null() {
-        let s_fl = unsafe { CStr::from_ptr(r_fl) }.to_string_lossy().into_owned();
-        let s_lc = unsafe { CStr::from_ptr(r_lc) }.to_string_lossy().into_owned();
+        let s_fl = unsafe { CStr::from_ptr(r_fl) }
+            .to_string_lossy()
+            .into_owned();
+        let s_lc = unsafe { CStr::from_ptr(r_lc) }
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(s_fl, s_lc, "realpath result divergence");
     }
 }
@@ -64,15 +68,15 @@ fn diff_realpath_with_double_dot() {
     let r_fl = unsafe { fl_stdlib::realpath(cp.as_ptr(), buf_fl.as_mut_ptr()) };
     let r_lc = unsafe { realpath(cp.as_ptr(), buf_lc.as_mut_ptr()) };
     if !r_fl.is_null() && !r_lc.is_null() {
-        let s_fl = unsafe { CStr::from_ptr(r_fl) }.to_string_lossy().into_owned();
-        let s_lc = unsafe { CStr::from_ptr(r_lc) }.to_string_lossy().into_owned();
+        let s_fl = unsafe { CStr::from_ptr(r_fl) }
+            .to_string_lossy()
+            .into_owned();
+        let s_lc = unsafe { CStr::from_ptr(r_lc) }
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(s_fl, s_lc, "realpath /tmp/../tmp/. divergence");
     } else {
-        assert_eq!(
-            r_fl.is_null(),
-            r_lc.is_null(),
-            "realpath dotdot null-match"
-        );
+        assert_eq!(r_fl.is_null(), r_lc.is_null(), "realpath dotdot null-match");
     }
 }
 
@@ -103,8 +107,12 @@ fn diff_realpath_symlink_resolution() {
     let r_fl = unsafe { fl_stdlib::realpath(cp.as_ptr(), buf_fl.as_mut_ptr()) };
     let r_lc = unsafe { realpath(cp.as_ptr(), buf_lc.as_mut_ptr()) };
     if !r_fl.is_null() && !r_lc.is_null() {
-        let s_fl = unsafe { CStr::from_ptr(r_fl) }.to_string_lossy().into_owned();
-        let s_lc = unsafe { CStr::from_ptr(r_lc) }.to_string_lossy().into_owned();
+        let s_fl = unsafe { CStr::from_ptr(r_fl) }
+            .to_string_lossy()
+            .into_owned();
+        let s_lc = unsafe { CStr::from_ptr(r_lc) }
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(s_fl, s_lc, "realpath symlink divergence");
     }
     let _ = std::fs::remove_file(&link_path);
@@ -121,8 +129,12 @@ fn diff_canonicalize_file_name_known_path() {
         "canonicalize_file_name null-match"
     );
     if !r_fl.is_null() && !r_lc.is_null() {
-        let s_fl = unsafe { CStr::from_ptr(r_fl) }.to_string_lossy().into_owned();
-        let s_lc = unsafe { CStr::from_ptr(r_lc) }.to_string_lossy().into_owned();
+        let s_fl = unsafe { CStr::from_ptr(r_fl) }
+            .to_string_lossy()
+            .into_owned();
+        let s_lc = unsafe { CStr::from_ptr(r_lc) }
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(s_fl, s_lc, "canonicalize_file_name divergence");
         unsafe {
             libc::free(r_fl as *mut libc::c_void);

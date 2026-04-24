@@ -169,11 +169,9 @@ fn diff_sched_getaffinity_self() {
     const CPU_SET_BYTES: usize = 128;
     let mut mask_fl = vec![0u8; CPU_SET_BYTES];
     let mut mask_lc = vec![0u8; CPU_SET_BYTES];
-    let r_fl = unsafe {
-        fl_uni::sched_getaffinity(0, CPU_SET_BYTES, mask_fl.as_mut_ptr() as *mut c_void)
-    };
-    let r_lc =
-        unsafe { sched_getaffinity(0, CPU_SET_BYTES, mask_lc.as_mut_ptr() as *mut c_void) };
+    let r_fl =
+        unsafe { fl_uni::sched_getaffinity(0, CPU_SET_BYTES, mask_fl.as_mut_ptr() as *mut c_void) };
+    let r_lc = unsafe { sched_getaffinity(0, CPU_SET_BYTES, mask_lc.as_mut_ptr() as *mut c_void) };
     if r_fl != r_lc {
         divs.push(Divergence {
             function: "sched_getaffinity",

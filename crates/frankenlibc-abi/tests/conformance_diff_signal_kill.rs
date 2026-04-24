@@ -20,11 +20,8 @@ unsafe extern "C" {
     fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
     fn raise(sig: c_int) -> c_int;
     fn getpid() -> libc::pid_t;
-    fn sigaction(
-        signum: c_int,
-        act: *const libc::sigaction,
-        oldact: *mut libc::sigaction,
-    ) -> c_int;
+    fn sigaction(signum: c_int, act: *const libc::sigaction, oldact: *mut libc::sigaction)
+    -> c_int;
     fn tgkill(tgid: c_int, tid: c_int, sig: c_int) -> c_int;
     fn gettid() -> c_int;
 }
@@ -126,11 +123,7 @@ fn diff_kill_self_sigusr1() {
     }
 
     unsafe { restore_handler(libc::SIGUSR1, &old) };
-    assert!(
-        divs.is_empty(),
-        "kill divergences:\n{}",
-        render_divs(&divs)
-    );
+    assert!(divs.is_empty(), "kill divergences:\n{}", render_divs(&divs));
 }
 
 // ===========================================================================

@@ -68,9 +68,7 @@ fn make_c_locale_lc() -> *mut c_void {
 
 fn make_c_locale_fl() -> *mut c_void {
     let cname = CString::new("C").unwrap();
-    unsafe {
-        fl_locale::newlocale(LC_ALL_MASK, cname.as_ptr(), std::ptr::null_mut()) as *mut c_void
-    }
+    unsafe { fl_locale::newlocale(LC_ALL_MASK, cname.as_ptr(), std::ptr::null_mut()) }
 }
 
 // ===========================================================================

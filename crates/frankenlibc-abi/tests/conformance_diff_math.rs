@@ -6,9 +6,7 @@
 //! Compares FrankenLibC vs glibc reference for:
 //!   - sqrt / fabs / floor / ceil           — exact bit equality
 //!   - sin / cos / tan / atan2              — ULP tolerance (math impls
-//!                                            historically diverge by a
-//!                                            few ULPs across libm
-//!                                            vendors)
+//!     historically diverge by a few ULPs across libm vendors)
 //!   - exp / log / log2 / log10 / pow       — ULP tolerance
 //!   - sinh / cosh / tanh                   — ULP tolerance
 //!   - fmod                                 — exact bit equality
@@ -53,7 +51,10 @@ struct Divergence {
 fn render_divs(divs: &[Divergence]) -> String {
     let mut out = String::new();
     for d in divs {
-        let ulp = d.delta_ulps.map(|u| format!(" Δulp={u}")).unwrap_or_default();
+        let ulp = d
+            .delta_ulps
+            .map(|u| format!(" Δulp={u}"))
+            .unwrap_or_default();
         out.push_str(&format!(
             "  {} | input={} | fl={} | glibc={}{ulp}\n",
             d.function, d.input, d.frankenlibc, d.glibc,
@@ -145,10 +146,24 @@ fn compare_f64(
 fn diff_sqrt_exact() {
     let mut divs = Vec::new();
     let inputs: &[f64] = &[
-        0.0, -0.0, 1.0, 2.0, 4.0, 9.0, 16.0, 100.0,
-        0.5, 0.25, 1e10, 1e-10, f64::MAX, f64::MIN_POSITIVE,
-        -1.0,                       // NaN domain
-        f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+        0.0,
+        -0.0,
+        1.0,
+        2.0,
+        4.0,
+        9.0,
+        16.0,
+        100.0,
+        0.5,
+        0.25,
+        1e10,
+        1e-10,
+        f64::MAX,
+        f64::MIN_POSITIVE,
+        -1.0, // NaN domain
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
     ];
     for &x in inputs {
         let fl_v = unsafe { fl::sqrt(x) };
@@ -162,8 +177,17 @@ fn diff_sqrt_exact() {
 fn diff_fabs_exact() {
     let mut divs = Vec::new();
     let inputs: &[f64] = &[
-        0.0, -0.0, 1.0, -1.0, 3.14, -3.14,
-        f64::MAX, f64::MIN, f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        std::f64::consts::PI,
+        -std::f64::consts::PI,
+        f64::MAX,
+        f64::MIN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
     ];
     for &x in inputs {
         let fl_v = unsafe { fl::fabs(x) };
@@ -177,9 +201,20 @@ fn diff_fabs_exact() {
 fn diff_floor_ceil_exact() {
     let mut divs = Vec::new();
     let inputs: &[f64] = &[
-        0.0, 0.5, 0.99, 1.0, 1.5, -0.5, -1.5, -0.99,
-        100.0, 100.5, -100.5,
-        f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+        0.0,
+        0.5,
+        0.99,
+        1.0,
+        1.5,
+        -0.5,
+        -1.5,
+        -0.99,
+        100.0,
+        100.5,
+        -100.5,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
     ];
     for &x in inputs {
         let fl_floor = unsafe { fl::floor(x) };
@@ -189,7 +224,11 @@ fn diff_floor_ceil_exact() {
         let lc_ceil = unsafe { ceil(x) };
         compare_f64(&mut divs, "ceil", format!("{x:?}"), fl_ceil, lc_ceil, 0);
     }
-    assert!(divs.is_empty(), "floor/ceil divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "floor/ceil divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -201,9 +240,9 @@ fn diff_fmod_exact() {
         (10.0, -3.0),
         (5.5, 2.0),
         (0.0, 5.0),
-        (5.0, 0.0),                  // NaN domain
-        (f64::INFINITY, 5.0),        // NaN
-        (5.0, f64::INFINITY),        // x
+        (5.0, 0.0),           // NaN domain
+        (f64::INFINITY, 5.0), // NaN
+        (5.0, f64::INFINITY), // x
         (f64::NAN, 5.0),
     ];
     for &(x, y) in cases {
@@ -219,101 +258,230 @@ fn diff_fmod_exact() {
 // ===========================================================================
 
 const TRIG_INPUTS: &[f64] = &[
-    0.0, 0.5, 1.0, std::f64::consts::FRAC_PI_4, std::f64::consts::FRAC_PI_2,
-    std::f64::consts::PI, 2.0 * std::f64::consts::PI,
-    -1.0, -std::f64::consts::PI,
-    1e10, -1e10,
-    f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+    0.0,
+    0.5,
+    1.0,
+    std::f64::consts::FRAC_PI_4,
+    std::f64::consts::FRAC_PI_2,
+    std::f64::consts::PI,
+    2.0 * std::f64::consts::PI,
+    -1.0,
+    -std::f64::consts::PI,
+    1e10,
+    -1e10,
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NAN,
 ];
 
 #[test]
 fn diff_sin_cos_tan_within_4_ulps() {
     let mut divs = Vec::new();
     for &x in TRIG_INPUTS {
-        compare_f64(&mut divs, "sin", format!("{x:?}"),
-            unsafe { fl::sin(x) }, unsafe { sin(x) }, 4);
-        compare_f64(&mut divs, "cos", format!("{x:?}"),
-            unsafe { fl::cos(x) }, unsafe { cos(x) }, 4);
-        compare_f64(&mut divs, "tan", format!("{x:?}"),
-            unsafe { fl::tan(x) }, unsafe { tan(x) }, 4);
+        compare_f64(
+            &mut divs,
+            "sin",
+            format!("{x:?}"),
+            unsafe { fl::sin(x) },
+            unsafe { sin(x) },
+            4,
+        );
+        compare_f64(
+            &mut divs,
+            "cos",
+            format!("{x:?}"),
+            unsafe { fl::cos(x) },
+            unsafe { cos(x) },
+            4,
+        );
+        compare_f64(
+            &mut divs,
+            "tan",
+            format!("{x:?}"),
+            unsafe { fl::tan(x) },
+            unsafe { tan(x) },
+            4,
+        );
     }
-    assert!(divs.is_empty(), "sin/cos/tan divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "sin/cos/tan divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_atan2_within_4_ulps() {
     let mut divs = Vec::new();
     let cases: &[(f64, f64)] = &[
-        (0.0, 1.0), (1.0, 0.0), (1.0, 1.0), (-1.0, -1.0),
-        (1.0, -1.0), (-1.0, 1.0),
-        (f64::INFINITY, 1.0), (1.0, f64::INFINITY),
+        (0.0, 1.0),
+        (1.0, 0.0),
+        (1.0, 1.0),
+        (-1.0, -1.0),
+        (1.0, -1.0),
+        (-1.0, 1.0),
+        (f64::INFINITY, 1.0),
+        (1.0, f64::INFINITY),
         (f64::NAN, 1.0),
     ];
     for &(y, x) in cases {
-        compare_f64(&mut divs, "atan2", format!("({y:?}, {x:?})"),
-            unsafe { fl::atan2(y, x) }, unsafe { atan2(y, x) }, 4);
+        compare_f64(
+            &mut divs,
+            "atan2",
+            format!("({y:?}, {x:?})"),
+            unsafe { fl::atan2(y, x) },
+            unsafe { atan2(y, x) },
+            4,
+        );
     }
-    assert!(divs.is_empty(), "atan2 divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "atan2 divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 const EXP_INPUTS: &[f64] = &[
-    0.0, 1.0, -1.0, std::f64::consts::LN_2, 10.0, -10.0,
-    700.0, -700.0,                  // near edge of representable range
-    1e10,                            // overflow → +Inf
-    -1e10,                           // underflow → 0
-    f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+    0.0,
+    1.0,
+    -1.0,
+    std::f64::consts::LN_2,
+    10.0,
+    -10.0,
+    700.0,
+    -700.0, // near edge of representable range
+    1e10,   // overflow → +Inf
+    -1e10,  // underflow → 0
+    f64::INFINITY,
+    f64::NEG_INFINITY,
+    f64::NAN,
 ];
 
 #[test]
 fn diff_exp_log_pow_within_4_ulps() {
     let mut divs = Vec::new();
     for &x in EXP_INPUTS {
-        compare_f64(&mut divs, "exp", format!("{x:?}"),
-            unsafe { fl::exp(x) }, unsafe { exp(x) }, 4);
+        compare_f64(
+            &mut divs,
+            "exp",
+            format!("{x:?}"),
+            unsafe { fl::exp(x) },
+            unsafe { exp(x) },
+            4,
+        );
     }
     let log_inputs: &[f64] = &[
-        1.0, std::f64::consts::E, 10.0, 100.0, 1e10, 0.5, 0.001,
-        0.0,                          // -Inf
-        -1.0,                         // NaN
-        f64::INFINITY, f64::NAN,
+        1.0,
+        std::f64::consts::E,
+        10.0,
+        100.0,
+        1e10,
+        0.5,
+        0.001,
+        0.0,  // -Inf
+        -1.0, // NaN
+        f64::INFINITY,
+        f64::NAN,
     ];
     for &x in log_inputs {
-        compare_f64(&mut divs, "log", format!("{x:?}"),
-            unsafe { fl::log(x) }, unsafe { log(x) }, 4);
-        compare_f64(&mut divs, "log2", format!("{x:?}"),
-            unsafe { fl::log2(x) }, unsafe { log2(x) }, 4);
-        compare_f64(&mut divs, "log10", format!("{x:?}"),
-            unsafe { fl::log10(x) }, unsafe { log10(x) }, 4);
+        compare_f64(
+            &mut divs,
+            "log",
+            format!("{x:?}"),
+            unsafe { fl::log(x) },
+            unsafe { log(x) },
+            4,
+        );
+        compare_f64(
+            &mut divs,
+            "log2",
+            format!("{x:?}"),
+            unsafe { fl::log2(x) },
+            unsafe { log2(x) },
+            4,
+        );
+        compare_f64(
+            &mut divs,
+            "log10",
+            format!("{x:?}"),
+            unsafe { fl::log10(x) },
+            unsafe { log10(x) },
+            4,
+        );
     }
     let pow_cases: &[(f64, f64)] = &[
-        (2.0, 10.0), (10.0, 3.0), (3.0, 0.5),
-        (0.0, 0.0), (1.0, f64::INFINITY), (f64::INFINITY, 0.0),
-        (-1.0, 0.5),                  // NaN domain
+        (2.0, 10.0),
+        (10.0, 3.0),
+        (3.0, 0.5),
+        (0.0, 0.0),
+        (1.0, f64::INFINITY),
+        (f64::INFINITY, 0.0),
+        (-1.0, 0.5), // NaN domain
         (2.0, -10.0),
     ];
     for &(x, y) in pow_cases {
-        compare_f64(&mut divs, "pow", format!("({x:?}, {y:?})"),
-            unsafe { fl::pow(x, y) }, unsafe { pow(x, y) }, 4);
+        compare_f64(
+            &mut divs,
+            "pow",
+            format!("({x:?}, {y:?})"),
+            unsafe { fl::pow(x, y) },
+            unsafe { pow(x, y) },
+            4,
+        );
     }
-    assert!(divs.is_empty(), "exp/log/pow divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "exp/log/pow divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_hyperbolic_within_4_ulps() {
     let mut divs = Vec::new();
     let inputs: &[f64] = &[
-        0.0, 1.0, -1.0, 5.0, -5.0, 700.0, -700.0,
-        f64::INFINITY, f64::NEG_INFINITY, f64::NAN,
+        0.0,
+        1.0,
+        -1.0,
+        5.0,
+        -5.0,
+        700.0,
+        -700.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NAN,
     ];
     for &x in inputs {
-        compare_f64(&mut divs, "sinh", format!("{x:?}"),
-            unsafe { fl::sinh(x) }, unsafe { sinh(x) }, 4);
-        compare_f64(&mut divs, "cosh", format!("{x:?}"),
-            unsafe { fl::cosh(x) }, unsafe { cosh(x) }, 4);
-        compare_f64(&mut divs, "tanh", format!("{x:?}"),
-            unsafe { fl::tanh(x) }, unsafe { tanh(x) }, 4);
+        compare_f64(
+            &mut divs,
+            "sinh",
+            format!("{x:?}"),
+            unsafe { fl::sinh(x) },
+            unsafe { sinh(x) },
+            4,
+        );
+        compare_f64(
+            &mut divs,
+            "cosh",
+            format!("{x:?}"),
+            unsafe { fl::cosh(x) },
+            unsafe { cosh(x) },
+            4,
+        );
+        compare_f64(
+            &mut divs,
+            "tanh",
+            format!("{x:?}"),
+            unsafe { fl::tanh(x) },
+            unsafe { tanh(x) },
+            4,
+        );
     }
-    assert!(divs.is_empty(), "hyperbolic divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "hyperbolic divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

@@ -10,7 +10,7 @@
 //!
 //! Bead: CONFORMANCE: libc flock+lockf diff matrix.
 
-use std::ffi::{CString, c_int};
+use std::ffi::c_int;
 use std::os::fd::AsRawFd;
 
 use frankenlibc_abi::unistd_abi as fl;

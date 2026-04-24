@@ -76,8 +76,14 @@ fn diff_dlopen_libm_then_dlsym_cos() {
         p_lc.is_null(),
         "dlsym(cos) null-match: fl={p_fl:?}, lc={p_lc:?}"
     );
-    assert_eq!(r_close_fl, r_close_lc, "dlclose return: fl={r_close_fl}, lc={r_close_lc}");
-    assert!(!p_fl.is_null(), "cos should resolve to a real address via fl");
+    assert_eq!(
+        r_close_fl, r_close_lc,
+        "dlclose return: fl={r_close_fl}, lc={r_close_lc}"
+    );
+    assert!(
+        !p_fl.is_null(),
+        "cos should resolve to a real address via fl"
+    );
     // Both should point to the same address since the library is shared.
     if !p_fl.is_null() && !p_lc.is_null() {
         assert_eq!(p_fl, p_lc, "cos address divergence");
@@ -127,6 +133,37 @@ fn diff_dlsym_unknown_returns_null() {
     assert!(p_fl.is_null(), "unknown symbol must return NULL");
 }
 
+#[test]
+fn diff_dlerror_is_consumed_after_lookup_failure() {
+    let _ = unsafe { fl::dlerror() };
+    let _ = unsafe { dlerror() };
+
+    let sym = CString::new("definitely_not_a_real_symbol_for_dlerror_xyz123").unwrap();
+    let p_fl = unsafe { fl::dlsym(RTLD_DEFAULT, sym.as_ptr()) };
+    let p_lc = unsafe { dlsym(RTLD_DEFAULT, sym.as_ptr()) };
+    assert!(p_fl.is_null(), "fl unknown symbol must fail");
+    assert!(p_lc.is_null(), "glibc unknown symbol must fail");
+
+    let e_fl = unsafe { fl::dlerror() };
+    let e_lc = unsafe { dlerror() };
+    assert_eq!(
+        e_fl.is_null(),
+        e_lc.is_null(),
+        "first dlerror null-match: fl={e_fl:?}, lc={e_lc:?}"
+    );
+    assert!(
+        !e_fl.is_null(),
+        "lookup failure should produce a dlerror message"
+    );
+
+    let second_fl = unsafe { fl::dlerror() };
+    let second_lc = unsafe { dlerror() };
+    assert!(
+        second_fl.is_null() && second_lc.is_null(),
+        "dlerror should consume the pending error"
+    );
+}
+
 // dlclose with a bogus handle is undefined behavior (glibc tends to
 // segfault inside its rtld); not a portable diff target. Skipped.
 
@@ -138,7 +175,11 @@ fn diff_dladdr_resolves_known_function() {
     let mut info_lc = DlInfo::default();
     let r_fl = unsafe { fl::dladdr(func_addr, &mut info_fl as *mut _ as *mut c_void) };
     let r_lc = unsafe { dladdr(func_addr, &mut info_lc) };
-    assert_eq!(r_fl != 0, r_lc != 0, "dladdr success-match: fl={r_fl}, lc={r_lc}");
+    assert_eq!(
+        r_fl != 0,
+        r_lc != 0,
+        "dladdr success-match: fl={r_fl}, lc={r_lc}"
+    );
     if r_fl != 0 && r_lc != 0 {
         // dli_fbase should match (same library)
         assert_eq!(

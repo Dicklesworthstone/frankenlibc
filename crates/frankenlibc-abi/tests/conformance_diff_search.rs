@@ -494,8 +494,10 @@ fn fl_tsearch_descending_inserts_balanced() {
     // Unbalanced BST would chain to depth 1024; LLRB stays O(log n).
     let mut root: *mut c_void = std::ptr::null_mut();
     let keys: Vec<i32> = (0..1024).rev().collect();
-    let key_ptrs: Vec<*const c_void> =
-        keys.iter().map(|k| k as *const _ as *const c_void).collect();
+    let key_ptrs: Vec<*const c_void> = keys
+        .iter()
+        .map(|k| k as *const _ as *const c_void)
+        .collect();
     for &kp in &key_ptrs {
         let r = unsafe {
             fl::tsearch(
@@ -568,7 +570,10 @@ fn fl_tsearch_random_then_delete_half_stays_balanced() {
         }
     }
     // We expect at least some survivors (LLRB doesn't lose nodes).
-    assert!(found > 0, "expected odd-indexed survivors after partial delete");
+    assert!(
+        found > 0,
+        "expected odd-indexed survivors after partial delete"
+    );
     unsafe { fl::tdestroy(root, None) };
 }
 
@@ -629,7 +634,7 @@ fn fl_hsearch_capacity_full_returns_null() {
     for c in &cn {
         let item = fl::Entry {
             key: c.as_ptr() as *mut c_char,
-            data: 1 as *mut c_void,
+            data: std::ptr::dangling_mut::<c_void>(),
         };
         let r = unsafe { fl::hsearch(item, fl::Action::ENTER) };
         if !r.is_null() {
@@ -641,7 +646,7 @@ fn fl_hsearch_capacity_full_returns_null() {
     let extra = CString::new("eeeeee").unwrap();
     let item = fl::Entry {
         key: extra.as_ptr() as *mut c_char,
-        data: 1 as *mut c_void,
+        data: std::ptr::dangling_mut::<c_void>(),
     };
     let r = unsafe { fl::hsearch(item, fl::Action::ENTER) };
     eprintln!(

@@ -93,7 +93,11 @@ fn stat_field_diffs(a: &libc::stat, b: &libc::stat) -> Vec<(&'static str, String
     macro_rules! cmp {
         ($field:ident) => {
             if a.$field != b.$field {
-                out.push((stringify!($field), format!("{}", a.$field), format!("{}", b.$field)));
+                out.push((
+                    stringify!($field),
+                    format!("{}", a.$field),
+                    format!("{}", b.$field),
+                ));
             }
         };
     }
@@ -194,10 +198,8 @@ fn diff_lstat_cases() {
     let symlink = dir.join("link");
     std::os::unix::fs::symlink(&target, &symlink).expect("symlink");
 
-    let cases: &[(&str, &std::path::Path)] = &[
-        ("regular_file", &target),
-        ("symlink_itself", &symlink),
-    ];
+    let cases: &[(&str, &std::path::Path)] =
+        &[("regular_file", &target), ("symlink_itself", &symlink)];
     let mut divs = Vec::new();
     for (label, path) in cases {
         let cp = cstr_path(path);
@@ -226,7 +228,11 @@ fn diff_lstat_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "lstat divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "lstat divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -290,7 +296,11 @@ fn diff_fstat_cases() {
             glibc: format!("{lc_err}"),
         });
     }
-    assert!(divs.is_empty(), "fstat divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "fstat divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -341,7 +351,11 @@ fn diff_chmod_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "chmod divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "chmod divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -401,7 +415,11 @@ fn diff_mkdir_rmdir_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "mkdir/rmdir divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "mkdir/rmdir divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -431,7 +449,11 @@ fn diff_umask_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "umask divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "umask divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================

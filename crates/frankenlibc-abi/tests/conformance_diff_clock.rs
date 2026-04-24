@@ -94,8 +94,10 @@ fn diff_clock_gettime_all_clocks() {
                 });
             }
             // tv_sec for wall clocks should be > 1 (post-epoch)
-            if matches!(name, &"CLOCK_REALTIME" | &"CLOCK_MONOTONIC" | &"CLOCK_BOOTTIME")
-                && (tp_fl.tv_sec < 1 || tp_lc.tv_sec < 1)
+            if matches!(
+                name,
+                &"CLOCK_REALTIME" | &"CLOCK_MONOTONIC" | &"CLOCK_BOOTTIME"
+            ) && (tp_fl.tv_sec < 1 || tp_lc.tv_sec < 1)
             {
                 divs.push(Divergence {
                     function: "clock_gettime",
@@ -141,16 +143,17 @@ fn diff_clock_getres_all_clocks() {
                 glibc: format!("{r_lc}"),
             });
         }
-        if r_fl == 0 && r_lc == 0 {
-            if tp_fl.tv_sec != tp_lc.tv_sec || tp_fl.tv_nsec != tp_lc.tv_nsec {
-                divs.push(Divergence {
-                    function: "clock_getres",
-                    case: (*name).into(),
-                    field: "resolution",
-                    frankenlibc: format!("({}, {})", tp_fl.tv_sec, tp_fl.tv_nsec),
-                    glibc: format!("({}, {})", tp_lc.tv_sec, tp_lc.tv_nsec),
-                });
-            }
+        if r_fl == 0
+            && r_lc == 0
+            && (tp_fl.tv_sec != tp_lc.tv_sec || tp_fl.tv_nsec != tp_lc.tv_nsec)
+        {
+            divs.push(Divergence {
+                function: "clock_getres",
+                case: (*name).into(),
+                field: "resolution",
+                frankenlibc: format!("({}, {})", tp_fl.tv_sec, tp_fl.tv_nsec),
+                glibc: format!("({}, {})", tp_lc.tv_sec, tp_lc.tv_nsec),
+            });
         }
     }
     assert!(
@@ -167,11 +170,7 @@ fn diff_clock_getres_all_clocks() {
 #[test]
 fn diff_nanosleep_short() {
     let mut divs = Vec::new();
-    let durations: &[(&str, c_long)] = &[
-        ("100ns", 100),
-        ("10us", 10_000),
-        ("1ms", 1_000_000),
-    ];
+    let durations: &[(&str, c_long)] = &[("100ns", 100), ("10us", 10_000), ("1ms", 1_000_000)];
     for (name, ns) in durations {
         let req = libc::timespec {
             tv_sec: 0,

@@ -270,7 +270,10 @@ fn diff_getaddrinfo_invalid_numeric() {
 fn diff_getnameinfo_v4_numeric() {
     let mut divs = Vec::new();
     // Build a sockaddr_in for 127.0.0.1:80 and 8.8.8.8:443
-    let cases: &[(u32, u16)] = &[(u32::from_be_bytes([127, 0, 0, 1]), 80), (u32::from_be_bytes([8, 8, 8, 8]), 443)];
+    let cases: &[(u32, u16)] = &[
+        (u32::from_be_bytes([127, 0, 0, 1]), 80),
+        (u32::from_be_bytes([8, 8, 8, 8]), 443),
+    ];
     for (addr_be, port) in cases {
         let mut sa: libc::sockaddr_in = unsafe { core::mem::zeroed() };
         sa.sin_family = libc::AF_INET as u16;
@@ -356,12 +359,12 @@ fn diff_getnameinfo_v4_numeric() {
 fn diff_gai_strerror_known_codes() {
     // EAI codes are negative on glibc Linux. Use known constants:
     let codes: &[c_int] = &[
-        -2,  // EAI_AGAIN
-        -3,  // EAI_BADFLAGS
-        -4,  // EAI_FAIL
-        -5,  // EAI_FAMILY
-        -6,  // EAI_MEMORY
-        -8,  // EAI_NONAME (varies)
+        -2, // EAI_AGAIN
+        -3, // EAI_BADFLAGS
+        -4, // EAI_FAIL
+        -5, // EAI_FAMILY
+        -6, // EAI_MEMORY
+        -8, // EAI_NONAME (varies)
     ];
     let mut divs = Vec::new();
     for code in codes {

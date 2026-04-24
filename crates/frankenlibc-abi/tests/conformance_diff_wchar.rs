@@ -341,7 +341,7 @@ fn diff_wcscpy_cases() {
                 sb.as_ptr() as *const libc::wchar_t,
             )
         };
-        let dst_lc_u32: Vec<u32> = dst_lc.iter().map(|&x| x as u32).collect();
+        let dst_lc_u32 = dst_lc.clone();
         if dst_fl != dst_lc_u32 {
             divs.push(Divergence {
                 function: "wcscpy",
@@ -379,7 +379,7 @@ fn diff_wcsncpy_cases() {
                     n,
                 )
             };
-            let dst_lc_u32: Vec<u32> = dst_lc.iter().map(|&x| x as u32).collect();
+            let dst_lc_u32 = dst_lc.clone();
             if dst_fl != dst_lc_u32 {
                 divs.push(Divergence {
                     function: "wcsncpy",
@@ -430,7 +430,7 @@ fn diff_mbstowcs_ascii_cases() {
         if n_fl != usize::MAX {
             let n = n_fl.min(buf_fl.len());
             let buf_lc_u32: Vec<u32> = buf_lc.iter().take(n).map(|&x| x as u32).collect();
-            if &buf_fl[..n] != &buf_lc_u32[..] {
+            if buf_fl[..n] != buf_lc_u32[..] {
                 divs.push(Divergence {
                     function: "mbstowcs",
                     case: format!("{:?}", String::from_utf8_lossy(input)),

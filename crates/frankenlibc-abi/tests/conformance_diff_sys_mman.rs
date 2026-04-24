@@ -65,18 +65,22 @@ fn diff_mmap_anon_lifecycle() {
     for &len in sizes {
         let p_fl = unsafe {
             fl::mmap(
-                std::ptr::null_mut(), len,
+                std::ptr::null_mut(),
+                len,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1, 0,
+                -1,
+                0,
             )
         };
         let p_lc = unsafe {
             libc::mmap(
-                std::ptr::null_mut(), len,
+                std::ptr::null_mut(),
+                len,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1, 0,
+                -1,
+                0,
             )
         };
         if map_failed(p_fl) != map_failed(p_lc) {
@@ -130,7 +134,12 @@ fn diff_mmap_anon_lifecycle() {
 fn diff_mmap_invalid_args() {
     let mut divs = Vec::new();
     let cases: &[(&str, usize, c_int, c_int)] = &[
-        ("len=0", 0, libc::PROT_READ, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS),
+        (
+            "len=0",
+            0,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+        ),
         ("invalid_flags", PAGE_SIZE, libc::PROT_READ, 0xDEAD), // bogus flags
     ];
     for (label, len, prot, flags) in cases {
@@ -159,13 +168,21 @@ fn diff_mmap_invalid_args() {
             });
         }
         if !map_failed(p_fl) {
-            unsafe { fl::munmap(p_fl, *len.max(&PAGE_SIZE)); }
+            unsafe {
+                fl::munmap(p_fl, *len.max(&PAGE_SIZE));
+            }
         }
         if !map_failed(p_lc) {
-            unsafe { libc::munmap(p_lc, *len.max(&PAGE_SIZE)); }
+            unsafe {
+                libc::munmap(p_lc, *len.max(&PAGE_SIZE));
+            }
         }
     }
-    assert!(divs.is_empty(), "mmap invalid divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "mmap invalid divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -177,17 +194,23 @@ fn diff_mprotect_lifecycle() {
     let mut divs = Vec::new();
     let len = PAGE_SIZE * 2;
     for (label, mprotect_fn) in [
-        ("frankenlibc",
-         fl::mprotect as unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int),
-        ("glibc",
-         libc::mprotect as unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int),
+        (
+            "frankenlibc",
+            fl::mprotect as unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int,
+        ),
+        (
+            "glibc",
+            libc::mprotect as unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int,
+        ),
     ] {
         let p = unsafe {
             libc::mmap(
-                std::ptr::null_mut(), len,
+                std::ptr::null_mut(),
+                len,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1, 0,
+                -1,
+                0,
             )
         };
         if map_failed(p) {
@@ -206,9 +229,15 @@ fn diff_mprotect_lifecycle() {
                 glibc: "expected 0/0".into(),
             });
         }
-        unsafe { libc::munmap(p, len); }
+        unsafe {
+            libc::munmap(p, len);
+        }
     }
-    assert!(divs.is_empty(), "mprotect divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "mprotect divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -220,21 +249,31 @@ fn diff_madvise_dontneed() {
     let mut divs = Vec::new();
     let len = PAGE_SIZE * 4;
     for (label, madvise_fn) in [
-        ("frankenlibc",
-         fl::madvise as unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int),
-        ("glibc",
-         libc::madvise as unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int),
+        (
+            "frankenlibc",
+            fl::madvise as unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int,
+        ),
+        (
+            "glibc",
+            libc::madvise as unsafe extern "C" fn(*mut c_void, usize, c_int) -> c_int,
+        ),
     ] {
         let p = unsafe {
             libc::mmap(
-                std::ptr::null_mut(), len,
+                std::ptr::null_mut(),
+                len,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1, 0,
+                -1,
+                0,
             )
         };
-        if map_failed(p) { continue; }
-        unsafe { std::ptr::write_bytes(p as *mut u8, 0x55, len); }
+        if map_failed(p) {
+            continue;
+        }
+        unsafe {
+            std::ptr::write_bytes(p as *mut u8, 0x55, len);
+        }
         let r = unsafe { madvise_fn(p, len, libc::MADV_DONTNEED) };
         if r != 0 {
             divs.push(Divergence {
@@ -245,9 +284,15 @@ fn diff_madvise_dontneed() {
                 glibc: "expected 0".into(),
             });
         }
-        unsafe { libc::munmap(p, len); }
+        unsafe {
+            libc::munmap(p, len);
+        }
     }
-    assert!(divs.is_empty(), "madvise divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "madvise divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -277,7 +322,11 @@ fn diff_munmap_unmapped() {
             glibc: format!("rc={r_lc} errno={er_lc}"),
         });
     }
-    assert!(divs.is_empty(), "munmap unmapped divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "munmap unmapped divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

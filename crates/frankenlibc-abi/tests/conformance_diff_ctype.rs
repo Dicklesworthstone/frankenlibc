@@ -109,73 +109,121 @@ fn render_divergences(divs: &[Divergence]) -> String {
 #[test]
 fn diff_isalpha_full_range() {
     let divs = diff_classifier!(isalpha);
-    assert!(divs.is_empty(), "isalpha divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "isalpha divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_isdigit_full_range() {
     let divs = diff_classifier!(isdigit);
-    assert!(divs.is_empty(), "isdigit divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "isdigit divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_isalnum_full_range() {
     let divs = diff_classifier!(isalnum);
-    assert!(divs.is_empty(), "isalnum divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "isalnum divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_isspace_full_range() {
     let divs = diff_classifier!(isspace);
-    assert!(divs.is_empty(), "isspace divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "isspace divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_isupper_full_range() {
     let divs = diff_classifier!(isupper);
-    assert!(divs.is_empty(), "isupper divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "isupper divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_islower_full_range() {
     let divs = diff_classifier!(islower);
-    assert!(divs.is_empty(), "islower divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "islower divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_isprint_full_range() {
     let divs = diff_classifier!(isprint);
-    assert!(divs.is_empty(), "isprint divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "isprint divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_ispunct_full_range() {
     let divs = diff_classifier!(ispunct);
-    assert!(divs.is_empty(), "ispunct divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "ispunct divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_isxdigit_full_range() {
     let divs = diff_classifier!(isxdigit);
-    assert!(divs.is_empty(), "isxdigit divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "isxdigit divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_isblank_full_range() {
     let divs = diff_classifier!(isblank);
-    assert!(divs.is_empty(), "isblank divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "isblank divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_iscntrl_full_range() {
     let divs = diff_classifier!(iscntrl);
-    assert!(divs.is_empty(), "iscntrl divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "iscntrl divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_isgraph_full_range() {
     let divs = diff_classifier!(isgraph);
-    assert!(divs.is_empty(), "isgraph divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "isgraph divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 // ===========================================================================
@@ -185,13 +233,21 @@ fn diff_isgraph_full_range() {
 #[test]
 fn diff_toupper_full_range() {
     let divs = diff_transformer!(toupper);
-    assert!(divs.is_empty(), "toupper divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "toupper divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 #[test]
 fn diff_tolower_full_range() {
     let divs = diff_transformer!(tolower);
-    assert!(divs.is_empty(), "tolower divergences:\n{}", render_divergences(&divs));
+    assert!(
+        divs.is_empty(),
+        "tolower divergences:\n{}",
+        render_divergences(&divs)
+    );
 }
 
 // ===========================================================================

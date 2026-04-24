@@ -192,8 +192,7 @@ fn diff_linkat_at_fdcwd() {
     let csrc = CString::new(src.to_string_lossy().as_bytes()).unwrap();
     let cdst_fl = CString::new(dst_fl.to_string_lossy().as_bytes()).unwrap();
     let cdst_lc = CString::new(dst_lc.to_string_lossy().as_bytes()).unwrap();
-    let r_fl =
-        unsafe { fl::linkat(AT_FDCWD, csrc.as_ptr(), AT_FDCWD, cdst_fl.as_ptr(), 0) };
+    let r_fl = unsafe { fl::linkat(AT_FDCWD, csrc.as_ptr(), AT_FDCWD, cdst_fl.as_ptr(), 0) };
     let r_lc = unsafe { linkat(AT_FDCWD, csrc.as_ptr(), AT_FDCWD, cdst_lc.as_ptr(), 0) };
     assert_eq!(r_fl, r_lc, "linkat: fl={r_fl}, lc={r_lc}");
     if r_fl == 0 {
@@ -215,10 +214,8 @@ fn diff_openat_real_dirfd() {
     let dfd = dirf.as_raw_fd();
     let cname_fl = CString::new("file_fl.txt").unwrap();
     let cname_lc = CString::new("file_lc.txt").unwrap();
-    let r_fl =
-        unsafe { fl::openat(dfd, cname_fl.as_ptr(), libc::O_RDWR | libc::O_CREAT, 0o600) };
-    let r_lc =
-        unsafe { openat(dfd, cname_lc.as_ptr(), libc::O_RDWR | libc::O_CREAT, 0o600) };
+    let r_fl = unsafe { fl::openat(dfd, cname_fl.as_ptr(), libc::O_RDWR | libc::O_CREAT, 0o600) };
+    let r_lc = unsafe { openat(dfd, cname_lc.as_ptr(), libc::O_RDWR | libc::O_CREAT, 0o600) };
     assert!(
         (r_fl >= 0) == (r_lc >= 0),
         "openat with real dirfd: fl={r_fl}, lc={r_lc}"

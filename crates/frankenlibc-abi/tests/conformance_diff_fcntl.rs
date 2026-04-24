@@ -47,8 +47,12 @@ unsafe fn clear_errno_both() {
         *libc::__errno_location() = 0;
     }
 }
-unsafe fn read_fl_errno() -> c_int { unsafe { *__errno_location() } }
-unsafe fn read_lc_errno() -> c_int { unsafe { *libc::__errno_location() } }
+unsafe fn read_fl_errno() -> c_int {
+    unsafe { *__errno_location() }
+}
+unsafe fn read_lc_errno() -> c_int {
+    unsafe { *libc::__errno_location() }
+}
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
     let pid = std::process::id();
@@ -102,10 +106,22 @@ fn diff_open_existing_file() {
                 glibc: format!("{fd_lc}"),
             });
         }
-        if fd_fl >= 0 { unsafe { libc::close(fd_fl); } }
-        if fd_lc >= 0 { unsafe { libc::close(fd_lc); } }
+        if fd_fl >= 0 {
+            unsafe {
+                libc::close(fd_fl);
+            }
+        }
+        if fd_lc >= 0 {
+            unsafe {
+                libc::close(fd_lc);
+            }
+        }
     }
-    assert!(divs.is_empty(), "open existing divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "open existing divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -129,9 +145,21 @@ fn diff_open_missing_file() {
             glibc: format!("fd={fd_lc} errno={er_lc}"),
         });
     }
-    if fd_fl >= 0 { unsafe { libc::close(fd_fl); } }
-    if fd_lc >= 0 { unsafe { libc::close(fd_lc); } }
-    assert!(divs.is_empty(), "open missing divergences:\n{}", render_divs(&divs));
+    if fd_fl >= 0 {
+        unsafe {
+            libc::close(fd_fl);
+        }
+    }
+    if fd_lc >= 0 {
+        unsafe {
+            libc::close(fd_lc);
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "open missing divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -174,12 +202,32 @@ fn diff_open_create_with_mode() {
                 glibc: format!("fd={r2_lc} errno={er_lc}"),
             });
         }
-        if r2_fl >= 0 { unsafe { libc::close(r2_fl); } }
-        if r2_lc >= 0 { unsafe { libc::close(r2_lc); } }
+        if r2_fl >= 0 {
+            unsafe {
+                libc::close(r2_fl);
+            }
+        }
+        if r2_lc >= 0 {
+            unsafe {
+                libc::close(r2_lc);
+            }
+        }
     }
-    if fd_fl >= 0 { unsafe { libc::close(fd_fl); } }
-    if fd_lc >= 0 { unsafe { libc::close(fd_lc); } }
-    assert!(divs.is_empty(), "open create divergences:\n{}", render_divs(&divs));
+    if fd_fl >= 0 {
+        unsafe {
+            libc::close(fd_fl);
+        }
+    }
+    if fd_lc >= 0 {
+        unsafe {
+            libc::close(fd_lc);
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "open create divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -208,9 +256,21 @@ fn diff_openat_at_fdcwd() {
             glibc: format!("{fd_lc}"),
         });
     }
-    if fd_fl >= 0 { unsafe { libc::close(fd_fl); } }
-    if fd_lc >= 0 { unsafe { libc::close(fd_lc); } }
-    assert!(divs.is_empty(), "openat divergences:\n{}", render_divs(&divs));
+    if fd_fl >= 0 {
+        unsafe {
+            libc::close(fd_fl);
+        }
+    }
+    if fd_lc >= 0 {
+        unsafe {
+            libc::close(fd_lc);
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "openat divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -252,9 +312,21 @@ fn diff_creat_basic() {
             glibc: format!("{:o}", st_lc.st_mode & 0o777),
         });
     }
-    if fd_fl >= 0 { unsafe { libc::close(fd_fl); } }
-    if fd_lc >= 0 { unsafe { libc::close(fd_lc); } }
-    assert!(divs.is_empty(), "creat divergences:\n{}", render_divs(&divs));
+    if fd_fl >= 0 {
+        unsafe {
+            libc::close(fd_fl);
+        }
+    }
+    if fd_lc >= 0 {
+        unsafe {
+            libc::close(fd_lc);
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "creat divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -283,8 +355,16 @@ fn diff_fcntl_dupfd_and_getfd() {
             glibc: format!("{dup_lc}"),
         });
     }
-    if dup_fl >= 0 { unsafe { libc::close(dup_fl); } }
-    if dup_lc >= 0 { unsafe { libc::close(dup_lc); } }
+    if dup_fl >= 0 {
+        unsafe {
+            libc::close(dup_fl);
+        }
+    }
+    if dup_lc >= 0 {
+        unsafe {
+            libc::close(dup_lc);
+        }
+    }
 
     // F_GETFD (default = 0)
     let gd_fl = unsafe { fl_io::fcntl(fd, libc::F_GETFD, 0) };
@@ -326,8 +406,14 @@ fn diff_fcntl_dupfd_and_getfd() {
         });
     }
 
-    unsafe { libc::close(fd); }
-    assert!(divs.is_empty(), "fcntl divergences:\n{}", render_divs(&divs));
+    unsafe {
+        libc::close(fd);
+    }
+    assert!(
+        divs.is_empty(),
+        "fcntl divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -344,9 +430,14 @@ fn diff_posix_fadvise_basic() {
     assert!(fd >= 0);
 
     let mut divs = Vec::new();
-    for advice in &[libc::POSIX_FADV_NORMAL, libc::POSIX_FADV_SEQUENTIAL,
-                    libc::POSIX_FADV_RANDOM, libc::POSIX_FADV_WILLNEED,
-                    libc::POSIX_FADV_DONTNEED, libc::POSIX_FADV_NOREUSE] {
+    for advice in &[
+        libc::POSIX_FADV_NORMAL,
+        libc::POSIX_FADV_SEQUENTIAL,
+        libc::POSIX_FADV_RANDOM,
+        libc::POSIX_FADV_WILLNEED,
+        libc::POSIX_FADV_DONTNEED,
+        libc::POSIX_FADV_NOREUSE,
+    ] {
         let r_fl = unsafe { fl_un::posix_fadvise(fd, 0, 4096, *advice) };
         let r_lc = unsafe { libc::posix_fadvise(fd, 0, 4096, *advice) };
         if r_fl != r_lc {
@@ -359,8 +450,14 @@ fn diff_posix_fadvise_basic() {
             });
         }
     }
-    unsafe { libc::close(fd); }
-    assert!(divs.is_empty(), "posix_fadvise divergences:\n{}", render_divs(&divs));
+    unsafe {
+        libc::close(fd);
+    }
+    assert!(
+        divs.is_empty(),
+        "posix_fadvise divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

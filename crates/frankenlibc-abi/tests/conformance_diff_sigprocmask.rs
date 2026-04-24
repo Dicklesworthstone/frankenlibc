@@ -12,6 +12,7 @@
 //! Bead: CONFORMANCE: libc sigprocmask/sigpending diff matrix.
 
 use std::ffi::{c_int, c_void};
+use std::process::Command;
 use std::sync::Mutex;
 
 use frankenlibc_abi::signal_abi as fl;
@@ -81,6 +82,8 @@ fn save_mask() -> libc::sigset_t {
 fn restore_mask(mask: &libc::sigset_t) {
     let _ = unsafe { sigprocmask(SIG_SETMASK, mask, std::ptr::null_mut()) };
 }
+
+extern "C" fn sigusr1_noop(_: c_int) {}
 
 #[test]
 fn diff_sigprocmask_set_then_get() {
@@ -203,24 +206,49 @@ fn diff_pthread_sigmask_set_then_get() {
 #[test]
 fn diff_sigpending_after_block_and_kill() {
     let _g = SIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let current_exe = std::env::current_exe().expect("current test binary path");
+    let output = Command::new(current_exe)
+        .args([
+            "--exact",
+            "sigpending_child_invocation",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env("FRANKENLIBC_SIGPENDING_HELPER", "1")
+        .output()
+        .expect("run isolated sigpending helper");
+    assert!(
+        output.status.success(),
+        "isolated sigpending helper failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn sigpending_child_invocation() {
+    if std::env::var_os("FRANKENLIBC_SIGPENDING_HELPER").is_none() {
+        return;
+    }
     let prior = save_mask();
 
-    // Install SIG_IGN BEFORE blocking, so any delivery in any thread is a
-    // no-op rather than terminating the process. Save old to restore.
+    // Install a no-op handler before blocking. Ignored signals need not become
+    // pending on Linux, while a handled, blocked signal remains observable.
     let mut act: libc::sigaction = unsafe { core::mem::zeroed() };
-    act.sa_sigaction = libc::SIG_IGN;
+    act.sa_sigaction = sigusr1_noop as *const () as usize;
     let _ = unsafe { libc::sigemptyset(&mut act.sa_mask) };
     let mut old_act: libc::sigaction = unsafe { core::mem::zeroed() };
     let _ = unsafe { libc::sigaction(libc::SIGUSR1, &act, &mut old_act) };
 
-    // Block SIGUSR1, send it to ourselves, then sigpending should report it.
+    // Block SIGUSR1 and send it to the current thread, not the process. This
+    // makes pending membership stable even when libtest itself is threaded.
     let mut to_block = empty_set();
     let _ = unsafe { libc::sigaddset(&mut to_block, libc::SIGUSR1) };
-    // Use pthread_sigmask in multi-threaded process per POSIX.
     let _ = unsafe { pthread_sigmask(SIG_BLOCK, &to_block, std::ptr::null_mut()) };
 
-    let pid = unsafe { libc::getpid() };
-    let _ = unsafe { libc::kill(pid, libc::SIGUSR1) };
+    let send_rc = unsafe { libc::pthread_kill(libc::pthread_self(), libc::SIGUSR1) };
+    assert_eq!(send_rc, 0, "pthread_kill self SIGUSR1");
 
     // Query via fl
     let mut pending_fl = empty_set();
@@ -232,22 +260,22 @@ fn diff_sigpending_after_block_and_kill() {
     let r_lc = unsafe { sigpending(&mut pending_lc) };
     let in_lc = unsafe { libc::sigismember(&pending_lc, libc::SIGUSR1) };
 
-    assert_eq!(r_fl, r_lc, "sigpending return mismatch");
-    assert_eq!(
-        in_fl, in_lc,
-        "sigpending SIGUSR1 membership: fl={in_fl}, lc={in_lc}"
-    );
-    // Note: sigpending in a multi-threaded program reports per-thread
-    // pending; the queued kill(getpid, ...) is process-wide, which goes
-    // to any thread. So in_fl might be 0 if the kernel chose another
-    // thread. We don't assert in_fl == 1; we only assert fl == lc.
-
-    // Unblock; SIG_IGN absorbs delivery.
+    // Unblock; the no-op handler absorbs delivery.
     let _ = unsafe { pthread_sigmask(SIG_UNBLOCK, &to_block, std::ptr::null_mut()) };
     // Restore handler
     let _ = unsafe { libc::sigaction(libc::SIGUSR1, &old_act, std::ptr::null_mut()) };
 
     restore_mask(&prior);
+
+    assert_eq!(r_fl, r_lc, "sigpending return mismatch");
+    assert_eq!(
+        in_fl, in_lc,
+        "sigpending SIGUSR1 membership: fl={in_fl}, lc={in_lc}"
+    );
+    assert_eq!(
+        in_fl, 1,
+        "thread-directed blocked SIGUSR1 should be pending"
+    );
 }
 
 #[test]

@@ -1,7 +1,7 @@
 #![cfg(target_os = "linux")]
 
 //! Differential conformance harness for `<libgen.h>`:
-//!   - basename(char *path) — GNU/glibc path-component extractor
+//!   - basename(char *path) — POSIX path-component extractor
 //!   - dirname(char *path)  — POSIX path-prefix extractor
 //!
 //! Both functions may modify the input buffer in-place per POSIX. Each
@@ -133,11 +133,12 @@ fn diff_basename_paths() {
 #[test]
 fn basename_null_does_not_crash() {
     let r_fl = unsafe { fl::basename(std::ptr::null_mut()) };
-    assert_eq!(
-        r_fl,
-        std::ptr::null_mut(),
-        "basename(NULL) should fail closed instead of dereferencing a null path"
-    );
+    let s_fl = if r_fl.is_null() {
+        "<NULL>".to_string()
+    } else {
+        unsafe { CStr::from_ptr(r_fl).to_string_lossy().into_owned() }
+    };
+    assert_eq!(s_fl, ".", "basename(NULL) should return POSIX '.'");
 }
 
 #[test]
@@ -148,9 +149,7 @@ fn diff_dirname_paths() {
         ".",
         "..",
         "/",
-        // "//" is excluded — POSIX leaves it implementation-defined
-        // ("/" or "//" both conformant). fl returns "/", glibc "//".
-        // Logged in diff_dirname_double_slash_documented.
+        "//",
         "///",
         "/usr",
         "/usr/",
@@ -185,14 +184,14 @@ fn diff_dirname_paths() {
     );
 }
 
-// POSIX 2017 dirname for "//" is implementation-defined: result may be
-// "/" or "//". fl returns "/", glibc returns "//". Both conformant.
 #[test]
-fn diff_dirname_double_slash_documented() {
-    let s_fl = run_dirname_fl("//");
-    let s_lc = run_dirname("//");
-    eprintln!(
-        "{{\"family\":\"libgen.h\",\"divergence\":\"DISC-LIBGEN-001\",\"test\":\"dirname(\\\"//\\\")\",\"fl\":\"{s_fl}\",\"glibc\":\"{s_lc}\",\"posix\":\"implementation-defined\"}}"
+fn dirname_long_path_does_not_use_fixed_buffer() {
+    let long_dir = format!("/{}", "a".repeat(5000));
+    let path = format!("{long_dir}/leaf");
+    assert_eq!(
+        run_dirname_fl(&path),
+        run_dirname(&path),
+        "dirname should handle long caller buffers without fixed internal truncation or panic"
     );
 }
 

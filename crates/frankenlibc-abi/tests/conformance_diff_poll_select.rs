@@ -42,9 +42,7 @@ fn render_divs(divs: &[Divergence]) -> String {
 
 fn make_socketpair() -> (c_int, c_int) {
     let mut sv: [c_int; 2] = [-1, -1];
-    let r = unsafe {
-        libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr())
-    };
+    let r = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
     assert_eq!(r, 0, "socketpair setup failed");
     (sv[0], sv[1])
 }
@@ -74,7 +72,11 @@ fn diff_poll_empty_immediate() {
             glibc: format!("{r_lc}"),
         });
     }
-    assert!(divs.is_empty(), "poll empty divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "poll empty divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -82,7 +84,11 @@ fn diff_poll_writable_socketpair() {
     let mut divs = Vec::new();
     let (a, _b) = make_socketpair();
     // Fresh socketpair: `a` should be writable immediately.
-    let mut pfd = libc::pollfd { fd: a, events: libc::POLLOUT, revents: 0 };
+    let mut pfd = libc::pollfd {
+        fd: a,
+        events: libc::POLLOUT,
+        revents: 0,
+    };
     let r_fl = unsafe { fl::poll(&mut pfd, 1, 0) };
     let revents_fl = pfd.revents;
     pfd.revents = 0;
@@ -107,7 +113,11 @@ fn diff_poll_writable_socketpair() {
         });
     }
     close_pair((a, _b));
-    assert!(divs.is_empty(), "poll writable divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "poll writable divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -119,7 +129,11 @@ fn diff_poll_readable_after_write() {
     let n = unsafe { libc::write(b, buf.as_ptr() as *const c_void, 1) };
     assert_eq!(n, 1);
 
-    let mut pfd = libc::pollfd { fd: a, events: libc::POLLIN, revents: 0 };
+    let mut pfd = libc::pollfd {
+        fd: a,
+        events: libc::POLLIN,
+        revents: 0,
+    };
     let r_fl = unsafe { fl::poll(&mut pfd, 1, 100) };
     let revents_fl = pfd.revents;
     pfd.revents = 0;
@@ -144,13 +158,21 @@ fn diff_poll_readable_after_write() {
         });
     }
     close_pair((a, b));
-    assert!(divs.is_empty(), "poll readable divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "poll readable divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_poll_invalid_fd_pollnval() {
     let mut divs = Vec::new();
-    let mut pfd = libc::pollfd { fd: 99999, events: libc::POLLIN, revents: 0 };
+    let mut pfd = libc::pollfd {
+        fd: 99999,
+        events: libc::POLLIN,
+        revents: 0,
+    };
     let r_fl = unsafe { fl::poll(&mut pfd, 1, 0) };
     let revents_fl = pfd.revents;
     pfd.revents = 0;
@@ -174,7 +196,11 @@ fn diff_poll_invalid_fd_pollnval() {
             glibc: format!("{:#x}", revents_lc & libc::POLLNVAL),
         });
     }
-    assert!(divs.is_empty(), "poll invalid_fd divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "poll invalid_fd divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -183,7 +209,11 @@ fn diff_poll_timeout_zero_unready() {
     let (a, _b) = make_socketpair();
     // No write happened → `a` is NOT readable, with timeout 0 should
     // return 0 immediately.
-    let mut pfd = libc::pollfd { fd: a, events: libc::POLLIN, revents: 0 };
+    let mut pfd = libc::pollfd {
+        fd: a,
+        events: libc::POLLIN,
+        revents: 0,
+    };
     let r_fl = unsafe { fl::poll(&mut pfd, 1, 0) };
     pfd.revents = 0;
     let r_lc = unsafe { libc::poll(&mut pfd, 1, 0) };
@@ -197,7 +227,11 @@ fn diff_poll_timeout_zero_unready() {
         });
     }
     close_pair((a, _b));
-    assert!(divs.is_empty(), "poll timeout divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "poll timeout divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -205,10 +239,14 @@ fn diff_poll_timeout_zero_unready() {
 // ===========================================================================
 
 unsafe fn fd_set_zero(set: *mut libc::fd_set) {
-    unsafe { libc::FD_ZERO(set); }
+    unsafe {
+        libc::FD_ZERO(set);
+    }
 }
 unsafe fn fd_set_set(fd: c_int, set: *mut libc::fd_set) {
-    unsafe { libc::FD_SET(fd, set); }
+    unsafe {
+        libc::FD_SET(fd, set);
+    }
 }
 unsafe fn fd_set_isset(fd: c_int, set: *const libc::fd_set) -> bool {
     unsafe { libc::FD_ISSET(fd, set as *mut libc::fd_set) }
@@ -217,12 +255,27 @@ unsafe fn fd_set_isset(fd: c_int, set: *const libc::fd_set) -> bool {
 #[test]
 fn diff_select_empty_immediate() {
     let mut divs = Vec::new();
-    let mut tv = libc::timeval { tv_sec: 0, tv_usec: 0 };
+    let mut tv = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
     let r_fl = unsafe {
-        fl::select(0, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), &mut tv)
+        fl::select(
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut tv,
+        )
     };
     let r_lc = unsafe {
-        libc::select(0, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), &mut tv)
+        libc::select(
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut tv,
+        )
     };
     if r_fl != r_lc {
         divs.push(Divergence {
@@ -233,7 +286,11 @@ fn diff_select_empty_immediate() {
             glibc: format!("{r_lc}"),
         });
     }
-    assert!(divs.is_empty(), "select empty divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "select empty divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -243,16 +300,37 @@ fn diff_select_writable_socketpair() {
     let nfds = (a.max(b) + 1) as c_int;
 
     let mut wfds: libc::fd_set = unsafe { core::mem::zeroed() };
-    unsafe { fd_set_zero(&mut wfds); fd_set_set(a, &mut wfds); }
-    let mut tv = libc::timeval { tv_sec: 0, tv_usec: 0 };
+    unsafe {
+        fd_set_zero(&mut wfds);
+        fd_set_set(a, &mut wfds);
+    }
+    let mut tv = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
     let r_fl = unsafe {
-        fl::select(nfds, std::ptr::null_mut(), &mut wfds, std::ptr::null_mut(), &mut tv)
+        fl::select(
+            nfds,
+            std::ptr::null_mut(),
+            &mut wfds,
+            std::ptr::null_mut(),
+            &mut tv,
+        )
     };
     let was_set_fl = unsafe { fd_set_isset(a, &wfds) };
 
-    unsafe { fd_set_zero(&mut wfds); fd_set_set(a, &mut wfds); }
+    unsafe {
+        fd_set_zero(&mut wfds);
+        fd_set_set(a, &mut wfds);
+    }
     let r_lc = unsafe {
-        libc::select(nfds, std::ptr::null_mut(), &mut wfds, std::ptr::null_mut(), &mut tv)
+        libc::select(
+            nfds,
+            std::ptr::null_mut(),
+            &mut wfds,
+            std::ptr::null_mut(),
+            &mut tv,
+        )
     };
     let was_set_lc = unsafe { fd_set_isset(a, &wfds) };
 
@@ -275,7 +353,11 @@ fn diff_select_writable_socketpair() {
         });
     }
     close_pair((a, b));
-    assert!(divs.is_empty(), "select writable divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "select writable divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -288,17 +370,41 @@ fn diff_select_readable_after_write() {
     let nfds = (a.max(b) + 1) as c_int;
 
     let mut rfds: libc::fd_set = unsafe { core::mem::zeroed() };
-    unsafe { fd_set_zero(&mut rfds); fd_set_set(a, &mut rfds); }
-    let mut tv = libc::timeval { tv_sec: 0, tv_usec: 100_000 };
+    unsafe {
+        fd_set_zero(&mut rfds);
+        fd_set_set(a, &mut rfds);
+    }
+    let mut tv = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 100_000,
+    };
     let r_fl = unsafe {
-        fl::select(nfds, &mut rfds, std::ptr::null_mut(), std::ptr::null_mut(), &mut tv)
+        fl::select(
+            nfds,
+            &mut rfds,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut tv,
+        )
     };
     let was_set_fl = unsafe { fd_set_isset(a, &rfds) };
 
-    unsafe { fd_set_zero(&mut rfds); fd_set_set(a, &mut rfds); }
-    let mut tv = libc::timeval { tv_sec: 0, tv_usec: 100_000 };
+    unsafe {
+        fd_set_zero(&mut rfds);
+        fd_set_set(a, &mut rfds);
+    }
+    let mut tv = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 100_000,
+    };
     let r_lc = unsafe {
-        libc::select(nfds, &mut rfds, std::ptr::null_mut(), std::ptr::null_mut(), &mut tv)
+        libc::select(
+            nfds,
+            &mut rfds,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut tv,
+        )
     };
     let was_set_lc = unsafe { fd_set_isset(a, &rfds) };
 
@@ -321,7 +427,11 @@ fn diff_select_readable_after_write() {
         });
     }
     close_pair((a, b));
-    assert!(divs.is_empty(), "select readable divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "select readable divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -332,8 +442,15 @@ fn diff_select_readable_after_write() {
 fn diff_ppoll_writable() {
     let mut divs = Vec::new();
     let (a, b) = make_socketpair();
-    let mut pfd = libc::pollfd { fd: a, events: libc::POLLOUT, revents: 0 };
-    let ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut pfd = libc::pollfd {
+        fd: a,
+        events: libc::POLLOUT,
+        revents: 0,
+    };
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let r_fl = unsafe { fl::ppoll(&mut pfd, 1, &ts, std::ptr::null()) };
     let revents_fl = pfd.revents;
     pfd.revents = 0;
@@ -358,20 +475,39 @@ fn diff_ppoll_writable() {
         });
     }
     close_pair((a, b));
-    assert!(divs.is_empty(), "ppoll divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "ppoll divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_pselect_empty_immediate() {
     let mut divs = Vec::new();
-    let ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     let r_fl = unsafe {
-        fl::pselect(0, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(),
-                    &ts, std::ptr::null())
+        fl::pselect(
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &ts,
+            std::ptr::null(),
+        )
     };
     let r_lc = unsafe {
-        libc::pselect(0, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(),
-                      &ts, std::ptr::null())
+        libc::pselect(
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &ts,
+            std::ptr::null(),
+        )
     };
     if r_fl != r_lc {
         divs.push(Divergence {
@@ -382,7 +518,11 @@ fn diff_pselect_empty_immediate() {
             glibc: format!("{r_lc}"),
         });
     }
-    assert!(divs.is_empty(), "pselect divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "pselect divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

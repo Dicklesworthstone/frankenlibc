@@ -11,12 +11,8 @@ use std::ffi::{CString, c_char, c_int, c_uint, c_void};
 use frankenlibc_abi::unistd_abi as fl;
 
 unsafe extern "C" {
-    fn mq_open(
-        name: *const c_char,
-        oflag: c_int,
-        mode: libc::mode_t,
-        attr: *const MqAttr,
-    ) -> c_int;
+    fn mq_open(name: *const c_char, oflag: c_int, mode: libc::mode_t, attr: *const MqAttr)
+    -> c_int;
     fn mq_close(mqdes: c_int) -> c_int;
     fn mq_unlink(name: *const c_char) -> c_int;
     fn mq_send(mqdes: c_int, msg_ptr: *const c_char, msg_len: usize, msg_prio: c_uint) -> c_int;

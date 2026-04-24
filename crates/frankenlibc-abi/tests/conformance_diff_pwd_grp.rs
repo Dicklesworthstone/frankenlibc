@@ -36,8 +36,12 @@ fn render_divs(divs: &[Divergence]) -> String {
     out
 }
 
-unsafe fn read_lc_errno() -> c_int { unsafe { *libc::__errno_location() } }
-unsafe fn read_fl_errno() -> c_int { unsafe { *__errno_location() } }
+unsafe fn read_lc_errno() -> c_int {
+    unsafe { *libc::__errno_location() }
+}
+unsafe fn read_fl_errno() -> c_int {
+    unsafe { *__errno_location() }
+}
 
 unsafe fn cstr_to_bytes(p: *const i8) -> Vec<u8> {
     if p.is_null() {
@@ -94,7 +98,10 @@ fn diff_getpwuid_well_known_uids() {
         }
     }
     // Nonexistent uid
-    unsafe { *__errno_location() = 0; *libc::__errno_location() = 0; }
+    unsafe {
+        *__errno_location() = 0;
+        *libc::__errno_location() = 0;
+    }
     let p_fl = unsafe { fl_pwd::getpwuid(99999) };
     let p_lc = unsafe { libc::getpwuid(99999) };
     if p_fl.is_null() != p_lc.is_null() {
@@ -106,7 +113,11 @@ fn diff_getpwuid_well_known_uids() {
             glibc: format!("{}", p_lc.is_null()),
         });
     }
-    assert!(divs.is_empty(), "getpwuid divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "getpwuid divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -157,7 +168,11 @@ fn diff_getpwnam_well_known() {
             glibc: format!("{}", p_lc.is_null()),
         });
     }
-    assert!(divs.is_empty(), "getpwnam divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "getpwnam divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -218,7 +233,11 @@ fn diff_getgrgid_well_known() {
             glibc: format!("{}", p_lc.is_null()),
         });
     }
-    assert!(divs.is_empty(), "getgrgid divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "getgrgid divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -267,7 +286,11 @@ fn diff_getgrnam_root_and_missing() {
             glibc: format!("{}", p_lc.is_null()),
         });
     }
-    assert!(divs.is_empty(), "getgrnam divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "getgrnam divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -285,10 +308,22 @@ fn diff_getpwnam_r_root() {
     let mut res_fl: *mut libc::passwd = std::ptr::null_mut();
     let mut res_lc: *mut libc::passwd = std::ptr::null_mut();
     let r_fl = unsafe {
-        fl_pwd::getpwnam_r(name.as_ptr(), &mut pwd_fl, buf_fl.as_mut_ptr(), buf_fl.len(), &mut res_fl)
+        fl_pwd::getpwnam_r(
+            name.as_ptr(),
+            &mut pwd_fl,
+            buf_fl.as_mut_ptr(),
+            buf_fl.len(),
+            &mut res_fl,
+        )
     };
     let r_lc = unsafe {
-        libc::getpwnam_r(name.as_ptr(), &mut pwd_lc, buf_lc.as_mut_ptr(), buf_lc.len(), &mut res_lc)
+        libc::getpwnam_r(
+            name.as_ptr(),
+            &mut pwd_lc,
+            buf_lc.as_mut_ptr(),
+            buf_lc.len(),
+            &mut res_lc,
+        )
     };
     if r_fl != r_lc {
         divs.push(Divergence {
@@ -299,18 +334,24 @@ fn diff_getpwnam_r_root() {
             glibc: format!("{r_lc}"),
         });
     }
-    if r_fl == 0 && !res_fl.is_null() && !res_lc.is_null() {
-        if pwd_fl.pw_uid != pwd_lc.pw_uid || pwd_fl.pw_gid != pwd_lc.pw_gid {
-            divs.push(Divergence {
-                function: "getpwnam_r",
-                case: "root".into(),
-                field: "pw_uid/gid",
-                frankenlibc: format!("uid={} gid={}", pwd_fl.pw_uid, pwd_fl.pw_gid),
-                glibc: format!("uid={} gid={}", pwd_lc.pw_uid, pwd_lc.pw_gid),
-            });
-        }
+    if r_fl == 0
+        && !res_fl.is_null()
+        && !res_lc.is_null()
+        && (pwd_fl.pw_uid != pwd_lc.pw_uid || pwd_fl.pw_gid != pwd_lc.pw_gid)
+    {
+        divs.push(Divergence {
+            function: "getpwnam_r",
+            case: "root".into(),
+            field: "pw_uid/gid",
+            frankenlibc: format!("uid={} gid={}", pwd_fl.pw_uid, pwd_fl.pw_gid),
+            glibc: format!("uid={} gid={}", pwd_lc.pw_uid, pwd_lc.pw_gid),
+        });
     }
-    assert!(divs.is_empty(), "getpwnam_r divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "getpwnam_r divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

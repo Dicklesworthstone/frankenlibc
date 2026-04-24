@@ -8,8 +8,8 @@ use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atoll, clearenv, confstr, drand48, ecvt, erand48, fcvt, gcvt,
     get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getenv, getsubopt, initstate,
     jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit,
-    qsort_r, random, reallocarray, seed48, setenv, setstate, srand48, srandom, strtold, strtoll,
-    strtoq, strtoull, strtouq, system, unsetenv,
+    qsort_r, random, reallocarray, seed48, setenv, setstate, srand48, srandom, strtod, strtof,
+    strtold, strtoll, strtoq, strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -580,6 +580,55 @@ fn strtold_sets_endptr_to_first_unparsed_byte() {
     // SAFETY: returned endptr points into the source buffer by contract.
     let offset = unsafe { endptr.offset_from(c"12.5x".as_ptr()) };
     assert_eq!(offset, 4);
+}
+
+#[test]
+fn strtod_sets_erange_for_nonzero_subnormal_only() {
+    let mut endptr = ptr::null_mut();
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let tiny = unsafe { strtod(c"1e-320".as_ptr(), &mut endptr) };
+    assert!(tiny > 0.0 && tiny < f64::MIN_POSITIVE);
+    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let exact_zero = unsafe { strtod(c"0e-400".as_ptr(), &mut endptr) };
+    assert_eq!(exact_zero, 0.0);
+    assert_eq!(
+        unsafe { *__errno_location() },
+        0,
+        "zero significands with large exponent digits are not underflow"
+    );
+}
+
+#[test]
+fn strtof_sets_float_range_erange() {
+    let mut endptr = ptr::null_mut();
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let tiny = unsafe { strtof(c"1e-45".as_ptr(), &mut endptr) };
+    assert!(tiny > 0.0 && tiny < f32::MIN_POSITIVE);
+    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let huge = unsafe { strtof(c"1e39".as_ptr(), &mut endptr) };
+    assert!(huge.is_infinite());
+    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
+
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let literal_inf = unsafe { strtof(c"inf".as_ptr(), &mut endptr) };
+    assert!(literal_inf.is_infinite());
+    assert_eq!(unsafe { *__errno_location() }, 0);
 }
 
 #[test]

@@ -17,11 +17,7 @@ use std::ffi::{c_int, c_void};
 use frankenlibc_abi::pthread_abi as fl;
 
 unsafe extern "C" {
-    fn pthread_barrier_init(
-        barrier: *mut c_void,
-        attr: *const c_void,
-        count: u32,
-    ) -> c_int;
+    fn pthread_barrier_init(barrier: *mut c_void, attr: *const c_void, count: u32) -> c_int;
     fn pthread_barrier_wait(barrier: *mut c_void) -> c_int;
     fn pthread_barrier_destroy(barrier: *mut c_void) -> c_int;
     fn pthread_spin_init(lock: *mut c_void, pshared: c_int) -> c_int;
@@ -34,7 +30,7 @@ unsafe extern "C" {
 const BARRIER_SERIAL_THREAD: c_int = -1;
 
 const BARRIER_BYTES: usize = 256; // glibc pthread_barrier_t = 32B
-const SPIN_BYTES: usize = 64;     // glibc pthread_spinlock_t = 4B
+const SPIN_BYTES: usize = 64; // glibc pthread_spinlock_t = 4B
 
 #[test]
 fn diff_pthread_barrier_init_destroy_round_trip() {
@@ -48,7 +44,10 @@ fn diff_pthread_barrier_init_destroy_round_trip() {
         unsafe { pthread_barrier_init(b_lc.as_mut_ptr() as *mut c_void, std::ptr::null(), 1) };
     let r_destroy_lc = unsafe { pthread_barrier_destroy(b_lc.as_mut_ptr() as *mut c_void) };
 
-    assert_eq!(r_init_fl, r_init_lc, "barrier_init: fl={r_init_fl}, lc={r_init_lc}");
+    assert_eq!(
+        r_init_fl, r_init_lc,
+        "barrier_init: fl={r_init_fl}, lc={r_init_lc}"
+    );
     assert_eq!(
         r_destroy_fl, r_destroy_lc,
         "barrier_destroy: fl={r_destroy_fl}, lc={r_destroy_lc}"
@@ -79,9 +78,7 @@ fn diff_pthread_barrier_wait_count_one_releases_immediately() {
     let run = |use_fl: bool| -> (c_int, c_int) {
         let mut b = vec![0u8; BARRIER_BYTES];
         let _ = if use_fl {
-            unsafe {
-                fl::pthread_barrier_init(b.as_mut_ptr() as *mut c_void, std::ptr::null(), 1)
-            }
+            unsafe { fl::pthread_barrier_init(b.as_mut_ptr() as *mut c_void, std::ptr::null(), 1) }
         } else {
             unsafe { pthread_barrier_init(b.as_mut_ptr() as *mut c_void, std::ptr::null(), 1) }
         };
@@ -97,13 +94,23 @@ fn diff_pthread_barrier_wait_count_one_releases_immediately() {
         };
         // POSIX: exactly one waiter receives PTHREAD_BARRIER_SERIAL_THREAD;
         // others get 0. Both impls should agree.
-        (r, if r == BARRIER_SERIAL_THREAD || r == 0 { 0 } else { -1 })
+        (
+            r,
+            if r == BARRIER_SERIAL_THREAD || r == 0 {
+                0
+            } else {
+                -1
+            },
+        )
     };
     let (r_fl, sane_fl) = run(true);
     let (r_lc, sane_lc) = run(false);
     assert_eq!(sane_fl, 0, "fl barrier_wait sane return: r={r_fl}");
     assert_eq!(sane_lc, 0, "lc barrier_wait sane return: r={r_lc}");
-    assert_eq!(r_fl, r_lc, "barrier_wait return divergence: fl={r_fl}, lc={r_lc}");
+    assert_eq!(
+        r_fl, r_lc,
+        "barrier_wait return divergence: fl={r_fl}, lc={r_lc}"
+    );
 }
 
 #[test]
@@ -116,7 +123,10 @@ fn diff_pthread_spin_init_destroy() {
     let r_init_lc = unsafe { pthread_spin_init(s_lc.as_mut_ptr() as *mut c_void, 0) };
     let r_destroy_lc = unsafe { pthread_spin_destroy(s_lc.as_mut_ptr() as *mut c_void) };
 
-    assert_eq!(r_init_fl, r_init_lc, "spin_init: fl={r_init_fl}, lc={r_init_lc}");
+    assert_eq!(
+        r_init_fl, r_init_lc,
+        "spin_init: fl={r_init_fl}, lc={r_init_lc}"
+    );
     assert_eq!(
         r_destroy_fl, r_destroy_lc,
         "spin_destroy: fl={r_destroy_fl}, lc={r_destroy_lc}"

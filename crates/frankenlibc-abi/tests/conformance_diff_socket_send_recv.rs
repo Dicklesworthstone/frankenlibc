@@ -52,7 +52,11 @@ fn diff_send_recv_round_trip() {
         (
             n_s,
             n_r,
-            if n_r > 0 { buf[..n_r as usize].to_vec() } else { Vec::new() },
+            if n_r > 0 {
+                buf[..n_r as usize].to_vec()
+            } else {
+                Vec::new()
+            },
         )
     };
     let (ns_a, nr_a, data_a) = run(true, false); // fl send, lc recv

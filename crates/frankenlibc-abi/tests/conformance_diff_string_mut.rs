@@ -42,7 +42,9 @@ fn cstr(bytes: &[u8]) -> Vec<u8> {
     v
 }
 
-fn sign(x: c_int) -> c_int { x.signum() }
+fn sign(x: c_int) -> c_int {
+    x.signum()
+}
 
 // ===========================================================================
 // strlen — straightforward
@@ -74,7 +76,11 @@ fn diff_strlen_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strlen divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strlen divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -91,8 +97,8 @@ const CMP_CASES: &[(&[u8], &[u8])] = &[
     (b"abc", b"abd"),
     (b"abc", b"abcd"),
     (b"abcd", b"abc"),
-    (b"\xff", b"\x01"),     // unsigned compare
-    (b"\x80", b"\x7f"),     // boundary
+    (b"\xff", b"\x01"), // unsigned compare
+    (b"\x80", b"\x7f"), // boundary
     (b"hello", b"hello"),
     (b"hello", b"world"),
 ];
@@ -103,8 +109,10 @@ fn diff_strcmp_cases() {
     for (a, b) in CMP_CASES {
         let ab = cstr(a);
         let bb = cstr(b);
-        let fl_v = unsafe { fl::strcmp(ab.as_ptr() as *const c_char, bb.as_ptr() as *const c_char) };
-        let lc_v = unsafe { libc::strcmp(ab.as_ptr() as *const c_char, bb.as_ptr() as *const c_char) };
+        let fl_v =
+            unsafe { fl::strcmp(ab.as_ptr() as *const c_char, bb.as_ptr() as *const c_char) };
+        let lc_v =
+            unsafe { libc::strcmp(ab.as_ptr() as *const c_char, bb.as_ptr() as *const c_char) };
         if sign(fl_v) != sign(lc_v) {
             divs.push(Divergence {
                 function: "strcmp",
@@ -115,7 +123,11 @@ fn diff_strcmp_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strcmp divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strcmp divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -125,8 +137,20 @@ fn diff_strncmp_cases() {
         let ab = cstr(a);
         let bb = cstr(b);
         for &n in &[0usize, 1, 3, 100] {
-            let fl_v = unsafe { fl::strncmp(ab.as_ptr() as *const c_char, bb.as_ptr() as *const c_char, n) };
-            let lc_v = unsafe { libc::strncmp(ab.as_ptr() as *const c_char, bb.as_ptr() as *const c_char, n) };
+            let fl_v = unsafe {
+                fl::strncmp(
+                    ab.as_ptr() as *const c_char,
+                    bb.as_ptr() as *const c_char,
+                    n,
+                )
+            };
+            let lc_v = unsafe {
+                libc::strncmp(
+                    ab.as_ptr() as *const c_char,
+                    bb.as_ptr() as *const c_char,
+                    n,
+                )
+            };
             if sign(fl_v) != sign(lc_v) {
                 divs.push(Divergence {
                     function: "strncmp",
@@ -138,7 +162,11 @@ fn diff_strncmp_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "strncmp divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strncmp divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -154,10 +182,16 @@ fn diff_strcpy_cases() {
         let mut dst_fl = vec![0xCDu8; 64];
         let mut dst_lc = vec![0xCDu8; 64];
         let _ = unsafe {
-            fl::strcpy(dst_fl.as_mut_ptr() as *mut c_char, sb.as_ptr() as *const c_char)
+            fl::strcpy(
+                dst_fl.as_mut_ptr() as *mut c_char,
+                sb.as_ptr() as *const c_char,
+            )
         };
         let _ = unsafe {
-            libc::strcpy(dst_lc.as_mut_ptr() as *mut c_char, sb.as_ptr() as *const c_char)
+            libc::strcpy(
+                dst_lc.as_mut_ptr() as *mut c_char,
+                sb.as_ptr() as *const c_char,
+            )
         };
         if dst_fl != dst_lc {
             divs.push(Divergence {
@@ -170,7 +204,11 @@ fn diff_strcpy_cases() {
         }
         let _ = sb;
     }
-    assert!(divs.is_empty(), "strcpy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strcpy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -182,10 +220,18 @@ fn diff_strncpy_cases() {
             let mut dst_fl = vec![0xCDu8; 32];
             let mut dst_lc = vec![0xCDu8; 32];
             let _ = unsafe {
-                fl::strncpy(dst_fl.as_mut_ptr() as *mut c_char, sb.as_ptr() as *const c_char, n)
+                fl::strncpy(
+                    dst_fl.as_mut_ptr() as *mut c_char,
+                    sb.as_ptr() as *const c_char,
+                    n,
+                )
             };
             let _ = unsafe {
-                libc::strncpy(dst_lc.as_mut_ptr() as *mut c_char, sb.as_ptr() as *const c_char, n)
+                libc::strncpy(
+                    dst_lc.as_mut_ptr() as *mut c_char,
+                    sb.as_ptr() as *const c_char,
+                    n,
+                )
             };
             if dst_fl != dst_lc {
                 divs.push(Divergence {
@@ -198,7 +244,11 @@ fn diff_strncpy_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "strncpy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strncpy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -223,10 +273,16 @@ fn diff_strcat_cases() {
         buf_lc[..a.len()].copy_from_slice(a);
         let bb = cstr(b);
         let _ = unsafe {
-            fl::strcat(buf_fl.as_mut_ptr() as *mut c_char, bb.as_ptr() as *const c_char)
+            fl::strcat(
+                buf_fl.as_mut_ptr() as *mut c_char,
+                bb.as_ptr() as *const c_char,
+            )
         };
         let _ = unsafe {
-            libc::strcat(buf_lc.as_mut_ptr() as *mut c_char, bb.as_ptr() as *const c_char)
+            libc::strcat(
+                buf_lc.as_mut_ptr() as *mut c_char,
+                bb.as_ptr() as *const c_char,
+            )
         };
         if buf_fl != buf_lc {
             divs.push(Divergence {
@@ -238,17 +294,17 @@ fn diff_strcat_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strcat divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strcat divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_strncat_cases() {
     let mut divs = Vec::new();
-    let pairs: &[(&[u8], &[u8])] = &[
-        (b"abc", b"def"),
-        (b"abc", b"defghi"),
-        (b"", b"def"),
-    ];
+    let pairs: &[(&[u8], &[u8])] = &[(b"abc", b"def"), (b"abc", b"defghi"), (b"", b"def")];
     for (a, b) in pairs {
         for &n in &[0usize, 1, 3, 5, 100] {
             let mut buf_fl = vec![0u8; 64];
@@ -281,7 +337,11 @@ fn diff_strncat_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "strncat divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strncat divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -323,7 +383,11 @@ fn diff_strdup_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "strdup divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strdup divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -363,7 +427,11 @@ fn diff_strndup_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "strndup divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strndup divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -401,7 +469,11 @@ fn diff_memcpy_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "memcpy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "memcpy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -444,7 +516,11 @@ fn diff_memmove_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "memmove divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "memmove divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -467,7 +543,11 @@ fn diff_memset_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "memset divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "memset divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -477,7 +557,15 @@ fn diff_memset_cases() {
 #[test]
 fn diff_strerror_cases() {
     let mut divs = Vec::new();
-    let codes: &[c_int] = &[0, libc::EINVAL, libc::ENOENT, libc::EACCES, libc::EAGAIN, libc::EIO, 99999];
+    let codes: &[c_int] = &[
+        0,
+        libc::EINVAL,
+        libc::ENOENT,
+        libc::EACCES,
+        libc::EAGAIN,
+        libc::EIO,
+        99999,
+    ];
     for &code in codes {
         let p_fl = unsafe { fl::strerror(code) };
         let p_lc = unsafe { libc::strerror(code) };
@@ -507,7 +595,11 @@ fn diff_strerror_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strerror divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strerror divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -522,9 +614,7 @@ fn diff_strerror_r_cases() {
         unsafe extern "C" {
             fn __xpg_strerror_r(errnum: c_int, buf: *mut c_char, buflen: usize) -> c_int;
         }
-        let r_fl = unsafe {
-            fl_stdlib::__xpg_strerror_r(code, buf_fl.as_mut_ptr(), buf_fl.len())
-        };
+        let r_fl = unsafe { fl_stdlib::__xpg_strerror_r(code, buf_fl.as_mut_ptr(), buf_fl.len()) };
         let r_lc = unsafe { __xpg_strerror_r(code, buf_lc.as_mut_ptr(), buf_lc.len()) };
         if r_fl != r_lc {
             divs.push(Divergence {
@@ -536,7 +626,11 @@ fn diff_strerror_r_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strerror_r divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strerror_r divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -570,11 +664,11 @@ fn diff_strtok_r_cases() {
     let mut divs = Vec::new();
     let cases: &[(&[u8], &[u8])] = &[
         (b"a,b,c", b","),
-        (b",,a,,b,,", b","),                   // adjacent + trailing delims
+        (b",,a,,b,,", b","), // adjacent + trailing delims
         (b"hello world how are you", b" "),
-        (b"x", b","),                          // no delims
-        (b"", b","),                            // empty source
-        (b"a-b_c d", b"-_ "),                   // multi-char delim set
+        (b"x", b","),         // no delims
+        (b"", b","),          // empty source
+        (b"a-b_c d", b"-_ "), // multi-char delim set
     ];
     for (src, delim) in cases {
         let fl_toks = tokenize_with(fl::strtok_r, src, delim);
@@ -589,7 +683,11 @@ fn diff_strtok_r_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "strtok_r divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strtok_r divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================

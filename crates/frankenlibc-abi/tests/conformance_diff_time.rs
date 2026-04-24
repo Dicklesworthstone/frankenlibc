@@ -65,9 +65,17 @@ fn with_utc<R>(f: impl FnOnce() -> R) -> R {
 
 fn empty_tm() -> libc::tm {
     libc::tm {
-        tm_sec: 0, tm_min: 0, tm_hour: 0, tm_mday: 0, tm_mon: 0,
-        tm_year: 0, tm_wday: 0, tm_yday: 0, tm_isdst: 0,
-        tm_gmtoff: 0, tm_zone: std::ptr::null(),
+        tm_sec: 0,
+        tm_min: 0,
+        tm_hour: 0,
+        tm_mday: 0,
+        tm_mon: 0,
+        tm_year: 0,
+        tm_wday: 0,
+        tm_yday: 0,
+        tm_isdst: 0,
+        tm_gmtoff: 0,
+        tm_zone: std::ptr::null(),
     }
 }
 
@@ -86,8 +94,15 @@ fn tm_eq(a: &libc::tm, b: &libc::tm) -> bool {
 fn tm_render(t: &libc::tm) -> String {
     format!(
         "{{y={}, mo={}, d={}, h={}, mi={}, s={}, wd={}, yd={}, dst={}}}",
-        t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec,
-        t.tm_wday, t.tm_yday, t.tm_isdst,
+        t.tm_year,
+        t.tm_mon,
+        t.tm_mday,
+        t.tm_hour,
+        t.tm_min,
+        t.tm_sec,
+        t.tm_wday,
+        t.tm_yday,
+        t.tm_isdst,
     )
 }
 
@@ -96,17 +111,17 @@ fn tm_render(t: &libc::tm) -> String {
 // ===========================================================================
 
 const GMTIME_EPOCHS: &[i64] = &[
-    0,                          // 1970-01-01 00:00:00 UTC
-    1,                          // 1970-01-01 00:00:01 UTC
-    86400,                      // 1970-01-02 00:00:00 UTC
-    -1,                         // 1969-12-31 23:59:59 UTC
-    -86400,                     // 1969-12-31 00:00:00 UTC
-    951782400,                  // 2000-02-29 00:00:00 UTC (leap year)
-    1234567890,                 // 2009-02-13 23:31:30 UTC
-    1577836800,                 // 2020-01-01 00:00:00 UTC (leap year)
-    1893456000,                 // 2030-01-01 00:00:00 UTC
-    -2208988800,                // 1900-01-01 00:00:00 UTC (NOT a leap year)
-    253402300799,               // 9999-12-31 23:59:59 UTC
+    0,            // 1970-01-01 00:00:00 UTC
+    1,            // 1970-01-01 00:00:01 UTC
+    86400,        // 1970-01-02 00:00:00 UTC
+    -1,           // 1969-12-31 23:59:59 UTC
+    -86400,       // 1969-12-31 00:00:00 UTC
+    951782400,    // 2000-02-29 00:00:00 UTC (leap year)
+    1234567890,   // 2009-02-13 23:31:30 UTC
+    1577836800,   // 2020-01-01 00:00:00 UTC (leap year)
+    1893456000,   // 2030-01-01 00:00:00 UTC
+    -2208988800,  // 1900-01-01 00:00:00 UTC (NOT a leap year)
+    253402300799, // 9999-12-31 23:59:59 UTC
 ];
 
 #[test]
@@ -140,7 +155,11 @@ fn diff_gmtime_r_cases() {
             }
         }
     });
-    assert!(divs.is_empty(), "gmtime_r divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "gmtime_r divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -173,7 +192,11 @@ fn diff_timegm_cases() {
             }
         }
     });
-    assert!(divs.is_empty(), "timegm divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "timegm divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -204,7 +227,11 @@ fn diff_mktime_cases_under_utc() {
             }
         }
     });
-    assert!(divs.is_empty(), "mktime divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "mktime divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -236,7 +263,11 @@ fn diff_difftime_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "difftime divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "difftime divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -245,21 +276,21 @@ fn diff_difftime_cases() {
 // ===========================================================================
 
 const STRFTIME_FORMATS: &[&[u8]] = &[
-    b"%Y-%m-%d",                 // ISO date
-    b"%H:%M:%S",                 // 24-hour time
-    b"%Y-%m-%dT%H:%M:%S",        // ISO 8601
-    b"%a",                       // abbreviated weekday
-    b"%A",                       // full weekday
-    b"%b",                       // abbreviated month
-    b"%B",                       // full month
-    b"%j",                       // day of year
-    b"%w",                       // weekday number
-    b"%U",                       // week of year (Sunday-start)
-    b"%W",                       // week of year (Monday-start)
-    b"%p",                       // AM/PM
-    b"%I:%M %p",                 // 12-hour clock
-    b"%%",                       // literal percent
-    b"static text only",         // no conversions
+    b"%Y-%m-%d",          // ISO date
+    b"%H:%M:%S",          // 24-hour time
+    b"%Y-%m-%dT%H:%M:%S", // ISO 8601
+    b"%a",                // abbreviated weekday
+    b"%A",                // full weekday
+    b"%b",                // abbreviated month
+    b"%B",                // full month
+    b"%j",                // day of year
+    b"%w",                // weekday number
+    b"%U",                // week of year (Sunday-start)
+    b"%W",                // week of year (Monday-start)
+    b"%p",                // AM/PM
+    b"%I:%M %p",          // 12-hour clock
+    b"%%",                // literal percent
+    b"static text only",  // no conversions
 ];
 
 #[test]
@@ -316,7 +347,11 @@ fn diff_strftime_cases() {
             }
         }
     });
-    assert!(divs.is_empty(), "strftime divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strftime divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -327,7 +362,7 @@ fn diff_strftime_cases() {
 fn time_diff_coverage_report() {
     let total = GMTIME_EPOCHS.len() * 3                            // gmtime_r + timegm + mktime
         + 7                                                          // difftime cases
-        + GMTIME_EPOCHS.len() * STRFTIME_FORMATS.len();              // strftime
+        + GMTIME_EPOCHS.len() * STRFTIME_FORMATS.len(); // strftime
     eprintln!(
         "{{\"family\":\"time.h\",\"reference\":\"glibc\",\"functions\":5,\"total_diff_calls\":{},\"divergences\":0}}",
         total,

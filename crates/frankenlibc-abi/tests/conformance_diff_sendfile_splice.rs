@@ -17,12 +17,7 @@ use std::os::fd::AsRawFd;
 use frankenlibc_abi::io_abi as fl;
 
 unsafe extern "C" {
-    fn sendfile(
-        out_fd: c_int,
-        in_fd: c_int,
-        offset: *mut libc::off_t,
-        count: usize,
-    ) -> isize;
+    fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut libc::off_t, count: usize) -> isize;
     fn copy_file_range(
         fd_in: c_int,
         off_in: *mut libc::off64_t,
@@ -97,24 +92,37 @@ fn diff_sendfile_file_to_socket() {
         };
         // Read what got through to b
         let mut buf = vec![0u8; payload.len()];
-        let m = unsafe {
-            libc::read(b, buf.as_mut_ptr() as *mut c_void, buf.len())
-        };
+        let m = unsafe { libc::read(b, buf.as_mut_ptr() as *mut c_void, buf.len()) };
         unsafe {
             libc::close(a);
             libc::close(b);
         }
         drop(f);
         let _ = std::fs::remove_file(&p);
-        (n, off, if m > 0 { buf[..m as usize].to_vec() } else { Vec::new() })
+        (
+            n,
+            off,
+            if m > 0 {
+                buf[..m as usize].to_vec()
+            } else {
+                Vec::new()
+            },
+        )
     };
     let (n_fl, off_fl, data_fl) = run(true);
     let (n_lc, off_lc, data_lc) = run(false);
     assert_eq!(n_fl, n_lc, "sendfile bytes-sent: fl={n_fl}, lc={n_lc}");
-    assert_eq!(off_fl, off_lc, "sendfile post-offset: fl={off_fl}, lc={off_lc}");
+    assert_eq!(
+        off_fl, off_lc,
+        "sendfile post-offset: fl={off_fl}, lc={off_lc}"
+    );
     assert_eq!(data_fl, data_lc, "sendfile transferred bytes diff");
     assert_eq!(data_fl, payload.to_vec(), "sendfile expected payload");
-    assert_eq!(off_fl as usize, payload.len(), "offset advanced by payload size");
+    assert_eq!(
+        off_fl as usize,
+        payload.len(),
+        "offset advanced by payload size"
+    );
 }
 
 #[test]
@@ -190,10 +198,20 @@ fn diff_copy_file_range_basic() {
     let (n_fl, oi_fl, oo_fl, data_fl) = run(true);
     let (n_lc, oi_lc, oo_lc, data_lc) = run(false);
     assert_eq!(n_fl, n_lc, "copy_file_range n: fl={n_fl}, lc={n_lc}");
-    assert_eq!(oi_fl, oi_lc, "copy_file_range off_in: fl={oi_fl}, lc={oi_lc}");
-    assert_eq!(oo_fl, oo_lc, "copy_file_range off_out: fl={oo_fl}, lc={oo_lc}");
+    assert_eq!(
+        oi_fl, oi_lc,
+        "copy_file_range off_in: fl={oi_fl}, lc={oi_lc}"
+    );
+    assert_eq!(
+        oo_fl, oo_lc,
+        "copy_file_range off_out: fl={oo_fl}, lc={oo_lc}"
+    );
     assert_eq!(data_fl, data_lc, "copy_file_range data divergence");
-    assert_eq!(data_fl, payload.to_vec(), "copy_file_range expected payload");
+    assert_eq!(
+        data_fl,
+        payload.to_vec(),
+        "copy_file_range expected payload"
+    );
 }
 
 #[test]
@@ -235,7 +253,14 @@ fn diff_splice_pipe_to_socket() {
             libc::close(a);
             libc::close(b);
         }
-        (n, if m > 0 { buf[..m as usize].to_vec() } else { Vec::new() })
+        (
+            n,
+            if m > 0 {
+                buf[..m as usize].to_vec()
+            } else {
+                Vec::new()
+            },
+        )
     };
     let (n_fl, data_fl) = run(true);
     let (n_lc, data_lc) = run(false);
@@ -269,8 +294,16 @@ fn diff_tee_pipe_to_pipe() {
         }
         (
             n,
-            if m1 > 0 { buf1[..m1 as usize].to_vec() } else { Vec::new() },
-            if m2 > 0 { buf2[..m2 as usize].to_vec() } else { Vec::new() },
+            if m1 > 0 {
+                buf1[..m1 as usize].to_vec()
+            } else {
+                Vec::new()
+            },
+            if m2 > 0 {
+                buf2[..m2 as usize].to_vec()
+            } else {
+                Vec::new()
+            },
         )
     };
     let (n_fl, src_fl, dst_fl) = run(true);
@@ -278,8 +311,16 @@ fn diff_tee_pipe_to_pipe() {
     assert_eq!(n_fl, n_lc, "tee n: fl={n_fl}, lc={n_lc}");
     assert_eq!(src_fl, src_lc, "tee source-side divergence");
     assert_eq!(dst_fl, dst_lc, "tee destination-side divergence");
-    assert_eq!(src_fl, payload.to_vec(), "source pipe should still have payload");
-    assert_eq!(dst_fl, payload.to_vec(), "destination pipe should also have payload");
+    assert_eq!(
+        src_fl,
+        payload.to_vec(),
+        "source pipe should still have payload"
+    );
+    assert_eq!(
+        dst_fl,
+        payload.to_vec(),
+        "destination pipe should also have payload"
+    );
 }
 
 #[test]
