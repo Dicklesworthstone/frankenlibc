@@ -9,10 +9,10 @@
 //! This module provides deterministic error semantics (`E2BIG`, `EILSEQ`, `EINVAL`)
 //! and tracks descriptor validity to avoid invalid/double-close behavior.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::slice;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::iconv::{self, IconvDescriptor};
@@ -31,30 +31,40 @@ fn iconv_error_return() -> usize {
     ICONV_ERROR_VALUE
 }
 
-static ICONV_HANDLES: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+type IconvHandle = Arc<Mutex<IconvDescriptor>>;
 
-fn handles() -> &'static Mutex<HashSet<usize>> {
-    ICONV_HANDLES.get_or_init(|| Mutex::new(HashSet::new()))
+static ICONV_HANDLES: OnceLock<Mutex<HashMap<usize, IconvHandle>>> = OnceLock::new();
+
+fn handles() -> &'static Mutex<HashMap<usize, IconvHandle>> {
+    ICONV_HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn register_handle(ptr: *mut c_void) {
-    if let Ok(mut set) = handles().lock() {
-        set.insert(ptr as usize);
-    }
-}
-
-fn unregister_handle(ptr: *mut c_void) -> bool {
+fn lock_handles() -> MutexGuard<'static, HashMap<usize, IconvHandle>> {
     handles()
         .lock()
-        .map(|mut set| set.remove(&(ptr as usize)))
-        .unwrap_or(false)
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
-fn is_known_handle(ptr: *mut c_void) -> bool {
-    handles()
-        .lock()
-        .map(|set| set.contains(&(ptr as usize)))
-        .unwrap_or(false)
+fn lock_descriptor(handle: &IconvHandle) -> MutexGuard<'_, IconvDescriptor> {
+    handle.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
+fn register_handle(descriptor: IconvDescriptor) -> *mut c_void {
+    let handle = Arc::new(Mutex::new(descriptor));
+    let raw = Arc::into_raw(Arc::clone(&handle)) as *mut c_void;
+    lock_handles().insert(raw as usize, handle);
+    raw
+}
+
+fn lookup_handle(ptr: *mut c_void) -> Option<IconvHandle> {
+    lock_handles().get(&(ptr as usize)).cloned()
+}
+
+unsafe fn release_raw_handle(ptr: *mut c_void) {
+    // SAFETY: callers only release raw handles after removing a matching entry
+    // from the registry, which proves the raw Arc strong reference is live and
+    // has not been consumed by a prior close.
+    unsafe { drop(Arc::from_raw(ptr.cast::<Mutex<IconvDescriptor>>())) };
 }
 
 unsafe fn apply_progress(
@@ -120,8 +130,7 @@ pub unsafe extern "C" fn iconv_open(tocode: *const c_char, fromcode: *const c_ch
 
     match iconv::iconv_open_detailed(to, from) {
         Ok((desc, _dispatch)) => {
-            let raw = Box::into_raw(Box::new(desc)).cast::<c_void>();
-            register_handle(raw);
+            let raw = register_handle(desc);
             runtime_policy::observe(ApiFamily::Locale, decision.profile, 12, false);
             raw
         }
@@ -173,7 +182,7 @@ pub unsafe extern "C" fn iconv(
         return iconv_error_return();
     }
 
-    if cd.is_null() || cd == iconv_error_handle() || !is_known_handle(cd) {
+    if cd.is_null() || cd == iconv_error_handle() {
         // SAFETY: sets thread-local errno.
         unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(
@@ -185,7 +194,17 @@ pub unsafe extern "C" fn iconv(
         return iconv_error_return();
     }
 
-    let descriptor = unsafe { &mut *cd.cast::<IconvDescriptor>() };
+    let Some(handle) = lookup_handle(cd) else {
+        // SAFETY: sets thread-local errno.
+        unsafe { set_abi_errno(errno::EBADF) };
+        runtime_policy::observe(
+            ApiFamily::Locale,
+            decision.profile,
+            runtime_policy::scaled_cost(8, requested),
+            true,
+        );
+        return iconv_error_return();
+    };
 
     if !inbuf.is_null() {
         // SAFETY: guarded by the null check above.
@@ -279,7 +298,8 @@ pub unsafe extern "C" fn iconv(
         }
     };
 
-    match iconv::iconv(descriptor, input_opt, output) {
+    let mut descriptor = lock_descriptor(&handle);
+    match iconv::iconv(&mut descriptor, input_opt, output) {
         Ok(result) => {
             // SAFETY: progress fields are validated by core conversion logic.
             unsafe {
@@ -339,16 +359,42 @@ pub unsafe extern "C" fn iconv_close(cd: *mut c_void) -> c_int {
         return -1;
     }
 
-    if cd.is_null() || cd == iconv_error_handle() || !unregister_handle(cd) {
+    if cd.is_null() || cd == iconv_error_handle() {
         // SAFETY: sets thread-local errno.
         unsafe { set_abi_errno(errno::EBADF) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
         return -1;
     }
 
-    // SAFETY: registry removal above guarantees unique ownership for this descriptor.
-    let boxed = unsafe { Box::from_raw(cd.cast::<IconvDescriptor>()) };
-    let rc = iconv::iconv_close(*boxed);
+    let handle = {
+        let mut handles_guard = lock_handles();
+        match handles_guard.remove(&(cd as usize)) {
+            Some(handle) => handle,
+            None => {
+                // SAFETY: sets thread-local errno.
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
+                return -1;
+            }
+        }
+    };
+
+    // SAFETY: registry removal above proves the raw Arc strong reference is
+    // still live and has not been consumed by an earlier close.
+    unsafe { release_raw_handle(cd) };
+
+    let rc = match Arc::try_unwrap(handle) {
+        Ok(descriptor) => {
+            let descriptor = descriptor
+                .into_inner()
+                .unwrap_or_else(|poison| poison.into_inner());
+            iconv::iconv_close(descriptor)
+        }
+        Err(active_handle) => {
+            drop(active_handle);
+            0
+        }
+    };
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, rc != 0);
     rc
 }

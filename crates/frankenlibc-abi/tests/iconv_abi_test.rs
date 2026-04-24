@@ -7,6 +7,9 @@
 
 use std::ffi::{c_char, c_void};
 use std::ptr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use std::thread;
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::iconv_abi::{iconv, iconv_close, iconv_open};
@@ -410,6 +413,83 @@ fn iconv_close_double_close_returns_error() {
         let rc = iconv_close(cd);
         assert_eq!(rc, -1, "double close should return -1");
     }
+}
+
+#[test]
+fn iconv_close_waits_out_concurrent_conversion() {
+    let cd = unsafe { iconv_open(c_str(b"UTF-16LE\0"), c_str(b"UTF-8\0")) };
+    assert_ne!(cd, iconv_error_handle());
+
+    let cd_addr = cd as usize;
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let successful_conversions = Arc::new(AtomicUsize::new(0));
+    let saw_ebadf = Arc::new(AtomicBool::new(false));
+    let unexpected_errno = Arc::new(AtomicI32::new(0));
+
+    let worker_attempts = Arc::clone(&attempts);
+    let worker_successful_conversions = Arc::clone(&successful_conversions);
+    let worker_saw_ebadf = Arc::clone(&saw_ebadf);
+    let worker_unexpected_errno = Arc::clone(&unexpected_errno);
+    let worker = thread::spawn(move || {
+        for _ in 0..10_000 {
+            worker_attempts.fetch_add(1, Ordering::SeqCst);
+
+            let mut input = b"race".to_vec();
+            let mut in_ptr = input.as_mut_ptr().cast::<c_char>();
+            let mut in_left = input.len();
+            let mut output = [0_u8; 16];
+            let mut out_ptr = output.as_mut_ptr().cast::<c_char>();
+            let mut out_left = output.len();
+
+            let rc = unsafe {
+                iconv(
+                    cd_addr as *mut c_void,
+                    &mut in_ptr,
+                    &mut in_left,
+                    &mut out_ptr,
+                    &mut out_left,
+                )
+            };
+            if rc == ICONV_ERROR {
+                let err = unsafe { *__errno_location() };
+                if err == libc::EBADF {
+                    worker_saw_ebadf.store(true, Ordering::SeqCst);
+                    break;
+                }
+                worker_unexpected_errno.store(err, Ordering::SeqCst);
+                break;
+            }
+
+            worker_successful_conversions.fetch_add(1, Ordering::SeqCst);
+            thread::yield_now();
+        }
+    });
+
+    while successful_conversions.load(Ordering::SeqCst) == 0
+        && attempts.load(Ordering::SeqCst) < 10_000
+    {
+        thread::yield_now();
+    }
+    assert!(
+        successful_conversions.load(Ordering::SeqCst) > 0,
+        "worker should complete at least one conversion before close"
+    );
+
+    assert_eq!(unsafe { iconv_close(cd) }, 0);
+    assert!(
+        worker.join().is_ok(),
+        "concurrent iconv worker should not panic"
+    );
+    assert_eq!(
+        unexpected_errno.load(Ordering::SeqCst),
+        0,
+        "worker should not observe an unexpected iconv errno"
+    );
+
+    assert!(
+        saw_ebadf.load(Ordering::SeqCst),
+        "worker should observe EBADF instead of dereferencing a closed descriptor"
+    );
 }
 
 // ---------------------------------------------------------------------------
