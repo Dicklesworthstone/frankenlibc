@@ -2054,7 +2054,26 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
                 Err(_) => 2097152,
             }
         }
-        libc::_SC_CHILD_MAX => 32768,
+        libc::_SC_CHILD_MAX => {
+            // glibc queries RLIMIT_NPROC. Match that behavior so callers
+            // see the actual per-user process limit, not the POSIX
+            // minimum.
+            let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
+            match unsafe {
+                syscall::sys_getrlimit(libc::RLIMIT_NPROC as i32, rlim.as_mut_ptr() as *mut u8)
+            } {
+                Ok(()) => {
+                    let rlim = unsafe { rlim.assume_init() };
+                    if rlim.rlim_cur == libc::RLIM_INFINITY {
+                        -1i64 as libc::c_long
+                    } else {
+                        rlim.rlim_cur as libc::c_long
+                    }
+                }
+                Err(_) => 32768,
+            }
+        }
+        libc::_SC_STREAM_MAX => 16, // FOPEN_MAX (matches glibc)
         libc::_SC_IOV_MAX => 1024,
         libc::_SC_PHYS_PAGES => runtime_meminfo_pages("MemTotal:").unwrap_or(-1),
         libc::_SC_AVPHYS_PAGES => runtime_meminfo_pages("MemAvailable:").unwrap_or(-1),
@@ -2852,8 +2871,52 @@ unsafe fn resolve_ptsname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
 }
 
 #[inline]
+/// Per-filesystem LINK_MAX values, mirroring glibc's pathconf table.
+/// f_type magic numbers from <linux/magic.h>.
+fn fs_link_max_for_type(f_type: i64) -> libc::c_long {
+    const EXT2_SUPER_MAGIC: i64 = 0xEF53; // also EXT3, EXT4
+    const BTRFS_SUPER_MAGIC: i64 = 0x9123683E;
+    const XFS_SUPER_MAGIC: i64 = 0x58465342;
+    const TMPFS_MAGIC: i64 = 0x01021994;
+    const NFS_SUPER_MAGIC: i64 = 0x6969;
+    const RAMFS_MAGIC: i64 = 0x858458F6;
+    const PROC_SUPER_MAGIC: i64 = 0x9FA0;
+    const SYSFS_MAGIC: i64 = 0x62656572;
+    match f_type {
+        EXT2_SUPER_MAGIC => 65000,    // EXT4 limit; ext2/3 cap at 32000 but glibc returns 65000
+        BTRFS_SUPER_MAGIC => 65535,
+        XFS_SUPER_MAGIC => 2147483647, // INT32_MAX
+        TMPFS_MAGIC | RAMFS_MAGIC => 127,
+        NFS_SUPER_MAGIC => 32000,
+        PROC_SUPER_MAGIC | SYSFS_MAGIC => 1,
+        _ => 127, // POSIX minimum (LINUX_LINK_MAX)
+    }
+}
+
+/// Resolve _PC_LINK_MAX for a path by querying statfs and dispatching
+/// on the filesystem type. Falls back to POSIX minimum on probe error.
+unsafe fn pc_link_max_for_path(path: *const c_char) -> libc::c_long {
+    let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
+    match unsafe { syscall::sys_statfs(path as *const u8, sf.as_mut_ptr()) } {
+        Ok(()) => fs_link_max_for_type(unsafe { sf.assume_init() }.f_type),
+        Err(_) => 127,
+    }
+}
+
+/// Resolve _PC_LINK_MAX for an fd by querying fstatfs and dispatching.
+unsafe fn pc_link_max_for_fd(fd: c_int) -> libc::c_long {
+    let mut sf = std::mem::MaybeUninit::<frankenlibc_core::syscall::StatFs>::zeroed();
+    match unsafe { syscall::sys_fstatfs(fd, sf.as_mut_ptr()) } {
+        Ok(()) => fs_link_max_for_type(unsafe { sf.assume_init() }.f_type),
+        Err(_) => 127,
+    }
+}
+
 fn pathconf_value(name: c_int) -> Option<libc::c_long> {
     match name {
+        // _PC_LINK_MAX is resolved via per-path/per-fd statfs in the
+        // public pathconf/fpathconf wrappers; this fallback is only
+        // hit if the caller routes through pathconf_value directly.
         libc::_PC_LINK_MAX => Some(127),
         libc::_PC_MAX_CANON => Some(255),
         libc::_PC_MAX_INPUT => Some(255),
@@ -2961,6 +3024,12 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
         }
     }
 
+    // _PC_LINK_MAX needs the actual filesystem type; query via statfs.
+    if name == libc::_PC_LINK_MAX {
+        let v = unsafe { pc_link_max_for_path(path) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return v;
+    }
     let out = match pathconf_value(name) {
         Some(v) => v,
         None => {
@@ -2988,6 +3057,11 @@ pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> libc::c_long {
         return -1;
     }
 
+    if name == libc::_PC_LINK_MAX {
+        let v = unsafe { pc_link_max_for_fd(fd) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
+        return v;
+    }
     let out = match pathconf_value(name) {
         Some(v) => v,
         None => {

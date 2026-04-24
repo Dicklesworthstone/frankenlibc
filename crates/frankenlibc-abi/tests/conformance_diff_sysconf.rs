@@ -69,10 +69,8 @@ fn render_divs(divs: &[Divergence]) -> String {
 #[test]
 fn diff_sysconf_common_values() {
     let mut divs = Vec::new();
-    // _SC_CHILD_MAX and _SC_STREAM_MAX excluded — known DISC-SYSCONF-001:
-    // fl returns POSIX minimum (32768 for CHILD_MAX) or -1 (STREAM_MAX);
-    // glibc queries the live rlimit (883226 typical for CHILD_MAX). Both
-    // are POSIX-acceptable but the divergence is informational.
+    // bd-cnf2 (DISC-SYSCONF-001) closed: _SC_CHILD_MAX now queries
+    // RLIMIT_NPROC and _SC_STREAM_MAX returns FOPEN_MAX, matching glibc.
     let names: &[(&str, c_int)] = &[
         ("_SC_PAGESIZE", _SC_PAGESIZE),
         ("_SC_NPROCESSORS_ONLN", _SC_NPROCESSORS_ONLN),
@@ -84,6 +82,8 @@ fn diff_sysconf_common_values() {
         ("_SC_LINE_MAX", _SC_LINE_MAX),
         ("_SC_NGROUPS_MAX", _SC_NGROUPS_MAX),
         ("_SC_ARG_MAX", _SC_ARG_MAX),
+        ("_SC_CHILD_MAX", _SC_CHILD_MAX),
+        ("_SC_STREAM_MAX", _SC_STREAM_MAX),
         ("_SC_TZNAME_MAX", _SC_TZNAME_MAX),
         ("_SC_PHYS_PAGES", _SC_PHYS_PAGES),
     ];
@@ -123,9 +123,10 @@ fn diff_sysconf_invalid_name() {
 fn diff_pathconf_root() {
     let mut divs = Vec::new();
     let cpath = CString::new("/").unwrap();
-    // _PC_LINK_MAX excluded — DISC-SYSCONF-002: fl returns POSIX min
-    // (127), glibc queries actual filesystem (e.g. 65000 on ext4).
+    // bd-cnf2 (DISC-SYSCONF-002) closed: _PC_LINK_MAX now resolves via
+    // statfs() and dispatches on filesystem magic, matching glibc.
     let names: &[(&str, c_int)] = &[
+        ("_PC_LINK_MAX", _PC_LINK_MAX),
         ("_PC_NAME_MAX", _PC_NAME_MAX),
         ("_PC_PATH_MAX", _PC_PATH_MAX),
     ];
@@ -208,21 +209,29 @@ fn diff_confstr_libc_version() {
     let _unused = _CS_GNU_LIBPTHREAD_VERSION;
 }
 
-// DISC-SYSCONF-001 + DISC-SYSCONF-002: documented divergences
+// bd-cnf2 (DISC-SYSCONF-001 + DISC-SYSCONF-002) closed; this test
+// retains as a regression check that the runtime-query path stays
+// in sync with glibc.
 #[test]
-fn diff_sysconf_runtime_limits_documented() {
+fn diff_sysconf_runtime_limits_match() {
     let v_fl_child = unsafe { fl_uni::sysconf(_SC_CHILD_MAX) };
     let v_lc_child = unsafe { sysconf(_SC_CHILD_MAX) };
+    assert_eq!(
+        v_fl_child, v_lc_child,
+        "_SC_CHILD_MAX divergence after bd-cnf2 fix: fl={v_fl_child}, lc={v_lc_child}"
+    );
     let v_fl_stream = unsafe { fl_uni::sysconf(_SC_STREAM_MAX) };
     let v_lc_stream = unsafe { sysconf(_SC_STREAM_MAX) };
+    assert_eq!(
+        v_fl_stream, v_lc_stream,
+        "_SC_STREAM_MAX divergence after bd-cnf2 fix: fl={v_fl_stream}, lc={v_lc_stream}"
+    );
     let cpath = CString::new("/").unwrap();
     let v_fl_link = unsafe { fl_uni::pathconf(cpath.as_ptr(), _PC_LINK_MAX) };
     let v_lc_link = unsafe { pathconf(cpath.as_ptr(), _PC_LINK_MAX) };
-    eprintln!(
-        "{{\"family\":\"sysconf\",\"divergence\":\"DISC-SYSCONF-001\",\"_SC_CHILD_MAX\":{{\"fl\":{v_fl_child},\"glibc\":{v_lc_child}}},\"_SC_STREAM_MAX\":{{\"fl\":{v_fl_stream},\"glibc\":{v_lc_stream}}}}}"
-    );
-    eprintln!(
-        "{{\"family\":\"sysconf\",\"divergence\":\"DISC-SYSCONF-002\",\"_PC_LINK_MAX(/)\":{{\"fl\":{v_fl_link},\"glibc\":{v_lc_link}}}}}"
+    assert_eq!(
+        v_fl_link, v_lc_link,
+        "_PC_LINK_MAX(/) divergence after bd-cnf2 fix: fl={v_fl_link}, lc={v_lc_link}"
     );
 }
 
