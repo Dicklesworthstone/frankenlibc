@@ -250,4 +250,9 @@ name = "fuzz_statx"
 path = "fuzz_targets/fuzz_statx.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_ioctl"
+path = "fuzz_targets/fuzz_ioctl.rs"
+doc = false
+
 [workspace]
