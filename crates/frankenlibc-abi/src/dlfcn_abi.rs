@@ -242,12 +242,18 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
             crate::malloc_abi::known_remaining(filename as usize),
         )
     };
-    if !terminated && mode.heals_enabled() {
+    // Reject non-NUL-terminated filenames in EVERY mode. The original guard
+    // only fired when `mode.heals_enabled()` was true (hardened mode), so a
+    // strict-mode caller with an unterminated pointer fell through to the
+    // CStr::from_ptr / host_dlopen sites below and walked arbitrary process
+    // memory. (REVIEW round 4: same defense class as bd-z4k96.)
+    let _ = mode;
+    if !terminated {
         set_dlerror(dlfcn_core::ERR_NOT_FOUND);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return std::ptr::null_mut();
     }
-    let _name = unsafe { std::slice::from_raw_parts(filename as *const u8, name_len) };
+    let name_bytes = unsafe { std::slice::from_raw_parts(filename as *const u8, name_len) };
     if !dlfcn_core::valid_flags(flags) {
         if mode.heals_enabled() {
             // Hardened mode: default to RTLD_NOW | RTLD_LOCAL.
@@ -275,7 +281,9 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
     let handle = if filename.is_null() {
         open_main_program_handle()
     } else {
-        let name = unsafe { CStr::from_ptr(filename) }.to_bytes();
+        // Use the bounded `name_bytes` slice instead of re-scanning via
+        // CStr::from_ptr which has no length bound. (REVIEW round 4.)
+        let name = name_bytes;
         if name.is_empty()
             || ((flags & dlfcn_core::RTLD_NOLOAD) != 0 && library_alias_matches(name))
         {
@@ -366,7 +374,12 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
     let (symbol_len, terminated) = unsafe {
         crate::util::scan_c_string(symbol, crate::malloc_abi::known_remaining(symbol as usize))
     };
-    if !terminated && mode.heals_enabled() {
+    // Reject non-NUL-terminated symbols in EVERY mode. The original guard
+    // only fired in hardened mode and let strict mode fall through to
+    // host_dlsym(symbol)/CStr::from_ptr(symbol) — both unbounded reads of
+    // user-supplied memory. (REVIEW round 4: same defense class as bd-z4k96.)
+    let _ = mode;
+    if !terminated {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return std::ptr::null_mut();
