@@ -4436,6 +4436,21 @@ pub unsafe extern "C" fn sem_getvalue(sem: *mut c_void, sval: *mut c_int) -> c_i
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mq_open(name: *const c_char, oflag: c_int, mut args: ...) -> c_int {
+    if name.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // POSIX requires the queue name to begin with '/'. glibc strips
+    // that leading slash before passing the path to the kernel
+    // SYS_mq_open syscall (the kernel resolves the name relative to
+    // an internal mqueue mount and would reject names containing '/').
+    let first_byte = unsafe { *name } as u8;
+    if first_byte != b'/' {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let kernel_name = unsafe { name.add(1) } as *const u8;
+
     let (mode, attr) = if (oflag & libc::O_CREAT) != 0 {
         let mode = unsafe { args.arg::<libc::mode_t>() };
         let attr = unsafe { args.arg::<*const c_void>() };
@@ -4444,7 +4459,7 @@ pub unsafe extern "C" fn mq_open(name: *const c_char, oflag: c_int, mut args: ..
         (0 as libc::mode_t, std::ptr::null())
     };
 
-    match unsafe { syscall::sys_mq_open(name as *const u8, oflag, mode, attr as usize) } {
+    match unsafe { syscall::sys_mq_open(kernel_name, oflag, mode, attr as usize) } {
         Ok(fd) => fd,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -4466,7 +4481,19 @@ pub unsafe extern "C" fn mq_close(mqdes: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mq_unlink(name: *const c_char) -> c_int {
-    match unsafe { syscall::sys_mq_unlink(name as *const u8) } {
+    if name.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let first = unsafe { *name } as u8;
+    if first != b'/' {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // Strip the leading '/' for the kernel SYS_mq_unlink syscall;
+    // matches glibc's behavior. (See bd-mq2 / mq_open.)
+    let kernel_name = unsafe { name.add(1) } as *const u8;
+    match unsafe { syscall::sys_mq_unlink(kernel_name) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
