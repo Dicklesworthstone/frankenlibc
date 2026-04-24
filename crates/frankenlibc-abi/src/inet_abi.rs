@@ -12,13 +12,36 @@ use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::scan_c_string;
 
 // Socket constants for if_nametoindex/if_indextoname
 const SOCK_DGRAM: i32 = 2;
 const SOCK_CLOEXEC: i32 = 0x80000;
 const SIOCGIFINDEX: usize = 0x8933;
 const SIOCGIFNAME: usize = 0x8910;
+
+/// Read a user-supplied C string pointer with a known-region bound so a
+/// non-NUL-terminated argument cannot walk arbitrary process memory through
+/// `CStr::from_ptr`. Returns `None` for null or unterminated input.
+///
+/// Mirrors the locale_abi / iconv_abi / dlfcn_abi defense (bd-z4k96 class).
+/// inet_pton/inet_aton/inet_addr/if_nametoindex are commonly invoked from
+/// network code; an attacker-controlled or corrupted address-text pointer
+/// must not crash or leak memory across the libc.so boundary.
+#[inline]
+unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+    Some(bytes.to_vec())
+}
 
 // ---------------------------------------------------------------------------
 // htons
@@ -79,8 +102,14 @@ pub unsafe extern "C" fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_vo
         return -1;
     }
 
-    // Read the C string into a byte slice (scan for NUL).
-    let src_bytes = unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes();
+    // Bounded read rejects non-NUL-terminated pointers at the boundary
+    // instead of walking memory through CStr::from_ptr. Same defense
+    // class as bd-z4k96 / iconv_open / dlopen / setlocale. (REVIEW round 5.)
+    let Some(src_bytes) = (unsafe { read_bounded_cstr(src) }) else {
+        runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
+        return 0;
+    };
+    let src_bytes = src_bytes.as_slice();
 
     let dst_size = match af {
         AF_INET => 4,
@@ -178,9 +207,13 @@ pub unsafe extern "C" fn inet_aton(cp: *const c_char, inp: *mut u32) -> c_int {
         return 0;
     }
 
-    let src_bytes = unsafe { std::ffi::CStr::from_ptr(cp) }.to_bytes();
+    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
+    let Some(src_bytes) = (unsafe { read_bounded_cstr(cp) }) else {
+        runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
+        return 0;
+    };
     let mut octets = [0u8; 4];
-    let rc = inet_core::inet_aton(src_bytes, &mut octets);
+    let rc = inet_core::inet_aton(&src_bytes, &mut octets);
     if rc == 1 {
         // Write as network-byte-order u32 (same as in_addr.s_addr)
         unsafe { *inp = u32::from_ne_bytes(octets) };
@@ -237,8 +270,12 @@ pub unsafe extern "C" fn inet_addr(cp: *const c_char) -> u32 {
         return inet_core::INADDR_NONE;
     }
 
-    let src_bytes = unsafe { std::ffi::CStr::from_ptr(cp) }.to_bytes();
-    let result = inet_core::inet_addr(src_bytes);
+    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
+    let Some(src_bytes) = (unsafe { read_bounded_cstr(cp) }) else {
+        runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
+        return inet_core::INADDR_NONE;
+    };
+    let result = inet_core::inet_addr(&src_bytes);
     runtime_policy::observe(
         ApiFamily::Inet,
         decision.profile,
@@ -279,8 +316,13 @@ pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
     };
 
     let mut ifr: IfreqCompat = unsafe { std::mem::zeroed() };
-    let name = unsafe { CStr::from_ptr(ifname) };
-    let name_bytes = name.to_bytes();
+    // Bounded read — non-NUL-terminated `ifname` would otherwise walk
+    // arbitrary memory through CStr::from_ptr. (REVIEW round 5.)
+    let Some(name_bytes) = (unsafe { read_bounded_cstr(ifname) }) else {
+        let _ = raw_syscall::sys_close(sock);
+        unsafe { set_abi_errno(errno::ENODEV) };
+        return 0;
+    };
     let copy_len = name_bytes.len().min(15);
     ifr.ifr_name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
 
