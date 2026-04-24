@@ -23,7 +23,9 @@ unsafe extern "C" {
     ) -> c_int;
     fn nftw(
         dirpath: *const c_char,
-        cb: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int>,
+        cb: Option<
+            unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+        >,
         nopenfd: c_int,
         flags: c_int,
     ) -> c_int;
@@ -51,8 +53,14 @@ const FTW_DEPTH: c_int = 4;
 static COLLECTOR: Mutex<Vec<(String, c_int)>> = Mutex::new(Vec::new());
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn collect_ftw(path: *const c_char, _st: *const libc::stat, typeflag: c_int) -> c_int {
-    let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
+unsafe extern "C" fn collect_ftw(
+    path: *const c_char,
+    _st: *const libc::stat,
+    typeflag: c_int,
+) -> c_int {
+    let p = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
     if let Ok(mut v) = COLLECTOR.lock() {
         v.push((p, typeflag));
     }
@@ -66,7 +74,9 @@ unsafe extern "C" fn collect_nftw(
     typeflag: c_int,
     _ftwbuf: *mut c_void,
 ) -> c_int {
-    let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
+    let p = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
     if let Ok(mut v) = COLLECTOR.lock() {
         v.push((p, typeflag));
     }
@@ -186,25 +196,37 @@ fn diff_nftw_depth_visits_same_set() {
     );
 }
 
-// DISC-FTW-001: POSIX says ftw "shall return -1 if it cannot start
-// the walk (e.g. ENOENT on dirpath)". glibc returns -1 for a
-// nonexistent directory; fl returns 0 (treats it as an empty walk).
-// Logged not failed; bd-ftw2 opened.
+// DISC-FTW-001 closed by bd-ftw2: POSIX says ftw "shall return -1 if
+// it cannot start the walk." Both fl and glibc now return -1 on
+// nonexistent dirpath. Asserted strictly.
 #[test]
-fn diff_ftw_nonexistent_dir_documented() {
+fn diff_ftw_nonexistent_dir() {
     let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let cpath = CString::new("/this/dir/does/not/exist/xyz").unwrap();
     let r_fl = unsafe { fl::ftw(cpath.as_ptr(), Some(collect_ftw), 16) };
     let r_lc = unsafe { ftw(cpath.as_ptr(), Some(collect_ftw), 16) };
     let _ = FtwBuf { base: 0, level: 0 };
-    eprintln!(
-        "{{\"family\":\"ftw.h\",\"divergence\":\"DISC-FTW-001\",\"test\":\"ftw_nonexistent\",\"fl\":{r_fl},\"glibc\":{r_lc},\"posix\":\"-1 expected\"}}"
+    assert!(
+        (r_fl < 0) == (r_lc < 0),
+        "ftw nonexistent fail-match: fl={r_fl}, lc={r_lc}"
     );
+    assert_eq!(r_fl, -1, "ftw should return -1 on ENOENT root");
+}
+
+#[test]
+fn diff_nftw_nonexistent_dir() {
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let cpath = CString::new("/this/dir/does/not/exist/xyz").unwrap();
+    let r_fl = unsafe { fl::nftw(cpath.as_ptr(), Some(collect_nftw), 16, 0) };
+    let r_lc = unsafe { nftw(cpath.as_ptr(), Some(collect_nftw), 16, 0) };
+    assert!(
+        (r_fl < 0) == (r_lc < 0),
+        "nftw nonexistent fail-match: fl={r_fl}, lc={r_lc}"
+    );
+    assert_eq!(r_fl, -1, "nftw should return -1 on ENOENT root");
 }
 
 #[test]
 fn ftw_diff_coverage_report() {
-    eprintln!(
-        "{{\"family\":\"ftw.h\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",
-    );
+    eprintln!("{{\"family\":\"ftw.h\",\"reference\":\"glibc\",\"functions\":2,\"divergences\":0}}",);
 }

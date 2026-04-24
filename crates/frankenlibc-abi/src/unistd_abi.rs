@@ -3267,6 +3267,22 @@ pub unsafe extern "C" fn ftw(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
+    // POSIX: "ftw() shall return -1 if it cannot start the walk." Probe
+    // the root path before walking; on stat failure, propagate errno
+    // and return -1 instead of invoking the callback with FTW_NS.
+    let mut probe: libc::stat = unsafe { std::mem::zeroed() };
+    let probe_rc = unsafe {
+        syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            dirpath as *const u8,
+            &mut probe as *mut _ as *mut u8,
+            0,
+        )
+    };
+    if let Err(e) = probe_rc {
+        unsafe { set_abi_errno(e) };
+        return -1;
+    }
     let max_fd = if nopenfd < 1 { 1 } else { nopenfd as usize };
 
     // Adapter: ftw callback to nftw-style internal walk.
@@ -3388,6 +3404,27 @@ pub unsafe extern "C" fn nftw(
     };
     if dirpath.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // POSIX: "nftw() shall return -1 if it cannot start the walk."
+    // Probe the root path; on stat failure, propagate errno and
+    // return -1 instead of invoking the callback with FTW_NS.
+    let mut probe: libc::stat = unsafe { std::mem::zeroed() };
+    let probe_flags = if (flags & FTW_PHYS) != 0 {
+        libc::AT_SYMLINK_NOFOLLOW
+    } else {
+        0
+    };
+    let probe_rc = unsafe {
+        syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            dirpath as *const u8,
+            &mut probe as *mut _ as *mut u8,
+            probe_flags,
+        )
+    };
+    if let Err(e) = probe_rc {
+        unsafe { set_abi_errno(e) };
         return -1;
     }
     let max_fd = if nopenfd < 1 { 1 } else { nopenfd as usize };
@@ -3885,7 +3922,7 @@ unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI
     unsafe { &*(sem as *const std::sync::atomic::AtomicI32) }
 }
 
-fn sem_futex_wait(word: *mut c_void, expected: i32) -> i64 {
+fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
     match unsafe {
         syscall::sys_futex(
             word as *const u32,
@@ -3896,24 +3933,72 @@ fn sem_futex_wait(word: *mut c_void, expected: i32) -> i64 {
             0,
         )
     } {
-        Ok(v) => v as i64,
-        Err(e) => -(e as i64),
+        Ok(_) => 0,
+        Err(e) => -e,
     }
 }
 
-fn sem_futex_wait_timed(word: *mut c_void, expected: i32, ts: *const libc::timespec) -> i64 {
+fn sem_realtime_now() -> Result<libc::timespec, c_int> {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe {
+        syscall::sys_clock_gettime(libc::CLOCK_REALTIME, &mut now as *mut _ as *mut u8)?;
+    }
+    Ok(now)
+}
+
+fn sem_relative_timeout(abs_timeout: *const libc::timespec) -> Result<libc::timespec, c_int> {
+    if abs_timeout.is_null() {
+        return Err(libc::EINVAL);
+    }
+    let deadline = unsafe { *abs_timeout };
+    if !(0..1_000_000_000).contains(&deadline.tv_nsec) {
+        return Err(libc::EINVAL);
+    }
+    let now = sem_realtime_now()?;
+    let Some(sec_diff) = deadline.tv_sec.checked_sub(now.tv_sec) else {
+        return Err(libc::ETIMEDOUT);
+    };
+    let mut rel = libc::timespec {
+        tv_sec: sec_diff,
+        tv_nsec: deadline.tv_nsec - now.tv_nsec,
+    };
+    if rel.tv_nsec < 0 {
+        let Some(adjusted) = rel.tv_sec.checked_sub(1) else {
+            return Err(libc::ETIMEDOUT);
+        };
+        rel.tv_sec = adjusted;
+        rel.tv_nsec += 1_000_000_000;
+    }
+    if rel.tv_sec < 0 || (rel.tv_sec == 0 && rel.tv_nsec <= 0) {
+        return Err(libc::ETIMEDOUT);
+    }
+    Ok(rel)
+}
+
+fn sem_futex_wait_timed(
+    word: *mut c_void,
+    expected: i32,
+    abs_timeout: *const libc::timespec,
+) -> c_int {
+    let rel = match sem_relative_timeout(abs_timeout) {
+        Ok(rel) => rel,
+        Err(errno) => return -errno,
+    };
     match unsafe {
         syscall::sys_futex(
             word as *const u32,
             libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
             expected as u32,
-            ts as usize,
+            &rel as *const libc::timespec as usize,
             0,
             0,
         )
     } {
-        Ok(v) => v as i64,
-        Err(e) => -(e as i64),
+        Ok(_) => 0,
+        Err(e) => -e,
     }
 }
 
@@ -4172,12 +4257,16 @@ pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
         if val <= 0 {
             let ret = sem_futex_wait(sem, val);
             if ret < 0 {
-                let err = current_abi_errno();
+                let err = -ret;
                 if err == libc::EINTR {
                     unsafe { set_abi_errno(libc::EINTR) };
                     return -1;
                 }
-                // EAGAIN is spurious wakeup — retry
+                if err != libc::EAGAIN {
+                    unsafe { set_abi_errno(err) };
+                    return -1;
+                }
+                // EAGAIN is spurious wakeup or value mismatch — retry.
             }
         }
     }
@@ -4243,15 +4332,12 @@ pub unsafe extern "C" fn sem_timedwait(
             }
             let ret = sem_futex_wait_timed(sem, val, abs_timeout);
             if ret < 0 {
-                let err = current_abi_errno();
-                if err == libc::ETIMEDOUT {
-                    unsafe { set_abi_errno(libc::ETIMEDOUT) };
+                let err = -ret;
+                if err != libc::EAGAIN {
+                    unsafe { set_abi_errno(err) };
                     return -1;
                 }
-                if err == libc::EINTR {
-                    unsafe { set_abi_errno(libc::EINTR) };
-                    return -1;
-                }
+                // EAGAIN is spurious wakeup or value mismatch — retry.
             }
         }
     }
