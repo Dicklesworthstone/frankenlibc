@@ -2290,6 +2290,14 @@ pub unsafe extern "C" fn gcvt(value: c_double, ndigit: c_int, buf: *mut c_char) 
 // Process control (3 functions)
 // ===========================================================================
 
+/// Re-entrancy depth for `abort`. A SIGABRT handler that calls `abort()`
+/// (directly or transitively via fflush/raise/signal/sigprocmask) would
+/// otherwise re-enter the full sequence on the same stack, recursing until
+/// stack overflow. Glibc guards against this via an atomic depth counter
+/// in `abort.c`; we mirror that behavior.
+static ABORT_RECURSION_DEPTH: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0);
+
 /// `abort` — abnormal process termination.
 ///
 /// Raises SIGABRT. If caught, re-raises after resetting the handler.
@@ -2299,8 +2307,20 @@ pub unsafe extern "C" fn gcvt(value: c_double, ndigit: c_int, buf: *mut c_char) 
 /// the signal pending and the process never receives the default core-dump
 /// action — production crashes lose their core file. Match glibc abort.c by
 /// unblocking SIGABRT in the calling thread before each raise. (bd-r25ks)
+///
+/// On re-entrant invocation (e.g. a SIGABRT handler calls abort, or any of
+/// the flush/raise/sigprocmask helpers transitively triggers another abort)
+/// skip the bookkeeping and go straight to the kernel exit so we never
+/// recurse on the same stack. (REVIEW round 2: abort recursion guard.)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn abort() -> ! {
+    let depth = ABORT_RECURSION_DEPTH.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    if depth > 0 {
+        // Already inside abort on this process. Don't run flush/raise again
+        // (they're what re-entered us); fall straight through to exit.
+        frankenlibc_core::syscall::sys_exit_group(134)
+    }
+
     // Flush stdout/stderr before aborting.
     let _ = unsafe { crate::stdio_abi::fflush(ptr::null_mut()) };
 
