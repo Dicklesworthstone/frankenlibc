@@ -14,7 +14,9 @@
 //! layer (typically `*const c_void` adapted via a wrapper).
 
 pub mod hash;
+pub mod linear;
 pub mod rb_tree;
 
 pub use hash::{LinearProbeTable, LinearSlot};
+pub use linear::{SearchOrAppend, lfind_index, lsearch_or_append_index};
 pub use rb_tree::{PosixVisit, RbTree, RbWalkOrder};

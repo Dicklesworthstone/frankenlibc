@@ -443,6 +443,10 @@ pub unsafe extern "C" fn tdestroy(
 // ---------------------------------------------------------------------------
 
 /// POSIX `lfind` — linear search (find only, no insert).
+///
+/// Delegates the array scan to frankenlibc-core::search::lfind_index;
+/// abi remains responsible only for raw-pointer / C-comparator
+/// adaptation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lfind(
     key: *const c_void,
@@ -455,14 +459,19 @@ pub unsafe extern "C" fn lfind(
         return std::ptr::null_mut();
     }
     let nel = unsafe { *nelp };
-    let base_ptr = base as *const u8;
-    for i in 0..nel {
-        let element = unsafe { base_ptr.add(i * width) } as *const c_void;
-        if unsafe { compar(key, element) } == 0 {
-            return element as *mut c_void;
-        }
+    let total = match nel.checked_mul(width) {
+        Some(n) => n,
+        None => return std::ptr::null_mut(),
+    };
+    let buf: &[u8] = unsafe { std::slice::from_raw_parts(base as *const u8, total) };
+    let matches = |rec: &[u8], _i: usize| -> bool {
+        let r = unsafe { compar(key, rec.as_ptr() as *const c_void) };
+        r == 0
+    };
+    match frankenlibc_core::search::lfind_index(buf, width, nel, matches) {
+        Some(idx) => unsafe { (base as *mut u8).add(idx * width) as *mut c_void },
+        None => std::ptr::null_mut(),
     }
-    std::ptr::null_mut()
 }
 
 /// POSIX `lsearch` — linear search with insert if not found.
@@ -477,21 +486,29 @@ pub unsafe extern "C" fn lsearch(
     if key.is_null() || base.is_null() || nelp.is_null() || width == 0 {
         return std::ptr::null_mut();
     }
-
-    // First try to find it.
-    let result = unsafe { lfind(key, base, nelp, width, compar) };
-    if !result.is_null() {
-        return result;
-    }
-
-    // Not found: append at end.
     let nel = unsafe { *nelp };
-    let dest = unsafe { (base as *mut u8).add(nel * width) };
-    unsafe {
-        std::ptr::copy_nonoverlapping(key as *const u8, dest, width);
-        *nelp = nel + 1;
+    let total = match nel.checked_mul(width) {
+        Some(n) => n,
+        None => return std::ptr::null_mut(),
+    };
+    let buf: &[u8] = unsafe { std::slice::from_raw_parts(base as *const u8, total) };
+    let matches = |rec: &[u8], _i: usize| -> bool {
+        let r = unsafe { compar(key, rec.as_ptr() as *const c_void) };
+        r == 0
+    };
+    match frankenlibc_core::search::lsearch_or_append_index(buf, width, nel, matches) {
+        frankenlibc_core::search::SearchOrAppend::Found(idx) => unsafe {
+            (base as *mut u8).add(idx * width) as *mut c_void
+        },
+        frankenlibc_core::search::SearchOrAppend::AppendAt(idx) => {
+            let dest = unsafe { (base as *mut u8).add(idx * width) };
+            unsafe {
+                std::ptr::copy_nonoverlapping(key as *const u8, dest, width);
+                *nelp = nel + 1;
+            }
+            dest as *mut c_void
+        }
     }
-    dest as *mut c_void
 }
 
 // ---------------------------------------------------------------------------
