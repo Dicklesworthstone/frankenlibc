@@ -29,6 +29,13 @@ fn load_json(path: &Path) -> serde_json::Value {
     serde_json::from_str(&content).expect("json should parse")
 }
 
+fn required_summary_u64(summary: &serde_json::Map<String, serde_json::Value>, key: &str) -> u64 {
+    summary
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_else(|| panic!("summary.{key} must be a non-negative integer"))
+}
+
 #[test]
 fn artifact_exists_and_has_required_shape() {
     let root = workspace_root();
@@ -79,13 +86,29 @@ fn summary_counts_match_rows_and_hooks_present() {
     let symbols = artifact["symbol_ranking_top_n"].as_array().unwrap();
     let waves = artifact["wave_plan"].as_array().unwrap();
     let summary = artifact["summary"].as_object().unwrap();
+    let candidate_symbols = required_summary_u64(summary, "candidate_symbols");
 
-    assert!(!modules.is_empty(), "module_ranking must not be empty");
-    assert!(
-        !symbols.is_empty(),
-        "symbol_ranking_top_n must not be empty"
-    );
-    assert!(!waves.is_empty(), "wave_plan must not be empty");
+    if candidate_symbols == 0 {
+        assert!(
+            modules.is_empty(),
+            "module_ranking should be empty when all workload candidates are resolved"
+        );
+        assert!(
+            symbols.is_empty(),
+            "symbol_ranking_top_n should be empty when all workload candidates are resolved"
+        );
+        assert!(
+            waves.is_empty(),
+            "wave_plan should be empty when all workload candidates are resolved"
+        );
+    } else {
+        assert!(!modules.is_empty(), "module_ranking must not be empty");
+        assert!(
+            !symbols.is_empty(),
+            "symbol_ranking_top_n must not be empty"
+        );
+        assert!(!waves.is_empty(), "wave_plan must not be empty");
+    }
 
     assert_eq!(
         summary.get("top_n").and_then(|v| v.as_u64()),
@@ -102,18 +125,9 @@ fn summary_counts_match_rows_and_hooks_present() {
         Some(waves.len() as u64),
         "summary.wave_count mismatch"
     );
-    let top50_size = summary
-        .get("top50_size")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let top200_size = summary
-        .get("top200_size")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let downgrade_count = summary
-        .get("downgrade_symbol_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let top50_size = required_summary_u64(summary, "top50_size");
+    let top200_size = required_summary_u64(summary, "top200_size");
+    let downgrade_count = required_summary_u64(summary, "downgrade_symbol_count");
     let top50_symbols = artifact["implementation_waves"]["top50"]["symbols"]
         .as_array()
         .expect("implementation_waves.top50.symbols must be array");
@@ -139,18 +153,25 @@ fn summary_counts_match_rows_and_hooks_present() {
         "summary.downgrade_symbol_count mismatch"
     );
 
-    let top_blocker = summary
-        .get("top_blocker_module")
-        .and_then(|v| v.as_str())
-        .expect("summary.top_blocker_module must be string");
-    let module_names: HashSet<&str> = modules
-        .iter()
-        .filter_map(|row| row["module"].as_str())
-        .collect();
-    assert!(
-        module_names.contains(top_blocker),
-        "summary.top_blocker_module must appear in module_ranking"
-    );
+    if candidate_symbols == 0 {
+        assert!(
+            matches!(summary.get("top_blocker_module"), Some(value) if value.is_null()),
+            "summary.top_blocker_module should be null when there are no workload candidates"
+        );
+    } else {
+        let top_blocker = summary
+            .get("top_blocker_module")
+            .and_then(|v| v.as_str())
+            .expect("summary.top_blocker_module must be string");
+        let module_names: HashSet<&str> = modules
+            .iter()
+            .filter_map(|row| row["module"].as_str())
+            .collect();
+        assert!(
+            module_names.contains(top_blocker),
+            "summary.top_blocker_module must appear in module_ranking"
+        );
+    }
 
     let hooks = artifact["integration_hooks"].as_object().unwrap();
     for key in ["setjmp", "tls", "threading", "hard_parts"] {

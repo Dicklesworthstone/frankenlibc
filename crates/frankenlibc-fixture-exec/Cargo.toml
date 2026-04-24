@@ -5,5 +5,8 @@ edition.workspace = true
 license-file = "../../LICENSE"
 description = "Fixture execution adapter for frankenlibc harness tooling"
 
+[lib]
+doctest = false
+
 [dependencies]
 frankenlibc_conformance = { path = "../frankenlibc_conformance" }

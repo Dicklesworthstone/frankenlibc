@@ -1381,17 +1381,28 @@ fn run_impl_hsearch_r_replace(
     }
 }
 
-fn build_tree(search_fn: TreeInsertFn, keys: &[c_int]) -> (*mut c_void, Vec<c_int>) {
+fn tree_node_value(node: *mut c_void) -> Option<c_int> {
+    if node.is_null() {
+        None
+    } else {
+        Some(unsafe { *(*(node as *const *const c_int)) })
+    }
+}
+
+fn build_tree(search_fn: TreeInsertFn, keys: &[c_int]) -> (*mut c_void, Vec<c_int>, Option<c_int>) {
     let mut root: *mut c_void = std::ptr::null_mut();
     let stored_keys = keys.to_vec();
+    let mut first_inserted_value = None;
 
     for key in &stored_keys {
-        unsafe {
-            search_fn((key as *const c_int).cast(), &mut root, search_int_compare);
+        let node =
+            unsafe { search_fn((key as *const c_int).cast(), &mut root, search_int_compare) };
+        if first_inserted_value.is_none() {
+            first_inserted_value = tree_node_value(node);
         }
     }
 
-    (root, stored_keys)
+    (root, stored_keys, first_inserted_value)
 }
 
 fn cleanup_tree(delete_fn: TreeDeleteFn, root: &mut *mut c_void, keys: &[c_int]) {
@@ -1402,14 +1413,6 @@ fn cleanup_tree(delete_fn: TreeDeleteFn, root: &mut *mut c_void, keys: &[c_int])
     }
 }
 
-fn tree_root_value(root: *mut c_void) -> Option<c_int> {
-    if root.is_null() {
-        None
-    } else {
-        Some(unsafe { *(*(root as *const *const c_int)) })
-    }
-}
-
 fn run_tree_insert_find(
     search_fn: TreeInsertFn,
     find_fn: TreeFindFn,
@@ -1417,8 +1420,8 @@ fn run_tree_insert_find(
     keys: &[c_int],
     probes: &[c_int],
 ) -> String {
-    let (mut root, stored_keys) = build_tree(search_fn, keys);
-    let mut parts = vec![match tree_root_value(root) {
+    let (mut root, stored_keys, first_inserted_value) = build_tree(search_fn, keys);
+    let mut parts = vec![match first_inserted_value {
         Some(value) => format!("ROOT:{value}"),
         None => String::from("ROOT:NULL"),
     }];
@@ -1450,7 +1453,7 @@ fn run_tree_delete(
     delete_key: c_int,
     probes: &[c_int],
 ) -> String {
-    let (mut root, stored_keys) = build_tree(search_fn, keys);
+    let (mut root, stored_keys, _) = build_tree(search_fn, keys);
     let deleted = unsafe {
         delete_fn(
             (&delete_key as *const c_int).cast(),
@@ -1527,7 +1530,7 @@ unsafe extern "C" fn impl_twalk_capture(
 }
 
 fn run_host_twalk_capture(keys: &[c_int]) -> String {
-    let (mut root, stored_keys) = build_tree(host_tsearch, keys);
+    let (mut root, stored_keys, _) = build_tree(host_tsearch, keys);
     HOST_TWALK_EVENTS.with(|events| events.borrow_mut().clear());
     unsafe { host_twalk(root, host_twalk_capture) };
     let output = HOST_TWALK_EVENTS.with(|events| events.borrow().join("|"));
@@ -1536,7 +1539,7 @@ fn run_host_twalk_capture(keys: &[c_int]) -> String {
 }
 
 fn run_impl_twalk_capture(keys: &[c_int]) -> String {
-    let (mut root, stored_keys) = build_tree(frankenlibc_abi::search_abi::tsearch, keys);
+    let (mut root, stored_keys, _) = build_tree(frankenlibc_abi::search_abi::tsearch, keys);
     IMPL_TWALK_EVENTS.with(|events| events.borrow_mut().clear());
     unsafe { frankenlibc_abi::search_abi::twalk(root, impl_twalk_capture) };
     let output = IMPL_TWALK_EVENTS.with(|events| events.borrow().join("|"));
@@ -15136,18 +15139,18 @@ mod tests {
     }
 
     #[test]
-    fn execute_dladdr_case_strict_reports_native_fallback_difference() {
+    fn execute_dladdr_case_strict_matches_host_resolution() {
         assert_differential_contract(
             "loader",
-            "strict-dladdr-native-fallback-diff",
+            "strict-dladdr-host-resolution",
             "tests/conformance/fixtures/loader_edges.json#/cases/dladdr_valid_address_strict",
             "dladdr",
             "strict",
             serde_json::json!({ "addr": "valid_function_ptr" }),
-            "0",
+            "nonzero",
             Some("nonzero"),
-            false,
-            Some("native fallback differs from host"),
+            true,
+            None,
         );
     }
 

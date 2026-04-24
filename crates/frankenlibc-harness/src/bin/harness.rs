@@ -1790,13 +1790,42 @@ fn stable_conformance_case_runner(
         "conformance-matrix-case-runner-{}.bin",
         std::process::id()
     ));
-    std::fs::copy(current_exe, &runner)?;
+    match std::fs::copy(current_exe, &runner) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            #[cfg(target_os = "linux")]
+            {
+                let proc_exe = Path::new("/proc/self/exe");
+                std::fs::copy(proc_exe, &runner).map_err(|proc_err| {
+                    format!(
+                        "copy current executable from {} failed: {err}; /proc/self/exe fallback failed: {proc_err}",
+                        current_exe.display()
+                    )
+                })?;
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                return Err(format!(
+                    "copy current executable from {} failed: {err}",
+                    current_exe.display()
+                )
+                .into());
+            }
+        }
+        Err(err) => {
+            return Err(format!(
+                "copy current executable from {} failed: {err}",
+                current_exe.display()
+            )
+            .into());
+        }
+    }
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        let mut permissions = std::fs::metadata(current_exe)?.permissions();
+        let mut permissions = std::fs::metadata(&runner)?.permissions();
         permissions.set_mode(permissions.mode() | 0o700);
         std::fs::set_permissions(&runner, permissions)?;
     }

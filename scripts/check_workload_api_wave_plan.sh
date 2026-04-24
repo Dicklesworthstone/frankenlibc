@@ -80,6 +80,14 @@ def to_int(value, default=0):
     except (TypeError, ValueError):
         return default
 
+def require_nonnegative_int(mapping, key):
+    if key not in mapping:
+        raise SystemExit(f'FAIL: summary.{key} is required')
+    value = to_int(mapping.get(key), -1)
+    if value < 0:
+        raise SystemExit(f'FAIL: summary.{key} must be a non-negative integer')
+    return value
+
 if artifact.get('schema_version') != 'v1':
     raise SystemExit('FAIL: schema_version must be v1')
 if artifact.get('bead') != 'bd-3mam':
@@ -93,13 +101,22 @@ symbol_rows = artifact.get('symbol_ranking_top_n', [])
 wave_rows = artifact.get('wave_plan', [])
 implementation_waves = artifact.get('implementation_waves', {})
 downgrade_policy = artifact.get('downgrade_policy', {})
+candidate_count = require_nonnegative_int(summary, 'candidate_symbols')
 
-if not module_rows:
-    raise SystemExit('FAIL: module_ranking must be non-empty')
-if not symbol_rows:
-    raise SystemExit('FAIL: symbol_ranking_top_n must be non-empty')
-if not wave_rows:
-    raise SystemExit('FAIL: wave_plan must be non-empty')
+if candidate_count > 0:
+    if not module_rows:
+        raise SystemExit('FAIL: module_ranking must be non-empty when candidates remain')
+    if not symbol_rows:
+        raise SystemExit('FAIL: symbol_ranking_top_n must be non-empty when candidates remain')
+    if not wave_rows:
+        raise SystemExit('FAIL: wave_plan must be non-empty when candidates remain')
+else:
+    if module_rows:
+        raise SystemExit('FAIL: module_ranking must be empty when no candidates remain')
+    if symbol_rows:
+        raise SystemExit('FAIL: symbol_ranking_top_n must be empty when no candidates remain')
+    if wave_rows:
+        raise SystemExit('FAIL: wave_plan must be empty when no candidates remain')
 if not isinstance(implementation_waves, dict):
     raise SystemExit('FAIL: implementation_waves must be object')
 if not isinstance(downgrade_policy, dict):
@@ -305,13 +322,19 @@ if to_int(summary.get('downgrade_symbol_count', -1), -1) != len(downgraded_rows)
 
 # Cross-check top blocker appears in module ranking and workload subsystem impact.
 top_blocker = summary.get('top_blocker_module')
-if top_blocker not in {row.get('module') for row in module_rows}:
-    raise SystemExit('FAIL: summary.top_blocker_module missing from module_ranking')
-subsystem_impact = workload.get('subsystem_impact', {})
-if top_blocker not in subsystem_impact:
-    raise SystemExit(
-        f'FAIL: summary.top_blocker_module {top_blocker!r} missing from workload_matrix subsystem_impact'
-    )
+if candidate_count == 0:
+    if 'top_blocker_module' not in summary:
+        raise SystemExit('FAIL: summary.top_blocker_module is required')
+    if top_blocker is not None:
+        raise SystemExit('FAIL: summary.top_blocker_module must be null when no candidates remain')
+else:
+    if top_blocker not in {row.get('module') for row in module_rows}:
+        raise SystemExit('FAIL: summary.top_blocker_module missing from module_ranking')
+    subsystem_impact = workload.get('subsystem_impact', {})
+    if top_blocker not in subsystem_impact:
+        raise SystemExit(
+            f'FAIL: summary.top_blocker_module {top_blocker!r} missing from workload_matrix subsystem_impact'
+        )
 
 report = {
     'schema_version': 'v1',

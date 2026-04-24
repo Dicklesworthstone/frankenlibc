@@ -8,6 +8,9 @@ description = "Conformance testing harness for FrankenLibC"
 [lints.rust]
 unsafe_code = "forbid"
 
+[lib]
+doctest = false
+
 [features]
 default = ["asupersync-tooling"]
 asupersync-tooling = ["dep:asupersync-conformance"]
