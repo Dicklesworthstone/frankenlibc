@@ -2295,8 +2295,7 @@ pub unsafe extern "C" fn gcvt(value: c_double, ndigit: c_int, buf: *mut c_char) 
 /// otherwise re-enter the full sequence on the same stack, recursing until
 /// stack overflow. Glibc guards against this via an atomic depth counter
 /// in `abort.c`; we mirror that behavior.
-static ABORT_RECURSION_DEPTH: std::sync::atomic::AtomicU32 =
-    std::sync::atomic::AtomicU32::new(0);
+static ABORT_RECURSION_DEPTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// `abort` — abnormal process termination.
 ///
