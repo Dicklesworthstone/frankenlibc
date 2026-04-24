@@ -77,7 +77,20 @@ static ENVIRON_OWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 /// while holding the lock can transitively re-enter our getenv during early
 /// glibc malloc initialization (MALLOC_PERTURB_/MALLOC_CHECK_ probes); a
 /// non-reentrant Mutex would self-deadlock in that window.
-static ENVIRON_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
+pub(crate) static ENVIRON_LOCK: parking_lot::ReentrantMutex<()> =
+    parking_lot::ReentrantMutex::new(());
+
+/// Cross-module helper: run `f` with the environ array held stable. Other
+/// ABI modules (process_abi for PATH lookup, etc.) need to walk environ
+/// without UAFing on a concurrent setenv realloc; this acquires the same
+/// lock the mutators use.
+pub(crate) fn with_environ_locked<R>(f: impl FnOnce(*mut *mut c_char) -> R) -> R {
+    let _lock = ENVIRON_LOCK.lock();
+    // SAFETY: HOST_ENVIRON is the libc environ pointer; the lock guards the
+    // array layout against concurrent realloc by setenv/unsetenv/clearenv.
+    let envp = unsafe { HOST_ENVIRON };
+    f(envp)
+}
 
 #[inline]
 unsafe fn native_c_strlen(s: *const c_char) -> usize {

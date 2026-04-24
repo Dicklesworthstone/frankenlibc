@@ -19,12 +19,22 @@ unsafe extern "C" {
     static mut environ: *mut *mut c_char;
 }
 
-unsafe fn path_bytes_from_env_vector(mut envp: *const *mut c_char) -> Vec<u8> {
-    if envp.is_null() {
-        // SAFETY: reading the process-global `environ` pointer is valid here.
-        envp = unsafe { environ as *const *mut c_char };
+unsafe fn path_bytes_from_env_vector(envp: *const *mut c_char) -> Vec<u8> {
+    // If a caller-supplied envp was provided, walk it directly: that array
+    // is owned by the caller, not by libc's mutable environ table, so
+    // ENVIRON_LOCK does not apply.
+    if !envp.is_null() {
+        return unsafe { walk_env_for_path(envp) };
     }
+    // Walking the process-global `environ` requires ENVIRON_LOCK to avoid
+    // UAFing on a concurrent setenv realloc — same defense class as the
+    // native_getenv / clearenv fixes. (REVIEW round 4.)
+    crate::stdlib_abi::with_environ_locked(|envp| unsafe {
+        walk_env_for_path(envp as *const *mut c_char)
+    })
+}
 
+unsafe fn walk_env_for_path(mut envp: *const *mut c_char) -> Vec<u8> {
     while !envp.is_null() {
         // SAFETY: `envp` points to a NULL-terminated environment vector.
         let entry = unsafe { *envp };
