@@ -3,252 +3,219 @@
   "blockers": [
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-25n/trace.jsonl",
-        "tests/cve_arena/results/bd-25n/artifact_index.json"
+        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
+        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
       ],
-      "bead_id": "bd-25n",
+      "bead_id": "bd-1rxj",
       "bead_status": "in_progress",
       "blocker": "missing_e2e",
       "category": "e2e_scripts",
       "coverage_status": "missing",
       "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
+        "scripts/check_e2e_suite.sh"
       ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": true,
       "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall/unit",
-      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem",
+      "stream": "math",
+      "subsystem": "math/alien",
+      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
       "unit_cmds": [
-        "cargo test --test e2e_link_test"
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-25n/trace.jsonl",
-        "tests/cve_arena/results/bd-25n/artifact_index.json"
+        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
+        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
       ],
-      "bead_id": "bd-25n",
+      "bead_id": "bd-1rxj",
       "bead_status": "in_progress",
       "blocker": "missing_golden_artifacts",
       "category": "golden_artifacts",
       "coverage_status": "missing",
       "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
+        "scripts/check_e2e_suite.sh"
       ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": true,
       "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall/unit",
-      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem",
+      "stream": "math",
+      "subsystem": "math/alien",
+      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
       "unit_cmds": [
-        "cargo test --test e2e_link_test"
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-25n/trace.jsonl",
-        "tests/cve_arena/results/bd-25n/artifact_index.json"
+        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
+        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
       ],
-      "bead_id": "bd-25n",
+      "bead_id": "bd-1rxj",
       "bead_status": "in_progress",
       "blocker": "missing_logs",
       "category": "structured_logs",
       "coverage_status": "missing",
       "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
+        "scripts/check_e2e_suite.sh"
       ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": true,
       "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall/unit",
-      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem",
+      "stream": "math",
+      "subsystem": "math/alien",
+      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
       "unit_cmds": [
-        "cargo test --test e2e_link_test"
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-25n/trace.jsonl",
-        "tests/cve_arena/results/bd-25n/artifact_index.json"
+        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
+        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
       ],
-      "bead_id": "bd-25n",
-      "bead_status": "in_progress",
-      "blocker": "missing_unit",
-      "category": "unit_tests",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall/unit",
-      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem",
-      "unit_cmds": [
-        "cargo test --test e2e_link_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-3qq/trace.jsonl",
-        "tests/cve_arena/results/bd-3qq/artifact_index.json"
-      ],
-      "bead_id": "bd-3qq",
-      "bead_status": "in_progress",
-      "blocker": "missing_e2e",
-      "category": "e2e_scripts",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall",
-      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
-      "unit_cmds": [
-        "cargo test --test e2e_link_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-3qq/trace.jsonl",
-        "tests/cve_arena/results/bd-3qq/artifact_index.json"
-      ],
-      "bead_id": "bd-3qq",
-      "bead_status": "in_progress",
-      "blocker": "missing_fixtures",
-      "category": "conformance_fixtures",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall",
-      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
-      "unit_cmds": [
-        "cargo test --test e2e_link_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-3qq/trace.jsonl",
-        "tests/cve_arena/results/bd-3qq/artifact_index.json"
-      ],
-      "bead_id": "bd-3qq",
-      "bead_status": "in_progress",
-      "blocker": "missing_golden_artifacts",
-      "category": "golden_artifacts",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall",
-      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
-      "unit_cmds": [
-        "cargo test --test e2e_link_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-3qq/trace.jsonl",
-        "tests/cve_arena/results/bd-3qq/artifact_index.json"
-      ],
-      "bead_id": "bd-3qq",
-      "bead_status": "in_progress",
-      "blocker": "missing_logs",
-      "category": "structured_logs",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall",
-      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
-      "unit_cmds": [
-        "cargo test --test e2e_link_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-3qq/trace.jsonl",
-        "tests/cve_arena/results/bd-3qq/artifact_index.json"
-      ],
-      "bead_id": "bd-3qq",
+      "bead_id": "bd-1rxj",
       "bead_status": "in_progress",
       "blocker": "missing_perf",
       "category": "perf_evidence",
       "coverage_status": "missing",
       "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
+        "scripts/check_e2e_suite.sh"
       ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": false,
       "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall",
-      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
+      "stream": "math",
+      "subsystem": "math/alien",
+      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
       "unit_cmds": [
-        "cargo test --test e2e_link_test"
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-3qq/trace.jsonl",
-        "tests/cve_arena/results/bd-3qq/artifact_index.json"
+        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
+        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
       ],
-      "bead_id": "bd-3qq",
+      "bead_id": "bd-1rxj",
       "bead_status": "in_progress",
       "blocker": "missing_unit",
       "category": "unit_tests",
       "coverage_status": "missing",
       "e2e_cmds": [
-        "scripts/ld_preload_smoke.sh"
+        "scripts/check_e2e_suite.sh"
       ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": true,
       "priority": 0,
-      "stream": "syscall",
-      "subsystem": "syscall",
-      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
+      "stream": "math",
+      "subsystem": "math/alien",
+      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
       "unit_cmds": [
-        "cargo test --test e2e_link_test"
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-25pf/trace.jsonl",
+        "tests/cve_arena/results/bd-25pf/artifact_index.json"
+      ],
+      "bead_id": "bd-25pf",
+      "bead_status": "in_progress",
+      "blocker": "missing_fixtures",
+      "category": "conformance_fixtures",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 0,
+      "stream": "math",
+      "subsystem": "math/governance",
+      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-25pf/trace.jsonl",
+        "tests/cve_arena/results/bd-25pf/artifact_index.json"
+      ],
+      "bead_id": "bd-25pf",
+      "bead_status": "in_progress",
+      "blocker": "missing_golden_artifacts",
+      "category": "golden_artifacts",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 0,
+      "stream": "math",
+      "subsystem": "math/governance",
+      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-25pf/trace.jsonl",
+        "tests/cve_arena/results/bd-25pf/artifact_index.json"
+      ],
+      "bead_id": "bd-25pf",
+      "bead_status": "in_progress",
+      "blocker": "missing_logs",
+      "category": "structured_logs",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 0,
+      "stream": "math",
+      "subsystem": "math/governance",
+      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-25pf/trace.jsonl",
+        "tests/cve_arena/results/bd-25pf/artifact_index.json"
+      ],
+      "bead_id": "bd-25pf",
+      "bead_status": "in_progress",
+      "blocker": "missing_unit",
+      "category": "unit_tests",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 0,
+      "stream": "math",
+      "subsystem": "math/governance",
+      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
     },
     {
@@ -318,6 +285,156 @@
       "title": "Production kernel manifest: minimal required math set + compile-time gates",
       "unit_cmds": [
         "cargo test -p frankenlibc-membrane runtime_math::loss_minimizer::tests:: -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-1x3/trace.jsonl",
+        "tests/cve_arena/results/bd-1x3/artifact_index.json"
+      ],
+      "bead_id": "bd-1x3",
+      "bead_status": "in_progress",
+      "blocker": "missing_e2e",
+      "category": "e2e_scripts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_stub_guard.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "stubs",
+      "subsystem": "stubs/stubs",
+      "title": "EPIC: Stub Extermination (ranked by real call traces)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --test stub_contract_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-1x3/trace.jsonl",
+        "tests/cve_arena/results/bd-1x3/artifact_index.json"
+      ],
+      "bead_id": "bd-1x3",
+      "bead_status": "in_progress",
+      "blocker": "missing_fixtures",
+      "category": "conformance_fixtures",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_stub_guard.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "stubs",
+      "subsystem": "stubs/stubs",
+      "title": "EPIC: Stub Extermination (ranked by real call traces)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --test stub_contract_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-1x3/trace.jsonl",
+        "tests/cve_arena/results/bd-1x3/artifact_index.json"
+      ],
+      "bead_id": "bd-1x3",
+      "bead_status": "in_progress",
+      "blocker": "missing_golden_artifacts",
+      "category": "golden_artifacts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_stub_guard.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "stubs",
+      "subsystem": "stubs/stubs",
+      "title": "EPIC: Stub Extermination (ranked by real call traces)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --test stub_contract_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-1x3/trace.jsonl",
+        "tests/cve_arena/results/bd-1x3/artifact_index.json"
+      ],
+      "bead_id": "bd-1x3",
+      "bead_status": "in_progress",
+      "blocker": "missing_logs",
+      "category": "structured_logs",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_stub_guard.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "stubs",
+      "subsystem": "stubs/stubs",
+      "title": "EPIC: Stub Extermination (ranked by real call traces)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --test stub_contract_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-1x3/trace.jsonl",
+        "tests/cve_arena/results/bd-1x3/artifact_index.json"
+      ],
+      "bead_id": "bd-1x3",
+      "bead_status": "in_progress",
+      "blocker": "missing_perf",
+      "category": "perf_evidence",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_stub_guard.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": false,
+      "priority": 1,
+      "stream": "stubs",
+      "subsystem": "stubs/stubs",
+      "title": "EPIC: Stub Extermination (ranked by real call traces)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --test stub_contract_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-1x3/trace.jsonl",
+        "tests/cve_arena/results/bd-1x3/artifact_index.json"
+      ],
+      "bead_id": "bd-1x3",
+      "bead_status": "in_progress",
+      "blocker": "missing_unit",
+      "category": "unit_tests",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_stub_guard.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "stubs",
+      "subsystem": "stubs/stubs",
+      "title": "EPIC: Stub Extermination (ranked by real call traces)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --test stub_contract_test"
       ]
     },
     {
@@ -572,75 +689,6 @@
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-1rf/trace.jsonl",
-        "tests/cve_arena/results/bd-1rf/artifact_index.json"
-      ],
-      "bead_id": "bd-1rf",
-      "bead_status": "in_progress",
-      "blocker": "missing_golden_artifacts",
-      "category": "golden_artifacts",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "syscall",
-      "subsystem": "syscall/nss",
-      "title": "NSS phase-1: files backend for passwd/group/hosts lookups",
-      "unit_cmds": [
-        "cargo test --test e2e_link_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1rf/trace.jsonl",
-        "tests/cve_arena/results/bd-1rf/artifact_index.json"
-      ],
-      "bead_id": "bd-1rf",
-      "bead_status": "in_progress",
-      "blocker": "missing_logs",
-      "category": "structured_logs",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "syscall",
-      "subsystem": "syscall/nss",
-      "title": "NSS phase-1: files backend for passwd/group/hosts lookups",
-      "unit_cmds": [
-        "cargo test --test e2e_link_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1rf/trace.jsonl",
-        "tests/cve_arena/results/bd-1rf/artifact_index.json"
-      ],
-      "bead_id": "bd-1rf",
-      "bead_status": "in_progress",
-      "blocker": "missing_unit",
-      "category": "unit_tests",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "syscall",
-      "subsystem": "syscall/nss",
-      "title": "NSS phase-1: files backend for passwd/group/hosts lookups",
-      "unit_cmds": [
-        "cargo test --test e2e_link_test"
-      ]
-    },
-    {
-      "artifact_paths": [
         "tests/cve_arena/results/bd-2ry/trace.jsonl",
         "tests/cve_arena/results/bd-2ry/artifact_index.json"
       ],
@@ -766,10 +814,10 @@
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-qwm/trace.jsonl",
-        "tests/cve_arena/results/bd-qwm/artifact_index.json"
+        "tests/cve_arena/results/bd-by8c/trace.jsonl",
+        "tests/cve_arena/results/bd-by8c/artifact_index.json"
       ],
-      "bead_id": "bd-qwm",
+      "bead_id": "bd-by8c",
       "bead_status": "in_progress",
       "blocker": "missing_golden_artifacts",
       "category": "golden_artifacts",
@@ -780,19 +828,19 @@
       ],
       "present_in_row_close_blockers": true,
       "priority": 2,
-      "stream": "syscall",
-      "subsystem": "syscall/crt",
-      "title": "CRT phase-0: _start/__libc_start_main bootstrap skeleton + acceptance fixtures",
+      "stream": "docs",
+      "subsystem": "docs/iconv",
+      "title": "bd-3bg subtask: Runtime iconv dispatch integration with explicit fallback/error policy",
       "unit_cmds": [
-        "cargo test --test e2e_link_test"
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-qwm/trace.jsonl",
-        "tests/cve_arena/results/bd-qwm/artifact_index.json"
+        "tests/cve_arena/results/bd-by8c/trace.jsonl",
+        "tests/cve_arena/results/bd-by8c/artifact_index.json"
       ],
-      "bead_id": "bd-qwm",
+      "bead_id": "bd-by8c",
       "bead_status": "in_progress",
       "blocker": "missing_logs",
       "category": "structured_logs",
@@ -803,19 +851,19 @@
       ],
       "present_in_row_close_blockers": true,
       "priority": 2,
-      "stream": "syscall",
-      "subsystem": "syscall/crt",
-      "title": "CRT phase-0: _start/__libc_start_main bootstrap skeleton + acceptance fixtures",
+      "stream": "docs",
+      "subsystem": "docs/iconv",
+      "title": "bd-3bg subtask: Runtime iconv dispatch integration with explicit fallback/error policy",
       "unit_cmds": [
-        "cargo test --test e2e_link_test"
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-qwm/trace.jsonl",
-        "tests/cve_arena/results/bd-qwm/artifact_index.json"
+        "tests/cve_arena/results/bd-by8c/trace.jsonl",
+        "tests/cve_arena/results/bd-by8c/artifact_index.json"
       ],
-      "bead_id": "bd-qwm",
+      "bead_id": "bd-by8c",
       "bead_status": "in_progress",
       "blocker": "missing_unit",
       "category": "unit_tests",
@@ -826,11 +874,136 @@
       ],
       "present_in_row_close_blockers": true,
       "priority": 2,
-      "stream": "syscall",
-      "subsystem": "syscall/crt",
-      "title": "CRT phase-0: _start/__libc_start_main bootstrap skeleton + acceptance fixtures",
+      "stream": "docs",
+      "subsystem": "docs/iconv",
+      "title": "bd-3bg subtask: Runtime iconv dispatch integration with explicit fallback/error policy",
       "unit_cmds": [
-        "cargo test --test e2e_link_test"
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
+        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
+      ],
+      "bead_id": "bd-x2sq",
+      "bead_status": "in_progress",
+      "blocker": "missing_e2e",
+      "category": "e2e_scripts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
+        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
+      ],
+      "bead_id": "bd-x2sq",
+      "bead_status": "in_progress",
+      "blocker": "missing_fixtures",
+      "category": "conformance_fixtures",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
+        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
+      ],
+      "bead_id": "bd-x2sq",
+      "bead_status": "in_progress",
+      "blocker": "missing_golden_artifacts",
+      "category": "golden_artifacts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
+        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
+      ],
+      "bead_id": "bd-x2sq",
+      "bead_status": "in_progress",
+      "blocker": "missing_logs",
+      "category": "structured_logs",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
+        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
+      ],
+      "bead_id": "bd-x2sq",
+      "bead_status": "in_progress",
+      "blocker": "missing_unit",
+      "category": "unit_tests",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
     },
     {
@@ -956,131 +1129,6 @@
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
-        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
-      ],
-      "bead_id": "bd-1rxj",
-      "bead_status": "open",
-      "blocker": "missing_e2e",
-      "category": "e2e_scripts",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "math",
-      "subsystem": "math/alien",
-      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
-        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
-      ],
-      "bead_id": "bd-1rxj",
-      "bead_status": "open",
-      "blocker": "missing_golden_artifacts",
-      "category": "golden_artifacts",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "math",
-      "subsystem": "math/alien",
-      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
-        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
-      ],
-      "bead_id": "bd-1rxj",
-      "bead_status": "open",
-      "blocker": "missing_logs",
-      "category": "structured_logs",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "math",
-      "subsystem": "math/alien",
-      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
-        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
-      ],
-      "bead_id": "bd-1rxj",
-      "bead_status": "open",
-      "blocker": "missing_perf",
-      "category": "perf_evidence",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": false,
-      "priority": 0,
-      "stream": "math",
-      "subsystem": "math/alien",
-      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1rxj/trace.jsonl",
-        "tests/cve_arena/results/bd-1rxj/artifact_index.json"
-      ],
-      "bead_id": "bd-1rxj",
-      "bead_status": "open",
-      "blocker": "missing_unit",
-      "category": "unit_tests",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 0,
-      "stream": "math",
-      "subsystem": "math/alien",
-      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
         "tests/cve_arena/results/bd-226/trace.jsonl",
         "tests/cve_arena/results/bd-226/artifact_index.json"
       ],
@@ -1231,94 +1279,102 @@
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-25pf/trace.jsonl",
-        "tests/cve_arena/results/bd-25pf/artifact_index.json"
+        "tests/cve_arena/results/bd-25n/trace.jsonl",
+        "tests/cve_arena/results/bd-25n/artifact_index.json"
       ],
-      "bead_id": "bd-25pf",
+      "bead_id": "bd-25n",
       "bead_status": "open",
-      "blocker": "missing_fixtures",
-      "category": "conformance_fixtures",
+      "blocker": "missing_e2e",
+      "category": "e2e_scripts",
       "coverage_status": "missing",
-      "e2e_cmds": [],
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": true,
       "priority": 0,
-      "stream": "math",
-      "subsystem": "math/governance",
-      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)",
+      "stream": "syscall",
+      "subsystem": "syscall/unit",
+      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem",
       "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+        "cargo test --test e2e_link_test"
       ]
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-25pf/trace.jsonl",
-        "tests/cve_arena/results/bd-25pf/artifact_index.json"
+        "tests/cve_arena/results/bd-25n/trace.jsonl",
+        "tests/cve_arena/results/bd-25n/artifact_index.json"
       ],
-      "bead_id": "bd-25pf",
+      "bead_id": "bd-25n",
       "bead_status": "open",
       "blocker": "missing_golden_artifacts",
       "category": "golden_artifacts",
       "coverage_status": "missing",
-      "e2e_cmds": [],
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": true,
       "priority": 0,
-      "stream": "math",
-      "subsystem": "math/governance",
-      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)",
+      "stream": "syscall",
+      "subsystem": "syscall/unit",
+      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem",
       "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+        "cargo test --test e2e_link_test"
       ]
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-25pf/trace.jsonl",
-        "tests/cve_arena/results/bd-25pf/artifact_index.json"
+        "tests/cve_arena/results/bd-25n/trace.jsonl",
+        "tests/cve_arena/results/bd-25n/artifact_index.json"
       ],
-      "bead_id": "bd-25pf",
+      "bead_id": "bd-25n",
       "bead_status": "open",
       "blocker": "missing_logs",
       "category": "structured_logs",
       "coverage_status": "missing",
-      "e2e_cmds": [],
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": true,
       "priority": 0,
-      "stream": "math",
-      "subsystem": "math/governance",
-      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)",
+      "stream": "syscall",
+      "subsystem": "syscall/unit",
+      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem",
       "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+        "cargo test --test e2e_link_test"
       ]
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-25pf/trace.jsonl",
-        "tests/cve_arena/results/bd-25pf/artifact_index.json"
+        "tests/cve_arena/results/bd-25n/trace.jsonl",
+        "tests/cve_arena/results/bd-25n/artifact_index.json"
       ],
-      "bead_id": "bd-25pf",
+      "bead_id": "bd-25n",
       "bead_status": "open",
       "blocker": "missing_unit",
       "category": "unit_tests",
       "coverage_status": "missing",
-      "e2e_cmds": [],
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
       "log_schema_refs": [
         "tests/conformance/log_schema.json"
       ],
       "present_in_row_close_blockers": true,
       "priority": 0,
-      "stream": "math",
-      "subsystem": "math/governance",
-      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)",
+      "stream": "syscall",
+      "subsystem": "syscall/unit",
+      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem",
       "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+        "cargo test --test e2e_link_test"
       ]
     },
     {
@@ -1894,6 +1950,156 @@
       "title": "Runtime math production admission policy: value proofs, retirement, and annex routing",
       "unit_cmds": [
         "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-3qq/trace.jsonl",
+        "tests/cve_arena/results/bd-3qq/artifact_index.json"
+      ],
+      "bead_id": "bd-3qq",
+      "bead_status": "open",
+      "blocker": "missing_e2e",
+      "category": "e2e_scripts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 0,
+      "stream": "syscall",
+      "subsystem": "syscall",
+      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
+      "unit_cmds": [
+        "cargo test --test e2e_link_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-3qq/trace.jsonl",
+        "tests/cve_arena/results/bd-3qq/artifact_index.json"
+      ],
+      "bead_id": "bd-3qq",
+      "bead_status": "open",
+      "blocker": "missing_fixtures",
+      "category": "conformance_fixtures",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 0,
+      "stream": "syscall",
+      "subsystem": "syscall",
+      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
+      "unit_cmds": [
+        "cargo test --test e2e_link_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-3qq/trace.jsonl",
+        "tests/cve_arena/results/bd-3qq/artifact_index.json"
+      ],
+      "bead_id": "bd-3qq",
+      "bead_status": "open",
+      "blocker": "missing_golden_artifacts",
+      "category": "golden_artifacts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 0,
+      "stream": "syscall",
+      "subsystem": "syscall",
+      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
+      "unit_cmds": [
+        "cargo test --test e2e_link_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-3qq/trace.jsonl",
+        "tests/cve_arena/results/bd-3qq/artifact_index.json"
+      ],
+      "bead_id": "bd-3qq",
+      "bead_status": "open",
+      "blocker": "missing_logs",
+      "category": "structured_logs",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 0,
+      "stream": "syscall",
+      "subsystem": "syscall",
+      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
+      "unit_cmds": [
+        "cargo test --test e2e_link_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-3qq/trace.jsonl",
+        "tests/cve_arena/results/bd-3qq/artifact_index.json"
+      ],
+      "bead_id": "bd-3qq",
+      "bead_status": "open",
+      "blocker": "missing_perf",
+      "category": "perf_evidence",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": false,
+      "priority": 0,
+      "stream": "syscall",
+      "subsystem": "syscall",
+      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
+      "unit_cmds": [
+        "cargo test --test e2e_link_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-3qq/trace.jsonl",
+        "tests/cve_arena/results/bd-3qq/artifact_index.json"
+      ],
+      "bead_id": "bd-3qq",
+      "bead_status": "open",
+      "blocker": "missing_unit",
+      "category": "unit_tests",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 0,
+      "stream": "syscall",
+      "subsystem": "syscall",
+      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)",
+      "unit_cmds": [
+        "cargo test --test e2e_link_test"
       ]
     },
     {
@@ -2630,6 +2836,200 @@
       "stream": "syscall",
       "subsystem": "syscall/pthread",
       "title": "bd-25n subtask: Threading/futex lifecycle exhaustive unit+stress test packs",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-10pq/trace.jsonl",
+        "tests/cve_arena/results/bd-10pq/artifact_index.json"
+      ],
+      "bead_id": "bd-10pq",
+      "bead_status": "open",
+      "blocker": "missing_golden_artifacts",
+      "category": "golden_artifacts",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "syscall",
+      "subsystem": "syscall/architecture",
+      "title": "Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-10pq/trace.jsonl",
+        "tests/cve_arena/results/bd-10pq/artifact_index.json"
+      ],
+      "bead_id": "bd-10pq",
+      "bead_status": "open",
+      "blocker": "missing_logs",
+      "category": "structured_logs",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "syscall",
+      "subsystem": "syscall/architecture",
+      "title": "Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-10pq/trace.jsonl",
+        "tests/cve_arena/results/bd-10pq/artifact_index.json"
+      ],
+      "bead_id": "bd-10pq",
+      "bead_status": "open",
+      "blocker": "missing_unit",
+      "category": "unit_tests",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "syscall",
+      "subsystem": "syscall/architecture",
+      "title": "Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V)",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-18qq/trace.jsonl",
+        "tests/cve_arena/results/bd-18qq/artifact_index.json"
+      ],
+      "bead_id": "bd-18qq",
+      "bead_status": "open",
+      "blocker": "missing_e2e",
+      "category": "e2e_scripts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "EPIC: Testing and Fault Injection Campaign",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-18qq/trace.jsonl",
+        "tests/cve_arena/results/bd-18qq/artifact_index.json"
+      ],
+      "bead_id": "bd-18qq",
+      "bead_status": "open",
+      "blocker": "missing_fixtures",
+      "category": "conformance_fixtures",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "EPIC: Testing and Fault Injection Campaign",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-18qq/trace.jsonl",
+        "tests/cve_arena/results/bd-18qq/artifact_index.json"
+      ],
+      "bead_id": "bd-18qq",
+      "bead_status": "open",
+      "blocker": "missing_golden_artifacts",
+      "category": "golden_artifacts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "EPIC: Testing and Fault Injection Campaign",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-18qq/trace.jsonl",
+        "tests/cve_arena/results/bd-18qq/artifact_index.json"
+      ],
+      "bead_id": "bd-18qq",
+      "bead_status": "open",
+      "blocker": "missing_logs",
+      "category": "structured_logs",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "EPIC: Testing and Fault Injection Campaign",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-18qq/trace.jsonl",
+        "tests/cve_arena/results/bd-18qq/artifact_index.json"
+      ],
+      "bead_id": "bd-18qq",
+      "bead_status": "open",
+      "blocker": "missing_unit",
+      "category": "unit_tests",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 1,
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "EPIC: Testing and Fault Injection Campaign",
       "unit_cmds": [
         "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
@@ -3202,156 +3602,6 @@
       "title": "bd-z84 subtask: ABI routing/callthrough eradication guard for pthread_mutex_* replacement paths",
       "unit_cmds": [
         "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1x3/trace.jsonl",
-        "tests/cve_arena/results/bd-1x3/artifact_index.json"
-      ],
-      "bead_id": "bd-1x3",
-      "bead_status": "open",
-      "blocker": "missing_e2e",
-      "category": "e2e_scripts",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_stub_guard.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 1,
-      "stream": "stubs",
-      "subsystem": "stubs/stubs",
-      "title": "EPIC: Stub Extermination (ranked by real call traces)",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --test stub_contract_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1x3/trace.jsonl",
-        "tests/cve_arena/results/bd-1x3/artifact_index.json"
-      ],
-      "bead_id": "bd-1x3",
-      "bead_status": "open",
-      "blocker": "missing_fixtures",
-      "category": "conformance_fixtures",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_stub_guard.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 1,
-      "stream": "stubs",
-      "subsystem": "stubs/stubs",
-      "title": "EPIC: Stub Extermination (ranked by real call traces)",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --test stub_contract_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1x3/trace.jsonl",
-        "tests/cve_arena/results/bd-1x3/artifact_index.json"
-      ],
-      "bead_id": "bd-1x3",
-      "bead_status": "open",
-      "blocker": "missing_golden_artifacts",
-      "category": "golden_artifacts",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_stub_guard.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 1,
-      "stream": "stubs",
-      "subsystem": "stubs/stubs",
-      "title": "EPIC: Stub Extermination (ranked by real call traces)",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --test stub_contract_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1x3/trace.jsonl",
-        "tests/cve_arena/results/bd-1x3/artifact_index.json"
-      ],
-      "bead_id": "bd-1x3",
-      "bead_status": "open",
-      "blocker": "missing_logs",
-      "category": "structured_logs",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_stub_guard.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 1,
-      "stream": "stubs",
-      "subsystem": "stubs/stubs",
-      "title": "EPIC: Stub Extermination (ranked by real call traces)",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --test stub_contract_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1x3/trace.jsonl",
-        "tests/cve_arena/results/bd-1x3/artifact_index.json"
-      ],
-      "bead_id": "bd-1x3",
-      "bead_status": "open",
-      "blocker": "missing_perf",
-      "category": "perf_evidence",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_stub_guard.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": false,
-      "priority": 1,
-      "stream": "stubs",
-      "subsystem": "stubs/stubs",
-      "title": "EPIC: Stub Extermination (ranked by real call traces)",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --test stub_contract_test"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-1x3/trace.jsonl",
-        "tests/cve_arena/results/bd-1x3/artifact_index.json"
-      ],
-      "bead_id": "bd-1x3",
-      "bead_status": "open",
-      "blocker": "missing_unit",
-      "category": "unit_tests",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_stub_guard.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 1,
-      "stream": "stubs",
-      "subsystem": "stubs/stubs",
-      "title": "EPIC: Stub Extermination (ranked by real call traces)",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --test stub_contract_test"
       ]
     },
     {
@@ -4666,6 +4916,131 @@
     },
     {
       "artifact_paths": [
+        "tests/cve_arena/results/bd-13zp/trace.jsonl",
+        "tests/cve_arena/results/bd-13zp/artifact_index.json"
+      ],
+      "bead_id": "bd-13zp",
+      "bead_status": "open",
+      "blocker": "missing_e2e",
+      "category": "e2e_scripts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "perf",
+      "subsystem": "perf/e2e",
+      "title": "EPIC: Killer Demo - Memory Safety Membrane Showcase",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-13zp/trace.jsonl",
+        "tests/cve_arena/results/bd-13zp/artifact_index.json"
+      ],
+      "bead_id": "bd-13zp",
+      "bead_status": "open",
+      "blocker": "missing_golden_artifacts",
+      "category": "golden_artifacts",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "perf",
+      "subsystem": "perf/e2e",
+      "title": "EPIC: Killer Demo - Memory Safety Membrane Showcase",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-13zp/trace.jsonl",
+        "tests/cve_arena/results/bd-13zp/artifact_index.json"
+      ],
+      "bead_id": "bd-13zp",
+      "bead_status": "open",
+      "blocker": "missing_logs",
+      "category": "structured_logs",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "perf",
+      "subsystem": "perf/e2e",
+      "title": "EPIC: Killer Demo - Memory Safety Membrane Showcase",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-13zp/trace.jsonl",
+        "tests/cve_arena/results/bd-13zp/artifact_index.json"
+      ],
+      "bead_id": "bd-13zp",
+      "bead_status": "open",
+      "blocker": "missing_perf",
+      "category": "perf_evidence",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": false,
+      "priority": 2,
+      "stream": "perf",
+      "subsystem": "perf/e2e",
+      "title": "EPIC: Killer Demo - Memory Safety Membrane Showcase",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-13zp/trace.jsonl",
+        "tests/cve_arena/results/bd-13zp/artifact_index.json"
+      ],
+      "bead_id": "bd-13zp",
+      "bead_status": "open",
+      "blocker": "missing_unit",
+      "category": "unit_tests",
+      "coverage_status": "missing",
+      "e2e_cmds": [
+        "scripts/check_e2e_suite.sh"
+      ],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "perf",
+      "subsystem": "perf/e2e",
+      "title": "EPIC: Killer Demo - Memory Safety Membrane Showcase",
+      "unit_cmds": [
+        "cargo test -p frankenlibc-harness --tests -- --nocapture"
+      ]
+    },
+    {
+      "artifact_paths": [
         "tests/cve_arena/results/bd-146t/trace.jsonl",
         "tests/cve_arena/results/bd-146t/artifact_index.json"
       ],
@@ -5304,6 +5679,75 @@
     },
     {
       "artifact_paths": [
+        "tests/cve_arena/results/bd-1rf/trace.jsonl",
+        "tests/cve_arena/results/bd-1rf/artifact_index.json"
+      ],
+      "bead_id": "bd-1rf",
+      "bead_status": "open",
+      "blocker": "missing_golden_artifacts",
+      "category": "golden_artifacts",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "syscall",
+      "subsystem": "syscall/nss",
+      "title": "NSS phase-1: files backend for passwd/group/hosts lookups",
+      "unit_cmds": [
+        "cargo test --test e2e_link_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-1rf/trace.jsonl",
+        "tests/cve_arena/results/bd-1rf/artifact_index.json"
+      ],
+      "bead_id": "bd-1rf",
+      "bead_status": "open",
+      "blocker": "missing_logs",
+      "category": "structured_logs",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "syscall",
+      "subsystem": "syscall/nss",
+      "title": "NSS phase-1: files backend for passwd/group/hosts lookups",
+      "unit_cmds": [
+        "cargo test --test e2e_link_test"
+      ]
+    },
+    {
+      "artifact_paths": [
+        "tests/cve_arena/results/bd-1rf/trace.jsonl",
+        "tests/cve_arena/results/bd-1rf/artifact_index.json"
+      ],
+      "bead_id": "bd-1rf",
+      "bead_status": "open",
+      "blocker": "missing_unit",
+      "category": "unit_tests",
+      "coverage_status": "missing",
+      "e2e_cmds": [],
+      "log_schema_refs": [
+        "tests/conformance/log_schema.json"
+      ],
+      "present_in_row_close_blockers": true,
+      "priority": 2,
+      "stream": "syscall",
+      "subsystem": "syscall/nss",
+      "title": "NSS phase-1: files backend for passwd/group/hosts lookups",
+      "unit_cmds": [
+        "cargo test --test e2e_link_test"
+      ]
+    },
+    {
+      "artifact_paths": [
         "tests/cve_arena/results/bd-1y7/trace.jsonl",
         "tests/cve_arena/results/bd-1y7/artifact_index.json"
       ],
@@ -6868,75 +7312,6 @@
     },
     {
       "artifact_paths": [
-        "tests/cve_arena/results/bd-by8c/trace.jsonl",
-        "tests/cve_arena/results/bd-by8c/artifact_index.json"
-      ],
-      "bead_id": "bd-by8c",
-      "bead_status": "open",
-      "blocker": "missing_golden_artifacts",
-      "category": "golden_artifacts",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "docs",
-      "subsystem": "docs/iconv",
-      "title": "bd-3bg subtask: Runtime iconv dispatch integration with explicit fallback/error policy",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-by8c/trace.jsonl",
-        "tests/cve_arena/results/bd-by8c/artifact_index.json"
-      ],
-      "bead_id": "bd-by8c",
-      "bead_status": "open",
-      "blocker": "missing_logs",
-      "category": "structured_logs",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "docs",
-      "subsystem": "docs/iconv",
-      "title": "bd-3bg subtask: Runtime iconv dispatch integration with explicit fallback/error policy",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-by8c/trace.jsonl",
-        "tests/cve_arena/results/bd-by8c/artifact_index.json"
-      ],
-      "bead_id": "bd-by8c",
-      "bead_status": "open",
-      "blocker": "missing_unit",
-      "category": "unit_tests",
-      "coverage_status": "missing",
-      "e2e_cmds": [],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "docs",
-      "subsystem": "docs/iconv",
-      "title": "bd-3bg subtask: Runtime iconv dispatch integration with explicit fallback/error policy",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
         "tests/cve_arena/results/bd-c1x/trace.jsonl",
         "tests/cve_arena/results/bd-c1x/artifact_index.json"
       ],
@@ -7250,131 +7625,6 @@
       "stream": "stubs",
       "subsystem": "stubs/e2e",
       "title": "bd-1gh subtask: Strict+hardened verification pack and stub-retirement gate",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
-        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
-      ],
-      "bead_id": "bd-x2sq",
-      "bead_status": "open",
-      "blocker": "missing_e2e",
-      "category": "e2e_scripts",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "docs",
-      "subsystem": "docs/e2e",
-      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
-        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
-      ],
-      "bead_id": "bd-x2sq",
-      "bead_status": "open",
-      "blocker": "missing_fixtures",
-      "category": "conformance_fixtures",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "docs",
-      "subsystem": "docs/e2e",
-      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
-        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
-      ],
-      "bead_id": "bd-x2sq",
-      "bead_status": "open",
-      "blocker": "missing_golden_artifacts",
-      "category": "golden_artifacts",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "docs",
-      "subsystem": "docs/e2e",
-      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
-        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
-      ],
-      "bead_id": "bd-x2sq",
-      "bead_status": "open",
-      "blocker": "missing_logs",
-      "category": "structured_logs",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "docs",
-      "subsystem": "docs/e2e",
-      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
-      "unit_cmds": [
-        "cargo test -p frankenlibc-harness --tests -- --nocapture"
-      ]
-    },
-    {
-      "artifact_paths": [
-        "tests/cve_arena/results/bd-x2sq/trace.jsonl",
-        "tests/cve_arena/results/bd-x2sq/artifact_index.json"
-      ],
-      "bead_id": "bd-x2sq",
-      "bead_status": "open",
-      "blocker": "missing_unit",
-      "category": "unit_tests",
-      "coverage_status": "missing",
-      "e2e_cmds": [
-        "scripts/check_e2e_suite.sh"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
-      "present_in_row_close_blockers": true,
-      "priority": 2,
-      "stream": "docs",
-      "subsystem": "docs/e2e",
-      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks",
       "unit_cmds": [
         "cargo test -p frankenlibc-harness --tests -- --nocapture"
       ]
@@ -7576,15 +7826,26 @@
   ],
   "by_bead": [
     {
-      "assignee": "BronzeTower",
-      "bead_id": "bd-25n",
+      "assignee": null,
+      "bead_id": "bd-1rxj",
+      "blocker_count": 5,
+      "priority": 0,
+      "required_categories": 5,
+      "status": "in_progress",
+      "stream": "math",
+      "subsystem": "math/alien",
+      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions"
+    },
+    {
+      "assignee": "IcyCat",
+      "bead_id": "bd-25pf",
       "blocker_count": 4,
       "priority": 0,
       "required_categories": 4,
       "status": "in_progress",
-      "stream": "syscall",
-      "subsystem": "syscall/unit",
-      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem"
+      "stream": "math",
+      "subsystem": "math/governance",
+      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)"
     },
     {
       "assignee": null,
@@ -7609,17 +7870,6 @@
       "title": "Perf baseline suite: hyperfine + criterion for strict/hardened critical paths"
     },
     {
-      "assignee": "CrimsonCove",
-      "bead_id": "bd-3qq",
-      "blocker_count": 6,
-      "priority": 0,
-      "required_categories": 6,
-      "status": "in_progress",
-      "stream": "syscall",
-      "subsystem": "syscall",
-      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)"
-    },
-    {
       "assignee": "WhiteMeadow",
       "bead_id": "bd-rqn",
       "blocker_count": 3,
@@ -7631,15 +7881,15 @@
       "title": "Production kernel manifest: minimal required math set + compile-time gates"
     },
     {
-      "assignee": "RusticCastle",
-      "bead_id": "bd-1qy",
-      "blocker_count": 0,
+      "assignee": "BrightBrook",
+      "bead_id": "bd-1x3",
+      "blocker_count": 6,
       "priority": 1,
-      "required_categories": 5,
+      "required_categories": 6,
       "status": "in_progress",
-      "stream": "e2e",
-      "subsystem": "e2e/e2e",
-      "title": "bd-z84 subtask: Strict+hardened mutex fixture suite with failure artifact capture"
+      "stream": "stubs",
+      "subsystem": "stubs/stubs",
+      "title": "EPIC: Stub Extermination (ranked by real call traces)"
     },
     {
       "assignee": "WhiteMeadow",
@@ -7664,17 +7914,6 @@
       "title": "Futex mutex core: implement pthread_mutex_* state machine without glibc call-through"
     },
     {
-      "assignee": "SageCreek",
-      "bead_id": "bd-1rf",
-      "blocker_count": 3,
-      "priority": 2,
-      "required_categories": 3,
-      "status": "in_progress",
-      "stream": "syscall",
-      "subsystem": "syscall/nss",
-      "title": "NSS phase-1: files backend for passwd/group/hosts lookups"
-    },
-    {
       "assignee": "OliveBeacon",
       "bead_id": "bd-2ry",
       "blocker_count": 5,
@@ -7686,15 +7925,37 @@
       "title": "Stub wave 4: setjmp/longjmp control-transfer strategy + safety constraints"
     },
     {
-      "assignee": "OrangeGlacier",
-      "bead_id": "bd-qwm",
+      "assignee": "ScarletBasin",
+      "bead_id": "bd-by8c",
       "blocker_count": 3,
+      "priority": 2,
+      "required_categories": 3,
+      "status": "in_progress",
+      "stream": "docs",
+      "subsystem": "docs/iconv",
+      "title": "bd-3bg subtask: Runtime iconv dispatch integration with explicit fallback/error policy"
+    },
+    {
+      "assignee": "SwiftLark",
+      "bead_id": "bd-qwm",
+      "blocker_count": 0,
       "priority": 2,
       "required_categories": 3,
       "status": "in_progress",
       "stream": "syscall",
       "subsystem": "syscall/crt",
       "title": "CRT phase-0: _start/__libc_start_main bootstrap skeleton + acceptance fixtures"
+    },
+    {
+      "assignee": "IcyCat",
+      "bead_id": "bd-x2sq",
+      "blocker_count": 5,
+      "priority": 2,
+      "required_categories": 5,
+      "status": "in_progress",
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks"
     },
     {
       "assignee": null,
@@ -7720,17 +7981,6 @@
     },
     {
       "assignee": null,
-      "bead_id": "bd-1rxj",
-      "blocker_count": 5,
-      "priority": 0,
-      "required_categories": 5,
-      "status": "open",
-      "stream": "math",
-      "subsystem": "math/alien",
-      "title": "bd-rqn subtask: Controller value-proof ablations and retention decisions"
-    },
-    {
-      "assignee": null,
       "bead_id": "bd-226",
       "blocker_count": 6,
       "priority": 0,
@@ -7741,15 +7991,15 @@
       "title": "Full release rehearsal: clean-checkout gate run + complete artifact dossier"
     },
     {
-      "assignee": null,
-      "bead_id": "bd-25pf",
+      "assignee": "BronzeTower",
+      "bead_id": "bd-25n",
       "blocker_count": 4,
       "priority": 0,
       "required_categories": 4,
       "status": "open",
-      "stream": "math",
-      "subsystem": "math/governance",
-      "title": "bd-rqn subtask: Production-set change policy gate (admission/retirement evidence)"
+      "stream": "syscall",
+      "subsystem": "syscall/unit",
+      "title": "Unit test expansion program: exhaustive positive/negative/property tests by subsystem"
     },
     {
       "assignee": null,
@@ -7829,6 +8079,17 @@
       "title": "Runtime math production admission policy: value proofs, retirement, and annex routing"
     },
     {
+      "assignee": "CrimsonCove",
+      "bead_id": "bd-3qq",
+      "blocker_count": 6,
+      "priority": 0,
+      "required_categories": 6,
+      "status": "open",
+      "stream": "syscall",
+      "subsystem": "syscall",
+      "title": "EPIC: HA1zgq Critique Response (Make glibc_rust real + honest + fast)"
+    },
+    {
       "assignee": null,
       "bead_id": "bd-4rl",
       "blocker_count": 0,
@@ -7906,6 +8167,17 @@
       "title": "bd-25n subtask: Threading/futex lifecycle exhaustive unit+stress test packs"
     },
     {
+      "assignee": "ubuntu",
+      "bead_id": "bd-10pq",
+      "blocker_count": 3,
+      "priority": 1,
+      "required_categories": 3,
+      "status": "open",
+      "stream": "syscall",
+      "subsystem": "syscall/architecture",
+      "title": "Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V)"
+    },
+    {
       "assignee": null,
       "bead_id": "bd-182",
       "blocker_count": 0,
@@ -7915,6 +8187,17 @@
       "stream": "math",
       "subsystem": "math/alien",
       "title": "Anytime-valid monitor standard: e-process thresholds + alert budget contracts"
+    },
+    {
+      "assignee": null,
+      "bead_id": "bd-18qq",
+      "blocker_count": 5,
+      "priority": 1,
+      "required_categories": 5,
+      "status": "open",
+      "stream": "docs",
+      "subsystem": "docs/e2e",
+      "title": "EPIC: Testing and Fault Injection Campaign"
     },
     {
       "assignee": null,
@@ -7983,6 +8266,17 @@
       "title": "bd-1x3 subtask: Unified stub/TODO debt census (exported + critical non-exported)"
     },
     {
+      "assignee": "RusticCastle",
+      "bead_id": "bd-1qy",
+      "blocker_count": 0,
+      "priority": 1,
+      "required_categories": 5,
+      "status": "open",
+      "stream": "e2e",
+      "subsystem": "e2e/e2e",
+      "title": "bd-z84 subtask: Strict+hardened mutex fixture suite with failure artifact capture"
+    },
+    {
       "assignee": null,
       "bead_id": "bd-1uc",
       "blocker_count": 4,
@@ -7992,17 +8286,6 @@
       "stream": "perf",
       "subsystem": "perf/pthread",
       "title": "bd-z84 subtask: ABI routing/callthrough eradication guard for pthread_mutex_* replacement paths"
-    },
-    {
-      "assignee": null,
-      "bead_id": "bd-1x3",
-      "blocker_count": 6,
-      "priority": 1,
-      "required_categories": 6,
-      "status": "open",
-      "stream": "stubs",
-      "subsystem": "stubs/stubs",
-      "title": "EPIC: Stub Extermination (ranked by real call traces)"
     },
     {
       "assignee": null,
@@ -8225,7 +8508,7 @@
       "title": "I/O migration wave: route core unistd/io ABI entrypoints through raw veneer"
     },
     {
-      "assignee": null,
+      "assignee": "BlueLake",
       "bead_id": "bd-h5x",
       "blocker_count": 6,
       "priority": 1,
@@ -8303,6 +8586,17 @@
     },
     {
       "assignee": null,
+      "bead_id": "bd-13zp",
+      "blocker_count": 5,
+      "priority": 2,
+      "required_categories": 5,
+      "status": "open",
+      "stream": "perf",
+      "subsystem": "perf/e2e",
+      "title": "EPIC: Killer Demo - Memory Safety Membrane Showcase"
+    },
+    {
+      "assignee": null,
       "bead_id": "bd-146t",
       "blocker_count": 3,
       "priority": 2,
@@ -8366,6 +8660,17 @@
       "stream": "syscall",
       "subsystem": "syscall/locale",
       "title": "EPIC: Hard Parts Roadmap (rtld/CRT + NSS/locale/resolver)"
+    },
+    {
+      "assignee": "SageCreek",
+      "bead_id": "bd-1rf",
+      "blocker_count": 3,
+      "priority": 2,
+      "required_categories": 3,
+      "status": "open",
+      "stream": "syscall",
+      "subsystem": "syscall/nss",
+      "title": "NSS phase-1: files backend for passwd/group/hosts lookups"
     },
     {
       "assignee": "opus-tsm",
@@ -8567,17 +8872,6 @@
     },
     {
       "assignee": null,
-      "bead_id": "bd-by8c",
-      "blocker_count": 3,
-      "priority": 2,
-      "required_categories": 3,
-      "status": "open",
-      "stream": "docs",
-      "subsystem": "docs/iconv",
-      "title": "bd-3bg subtask: Runtime iconv dispatch integration with explicit fallback/error policy"
-    },
-    {
-      "assignee": null,
       "bead_id": "bd-c1x",
       "blocker_count": 5,
       "priority": 2,
@@ -8608,17 +8902,6 @@
       "stream": "stubs",
       "subsystem": "stubs/e2e",
       "title": "bd-1gh subtask: Strict+hardened verification pack and stub-retirement gate"
-    },
-    {
-      "assignee": null,
-      "bead_id": "bd-x2sq",
-      "blocker_count": 5,
-      "priority": 2,
-      "required_categories": 5,
-      "status": "open",
-      "stream": "docs",
-      "subsystem": "docs/e2e",
-      "title": "bd-1rf subtask: NSS strict+hardened fixture/e2e closure with matrix drift checks"
     },
     {
       "assignee": null,
@@ -8774,25 +9057,25 @@
       "subsystem": "docs/docs"
     },
     {
-      "bead_count": 2,
+      "bead_count": 3,
       "categories": {
         "conformance_fixtures": {
           "complete": 0,
-          "missing": 2,
+          "missing": 3,
           "partial": 0,
-          "required": 2
+          "required": 3
         },
         "e2e_scripts": {
           "complete": 0,
-          "missing": 2,
+          "missing": 3,
           "partial": 0,
-          "required": 2
+          "required": 3
         },
         "golden_artifacts": {
           "complete": 0,
-          "missing": 2,
+          "missing": 3,
           "partial": 0,
-          "required": 2
+          "required": 3
         },
         "perf_evidence": {
           "complete": 0,
@@ -8802,15 +9085,15 @@
         },
         "structured_logs": {
           "complete": 0,
-          "missing": 2,
+          "missing": 3,
           "partial": 0,
-          "required": 2
+          "required": 3
         },
         "unit_tests": {
           "complete": 0,
-          "missing": 2,
+          "missing": 3,
           "partial": 0,
-          "required": 2
+          "required": 3
         }
       },
       "stream": "docs",
@@ -9634,7 +9917,7 @@
       "subsystem": "perf/diagnostics"
     },
     {
-      "bead_count": 3,
+      "bead_count": 4,
       "categories": {
         "conformance_fixtures": {
           "complete": 0,
@@ -9644,33 +9927,33 @@
         },
         "e2e_scripts": {
           "complete": 0,
-          "missing": 3,
+          "missing": 4,
           "partial": 0,
-          "required": 3
+          "required": 4
         },
         "golden_artifacts": {
           "complete": 0,
-          "missing": 3,
+          "missing": 4,
           "partial": 0,
-          "required": 3
+          "required": 4
         },
         "perf_evidence": {
           "complete": 0,
-          "missing": 2,
+          "missing": 3,
           "partial": 0,
-          "required": 2
+          "required": 3
         },
         "structured_logs": {
           "complete": 0,
-          "missing": 3,
+          "missing": 4,
           "partial": 0,
-          "required": 3
+          "required": 4
         },
         "unit_tests": {
           "complete": 0,
-          "missing": 3,
+          "missing": 4,
           "partial": 0,
-          "required": 3
+          "required": 4
         }
       },
       "stream": "perf",
@@ -10362,7 +10645,7 @@
         }
       },
       "stream": "syscall",
-      "subsystem": "syscall/build"
+      "subsystem": "syscall/architecture"
     },
     {
       "bead_count": 1,
@@ -10400,6 +10683,49 @@
         "unit_tests": {
           "complete": 0,
           "missing": 1,
+          "partial": 0,
+          "required": 1
+        }
+      },
+      "stream": "syscall",
+      "subsystem": "syscall/build"
+    },
+    {
+      "bead_count": 1,
+      "categories": {
+        "conformance_fixtures": {
+          "complete": 0,
+          "missing": 0,
+          "partial": 0,
+          "required": 0
+        },
+        "e2e_scripts": {
+          "complete": 0,
+          "missing": 0,
+          "partial": 0,
+          "required": 0
+        },
+        "golden_artifacts": {
+          "complete": 1,
+          "missing": 0,
+          "partial": 0,
+          "required": 1
+        },
+        "perf_evidence": {
+          "complete": 0,
+          "missing": 0,
+          "partial": 0,
+          "required": 0
+        },
+        "structured_logs": {
+          "complete": 1,
+          "missing": 0,
+          "partial": 0,
+          "required": 1
+        },
+        "unit_tests": {
+          "complete": 1,
+          "missing": 0,
           "partial": 0,
           "required": 1
         }
@@ -10924,29 +11250,29 @@
       "subsystem": "syscall/unit"
     }
   ],
-  "generated_at": "2026-02-13T09:08:00Z",
+  "generated_at": "2026-04-24T01:45:27Z",
   "schema_version": "v1",
   "source": "tests/conformance/verification_matrix.json",
   "summary": {
-    "blocked_bead_count": 78,
-    "blocker_count": 312,
+    "blocked_bead_count": 80,
+    "blocker_count": 322,
     "by_blocker": {
-      "missing_e2e": 39,
-      "missing_fixtures": 31,
-      "missing_golden_artifacts": 75,
-      "missing_logs": 74,
-      "missing_perf": 19,
-      "missing_unit": 74
+      "missing_e2e": 41,
+      "missing_fixtures": 32,
+      "missing_golden_artifacts": 77,
+      "missing_logs": 76,
+      "missing_perf": 20,
+      "missing_unit": 76
     },
     "by_category_missing": {
-      "conformance_fixtures": 31,
-      "e2e_scripts": 39,
-      "golden_artifacts": 75,
-      "perf_evidence": 19,
-      "structured_logs": 74,
-      "unit_tests": 74
+      "conformance_fixtures": 32,
+      "e2e_scripts": 41,
+      "golden_artifacts": 77,
+      "perf_evidence": 20,
+      "structured_logs": 76,
+      "unit_tests": 76
     },
-    "entry_count": 97,
-    "subsystem_count": 53
+    "entry_count": 100,
+    "subsystem_count": 54
   }
 }

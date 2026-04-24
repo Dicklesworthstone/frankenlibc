@@ -1,13 +1,13 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.5",
-  "generated_at": "2026-04-24T03:41:09Z",
+  "generated_at": "2026-04-24T08:37:36Z",
   "summary": {
-    "total_targets": 49,
-    "functional_targets": 49,
+    "total_targets": 50,
+    "functional_targets": 50,
     "stub_targets": 0,
-    "checks_passed": 245,
-    "checks_total": 245,
+    "checks_passed": 250,
+    "checks_total": 250,
     "quality_score_pct": 100.0,
     "total_seed_corpus": 22367,
     "total_dict_entries": 350,
@@ -112,7 +112,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 291
+      "lines": 285
     },
     {
       "target": "fuzz_ctype",
@@ -235,7 +235,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 259
+      "lines": 265
     },
     {
       "target": "fuzz_elf_loader",
@@ -322,7 +322,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 340
+      "lines": 333
     },
     {
       "target": "fuzz_errno_precedence",
@@ -363,7 +363,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 651
+      "lines": 703
     },
     {
       "target": "fuzz_fcntl",
@@ -404,7 +404,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 196
+      "lines": 200
     },
     {
       "target": "fuzz_fortify",
@@ -445,7 +445,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 361
+      "lines": 459
     },
     {
       "target": "fuzz_iconv",
@@ -568,7 +568,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 186
+      "lines": 185
     },
     {
       "target": "fuzz_locale",
@@ -786,7 +786,48 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 427
+      "lines": 450
+    },
+    {
+      "target": "fuzz_mount",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_mount.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 199
     },
     {
       "target": "fuzz_open_syscalls",
@@ -827,7 +868,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 399
+      "lines": 435
     },
     {
       "target": "fuzz_pathname",
@@ -868,7 +909,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 345
+      "lines": 700
     },
     {
       "target": "fuzz_pattern_match",
@@ -950,7 +991,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 412
+      "lines": 402
     },
     {
       "target": "fuzz_printf",
@@ -994,7 +1035,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 578
+      "lines": 571
     },
     {
       "target": "fuzz_printf_adversarial",
@@ -1076,7 +1117,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 323
+      "lines": 325
     },
     {
       "target": "fuzz_pthread_keys",
@@ -1117,7 +1158,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 284
+      "lines": 294
     },
     {
       "target": "fuzz_pthread_mutex",
@@ -1158,7 +1199,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 413
+      "lines": 445
     },
     {
       "target": "fuzz_pthread_rwlock",
@@ -1199,7 +1240,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 405
+      "lines": 436
     },
     {
       "target": "fuzz_pthread_sync_misc",
@@ -1240,7 +1281,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 218
+      "lines": 216
     },
     {
       "target": "fuzz_pwd_grp",
@@ -1572,7 +1613,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 361
+      "lines": 355
     },
     {
       "target": "fuzz_setjmp",
@@ -1613,7 +1654,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 165
+      "lines": 173
     },
     {
       "target": "fuzz_signal",
@@ -1654,7 +1695,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 306
+      "lines": 330
     },
     {
       "target": "fuzz_socket",
@@ -1695,7 +1736,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 551
+      "lines": 624
     },
     {
       "target": "fuzz_splice",
@@ -1736,7 +1777,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 220
+      "lines": 281
     },
     {
       "target": "fuzz_statx",
@@ -1777,7 +1818,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 146
+      "lines": 139
     },
     {
       "target": "fuzz_stdlib",
@@ -1986,7 +2027,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 217
+      "lines": 225
     },
     {
       "target": "fuzz_wchar",
@@ -2027,7 +2068,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 336
+      "lines": 381
     },
     {
       "target": "fuzz_wordexp",
@@ -2109,7 +2150,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 353
+      "lines": 348
     }
   ],
   "corpus_strategy": {
@@ -137427,10 +137468,10 @@
     ]
   },
   "quality_checklist": {
-    "convention_compliance": "245/245 checks passed",
-    "implementation_coverage": "49/49 targets functional",
-    "corpus_seeded": "50/49 targets with seeds",
-    "dictionary_created": "50/49 targets with dictionaries",
+    "convention_compliance": "250/250 checks passed",
+    "implementation_coverage": "50/50 targets functional",
+    "corpus_seeded": "50/50 targets with seeds",
+    "dictionary_created": "50/50 targets with dictionaries",
     "cwe_mapping": "17 CWEs covered across targets"
   }
 }

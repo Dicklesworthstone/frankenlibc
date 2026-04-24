@@ -1050,7 +1050,7 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 77,
+          "line": 124,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_fortify.rs",
           "scope": "other",
@@ -1064,14 +1064,14 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 98,
+          "line": 118,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_mmap.rs",
           "scope": "other",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 86,
+          "line": 102,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pathname.rs",
           "scope": "other",
@@ -1085,7 +1085,7 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 129,
+          "line": 122,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs",
           "scope": "other",
@@ -1106,21 +1106,21 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 95,
+          "line": 105,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_keys.rs",
           "scope": "other",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 103,
+          "line": 128,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_mutex.rs",
           "scope": "other",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 101,
+          "line": 126,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_pthread_rwlock.rs",
           "scope": "other",
@@ -1141,35 +1141,35 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 53,
+          "line": 60,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_setjmp.rs",
           "scope": "other",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 94,
+          "line": 116,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_signal.rs",
           "scope": "other",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 92,
+          "line": 142,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_socket.rs",
           "scope": "other",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 90,
+          "line": 132,
           "operation": "reference",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_wchar.rs",
           "scope": "other",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 1932,
+          "line": 1961,
           "operation": "write",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",

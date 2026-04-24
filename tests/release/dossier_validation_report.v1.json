@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-24T03:42:46Z",
+  "generated_at": "2026-04-24T08:39:14Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "74401970c08f73a67f42e8555cb378ee0984499ac7bdf17db25c3f2c3f8fdd87",
+      "sha256": "2aaf310908ae13cc74c8c7c19c06552a6463f97c9edaefa935389b2edb3598f2",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "35adb2f7621ee44d7c5812c620f176e7be041c021b92272a00b27dfcb1158d8b",
+      "sha256": "0969c310e811f40537e944a2d580c314266f460d77bb72067985a19c4332bcf4",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "5450404ced0829e2dac794be35d08240c0c07a93a05978c560808428db858277",
+      "sha256": "f8cb3e41d8277e50ff0cbc1b5a6ee23e0756ade971af7580bb0be107efc2967b",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -171,8 +171,8 @@
       "kind": "report",
       "required": true,
       "critical": false,
-      "sha256": "fe3205c643e3645d933a455d65a9dba77f391334fe849b907b1fc03a722b4754",
-      "size_bytes": 144543,
+      "sha256": "9083a49284f2d8e4f925b99dc651d3e32b9fd35cff1fd93b5cbb0cc74ec702e2",
+      "size_bytes": 1780530,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -230,7 +230,7 @@
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "74401970c08f73a67f42e8555cb378ee0984499ac7bdf17db25c3f2c3f8fdd87",
+      "sha256": "2aaf310908ae13cc74c8c7c19c06552a6463f97c9edaefa935389b2edb3598f2",
       "size_bytes": 5609
     },
     "replacement_levels": {
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "35adb2f7621ee44d7c5812c620f176e7be041c021b92272a00b27dfcb1158d8b",
+      "sha256": "0969c310e811f40537e944a2d580c314266f460d77bb72067985a19c4332bcf4",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "5450404ced0829e2dac794be35d08240c0c07a93a05978c560808428db858277",
+      "sha256": "f8cb3e41d8277e50ff0cbc1b5a6ee23e0756ade971af7580bb0be107efc2967b",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -270,8 +270,8 @@
     },
     "symbol_fixture_coverage": {
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "fe3205c643e3645d933a455d65a9dba77f391334fe849b907b1fc03a722b4754",
-      "size_bytes": 144543
+      "sha256": "9083a49284f2d8e4f925b99dc651d3e32b9fd35cff1fd93b5cbb0cc74ec702e2",
+      "size_bytes": 1780530
     },
     "closure_contract": {
       "path": "tests/conformance/closure_contract.v1.json",
@@ -288,116 +288,128 @@
     },
     "entries": [
       {
-        "id": "bd-10pq",
-        "title": "Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V)",
+        "id": "bd-fnm-epic",
+        "title": "PORT: fnmatch.h native Rust impl in frankenlibc-core",
+        "issue_type": "epic",
+        "priority": 1,
+        "closed_at": "2026-04-25T00:30:00.000000000Z",
+        "closed_by": "cod-frankenlibc",
+        "labels": [
+          "porting",
+          "fnmatch",
+          "native-rust",
+          "epic"
+        ],
+        "close_reason": "Epic complete. All 3 sub-beads closed: bd-fnm-1 (frankenlibc-core/src/string/fnmatch.rs with FnmatchFlags + fnmatch_match() + classify_bracket + fnmatch_inner, 16 unit tests), bd-fnm-2 (replaced ~280\u2026"
+      },
+      {
+        "id": "bd-fnm-3",
+        "title": "PORT fnmatch.h #3: conformance + GNU extensions parity",
+        "issue_type": "task",
+        "priority": 2,
+        "closed_at": "2026-04-25T00:30:00.000000000Z",
+        "closed_by": "cod-frankenlibc",
+        "labels": [
+          "porting",
+          "fnmatch",
+          "conformance",
+          "testing"
+        ],
+        "close_reason": "Extended conformance_diff_fnmatch_glob.rs with 4 new tests: diff_fnmatch_leading_dir (FNM_LEADING_DIR across 7 cases incl 'a/b' vs 'a/b/c/d', confirming pattern matches dir prefixes per glibc), diff_\u2026"
+      },
+      {
+        "id": "bd-fnm-2",
+        "title": "PORT fnmatch.h #2: wire fl::fnmatch to delegate to core",
         "issue_type": "task",
         "priority": 1,
-        "closed_at": "2026-04-24T03:39:34.405902286Z",
-        "closed_by": "ubuntu",
+        "closed_at": "2026-04-25T00:15:00.000000000Z",
+        "closed_by": "cod-frankenlibc",
         "labels": [
-          "architecture",
-          "critique",
-          "cross-platform",
-          "feature-parity",
-          "frankenlibc",
-          "gap-closure",
-          "pthread",
-          "testing",
-          "verification"
+          "porting",
+          "fnmatch",
+          "abi"
         ],
-        "close_reason": "Architecture heterogeneity artifacts are present and verified: rch cargo test -p frankenlibc-membrane --test sos_barrier_arch_independence_test passed 6/6."
+        "close_reason": "Replaced search_abi.rs fnmatch_impl + classify_bracket + BracketShape (~280 lines) with thin shim that calls frankenlibc_core::string::fnmatch::fnmatch_match. Adapts NUL-terminated C strings to byte\u2026"
       },
       {
-        "id": "bd-z4k96",
-        "title": "REVIEW: [HIGH] locale_abi.rs setlocale/newlocale/textdomain/bindtextdomain walk unbounded memory via CStr::from_ptr on user-controlled pointers",
-        "issue_type": "bug",
+        "id": "bd-fnm-1",
+        "title": "PORT fnmatch.h #1: native engine in frankenlibc-core/src/string/fnmatch.rs",
+        "issue_type": "task",
         "priority": 1,
-        "closed_at": "2026-04-24T03:35:00.000000000Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "All four named sites (setlocale L158, textdomain L392, bindtextdomain L419+L435, newlocale L491) now use read_bounded_cstr (locale_abi.rs:36) which delegates to scan_c_string + known_locale_string_re\u2026"
-      },
-      {
-        "id": "bd-jqy64",
-        "title": "[MODE-1][HIGH] symbolic correctness: c11threads create/join backend mismatch",
-        "issue_type": "bug",
-        "priority": 1,
-        "closed_at": "2026-04-24T03:30:00Z",
-        "closed_by": "ubuntu",
+        "closed_at": "2026-04-25T00:00:00.000000000Z",
+        "closed_by": "cod-frankenlibc",
         "labels": [
-          "c11threads",
-          "modes",
-          "review",
-          "symbolic"
+          "porting",
+          "fnmatch",
+          "core"
         ],
-        "close_reason": "Already fixed: commit 138c07c3 made pthread_join delegate to host for non-managed handles. 37/37 c11threads_abi_test pass. Verified round 2."
+        "close_reason": "Created crates/frankenlibc-core/src/string/fnmatch.rs with pure-safe Rust port of the engine. Public API: pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool + FnmatchFlags\u2026"
       },
       {
-        "id": "bd-ily44",
-        "title": "REVIEW: [HIGH] iconv() TOCTOU use-after-free with concurrent iconv_close()",
-        "issue_type": "bug",
+        "id": "bd-srch-epic",
+        "title": "PORT: search.h native Rust impl with Red-Black tree parity",
+        "issue_type": "epic",
         "priority": 1,
-        "closed_at": "2026-04-24T03:30:00Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "Fixed: commit c8003957 (peer agent) refactored iconv registry to Arc<Mutex<IconvDescriptor>>; concurrent close + iconv no longer UAFs. 41/41 iconv tests pass including the new TOCTOU regression."
+        "closed_at": "2026-04-24T23:00:00.000000000Z",
+        "closed_by": "cod-frankenlibc",
+        "labels": [
+          "porting",
+          "search",
+          "tsearch",
+          "native-rust",
+          "epic"
+        ],
+        "close_reason": "Epic complete. All 6 sub-beads closed: bd-srch-1 (LLRB tree types + core ops in frankenlibc-core/src/search/rb_tree.rs, 12 unit tests), bd-srch-2 (wire tsearch/tfind/tdelete + twalk/twalk_r to delega\u2026"
       },
       {
-        "id": "bd-cie59",
-        "title": "REVIEW: [HIGH] pthread_cond_wait/timedwait clobbers RECURSIVE/ERRORCHECK mutex owner without ownership check",
-        "issue_type": "bug",
-        "priority": 1,
-        "closed_at": "2026-04-24T03:30:00Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "Fixed: commit 64fb99b2 added owner verification in pthread_cond_wait/timedwait for RECURSIVE/ERRORCHECK; returns EPERM for non-owner. Regression test added."
-      },
-      {
-        "id": "bd-9chy.7",
-        "title": "stdio: implement tmpfile/tmpfile64 natively via O_TMPFILE + native fdopen",
-        "issue_type": "feature",
+        "id": "bd-srch-6",
+        "title": "PORT search.h #6: conformance + perf parity verification vs glibc",
+        "issue_type": "task",
         "priority": 2,
-        "closed_at": "2026-04-24T03:30:00Z",
-        "closed_by": "ubuntu",
+        "closed_at": "2026-04-24T23:00:00.000000000Z",
+        "closed_by": "cod-frankenlibc",
         "labels": [
-          "constructor",
-          "stdio"
+          "porting",
+          "search",
+          "conformance",
+          "testing"
         ],
-        "close_reason": "Already implemented: tmpfile uses O_TMPFILE primary + mkstemp/unlink fallback + fdopen_native_impl; tmpfile64 alias. 6/6 stdio tmpfile tests pass."
+        "close_reason": "Extended conformance_diff_search.rs with 4 epic-completion regression tests: fl_tsearch_descending_inserts_balanced (1024 descending keys + tfind all + tdestroy \u2014 would chain to depth 1024 in unbalan\u2026"
       },
       {
-        "id": "bd-9chy.4",
-        "title": "stdio: define versioned JSONL evidence schema + parser + ring buffer",
-        "issue_type": "feature",
+        "id": "bd-srch-5",
+        "title": "PORT search.h #5: move lsearch/lfind linear search to core",
+        "issue_type": "task",
         "priority": 2,
-        "closed_at": "2026-04-24T03:20:58.472918221Z",
-        "closed_by": "ubuntu",
+        "closed_at": "2026-04-24T22:45:00.000000000Z",
+        "closed_by": "cod-frankenlibc",
         "labels": [
-          "evidence",
-          "foundation",
-          "stdio"
+          "porting",
+          "search",
+          "lsearch",
+          "core"
         ],
-        "close_reason": "Stdio evidence schema/parser/ring buffer are implemented and verified: rch cargo test -p frankenlibc-harness --test stdio_evidence_schema passed 4/4."
+        "close_reason": "Added crates/frankenlibc-core/src/search/linear.rs with lfind_index(base: &[u8], width, nel, matches) -> Option<usize> and lsearch_or_append_index() -> SearchOrAppend::{Found(idx), AppendAt(idx)}. Pu\u2026"
       },
       {
-        "id": "bd-4rjgy",
-        "title": "[MODE-5][HIGH] symbolic correctness: runtime_policy env lock poisoning hides root failures",
-        "issue_type": "bug",
-        "priority": 1,
-        "closed_at": "2026-04-24T03:17:39.092744577Z",
-        "closed_by": "ubuntu",
+        "id": "bd-srch-4",
+        "title": "PORT search.h #4: move hash table (hcreate/hsearch/hdestroy + _r) to core",
+        "issue_type": "task",
+        "priority": 2,
+        "closed_at": "2026-04-24T22:30:00.000000000Z",
+        "closed_by": "cod-frankenlibc",
         "labels": [
-          "modes",
-          "review",
-          "runtime-policy",
-          "symbolic"
+          "porting",
+          "search",
+          "hsearch",
+          "core"
         ],
-        "close_reason": "Runtime policy switch logging and panic-isolated env lock recovery are present; revalidated runtime_policy regression via rch."
+        "close_reason": "Added crates/frankenlibc-core/src/search/hash.rs with LinearProbeTable<K,V> + LinearSlot<K,V> (#[repr(C)] for layout-compat with POSIX Entry) + djb2_seed/djb2_step helpers. Generic over K,V with call\u2026"
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-10pq` Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V) (task, closed 2026-04-24T03:39:34.405902286Z)\n  Architecture heterogeneity artifacts are present and verified: rch cargo test -p frankenlibc-membrane --test sos_barrier_arch_independence_test passed 6/6.\n- `bd-z4k96` REVIEW: [HIGH] locale_abi.rs setlocale/newlocale/textdomain/bindtextdomain walk unbounded memory via CStr::from_ptr on user-controlled pointers (bug, closed 2026-04-24T03:35:00.000000000Z)\n  All four named sites (setlocale L158, textdomain L392, bindtextdomain L419+L435, newlocale L491) now use read_bounded_cstr (locale_abi.rs:36) which delegates to scan_c_string + known_locale_string_re\u2026\n- `bd-jqy64` [MODE-1][HIGH] symbolic correctness: c11threads create/join backend mismatch (bug, closed 2026-04-24T03:30:00Z)\n  Already fixed: commit 138c07c3 made pthread_join delegate to host for non-managed handles. 37/37 c11threads_abi_test pass. Verified round 2.\n- `bd-ily44` REVIEW: [HIGH] iconv() TOCTOU use-after-free with concurrent iconv_close() (bug, closed 2026-04-24T03:30:00Z)\n  Fixed: commit c8003957 (peer agent) refactored iconv registry to Arc<Mutex<IconvDescriptor>>; concurrent close + iconv no longer UAFs. 41/41 iconv tests pass including the new TOCTOU regression.\n- `bd-cie59` REVIEW: [HIGH] pthread_cond_wait/timedwait clobbers RECURSIVE/ERRORCHECK mutex owner without ownership check (bug, closed 2026-04-24T03:30:00Z)\n  Fixed: commit 64fb99b2 added owner verification in pthread_cond_wait/timedwait for RECURSIVE/ERRORCHECK; returns EPERM for non-owner. Regression test added.\n- `bd-9chy.7` stdio: implement tmpfile/tmpfile64 natively via O_TMPFILE + native fdopen (feature, closed 2026-04-24T03:30:00Z)\n  Already implemented: tmpfile uses O_TMPFILE primary + mkstemp/unlink fallback + fdopen_native_impl; tmpfile64 alias. 6/6 stdio tmpfile tests pass.\n- `bd-9chy.4` stdio: define versioned JSONL evidence schema + parser + ring buffer (feature, closed 2026-04-24T03:20:58.472918221Z)\n  Stdio evidence schema/parser/ring buffer are implemented and verified: rch cargo test -p frankenlibc-harness --test stdio_evidence_schema passed 4/4.\n- `bd-4rjgy` [MODE-5][HIGH] symbolic correctness: runtime_policy env lock poisoning hides root failures (bug, closed 2026-04-24T03:17:39.092744577Z)\n  Runtime policy switch logging and panic-isolated env lock recovery are present; revalidated runtime_policy regression via rch.",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-fnm-epic` PORT: fnmatch.h native Rust impl in frankenlibc-core (epic, closed 2026-04-25T00:30:00.000000000Z)\n  Epic complete. All 3 sub-beads closed: bd-fnm-1 (frankenlibc-core/src/string/fnmatch.rs with FnmatchFlags + fnmatch_match() + classify_bracket + fnmatch_inner, 16 unit tests), bd-fnm-2 (replaced ~280\u2026\n- `bd-fnm-3` PORT fnmatch.h #3: conformance + GNU extensions parity (task, closed 2026-04-25T00:30:00.000000000Z)\n  Extended conformance_diff_fnmatch_glob.rs with 4 new tests: diff_fnmatch_leading_dir (FNM_LEADING_DIR across 7 cases incl 'a/b' vs 'a/b/c/d', confirming pattern matches dir prefixes per glibc), diff_\u2026\n- `bd-fnm-2` PORT fnmatch.h #2: wire fl::fnmatch to delegate to core (task, closed 2026-04-25T00:15:00.000000000Z)\n  Replaced search_abi.rs fnmatch_impl + classify_bracket + BracketShape (~280 lines) with thin shim that calls frankenlibc_core::string::fnmatch::fnmatch_match. Adapts NUL-terminated C strings to byte\u2026\n- `bd-fnm-1` PORT fnmatch.h #1: native engine in frankenlibc-core/src/string/fnmatch.rs (task, closed 2026-04-25T00:00:00.000000000Z)\n  Created crates/frankenlibc-core/src/string/fnmatch.rs with pure-safe Rust port of the engine. Public API: pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool + FnmatchFlags\u2026\n- `bd-srch-epic` PORT: search.h native Rust impl with Red-Black tree parity (epic, closed 2026-04-24T23:00:00.000000000Z)\n  Epic complete. All 6 sub-beads closed: bd-srch-1 (LLRB tree types + core ops in frankenlibc-core/src/search/rb_tree.rs, 12 unit tests), bd-srch-2 (wire tsearch/tfind/tdelete + twalk/twalk_r to delega\u2026\n- `bd-srch-6` PORT search.h #6: conformance + perf parity verification vs glibc (task, closed 2026-04-24T23:00:00.000000000Z)\n  Extended conformance_diff_search.rs with 4 epic-completion regression tests: fl_tsearch_descending_inserts_balanced (1024 descending keys + tfind all + tdestroy \u2014 would chain to depth 1024 in unbalan\u2026\n- `bd-srch-5` PORT search.h #5: move lsearch/lfind linear search to core (task, closed 2026-04-24T22:45:00.000000000Z)\n  Added crates/frankenlibc-core/src/search/linear.rs with lfind_index(base: &[u8], width, nel, matches) -> Option<usize> and lsearch_or_append_index() -> SearchOrAppend::{Found(idx), AppendAt(idx)}. Pu\u2026\n- `bd-srch-4` PORT search.h #4: move hash table (hcreate/hsearch/hdestroy + _r) to core (task, closed 2026-04-24T22:30:00.000000000Z)\n  Added crates/frankenlibc-core/src/search/hash.rs with LinearProbeTable<K,V> + LinearSlot<K,V> (#[repr(C)] for layout-compat with POSIX Entry) + djb2_seed/djb2_step helpers. Generic over K,V with call\u2026",
     "summary": {
-      "closed_total": 1085,
+      "closed_total": 1180,
       "selected": 8,
       "invalid_rows": 0
     }
