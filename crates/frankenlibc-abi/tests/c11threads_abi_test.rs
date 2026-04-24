@@ -4,7 +4,7 @@
 
 use std::ffi::c_int;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use frankenlibc_abi::c11threads_abi::{
     call_once, cnd_broadcast, cnd_destroy, cnd_init, cnd_signal, cnd_timedwait, cnd_wait,
@@ -16,6 +16,8 @@ use frankenlibc_abi::dirent_abi::versionsort;
 use frankenlibc_abi::time_abi::{timespec_get, timespec_getres};
 
 const THRD_SUCCESS: c_int = 0;
+
+static C11_THREAD_SELF_SNAPSHOT: AtomicUsize = AtomicUsize::new(0);
 
 // ===========================================================================
 // thrd_* tests
@@ -37,6 +39,50 @@ fn test_thrd_create_join() {
         let rc = thrd_join(thr, &mut res);
         assert_eq!(rc, THRD_SUCCESS, "thrd_join failed");
         assert_eq!(res, 52, "thread should return arg+10");
+    }
+}
+
+unsafe extern "C" fn c11_lifecycle_contract_probe(arg: *mut c_void) -> c_int {
+    let parent = unsafe { *(arg as *const libc::pthread_t) };
+    let self_id = thrd_current();
+    C11_THREAD_SELF_SNAPSHOT.store(self_id as usize, Ordering::SeqCst);
+    if self_id == 0 {
+        return -10;
+    }
+    if thrd_equal(parent, self_id) != 0 {
+        return -11;
+    }
+    73
+}
+
+#[test]
+fn test_thrd_create_join_default_backend_contract() {
+    unsafe {
+        C11_THREAD_SELF_SNAPSHOT.store(0, Ordering::SeqCst);
+        let parent = thrd_current();
+        assert_ne!(parent, 0, "parent thrd_current should be non-zero");
+
+        let mut thr: libc::pthread_t = 0;
+        let rc = thrd_create(
+            &mut thr,
+            Some(c11_lifecycle_contract_probe),
+            (&parent as *const libc::pthread_t).cast_mut().cast(),
+        );
+        assert_eq!(rc, THRD_SUCCESS, "thrd_create failed");
+        assert_ne!(thr, 0, "thrd_create should publish a joinable handle");
+
+        let mut res: c_int = 0;
+        let rc = thrd_join(thr, &mut res);
+        assert_eq!(rc, THRD_SUCCESS, "thrd_join failed");
+        assert_eq!(res, 73, "join must propagate the C11 start return");
+
+        let child_self = C11_THREAD_SELF_SNAPSHOT.load(Ordering::SeqCst) as libc::pthread_t;
+        assert_ne!(child_self, 0, "child thrd_current should be recorded");
+        assert_eq!(
+            thrd_equal(parent, child_self),
+            0,
+            "parent and child thread IDs should not compare equal"
+        );
     }
 }
 
