@@ -32,7 +32,15 @@ unsafe extern "C" {
 
 #[inline]
 unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
-    // SAFETY: HOST_ENVIRON is owned by libc; we only read pointers/bytes.
+    // Hold ENVIRON_LOCK during the array walk so a concurrent setenv that
+    // host_passthrough_realloc()s the HOST_ENVIRON array out from under us
+    // cannot turn this read into a use-after-free. The lock is released
+    // before we return the entry-value pointer; callers that retain the
+    // pointer across a subsequent setenv must accept POSIX's documented
+    // "value may be overwritten by setenv" semantics. (REVIEW round 3.)
+    let _lock = ENVIRON_LOCK.lock();
+    // SAFETY: HOST_ENVIRON is owned by libc; we only read pointers/bytes
+    // and the array layout is stable while we hold the mutator lock.
     unsafe {
         let mut cursor = HOST_ENVIRON;
         if cursor.is_null() {
@@ -64,8 +72,12 @@ unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
 /// Whether we've already copied environ to our own allocation.
 static ENVIRON_OWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Mutex protecting all environ mutations.
-static ENVIRON_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Re-entrant mutex protecting all environ mutations and reads. Re-entrant
+/// because host_passthrough_malloc / host_passthrough_realloc that we invoke
+/// while holding the lock can transitively re-enter our getenv during early
+/// glibc malloc initialization (MALLOC_PERTURB_/MALLOC_CHECK_ probes); a
+/// non-reentrant Mutex would self-deadlock in that window.
+static ENVIRON_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
 
 #[inline]
 unsafe fn native_c_strlen(s: *const c_char) -> usize {
@@ -98,7 +110,7 @@ unsafe fn environ_len() -> usize {
 /// safely realloc. Safe to call multiple times (idempotent). Must be called
 /// after `init_environment_globals` has set the environ aliases.
 pub fn take_environ_ownership() {
-    let _lock = ENVIRON_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _lock = ENVIRON_LOCK.lock();
     // SAFETY: we hold the environ lock.
     unsafe { ensure_environ_owned() };
 }
