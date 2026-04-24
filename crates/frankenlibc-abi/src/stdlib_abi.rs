@@ -1435,6 +1435,21 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed) as *mut c_char };
     }
+
+    // POSIX strtod: on overflow set errno=ERANGE and return ±HUGE_VAL;
+    // on underflow set errno=ERANGE and return a value at most as
+    // large in magnitude as DBL_MIN. Detect both from the parsed
+    // result + the consumed prefix and set errno accordingly.
+    // (CONFORMANCE: stdlib.h numeric diff matrix.)
+    if consumed > 0 {
+        let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
+        if val.is_infinite() && !contains_inf_literal(consumed_bytes) {
+            unsafe { set_abi_errno(libc::ERANGE) };
+        } else if val == 0.0 && contains_nonzero_digit(consumed_bytes) {
+            unsafe { set_abi_errno(libc::ERANGE) };
+        }
+    }
+
     runtime_policy::observe(
         ApiFamily::Stdlib,
         decision.profile,
@@ -1442,6 +1457,24 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         false,
     );
     val
+}
+
+/// Case-insensitive check for "inf" or "infinity" anywhere in the consumed
+/// prefix — used to distinguish a literal Infinity input from an overflow
+/// result for strtod errno reporting.
+fn contains_inf_literal(bytes: &[u8]) -> bool {
+    if bytes.len() < 3 {
+        return false;
+    }
+    bytes
+        .windows(3)
+        .any(|w| w[0].eq_ignore_ascii_case(&b'i') && w[1].eq_ignore_ascii_case(&b'n') && w[2].eq_ignore_ascii_case(&b'f'))
+}
+
+/// Whether the consumed prefix contained any non-zero decimal/hex digit —
+/// used to detect underflow (val==0 but input had real digits).
+fn contains_nonzero_digit(bytes: &[u8]) -> bool {
+    bytes.iter().any(|&b| matches!(b, b'1'..=b'9' | b'A'..=b'F' | b'a'..=b'f'))
 }
 
 /// C `strtof` -- converts string to float with endptr.
