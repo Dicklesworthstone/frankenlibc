@@ -35,6 +35,7 @@ pub mod locale;
 pub mod malloc;
 pub mod math;
 pub mod mmap;
+pub mod mntent;
 pub mod poll;
 pub mod process;
 pub mod pthread;
