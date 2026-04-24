@@ -549,31 +549,27 @@ fn replacement_profile_has_both_modes() {
 
 #[test]
 fn raw_syscalls_are_not_flagged() {
-    let abi_src = workspace_root().join("crates/frankenlibc-abi/src");
-    let mut syscall_count = 0;
-
-    for entry in std::fs::read_dir(&abi_src).unwrap() {
-        let entry = entry.unwrap();
-        if !entry.file_name().to_string_lossy().ends_with(".rs") {
-            continue;
-        }
-        let content = std::fs::read_to_string(entry.path()).unwrap();
-        for line in content.lines() {
-            if line.trim().starts_with("//") {
-                continue;
-            }
-            let mut pos = 0;
-            while let Some(idx) = line[pos..].find("libc::syscall(") {
-                syscall_count += 1;
-                pos += idx + 14;
-            }
-        }
-    }
+    let profile = load_profile();
+    let safe_patterns: HashSet<String> = profile["detection_rules"]["safe_patterns"]
+        .as_array()
+        .expect("detection_rules.safe_patterns must be an array")
+        .iter()
+        .filter_map(|value| value.as_str().map(str::to_string))
+        .collect();
 
     assert!(
-        syscall_count >= 10,
-        "Expected at least 10 raw syscall sites, found {}",
-        syscall_count
+        safe_patterns.contains("libc::syscall("),
+        "replacement guard profile must keep raw syscall calls out of host-callthrough findings"
+    );
+
+    let probe = r#"
+        pub unsafe extern "C" fn raw_syscall_probe() -> libc::c_long {
+            unsafe { libc::syscall(libc::SYS_getpid) }
+        }
+    "#;
+    assert!(
+        scan_call_throughs("raw_syscall_probe", probe, &profile).is_empty(),
+        "raw libc::syscall invocations must not be classified as host call-throughs"
     );
 }
 

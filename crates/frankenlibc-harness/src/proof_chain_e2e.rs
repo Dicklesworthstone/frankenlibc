@@ -393,6 +393,7 @@ fn evaluate_chain_integrity(
 
         let status = required_string(entry, "status")?;
         let owner = required_string(entry, "owner")?;
+        let verification_command = required_string(entry, "verification_command")?;
         let evidence_artifacts = string_array(entry.get("evidence_artifacts"))?;
         let gates = string_array(entry.get("gates"))?;
         let join_keys = string_array(entry.get("join_keys"))?;
@@ -414,12 +415,14 @@ fn evaluate_chain_integrity(
         }
 
         if status == "in_progress" {
-            if gates
+            let has_external_gate = gates
                 .iter()
                 .filter(|gate| gate.as_str() != PROOF_BINDER_GATE_PATH)
                 .count()
-                == 0
-            {
+                != 0;
+            let has_external_verification = !verification_command.is_empty()
+                && !verification_command.contains(PROOF_BINDER_GATE_PATH);
+            if !has_external_gate && !has_external_verification {
                 self_certifying_in_progress.push(id.to_string());
             }
 

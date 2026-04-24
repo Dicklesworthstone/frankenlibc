@@ -119,8 +119,7 @@ fn gate_fails_when_unresolved_drift_loses_owner() {
         let mut row: serde_json::Value =
             serde_json::from_str(raw).expect("issues.jsonl line must be valid JSON");
         if row["id"].as_str() == Some("bd-w2c3.10.1") {
-            row["status"] = serde_json::Value::String("closed".to_string());
-            row["closed_at"] = serde_json::Value::String("2026-02-13T00:00:00Z".to_string());
+            row["status"] = serde_json::Value::String("orphaned".to_string());
         }
         lines_out.push(serde_json::to_string(&row).unwrap());
     }

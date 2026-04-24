@@ -1629,7 +1629,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })?;
 
             let matrix = if isolate {
-                let exe = std::env::current_exe()?;
+                let exe = stable_conformance_case_runner(&std::env::current_exe()?, &output)?;
                 let timeout = Duration::from_millis(case_timeout_ms.max(1));
                 frankenlibc_harness::conformance_matrix::build_conformance_matrix_with_executor(
                     &fixture_sets,
@@ -1778,6 +1778,30 @@ enum MatrixCaseSubprocessError {
     Timeout(String),
     Crash(String),
     Error(String),
+}
+
+fn stable_conformance_case_runner(
+    current_exe: &Path,
+    output: &Path,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let runner_dir = output.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(runner_dir)?;
+    let runner = runner_dir.join(format!(
+        "conformance-matrix-case-runner-{}.bin",
+        std::process::id()
+    ));
+    std::fs::copy(current_exe, &runner)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = std::fs::metadata(current_exe)?.permissions();
+        permissions.set_mode(permissions.mode() | 0o700);
+        std::fs::set_permissions(&runner, permissions)?;
+    }
+
+    Ok(runner)
 }
 
 fn run_conformance_case_subprocess(

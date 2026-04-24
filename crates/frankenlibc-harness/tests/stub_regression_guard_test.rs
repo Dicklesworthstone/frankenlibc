@@ -193,8 +193,6 @@ fn guard_script_fails_when_stale_waiver_injected() {
         .output()
         .expect("failed to run stub regression guard");
 
-    let _ = std::fs::remove_file(&tmp_path);
-
     assert!(
         !output.status.success(),
         "guard should fail when a stale waiver is injected"
@@ -248,8 +246,6 @@ fn guard_script_fails_when_burn_down_threshold_is_too_strict() {
         .current_dir(&root)
         .output()
         .expect("failed to run stub regression guard");
-
-    let _ = std::fs::remove_file(&tmp_path);
 
     assert!(
         !output.status.success(),

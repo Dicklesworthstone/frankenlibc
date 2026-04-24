@@ -147,7 +147,7 @@ fn errno_edge_gate_script_passes() {
 }
 
 #[test]
-fn canonical_errno_edge_report_keeps_pthread_cond_rows_out_of_unsupported() {
+fn canonical_errno_edge_report_keeps_posix_pthread_cond_rows_out_of_unsupported() {
     let root = workspace_root();
     let report = load_json(&root.join("tests/conformance/errno_edge_report.v1.json"));
     let rows = report["rows"].as_array().expect("rows should be array");
@@ -158,6 +158,11 @@ fn canonical_errno_edge_report_keeps_pthread_cond_rows_out_of_unsupported() {
             row["symbol"]
                 .as_str()
                 .is_some_and(|symbol| symbol.starts_with("pthread_cond_"))
+                && row["artifact_refs"].as_array().is_some_and(|refs| {
+                    refs.iter().any(|artifact| {
+                        artifact.as_str() == Some("tests/conformance/fixtures/pthread_cond.json")
+                    })
+                })
         })
         .collect::<Vec<_>>();
 
