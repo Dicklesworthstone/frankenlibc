@@ -5620,7 +5620,6 @@ pub unsafe extern "C" fn putgrent(grp: *const c_void, fp: *mut c_void) -> c_int 
     if grp.is_null() || fp.is_null() {
         return -1;
     }
-    // struct group { gr_name, gr_passwd, gr_gid, gr_mem }
     let g = grp as *const libc::group;
     let name = unsafe { std::ffi::CStr::from_ptr((*g).gr_name) }.to_bytes();
     let passwd = if unsafe { (*g).gr_passwd }.is_null() {
@@ -5629,8 +5628,8 @@ pub unsafe extern "C" fn putgrent(grp: *const c_void, fp: *mut c_void) -> c_int 
         unsafe { std::ffi::CStr::from_ptr((*g).gr_passwd) }.to_bytes()
     };
     let gid = unsafe { (*g).gr_gid };
-    // Build member list
-    let mut members = Vec::new();
+
+    let mut members: Vec<&[u8]> = Vec::new();
     let mut mem_ptr = unsafe { (*g).gr_mem };
     if !mem_ptr.is_null() {
         while !unsafe { *mem_ptr }.is_null() {
@@ -5638,17 +5637,9 @@ pub unsafe extern "C" fn putgrent(grp: *const c_void, fp: *mut c_void) -> c_int 
             mem_ptr = unsafe { mem_ptr.add(1) };
         }
     }
-    // Format: name:passwd:gid:member1,member2,...
-    let member_str: Vec<u8> = members.join(&b","[..]);
-    let line = unsafe {
-        format!(
-            "{}:{}:{}:{}\n",
-            std::str::from_utf8_unchecked(name),
-            std::str::from_utf8_unchecked(passwd),
-            gid,
-            std::str::from_utf8_unchecked(&member_str),
-        )
-    };
+
+    let mut line = Vec::with_capacity(64 + name.len() + passwd.len());
+    frankenlibc_core::grp::format_group_line(name, passwd, gid, &members, &mut line);
     let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), fp) };
     if written == line.len() { 0 } else { -1 }
 }
@@ -5687,37 +5678,30 @@ pub unsafe extern "C" fn putpwent(pw: *const c_void, fp: *mut c_void) -> c_int {
         return -1;
     }
     let p = pw as *const libc::passwd;
-    let name = unsafe { std::ffi::CStr::from_ptr((*p).pw_name) }.to_bytes();
-    let passwd = if unsafe { (*p).pw_passwd }.is_null() {
-        b"x" as &[u8]
-    } else {
-        unsafe { std::ffi::CStr::from_ptr((*p).pw_passwd) }.to_bytes()
+    let cstr_or_empty = |ptr: *const c_char, fallback: &'static [u8]| -> &[u8] {
+        if ptr.is_null() {
+            fallback
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes()
+        }
     };
-    let gecos = if unsafe { (*p).pw_gecos }.is_null() {
-        b"" as &[u8]
-    } else {
-        unsafe { std::ffi::CStr::from_ptr((*p).pw_gecos) }.to_bytes()
-    };
-    let dir = if unsafe { (*p).pw_dir }.is_null() {
-        b"" as &[u8]
-    } else {
-        unsafe { std::ffi::CStr::from_ptr((*p).pw_dir) }.to_bytes()
-    };
-    let shell = if unsafe { (*p).pw_shell }.is_null() {
-        b"" as &[u8]
-    } else {
-        unsafe { std::ffi::CStr::from_ptr((*p).pw_shell) }.to_bytes()
-    };
-    // Format: name:passwd:uid:gid:gecos:dir:shell
-    let line = format!(
-        "{}:{}:{}:{}:{}:{}:{}\n",
-        unsafe { std::str::from_utf8_unchecked(name) },
-        unsafe { std::str::from_utf8_unchecked(passwd) },
+    let name = cstr_or_empty(unsafe { (*p).pw_name }, b"");
+    let passwd = cstr_or_empty(unsafe { (*p).pw_passwd }, b"x");
+    let gecos = cstr_or_empty(unsafe { (*p).pw_gecos }, b"");
+    let dir = cstr_or_empty(unsafe { (*p).pw_dir }, b"");
+    let shell = cstr_or_empty(unsafe { (*p).pw_shell }, b"");
+
+    let mut line =
+        Vec::with_capacity(64 + name.len() + passwd.len() + gecos.len() + dir.len() + shell.len());
+    frankenlibc_core::pwd::format_passwd_line(
+        name,
+        passwd,
         unsafe { (*p).pw_uid },
         unsafe { (*p).pw_gid },
-        unsafe { std::str::from_utf8_unchecked(gecos) },
-        unsafe { std::str::from_utf8_unchecked(dir) },
-        unsafe { std::str::from_utf8_unchecked(shell) },
+        gecos,
+        dir,
+        shell,
+        &mut line,
     );
     let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), fp) };
     if written == line.len() { 0 } else { -1 }

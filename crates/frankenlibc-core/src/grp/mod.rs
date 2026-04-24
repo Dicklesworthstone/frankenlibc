@@ -99,6 +99,51 @@ pub fn lookup_by_gid(content: &[u8], gid: u32) -> Option<Group> {
     None
 }
 
+/// Append a serialized group line to `out`.
+///
+/// Produces `"name:passwd:gid:m1,m2,...\n"` — the canonical
+/// `/etc/group` shape consumed by `parse_group_line`. Members are
+/// joined with `,` and yield an empty trailing field when the slice
+/// is empty. Field bytes are written verbatim.
+pub fn format_group_line(
+    name: &[u8],
+    passwd: &[u8],
+    gid: u32,
+    members: &[&[u8]],
+    out: &mut Vec<u8>,
+) {
+    out.extend_from_slice(name);
+    out.push(b':');
+    out.extend_from_slice(passwd);
+    out.push(b':');
+    write_u32_decimal(out, gid);
+    out.push(b':');
+    for (i, m) in members.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        out.extend_from_slice(m);
+    }
+    out.push(b'\n');
+}
+
+fn write_u32_decimal(out: &mut Vec<u8>, mut n: u32) {
+    if n == 0 {
+        out.push(b'0');
+        return;
+    }
+    let mut tmp = [0u8; 10];
+    let mut i = 0;
+    while n > 0 {
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    for j in 0..i {
+        out.push(tmp[i - 1 - j]);
+    }
+}
+
 /// Parse all valid entries from group content.
 pub fn parse_all(content: &[u8]) -> Vec<Group> {
     parse_all_with_stats(content).0
@@ -322,5 +367,66 @@ ubuntu:x:1000:
         assert_eq!(stats.parsed_entries, 1);
         assert_eq!(stats.malformed_lines, 0);
         assert_eq!(stats.skipped_lines, 1);
+    }
+
+    #[test]
+    fn format_basic_no_members() {
+        let mut out = Vec::new();
+        format_group_line(b"root", b"x", 0, &[], &mut out);
+        assert_eq!(out, b"root:x:0:\n".to_vec());
+    }
+
+    #[test]
+    fn format_with_single_member() {
+        let mut out = Vec::new();
+        format_group_line(b"sudo", b"x", 27, &[b"alice"], &mut out);
+        assert_eq!(out, b"sudo:x:27:alice\n".to_vec());
+    }
+
+    #[test]
+    fn format_with_multiple_members() {
+        let mut out = Vec::new();
+        format_group_line(
+            b"adm",
+            b"x",
+            4,
+            &[b"alice", b"bob", b"carol"],
+            &mut out,
+        );
+        assert_eq!(out, b"adm:x:4:alice,bob,carol\n".to_vec());
+    }
+
+    #[test]
+    fn format_round_trip_with_members() {
+        let mut out = Vec::new();
+        format_group_line(b"team", b"x", 1000, &[b"alice", b"bob"], &mut out);
+        let parsed = parse_group_line(&out).expect("reparsed");
+        assert_eq!(parsed.gr_name, b"team");
+        assert_eq!(parsed.gr_gid, 1000);
+        assert_eq!(parsed.gr_mem.len(), 2);
+        assert_eq!(parsed.gr_mem[0], b"alice");
+        assert_eq!(parsed.gr_mem[1], b"bob");
+    }
+
+    #[test]
+    fn format_round_trip_no_members() {
+        let mut out = Vec::new();
+        format_group_line(b"empty", b"x", 999, &[], &mut out);
+        let parsed = parse_group_line(&out).expect("reparsed");
+        assert_eq!(parsed.gr_mem.len(), 0);
+    }
+
+    #[test]
+    fn format_handles_max_gid() {
+        let mut out = Vec::new();
+        format_group_line(b"big", b"x", u32::MAX, &[], &mut out);
+        assert_eq!(out, b"big:x:4294967295:\n".to_vec());
+    }
+
+    #[test]
+    fn format_appends_to_existing_buffer() {
+        let mut out = b"# header\n".to_vec();
+        format_group_line(b"a", b"x", 0, &[], &mut out);
+        assert_eq!(out, b"# header\na:x:0:\n".to_vec());
     }
 }

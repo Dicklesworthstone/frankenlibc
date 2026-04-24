@@ -13367,38 +13367,32 @@ pub unsafe extern "C" fn putspent(sp: *const libc::spwd, stream: *mut libc::FILE
     if sp.is_null() || stream.is_null() {
         return -1;
     }
-    // Format: name:passwd:lstchg:min:max:warn:inact:expire:flag
     let spw = unsafe { &*sp };
-    let name = if spw.sp_namp.is_null() {
-        ""
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(spw.sp_namp) }
-            .to_str()
-            .unwrap_or("")
+    let cstr_or_empty = |ptr: *mut c_char| -> &[u8] {
+        if ptr.is_null() {
+            b""
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes()
+        }
     };
-    let pwd = if spw.sp_pwdp.is_null() {
-        ""
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(spw.sp_pwdp) }
-            .to_str()
-            .unwrap_or("")
-    };
-    let line = format!(
-        "{}:{}:{}:{}:{}:{}:{}:{}:{}\n",
+    let name = cstr_or_empty(spw.sp_namp);
+    let passwd = cstr_or_empty(spw.sp_pwdp);
+
+    let mut line = Vec::with_capacity(96 + name.len() + passwd.len());
+    frankenlibc_core::pwd::shadow::format_shadow_line(
         name,
-        pwd,
+        passwd,
         spw.sp_lstchg,
         spw.sp_min,
         spw.sp_max,
         spw.sp_warn,
         spw.sp_inact,
         spw.sp_expire,
-        spw.sp_flag
+        spw.sp_flag,
+        &mut line,
     );
-    let bytes = line.as_bytes();
-    let written =
-        unsafe { crate::stdio_abi::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream.cast()) };
-    if written == bytes.len() { 0 } else { -1 }
+    let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), stream.cast()) };
+    if written == line.len() { 0 } else { -1 }
 }
 
 // ---------------------------------------------------------------------------

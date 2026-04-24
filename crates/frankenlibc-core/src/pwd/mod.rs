@@ -4,6 +4,7 @@
 //! Parses `/etc/passwd` in the standard colon-delimited format.
 
 pub mod gshadow;
+pub mod shadow;
 
 /// A parsed passwd entry (analogous to `struct passwd`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +102,55 @@ pub fn lookup_by_uid(content: &[u8], uid: u32) -> Option<Passwd> {
         }
     }
     None
+}
+
+/// Append a serialized passwd line to `out`.
+///
+/// Produces `"name:passwd:uid:gid:gecos:dir:shell\n"` — the canonical
+/// `/etc/passwd` line shape consumed by `parse_passwd_line`. Field
+/// bytes are written verbatim; the caller is responsible for ensuring
+/// no embedded `:` or `\n` would corrupt the format.
+pub fn format_passwd_line(
+    name: &[u8],
+    passwd: &[u8],
+    uid: u32,
+    gid: u32,
+    gecos: &[u8],
+    dir: &[u8],
+    shell: &[u8],
+    out: &mut Vec<u8>,
+) {
+    out.extend_from_slice(name);
+    out.push(b':');
+    out.extend_from_slice(passwd);
+    out.push(b':');
+    write_u32_decimal(out, uid);
+    out.push(b':');
+    write_u32_decimal(out, gid);
+    out.push(b':');
+    out.extend_from_slice(gecos);
+    out.push(b':');
+    out.extend_from_slice(dir);
+    out.push(b':');
+    out.extend_from_slice(shell);
+    out.push(b'\n');
+}
+
+fn write_u32_decimal(out: &mut Vec<u8>, mut n: u32) {
+    if n == 0 {
+        out.push(b'0');
+        return;
+    }
+    let mut tmp = [0u8; 10];
+    let mut i = 0;
+    while n > 0 {
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    for j in 0..i {
+        out.push(tmp[i - 1 - j]);
+    }
 }
 
 /// Parse all valid entries from passwd content.
@@ -311,5 +361,67 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
         assert_eq!(stats.parsed_entries, 1);
         assert_eq!(stats.malformed_lines, 0);
         assert_eq!(stats.skipped_lines, 1);
+    }
+
+    #[test]
+    fn format_basic_round_trip() {
+        let mut out = Vec::new();
+        format_passwd_line(
+            b"root", b"x", 0, 0, b"root", b"/root", b"/bin/bash", &mut out,
+        );
+        assert_eq!(out, b"root:x:0:0:root:/root:/bin/bash\n".to_vec());
+        let parsed = parse_passwd_line(&out).expect("reparsed");
+        assert_eq!(parsed.pw_name, b"root");
+        assert_eq!(parsed.pw_uid, 0);
+        assert_eq!(parsed.pw_shell, b"/bin/bash");
+    }
+
+    #[test]
+    fn format_handles_max_uid_gid() {
+        let mut out = Vec::new();
+        format_passwd_line(
+            b"big",
+            b"x",
+            u32::MAX,
+            u32::MAX,
+            b"",
+            b"/",
+            b"/bin/sh",
+            &mut out,
+        );
+        assert_eq!(out, b"big:x:4294967295:4294967295::/:/bin/sh\n".to_vec());
+    }
+
+    #[test]
+    fn format_handles_empty_optional_fields() {
+        let mut out = Vec::new();
+        format_passwd_line(b"u", b"", 1, 2, b"", b"", b"", &mut out);
+        // 7 fields, 6 separators: name:passwd:uid:gid:gecos:dir:shell
+        assert_eq!(out, b"u::1:2:::\n".to_vec());
+    }
+
+    #[test]
+    fn format_appends_to_existing_buffer() {
+        let mut out = b"# header\n".to_vec();
+        format_passwd_line(b"a", b"x", 0, 0, b"", b"/", b"/", &mut out);
+        assert_eq!(out, b"# header\na:x:0:0::/:/\n".to_vec());
+    }
+
+    #[test]
+    fn format_round_trip_with_gecos_commas() {
+        let mut out = Vec::new();
+        format_passwd_line(
+            b"ubuntu",
+            b"x",
+            1000,
+            1000,
+            b"Ubuntu,,,",
+            b"/home/ubuntu",
+            b"/bin/bash",
+            &mut out,
+        );
+        let parsed = parse_passwd_line(&out).expect("reparsed");
+        assert_eq!(parsed.pw_gecos, b"Ubuntu,,,");
+        assert_eq!(parsed.pw_uid, 1000);
     }
 }
