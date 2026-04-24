@@ -1153,6 +1153,7 @@ unsafe fn posix_spawn_impl(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
     search_path: bool,
+    pidfd_out: *mut c_int,
 ) -> c_int {
     if path.is_null() || argv.is_null() {
         return libc::EINVAL;
@@ -1218,13 +1219,40 @@ unsafe fn posix_spawn_impl(
         return e;
     }
 
-    // Fork using clone syscall (minimal flags = just SIGCHLD for basic fork)
-    let child_pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
-        Ok(pid) => pid,
-        Err(e) => {
-            let _ = raw_syscall::sys_close(err_pipe[0]);
-            let _ = raw_syscall::sys_close(err_pipe[1]);
-            return e;
+    let mut child_pidfd = -1_i32;
+    let want_pidfd = !pidfd_out.is_null();
+
+    let child_pid = if want_pidfd {
+        let args = raw_syscall::CloneArgs {
+            flags: raw_syscall::CLONE_PIDFD,
+            pidfd: (&mut child_pidfd as *mut i32).cast::<()>() as u64,
+            exit_signal: libc::SIGCHLD as u64,
+            ..raw_syscall::CloneArgs::default()
+        };
+
+        // Use clone3(CLONE_PIDFD) so the parent receives a pidfd in the same
+        // kernel operation that creates the child. Calling pidfd_open(child_pid)
+        // after a separate spawn has a PID-reuse race for very short-lived
+        // children.
+        match unsafe {
+            raw_syscall::sys_clone3(&args, std::mem::size_of::<raw_syscall::CloneArgs>())
+        } {
+            Ok(pid) => pid,
+            Err(e) => {
+                let _ = raw_syscall::sys_close(err_pipe[0]);
+                let _ = raw_syscall::sys_close(err_pipe[1]);
+                return e;
+            }
+        }
+    } else {
+        // Fork using clone syscall (minimal flags = just SIGCHLD for basic fork)
+        match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
+            Ok(pid) => pid,
+            Err(e) => {
+                let _ = raw_syscall::sys_close(err_pipe[0]);
+                let _ = raw_syscall::sys_close(err_pipe[1]);
+                return e;
+            }
         }
     };
 
@@ -1310,15 +1338,56 @@ unsafe fn posix_spawn_impl(
     let _ = raw_syscall::sys_close(err_pipe[0]);
 
     if bytes_read > 0 {
+        if child_pidfd >= 0 {
+            let _ = raw_syscall::sys_close(child_pidfd);
+        }
         let _ = unsafe {
             raw_syscall::sys_wait4(child_pid, std::ptr::null_mut(), 0, std::ptr::null_mut())
         };
+        if want_pidfd {
+            unsafe { *pidfd_out = -1 };
+        }
         if child_err == 0 { libc::EIO } else { child_err }
     } else {
         if !pid.is_null() {
             unsafe { *pid = child_pid };
         }
+        if want_pidfd {
+            unsafe { *pidfd_out = child_pidfd };
+        }
         0
+    }
+}
+
+/// GNU `pidfd_spawn`/`pidfd_spawnp` implementation shared by the ABI aliases.
+///
+/// Unlike `posix_spawn` followed by `pidfd_open`, this uses
+/// `clone3(CLONE_PIDFD)` so the process handle is allocated atomically with
+/// child creation.
+pub(crate) unsafe fn pidfd_spawn_impl(
+    pidfd: *mut c_int,
+    path: *const c_char,
+    file_actions: *const c_void,
+    attrp: *const c_void,
+    argv: *const *mut c_char,
+    envp: *const *mut c_char,
+    search_path: bool,
+) -> c_int {
+    if pidfd.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { *pidfd = -1 };
+    unsafe {
+        posix_spawn_impl(
+            std::ptr::null_mut(),
+            path,
+            file_actions,
+            attrp,
+            argv,
+            envp,
+            search_path,
+            pidfd,
+        )
     }
 }
 
@@ -1332,7 +1401,18 @@ pub unsafe extern "C" fn posix_spawn(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    unsafe { posix_spawn_impl(pid, path, file_actions, attrp, argv, envp, false) }
+    unsafe {
+        posix_spawn_impl(
+            pid,
+            path,
+            file_actions,
+            attrp,
+            argv,
+            envp,
+            false,
+            std::ptr::null_mut(),
+        )
+    }
 }
 
 /// POSIX `posix_spawnp` — spawn a new process, searching PATH.
@@ -1345,7 +1425,18 @@ pub unsafe extern "C" fn posix_spawnp(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    unsafe { posix_spawn_impl(pid, file, file_actions, attrp, argv, envp, true) }
+    unsafe {
+        posix_spawn_impl(
+            pid,
+            file,
+            file_actions,
+            attrp,
+            argv,
+            envp,
+            true,
+            std::ptr::null_mut(),
+        )
+    }
 }
 
 /// POSIX `posix_spawn_file_actions_addclose` — add a close action.

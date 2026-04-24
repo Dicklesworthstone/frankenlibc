@@ -15,6 +15,7 @@ use std::os::unix::io::AsRawFd;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use frankenlibc_abi::glibc_internal_abi::{pidfd_spawn, pidfd_spawnp};
 use frankenlibc_abi::process_abi::*;
 use frankenlibc_abi::unistd_abi::{
     posix_spawn_file_actions_addclosefrom_np, posix_spawn_file_actions_addtcsetpgrp_np,
@@ -45,6 +46,42 @@ impl AlignedBuf {
     fn as_ptr(&self) -> *const u8 {
         self.0.as_ptr()
     }
+}
+
+fn pid_from_fdinfo(pidfd: c_int) -> Option<libc::pid_t> {
+    let path = format!("/proc/self/fdinfo/{pidfd}");
+    let fdinfo = std::fs::read_to_string(path).ok()?;
+    fdinfo.lines().find_map(|line| {
+        let value = line.strip_prefix("Pid:")?.trim();
+        value.parse::<libc::pid_t>().ok().filter(|pid| *pid > 0)
+    })
+}
+
+fn wait_for_pidfd_child(pidfd: c_int) {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::waitid(libc::P_PIDFD, pidfd as libc::id_t, &mut info, libc::WEXITED) };
+    if rc == 0 {
+        return;
+    }
+
+    let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+    let pid = match pid_from_fdinfo(pidfd) {
+        Some(pid) => pid,
+        None => {
+            assert!(
+                false,
+                "waitid(P_PIDFD) failed with errno {err}, and fdinfo did not expose a child pid"
+            );
+            return;
+        }
+    };
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(
+        waited, pid,
+        "fallback waitpid({pid}) after waitid(P_PIDFD) errno {err} failed"
+    );
 }
 
 #[test]
@@ -965,6 +1002,62 @@ fn posix_spawn_runs_true() {
     unsafe { libc::waitpid(pid, &mut status, 0) };
     assert!(libc::WIFEXITED(status));
     assert_eq!(libc::WEXITSTATUS(status), 0);
+}
+
+#[test]
+fn pidfd_spawn_runs_true_with_atomic_pidfd() {
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let cmd = CString::new("/bin/true").unwrap();
+    let argv: [*const c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
+    let mut pidfd: c_int = -1;
+
+    let rc = unsafe {
+        pidfd_spawn(
+            &mut pidfd,
+            cmd.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr().cast(),
+            std::ptr::null(),
+        )
+    };
+    if matches!(rc, libc::ENOSYS | libc::EPERM) {
+        assert_eq!(pidfd, -1, "unsupported clone3 must not publish a pidfd");
+        return;
+    }
+
+    assert_eq!(rc, 0, "pidfd_spawn should succeed");
+    assert!(pidfd >= 0, "pidfd_spawn must return a live pidfd");
+    wait_for_pidfd_child(pidfd);
+    unsafe { libc::close(pidfd) };
+}
+
+#[test]
+fn pidfd_spawnp_searches_path_with_atomic_pidfd() {
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let cmd = CString::new("true").unwrap();
+    let argv: [*const c_char; 2] = [cmd.as_ptr(), std::ptr::null()];
+    let mut pidfd: c_int = -1;
+
+    let rc = unsafe {
+        pidfd_spawnp(
+            &mut pidfd,
+            cmd.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr().cast(),
+            std::ptr::null(),
+        )
+    };
+    if matches!(rc, libc::ENOSYS | libc::EPERM) {
+        assert_eq!(pidfd, -1, "unsupported clone3 must not publish a pidfd");
+        return;
+    }
+
+    assert_eq!(rc, 0, "pidfd_spawnp should succeed");
+    assert!(pidfd >= 0, "pidfd_spawnp must return a live pidfd");
+    wait_for_pidfd_child(pidfd);
+    unsafe { libc::close(pidfd) };
 }
 
 #[test]

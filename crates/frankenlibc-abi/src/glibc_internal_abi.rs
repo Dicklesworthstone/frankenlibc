@@ -5568,7 +5568,7 @@ pub unsafe extern "C" fn pidfd_getpid(pidfd: c_int) -> c_int {
         }
     }
 }
-// pidfd_spawn: posix_spawn + pidfd_open to get a pidfd for the child process
+// pidfd_spawn: atomically spawn with a pidfd via clone3(CLONE_PIDFD).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pidfd_spawn(
     pidfd: *mut c_int,
@@ -5578,27 +5578,12 @@ pub unsafe extern "C" fn pidfd_spawn(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    if pidfd.is_null() {
-        return libc::EINVAL;
+    unsafe {
+        crate::process_abi::pidfd_spawn_impl(pidfd, path, file_actions, attrp, argv, envp, false)
     }
-    let mut child_pid: libc::pid_t = 0;
-    let rc = unsafe {
-        crate::process_abi::posix_spawn(&mut child_pid, path, file_actions, attrp, argv, envp)
-    };
-    if rc != 0 {
-        return rc;
-    }
-    let fd = unsafe { crate::unistd_abi::pidfd_open(child_pid, 0) };
-    if fd < 0 {
-        // pidfd_open failed, but child is spawned — still return the pidfd as -1
-        unsafe { *pidfd = -1 };
-        return 0;
-    }
-    unsafe { *pidfd = fd };
-    0
 }
 
-// pidfd_spawnp: like pidfd_spawn but searches PATH for `file`
+// pidfd_spawnp: like pidfd_spawn but searches PATH for `file`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pidfd_spawnp(
     pidfd: *mut c_int,
@@ -5608,23 +5593,9 @@ pub unsafe extern "C" fn pidfd_spawnp(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> c_int {
-    if pidfd.is_null() {
-        return libc::EINVAL;
+    unsafe {
+        crate::process_abi::pidfd_spawn_impl(pidfd, file, file_actions, attrp, argv, envp, true)
     }
-    let mut child_pid: libc::pid_t = 0;
-    let rc = unsafe {
-        crate::process_abi::posix_spawnp(&mut child_pid, file, file_actions, attrp, argv, envp)
-    };
-    if rc != 0 {
-        return rc;
-    }
-    let fd = unsafe { crate::unistd_abi::pidfd_open(child_pid, 0) };
-    if fd < 0 {
-        unsafe { *pidfd = -1 };
-        return 0;
-    }
-    unsafe { *pidfd = fd };
-    0
 }
 // preadv64v2: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
