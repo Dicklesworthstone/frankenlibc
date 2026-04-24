@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-24T08:39:14Z",
+  "generated_at": "2026-04-24T16:23:27Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "2aaf310908ae13cc74c8c7c19c06552a6463f97c9edaefa935389b2edb3598f2",
+      "sha256": "5945c3fb4ee27faca8d61c0448a5e76fb076d38c2763a60316cf5cadeeced135",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "0969c310e811f40537e944a2d580c314266f460d77bb72067985a19c4332bcf4",
+      "sha256": "f8abfb089a36e0889fc1b02b02ff8e407f3d3bd016d9080ffde99bc30a7697c9",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "f8cb3e41d8277e50ff0cbc1b5a6ee23e0756ade971af7580bb0be107efc2967b",
+      "sha256": "5c83edaead786e29759503c2c03ce45a679a7e096fce92e4ecf69f746f3c3737",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -230,7 +230,7 @@
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "2aaf310908ae13cc74c8c7c19c06552a6463f97c9edaefa935389b2edb3598f2",
+      "sha256": "5945c3fb4ee27faca8d61c0448a5e76fb076d38c2763a60316cf5cadeeced135",
       "size_bytes": 5609
     },
     "replacement_levels": {
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "0969c310e811f40537e944a2d580c314266f460d77bb72067985a19c4332bcf4",
+      "sha256": "f8abfb089a36e0889fc1b02b02ff8e407f3d3bd016d9080ffde99bc30a7697c9",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "f8cb3e41d8277e50ff0cbc1b5a6ee23e0756ade971af7580bb0be107efc2967b",
+      "sha256": "5c83edaead786e29759503c2c03ce45a679a7e096fce92e4ecf69f746f3c3737",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -288,128 +288,124 @@
     },
     "entries": [
       {
-        "id": "bd-fnm-epic",
-        "title": "PORT: fnmatch.h native Rust impl in frankenlibc-core",
-        "issue_type": "epic",
+        "id": "bd-go-1",
+        "title": "PORT getopt #1: parse helpers + GetoptArgMode in core",
+        "issue_type": "task",
         "priority": 1,
-        "closed_at": "2026-04-25T00:30:00.000000000Z",
+        "closed_at": "2026-04-25T05:00:00.000000000Z",
         "closed_by": "cod-frankenlibc",
         "labels": [
           "porting",
-          "fnmatch",
+          "getopt",
+          "core"
+        ],
+        "close_reason": "Created crates/frankenlibc-core/src/getopt/parse.rs with: pub enum GetoptArgMode (None / Required / Optional GNU ext), pub fn getopt_prefers_colon(optspec: &[u8]) -> bool, pub fn getopt_arg_mode(opts\u2026"
+      },
+      {
+        "id": "bd-err-epic",
+        "title": "PORT: err.h native Rust impl in frankenlibc-core",
+        "issue_type": "epic",
+        "priority": 1,
+        "closed_at": "2026-04-25T04:00:00.000000000Z",
+        "closed_by": "cod-frankenlibc",
+        "labels": [
+          "porting",
+          "err",
           "native-rust",
           "epic"
         ],
-        "close_reason": "Epic complete. All 3 sub-beads closed: bd-fnm-1 (frankenlibc-core/src/string/fnmatch.rs with FnmatchFlags + fnmatch_match() + classify_bracket + fnmatch_inner, 16 unit tests), bd-fnm-2 (replaced ~280\u2026"
+        "close_reason": "Epic complete. All 3 sub-beads closed: bd-err-1 (created core/err/mod.rs with format_err_message + basename_bytes, 8 unit tests), bd-err-2 (replaced 32-line write_err_message inline formatter with 14\u2026"
       },
       {
-        "id": "bd-fnm-3",
-        "title": "PORT fnmatch.h #3: conformance + GNU extensions parity",
+        "id": "bd-err-3",
+        "title": "PORT err.h #3: conformance verification + property tests",
         "issue_type": "task",
         "priority": 2,
-        "closed_at": "2026-04-25T00:30:00.000000000Z",
+        "closed_at": "2026-04-25T04:00:00.000000000Z",
         "closed_by": "cod-frankenlibc",
         "labels": [
           "porting",
-          "fnmatch",
-          "conformance",
-          "testing"
+          "err",
+          "conformance"
         ],
-        "close_reason": "Extended conformance_diff_fnmatch_glob.rs with 4 new tests: diff_fnmatch_leading_dir (FNM_LEADING_DIR across 7 cases incl 'a/b' vs 'a/b/c/d', confirming pattern matches dir prefixes per glibc), diff_\u2026"
+        "close_reason": "Added 4 structural property tests to crates/frankenlibc-core/src/err/mod.rs: property_output_starts_with_progname (3 progname sizes), property_output_has_progname_separator (8 input combos verify ':\u2026"
       },
       {
-        "id": "bd-fnm-2",
-        "title": "PORT fnmatch.h #2: wire fl::fnmatch to delegate to core",
+        "id": "bd-err-2",
+        "title": "PORT err.h #2: wire fl warn/warnx/err/errx to delegate",
         "issue_type": "task",
         "priority": 1,
-        "closed_at": "2026-04-25T00:15:00.000000000Z",
+        "closed_at": "2026-04-25T03:45:00.000000000Z",
         "closed_by": "cod-frankenlibc",
         "labels": [
           "porting",
-          "fnmatch",
+          "err",
           "abi"
         ],
-        "close_reason": "Replaced search_abi.rs fnmatch_impl + classify_bracket + BracketShape (~280 lines) with thin shim that calls frankenlibc_core::string::fnmatch::fnmatch_match. Adapts NUL-terminated C strings to byte\u2026"
+        "close_reason": "Replaced 32 lines of inline byte-formatting in write_err_message with 14-line shim that calls frankenlibc_core::err::format_err_message. Removed local basename_bytes (now imports from core::err). The\u2026"
       },
       {
-        "id": "bd-fnm-1",
-        "title": "PORT fnmatch.h #1: native engine in frankenlibc-core/src/string/fnmatch.rs",
+        "id": "bd-err-1",
+        "title": "PORT err.h #1: format_err_message in frankenlibc-core/src/err/",
         "issue_type": "task",
         "priority": 1,
-        "closed_at": "2026-04-25T00:00:00.000000000Z",
+        "closed_at": "2026-04-25T03:30:00.000000000Z",
         "closed_by": "cod-frankenlibc",
         "labels": [
           "porting",
-          "fnmatch",
+          "err",
           "core"
         ],
-        "close_reason": "Created crates/frankenlibc-core/src/string/fnmatch.rs with pure-safe Rust port of the engine. Public API: pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool + FnmatchFlags\u2026"
+        "close_reason": "Created crates/frankenlibc-core/src/err/mod.rs with: pub fn format_err_message(progname, message, errno_msg) -> Vec<u8> producing the canonical 'progname: [message[: errno_msg]]\\n' BSD-style line; pu\u2026"
       },
       {
-        "id": "bd-srch-epic",
-        "title": "PORT: search.h native Rust impl with Red-Black tree parity",
+        "id": "bd-ftw-epic",
+        "title": "PORT: ftw.h native Rust impl in frankenlibc-core",
         "issue_type": "epic",
         "priority": 1,
-        "closed_at": "2026-04-24T23:00:00.000000000Z",
+        "closed_at": "2026-04-25T02:30:00.000000000Z",
         "closed_by": "cod-frankenlibc",
         "labels": [
           "porting",
-          "search",
-          "tsearch",
+          "ftw",
           "native-rust",
           "epic"
         ],
-        "close_reason": "Epic complete. All 6 sub-beads closed: bd-srch-1 (LLRB tree types + core ops in frankenlibc-core/src/search/rb_tree.rs, 12 unit tests), bd-srch-2 (wire tsearch/tfind/tdelete + twalk/twalk_r to delega\u2026"
+        "close_reason": "Epic complete. All 4 sub-beads closed: bd-ftw-1 (path helpers + WalkType + WalkFlags in core/ftw/path.rs, 13 unit tests), bd-ftw-2 (closure-based walker driver in core/ftw/walker.rs with FsOps + Stat\u2026"
       },
       {
-        "id": "bd-srch-6",
-        "title": "PORT search.h #6: conformance + perf parity verification vs glibc",
+        "id": "bd-ftw-4",
+        "title": "PORT ftw.h #4: conformance + DISC-FTW-001 regression lock-in",
         "issue_type": "task",
         "priority": 2,
-        "closed_at": "2026-04-24T23:00:00.000000000Z",
+        "closed_at": "2026-04-25T02:30:00.000000000Z",
         "closed_by": "cod-frankenlibc",
         "labels": [
           "porting",
-          "search",
+          "ftw",
           "conformance",
           "testing"
         ],
-        "close_reason": "Extended conformance_diff_search.rs with 4 epic-completion regression tests: fl_tsearch_descending_inserts_balanced (1024 descending keys + tfind all + tdestroy \u2014 would chain to depth 1024 in unbalan\u2026"
+        "close_reason": "Extended conformance_diff_ftw_nftw.rs with 3 epic-completion regression tests + fixed a latent test-side bug (FTW_DEPTH was defined as 4 = FTW_CHDIR; corrected to 8 per glibc). New tests: diff_nftw_d\u2026"
       },
       {
-        "id": "bd-srch-5",
-        "title": "PORT search.h #5: move lsearch/lfind linear search to core",
+        "id": "bd-ftw-3",
+        "title": "PORT ftw.h #3: wire fl::ftw + fl::nftw to delegate to core",
         "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-24T22:45:00.000000000Z",
+        "priority": 1,
+        "closed_at": "2026-04-25T02:00:00.000000000Z",
         "closed_by": "cod-frankenlibc",
         "labels": [
           "porting",
-          "search",
-          "lsearch",
-          "core"
+          "ftw",
+          "abi"
         ],
-        "close_reason": "Added crates/frankenlibc-core/src/search/linear.rs with lfind_index(base: &[u8], width, nel, matches) -> Option<usize> and lsearch_or_append_index() -> SearchOrAppend::{Found(idx), AppendAt(idx)}. Pu\u2026"
-      },
-      {
-        "id": "bd-srch-4",
-        "title": "PORT search.h #4: move hash table (hcreate/hsearch/hdestroy + _r) to core",
-        "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-24T22:30:00.000000000Z",
-        "closed_by": "cod-frankenlibc",
-        "labels": [
-          "porting",
-          "search",
-          "hsearch",
-          "core"
-        ],
-        "close_reason": "Added crates/frankenlibc-core/src/search/hash.rs with LinearProbeTable<K,V> + LinearSlot<K,V> (#[repr(C)] for layout-compat with POSIX Entry) + djb2_seed/djb2_step helpers. Generic over K,V with call\u2026"
+        "close_reason": "Replaced ~339 lines of inline ftw_walk_dir + nftw + nftw_walk_dir + FtwInfo struct in unistd_abi.rs with a thin shim layer (~155 lines): AbiStat(libc::stat) wrapper implementing core's StatLike trait\u2026"
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-fnm-epic` PORT: fnmatch.h native Rust impl in frankenlibc-core (epic, closed 2026-04-25T00:30:00.000000000Z)\n  Epic complete. All 3 sub-beads closed: bd-fnm-1 (frankenlibc-core/src/string/fnmatch.rs with FnmatchFlags + fnmatch_match() + classify_bracket + fnmatch_inner, 16 unit tests), bd-fnm-2 (replaced ~280\u2026\n- `bd-fnm-3` PORT fnmatch.h #3: conformance + GNU extensions parity (task, closed 2026-04-25T00:30:00.000000000Z)\n  Extended conformance_diff_fnmatch_glob.rs with 4 new tests: diff_fnmatch_leading_dir (FNM_LEADING_DIR across 7 cases incl 'a/b' vs 'a/b/c/d', confirming pattern matches dir prefixes per glibc), diff_\u2026\n- `bd-fnm-2` PORT fnmatch.h #2: wire fl::fnmatch to delegate to core (task, closed 2026-04-25T00:15:00.000000000Z)\n  Replaced search_abi.rs fnmatch_impl + classify_bracket + BracketShape (~280 lines) with thin shim that calls frankenlibc_core::string::fnmatch::fnmatch_match. Adapts NUL-terminated C strings to byte\u2026\n- `bd-fnm-1` PORT fnmatch.h #1: native engine in frankenlibc-core/src/string/fnmatch.rs (task, closed 2026-04-25T00:00:00.000000000Z)\n  Created crates/frankenlibc-core/src/string/fnmatch.rs with pure-safe Rust port of the engine. Public API: pub fn fnmatch_match(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> bool + FnmatchFlags\u2026\n- `bd-srch-epic` PORT: search.h native Rust impl with Red-Black tree parity (epic, closed 2026-04-24T23:00:00.000000000Z)\n  Epic complete. All 6 sub-beads closed: bd-srch-1 (LLRB tree types + core ops in frankenlibc-core/src/search/rb_tree.rs, 12 unit tests), bd-srch-2 (wire tsearch/tfind/tdelete + twalk/twalk_r to delega\u2026\n- `bd-srch-6` PORT search.h #6: conformance + perf parity verification vs glibc (task, closed 2026-04-24T23:00:00.000000000Z)\n  Extended conformance_diff_search.rs with 4 epic-completion regression tests: fl_tsearch_descending_inserts_balanced (1024 descending keys + tfind all + tdestroy \u2014 would chain to depth 1024 in unbalan\u2026\n- `bd-srch-5` PORT search.h #5: move lsearch/lfind linear search to core (task, closed 2026-04-24T22:45:00.000000000Z)\n  Added crates/frankenlibc-core/src/search/linear.rs with lfind_index(base: &[u8], width, nel, matches) -> Option<usize> and lsearch_or_append_index() -> SearchOrAppend::{Found(idx), AppendAt(idx)}. Pu\u2026\n- `bd-srch-4` PORT search.h #4: move hash table (hcreate/hsearch/hdestroy + _r) to core (task, closed 2026-04-24T22:30:00.000000000Z)\n  Added crates/frankenlibc-core/src/search/hash.rs with LinearProbeTable<K,V> + LinearSlot<K,V> (#[repr(C)] for layout-compat with POSIX Entry) + djb2_seed/djb2_step helpers. Generic over K,V with call\u2026",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-go-1` PORT getopt #1: parse helpers + GetoptArgMode in core (task, closed 2026-04-25T05:00:00.000000000Z)\n  Created crates/frankenlibc-core/src/getopt/parse.rs with: pub enum GetoptArgMode (None / Required / Optional GNU ext), pub fn getopt_prefers_colon(optspec: &[u8]) -> bool, pub fn getopt_arg_mode(opts\u2026\n- `bd-err-epic` PORT: err.h native Rust impl in frankenlibc-core (epic, closed 2026-04-25T04:00:00.000000000Z)\n  Epic complete. All 3 sub-beads closed: bd-err-1 (created core/err/mod.rs with format_err_message + basename_bytes, 8 unit tests), bd-err-2 (replaced 32-line write_err_message inline formatter with 14\u2026\n- `bd-err-3` PORT err.h #3: conformance verification + property tests (task, closed 2026-04-25T04:00:00.000000000Z)\n  Added 4 structural property tests to crates/frankenlibc-core/src/err/mod.rs: property_output_starts_with_progname (3 progname sizes), property_output_has_progname_separator (8 input combos verify ':\u2026\n- `bd-err-2` PORT err.h #2: wire fl warn/warnx/err/errx to delegate (task, closed 2026-04-25T03:45:00.000000000Z)\n  Replaced 32 lines of inline byte-formatting in write_err_message with 14-line shim that calls frankenlibc_core::err::format_err_message. Removed local basename_bytes (now imports from core::err). The\u2026\n- `bd-err-1` PORT err.h #1: format_err_message in frankenlibc-core/src/err/ (task, closed 2026-04-25T03:30:00.000000000Z)\n  Created crates/frankenlibc-core/src/err/mod.rs with: pub fn format_err_message(progname, message, errno_msg) -> Vec<u8> producing the canonical 'progname: [message[: errno_msg]]\\n' BSD-style line; pu\u2026\n- `bd-ftw-epic` PORT: ftw.h native Rust impl in frankenlibc-core (epic, closed 2026-04-25T02:30:00.000000000Z)\n  Epic complete. All 4 sub-beads closed: bd-ftw-1 (path helpers + WalkType + WalkFlags in core/ftw/path.rs, 13 unit tests), bd-ftw-2 (closure-based walker driver in core/ftw/walker.rs with FsOps + Stat\u2026\n- `bd-ftw-4` PORT ftw.h #4: conformance + DISC-FTW-001 regression lock-in (task, closed 2026-04-25T02:30:00.000000000Z)\n  Extended conformance_diff_ftw_nftw.rs with 3 epic-completion regression tests + fixed a latent test-side bug (FTW_DEPTH was defined as 4 = FTW_CHDIR; corrected to 8 per glibc). New tests: diff_nftw_d\u2026\n- `bd-ftw-3` PORT ftw.h #3: wire fl::ftw + fl::nftw to delegate to core (task, closed 2026-04-25T02:00:00.000000000Z)\n  Replaced ~339 lines of inline ftw_walk_dir + nftw + nftw_walk_dir + FtwInfo struct in unistd_abi.rs with a thin shim layer (~155 lines): AbiStat(libc::stat) wrapper implementing core's StatLike trait\u2026",
     "summary": {
-      "closed_total": 1180,
+      "closed_total": 1220,
       "selected": 8,
       "invalid_rows": 0
     }
