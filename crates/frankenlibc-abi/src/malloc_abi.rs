@@ -1035,6 +1035,27 @@ const FALLBACK_SLOT_EMPTY: usize = 0;
 const FALLBACK_SLOT_TOMBSTONE: usize = 1;
 static FALLBACK_ALLOC_PTRS: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
     [const { AtomicUsize::new(FALLBACK_SLOT_EMPTY) }; FALLBACK_ALLOC_TABLE_SLOTS];
+static FALLBACK_ALLOC_SIZES: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
+    [const { AtomicUsize::new(0) }; FALLBACK_ALLOC_TABLE_SLOTS];
+static FALLBACK_ALLOC_TABLE_LOCK: AtomicBool = AtomicBool::new(false);
+
+struct FallbackAllocTableGuard;
+
+impl Drop for FallbackAllocTableGuard {
+    fn drop(&mut self) {
+        FALLBACK_ALLOC_TABLE_LOCK.store(false, Ordering::Release);
+    }
+}
+
+fn lock_fallback_alloc_table() -> FallbackAllocTableGuard {
+    while FALLBACK_ALLOC_TABLE_LOCK
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        std::hint::spin_loop();
+    }
+    FallbackAllocTableGuard
+}
 
 #[inline]
 fn fallback_key(ptr: *mut c_void) -> Option<usize> {
@@ -1055,10 +1076,11 @@ fn fallback_contains(ptr: *mut c_void) -> bool {
     let Some(key) = fallback_key(ptr) else {
         return false;
     };
+    let _guard = lock_fallback_alloc_table();
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Acquire);
+        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if slot == key {
             return true;
         }
@@ -1070,18 +1092,26 @@ fn fallback_contains(ptr: *mut c_void) -> bool {
 }
 
 fn fallback_insert(ptr: *mut c_void) {
+    fallback_insert_sized(ptr, 0);
+}
+
+fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
     if ptr.is_null() || is_bump_ptr(ptr) {
         return;
     }
     let Some(key) = fallback_key(ptr) else {
         return;
     };
+    let _guard = lock_fallback_alloc_table();
     let start = fallback_start_index(key);
     let mut first_tombstone: Option<usize> = None;
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Acquire);
+        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if slot == key {
+            if size != 0 {
+                FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
+            }
             return;
         }
         if slot == FALLBACK_SLOT_TOMBSTONE {
@@ -1092,72 +1122,61 @@ fn fallback_insert(ptr: *mut c_void) {
         }
         if slot == FALLBACK_SLOT_EMPTY {
             if let Some(tomb_idx) = first_tombstone {
-                if FALLBACK_ALLOC_PTRS[tomb_idx]
-                    .compare_exchange(
-                        FALLBACK_SLOT_TOMBSTONE,
-                        key,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .is_ok()
-                {
-                    return;
-                }
-                first_tombstone = None;
-                // Tombstone was taken by another thread. Fall through to try
-                // claiming the empty slot we just found at `idx`.
-            }
-            if FALLBACK_ALLOC_PTRS[idx]
-                .compare_exchange(
-                    FALLBACK_SLOT_EMPTY,
-                    key,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-            {
+                FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Relaxed);
+                FALLBACK_ALLOC_PTRS[tomb_idx].store(key, Ordering::Release);
                 return;
             }
+            FALLBACK_ALLOC_SIZES[idx].store(size, Ordering::Relaxed);
+            FALLBACK_ALLOC_PTRS[idx].store(key, Ordering::Release);
+            return;
         }
     }
 
     if let Some(tomb_idx) = first_tombstone {
-        let _ = FALLBACK_ALLOC_PTRS[tomb_idx].compare_exchange(
-            FALLBACK_SLOT_TOMBSTONE,
-            key,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        FALLBACK_ALLOC_SIZES[tomb_idx].store(size, Ordering::Relaxed);
+        FALLBACK_ALLOC_PTRS[tomb_idx].store(key, Ordering::Release);
     }
 }
 
 fn fallback_remove(ptr: *mut c_void) -> bool {
-    let Some(key) = fallback_key(ptr) else {
-        return false;
-    };
+    fallback_remove_sized(ptr).is_some()
+}
+
+fn fallback_remove_sized(ptr: *mut c_void) -> Option<usize> {
+    let key = fallback_key(ptr)?;
+    let _guard = lock_fallback_alloc_table();
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
-        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Acquire);
+        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if slot == key {
-            if FALLBACK_ALLOC_PTRS[idx]
-                .compare_exchange(
-                    key,
-                    FALLBACK_SLOT_TOMBSTONE,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                return true;
-            }
-            continue;
+            let size = FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed);
+            FALLBACK_ALLOC_SIZES[idx].store(0, Ordering::Relaxed);
+            FALLBACK_ALLOC_PTRS[idx].store(FALLBACK_SLOT_TOMBSTONE, Ordering::Release);
+            return Some(size);
         }
         if slot == FALLBACK_SLOT_EMPTY {
-            return false;
+            return None;
         }
     }
-    false
+    None
+}
+
+fn fallback_size(ptr: *mut c_void) -> Option<usize> {
+    let key = fallback_key(ptr)?;
+    let _guard = lock_fallback_alloc_table();
+    let start = fallback_start_index(key);
+    for i in 0..1024 {
+        let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
+        let slot = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
+        if slot == key {
+            return Some(FALLBACK_ALLOC_SIZES[idx].load(Ordering::Relaxed));
+        }
+        if slot == FALLBACK_SLOT_EMPTY {
+            return None;
+        }
+    }
+    None
 }
 
 #[must_use]
@@ -1334,8 +1353,8 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
             // SAFETY: strict-mode preload delegates allocator semantics to host libc
             // to preserve compatibility while the PCC gate records explainability.
             let out = unsafe { native_libc_malloc(req) };
-            fallback_insert(out);
             if !out.is_null() {
+                fallback_insert_sized(out, req);
                 record_alloc_stats(req);
             }
             runtime_policy::observe(
@@ -1350,8 +1369,8 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // to preserve process compatibility while hardened mode exercises the
         // membrane allocator and repair pipeline.
         let out = unsafe { native_libc_malloc(req) };
-        fallback_insert(out);
         if !out.is_null() {
+            fallback_insert_sized(out, req);
             record_alloc_stats(req);
         }
         return out;
@@ -1437,11 +1456,14 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     if is_bump_ptr(ptr) {
         return;
     }
-    if strict_allocator_host_path_active() && fallback_remove(ptr) {
+    if strict_allocator_host_path_active()
+        && let Some(size) = fallback_remove_sized(ptr)
+    {
         // SAFETY: strict-mode allocations are tracked in the fallback table and
         // must be released by the host allocator to preserve host heap
         // semantics.
         unsafe { native_libc_free(ptr) };
+        record_free_stats(size);
         return;
     }
     let _trace_scope = runtime_policy::entrypoint_scope("free");
@@ -1568,9 +1590,10 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     if strict_allocator_host_path_active() {
         // SAFETY: strict-mode preload delegates allocator semantics to host libc.
         let out = unsafe { native_libc_calloc(nmemb, size) };
-        fallback_insert(out);
         if !out.is_null() {
-            record_alloc_stats(nmemb.saturating_mul(size).max(1));
+            let total = nmemb.saturating_mul(size).max(1);
+            fallback_insert_sized(out, total);
+            record_alloc_stats(total);
         }
         return out;
     }
@@ -1700,12 +1723,15 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     }
 
     if strict_allocator_host_path_active() {
-        if fallback_contains(ptr) {
+        if let Some(old_size) = fallback_size(ptr) {
             // SAFETY: fallback-tracked pointers originate from the host allocator.
             let out = unsafe { native_libc_realloc(ptr, size) };
             if !out.is_null() {
-                let _ = fallback_remove(ptr);
-                fallback_insert(out);
+                let removed_size = fallback_remove_sized(ptr).unwrap_or(old_size);
+                let req = size.max(1);
+                fallback_insert_sized(out, req);
+                record_free_stats(removed_size);
+                record_alloc_stats(req);
             }
             return out;
         }
@@ -1726,7 +1752,8 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
             }
             let _ = pipeline.free(ptr.cast());
-            fallback_insert(out);
+            fallback_insert_sized(out, size.max(1));
+            record_alloc_stats(size.max(1));
             return out;
         }
 
@@ -1734,7 +1761,10 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         // allocating a fresh host buffer rather than invoking undefined
         // realloc semantics on a foreign pointer.
         let out = unsafe { native_libc_malloc(size.max(1)) };
-        fallback_insert(out);
+        if !out.is_null() {
+            fallback_insert_sized(out, size.max(1));
+            record_alloc_stats(size.max(1));
+        }
         return out;
     }
     let _trace_scope = runtime_policy::entrypoint_scope("realloc");
