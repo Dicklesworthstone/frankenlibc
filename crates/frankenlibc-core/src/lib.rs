@@ -24,6 +24,7 @@ pub mod dirent;
 pub mod dlfcn;
 pub mod elf;
 pub mod errno;
+pub mod ftw;
 pub mod grp;
 pub mod iconv;
 pub mod inet;
