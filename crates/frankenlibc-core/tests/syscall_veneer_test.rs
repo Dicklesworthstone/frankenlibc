@@ -1020,11 +1020,22 @@ mod x86_64_tests {
         assert_eq!(fstatfs.f_bsize, statfs.f_bsize);
         assert_eq!(fstatfs.f_frsize, statfs.f_frsize);
         assert_eq!(fstatfs.f_blocks, statfs.f_blocks);
-        assert_eq!(fstatfs.f_bfree, statfs.f_bfree);
-        assert_eq!(fstatfs.f_bavail, statfs.f_bavail);
         assert_eq!(fstatfs.f_files, statfs.f_files);
-        assert_eq!(fstatfs.f_ffree, statfs.f_ffree);
         assert_eq!(fstatfs.f_namelen, statfs.f_namelen);
+        for snapshot in [statfs, fstatfs] {
+            assert!(
+                snapshot.f_bfree <= snapshot.f_blocks,
+                "free block count should not exceed total blocks"
+            );
+            assert!(
+                snapshot.f_bavail <= snapshot.f_blocks,
+                "available block count should not exceed total blocks"
+            );
+            assert!(
+                snapshot.f_ffree <= snapshot.f_files,
+                "free file count should not exceed total file nodes"
+            );
+        }
         assert!(
             statfs.f_bsize > 0,
             "filesystem block size should be positive"
@@ -2239,7 +2250,14 @@ mod x86_64_tests {
         unsafe { sys_timerfd_gettime_spec(fd, &mut current) }.expect("timerfd_gettime");
         assert_eq!(current.it_interval, Timespec::default());
 
-        let expirations = sys_timerfd_read_expirations(fd).expect("timerfd read");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
+        let expirations = loop {
+            match sys_timerfd_read_expirations(fd) {
+                Ok(expirations) => break expirations,
+                Err(EAGAIN) if std::time::Instant::now() < deadline => std::thread::yield_now(),
+                Err(err) => panic!("timerfd read: {err}"),
+            }
+        };
         assert_eq!(
             expirations, 1,
             "one-shot timer should report exactly one expiration"

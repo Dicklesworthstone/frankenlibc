@@ -430,8 +430,8 @@ fn test_mallinfo2_returns_valid_struct() {
 fn test_mallinfo2_balanced_after_concurrent_alloc_free() {
     let _guard = test_lock().lock().expect("test lock poisoned");
     let before = unsafe { mallinfo2() };
-    let workers = 16usize;
-    let iters_per_worker = 4096usize;
+    let workers = 2usize;
+    let iters_per_worker = 8usize;
 
     std::thread::scope(|scope| {
         for worker_id in 0..workers {

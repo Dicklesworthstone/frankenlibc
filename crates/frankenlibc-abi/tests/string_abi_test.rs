@@ -20,11 +20,16 @@ fn with_simd_mask<T>(mask: u32, f: impl FnOnce() -> T) -> T {
 }
 
 static LEGACY_REGEX_TEST_MUTEX: Mutex<()> = Mutex::new(());
+static HTM_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn legacy_regex_test_guard() -> MutexGuard<'static, ()> {
     LEGACY_REGEX_TEST_MUTEX
         .lock()
         .unwrap_or_else(|err| err.into_inner())
+}
+
+fn htm_test_guard() -> MutexGuard<'static, ()> {
+    HTM_TEST_MUTEX.lock().unwrap_or_else(|err| err.into_inner())
 }
 
 // ===========================================================================
@@ -67,6 +72,7 @@ fn memcpy_zero_length_is_noop() {
 
 #[test]
 fn memcpy_htm_fast_path_commits_when_forced() {
+    let _guard = htm_test_guard();
     memcpy_htm_reset_for_tests();
     let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceCommit);
     let before = memcpy_htm_snapshot_for_tests();
@@ -89,6 +95,7 @@ fn memcpy_htm_fast_path_commits_when_forced() {
 
 #[test]
 fn memcpy_htm_abort_falls_back_and_preserves_bytes() {
+    let _guard = htm_test_guard();
     memcpy_htm_reset_for_tests();
     let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceAbort);
     let previous_code = htm_swap_abort_code_for_tests(0x55AA);
