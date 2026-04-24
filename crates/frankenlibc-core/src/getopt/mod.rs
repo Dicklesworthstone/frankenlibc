@@ -9,5 +9,7 @@
 //! Sub-bead 3 will wire the abi shims.
 
 pub mod parse;
+pub mod state;
 
 pub use parse::{GetoptArgMode, getopt_arg_mode, getopt_prefers_colon};
+pub use state::{ArgRef, GetoptState, StepOutcome, step_short};
