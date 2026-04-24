@@ -22,8 +22,9 @@ pub struct LargeAllocation {
 const PAGE_SIZE: usize = 4096;
 
 /// Rounds a size up to the nearest page boundary.
-fn page_align(size: usize) -> usize {
-    (size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)
+fn page_align(size: usize) -> Option<usize> {
+    size.checked_add(PAGE_SIZE - 1)
+        .map(|rounded| rounded & !(PAGE_SIZE - 1))
 }
 
 /// Tracks active large allocations.
@@ -57,7 +58,7 @@ impl LargeAllocator {
             return None;
         }
 
-        let mapped_size = page_align(size);
+        let mapped_size = page_align(size)?;
         let base = self.next_base;
         self.next_base = self.next_base.checked_add(mapped_size)?;
         self.total_mapped = self.total_mapped.saturating_add(mapped_size);
@@ -216,10 +217,19 @@ mod tests {
 
     #[test]
     fn test_page_alignment() {
-        assert_eq!(page_align(1), 4096);
-        assert_eq!(page_align(4096), 4096);
-        assert_eq!(page_align(4097), 8192);
-        assert_eq!(page_align(0), 0);
+        assert_eq!(page_align(1), Some(4096));
+        assert_eq!(page_align(4096), Some(4096));
+        assert_eq!(page_align(4097), Some(8192));
+        assert_eq!(page_align(0), Some(0));
+        assert_eq!(page_align(usize::MAX), None);
+    }
+
+    #[test]
+    fn test_large_alloc_rejects_page_align_overflow() {
+        let mut allocator = LargeAllocator::new();
+        assert!(allocator.alloc(usize::MAX).is_none());
+        assert_eq!(allocator.active_count(), 0);
+        assert_eq!(allocator.total_mapped(), 0);
     }
 
     #[test]
