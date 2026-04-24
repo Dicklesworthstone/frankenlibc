@@ -360,7 +360,10 @@ extern "C" fn tree_cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
 fn fl_tsearch_insert_then_tfind_returns_match() {
     let mut root: *mut c_void = std::ptr::null_mut();
     let keys: Vec<i32> = vec![5, 2, 8, 1, 3, 7, 9];
-    let key_ptrs: Vec<*const c_void> = keys.iter().map(|k| k as *const _ as *const c_void).collect();
+    let key_ptrs: Vec<*const c_void> = keys
+        .iter()
+        .map(|k| k as *const _ as *const c_void)
+        .collect();
     for &kp in &key_ptrs {
         let r = unsafe {
             fl::tsearch(
@@ -435,8 +438,10 @@ fn fl_tsearch_ascending_inserts_balanced_via_llrb() {
     // ascending_inserts_stay_balanced).
     let mut root: *mut c_void = std::ptr::null_mut();
     let keys: Vec<i32> = (0..1024).collect();
-    let key_ptrs: Vec<*const c_void> =
-        keys.iter().map(|k| k as *const _ as *const c_void).collect();
+    let key_ptrs: Vec<*const c_void> = keys
+        .iter()
+        .map(|k| k as *const _ as *const c_void)
+        .collect();
     for &kp in &key_ptrs {
         let r = unsafe {
             fl::tsearch(
@@ -477,6 +482,68 @@ fn fl_tsearch_ascending_inserts_balanced_via_llrb() {
         };
     }
     assert!(root.is_null());
+}
+
+// ===========================================================================
+// tdestroy (GNU extension) — bd-srch-3
+// ===========================================================================
+
+extern "C" fn destroy_count_cb(_key: *mut c_void) {
+    DESTROY_COUNT.with(|c| c.set(c.get() + 1));
+}
+
+thread_local! {
+    static DESTROY_COUNT: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn fl_tdestroy_calls_free_node_for_every_key() {
+    let mut root: *mut c_void = std::ptr::null_mut();
+    // Heap-allocated keys so the free_node callback can verify each gets
+    // visited (we count via thread-local since the callback is C ABI).
+    let keys: Vec<Box<i32>> = (1..=10).map(Box::new).collect();
+    for k in &keys {
+        let r = unsafe {
+            fl::tsearch(
+                &**k as *const _ as *const c_void,
+                &mut root,
+                core::mem::transmute::<
+                    extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                >(tree_cmp_i32),
+            )
+        };
+        assert!(!r.is_null());
+    }
+    DESTROY_COUNT.with(|c| c.set(0));
+    unsafe { fl::tdestroy(root, Some(destroy_count_cb)) };
+    let n = DESTROY_COUNT.with(|c| c.get());
+    assert_eq!(n, keys.len() as u32, "tdestroy should visit every key");
+}
+
+#[test]
+fn fl_tdestroy_null_root_is_safe() {
+    // Per glibc convention tdestroy(NULL, _) is a no-op.
+    unsafe { fl::tdestroy(std::ptr::null_mut(), Some(destroy_count_cb)) };
+}
+
+#[test]
+fn fl_tdestroy_with_null_callback_is_safe() {
+    let mut root: *mut c_void = std::ptr::null_mut();
+    let k1 = Box::new(42i32);
+    let _ = unsafe {
+        fl::tsearch(
+            &*k1 as *const _ as *const c_void,
+            &mut root,
+            core::mem::transmute::<
+                extern "C" fn(*const c_void, *const c_void) -> c_int,
+                unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+            >(tree_cmp_i32),
+        )
+    };
+    // None callback → tdestroy still drops tree state without invoking
+    // any free_node.
+    unsafe { fl::tdestroy(root, None) };
 }
 
 #[test]

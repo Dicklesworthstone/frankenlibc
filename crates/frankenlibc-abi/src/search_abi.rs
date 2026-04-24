@@ -410,6 +410,31 @@ pub unsafe extern "C" fn twalk_r(
     });
 }
 
+/// GNU `tdestroy` — free every node in a binary tree, calling
+/// `free_node(key)` on each user-supplied key as the corresponding
+/// node is freed (post-order). After this call the underlying tree
+/// state is dropped and the original `*rootp` storage holds a
+/// dangling pointer; callers typically pass the value of `*rootp`
+/// directly (not `rootp`) as required by the GNU ABI.
+///
+/// `free_node` may be NULL if the keys do not need freeing.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tdestroy(
+    root: *mut c_void,
+    free_node: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    if root.is_null() {
+        return;
+    }
+    let handle: Box<RbTreeBox> = unsafe { Box::from_raw(root as *mut RbTreeBox) };
+    let RbTreeBox { tree } = *handle;
+    tree.destroy_with(|opaque_key| {
+        if let Some(cb) = free_node {
+            unsafe { cb(opaque_key.0 as *mut c_void) };
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Linear search: lfind, lsearch
 // ---------------------------------------------------------------------------
