@@ -701,10 +701,7 @@ fn cond_timedwait_rejects_out_of_range_tv_nsec() {
         assert_eq!(pthread_mutex_lock(&mut mutex), 0);
 
         for tv_nsec in [-1_i64, 1_000_000_000_i64, i64::MAX] {
-            let ts = libc::timespec {
-                tv_sec: 0,
-                tv_nsec,
-            };
+            let ts = libc::timespec { tv_sec: 0, tv_nsec };
             let rc = pthread_cond_timedwait(&mut cond, &mut mutex, &ts);
             assert_eq!(
                 rc,
@@ -2017,13 +2014,8 @@ fn atfork_prepare_does_not_self_deadlock_on_reentrant_registration() {
     };
 
     __test_atfork_handlers_clear();
-    let rc = unsafe {
-        pthread_atfork(
-            Some(atfork_reentrant_prepare_registers_another),
-            None,
-            None,
-        )
-    };
+    let rc =
+        unsafe { pthread_atfork(Some(atfork_reentrant_prepare_registers_another), None, None) };
     assert_eq!(rc, 0);
     assert_eq!(__test_atfork_handlers_len(), 1);
 

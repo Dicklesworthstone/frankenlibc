@@ -3254,8 +3254,7 @@ pub unsafe extern "C" fn __assert_perror_fail(
         if ptr.is_null() {
             return "??".to_string();
         }
-        let (len, terminated) =
-            unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+        let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
         if !terminated {
             return "??".to_string();
         }
@@ -3265,9 +3264,7 @@ pub unsafe extern "C" fn __assert_perror_fail(
     let f = read_bounded(file);
     let func = read_bounded(function);
     let msg = std::io::Error::from_raw_os_error(errnum);
-    let msg_str = format!(
-        "{f}: {line}: {func}: Unexpected error: {msg}.\n"
-    );
+    let msg_str = format!("{f}: {line}: {func}: Unexpected error: {msg}.\n");
     unsafe {
         crate::unistd_abi::sys_write_fd(
             libc::STDERR_FILENO,

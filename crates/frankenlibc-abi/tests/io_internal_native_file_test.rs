@@ -998,8 +998,12 @@ fn io_adjust_column_no_newline_adds_count() {
 fn io_adjust_column_with_newline_returns_distance_from_last() {
     // "a\nbcd" — last '\n' at index 1, count = 5, return 5 - 1 - 1 = 3
     let buf = b"a\nbcd";
-    let result = unsafe { _IO_adjust_column(99, buf.as_ptr() as *const c_char, buf.len() as c_int) };
-    assert_eq!(result, 3, "must report bytes after last \\n, ignoring start");
+    let result =
+        unsafe { _IO_adjust_column(99, buf.as_ptr() as *const c_char, buf.len() as c_int) };
+    assert_eq!(
+        result, 3,
+        "must report bytes after last \\n, ignoring start"
+    );
 }
 
 #[test]
@@ -1033,13 +1037,8 @@ fn io_adjust_column_null_or_zero_count_returns_start_unchanged() {
 fn io_adjust_wcolumn_mirrors_glibc_semantics() {
     // wide chars: 'a', '\n', 'b', 'c'
     let buf: [i32; 4] = [b'a' as i32, 0x0A, b'b' as i32, b'c' as i32];
-    let result = unsafe {
-        _IO_adjust_wcolumn(
-            10,
-            buf.as_ptr() as *const c_void,
-            buf.len() as c_int,
-        )
-    };
+    let result =
+        unsafe { _IO_adjust_wcolumn(10, buf.as_ptr() as *const c_void, buf.len() as c_int) };
     // last '\n' at wchar index 1, count = 4, return 4 - 1 - 1 = 2
     assert_eq!(result, 2);
 }
@@ -1047,12 +1046,10 @@ fn io_adjust_wcolumn_mirrors_glibc_semantics() {
 #[test]
 fn io_adjust_wcolumn_no_newline_path() {
     let buf: [i32; 3] = [b'x' as i32, b'y' as i32, b'z' as i32];
-    let result = unsafe {
-        _IO_adjust_wcolumn(
-            5,
-            buf.as_ptr() as *const c_void,
-            buf.len() as c_int,
-        )
-    };
-    assert_eq!(result, 8, "must return start + count when no \\n is present");
+    let result =
+        unsafe { _IO_adjust_wcolumn(5, buf.as_ptr() as *const c_void, buf.len() as c_int) };
+    assert_eq!(
+        result, 8,
+        "must return start + count when no \\n is present"
+    );
 }

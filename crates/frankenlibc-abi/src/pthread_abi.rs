@@ -6315,7 +6315,6 @@ mod tests {
             assert!(!current_thread_pending_cancel());
         }
     }
-
 }
 
 // Test-only hook: integration tests in `tests/pthread_abi_test.rs` drive the

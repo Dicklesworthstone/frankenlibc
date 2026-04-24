@@ -979,9 +979,9 @@ unsafe fn host_cxa_thread_atexit_impl() -> Option<HostCxaThreadAtExitImplFn> {
         return None;
     }
 
-    let resolved = unsafe {
-        crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"__cxa_thread_atexit_impl".as_ptr())
-    } as usize;
+    let resolved =
+        unsafe { crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"__cxa_thread_atexit_impl".as_ptr()) }
+            as usize;
 
     let _ = HOST_CXA_LOOKUP_REENTRY.try_with(|c| c.set(false));
 

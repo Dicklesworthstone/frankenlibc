@@ -6080,9 +6080,8 @@ pub unsafe extern "C" fn scandirat(
     }
     let count = entries.len() as c_int;
     // Same caller-frees contract for the array. (bd-zgifl)
-    let arr =
-        unsafe { libc::malloc(entries.len() * std::mem::size_of::<*mut libc::dirent>()) }
-            as *mut *mut c_void;
+    let arr = unsafe { libc::malloc(entries.len() * std::mem::size_of::<*mut libc::dirent>()) }
+        as *mut *mut c_void;
     if arr.is_null() && !entries.is_empty() {
         for e in &entries {
             unsafe { libc::free(*e as *mut c_void) };

@@ -3174,11 +3174,11 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                                 // non-Deny we trust the caller's pointer.
                                 // (bd-xx2j1: POSIX %n must write to the
                                 // count slot even for untracked pointers.)
-                                if let Some(rem) = crate::malloc_abi::known_remaining(ptr_val) {
-                                    if rem < size {
-                                        should_write = false;
-                                        frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
-                                    }
+                                if let Some(rem) = crate::malloc_abi::known_remaining(ptr_val)
+                                    && rem < size
+                                {
+                                    should_write = false;
+                                    frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
                                 }
                                 // No `else` branch: untracked allocations
                                 // are not evidence of danger. (bd-xx2j1)
@@ -3420,7 +3420,11 @@ pub unsafe extern "C" fn fprintf(
                 runtime_policy::scaled_cost(15, total_len),
                 adverse,
             );
-            return if adverse { -1 } else { printf_result_to_c_int(total_len) };
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
         }
 
         let write_result = match s.buffer_write(&rendered) {
@@ -3565,7 +3569,11 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
                 runtime_policy::scaled_cost(15, total_len),
                 adverse,
             );
-            return if adverse { -1 } else { printf_result_to_c_int(total_len) };
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
         }
 
         let write_result = match s.buffer_write(&rendered) {
@@ -3690,7 +3698,11 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
         runtime_policy::scaled_cost(15, total_len),
         adverse,
     );
-    if adverse { -1 } else { printf_result_to_c_int(total_len) }
+    if adverse {
+        -1
+    } else {
+        printf_result_to_c_int(total_len)
+    }
 }
 
 /// GNU `asprintf`.
@@ -4049,7 +4061,11 @@ pub unsafe extern "C" fn vfprintf(
                 runtime_policy::scaled_cost(15, total_len),
                 adverse,
             );
-            return if adverse { -1 } else { printf_result_to_c_int(total_len) };
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
         }
 
         let write_result = match s.buffer_write(&rendered) {
@@ -4190,7 +4206,11 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
                 runtime_policy::scaled_cost(15, total_len),
                 adverse,
             );
-            return if adverse { -1 } else { printf_result_to_c_int(total_len) };
+            return if adverse {
+                -1
+            } else {
+                printf_result_to_c_int(total_len)
+            };
         }
 
         let write_result = match s.buffer_write(&rendered) {
@@ -4331,7 +4351,11 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_v
         runtime_policy::scaled_cost(15, total_len),
         adverse,
     );
-    if adverse { -1 } else { printf_result_to_c_int(total_len) }
+    if adverse {
+        -1
+    } else {
+        printf_result_to_c_int(total_len)
+    }
 }
 
 /// GNU `vasprintf` — allocate and format from va_list.

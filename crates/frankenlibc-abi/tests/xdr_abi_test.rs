@@ -2385,7 +2385,12 @@ fn xdr_pmaplist_deep_stream_does_not_overflow_stack() {
     // it, which would also need iterative free, which we test by
     // not crashing).
     let mut head: *mut c_void = std::ptr::null_mut();
-    let rc = unsafe { xdr_pmaplist(xdr.as_mut_ptr(), &mut head as *mut *mut c_void as *mut c_void) };
+    let rc = unsafe {
+        xdr_pmaplist(
+            xdr.as_mut_ptr(),
+            &mut head as *mut *mut c_void as *mut c_void,
+        )
+    };
     assert_eq!(rc, 1, "xdr_pmaplist failed on deep stream");
 
     // Free via xdr_pmaplist with XDR_FREE op — also must be iterative.
@@ -2398,7 +2403,11 @@ fn xdr_pmaplist_deep_stream_does_not_overflow_stack() {
             XDR_FREE,
         );
     }
-    let rc_free =
-        unsafe { xdr_pmaplist(free_xdr.as_mut_ptr(), &mut head as *mut *mut c_void as *mut c_void) };
+    let rc_free = unsafe {
+        xdr_pmaplist(
+            free_xdr.as_mut_ptr(),
+            &mut head as *mut *mut c_void as *mut c_void,
+        )
+    };
     assert_eq!(rc_free, 1, "xdr_pmaplist free failed on deep list");
 }

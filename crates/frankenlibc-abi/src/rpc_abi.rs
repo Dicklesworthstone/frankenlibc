@@ -1863,7 +1863,11 @@ pub unsafe extern "C" fn xdr_pmaplist(xdrs: *mut c_void, rp: *mut c_void) -> c_i
     // flag + xdr_reference per entry, advancing through pml_next.
     let mut cursor: *mut *mut PmapList = rp.cast();
     loop {
-        let mut more: c_int = if unsafe { !(*cursor).is_null() } { 1 } else { 0 };
+        let mut more: c_int = if unsafe { !(*cursor).is_null() } {
+            1
+        } else {
+            0
+        };
         if unsafe { xdr_bool(xdrs, &mut more) } != XDR_TRUE {
             return XDR_FALSE;
         }
