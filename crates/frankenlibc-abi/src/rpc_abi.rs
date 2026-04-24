@@ -15,7 +15,27 @@ use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::scan_c_string;
+
+/// Read a user-supplied C string pointer with a known-region bound so a
+/// non-NUL-terminated argument cannot walk arbitrary process memory through
+/// `CStr::from_ptr`. Returns `None` for null or unterminated input.
+/// (REVIEW round 5 — same defense class as bd-z4k96 / iconv_open / dlopen /
+/// inet_pton / execvp.)
+#[inline]
+unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+    Some(bytes.to_vec())
+}
 
 type c_ulong = u64;
 #[allow(dead_code)]
@@ -3030,21 +3050,31 @@ pub unsafe extern "C" fn host2netname(
     if netname.is_null() {
         return 0;
     }
-    let host_str = if host.is_null() {
-        "localhost"
+    // Bounded reads — non-NUL-terminated host/domain pointers must not
+    // walk arbitrary memory. (REVIEW round 5: bd-z4k96 class.)
+    let host_owned = if host.is_null() {
+        b"localhost".to_vec()
     } else {
-        match unsafe { std::ffi::CStr::from_ptr(host) }.to_str() {
-            Ok(s) => s,
-            Err(_) => return 0,
+        match unsafe { read_bounded_cstr(host) } {
+            Some(b) => b,
+            None => return 0,
         }
     };
-    let domain_str = if domain.is_null() {
-        "localhost"
+    let domain_owned = if domain.is_null() {
+        b"localhost".to_vec()
     } else {
-        match unsafe { std::ffi::CStr::from_ptr(domain) }.to_str() {
-            Ok(s) => s,
-            Err(_) => return 0,
+        match unsafe { read_bounded_cstr(domain) } {
+            Some(b) => b,
+            None => return 0,
         }
+    };
+    let host_str = match std::str::from_utf8(&host_owned) {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let domain_str = match std::str::from_utf8(&domain_owned) {
+        Ok(s) => s,
+        Err(_) => return 0,
     };
     let name = format!("unix.{}@{}\0", host_str, domain_str);
     // POSIX host2netname returns a heap buffer that the CALLER frees with the
@@ -3082,7 +3112,12 @@ pub unsafe extern "C" fn netname2host(
     if netname.is_null() || hostname.is_null() || hostlen <= 0 {
         return 0;
     }
-    let name = match unsafe { std::ffi::CStr::from_ptr(netname) }.to_str() {
+    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
+    let name_owned = match unsafe { read_bounded_cstr(netname) } {
+        Some(b) => b,
+        None => return 0,
+    };
+    let name = match std::str::from_utf8(&name_owned) {
         Ok(s) => s,
         Err(_) => return 0,
     };
@@ -3121,7 +3156,12 @@ pub unsafe extern "C" fn netname2user(
     if netname.is_null() || uidp.is_null() || gidp.is_null() || gidlenp.is_null() {
         return 0;
     }
-    let name = match unsafe { std::ffi::CStr::from_ptr(netname) }.to_str() {
+    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
+    let name_owned = match unsafe { read_bounded_cstr(netname) } {
+        Some(b) => b,
+        None => return 0,
+    };
+    let name = match std::str::from_utf8(&name_owned) {
         Ok(s) => s,
         Err(_) => return 0,
     };
@@ -3159,13 +3199,18 @@ pub unsafe extern "C" fn user2netname(
     if netname.is_null() {
         return 0;
     }
-    let domain_str = if domain.is_null() {
-        "localhost"
+    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
+    let domain_owned = if domain.is_null() {
+        b"localhost".to_vec()
     } else {
-        match unsafe { std::ffi::CStr::from_ptr(domain) }.to_str() {
-            Ok(s) => s,
-            Err(_) => return 0,
+        match unsafe { read_bounded_cstr(domain) } {
+            Some(b) => b,
+            None => return 0,
         }
+    };
+    let domain_str = match std::str::from_utf8(&domain_owned) {
+        Ok(s) => s,
+        Err(_) => return 0,
     };
     let name = format!("unix.{}@{}\0", uid, domain_str);
     // Sibling of host2netname (bd-dqqh1) — POSIX returns a buffer freed by
