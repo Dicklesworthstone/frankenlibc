@@ -318,28 +318,51 @@ fn diff_newlocale_validity() {
 
 // DISC-LOCALE-001: glibc validates that the category_mask passed to
 // newlocale only sets bits for real LC_*_MASK values (i.e., bit 6
-// LC_ALL is not a real mask and must be 0). FrankenLibC accepts this
-// invalid mask. POSIX leaves the result of "invalid mask" undefined
-// but glibc consistently rejects with NULL+EINVAL. We document the
-// divergence; this is logged not failed.
+// LC_ALL is not a real mask and must be 0). FrankenLibC should match
+// glibc by rejecting this with NULL+EINVAL.
 #[test]
-fn diff_newlocale_invalid_mask_documented() {
+fn diff_newlocale_invalid_mask_rejected() {
+    let mut divs = Vec::new();
     let cs = CString::new("C").unwrap();
     // Bit 6 (LC_ALL=64) is NOT a valid category mask bit per POSIX.
     let invalid_mask: c_int = LC_ALL_MASK | 64;
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
     let l_fl = unsafe { fl_locale::newlocale(invalid_mask, cs.as_ptr(), std::ptr::null_mut()) };
+    let e_fl = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    unsafe { *libc::__errno_location() = 0 };
     let l_lc = unsafe { newlocale(invalid_mask, cs.as_ptr(), std::ptr::null_mut()) };
-    eprintln!(
-        "{{\"family\":\"locale_l\",\"divergence\":\"DISC-LOCALE-001\",\"test\":\"newlocale_with_LC_ALL_bit\",\"fl\":\"{}\",\"glibc\":\"{}\",\"posix\":\"undefined\"}}",
-        if l_fl.is_null() { "NULL" } else { "non-null" },
-        if l_lc.is_null() { "NULL" } else { "non-null" },
-    );
+    let e_lc = unsafe { *libc::__errno_location() };
+
+    if l_fl.is_null() != l_lc.is_null() {
+        divs.push(Divergence {
+            function: "newlocale",
+            case: "LC_ALL bit set".into(),
+            field: "null_match",
+            frankenlibc: format!("{l_fl:?}"),
+            glibc: format!("{l_lc:?}"),
+        });
+    }
+    if e_fl != libc::EINVAL || e_lc != libc::EINVAL {
+        divs.push(Divergence {
+            function: "newlocale",
+            case: "LC_ALL bit set".into(),
+            field: "errno",
+            frankenlibc: format!("{e_fl}"),
+            glibc: format!("{e_lc}"),
+        });
+    }
     if !l_fl.is_null() {
         unsafe { fl_locale::freelocale(l_fl) };
     }
     if !l_lc.is_null() {
         unsafe { freelocale(l_lc) };
     }
+    assert!(
+        divs.is_empty(),
+        "newlocale invalid-mask divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]

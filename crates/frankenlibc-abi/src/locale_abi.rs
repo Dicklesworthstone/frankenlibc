@@ -460,10 +460,17 @@ pub type LocaleT = *mut std::ffi::c_void;
 /// Sentinel value for the C locale handle.
 static C_LOCALE_HANDLE: u8 = 0;
 
+const VALID_NEWLOCALE_CATEGORY_MASK: c_int = libc::LC_ALL_MASK;
+
 /// Return a pointer to use as the C-locale handle.
 #[inline]
 fn c_locale_handle() -> LocaleT {
     std::ptr::addr_of!(C_LOCALE_HANDLE) as LocaleT
+}
+
+#[inline]
+fn valid_newlocale_category_mask(category_mask: c_int) -> bool {
+    category_mask >= 0 && (category_mask & !VALID_NEWLOCALE_CATEGORY_MASK) == 0
 }
 
 /// POSIX `newlocale` — create a new locale object.
@@ -479,6 +486,12 @@ pub unsafe extern "C" fn newlocale(
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Locale, category_mask as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
+        return std::ptr::null_mut();
+    }
+
+    if !valid_newlocale_category_mask(category_mask) {
+        unsafe { set_abi_errno(libc::EINVAL) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
         return std::ptr::null_mut();
     }
@@ -829,6 +842,26 @@ mod tests {
             )
         };
         assert!(!loc.is_null());
+    }
+
+    #[test]
+    fn newlocale_rejects_lc_all_category_bit() {
+        let c_name = b"C\0";
+        let invalid_mask = libc::LC_ALL_MASK | (1 << libc::LC_ALL);
+        unsafe { set_abi_errno(0) };
+        // SAFETY: Valid C-locale name with an invalid category-mask bit.
+        let loc = unsafe {
+            newlocale(
+                invalid_mask,
+                c_name.as_ptr() as *const c_char,
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(loc.is_null());
+        assert_eq!(
+            unsafe { *crate::errno_abi::__errno_location() },
+            libc::EINVAL
+        );
     }
 
     #[test]
