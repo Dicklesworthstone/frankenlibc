@@ -1145,7 +1145,7 @@ unsafe fn child_spawn_fail(err_fd: c_int, err: c_int) -> ! {
 
 /// Core posix_spawn implementation shared between posix_spawn and posix_spawnp.
 /// `search_path` controls whether PATH search is done (posix_spawnp).
-unsafe fn posix_spawn_impl(
+struct SpawnRequest {
     pid: *mut libc::pid_t,
     path: *const c_char,
     file_actions: *const c_void,
@@ -1154,7 +1154,20 @@ unsafe fn posix_spawn_impl(
     envp: *const *mut c_char,
     search_path: bool,
     pidfd_out: *mut c_int,
-) -> c_int {
+}
+
+unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
+    let SpawnRequest {
+        pid,
+        path,
+        file_actions,
+        attrp,
+        argv,
+        envp,
+        search_path,
+        pidfd_out,
+    } = request;
+
     if path.is_null() || argv.is_null() {
         return libc::EINVAL;
     }
@@ -1378,16 +1391,16 @@ pub(crate) unsafe fn pidfd_spawn_impl(
     }
     unsafe { *pidfd = -1 };
     unsafe {
-        posix_spawn_impl(
-            std::ptr::null_mut(),
+        posix_spawn_impl(SpawnRequest {
+            pid: std::ptr::null_mut(),
             path,
             file_actions,
             attrp,
             argv,
             envp,
             search_path,
-            pidfd,
-        )
+            pidfd_out: pidfd,
+        })
     }
 }
 
@@ -1402,16 +1415,16 @@ pub unsafe extern "C" fn posix_spawn(
     envp: *const *mut c_char,
 ) -> c_int {
     unsafe {
-        posix_spawn_impl(
+        posix_spawn_impl(SpawnRequest {
             pid,
             path,
             file_actions,
             attrp,
             argv,
             envp,
-            false,
-            std::ptr::null_mut(),
-        )
+            search_path: false,
+            pidfd_out: std::ptr::null_mut(),
+        })
     }
 }
 
@@ -1426,16 +1439,16 @@ pub unsafe extern "C" fn posix_spawnp(
     envp: *const *mut c_char,
 ) -> c_int {
     unsafe {
-        posix_spawn_impl(
+        posix_spawn_impl(SpawnRequest {
             pid,
-            file,
+            path: file,
             file_actions,
             attrp,
             argv,
             envp,
-            true,
-            std::ptr::null_mut(),
-        )
+            search_path: true,
+            pidfd_out: std::ptr::null_mut(),
+        })
     }
 }
 

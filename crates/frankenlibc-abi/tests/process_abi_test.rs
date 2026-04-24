@@ -68,11 +68,9 @@ fn wait_for_pidfd_child(pidfd: c_int) {
     let pid = match pid_from_fdinfo(pidfd) {
         Some(pid) => pid,
         None => {
-            assert!(
-                false,
+            panic!(
                 "waitid(P_PIDFD) failed with errno {err}, and fdinfo did not expose a child pid"
             );
-            return;
         }
     };
 
