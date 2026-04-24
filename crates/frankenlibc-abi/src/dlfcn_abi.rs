@@ -150,9 +150,9 @@ unsafe fn host_dlvsym(
 }
 
 unsafe fn resolve_main_program_symbol(symbol: *const c_char, symbol_name: &[u8]) -> *mut c_void {
-    let native = resolve_exported_symbol(symbol_name);
-    if !native.is_null() {
-        return native;
+    let sym = resolve_exported_symbol(symbol_name);
+    if !sym.is_null() {
+        return sym;
     }
     unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol) }.unwrap_or(std::ptr::null_mut())
 }
