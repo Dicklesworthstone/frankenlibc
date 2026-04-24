@@ -6,7 +6,7 @@
 //! - `err`/`verr`: like warn + exit(eval)
 //! - `errx`/`verrx`: like warnx + exit(eval)
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{CStr, c_char, c_int, c_void};
 
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
 
@@ -14,23 +14,57 @@ use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf
 // Program name helper
 // ---------------------------------------------------------------------------
 
-/// Returns the short program name by reading `/proc/self/comm`.
-/// Falls back to `"?"` if unavailable.
-fn get_progname() -> &'static [u8] {
+/// Returns the short program name used by GNU/BSD err.h diagnostics.
+///
+/// Glibc bases this on `program_invocation_short_name`, which is the basename
+/// of `argv[0]`. In unit tests and interpose-style loading our CRT startup path
+/// may not have initialized that global, so `/proc/self/cmdline` is the best
+/// process-lifetime fallback. `/proc/self/comm` is only a last resort because
+/// Linux truncates it to `TASK_COMM_LEN`.
+fn get_progname() -> Vec<u8> {
     use std::sync::OnceLock;
-    static PROGNAME: OnceLock<Vec<u8>> = OnceLock::new();
-    PROGNAME.get_or_init(|| {
-        if let Ok(name) = std::fs::read("/proc/self/comm") {
-            let trimmed: Vec<u8> = name
-                .into_iter()
-                .take_while(|&b| b != b'\n' && b != 0)
-                .collect();
-            if !trimmed.is_empty() {
-                return trimmed;
-            }
+    static FALLBACK_PROGNAME: OnceLock<Vec<u8>> = OnceLock::new();
+
+    let published = crate::startup_abi::program_invocation_short_name
+        .load(std::sync::atomic::Ordering::Acquire);
+    if !published.is_null() {
+        // SAFETY: startup publishes `argv[0]` storage for process lifetime.
+        let bytes = unsafe { CStr::from_ptr(published) }.to_bytes();
+        if !bytes.is_empty() {
+            return bytes.to_vec();
         }
-        b"?".to_vec()
-    })
+    }
+
+    FALLBACK_PROGNAME
+        .get_or_init(|| {
+            proc_cmdline_progname()
+                .or_else(proc_comm_progname)
+                .unwrap_or_else(|| b"?".to_vec())
+        })
+        .clone()
+}
+
+fn basename_bytes(bytes: &[u8]) -> &[u8] {
+    bytes
+        .iter()
+        .rposition(|&b| b == b'/')
+        .map_or(bytes, |idx| &bytes[idx + 1..])
+}
+
+fn proc_cmdline_progname() -> Option<Vec<u8>> {
+    let cmdline = std::fs::read("/proc/self/cmdline").ok()?;
+    let argv0 = cmdline.split(|&b| b == 0).next()?;
+    let basename = basename_bytes(argv0);
+    (!basename.is_empty()).then(|| basename.to_vec())
+}
+
+fn proc_comm_progname() -> Option<Vec<u8>> {
+    let name = std::fs::read("/proc/self/comm").ok()?;
+    let trimmed: Vec<u8> = name
+        .into_iter()
+        .take_while(|&b| b != b'\n' && b != 0)
+        .collect();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 // ---------------------------------------------------------------------------
@@ -47,7 +81,7 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
 
     // Build the output: "progname: "
     let mut out = Vec::with_capacity(256);
-    out.extend_from_slice(progname);
+    out.extend_from_slice(&progname);
     out.extend_from_slice(b": ");
 
     // Append formatted message if format string is non-empty.
