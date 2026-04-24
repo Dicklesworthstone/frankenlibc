@@ -46,7 +46,7 @@ const FTW_DP: c_int = 5;
 const FTW_SLN: c_int = 6;
 
 const FTW_PHYS: c_int = 1; // don't follow symlinks
-const FTW_DEPTH: c_int = 4;
+const FTW_DEPTH: c_int = 8; // post-order (was 4 — pre-bd-ftw-4 bug, FTW_CHDIR=4)
 
 // Tests share a global collection vector since the C callback can't
 // capture closures.
@@ -224,6 +224,139 @@ fn diff_nftw_nonexistent_dir() {
         "nftw nonexistent fail-match: fl={r_fl}, lc={r_lc}"
     );
     assert_eq!(r_fl, -1, "nftw should return -1 on ENOENT root");
+}
+
+// ===========================================================================
+// bd-ftw-4: epic-completion regression tests
+// ===========================================================================
+
+thread_local! {
+    static DEPTH_LOG_FL: std::cell::RefCell<Vec<(String, c_int, c_int)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    static DEPTH_LOG_LC: std::cell::RefCell<Vec<(String, c_int, c_int)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+unsafe extern "C" fn record_depth_fl(
+    path: *const c_char,
+    _st: *const libc::stat,
+    typeflag: c_int,
+    ftwbuf: *mut c_void,
+) -> c_int {
+    let p = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    let level = unsafe { *(ftwbuf as *const c_int).add(1) };
+    DEPTH_LOG_FL.with(|c| c.borrow_mut().push((p, typeflag, level)));
+    0
+}
+
+unsafe extern "C" fn record_depth_lc(
+    path: *const c_char,
+    _st: *const libc::stat,
+    typeflag: c_int,
+    ftwbuf: *mut c_void,
+) -> c_int {
+    let p = unsafe { CStr::from_ptr(path) }
+        .to_string_lossy()
+        .into_owned();
+    let level = unsafe { *(ftwbuf as *const c_int).add(1) };
+    DEPTH_LOG_LC.with(|c| c.borrow_mut().push((p, typeflag, level)));
+    0
+}
+
+#[test]
+fn diff_nftw_depth_post_order_directories_after_contents() {
+    // FTW_DEPTH semantics: directory's DP visit must come AFTER all
+    // its contents. Verify both impls preserve this ordering.
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_tree();
+    let cbase = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+
+    DEPTH_LOG_FL.with(|c| c.borrow_mut().clear());
+    DEPTH_LOG_LC.with(|c| c.borrow_mut().clear());
+    let _ = unsafe { fl::nftw(cbase.as_ptr(), Some(record_depth_fl), 16, FTW_DEPTH) };
+    let _ = unsafe { nftw(cbase.as_ptr(), Some(record_depth_lc), 16, FTW_DEPTH) };
+    let _ = std::fs::remove_dir_all(&dir);
+
+    DEPTH_LOG_FL.with(|fl_log| {
+        let log = fl_log.borrow();
+        // Find sub/ DP entry and sub/d.txt or sub/e.txt entries
+        let sub_dp_idx = log
+            .iter()
+            .position(|(p, t, _)| p.ends_with("/sub") && *t == 5)
+            .expect("fl: sub DP entry");
+        let sub_d_idx = log
+            .iter()
+            .position(|(p, _, _)| p.ends_with("/sub/d.txt"))
+            .expect("fl: sub/d.txt entry");
+        assert!(
+            sub_d_idx < sub_dp_idx,
+            "fl: FTW_DEPTH must visit sub/d.txt before sub/ DP"
+        );
+    });
+    DEPTH_LOG_LC.with(|lc_log| {
+        let log = lc_log.borrow();
+        let sub_dp_idx = log
+            .iter()
+            .position(|(p, t, _)| p.ends_with("/sub") && *t == 5)
+            .expect("lc: sub DP entry");
+        let sub_d_idx = log
+            .iter()
+            .position(|(p, _, _)| p.ends_with("/sub/d.txt"))
+            .expect("lc: sub/d.txt entry");
+        assert!(
+            sub_d_idx < sub_dp_idx,
+            "lc: FTW_DEPTH must visit sub/d.txt before sub/ DP"
+        );
+    });
+}
+
+#[test]
+fn diff_nftw_level_field_correct() {
+    // The FTW info struct's `level` field must match the depth from
+    // root: 0 for root, 1 for direct children, 2 for grandchildren.
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = build_tree();
+    let cbase = CString::new(dir.to_string_lossy().as_bytes()).unwrap();
+
+    DEPTH_LOG_FL.with(|c| c.borrow_mut().clear());
+    let _ = unsafe { fl::nftw(cbase.as_ptr(), Some(record_depth_fl), 16, 0) };
+    DEPTH_LOG_FL.with(|fl_log| {
+        let log = fl_log.borrow();
+        // Root: level == 0
+        let root_entry = log
+            .iter()
+            .find(|(p, _, _)| p == &dir.to_string_lossy().to_string())
+            .expect("fl: root entry");
+        assert_eq!(root_entry.2, 0, "root level must be 0");
+        // a.txt: direct child, level == 1
+        let a = log
+            .iter()
+            .find(|(p, _, _)| p.ends_with("/a.txt"))
+            .expect("fl: a.txt entry");
+        assert_eq!(a.2, 1, "a.txt level must be 1");
+        // sub/d.txt: grandchild, level == 2
+        let d = log
+            .iter()
+            .find(|(p, _, _)| p.ends_with("/sub/d.txt"))
+            .expect("fl: sub/d.txt entry");
+        assert_eq!(d.2, 2, "sub/d.txt level must be 2");
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn diff_ftw_disc001_lock_in() {
+    // bd-ftw2 + bd-ftw-3 lock-in: nonexistent dirpath returns -1 on
+    // both impls (was DISC-FTW-001 — fl previously returned 0).
+    let _g = FTW_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let cpath = CString::new("/this/dir/does/not/exist/lock_in_check").unwrap();
+    let r_fl = unsafe { fl::ftw(cpath.as_ptr(), Some(collect_ftw), 16) };
+    let r_lc = unsafe { ftw(cpath.as_ptr(), Some(collect_ftw), 16) };
+    let _ = FtwBuf { base: 0, level: 0 };
+    assert_eq!(r_fl, -1, "fl::ftw nonexistent must return -1");
+    assert_eq!(r_lc, -1, "lc::ftw nonexistent must return -1");
 }
 
 #[test]
