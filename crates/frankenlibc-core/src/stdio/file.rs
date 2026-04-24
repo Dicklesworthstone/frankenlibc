@@ -173,8 +173,13 @@ impl MemBacking {
                 n
             }
             MemBacking::Dynamic { data, pos } => {
-                let end = *pos + src.len();
+                let Some(end) = pos.checked_add(src.len()) else {
+                    return 0;
+                };
                 if end > data.len() {
+                    if data.try_reserve(end - data.len()).is_err() {
+                        return 0;
+                    }
                     data.resize(end, 0);
                 }
                 data[*pos..end].copy_from_slice(src);
@@ -1052,6 +1057,18 @@ mod tests {
         assert_eq!(b.seek(5, 0), Some(5));
         b.write(b"!");
         assert_eq!(b.data(), b"hi\0\0\0!");
+    }
+
+    #[test]
+    fn test_mem_backing_dynamic_huge_seek_write_fails_without_panic() {
+        let mut b = MemBacking::Dynamic {
+            data: Vec::new(),
+            pos: 0,
+        };
+        assert_eq!(b.seek(i64::MAX, 0), Some(i64::MAX));
+        assert_eq!(b.write(b"!"), 0);
+        assert!(b.data().is_empty());
+        assert_eq!(b.position(), i64::MAX as usize);
     }
 
     #[test]
