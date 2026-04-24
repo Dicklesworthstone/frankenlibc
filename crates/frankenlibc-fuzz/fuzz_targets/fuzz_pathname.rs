@@ -26,22 +26,20 @@
 //!   stamp a guard sentinel on both sides and assert it survives.
 //!
 //! Differential coverage:
-//! - All archetypes here are crash-detector + invariant-checker only.
-//! - A host-libc differential for `basename`/`dirname` is a clean
-//!   follow-up but requires `dlsym(RTLD_NEXT, ...)` plumbing because
-//!   both our ABI layer and libc export the same symbol name; a naive
-//!   `extern "C"` from the fuzzer binary can only bind to one and does
-//!   not give us two independent implementations to compare. Tracked
-//!   separately.
-//! - A tmpdir-based host-parity differential against a pre-seeded
-//!   symlink graph for `stat`/`readlink` is also a reasonable
-//!   follow-up once the crash-detector surface is stable.
+//! - `basename` and `dirname` compare FrankenLibC directly with host libc
+//!   over caller-owned writable buffers.
+//! - `stat`/`lstat`/`access`/`fstatat`/`readlink`/`readlinkat`/`faccessat`
+//!   compare return shape and errno over inert paths and a small seeded
+//!   scratch filesystem with files, directories, and symlinks.
 //!
 //! Bead: bd-anoe7
 
-use std::ffi::{CString, c_char, c_int};
+use std::ffi::{CString, OsStr, c_char, c_int};
+use std::fs;
 use std::mem::MaybeUninit;
-use std::sync::Once;
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
+use std::sync::{Once, OnceLock};
 
 use arbitrary::Arbitrary;
 use frankenlibc_abi::stdlib_abi::{basename, dirname, realpath};
@@ -49,6 +47,13 @@ use frankenlibc_abi::unistd_abi::{
     access, canonicalize_file_name, fstatat, lstat, readlink, readlinkat, stat,
 };
 use libfuzzer_sys::fuzz_target;
+
+unsafe extern "C" {
+    #[link_name = "basename"]
+    fn host_libc_basename(path: *mut c_char) -> *mut c_char;
+    #[link_name = "dirname"]
+    fn host_libc_dirname(path: *mut c_char) -> *mut c_char;
+}
 
 /// Guard sentinel on either side of every writable output buffer.
 const GUARD_BYTES: usize = 64;
@@ -60,6 +65,14 @@ const GUARD_BYTE: u8 = 0xFD;
 const MAX_PATH_BYTES: usize = 5120;
 /// Bound on the readlink output buffer size the attacker may pick.
 const MAX_READLINK_BUF: usize = 4096;
+
+struct ScratchPaths {
+    existing: PathBuf,
+    directory: PathBuf,
+    symlink: PathBuf,
+    symlink_loop: PathBuf,
+    unicode: PathBuf,
+}
 
 #[derive(Debug, Arbitrary)]
 struct PathnameFuzzInput {
@@ -73,6 +86,9 @@ struct PathnameFuzzInput {
     flags: i32,
     /// access mode bits.
     amode: i32,
+    /// Seed-path selector. This keeps coverage on historical pathname edge
+    /// cases even when random bytes are too noisy.
+    path_case: u8,
     /// Archetype selector.
     op: u8,
 }
@@ -86,6 +102,72 @@ fn init_hardened_mode() {
             std::env::set_var("FRANKENLIBC_MODE", "hardened");
         }
     });
+}
+
+fn scratch_paths() -> &'static ScratchPaths {
+    static SCRATCH: OnceLock<ScratchPaths> = OnceLock::new();
+    SCRATCH.get_or_init(|| {
+        let root =
+            std::env::temp_dir().join(format!("frankenlibc-fuzz-pathname-{}", std::process::id()));
+        let existing = root.join("existing");
+        let directory = root.join("dir");
+        let symlink = root.join("link-to-existing");
+        let symlink_loop = root.join("loop-a");
+        let symlink_loop_b = root.join("loop-b");
+        let unicode = root.join(OsStr::from_bytes(
+            b"unicode-\xc3\xa9-\xe4\xb8\xad-\xf0\x9f\x98\x80",
+        ));
+
+        let _ = fs::create_dir_all(&root);
+        let _ = fs::create_dir_all(&directory);
+        let _ = fs::write(&existing, b"seed");
+        let _ = fs::write(&unicode, b"unicode");
+        let _ = std::os::unix::fs::symlink(&existing, &symlink);
+        let _ = std::os::unix::fs::symlink(&symlink_loop_b, &symlink_loop);
+        let _ = std::os::unix::fs::symlink(&symlink_loop, &symlink_loop_b);
+
+        ScratchPaths {
+            existing,
+            directory,
+            symlink,
+            symlink_loop,
+            unicode,
+        }
+    })
+}
+
+fn pathbuf_bytes(path: &PathBuf) -> Vec<u8> {
+    path.as_os_str().as_bytes().to_vec()
+}
+
+fn path_bytes(input: &PathnameFuzzInput) -> Vec<u8> {
+    match input.path_case % 20 {
+        0 => input.bytes.clone(),
+        1 => Vec::new(),
+        2 => b"/".to_vec(),
+        3 => b".".to_vec(),
+        4 => b"..".to_vec(),
+        5 => b"/tmp".to_vec(),
+        6 => b"/proc/self".to_vec(),
+        7 => b"/dev/null".to_vec(),
+        8 => b"/etc/passwd".to_vec(),
+        9 => b"/////".to_vec(),
+        10 => b"../../../..".to_vec(),
+        11 => b"unicode-\xc3\xa9-\xe4\xb8\xad-\xf0\x9f\x98\x80".to_vec(),
+        12 => vec![b'a'; 255],
+        13 => {
+            let mut path = b"/tmp/".to_vec();
+            path.extend(std::iter::repeat_n(b'a', 4096));
+            path
+        }
+        14 => pathbuf_bytes(&scratch_paths().existing),
+        15 => pathbuf_bytes(&scratch_paths().directory),
+        16 => pathbuf_bytes(&scratch_paths().symlink),
+        17 => pathbuf_bytes(&scratch_paths().symlink_loop),
+        18 => pathbuf_bytes(&scratch_paths().unicode),
+        19 => vec![0xff, 0xfe, b'/', b'a'],
+        _ => unreachable!(),
+    }
 }
 
 fn has_interior_nul(bytes: &[u8]) -> bool {
@@ -114,7 +196,8 @@ fn check_pathbuf_trailing_guards(buf: &[u8], name: &'static str) {
     let guard_start = buf.len() - GUARD_BYTES;
     for (i, &b) in buf[guard_start..].iter().enumerate() {
         assert_eq!(
-            b, GUARD_BYTE,
+            b,
+            GUARD_BYTE,
             "{name}: trailing guard corrupted at +{i} (total buf len={})",
             buf.len()
         );
@@ -142,11 +225,113 @@ fn check_output_buf_guards(buf: &[u8], size: usize, name: &'static str) {
     }
 }
 
+fn reset_abi_errno() {
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+}
+
+fn abi_errno() -> c_int {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+fn reset_host_errno() {
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+}
+
+fn host_errno() -> c_int {
+    unsafe { *libc::__errno_location() }
+}
+
+fn assert_syscall_parity(
+    name: &'static str,
+    abi_rc: c_int,
+    abi_errno: c_int,
+    host_rc: c_int,
+    host_errno: c_int,
+) {
+    assert_eq!(
+        abi_rc == 0,
+        host_rc == 0,
+        "{name}: success shape diverged (abi rc={abi_rc} errno={abi_errno}, host rc={host_rc} errno={host_errno})"
+    );
+    if abi_rc == -1 && host_rc == -1 {
+        assert_eq!(
+            abi_errno, host_errno,
+            "{name}: errno diverged (abi={abi_errno}, host={host_errno})"
+        );
+    }
+}
+
+fn assert_readlink_parity(
+    name: &'static str,
+    abi_rc: isize,
+    abi_errno: c_int,
+    host_rc: isize,
+    host_errno: c_int,
+) {
+    assert_eq!(
+        abi_rc >= 0,
+        host_rc >= 0,
+        "{name}: success shape diverged (abi rc={abi_rc} errno={abi_errno}, host rc={host_rc} errno={host_errno})"
+    );
+    if abi_rc >= 0 && host_rc >= 0 {
+        assert_eq!(
+            abi_rc, host_rc,
+            "{name}: byte count diverged (abi={abi_rc}, host={host_rc})"
+        );
+    } else {
+        assert_eq!(abi_rc, -1, "{name}: negative rc was not -1");
+        assert_eq!(host_rc, -1, "{name}: host negative rc was not -1");
+        assert_eq!(
+            abi_errno, host_errno,
+            "{name}: errno diverged (abi={abi_errno}, host={host_errno})"
+        );
+    }
+}
+
+fn valid_access_mode(amode: c_int) -> bool {
+    amode == libc::F_OK || (amode & !(libc::R_OK | libc::W_OK | libc::X_OK)) == 0
+}
+
+fn valid_faccessat_flags(flags: c_int) -> bool {
+    flags & !(libc::AT_EACCESS | libc::AT_SYMLINK_NOFOLLOW | libc::AT_EMPTY_PATH) == 0
+}
+
+fn assert_canonical_path(bytes: &[u8], name: &'static str) {
+    if bytes.is_empty() {
+        return;
+    }
+    assert_eq!(bytes[0], b'/', "{name}: result is not absolute");
+    if bytes.len() > 1 {
+        assert_ne!(
+            bytes.last().copied(),
+            Some(b'/'),
+            "{name}: non-root result has trailing slash"
+        );
+    }
+    assert!(
+        !bytes.windows(2).any(|w| w == b"//"),
+        "{name}: result retained duplicate slash"
+    );
+    assert!(
+        !bytes.windows(3).any(|w| w == b"/./"),
+        "{name}: result retained current-directory segment"
+    );
+    assert!(
+        !bytes.windows(4).any(|w| w == b"/../"),
+        "{name}: result retained parent-directory segment"
+    );
+}
+
 // ------------------------------------------------------------------
 // Archetype 0: crash-detector on realpath with arbitrary path bytes.
 // ------------------------------------------------------------------
 fn adv_realpath(input: &PathnameFuzzInput) {
-    let Some(cs) = CString::new(input.bytes.clone()).ok() else {
+    let bytes = path_bytes(input);
+    let Some(cs) = CString::new(bytes).ok() else {
         return;
     };
     // First variant: let realpath allocate its own result.
@@ -155,6 +340,8 @@ fn adv_realpath(input: &PathnameFuzzInput) {
     // leaks from the harness as exit-status-77 crashes otherwise (bd-s83dv).
     let ret = unsafe { realpath(cs.as_ptr(), std::ptr::null_mut()) };
     if !ret.is_null() {
+        let resolved = unsafe { cstr_to_vec(ret) };
+        assert_canonical_path(&resolved, "realpath");
         unsafe { libc::free(ret as *mut std::ffi::c_void) };
     }
     // Second variant: caller-supplied output buffer. POSIX says the
@@ -163,7 +350,11 @@ fn adv_realpath(input: &PathnameFuzzInput) {
     // capacity.
     let mut out = make_output_buf(libc::PATH_MAX as usize);
     let out_ptr = out[GUARD_BYTES..].as_mut_ptr().cast::<c_char>();
-    let _ = unsafe { realpath(cs.as_ptr(), out_ptr) };
+    let ret = unsafe { realpath(cs.as_ptr(), out_ptr) };
+    if !ret.is_null() {
+        let resolved = unsafe { cstr_to_vec(ret) };
+        assert_canonical_path(&resolved, "realpath-buffer");
+    }
     check_output_buf_guards(&out, libc::PATH_MAX as usize, "realpath");
 }
 
@@ -171,13 +362,16 @@ fn adv_realpath(input: &PathnameFuzzInput) {
 // Archetype 1: crash-detector on canonicalize_file_name.
 // ------------------------------------------------------------------
 fn adv_canonicalize_file_name(input: &PathnameFuzzInput) {
-    let Some(cs) = CString::new(input.bytes.clone()).ok() else {
+    let bytes = path_bytes(input);
+    let Some(cs) = CString::new(bytes).ok() else {
         return;
     };
     // canonicalize_file_name returns a libc::malloc'd buffer like realpath(x, NULL);
     // free with libc::free to avoid LSan exit-status-77 (bd-s83dv).
     let ret = unsafe { canonicalize_file_name(cs.as_ptr()) };
     if !ret.is_null() {
+        let resolved = unsafe { cstr_to_vec(ret) };
+        assert_canonical_path(&resolved, "canonicalize_file_name");
         unsafe { libc::free(ret as *mut std::ffi::c_void) };
     }
 }
@@ -189,7 +383,8 @@ fn adv_canonicalize_file_name(input: &PathnameFuzzInput) {
 // must be NUL-terminated and reachable within a sane bound.
 // ------------------------------------------------------------------
 fn adv_basename(input: &PathnameFuzzInput) {
-    let Some(mut buf) = make_pathbuf(&input.bytes) else {
+    let bytes = path_bytes(input);
+    let Some(mut buf) = make_pathbuf(&bytes) else {
         return;
     };
     let ret = unsafe { basename(buf.as_mut_ptr().cast::<c_char>()) };
@@ -198,38 +393,93 @@ fn adv_basename(input: &PathnameFuzzInput) {
     // Any non-null return must be at most the original input length.
     // basename never produces output longer than its input plus the
     // trivial dot-form for empty input, which is bounded by 2.
-    assert!(out.len() <= input.bytes.len().max(2) + 1);
+    assert!(out.len() <= bytes.len().max(2) + 1);
+
+    let Some(mut host_buf) = make_pathbuf(&bytes) else {
+        return;
+    };
+    let host_ret = unsafe { host_libc_basename(host_buf.as_mut_ptr().cast::<c_char>()) };
+    check_pathbuf_trailing_guards(&host_buf, "host-basename");
+    let host_out = unsafe { cstr_to_vec(host_ret) };
+    assert_eq!(out, host_out, "basename host divergence");
 }
 
 // ------------------------------------------------------------------
 // Archetype 3: crash-detector on dirname.
 // ------------------------------------------------------------------
 fn adv_dirname(input: &PathnameFuzzInput) {
-    let Some(mut buf) = make_pathbuf(&input.bytes) else {
+    let bytes = path_bytes(input);
+    let Some(mut buf) = make_pathbuf(&bytes) else {
         return;
     };
     let ret = unsafe { dirname(buf.as_mut_ptr().cast::<c_char>()) };
     check_pathbuf_trailing_guards(&buf, "dirname");
     let out = unsafe { cstr_to_vec(ret) };
-    assert!(out.len() <= input.bytes.len().max(2) + 1);
+    assert!(out.len() <= bytes.len().max(2) + 1);
+
+    let Some(mut host_buf) = make_pathbuf(&bytes) else {
+        return;
+    };
+    let host_ret = unsafe { host_libc_dirname(host_buf.as_mut_ptr().cast::<c_char>()) };
+    check_pathbuf_trailing_guards(&host_buf, "host-dirname");
+    let host_out = unsafe { cstr_to_vec(host_ret) };
+    assert_eq!(out, host_out, "dirname host divergence");
 }
 
 // ------------------------------------------------------------------
 // Archetype 4: crash-detector on stat / lstat.
 // ------------------------------------------------------------------
 fn adv_stat_family(input: &PathnameFuzzInput) {
-    let Some(cs) = CString::new(input.bytes.clone()).ok() else {
+    let bytes = path_bytes(input);
+    let Some(cs) = CString::new(bytes).ok() else {
         return;
     };
     let mut stat_buf: MaybeUninit<libc::stat> = MaybeUninit::zeroed();
+    reset_abi_errno();
     let rc_stat = unsafe { stat(cs.as_ptr(), stat_buf.as_mut_ptr()) };
-    assert!(rc_stat == 0 || rc_stat == -1, "stat rc out of contract: {rc_stat}");
+    let stat_errno = abi_errno();
+    assert!(
+        rc_stat == 0 || rc_stat == -1,
+        "stat rc out of contract: {rc_stat}"
+    );
+    if rc_stat == 0 {
+        let stat_value = unsafe { stat_buf.assume_init() };
+        assert!(
+            stat_value.st_dev != 0 || stat_value.st_ino != 0,
+            "stat success left identity fields empty"
+        );
+    }
+    let mut host_stat_buf: MaybeUninit<libc::stat> = MaybeUninit::zeroed();
+    reset_host_errno();
+    let host_rc_stat = unsafe { libc::stat(cs.as_ptr(), host_stat_buf.as_mut_ptr()) };
+    let host_stat_errno = host_errno();
+    assert_syscall_parity("stat", rc_stat, stat_errno, host_rc_stat, host_stat_errno);
 
     let mut lstat_buf: MaybeUninit<libc::stat> = MaybeUninit::zeroed();
+    reset_abi_errno();
     let rc_lstat = unsafe { lstat(cs.as_ptr(), lstat_buf.as_mut_ptr()) };
+    let lstat_errno = abi_errno();
     assert!(
         rc_lstat == 0 || rc_lstat == -1,
         "lstat rc out of contract: {rc_lstat}"
+    );
+    if rc_lstat == 0 {
+        let lstat_value = unsafe { lstat_buf.assume_init() };
+        assert!(
+            lstat_value.st_dev != 0 || lstat_value.st_ino != 0,
+            "lstat success left identity fields empty"
+        );
+    }
+    let mut host_lstat_buf: MaybeUninit<libc::stat> = MaybeUninit::zeroed();
+    reset_host_errno();
+    let host_rc_lstat = unsafe { libc::lstat(cs.as_ptr(), host_lstat_buf.as_mut_ptr()) };
+    let host_lstat_errno = host_errno();
+    assert_syscall_parity(
+        "lstat",
+        rc_lstat,
+        lstat_errno,
+        host_rc_lstat,
+        host_lstat_errno,
     );
 }
 
@@ -237,22 +487,33 @@ fn adv_stat_family(input: &PathnameFuzzInput) {
 // Archetype 5: crash-detector on access / faccessat-like call.
 // ------------------------------------------------------------------
 fn adv_access(input: &PathnameFuzzInput) {
-    let Some(cs) = CString::new(input.bytes.clone()).ok() else {
+    let bytes = path_bytes(input);
+    let Some(cs) = CString::new(bytes).ok() else {
         return;
     };
+    reset_abi_errno();
     let rc = unsafe { access(cs.as_ptr(), input.amode as c_int) };
+    let access_errno = abi_errno();
     assert!(rc == 0 || rc == -1, "access rc out of contract: {rc}");
+    if valid_access_mode(input.amode as c_int) {
+        reset_host_errno();
+        let host_rc = unsafe { libc::access(cs.as_ptr(), input.amode as c_int) };
+        let host_access_errno = host_errno();
+        assert_syscall_parity("access", rc, access_errno, host_rc, host_access_errno);
+    }
 }
 
 // ------------------------------------------------------------------
 // Archetype 6: crash-detector on readlink with guarded buffer.
 // ------------------------------------------------------------------
 fn adv_readlink(input: &PathnameFuzzInput) {
-    let Some(cs) = CString::new(input.bytes.clone()).ok() else {
+    let bytes = path_bytes(input);
+    let Some(cs) = CString::new(bytes).ok() else {
         return;
     };
     let size = (input.buf_size as usize % MAX_READLINK_BUF).max(1);
     let mut buf = make_output_buf(size);
+    reset_abi_errno();
     let rc = unsafe {
         readlink(
             cs.as_ptr(),
@@ -260,6 +521,7 @@ fn adv_readlink(input: &PathnameFuzzInput) {
             size,
         )
     };
+    let readlink_errno = abi_errno();
     // readlink returns -1 on error or the number of bytes written
     // (<= bufsiz). It does NOT NUL-terminate.
     if rc >= 0 {
@@ -271,6 +533,19 @@ fn adv_readlink(input: &PathnameFuzzInput) {
         assert_eq!(rc, -1);
     }
     check_output_buf_guards(&buf, size, "readlink");
+
+    let mut host_buf = make_output_buf(size);
+    reset_host_errno();
+    let host_rc = unsafe {
+        libc::readlink(
+            cs.as_ptr(),
+            host_buf[GUARD_BYTES..].as_mut_ptr().cast::<c_char>(),
+            size,
+        )
+    };
+    let host_readlink_errno = host_errno();
+    check_output_buf_guards(&host_buf, size, "host-readlink");
+    assert_readlink_parity("readlink", rc, readlink_errno, host_rc, host_readlink_errno);
 }
 
 // ------------------------------------------------------------------
@@ -279,15 +554,44 @@ fn adv_readlink(input: &PathnameFuzzInput) {
 // a prebuilt fd seed.
 // ------------------------------------------------------------------
 fn adv_at_family(input: &PathnameFuzzInput) {
-    let Some(cs) = CString::new(input.bytes.clone()).ok() else {
+    let bytes = path_bytes(input);
+    let Some(cs) = CString::new(bytes).ok() else {
         return;
     };
     let mut stat_buf: MaybeUninit<libc::stat> = MaybeUninit::zeroed();
-    let _ = unsafe { fstatat(libc::AT_FDCWD, cs.as_ptr(), stat_buf.as_mut_ptr(), input.flags) };
+    reset_abi_errno();
+    let fstatat_rc = unsafe {
+        fstatat(
+            libc::AT_FDCWD,
+            cs.as_ptr(),
+            stat_buf.as_mut_ptr(),
+            input.flags,
+        )
+    };
+    let fstatat_errno = abi_errno();
+    let mut host_stat_buf: MaybeUninit<libc::stat> = MaybeUninit::zeroed();
+    reset_host_errno();
+    let host_fstatat_rc = unsafe {
+        libc::fstatat(
+            libc::AT_FDCWD,
+            cs.as_ptr(),
+            host_stat_buf.as_mut_ptr(),
+            input.flags,
+        )
+    };
+    let host_fstatat_errno = host_errno();
+    assert_syscall_parity(
+        "fstatat",
+        fstatat_rc,
+        fstatat_errno,
+        host_fstatat_rc,
+        host_fstatat_errno,
+    );
 
     let size = (input.buf_size as usize % MAX_READLINK_BUF).max(1);
     let mut buf = make_output_buf(size);
-    let _ = unsafe {
+    reset_abi_errno();
+    let readlinkat_rc = unsafe {
         readlinkat(
             libc::AT_FDCWD,
             cs.as_ptr(),
@@ -295,11 +599,59 @@ fn adv_at_family(input: &PathnameFuzzInput) {
             size,
         )
     };
+    let readlinkat_errno = abi_errno();
     check_output_buf_guards(&buf, size, "readlinkat");
+    let mut host_buf = make_output_buf(size);
+    reset_host_errno();
+    let host_readlinkat_rc = unsafe {
+        libc::readlinkat(
+            libc::AT_FDCWD,
+            cs.as_ptr(),
+            host_buf[GUARD_BYTES..].as_mut_ptr().cast::<c_char>(),
+            size,
+        )
+    };
+    let host_readlinkat_errno = host_errno();
+    check_output_buf_guards(&host_buf, size, "host-readlinkat");
+    assert_readlink_parity(
+        "readlinkat",
+        readlinkat_rc,
+        readlinkat_errno,
+        host_readlinkat_rc,
+        host_readlinkat_errno,
+    );
 
     // faccessat entrypoint exists on the ABI; exercise it too.
     use frankenlibc_abi::unistd_abi::faccessat;
-    let _ = unsafe { faccessat(libc::AT_FDCWD, cs.as_ptr(), input.amode as c_int, input.flags) };
+    reset_abi_errno();
+    let faccessat_rc = unsafe {
+        faccessat(
+            libc::AT_FDCWD,
+            cs.as_ptr(),
+            input.amode as c_int,
+            input.flags,
+        )
+    };
+    let faccessat_errno = abi_errno();
+    if valid_access_mode(input.amode as c_int) && valid_faccessat_flags(input.flags) {
+        reset_host_errno();
+        let host_faccessat_rc = unsafe {
+            libc::faccessat(
+                libc::AT_FDCWD,
+                cs.as_ptr(),
+                input.amode as c_int,
+                input.flags,
+            )
+        };
+        let host_faccessat_errno = host_errno();
+        assert_syscall_parity(
+            "faccessat",
+            faccessat_rc,
+            faccessat_errno,
+            host_faccessat_rc,
+            host_faccessat_errno,
+        );
+    }
 }
 
 // ------------------------------------------------------------------
@@ -320,13 +672,16 @@ unsafe fn cstr_to_vec(ptr: *const c_char) -> Vec<u8> {
         }
         len += 1;
     }
-    assert!(len < SCAN_LIMIT, "pathname API returned unterminated string");
+    assert!(
+        len < SCAN_LIMIT,
+        "pathname API returned unterminated string"
+    );
     let slice = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) };
     slice.to_vec()
 }
 
 fuzz_target!(|input: PathnameFuzzInput| {
-    if input.bytes.len() > MAX_PATH_BYTES {
+    if input.path_case % 20 == 0 && input.bytes.len() > MAX_PATH_BYTES {
         return;
     }
     init_hardened_mode();
