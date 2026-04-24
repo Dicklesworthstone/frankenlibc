@@ -766,12 +766,6 @@ unsafe fn write_bytes_without_runtime_policy(
 
     if stream_obj.is_mem_backed() {
         let written = stream_obj.mem_write(bytes);
-        if written > 0 {
-            let start = stream_obj.offset().saturating_sub(written as i64);
-            if start >= 0 {
-                unsafe { sync_fmemopen_write(id, start as usize, &bytes[..written]) };
-            }
-        }
         if written < bytes.len() {
             stream_obj.set_error();
         }
@@ -1629,10 +1623,6 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return libc::EOF;
         }
-        let start = s.offset().saturating_sub(n as i64);
-        if start >= 0 {
-            unsafe { sync_fmemopen_write(id, start as usize, &[byte][..n]) };
-        }
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
         return c;
     }
@@ -1990,12 +1980,6 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
 
     if stream_obj.is_mem_backed() {
         let written = stream_obj.mem_write(bytes);
-        if written > 0 {
-            let start = stream_obj.offset().saturating_sub(written as i64);
-            if start >= 0 {
-                unsafe { sync_fmemopen_write(id, start as usize, &bytes[..written]) };
-            }
-        }
         let adverse = written < bytes.len();
         if adverse {
             stream_obj.set_error();
@@ -2349,12 +2333,6 @@ pub unsafe extern "C" fn fwrite(
     // Memory-backed streams: write directly to the backing.
     if s.is_mem_backed() {
         let written = s.mem_write(src);
-        if written > 0 {
-            let start = s.offset().saturating_sub(written as i64);
-            if start >= 0 {
-                unsafe { sync_fmemopen_write(id, start as usize, &src[..written]) };
-            }
-        }
         let complete_items = written.checked_div(size).unwrap_or(0);
         runtime_policy::observe(
             ApiFamily::Stdio,
@@ -2513,6 +2491,11 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
 
     // Memory-backed streams: seek within the backing buffer.
     if s.is_mem_backed() {
+        unsafe {
+            sync_memstream_to_caller(id, s);
+            sync_fmemopen_full(id, s);
+            crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
+        }
         let new_pos = s.mem_seek(offset, whence);
         if new_pos < 0 {
             unsafe { set_abi_errno(errno::EINVAL) };
@@ -3404,12 +3387,6 @@ pub unsafe extern "C" fn fprintf(
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
             let written = s.mem_write(&rendered);
-            if written > 0 {
-                let start = s.offset().saturating_sub(written as i64);
-                if start >= 0 {
-                    unsafe { sync_fmemopen_write(id, start as usize, &rendered[..written]) };
-                }
-            }
             let adverse = written < total_len;
             if adverse {
                 s.set_error();
@@ -3553,12 +3530,6 @@ pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
             let written = s.mem_write(&rendered);
-            if written > 0 {
-                let start = s.offset().saturating_sub(written as i64);
-                if start >= 0 {
-                    unsafe { sync_fmemopen_write(id, start as usize, &rendered[..written]) };
-                }
-            }
             let adverse = written < total_len;
             if adverse {
                 s.set_error();
@@ -4045,12 +4016,6 @@ pub unsafe extern "C" fn vfprintf(
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
             let written = s.mem_write(&rendered);
-            if written > 0 {
-                let start = s.offset().saturating_sub(written as i64);
-                if start >= 0 {
-                    unsafe { sync_fmemopen_write(id, start as usize, &rendered[..written]) };
-                }
-            }
             let adverse = written < total_len;
             if adverse {
                 s.set_error();
@@ -4190,12 +4155,6 @@ pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_in
     if let Some(s) = reg.streams.get_mut(&id) {
         if s.is_mem_backed() {
             let written = s.mem_write(&rendered);
-            if written > 0 {
-                let start = s.offset().saturating_sub(written as i64);
-                if start >= 0 {
-                    unsafe { sync_fmemopen_write(id, start as usize, &rendered[..written]) };
-                }
-            }
             let adverse = written < total_len;
             if adverse {
                 s.set_error();
@@ -4604,7 +4563,7 @@ pub unsafe extern "C" fn fscanf(
     format: *const c_char,
     mut args: ...
 ) -> c_int {
-    if format.is_null() {
+    if stream.is_null() || format.is_null() {
         return -1;
     }
     let id = canonical_stream_id(stream);
@@ -4711,7 +4670,7 @@ pub unsafe extern "C" fn vfscanf(
     format: *const c_char,
     ap: *mut c_void,
 ) -> c_int {
-    if format.is_null() || ap.is_null() {
+    if stream.is_null() || format.is_null() || ap.is_null() {
         return -1;
     }
     let id = canonical_stream_id(stream);
@@ -5974,25 +5933,6 @@ static MEM_FIXED_SYNC: Mutex<Option<HashMap<usize, MemFixedSync>>> = Mutex::new(
 
 fn mem_fixed_registry() -> &'static Mutex<Option<HashMap<usize, MemFixedSync>>> {
     &MEM_FIXED_SYNC
-}
-
-/// Synchronize newly written bytes for fmemopen fixed buffers.
-unsafe fn sync_fmemopen_write(id: usize, start: usize, src: &[u8]) {
-    let guard = mem_fixed_registry()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    if let Some(ref map) = *guard
-        && let Some(info) = map.get(&id)
-        && start < info.size
-    {
-        let max = info.size - start;
-        let len = src.len().min(max);
-        if len > 0 {
-            unsafe {
-                std::ptr::copy_nonoverlapping(src.as_ptr(), info.buf.add(start), len);
-            }
-        }
-    }
 }
 
 /// Synchronize the full fmemopen fixed buffer contents to the caller.

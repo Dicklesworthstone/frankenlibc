@@ -249,9 +249,11 @@ core::arch::global_asm!(
     ".type sigsetjmp, @function",
     ".type setjmp, @function",
     ".type _setjmp, @function",
-    // setjmp = __sigsetjmp(env, 1)
+    // setjmp = __sigsetjmp(env, 0).  glibc's default setjmp/_setjmp
+    // path must not save or restore the caller's signal mask; callers that
+    // need mask restoration use sigsetjmp(env, nonzero).
     "setjmp:",
-    "  mov esi, 1",
+    "  xor esi, esi",
     "  jmp __sigsetjmp",
     // _setjmp = __sigsetjmp(env, 0)
     "_setjmp:",

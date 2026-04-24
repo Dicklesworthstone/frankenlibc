@@ -3251,7 +3251,7 @@ pub unsafe extern "C" fn fwscanf(
     format: *const libc::wchar_t,
     mut args: ...
 ) -> c_int {
-    if format.is_null() {
+    if stream.is_null() || format.is_null() {
         return libc::EOF;
     }
     let id = stream as usize;
@@ -3274,7 +3274,7 @@ pub unsafe extern "C" fn vswscanf(
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
-    if s.is_null() || format.is_null() {
+    if s.is_null() || format.is_null() || ap.is_null() {
         return libc::EOF;
     }
     let input = unsafe { wide_input_to_narrow(s) };
@@ -3292,7 +3292,7 @@ pub unsafe extern "C" fn vswscanf(
 /// Native `vwscanf`: scan from stdin with va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi::c_void) -> c_int {
-    if format.is_null() {
+    if format.is_null() || ap.is_null() {
         return libc::EOF;
     }
     let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin_stream_id(), 4096);
@@ -3314,7 +3314,7 @@ pub unsafe extern "C" fn vfwscanf(
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
-    if format.is_null() {
+    if stream.is_null() || format.is_null() || ap.is_null() {
         return libc::EOF;
     }
     let id = stream as usize;

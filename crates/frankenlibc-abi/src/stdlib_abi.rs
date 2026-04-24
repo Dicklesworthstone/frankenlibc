@@ -826,7 +826,7 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn atexit(func: Option<unsafe extern "C" fn()>) -> c_int {
+pub unsafe extern "C" fn atexit(func: Option<extern "C" fn()>) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdlib, 0, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(libc::EPERM) };
@@ -835,10 +835,7 @@ pub unsafe extern "C" fn atexit(func: Option<unsafe extern "C" fn()>) -> c_int {
     }
 
     let res = match func {
-        Some(f) => {
-            let safe_f: extern "C" fn() = unsafe { std::mem::transmute(f) };
-            frankenlibc_core::stdlib::atexit(safe_f)
-        }
+        Some(f) => frankenlibc_core::stdlib::atexit(f),
         None => -1,
     };
 
@@ -1443,9 +1440,9 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
     // (CONFORMANCE: stdlib.h numeric diff matrix.)
     if consumed > 0 {
         let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
-        if val.is_infinite() && !contains_inf_literal(consumed_bytes) {
-            unsafe { set_abi_errno(libc::ERANGE) };
-        } else if val == 0.0 && contains_nonzero_digit(consumed_bytes) {
+        let overflowed = val.is_infinite() && !contains_inf_literal(consumed_bytes);
+        let underflowed = finite_float_underflowed_f64(val, consumed_bytes);
+        if overflowed || underflowed {
             unsafe { set_abi_errno(libc::ERANGE) };
         }
     }
@@ -1466,15 +1463,57 @@ fn contains_inf_literal(bytes: &[u8]) -> bool {
     if bytes.len() < 3 {
         return false;
     }
-    bytes
-        .windows(3)
-        .any(|w| w[0].eq_ignore_ascii_case(&b'i') && w[1].eq_ignore_ascii_case(&b'n') && w[2].eq_ignore_ascii_case(&b'f'))
+    bytes.windows(3).any(|w| {
+        w[0].eq_ignore_ascii_case(&b'i')
+            && w[1].eq_ignore_ascii_case(&b'n')
+            && w[2].eq_ignore_ascii_case(&b'f')
+    })
 }
 
-/// Whether the consumed prefix contained any non-zero decimal/hex digit —
-/// used to detect underflow (val==0 but input had real digits).
-fn contains_nonzero_digit(bytes: &[u8]) -> bool {
-    bytes.iter().any(|&b| matches!(b, b'1'..=b'9' | b'A'..=b'F' | b'a'..=b'f'))
+fn finite_float_underflowed_f64(value: f64, consumed: &[u8]) -> bool {
+    value.is_finite()
+        && value.abs() < f64::MIN_POSITIVE
+        && contains_nonzero_significand_digit(consumed)
+}
+
+fn finite_float_underflowed_f32(value: f32, consumed: &[u8]) -> bool {
+    value.is_finite()
+        && value.abs() < f32::MIN_POSITIVE
+        && contains_nonzero_significand_digit(consumed)
+}
+
+/// Whether the consumed prefix has a non-zero significand digit.
+///
+/// Exponent digits do not count: exact-zero inputs like `0e-400` must not set
+/// `ERANGE`, while non-zero underflows like `1e-400` must.
+fn contains_nonzero_significand_digit(bytes: &[u8]) -> bool {
+    let mut i = 0usize;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i < bytes.len() && matches!(bytes[i], b'+' | b'-') {
+        i += 1;
+    }
+
+    let is_hex = i + 1 < bytes.len() && bytes[i] == b'0' && matches!(bytes[i + 1], b'x' | b'X');
+    if is_hex {
+        i += 2;
+        while i < bytes.len() && !matches!(bytes[i], b'p' | b'P') {
+            if matches!(bytes[i], b'1'..=b'9' | b'A'..=b'F' | b'a'..=b'f') {
+                return true;
+            }
+            i += 1;
+        }
+        return false;
+    }
+
+    while i < bytes.len() && !matches!(bytes[i], b'e' | b'E') {
+        if matches!(bytes[i], b'1'..=b'9') {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// C `strtof` -- converts string to float with endptr.
@@ -1484,8 +1523,58 @@ fn contains_nonzero_digit(bytes: &[u8]) -> bool {
 /// Same safety requirements as `strtod`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -> f32 {
-    // SAFETY: same contract as strtod.
-    unsafe { strtod(nptr, endptr) as f32 }
+    if nptr.is_null() {
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr as *mut c_char };
+        }
+        return 0.0;
+    }
+
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        nptr as usize,
+        0,
+        false,
+        known_remaining(nptr as usize).is_none(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr as *mut c_char };
+        }
+        return 0.0;
+    }
+
+    let mut len = 0usize;
+    unsafe {
+        while *nptr.add(len) != 0 {
+            len += 1;
+        }
+    }
+    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
+    let (wide, consumed) = frankenlibc_core::stdlib::strtod(slice);
+    let value = wide as f32;
+    if !endptr.is_null() {
+        unsafe { *endptr = nptr.add(consumed) as *mut c_char };
+    }
+
+    if consumed > 0 {
+        let consumed_bytes = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), consumed) };
+        let overflowed = value.is_infinite() && !contains_inf_literal(consumed_bytes);
+        let underflowed = finite_float_underflowed_f32(value, consumed_bytes);
+        if overflowed || underflowed {
+            unsafe { set_abi_errno(libc::ERANGE) };
+        }
+    }
+
+    runtime_policy::observe(
+        ApiFamily::Stdlib,
+        decision.profile,
+        runtime_policy::scaled_cost(5, consumed),
+        false,
+    );
+    value
 }
 
 // ---------------------------------------------------------------------------
@@ -2789,7 +2878,9 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
     let _ = writeln!(stderr);
 
     if status != 0 {
-        std::process::exit(status);
+        // GNU error(status, ...) terminates via libc exit(status), preserving
+        // this ABI layer's atexit/on_exit and stdio-flush behavior.
+        unsafe { exit(status) };
     }
 }
 
@@ -2855,7 +2946,9 @@ pub unsafe extern "C" fn error_at_line(
     let _ = writeln!(stderr);
 
     if status != 0 {
-        std::process::exit(status);
+        // GNU error_at_line(status, ...) has the same termination contract as
+        // error(status, ...): go through libc exit rather than Rust process exit.
+        unsafe { exit(status) };
     }
 }
 
@@ -2955,32 +3048,13 @@ pub extern "C" fn get_avphys_pages() -> c_long {
     0
 }
 
-// ===========================================================================
-// Batch: POSIX binary search tree (tsearch family) — Implemented
-// ===========================================================================
-
-/// Internal binary tree node for tsearch.
-struct TsearchNode {
-    key: *const c_void,
-    left: *mut TsearchNode,
-    right: *mut TsearchNode,
-}
-
-/// `tdestroy` — destroy a binary tree, calling freefn for each node.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+// POSIX/GNU binary tree search exports live in search_abi.rs. Keep this
+// non-exported delegate for internal callers that still route through
+// stdlib_abi while avoiding a duplicate release symbol.
 pub unsafe extern "C" fn tdestroy(root: *mut c_void, freefn: unsafe extern "C" fn(*mut c_void)) {
-    unsafe fn destroy_recursive(node: *mut TsearchNode, freefn: unsafe extern "C" fn(*mut c_void)) {
-        if node.is_null() {
-            return;
-        }
-        let n = unsafe { &*node };
-        unsafe { destroy_recursive(n.left, freefn) };
-        unsafe { destroy_recursive(n.right, freefn) };
-        unsafe { freefn(n.key as *mut c_void) };
-        let _ = unsafe { Box::from_raw(node) };
-    }
-
-    unsafe { destroy_recursive(root as *mut TsearchNode, freefn) };
+    // SAFETY: `search_abi::tdestroy` owns the current opaque tree layout and
+    // performs the same GNU post-order callback contract.
+    unsafe { crate::search_abi::tdestroy(root, Some(freefn)) };
 }
 
 // ===========================================================================
@@ -3957,19 +4031,15 @@ pub unsafe extern "C" fn ualarm(usecs: c_uint, interval: c_uint) -> c_uint {
 
 use frankenlibc_core::unistd::{basename_range, dirname_range};
 
-/// Static buffer for basename return value.
-static BASENAME_BUF: std::sync::Mutex<[u8; 4097]> = std::sync::Mutex::new([0u8; 4097]);
-
 /// Static "." fallback for basename (must be mutable storage per POSIX).
 static BASENAME_DOT: std::sync::Mutex<[u8; 2]> = std::sync::Mutex::new([b'.', 0]);
 
 /// POSIX `basename` — extract filename component from a path.
 ///
-/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec,
-/// but we use a mutex internally for Rust safety.
+/// Returns a pointer into the caller's buffer after normalizing trailing
+/// slashes in-place. Empty/null inputs return a mutable `"."` fallback.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
-    // Return mutable "." buffer for null/empty paths
     let return_dot = || {
         BASENAME_DOT
             .lock()
@@ -3985,30 +4055,25 @@ pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi:
         return return_dot();
     }
     let slice = unsafe { std::slice::from_raw_parts(path as *const u8, len) };
-    let (s, e) = basename_range(slice);
-    let result_len = e - s;
-    if result_len == 0 {
+    let (start, end) = basename_range(slice);
+    if end == start {
         return return_dot();
     }
-    let mut buf = BASENAME_BUF.lock().unwrap_or_else(|e| e.into_inner());
-    buf[..result_len].copy_from_slice(&slice[s..e]);
-    buf[result_len] = 0;
-    buf.as_mut_ptr() as *mut std::ffi::c_char
+    unsafe {
+        *path.add(end) = 0;
+        path.add(start)
+    }
 }
-
-/// Static buffer for dirname return value.
-static DIRNAME_BUF: std::sync::Mutex<[u8; 4097]> = std::sync::Mutex::new([0u8; 4097]);
 
 /// Static "." fallback for dirname (must be mutable storage per POSIX).
 static DIRNAME_DOT: std::sync::Mutex<[u8; 2]> = std::sync::Mutex::new([b'.', 0]);
 
 /// POSIX `dirname` — extract directory component from a path.
 ///
-/// Returns a pointer to a static buffer. Not thread-safe per POSIX spec,
-/// but we use a mutex internally for Rust safety.
+/// Returns a pointer into the caller's buffer after truncating the directory
+/// component in-place. Empty/null inputs return a mutable `"."` fallback.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dirname(path: *mut std::ffi::c_char) -> *mut std::ffi::c_char {
-    // Return mutable "." buffer for null/empty paths
     let return_dot = || {
         DIRNAME_DOT
             .lock()
@@ -4024,15 +4089,14 @@ pub unsafe extern "C" fn dirname(path: *mut std::ffi::c_char) -> *mut std::ffi::
         return return_dot();
     }
     let slice = unsafe { std::slice::from_raw_parts(path as *const u8, len) };
-    let (s, e) = dirname_range(slice);
-    let result_len = e - s;
-    if result_len == 0 {
+    let (start, end) = dirname_range(slice);
+    if end == start {
         return return_dot();
     }
-    let mut buf = DIRNAME_BUF.lock().unwrap_or_else(|e| e.into_inner());
-    buf[..result_len].copy_from_slice(&slice[s..e]);
-    buf[result_len] = 0;
-    buf.as_mut_ptr() as *mut std::ffi::c_char
+    unsafe {
+        *path.add(end) = 0;
+        path.add(start)
+    }
 }
 
 // ---------------------------------------------------------------------------
