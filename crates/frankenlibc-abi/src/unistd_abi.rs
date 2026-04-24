@@ -14589,28 +14589,17 @@ static RPC_DB: std::sync::Mutex<RpcDb> = std::sync::Mutex::new(RpcDb::new());
 /// Format: `name  number  alias1 alias2 ...`
 /// Returns pointer to static rpcent or null on failure.
 fn parse_rpc_line_to_static(line: &str) -> *mut c_void {
-    // /etc/rpc line format: name<whitespace>number<whitespace>alias...
-    // Strip inline comments.
-    let line = if let Some(idx) = line.find('#') {
-        &line[..idx]
-    } else {
-        line
-    };
-    let mut parts = line.split_whitespace();
-    let name = match parts.next() {
-        Some(n) => n,
+    let entry = match frankenlibc_core::rpc::parse_rpc_line(line.as_bytes()) {
+        Some(e) => e,
         None => return std::ptr::null_mut(),
     };
-    let num_str = match parts.next() {
-        Some(n) => n,
-        None => return std::ptr::null_mut(),
-    };
-    let number: c_int = match num_str.parse() {
-        Ok(n) => n,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let aliases: Vec<&str> = parts.collect();
+    fill_rpc_tls_from_entry(&entry)
+}
 
+/// Pack an [`frankenlibc_core::rpc::RpcEntry`] into the thread-local
+/// rpcent storage and return a pointer to the layout-compatible
+/// rpcent struct (or null if the entry exceeds the storage budget).
+fn fill_rpc_tls_from_entry(entry: &frankenlibc_core::rpc::RpcEntry) -> *mut c_void {
     // glibc rpcent layout (x86_64):
     // struct rpcent {
     //     char *r_name;        // offset 0
@@ -14618,12 +14607,15 @@ fn parse_rpc_line_to_static(line: &str) -> *mut c_void {
     //     int r_number;        // offset 16
     // };
     // Size: 24 bytes (with padding)
-
     thread_local! {
         static RPC_BUF: std::cell::RefCell<[u8; 1024]> = const { std::cell::RefCell::new([0u8; 1024]) };
         static RPC_ENT: std::cell::RefCell<[u8; 24]> = const { std::cell::RefCell::new([0u8; 24]) };
         static RPC_ALIASES: std::cell::RefCell<[*mut c_char; 32]> = const { std::cell::RefCell::new([std::ptr::null_mut(); 32]) };
     }
+
+    let name_bytes = entry.name.as_slice();
+    let aliases = &entry.aliases;
+    let number = entry.number;
 
     RPC_BUF.with(|buf| {
         RPC_ENT.with(|ent| {
@@ -14633,8 +14625,6 @@ fn parse_rpc_line_to_static(line: &str) -> *mut c_void {
                 let mut al = al.borrow_mut();
 
                 let mut off = 0usize;
-                // Copy name.
-                let name_bytes = name.as_bytes();
                 if off + name_bytes.len() + 1 > buf.len() {
                     return std::ptr::null_mut();
                 }
@@ -14643,11 +14633,10 @@ fn parse_rpc_line_to_static(line: &str) -> *mut c_void {
                 let name_ptr = buf[off..].as_ptr() as *mut c_char;
                 off += name_bytes.len() + 1;
 
-                // Copy aliases.
                 let max_aliases = al.len() - 1; // Leave room for NULL terminator.
                 let num_al = aliases.len().min(max_aliases);
                 for (i, alias) in aliases.iter().take(num_al).enumerate() {
-                    let ab = alias.as_bytes();
+                    let ab = alias.as_slice();
                     if off + ab.len() + 1 > buf.len() {
                         break;
                     }
@@ -14658,14 +14647,10 @@ fn parse_rpc_line_to_static(line: &str) -> *mut c_void {
                 }
                 al[num_al] = std::ptr::null_mut();
 
-                // Fill rpcent struct.
                 let ent_ptr = ent.as_mut_ptr();
                 unsafe {
-                    // r_name at offset 0
                     *(ent_ptr as *mut *mut c_char) = name_ptr;
-                    // r_aliases at offset 8
                     *(ent_ptr.add(8) as *mut *mut *mut c_char) = al.as_mut_ptr();
-                    // r_number at offset 16
                     *(ent_ptr.add(16) as *mut c_int) = number;
                 }
 
@@ -14776,41 +14761,15 @@ pub unsafe extern "C" fn getrpcbyname(name: *const c_char) -> *mut c_void {
     if name.is_null() {
         return std::ptr::null_mut();
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(name) };
-    let needle = needle.to_bytes();
-
-    let contents = match std::fs::read_to_string("/etc/rpc") {
+    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let contents = match std::fs::read("/etc/rpc") {
         Ok(c) => c,
         Err(_) => return std::ptr::null_mut(),
     };
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let stripped = if let Some(idx) = line.find('#') {
-            &line[..idx]
-        } else {
-            line
-        };
-        let mut parts = stripped.split_whitespace();
-        let rpc_name = match parts.next() {
-            Some(n) => n,
-            None => continue,
-        };
-        // Skip number.
-        let _ = parts.next();
-        // Check name and aliases.
-        if rpc_name.as_bytes() == needle {
-            return parse_rpc_line_to_static(line);
-        }
-        for alias in parts {
-            if alias.as_bytes() == needle {
-                return parse_rpc_line_to_static(line);
-            }
-        }
+    match frankenlibc_core::rpc::lookup_rpc_by_name(&contents, needle) {
+        Some(entry) => fill_rpc_tls_from_entry(&entry),
+        None => std::ptr::null_mut(),
     }
-    std::ptr::null_mut()
 }
 
 /// `getrpcbyname_r` — reentrant RPC lookup by name.
@@ -14833,30 +14792,14 @@ pub unsafe extern "C" fn getrpcbyname_r(
 /// Native implementation: searches /etc/rpc for matching program number.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getrpcbynumber(number: c_int) -> *mut c_void {
-    let contents = match std::fs::read_to_string("/etc/rpc") {
+    let contents = match std::fs::read("/etc/rpc") {
         Ok(c) => c,
         Err(_) => return std::ptr::null_mut(),
     };
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let stripped = if let Some(idx) = line.find('#') {
-            &line[..idx]
-        } else {
-            line
-        };
-        let mut parts = stripped.split_whitespace();
-        let _ = parts.next(); // name
-        if let Some(num_str) = parts.next()
-            && let Ok(n) = num_str.parse::<c_int>()
-            && n == number
-        {
-            return parse_rpc_line_to_static(line);
-        }
+    match frankenlibc_core::rpc::lookup_rpc_by_number(&contents, number) {
+        Some(entry) => fill_rpc_tls_from_entry(&entry),
+        None => std::ptr::null_mut(),
     }
-    std::ptr::null_mut()
 }
 
 /// `getrpcbynumber_r` — reentrant RPC lookup by number.
