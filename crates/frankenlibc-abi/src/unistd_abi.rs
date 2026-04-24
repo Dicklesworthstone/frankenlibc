@@ -2883,7 +2883,7 @@ fn fs_link_max_for_type(f_type: i64) -> libc::c_long {
     const PROC_SUPER_MAGIC: i64 = 0x9FA0;
     const SYSFS_MAGIC: i64 = 0x62656572;
     match f_type {
-        EXT2_SUPER_MAGIC => 65000,    // EXT4 limit; ext2/3 cap at 32000 but glibc returns 65000
+        EXT2_SUPER_MAGIC => 65000, // EXT4 limit; ext2/3 cap at 32000 but glibc returns 65000
         BTRFS_SUPER_MAGIC => 65535,
         XFS_SUPER_MAGIC => 2147483647, // INT32_MAX
         TMPFS_MAGIC | RAMFS_MAGIC => 127,
@@ -3320,18 +3320,124 @@ pub unsafe extern "C" fn fallocate(fd: c_int, mode: c_int, offset: i64, len: i64
 }
 
 // ---------------------------------------------------------------------------
-// ftw / nftw — Implemented (native directory tree walk)
+// ftw / nftw — backed by frankenlibc-core::ftw::walk_tree (bd-ftw-3,
+// epic bd-ftw-epic).
+//
+// The recursion driver, path joining, and POSIX type-flag dispatch
+// live in core. This abi layer:
+//   - validates args
+//   - probes the root via newfstatat (preserves the bd-ftw2 fix)
+//   - wires concrete syscall closures (newfstatat / opendir / readdir
+//     / closedir) into core's FsOps trait
+//   - bridges the user's C callback to core's visit closure
 // ---------------------------------------------------------------------------
 
-/// POSIX `ftw` — file tree walk (native implementation).
+/// libc::stat wrapper implementing core's StatLike trait.
+#[derive(Clone)]
+struct AbiStat(libc::stat);
+
+impl Default for AbiStat {
+    fn default() -> Self {
+        // libc::stat doesn't implement Default; an all-zero stat
+        // matches the C-side behavior of passing a zeroed struct
+        // when stat() failed (POSIX says contents are undefined
+        // for FTW_NS visits).
+        AbiStat(unsafe { std::mem::zeroed() })
+    }
+}
+
+impl frankenlibc_core::ftw::StatLike for AbiStat {
+    fn is_dir(&self) -> bool {
+        (self.0.st_mode & libc::S_IFMT) == libc::S_IFDIR
+    }
+    fn is_symlink(&self) -> bool {
+        (self.0.st_mode & libc::S_IFMT) == libc::S_IFLNK
+    }
+    fn dev_id(&self) -> u64 {
+        self.0.st_dev as u64
+    }
+}
+
+/// FsOps impl wrapping the syscall layer + dirent_abi.
+struct AbiFs;
+
+impl frankenlibc_core::ftw::FsOps for AbiFs {
+    type Stat = AbiStat;
+
+    fn stat(&self, path: &[u8]) -> Option<AbiStat> {
+        // Build a NUL-terminated copy on the stack-bounded heap.
+        let mut buf = path.to_vec();
+        buf.push(0);
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        match unsafe {
+            syscall::sys_newfstatat(
+                libc::AT_FDCWD,
+                buf.as_ptr(),
+                &mut st as *mut _ as *mut u8,
+                0,
+            )
+        } {
+            Ok(()) => Some(AbiStat(st)),
+            Err(_) => None,
+        }
+    }
+
+    fn lstat(&self, path: &[u8]) -> Option<AbiStat> {
+        let mut buf = path.to_vec();
+        buf.push(0);
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        match unsafe {
+            syscall::sys_newfstatat(
+                libc::AT_FDCWD,
+                buf.as_ptr(),
+                &mut st as *mut _ as *mut u8,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } {
+            Ok(()) => Some(AbiStat(st)),
+            Err(_) => None,
+        }
+    }
+
+    fn read_dir(&self, path: &[u8], visit_entry: &mut dyn FnMut(&[u8])) -> bool {
+        let mut buf = path.to_vec();
+        buf.push(0);
+        let dir = unsafe { crate::dirent_abi::opendir(buf.as_ptr() as *const c_char) }
+            .cast::<libc::DIR>();
+        if dir.is_null() {
+            return false;
+        }
+        loop {
+            let entry = unsafe { crate::dirent_abi::readdir(dir.cast()) };
+            if entry.is_null() {
+                break;
+            }
+            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
+            let name_bytes = name.to_bytes();
+            if name_bytes == b"." || name_bytes == b".." {
+                continue;
+            }
+            visit_entry(name_bytes);
+        }
+        unsafe { crate::dirent_abi::closedir(dir.cast()) };
+        true
+    }
+}
+
+/// Adapter: translate a core WalkType to the POSIX FTW_* int.
+#[inline]
+fn walktype_to_ftw_int(t: frankenlibc_core::ftw::WalkType) -> c_int {
+    t.as_c_int()
+}
+
+/// POSIX `ftw` — file tree walk.
 ///
-/// Walks the directory tree rooted at `dirpath`, calling `func` for each
-/// entry. The callback receives the pathname, a stat struct, and a type flag.
+/// Now a thin shim over `frankenlibc_core::ftw::walk_tree` (bd-ftw-3).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ftw(
     dirpath: *const c_char,
     func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
-    nopenfd: c_int,
+    _nopenfd: c_int,
 ) -> c_int {
     let Some(callback) = func else {
         unsafe { set_abi_errno(errno::EINVAL) };
@@ -3341,184 +3447,26 @@ pub unsafe extern "C" fn ftw(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    // POSIX: "ftw() shall return -1 if it cannot start the walk." Probe
-    // the root path before walking; on stat failure, propagate errno
-    // and return -1 instead of invoking the callback with FTW_NS.
-    let mut probe: libc::stat = unsafe { std::mem::zeroed() };
-    let probe_rc = unsafe {
-        syscall::sys_newfstatat(
-            libc::AT_FDCWD,
-            dirpath as *const u8,
-            &mut probe as *mut _ as *mut u8,
-            0,
-        )
-    };
-    if let Err(e) = probe_rc {
-        unsafe { set_abi_errno(e) };
-        return -1;
-    }
-    let max_fd = if nopenfd < 1 { 1 } else { nopenfd as usize };
+    let path_bytes = unsafe { std::ffi::CStr::from_ptr(dirpath) }.to_bytes();
 
-    // Adapter: ftw callback to nftw-style internal walk.
-    unsafe { ftw_walk_dir(dirpath, callback, max_fd, 0) }
+    let fs = AbiFs;
+    let r = frankenlibc_core::ftw::walk_tree(
+        path_bytes,
+        &fs,
+        frankenlibc_core::ftw::WalkFlags::NONE,
+        |p, st, t, _level, _base| {
+            // Build NUL-terminated path for the C callback.
+            let mut buf = p.to_vec();
+            buf.push(0);
+            unsafe { callback(buf.as_ptr() as *const c_char, &st.0, walktype_to_ftw_int(t)) }
+        },
+    );
+    if r == -1 {
+        // Root probe failed — propagate a sensible errno.
+        unsafe { set_abi_errno(errno::ENOENT) };
+    }
+    r
 }
-
-/// Internal ftw directory walker.
-unsafe fn ftw_walk_dir(
-    path: *const c_char,
-    func: unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int,
-    max_fd: usize,
-    depth: usize,
-) -> c_int {
-    // FTW type flags (POSIX)
-    const FTW_F: c_int = 0; // regular file
-    const FTW_D: c_int = 1; // directory
-    const FTW_DNR: c_int = 2; // unreadable directory
-    const FTW_NS: c_int = 3; // stat failed
-
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    let stat_ok = unsafe {
-        syscall::sys_newfstatat(
-            libc::AT_FDCWD,
-            path as *const u8,
-            &mut st as *mut _ as *mut u8,
-            0,
-        )
-    };
-    if stat_ok.is_err() {
-        return unsafe { func(path, &st, FTW_NS) };
-    }
-
-    let is_dir = (st.st_mode & libc::S_IFMT) == libc::S_IFDIR;
-
-    if !is_dir {
-        return unsafe { func(path, &st, FTW_F) };
-    }
-
-    // Call callback for this directory.
-    let ret = unsafe { func(path, &st, FTW_D) };
-    if ret != 0 {
-        return ret;
-    }
-
-    // Open and traverse the directory.
-    let dir = unsafe { crate::dirent_abi::opendir(path) }.cast::<libc::DIR>();
-    if dir.is_null() {
-        return unsafe { func(path, &st, FTW_DNR) };
-    }
-
-    loop {
-        let entry = unsafe { crate::dirent_abi::readdir(dir.cast()) };
-        if entry.is_null() {
-            break;
-        }
-        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
-        let name_bytes = name.to_bytes();
-
-        // Skip . and ..
-        if name_bytes == b"." || name_bytes == b".." {
-            continue;
-        }
-
-        // Build child path: path + "/" + name
-        let path_len = unsafe { crate::string_abi::strlen(path) };
-        let child_len = path_len + 1 + name_bytes.len() + 1;
-        let child_buf = unsafe { crate::malloc_abi::raw_alloc(child_len) as *mut u8 };
-        if child_buf.is_null() {
-            unsafe { crate::dirent_abi::closedir(dir.cast()) };
-            return -1;
-        }
-        unsafe {
-            std::ptr::copy_nonoverlapping(path as *const u8, child_buf, path_len);
-            *child_buf.add(path_len) = b'/';
-            std::ptr::copy_nonoverlapping(
-                name_bytes.as_ptr(),
-                child_buf.add(path_len + 1),
-                name_bytes.len(),
-            );
-            *child_buf.add(child_len - 1) = 0;
-        }
-
-        let ret = if depth + 1 < max_fd {
-            unsafe { ftw_walk_dir(child_buf as *const c_char, func, max_fd, depth + 1) }
-        } else {
-            // At fd limit, still stat but don't recurse deeply.
-            unsafe { ftw_walk_dir(child_buf as *const c_char, func, max_fd, depth + 1) }
-        };
-
-        unsafe { crate::malloc_abi::raw_free(child_buf as *mut c_void) };
-
-        if ret != 0 {
-            unsafe { crate::dirent_abi::closedir(dir.cast()) };
-            return ret;
-        }
-    }
-
-    unsafe { crate::dirent_abi::closedir(dir.cast()) };
-    0
-}
-
-/// POSIX `nftw` — extended file tree walk (native implementation).
-///
-/// Like `ftw` but with additional flags and `FTW` info struct.
-/// Supports FTW_PHYS (no follow symlinks), FTW_DEPTH (post-order),
-/// FTW_MOUNT (stay on same filesystem), FTW_CHDIR (chdir into dirs).
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nftw(
-    dirpath: *const c_char,
-    func: Option<
-        unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
-    >,
-    nopenfd: c_int,
-    flags: c_int,
-) -> c_int {
-    let Some(callback) = func else {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    };
-    if dirpath.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
-    // POSIX: "nftw() shall return -1 if it cannot start the walk."
-    // Probe the root path; on stat failure, propagate errno and
-    // return -1 instead of invoking the callback with FTW_NS.
-    let mut probe: libc::stat = unsafe { std::mem::zeroed() };
-    let probe_flags = if (flags & FTW_PHYS) != 0 {
-        libc::AT_SYMLINK_NOFOLLOW
-    } else {
-        0
-    };
-    let probe_rc = unsafe {
-        syscall::sys_newfstatat(
-            libc::AT_FDCWD,
-            dirpath as *const u8,
-            &mut probe as *mut _ as *mut u8,
-            probe_flags,
-        )
-    };
-    if let Err(e) = probe_rc {
-        unsafe { set_abi_errno(e) };
-        return -1;
-    }
-    let max_fd = if nopenfd < 1 { 1 } else { nopenfd as usize };
-
-    unsafe { nftw_walk_dir(dirpath, callback, max_fd, flags, 0, 0) }
-}
-
-// NFTW flags
-const FTW_PHYS: c_int = 1;
-const FTW_MOUNT: c_int = 2;
-const FTW_DEPTH: c_int = 8;
-
-// FTW type flags
-const NFTW_F: c_int = 0; // regular file
-const NFTW_D: c_int = 1; // directory (pre-order)
-const NFTW_DNR: c_int = 2; // unreadable directory
-const NFTW_NS: c_int = 3; // stat failed
-const NFTW_DP: c_int = 5; // directory (post-order, FTW_DEPTH)
-const NFTW_SL: c_int = 4; // symlink (FTW_PHYS)
-const NFTW_SLN: c_int = 6; // dangling symlink
 
 /// FTW info struct (POSIX): { int base; int level; }
 #[repr(C)]
@@ -3527,178 +3475,58 @@ struct FtwInfo {
     level: c_int,
 }
 
-/// Internal nftw directory walker.
-#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
-unsafe fn nftw_walk_dir(
-    path: *const c_char,
-    func: unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
-    max_fd: usize,
+/// POSIX `nftw` — extended file tree walk (native implementation
+/// backed by frankenlibc-core::ftw::walk_tree as of bd-ftw-3).
+///
+/// Supports FTW_PHYS (no follow symlinks), FTW_DEPTH (post-order),
+/// FTW_MOUNT (stay on same filesystem). FTW_CHDIR is accepted but
+/// not honored by the core walker (caller can chdir before calling).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nftw(
+    dirpath: *const c_char,
+    func: Option<
+        unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+    >,
+    _nopenfd: c_int,
     flags: c_int,
-    depth: usize,
-    root_dev: libc::dev_t,
 ) -> c_int {
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-
-    // Use lstat (AT_SYMLINK_NOFOLLOW) if FTW_PHYS, stat otherwise.
-    let stat_flags = if flags & FTW_PHYS != 0 {
-        libc::AT_SYMLINK_NOFOLLOW
-    } else {
-        0
+    let Some(callback) = func else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
     };
-    let rc = match unsafe {
-        syscall::sys_newfstatat(
-            libc::AT_FDCWD,
-            path as *const u8,
-            &mut st as *mut libc::stat as *mut u8,
-            stat_flags,
-        )
-    } {
-        Ok(()) => 0,
-        Err(_) => -1,
-    };
-
-    // Compute base offset (last '/' + 1).
-    let path_len = unsafe { crate::string_abi::strlen(path) };
-    let path_bytes = unsafe { std::slice::from_raw_parts(path as *const u8, path_len) };
-    let base = path_bytes
-        .iter()
-        .rposition(|&b| b == b'/')
-        .map_or(0, |p| p + 1) as c_int;
-
-    let mut info = FtwInfo {
-        base,
-        level: depth as c_int,
-    };
-
-    if rc != 0 {
-        let ret = unsafe { func(path, &st, NFTW_NS, &mut info as *mut FtwInfo as *mut c_void) };
-        return ret;
+    if dirpath.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
     }
+    let path_bytes = unsafe { std::ffi::CStr::from_ptr(dirpath) }.to_bytes();
 
-    let is_dir = (st.st_mode & libc::S_IFMT) == libc::S_IFDIR;
-    let is_link = (st.st_mode & libc::S_IFMT) == libc::S_IFLNK;
-
-    // Check cross-device (FTW_MOUNT)
-    if flags & FTW_MOUNT != 0 && depth > 0 && st.st_dev != root_dev {
-        return 0;
+    let fs = AbiFs;
+    let core_flags = frankenlibc_core::ftw::WalkFlags::from_bits(flags as u32);
+    let r = frankenlibc_core::ftw::walk_tree(
+        path_bytes,
+        &fs,
+        core_flags,
+        |p, st, t, level, base| {
+            let mut buf = p.to_vec();
+            buf.push(0);
+            let mut info = FtwInfo {
+                base: base as c_int,
+                level: level as c_int,
+            };
+            unsafe {
+                callback(
+                    buf.as_ptr() as *const c_char,
+                    &st.0,
+                    t.as_c_int(),
+                    &mut info as *mut FtwInfo as *mut c_void,
+                )
+            }
+        },
+    );
+    if r == -1 {
+        unsafe { set_abi_errno(errno::ENOENT) };
     }
-
-    let dev = if depth == 0 { st.st_dev } else { root_dev };
-
-    // Handle symlinks
-    if is_link && flags & FTW_PHYS != 0 {
-        // Check if dangling
-        let mut target_st: libc::stat = unsafe { std::mem::zeroed() };
-        let typeflag = if unsafe {
-            syscall::sys_newfstatat(
-                libc::AT_FDCWD,
-                path as *const u8,
-                &mut target_st as *mut libc::stat as *mut u8,
-                0,
-            )
-        }
-        .is_err()
-        {
-            NFTW_SLN
-        } else {
-            NFTW_SL
-        };
-        return unsafe {
-            func(
-                path,
-                &st,
-                typeflag,
-                &mut info as *mut FtwInfo as *mut c_void,
-            )
-        };
-    }
-
-    if !is_dir {
-        return unsafe { func(path, &st, NFTW_F, &mut info as *mut FtwInfo as *mut c_void) };
-    }
-
-    // Pre-order callback (unless FTW_DEPTH)
-    if flags & FTW_DEPTH == 0 {
-        let ret = unsafe { func(path, &st, NFTW_D, &mut info as *mut FtwInfo as *mut c_void) };
-        if ret != 0 {
-            return ret;
-        }
-    }
-
-    // Open and traverse the directory.
-    let dir = unsafe { crate::dirent_abi::opendir(path) }.cast::<libc::DIR>();
-    if dir.is_null() {
-        let ret = unsafe {
-            func(
-                path,
-                &st,
-                NFTW_DNR,
-                &mut info as *mut FtwInfo as *mut c_void,
-            )
-        };
-        return ret;
-    }
-
-    loop {
-        let entry = unsafe { crate::dirent_abi::readdir(dir.cast()) };
-        if entry.is_null() {
-            break;
-        }
-        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
-        let name_bytes = name.to_bytes();
-
-        if name_bytes == b"." || name_bytes == b".." {
-            continue;
-        }
-
-        // Build child path
-        let child_len = path_len + 1 + name_bytes.len() + 1;
-        let child_buf = unsafe { crate::malloc_abi::raw_alloc(child_len) as *mut u8 };
-        if child_buf.is_null() {
-            unsafe { crate::dirent_abi::closedir(dir.cast()) };
-            return -1;
-        }
-        unsafe {
-            std::ptr::copy_nonoverlapping(path as *const u8, child_buf, path_len);
-            *child_buf.add(path_len) = b'/';
-            std::ptr::copy_nonoverlapping(
-                name_bytes.as_ptr(),
-                child_buf.add(path_len + 1),
-                name_bytes.len(),
-            );
-            *child_buf.add(child_len - 1) = 0;
-        }
-
-        let ret = unsafe {
-            nftw_walk_dir(
-                child_buf as *const c_char,
-                func,
-                max_fd,
-                flags,
-                depth + 1,
-                dev,
-            )
-        };
-
-        unsafe { crate::malloc_abi::raw_free(child_buf as *mut c_void) };
-
-        if ret != 0 {
-            unsafe { crate::dirent_abi::closedir(dir.cast()) };
-            return ret;
-        }
-    }
-
-    unsafe { crate::dirent_abi::closedir(dir.cast()) };
-
-    // Post-order callback (FTW_DEPTH)
-    if flags & FTW_DEPTH != 0 {
-        let ret = unsafe { func(path, &st, NFTW_DP, &mut info as *mut FtwInfo as *mut c_void) };
-        if ret != 0 {
-            return ret;
-        }
-    }
-
-    0
+    r
 }
 
 // ---------------------------------------------------------------------------
@@ -4437,7 +4265,7 @@ pub unsafe extern "C" fn sem_getvalue(sem: *mut c_void, sval: *mut c_int) -> c_i
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mq_open(name: *const c_char, oflag: c_int, mut args: ...) -> c_int {
     if name.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
+        unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
     // POSIX requires the queue name to begin with '/'. glibc strips
@@ -4482,7 +4310,7 @@ pub unsafe extern "C" fn mq_close(mqdes: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mq_unlink(name: *const c_char) -> c_int {
     if name.is_null() {
-        unsafe { set_abi_errno(errno::EINVAL) };
+        unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
     let first = unsafe { *name } as u8;
