@@ -11303,32 +11303,13 @@ std::thread_local! {
 
 /// Parse a /etc/networks line: "name number [aliases...]"
 /// Returns (name, network_number) or None.
-fn parse_networks_line(line: &[u8]) -> Option<(&[u8], u32)> {
-    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-        &line[..pos]
-    } else {
-        line
-    };
-    let mut fields = line
-        .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
-        .filter(|f| !f.is_empty());
-    let name = fields.next()?;
-    let num_str = std::str::from_utf8(fields.next()?).ok()?;
-    // Network number can be dotted-quad or plain integer
-    let net_num = if num_str.contains('.') {
-        // Parse as IP address, convert to host-order network number
-        let parts: Vec<u32> = num_str.split('.').filter_map(|p| p.parse().ok()).collect();
-        match parts.len() {
-            1 => parts[0] << 24,
-            2 => (parts[0] << 24) | (parts[1] << 16),
-            3 => (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8),
-            4 => (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3],
-            _ => return None,
-        }
-    } else {
-        num_str.parse().ok()?
-    };
-    Some((name, net_num))
+/// Adapter around frankenlibc_core::resolv::parse_networks_line that
+/// returns the canonical (name, number) tuple in the form the local
+/// netent fillers consume. Returns `None` for blank/comment/malformed
+/// lines.
+fn parse_networks_line(line: &[u8]) -> Option<(Vec<u8>, u32)> {
+    let entry = frankenlibc_core::resolv::parse_networks_line(line)?;
+    Some((entry.name, entry.number))
 }
 
 /// Fill a netent struct in the entry buffer.
@@ -11443,7 +11424,7 @@ pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
         {
             return NET_ITER.with(|cell| {
                 let state = unsafe { &mut *cell.get() };
-                unsafe { fill_netent_buf(state, pname, net) }
+                unsafe { fill_netent_buf(state, &pname, net) }
             });
         }
     }
@@ -11463,7 +11444,7 @@ pub unsafe extern "C" fn getnetbyaddr(net: u32, _type: c_int) -> *mut c_void {
         {
             return NET_ITER.with(|cell| {
                 let state = unsafe { &mut *cell.get() };
-                unsafe { fill_netent_buf(state, pname, pnet) }
+                unsafe { fill_netent_buf(state, &pname, pnet) }
             });
         }
     }
@@ -17669,7 +17650,7 @@ pub unsafe extern "C" fn getnetbyaddr_r(
         if let Some((pname, pnet)) = parse_networks_line(line)
             && pnet == net
         {
-            return unsafe { fill_netent_r(pname, pnet, result_buf, buf, buflen, result) };
+            return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
         }
     }
     0
@@ -17700,7 +17681,7 @@ pub unsafe extern "C" fn getnetbyname_r(
         if let Some((pname, pnet)) = parse_networks_line(line)
             && pname.eq_ignore_ascii_case(needle)
         {
-            return unsafe { fill_netent_r(pname, pnet, result_buf, buf, buflen, result) };
+            return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
         }
     }
     0
@@ -17741,7 +17722,7 @@ pub unsafe extern "C" fn getnetent_r(
                 Ok(_) => {}
             }
             if let Some((pname, pnet)) = parse_networks_line(&state.line_buf) {
-                return unsafe { fill_netent_r(pname, pnet, result_buf, buf, buflen, result) };
+                return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
             }
         }
     })

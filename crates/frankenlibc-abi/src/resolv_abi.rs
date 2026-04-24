@@ -1447,23 +1447,8 @@ thread_local! {
 /// Parse a single line from /etc/protocols.
 ///
 /// Format: `<protocol-name> <number> [<alias>...]`
-fn parse_protocols_line(line: &[u8]) -> Option<(Vec<u8>, i32)> {
-    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-        &line[..pos]
-    } else {
-        line
-    };
-
-    let mut fields = line
-        .split(|&b| b == b' ' || b == b'\t')
-        .filter(|f| !f.is_empty());
-
-    let name = fields.next()?;
-    let number_str = core::str::from_utf8(fields.next()?).ok()?;
-    let number: i32 = number_str.parse().ok()?;
-
-    Some((name.to_vec(), number))
-}
+// parse_protocols_line moved to frankenlibc_core::resolv. Local callers
+// use frankenlibc_core::resolv::parse_protocols_line directly.
 
 /// Copy a byte slice into a c_char buffer with NUL termination.
 fn copy_to_cchar_buf(dst: &mut [c_char], src: &[u8]) {
@@ -1935,15 +1920,8 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
         }
     };
 
-    let (proto_name, proto_num) = match content.split(|&b| b == b'\n').find_map(|line| {
-        let (pname, pnum) = parse_protocols_line(line)?;
-        if pname.eq_ignore_ascii_case(name_bytes) {
-            Some((pname, pnum))
-        } else {
-            None
-        }
-    }) {
-        Some(entry) => entry,
+    let entry = match frankenlibc_core::resolv::lookup_protocol_by_name(&content, name_bytes) {
+        Some(e) => e,
         None => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
             return ptr::null_mut();
@@ -1955,12 +1933,12 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
 
     PROTOENT_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();
-        copy_to_cchar_buf(&mut storage.name, &proto_name);
+        copy_to_cchar_buf(&mut storage.name, &entry.name);
         storage.aliases[0] = ptr::null_mut();
         storage.protoent = libc::protoent {
             p_name: storage.name.as_mut_ptr(),
             p_aliases: storage.aliases.as_mut_ptr(),
-            p_proto: proto_num,
+            p_proto: entry.number,
         };
         (&mut storage.protoent as *mut libc::protoent).cast::<c_void>()
     })
@@ -1990,15 +1968,8 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
         }
     };
 
-    let (proto_name, proto_num) = match content.split(|&b| b == b'\n').find_map(|line| {
-        let (pname, pnum) = parse_protocols_line(line)?;
-        if pnum == proto {
-            Some((pname, pnum))
-        } else {
-            None
-        }
-    }) {
-        Some(entry) => entry,
+    let entry = match frankenlibc_core::resolv::lookup_protocol_by_number(&content, proto) {
+        Some(e) => e,
         None => {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
             return ptr::null_mut();
@@ -2010,12 +1981,12 @@ pub unsafe extern "C" fn getprotobynumber(proto: c_int) -> *mut c_void {
 
     PROTOENT_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();
-        copy_to_cchar_buf(&mut storage.name, &proto_name);
+        copy_to_cchar_buf(&mut storage.name, &entry.name);
         storage.aliases[0] = ptr::null_mut();
         storage.protoent = libc::protoent {
             p_name: storage.name.as_mut_ptr(),
             p_aliases: storage.aliases.as_mut_ptr(),
-            p_proto: proto_num,
+            p_proto: entry.number,
         };
         (&mut storage.protoent as *mut libc::protoent).cast::<c_void>()
     })

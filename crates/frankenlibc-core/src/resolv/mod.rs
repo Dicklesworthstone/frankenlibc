@@ -179,6 +179,181 @@ fn service_name_matches(entry: &ServiceEntry, name: &[u8]) -> bool {
             .any(|alias| eq_ignore_ascii_case(alias, name))
 }
 
+/// Parsed `/etc/protocols` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtocolEntry {
+    /// Canonical protocol name.
+    pub name: Vec<u8>,
+    /// IP protocol number (e.g. 6 for tcp, 17 for udp).
+    pub number: i32,
+    /// Additional aliases for the protocol.
+    pub aliases: Vec<Vec<u8>>,
+}
+
+/// Parse a single line from /etc/protocols.
+///
+/// Format: `<protocol-name> <number> [<alias>...]`
+/// Comments (`#`) and blank lines yield `None`. The number is parsed as
+/// signed decimal — glibc's protoent uses `int p_proto`.
+pub fn parse_protocols_line(line: &[u8]) -> Option<ProtocolEntry> {
+    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+        &line[..pos]
+    } else {
+        line
+    };
+    let mut fields = line
+        .split(|&b| b == b' ' || b == b'\t')
+        .filter(|f| !f.is_empty());
+    let name = fields.next()?;
+    let number_str = core::str::from_utf8(fields.next()?).ok()?;
+    let number: i32 = number_str.parse().ok()?;
+    let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
+    Some(ProtocolEntry {
+        name: name.to_vec(),
+        number,
+        aliases,
+    })
+}
+
+fn protocol_name_matches(entry: &ProtocolEntry, name: &[u8]) -> bool {
+    eq_ignore_ascii_case(&entry.name, name)
+        || entry
+            .aliases
+            .iter()
+            .any(|alias| eq_ignore_ascii_case(alias, name))
+}
+
+/// Look up a protocol entry by name in /etc/protocols content.
+pub fn lookup_protocol_by_name(content: &[u8], name: &[u8]) -> Option<ProtocolEntry> {
+    for line in content.split(|&b| b == b'\n') {
+        if let Some(entry) = parse_protocols_line(line)
+            && protocol_name_matches(&entry, name)
+        {
+            return Some(entry);
+        }
+    }
+    None
+}
+
+/// Look up a protocol entry by number in /etc/protocols content.
+pub fn lookup_protocol_by_number(content: &[u8], number: i32) -> Option<ProtocolEntry> {
+    for line in content.split(|&b| b == b'\n') {
+        if let Some(entry) = parse_protocols_line(line)
+            && entry.number == number
+        {
+            return Some(entry);
+        }
+    }
+    None
+}
+
+/// Parsed `/etc/networks` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkEntry {
+    /// Canonical network name.
+    pub name: Vec<u8>,
+    /// Network number in host byte order (per glibc `n_net`).
+    pub number: u32,
+    /// Additional aliases for the network.
+    pub aliases: Vec<Vec<u8>>,
+}
+
+/// Parse a single line from /etc/networks.
+///
+/// Format: `<network-name> <number> [<alias>...]`
+/// `<number>` may be a plain unsigned decimal or a partial-dotted-quad
+/// (`a`, `a.b`, `a.b.c`, `a.b.c.d`) — glibc's historical
+/// `inet_network` accepts each. A 1-octet form `n` produces `n << 24`,
+/// 2-octet `a.b` produces `(a<<24)|(b<<16)`, etc. Octet values >255
+/// are rejected (return `None`).
+pub fn parse_networks_line(line: &[u8]) -> Option<NetworkEntry> {
+    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
+        &line[..pos]
+    } else {
+        line
+    };
+    let mut fields = line
+        .split(|&b| {
+            b == b' ' || b == b'\t' || b == b'\n' || b == b'\r'
+        })
+        .filter(|f| !f.is_empty());
+    let name = fields.next()?;
+    let num_str = core::str::from_utf8(fields.next()?).ok()?;
+    let number = parse_network_number(num_str)?;
+    let aliases: Vec<Vec<u8>> = fields.map(|f| f.to_vec()).collect();
+    Some(NetworkEntry {
+        name: name.to_vec(),
+        number,
+        aliases,
+    })
+}
+
+/// Parse a /etc/networks number field.
+///
+/// Accepts either a plain unsigned decimal or partial dotted-quad.
+/// Returns `None` if any octet exceeds 255 or non-numeric content
+/// appears.
+pub fn parse_network_number(s: &str) -> Option<u32> {
+    if s.is_empty() {
+        return None;
+    }
+    if !s.contains('.') {
+        return s.parse().ok();
+    }
+    let mut octets = [0u32; 4];
+    let mut count = 0usize;
+    for part in s.split('.') {
+        if count >= 4 {
+            return None;
+        }
+        let v: u32 = part.parse().ok()?;
+        if v > 255 {
+            return None;
+        }
+        octets[count] = v;
+        count += 1;
+    }
+    Some(match count {
+        1 => octets[0] << 24,
+        2 => (octets[0] << 24) | (octets[1] << 16),
+        3 => (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8),
+        4 => (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3],
+        _ => return None,
+    })
+}
+
+fn network_name_matches(entry: &NetworkEntry, name: &[u8]) -> bool {
+    eq_ignore_ascii_case(&entry.name, name)
+        || entry
+            .aliases
+            .iter()
+            .any(|alias| eq_ignore_ascii_case(alias, name))
+}
+
+/// Look up a network entry by name in /etc/networks content.
+pub fn lookup_network_by_name(content: &[u8], name: &[u8]) -> Option<NetworkEntry> {
+    for line in content.split(|&b| b == b'\n') {
+        if let Some(entry) = parse_networks_line(line)
+            && network_name_matches(&entry, name)
+        {
+            return Some(entry);
+        }
+    }
+    None
+}
+
+/// Look up a network entry by number in /etc/networks content.
+pub fn lookup_network_by_number(content: &[u8], number: u32) -> Option<NetworkEntry> {
+    for line in content.split(|&b| b == b'\n') {
+        if let Some(entry) = parse_networks_line(line)
+            && entry.number == number
+        {
+            return Some(entry);
+        }
+    }
+    None
+}
+
 /// Look up a service name in /etc/services content.
 ///
 /// Returns the port number for the given service name and optional protocol filter.
@@ -1459,5 +1634,219 @@ mod tests {
         ) {
             let _ = parse_services_line(&bytes);
         }
+    }
+
+    // ---- parse_protocols_line ----
+
+    #[test]
+    fn protocol_basic_no_aliases() {
+        let e = parse_protocols_line(b"tcp 6").unwrap();
+        assert_eq!(e.name, b"tcp");
+        assert_eq!(e.number, 6);
+        assert!(e.aliases.is_empty());
+    }
+
+    #[test]
+    fn protocol_with_aliases() {
+        let e = parse_protocols_line(b"ip 0 IP # internet protocol").unwrap();
+        assert_eq!(e.name, b"ip");
+        assert_eq!(e.number, 0);
+        assert_eq!(e.aliases, vec![b"IP".to_vec()]);
+    }
+
+    #[test]
+    fn protocol_strips_inline_comment() {
+        let e = parse_protocols_line(b"icmp 1 ICMP # internet control message").unwrap();
+        assert_eq!(e.name, b"icmp");
+        assert_eq!(e.number, 1);
+        assert_eq!(e.aliases, vec![b"ICMP".to_vec()]);
+    }
+
+    #[test]
+    fn protocol_skips_comment_only_line() {
+        assert!(parse_protocols_line(b"# nothing here").is_none());
+        assert!(parse_protocols_line(b"   # leading ws comment").is_none());
+    }
+
+    #[test]
+    fn protocol_skips_blank_line() {
+        assert!(parse_protocols_line(b"").is_none());
+        assert!(parse_protocols_line(b"   \t  ").is_none());
+    }
+
+    #[test]
+    fn protocol_rejects_non_numeric_number() {
+        assert!(parse_protocols_line(b"foo bar").is_none());
+    }
+
+    #[test]
+    fn protocol_lookup_by_name_case_insensitive() {
+        let content = b"tcp 6 TCP\nudp 17 UDP\n";
+        assert_eq!(lookup_protocol_by_name(content, b"TCP").unwrap().number, 6);
+        assert_eq!(lookup_protocol_by_name(content, b"udp").unwrap().number, 17);
+        assert_eq!(lookup_protocol_by_name(content, b"UDP").unwrap().number, 17);
+    }
+
+    #[test]
+    fn protocol_lookup_by_number() {
+        let content = b"tcp 6\nudp 17\nicmp 1\n";
+        assert_eq!(lookup_protocol_by_number(content, 17).unwrap().name, b"udp");
+        assert_eq!(lookup_protocol_by_number(content, 1).unwrap().name, b"icmp");
+        assert!(lookup_protocol_by_number(content, 99).is_none());
+    }
+
+    #[test]
+    fn protocol_alias_lookup_finds_main_entry() {
+        let content = b"ip 0 IP\n";
+        let e = lookup_protocol_by_name(content, b"ip").unwrap();
+        assert_eq!(e.number, 0);
+        let e = lookup_protocol_by_name(content, b"IP").unwrap();
+        assert_eq!(e.name, b"ip");
+    }
+
+    // ---- parse_network_number ----
+
+    #[test]
+    fn netnum_plain_decimal() {
+        assert_eq!(parse_network_number("0"), Some(0));
+        assert_eq!(parse_network_number("42"), Some(42));
+        assert_eq!(parse_network_number("4294967295"), Some(u32::MAX));
+    }
+
+    #[test]
+    fn netnum_dotted_one_octet() {
+        assert_eq!(parse_network_number("10."), None); // trailing empty octet
+        assert_eq!(parse_network_number("10"), Some(10));
+    }
+
+    #[test]
+    fn netnum_dotted_two_octet() {
+        // 10.1 -> (10<<24)|(1<<16) = 0x0a010000
+        assert_eq!(parse_network_number("10.1"), Some(0x0a01_0000));
+    }
+
+    #[test]
+    fn netnum_dotted_three_octet() {
+        // 192.168.1 -> (192<<24)|(168<<16)|(1<<8) = 0xc0a80100
+        assert_eq!(parse_network_number("192.168.1"), Some(0xc0a8_0100));
+    }
+
+    #[test]
+    fn netnum_dotted_four_octet() {
+        // 127.0.0.1 -> 0x7f000001
+        assert_eq!(parse_network_number("127.0.0.1"), Some(0x7f00_0001));
+    }
+
+    #[test]
+    fn netnum_rejects_octet_over_255() {
+        assert_eq!(parse_network_number("10.256"), None);
+        assert_eq!(parse_network_number("256.1.1.1"), None);
+    }
+
+    #[test]
+    fn netnum_rejects_non_numeric() {
+        assert_eq!(parse_network_number("abc"), None);
+        assert_eq!(parse_network_number("10.x.0.0"), None);
+    }
+
+    #[test]
+    fn netnum_rejects_empty() {
+        assert_eq!(parse_network_number(""), None);
+    }
+
+    #[test]
+    fn netnum_rejects_too_many_octets() {
+        assert_eq!(parse_network_number("1.2.3.4.5"), None);
+    }
+
+    // ---- parse_networks_line ----
+
+    #[test]
+    fn network_basic_plain_decimal() {
+        // Plain decimal (no dots) is taken as-is, matching glibc's
+        // inet_network("127") -> 127 behavior.
+        let e = parse_networks_line(b"loopback 127").unwrap();
+        assert_eq!(e.name, b"loopback");
+        assert_eq!(e.number, 127);
+        assert!(e.aliases.is_empty());
+    }
+
+    #[test]
+    fn network_basic_dotted_full() {
+        // Dotted full form 127.0.0.0 -> 0x7f000000 (the canonical loopback).
+        let e = parse_networks_line(b"loopback 127.0.0.0").unwrap();
+        assert_eq!(e.number, 0x7f00_0000);
+    }
+
+    #[test]
+    fn network_with_dotted_quad() {
+        let e = parse_networks_line(b"link-local 169.254").unwrap();
+        assert_eq!(e.name, b"link-local");
+        assert_eq!(e.number, (169u32 << 24) | (254 << 16));
+    }
+
+    #[test]
+    fn network_with_aliases() {
+        let e = parse_networks_line(b"loopback 127 lo localnet").unwrap();
+        assert_eq!(e.name, b"loopback");
+        assert_eq!(e.aliases.len(), 2);
+        assert_eq!(e.aliases[0], b"lo");
+        assert_eq!(e.aliases[1], b"localnet");
+    }
+
+    #[test]
+    fn network_strips_inline_comment() {
+        let e = parse_networks_line(b"loopback 127 lo # the loopback net").unwrap();
+        assert_eq!(e.aliases, vec![b"lo".to_vec()]);
+    }
+
+    #[test]
+    fn network_skips_comment_line() {
+        assert!(parse_networks_line(b"# nothing").is_none());
+    }
+
+    #[test]
+    fn network_skips_blank_line() {
+        assert!(parse_networks_line(b"").is_none());
+        assert!(parse_networks_line(b"  \t  ").is_none());
+    }
+
+    #[test]
+    fn network_rejects_invalid_number() {
+        assert!(parse_networks_line(b"foo bar").is_none());
+        assert!(parse_networks_line(b"foo 256.0.0.0").is_none());
+    }
+
+    #[test]
+    fn network_lookup_by_name_case_insensitive() {
+        // Use dotted form so the number reflects the canonical
+        // loopback / class-A network number.
+        let content = b"loopback 127.0.0.0 lo\nclassA 10.0.0.0\n";
+        assert_eq!(
+            lookup_network_by_name(content, b"LOOPBACK").unwrap().number,
+            0x7f00_0000
+        );
+        assert_eq!(
+            lookup_network_by_name(content, b"lo").unwrap().name,
+            b"loopback"
+        );
+    }
+
+    #[test]
+    fn network_lookup_by_number() {
+        let content = b"loopback 127.0.0.0\nten 10.0.0.0\n";
+        let e = lookup_network_by_number(content, 0x7f00_0000).unwrap();
+        assert_eq!(e.name, b"loopback");
+        let e = lookup_network_by_number(content, 0x0a00_0000).unwrap();
+        assert_eq!(e.name, b"ten");
+        assert!(lookup_network_by_number(content, 99).is_none());
+    }
+
+    #[test]
+    fn network_lookup_alias_finds_canonical() {
+        let content = b"loopback 127.0.0.0 lo localnet\n";
+        let e = lookup_network_by_name(content, b"localnet").unwrap();
+        assert_eq!(e.name, b"loopback");
+        assert_eq!(e.number, 0x7f00_0000);
     }
 }
