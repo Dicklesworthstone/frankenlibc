@@ -13,6 +13,8 @@
 //! can be reused with arbitrary opaque key types from the abi
 //! layer (typically `*const c_void` adapted via a wrapper).
 
+pub mod hash;
 pub mod rb_tree;
 
+pub use hash::{LinearProbeTable, LinearSlot};
 pub use rb_tree::{PosixVisit, RbTree, RbWalkOrder};

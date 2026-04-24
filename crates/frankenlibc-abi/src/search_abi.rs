@@ -33,87 +33,68 @@ pub enum Action {
 // Global hash table (non-reentrant API)
 // ---------------------------------------------------------------------------
 
-/// Internal hash table slot.
-/// Must be `#[repr(C)]` because `search()` casts `*mut HashSlot` to `*mut Entry`,
-/// relying on the key/data fields being at the same offsets as `Entry`.
-#[repr(C)]
-struct HashSlot {
-    key: *mut c_char,
-    data: *mut c_void,
-    occupied: bool,
-}
+// Hash table backing comes from frankenlibc-core. Keys are `*mut c_char`
+// (the user's NUL-terminated key strings), values are `*mut c_void`.
+// Both are wrapped in #[repr(transparent)] newtypes so the generic
+// LinearSlot<HashKey, HashData> has the same memory layout as POSIX
+// Entry: { key: *mut c_char, data: *mut c_void, ... }.
+//
+// Layout-compat hack (matches glibc): casting `&LinearSlot<HashKey, HashData>`
+// to `*mut Entry` is well-defined because the first two fields of
+// LinearSlot (key, value) are the only fields Entry exposes.
 
-// SAFETY: HashSlot raw pointers are C-owned and only accessed under Mutex.
-unsafe impl Send for HashSlot {}
+use frankenlibc_core::search::LinearProbeTable;
 
-struct HashTable {
-    slots: Vec<HashSlot>,
-    capacity: usize,
-}
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct HashKey(*mut c_char);
 
-impl HashTable {
-    fn new(nel: usize) -> Self {
-        let capacity = nel.max(1);
-        let mut slots = Vec::with_capacity(capacity);
-        for _ in 0..capacity {
-            slots.push(HashSlot {
-                key: std::ptr::null_mut(),
-                data: std::ptr::null_mut(),
-                occupied: false,
-            });
-        }
-        Self { slots, capacity }
-    }
-
-    fn hash_key(&self, key: *const c_char) -> usize {
-        if key.is_null() {
-            return 0;
-        }
-        // djb2 hash
-        let mut hash: u64 = 5381;
-        let mut ptr = key as *const u8;
-        loop {
-            let c = unsafe { *ptr };
-            if c == 0 {
-                break;
-            }
-            hash = hash.wrapping_mul(33).wrapping_add(c as u64);
-            ptr = unsafe { ptr.add(1) };
-        }
-        (hash as usize) % self.capacity
-    }
-
-    fn keys_equal(a: *const c_char, b: *const c_char) -> bool {
-        if a.is_null() || b.is_null() {
-            return a == b;
-        }
-        unsafe { crate::string_abi::strcmp(a, b) == 0 }
-    }
-
-    fn search(&mut self, item: Entry, action: Action) -> *mut Entry {
-        let idx = self.hash_key(item.key);
-        // Linear probing
-        for i in 0..self.capacity {
-            let slot_idx = (idx + i) % self.capacity;
-            let slot = &mut self.slots[slot_idx];
-            if !slot.occupied {
-                if action == Action::ENTER {
-                    slot.key = item.key;
-                    slot.data = item.data;
-                    slot.occupied = true;
-                    return slot as *mut HashSlot as *mut Entry;
-                }
-                return std::ptr::null_mut();
-            }
-            if Self::keys_equal(slot.key, item.key) {
-                // Existing keys are returned as-is. glibc ignores the new
-                // data pointer for duplicate ENTER operations.
-                return slot as *mut HashSlot as *mut Entry;
-            }
-        }
-        std::ptr::null_mut() // Table full
+impl Default for HashKey {
+    fn default() -> Self {
+        HashKey(std::ptr::null_mut())
     }
 }
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct HashData(*mut c_void);
+
+impl Default for HashData {
+    fn default() -> Self {
+        HashData(std::ptr::null_mut())
+    }
+}
+
+// SAFETY: hash table is only accessed under Mutex; the wrapped raw
+// pointers are C-owned and the abi layer guarantees serialization.
+unsafe impl Send for HashKey {}
+unsafe impl Send for HashData {}
+
+fn hash_key_djb2(k: &HashKey) -> u64 {
+    if k.0.is_null() {
+        return 0;
+    }
+    let mut h = frankenlibc_core::search::hash::djb2_seed();
+    let mut p = k.0 as *const u8;
+    loop {
+        let c = unsafe { *p };
+        if c == 0 {
+            break;
+        }
+        h = frankenlibc_core::search::hash::djb2_step(h, c);
+        p = unsafe { p.add(1) };
+    }
+    h
+}
+
+fn hash_keys_equal(a: &HashKey, b: &HashKey) -> bool {
+    if a.0.is_null() || b.0.is_null() {
+        return a.0 == b.0;
+    }
+    unsafe { crate::string_abi::strcmp(a.0, b.0) == 0 }
+}
+
+type HashTable = LinearProbeTable<HashKey, HashData>;
 
 static GLOBAL_HTAB: Mutex<Option<HashTable>> = Mutex::new(None);
 
@@ -129,8 +110,23 @@ pub unsafe extern "C" fn hcreate(nel: usize) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hsearch(item: Entry, action: Action) -> *mut Entry {
     let mut guard = GLOBAL_HTAB.lock().unwrap_or_else(|e| e.into_inner());
-    match guard.as_mut() {
-        Some(ht) => ht.search(item, action),
+    let ht = match guard.as_mut() {
+        Some(ht) => ht,
+        None => return std::ptr::null_mut(),
+    };
+    let key = HashKey(item.key);
+    let data = HashData(item.data);
+    let idx = match action {
+        Action::FIND => ht.search(&key, hash_key_djb2, hash_keys_equal),
+        Action::ENTER => ht
+            .enter(key, data, hash_key_djb2, hash_keys_equal)
+            .map(|(i, _new)| i),
+    };
+    match idx {
+        Some(i) => match ht.slot_address(i) {
+            Some(p) => p as *mut Entry,
+            None => std::ptr::null_mut(),
+        },
         None => std::ptr::null_mut(),
     }
 }
@@ -186,14 +182,21 @@ pub unsafe extern "C" fn hsearch_r(
         return 0;
     }
     let ht = unsafe { &mut *(htab_ref.table as *mut HashTable) };
-    let had_existing = if action == Action::ENTER {
-        !ht.search(item, Action::FIND).is_null()
-    } else {
-        false
+    let key = HashKey(item.key);
+    let data = HashData(item.data);
+    let (idx_opt, was_new) = match action {
+        Action::FIND => (ht.search(&key, hash_key_djb2, hash_keys_equal), false),
+        Action::ENTER => match ht.enter(key, data, hash_key_djb2, hash_keys_equal) {
+            Some((i, new)) => (Some(i), new),
+            None => (None, false),
+        },
     };
-    let result = ht.search(item, action);
+    let result = match idx_opt.and_then(|i| ht.slot_address(i)) {
+        Some(p) => p as *mut Entry,
+        None => std::ptr::null_mut(),
+    };
     unsafe { *retval = result };
-    if action == Action::ENTER && !had_existing && !result.is_null() {
+    if action == Action::ENTER && was_new {
         htab_ref.filled = htab_ref.filled.saturating_add(1);
     }
     if result.is_null() { 0 } else { 1 }
