@@ -2129,149 +2129,74 @@ unsafe extern "C" {
     static mut libc_optopt: c_int;
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum GetoptArgMode {
-    None,
-    Required,
-    Optional,
-}
+use frankenlibc_core::getopt as getopt_core;
+use frankenlibc_core::getopt::{ArgRef, GetoptState, StepOutcome};
 
-static mut GETOPT_NEXTCHAR: *const c_char = std::ptr::null();
+/// Persistent scanner state across `parse_getopt_short` calls.
+///
+/// Only `nextchar` carries cross-call meaning here; `optind`, `optopt`,
+/// and `optarg` are mirrored to/from the public `libc_optind` /
+/// `libc_optopt` / `libc_optarg` externs at each shim entry/exit so
+/// callers (including code linked against system libc symbols) see
+/// the canonical POSIX state.
+static mut GETOPT_NEXTCHAR: Option<ArgRef> = None;
 
-#[inline]
-fn getopt_prefers_colon(optspec: &[u8]) -> bool {
-    optspec.first().copied() == Some(b':')
-}
-
-#[inline]
-fn getopt_arg_mode(optspec: &[u8], option: u8) -> Option<GetoptArgMode> {
-    for (idx, &byte) in optspec.iter().enumerate() {
-        if byte != option {
-            continue;
+/// Reconstruct a C-style argv into a borrowed byte-slice vector.
+///
+/// Returns `None` for any null entry within `0..argc`. Each `&[u8]`
+/// shares the underlying argv element's lifetime — callers must keep
+/// `argv` valid for the duration of the borrow.
+unsafe fn argv_byte_slices<'a>(argc: c_int, argv: *const *mut c_char) -> Option<Vec<&'a [u8]>> {
+    let argc = usize::try_from(argc).ok()?;
+    let mut out = Vec::with_capacity(argc);
+    for i in 0..argc {
+        let p = unsafe { *argv.add(i) };
+        if p.is_null() {
+            return None;
         }
-        let requires = optspec.get(idx + 1).copied() == Some(b':');
-        let optional = optspec.get(idx + 2).copied() == Some(b':');
-        return Some(if requires && optional {
-            GetoptArgMode::Optional
-        } else if requires {
-            GetoptArgMode::Required
-        } else {
-            GetoptArgMode::None
-        });
+        out.push(unsafe { CStr::from_ptr(p) }.to_bytes());
     }
-    None
+    Some(out)
 }
 
 unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u8]) -> c_int {
     if argc <= 0 || argv.is_null() {
         return -1;
     }
-    if unsafe { libc_optind <= 0 } {
-        unsafe {
-            libc_optind = 1;
-            GETOPT_NEXTCHAR = std::ptr::null();
-        }
-    }
-    if unsafe { libc_optind >= argc } {
-        unsafe {
-            GETOPT_NEXTCHAR = std::ptr::null();
-        }
-        return -1;
-    }
-
-    if unsafe { GETOPT_NEXTCHAR.is_null() || *GETOPT_NEXTCHAR == 0 } {
-        let current = unsafe { *argv.add(libc_optind as usize) };
-        if current.is_null() {
-            return -1;
-        }
-        if unsafe { *current != b'-' as c_char || *current.add(1) == 0 } {
-            return -1;
-        }
-        if unsafe { *current.add(1) == b'-' as c_char && *current.add(2) == 0 } {
-            unsafe {
-                libc_optind += 1;
-                GETOPT_NEXTCHAR = std::ptr::null();
-            }
-            return -1;
-        }
-        unsafe {
-            GETOPT_NEXTCHAR = current.add(1);
-        }
-    }
-
-    let option = unsafe { *GETOPT_NEXTCHAR as u8 };
-    unsafe {
-        GETOPT_NEXTCHAR = GETOPT_NEXTCHAR.add(1);
-        libc_optarg = std::ptr::null_mut();
-    }
-
-    let missing_code = if getopt_prefers_colon(optspec) {
-        b':' as c_int
-    } else {
-        b'?' as c_int
+    let argv_slices = match unsafe { argv_byte_slices(argc, argv) } {
+        Some(v) => v,
+        None => return -1,
     };
 
-    match getopt_arg_mode(optspec, option) {
-        None => {
-            unsafe {
-                libc_optopt = option as c_int;
-                if *GETOPT_NEXTCHAR == 0 {
-                    libc_optind += 1;
-                    GETOPT_NEXTCHAR = std::ptr::null();
+    let mut state = GetoptState {
+        optind: unsafe { libc_optind.max(0) as usize },
+        nextchar: unsafe { GETOPT_NEXTCHAR },
+        optopt: unsafe { libc_optopt as u8 },
+        optarg: None,
+    };
+
+    let outcome = getopt_core::step_short(&argv_slices, optspec, &mut state);
+
+    unsafe {
+        libc_optind = state.optind as c_int;
+        libc_optopt = state.optopt as c_int;
+        GETOPT_NEXTCHAR = state.nextchar;
+        libc_optarg = match state.optarg {
+            Some(ArgRef { argv_idx, byte_offset }) => {
+                let base = *argv.add(argv_idx);
+                if base.is_null() {
+                    std::ptr::null_mut()
+                } else {
+                    base.add(byte_offset)
                 }
             }
-            b'?' as c_int
-        }
-        Some(GetoptArgMode::None) => {
-            unsafe {
-                if *GETOPT_NEXTCHAR == 0 {
-                    libc_optind += 1;
-                    GETOPT_NEXTCHAR = std::ptr::null();
-                }
-            }
-            option as c_int
-        }
-        Some(GetoptArgMode::Required) => {
-            if unsafe { *GETOPT_NEXTCHAR != 0 } {
-                unsafe {
-                    libc_optarg = GETOPT_NEXTCHAR as *mut c_char;
-                    libc_optind += 1;
-                    GETOPT_NEXTCHAR = std::ptr::null();
-                }
-                return option as c_int;
-            }
-            if unsafe { libc_optind + 1 >= argc } {
-                unsafe {
-                    libc_optopt = option as c_int;
-                    libc_optind += 1;
-                    GETOPT_NEXTCHAR = std::ptr::null();
-                }
-                return missing_code;
-            }
-            unsafe {
-                libc_optind += 1;
-                let value = *argv.add(libc_optind as usize);
-                if value.is_null() {
-                    libc_optopt = option as c_int;
-                    GETOPT_NEXTCHAR = std::ptr::null();
-                    return missing_code;
-                }
-                libc_optarg = value;
-                libc_optind += 1;
-                GETOPT_NEXTCHAR = std::ptr::null();
-            }
-            option as c_int
-        }
-        Some(GetoptArgMode::Optional) => {
-            unsafe {
-                if *GETOPT_NEXTCHAR != 0 {
-                    libc_optarg = GETOPT_NEXTCHAR as *mut c_char;
-                }
-                libc_optind += 1;
-                GETOPT_NEXTCHAR = std::ptr::null();
-            }
-            option as c_int
-        }
+            None => std::ptr::null_mut(),
+        };
+    }
+
+    match outcome {
+        StepOutcome::Done => -1,
+        StepOutcome::Found(c) => c,
     }
 }
 
@@ -2288,12 +2213,12 @@ unsafe fn parse_getopt_long(
     if unsafe { libc_optind <= 0 } {
         unsafe {
             libc_optind = 1;
-            GETOPT_NEXTCHAR = std::ptr::null();
+            GETOPT_NEXTCHAR = None;
         }
     }
     if unsafe { libc_optind >= argc } {
         unsafe {
-            GETOPT_NEXTCHAR = std::ptr::null();
+            GETOPT_NEXTCHAR = None;
         }
         return Some(-1);
     }
@@ -2308,7 +2233,7 @@ unsafe fn parse_getopt_long(
     if unsafe { *current.add(2) == 0 } {
         unsafe {
             libc_optind += 1;
-            GETOPT_NEXTCHAR = std::ptr::null();
+            GETOPT_NEXTCHAR = None;
         }
         return Some(-1);
     }
@@ -2325,7 +2250,7 @@ unsafe fn parse_getopt_long(
     } else {
         std::ptr::null()
     };
-    let missing_code = if getopt_prefers_colon(optspec) {
+    let missing_code = if getopt_core::getopt_prefers_colon(optspec) {
         b':' as c_int
     } else {
         b'?' as c_int
@@ -2348,7 +2273,7 @@ unsafe fn parse_getopt_long(
             unsafe {
                 libc_optarg = std::ptr::null_mut();
                 libc_optopt = 0;
-                GETOPT_NEXTCHAR = std::ptr::null();
+                GETOPT_NEXTCHAR = None;
             }
             let mut next_index = unsafe { libc_optind + 1 };
             match unsafe { (*opt_ptr).has_arg } {
@@ -2410,7 +2335,7 @@ unsafe fn parse_getopt_long(
         libc_optarg = std::ptr::null_mut();
         libc_optopt = 0;
         libc_optind += 1;
-        GETOPT_NEXTCHAR = std::ptr::null();
+        GETOPT_NEXTCHAR = None;
     }
     Some(b'?' as c_int)
 }
