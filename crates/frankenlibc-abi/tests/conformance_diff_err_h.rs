@@ -4,14 +4,12 @@
 //! functions.
 //!
 //! Compares FrankenLibC vs glibc reference for:
-//!   - warnx (stderr message body, sans progname)
+//!   - warnx (stderr message body)
 //!   - warn  (message body + ": strerror(errno)" suffix)
 //!   - errx  (fork-isolated: exit code + message body)
 //!
-//! Both impls write to fd 2 with a "progname: ..." prefix. The prefix
-//! source differs (fl reads /proc/self/comm; glibc reads argv[0]
-//! basename — DISC-ERR-001), so we compare the body after the first
-//! ": " rather than full bytes.
+//! Both impls write to fd 2 with a "progname: ..." prefix. FrankenLibC
+//! should match glibc's argv[0] basename source for that prefix.
 //!
 //! Bead: CONFORMANCE: libc err.h diff matrix.
 
@@ -297,37 +295,27 @@ fn diff_errx_exit_and_body() {
             });
         }
     }
-    assert!(
-        divs.is_empty(),
-        "errx divergences:\n{}",
-        render_divs(&divs)
-    );
+    assert!(divs.is_empty(), "errx divergences:\n{}", render_divs(&divs));
 }
 
-/// DISC-ERR-001: fl reads progname from /proc/self/comm (kernel
-/// TASK_COMM_LEN=16 byte limit, often truncated). glibc reads
-/// __progname / argv[0] basename, which is the full executable name.
-/// Both produce a "progname: ..." line on stderr but the prefix
-/// differs. Logged not failed.
+/// The err.h prefix should use the argv[0] basename rather than Linux
+/// `/proc/self/comm`, which truncates long executable names.
 #[test]
-fn diff_progname_source_documented() {
+fn diff_progname_source_matches_glibc() {
     let _g = IO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let cfmt = CString::new("ping").unwrap();
     let out_fl = capture_stderr(|| unsafe { fl::warnx(cfmt.as_ptr()) });
     let out_lc = capture_stderr(|| unsafe { warnx(cfmt.as_ptr()) });
     let prefix_fl = out_fl.split(|&b| b == b':').next().unwrap_or(&[]).to_vec();
     let prefix_lc = out_lc.split(|&b| b == b':').next().unwrap_or(&[]).to_vec();
-    eprintln!(
-        "{{\"family\":\"err.h\",\"divergence\":\"DISC-ERR-001\",\"fl_progname\":\"{}\",\"glibc_progname\":\"{}\",\"reason\":\"fl uses /proc/self/comm (truncated to 15 chars), glibc uses argv[0] basename\"}}",
-        String::from_utf8_lossy(&prefix_fl),
-        String::from_utf8_lossy(&prefix_lc),
+    assert_eq!(
+        prefix_fl, prefix_lc,
+        "err.h progname prefix should match glibc argv[0] basename"
     );
 }
 
 #[test]
 fn err_h_diff_coverage_report() {
     let _ = core::ptr::null::<c_void>();
-    eprintln!(
-        "{{\"family\":\"err.h\",\"reference\":\"glibc\",\"functions\":3,\"divergences\":0_in_body}}",
-    );
+    eprintln!("{{\"family\":\"err.h\",\"reference\":\"glibc\",\"functions\":3,\"divergences\":0}}",);
 }
