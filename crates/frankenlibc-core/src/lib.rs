@@ -23,6 +23,7 @@ pub mod ctype;
 pub mod dirent;
 pub mod dlfcn;
 pub mod elf;
+pub mod err;
 pub mod errno;
 pub mod ftw;
 pub mod grp;
