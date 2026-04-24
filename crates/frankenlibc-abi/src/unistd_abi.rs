@@ -7270,87 +7270,29 @@ struct EtherAddrBytes {
 static mut ETHER_ATON_STORAGE: EtherAddrBytes = EtherAddrBytes { octet: [0; 6] };
 static mut ETHER_NTOA_STORAGE: [c_char; 18] = [0; 18];
 
-fn parse_hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
 unsafe fn parse_ether_addr(asc: *const c_char, out: *mut EtherAddrBytes) -> bool {
     if asc.is_null() || out.is_null() {
         return false;
     }
-
-    // SAFETY: `asc` is validated non-null above and expected to be NUL-terminated by caller.
     let bytes = unsafe { CStr::from_ptr(asc) }.to_bytes();
-    let mut index = 0usize;
-    let mut octet = [0_u8; 6];
-
-    for (slot, octet) in octet.iter_mut().enumerate() {
-        if index >= bytes.len() {
-            return false;
+    match frankenlibc_core::ether::parse_ether_addr(bytes) {
+        Some(octet) => {
+            unsafe { (*out).octet = octet };
+            true
         }
-
-        let Some(high) = parse_hex_nibble(bytes[index]) else {
-            return false;
-        };
-        index += 1;
-
-        let mut value = high;
-        if index < bytes.len()
-            && let Some(low) = parse_hex_nibble(bytes[index])
-        {
-            value = (high << 4) | low;
-            index += 1;
-        }
-
-        *octet = value;
-        if slot < 5 {
-            if index >= bytes.len() || bytes[index] != b':' {
-                return false;
-            }
-            index += 1;
-        }
+        None => false,
     }
-
-    if index != bytes.len() {
-        return false;
-    }
-
-    // SAFETY: `out` is non-null and points to writable storage provided by caller.
-    unsafe {
-        (*out).octet = octet;
-    }
-    true
 }
 
 unsafe fn format_ether_addr(addr: *const EtherAddrBytes, buf: *mut c_char) -> *mut c_char {
     if addr.is_null() || buf.is_null() {
         return std::ptr::null_mut();
     }
-
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-
-    // SAFETY: `addr` is non-null and points to a 6-octet address layout.
     let octet = unsafe { (*addr).octet };
-    // SAFETY: caller guarantees `buf` has room for 18 bytes (`xx:..:xx\0`).
+    let text = frankenlibc_core::ether::format_ether_addr(&octet);
     let out = unsafe { std::slice::from_raw_parts_mut(buf.cast::<u8>(), 18) };
-    let mut pos = 0usize;
-
-    for (slot, value) in octet.iter().enumerate() {
-        out[pos] = HEX[(value >> 4) as usize];
-        pos += 1;
-        out[pos] = HEX[(value & 0x0f) as usize];
-        pos += 1;
-        if slot < 5 {
-            out[pos] = b':';
-            pos += 1;
-        }
-    }
-    out[pos] = 0;
+    out[..17].copy_from_slice(&text);
+    out[17] = 0;
     buf
 }
 
@@ -13026,49 +12968,13 @@ pub unsafe extern "C" fn ether_line(
         return -1;
     }
     let s = unsafe { std::ffi::CStr::from_ptr(line) }.to_bytes();
-    // Skip leading whitespace
-    let s = match s.iter().position(|&b| b != b' ' && b != b'\t') {
-        Some(i) => &s[i..],
-        None => return -1,
+    let Some((octet, host)) = frankenlibc_core::ether::parse_ether_line(s) else {
+        return -1;
     };
-    // Find end of MAC address (next whitespace)
-    let mac_end = s
-        .iter()
-        .position(|&b| b == b' ' || b == b'\t')
-        .unwrap_or(s.len());
-    if mac_end == 0 || mac_end >= s.len() {
-        return -1;
-    }
-    // NUL-terminate MAC in a stack buffer for parse_ether_addr
-    let mut mac_buf = [0u8; 32];
-    if mac_end >= mac_buf.len() {
-        return -1;
-    }
-    mac_buf[..mac_end].copy_from_slice(&s[..mac_end]);
-    mac_buf[mac_end] = 0;
-
-    if !unsafe { parse_ether_addr(mac_buf.as_ptr() as *const c_char, addr.cast()) } {
-        return -1;
-    }
-
-    // Skip whitespace after MAC to get hostname
-    let rest = &s[mac_end..];
-    let host_start = match rest.iter().position(|&b| b != b' ' && b != b'\t') {
-        Some(i) => i,
-        None => return -1,
-    };
-    let host_bytes = &rest[host_start..];
-    // Hostname ends at whitespace/newline/NUL
-    let host_len = host_bytes
-        .iter()
-        .position(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
-        .unwrap_or(host_bytes.len());
-    if host_len == 0 {
-        return -1;
-    }
     unsafe {
-        std::ptr::copy_nonoverlapping(host_bytes.as_ptr(), hostname as *mut u8, host_len);
-        *(hostname as *mut u8).add(host_len) = 0;
+        (*(addr as *mut EtherAddrBytes)).octet = octet;
+        std::ptr::copy_nonoverlapping(host.as_ptr(), hostname as *mut u8, host.len());
+        *(hostname as *mut u8).add(host.len()) = 0;
     }
     0
 }
