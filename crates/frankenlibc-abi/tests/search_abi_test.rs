@@ -95,7 +95,7 @@ fn hash_global_api() {
 
     unsafe { hdestroy() };
 
-    // --- overwrite: inserting existing key returns existing entry with replaced data ---
+    // --- duplicate ENTER: inserting an existing key returns the original entry ---
     unsafe { hcreate(16) };
 
     let key = CString::new("overwrite_key").unwrap();
@@ -113,8 +113,11 @@ fn hash_global_api() {
     };
     let r2 = unsafe { hsearch(item2, Action::ENTER) };
     assert!(!r2.is_null());
-    // POSIX: ENTER with existing key returns existing entry and replaces data.
-    assert_eq!(unsafe { (*r2).data } as usize, 200);
+    assert_eq!(
+        unsafe { (*r2).data } as usize,
+        100,
+        "duplicate ENTER should keep the original payload"
+    );
 
     unsafe { hdestroy() };
 }
@@ -487,8 +490,14 @@ fn remque_middle() {
 
     assert_eq!(a.next, &mut c as *mut _);
     assert_eq!(c.prev, &mut a as *mut _);
-    assert!(b.next.is_null());
-    assert!(b.prev.is_null());
+    assert_eq!(
+        b.next, &mut c as *mut _,
+        "removed node keeps its original next link"
+    );
+    assert_eq!(
+        b.prev, &mut a as *mut _,
+        "removed node keeps its original prev link"
+    );
 }
 
 #[test]
@@ -614,12 +623,12 @@ fn hash_reentrant_filled_tracks_unique_entries() {
     assert_eq!(
         htab_filled(&htab),
         1,
-        "replacing data for an existing key must not change filled"
+        "duplicate ENTER for an existing key must not change filled"
     );
     assert_eq!(
         unsafe { (*result).data } as usize,
-        456,
-        "duplicate ENTER should replace the stored payload"
+        123,
+        "duplicate ENTER should keep the original stored payload"
     );
 
     unsafe { hdestroy_r(&mut htab) };
