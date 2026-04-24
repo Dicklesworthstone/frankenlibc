@@ -161,18 +161,26 @@ fn diff_if_nameindex_loopback_present() {
             glibc: format!("{names_lc:?}"),
         });
     }
-    let _ = (
-        names_fl
-            .iter()
-            .any(|(_, n)| n == "lo")
-            .then_some(())
-            .ok_or("loopback missing in fl"),
-        names_lc
-            .iter()
-            .any(|(_, n)| n == "lo")
-            .then_some(())
-            .ok_or("loopback missing in lc"),
-    );
+    let fl_has_loopback = names_fl.iter().any(|(_, n)| n == "lo");
+    let lc_has_loopback = names_lc.iter().any(|(_, n)| n == "lo");
+    if !fl_has_loopback {
+        divs.push(Divergence {
+            function: "if_nameindex",
+            case: "all interfaces".into(),
+            field: "loopback_present",
+            frankenlibc: "false".into(),
+            glibc: format!("{lc_has_loopback}"),
+        });
+    }
+    if !lc_has_loopback {
+        divs.push(Divergence {
+            function: "if_nameindex",
+            case: "all interfaces".into(),
+            field: "host_loopback_present",
+            frankenlibc: format!("{fl_has_loopback}"),
+            glibc: "false".into(),
+        });
+    }
     if !p_fl.is_null() {
         unsafe { fl::if_freenameindex(p_fl as *mut c_void) };
     }
