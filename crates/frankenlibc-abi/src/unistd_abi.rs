@@ -14123,57 +14123,9 @@ std::thread_local! {
 }
 
 /// Parse an /etc/aliases line into name + member list.
-fn parse_aliases_line(line: &[u8]) -> Option<(&[u8], Vec<&[u8]>)> {
-    // Strip comments
-    let line = if let Some(pos) = line.iter().position(|&b| b == b'#') {
-        &line[..pos]
-    } else {
-        line
-    };
-    // Strip trailing whitespace/newlines
-    let line = {
-        let mut end = line.len();
-        while end > 0 && matches!(line[end - 1], b' ' | b'\t' | b'\n' | b'\r') {
-            end -= 1;
-        }
-        &line[..end]
-    };
-    // Find colon separator
-    let colon = line.iter().position(|&b| b == b':')?;
-    let name = &line[..colon];
-    let name = name
-        .iter()
-        .position(|&b| b != b' ' && b != b'\t')
-        .map(|start| {
-            let mut end = name.len();
-            while end > start && matches!(name[end - 1], b' ' | b'\t') {
-                end -= 1;
-            }
-            &name[start..end]
-        })?;
-    if name.is_empty() {
-        return None;
-    }
-    // Parse comma-separated members after colon
-    let rest = &line[colon + 1..];
-    let members: Vec<&[u8]> = rest
-        .split(|&b| b == b',')
-        .filter_map(|m| {
-            let m = m
-                .iter()
-                .position(|&b| b != b' ' && b != b'\t')
-                .map(|start| {
-                    let mut end = m.len();
-                    while end > start && matches!(m[end - 1], b' ' | b'\t') {
-                        end -= 1;
-                    }
-                    &m[start..end]
-                })?;
-            if m.is_empty() { None } else { Some(m) }
-        })
-        .collect();
-    Some((name, members))
-}
+// parse_aliases_line moved to frankenlibc_core::aliases. Callers below
+// use frankenlibc_core::aliases::parse_aliases_line directly and access
+// the owned name / members fields of the returned AliasEntry.
 
 /// Fill an aliasent in the entry_buf from parsed data.
 unsafe fn fill_aliasent_buf(
@@ -14236,13 +14188,11 @@ unsafe fn alias_iter_next(state: &mut AliasIterState) -> *mut c_void {
             Err(_) => return std::ptr::null_mut(),
             Ok(_) => {}
         }
-        if let Some((name, members)) = parse_aliases_line(&state.line_buf) {
+        if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(&state.line_buf) {
             let mut name_copy = [0u8; 256];
-            let nlen = name.len().min(255);
-            name_copy[..nlen].copy_from_slice(&name[..nlen]);
-            // Copy members to stack to avoid borrow conflict
-            let member_copies: Vec<Vec<u8>> = members.iter().map(|m| m.to_vec()).collect();
-            let member_refs: Vec<&[u8]> = member_copies.iter().map(|v| v.as_slice()).collect();
+            let nlen = entry.name.len().min(255);
+            name_copy[..nlen].copy_from_slice(&entry.name[..nlen]);
+            let member_refs: Vec<&[u8]> = entry.members.iter().map(|v| v.as_slice()).collect();
             let result = unsafe { fill_aliasent_buf(state, &name_copy[..nlen], &member_refs) };
             if !result.is_null() {
                 return result;
@@ -14276,13 +14226,14 @@ pub unsafe extern "C" fn getaliasbyname(name: *const c_char) -> *mut c_void {
         }
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, members)) = parse_aliases_line(line)
-            && pname.eq_ignore_ascii_case(needle)
+        if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(line)
+            && entry.name.eq_ignore_ascii_case(needle)
         {
             return ALIAS_ITER.with(|cell| {
                 let state = unsafe { &mut *cell.get() };
-                let member_refs: Vec<&[u8]> = members.to_vec();
-                unsafe { fill_aliasent_buf(state, pname, &member_refs) }
+                let member_refs: Vec<&[u8]> =
+                    entry.members.iter().map(|v| v.as_slice()).collect();
+                unsafe { fill_aliasent_buf(state, &entry.name, &member_refs) }
             });
         }
     }
@@ -14314,13 +14265,16 @@ pub unsafe extern "C" fn getaliasbyname_r(
         }
     };
     for line in content.split(|&b| b == b'\n') {
-        if let Some((pname, members)) = parse_aliases_line(line)
-            && pname.eq_ignore_ascii_case(needle)
+        if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(line)
+            && entry.name.eq_ignore_ascii_case(needle)
         {
+            let pname = &entry.name;
+            let members = &entry.members;
+
             // Pack into caller buffer: name + NUL + members + NULs + ptr array
             let ptr_size = core::mem::size_of::<*mut c_char>();
             let mut needed = pname.len() + 1;
-            for m in &members {
+            for m in members {
                 needed += m.len() + 1;
             }
             let ptrs_offset = (needed + (ptr_size - 1)) & !(ptr_size - 1);
@@ -14331,7 +14285,6 @@ pub unsafe extern "C" fn getaliasbyname_r(
 
             let buf_u8 = buffer as *mut u8;
 
-            // Pack name
             let name_ptr = buffer;
             unsafe {
                 std::ptr::copy_nonoverlapping(pname.as_ptr(), buf_u8, pname.len());
@@ -14339,7 +14292,6 @@ pub unsafe extern "C" fn getaliasbyname_r(
             }
             let mut off = pname.len() + 1;
 
-            // Pack members + build pointer list
             let member_ptrs_base = unsafe { buf_u8.add(ptrs_offset) } as *mut *mut c_char;
             for (i, m) in members.iter().enumerate() {
                 unsafe {
@@ -14351,7 +14303,6 @@ pub unsafe extern "C" fn getaliasbyname_r(
             }
             unsafe { *(member_ptrs_base.add(members.len())) = std::ptr::null_mut() };
 
-            // Fill struct aliasent in result_buf
             let ent = result_buf as *mut u8;
             unsafe {
                 *(ent as *mut *mut c_char) = name_ptr;
@@ -14423,10 +14374,13 @@ pub unsafe extern "C" fn getaliasent_r(
                 Err(_) => return libc::ENOENT,
                 Ok(_) => {}
             }
-            if let Some((pname, members)) = parse_aliases_line(&state.line_buf) {
+            if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(&state.line_buf)
+            {
+                let pname = &entry.name;
+                let members = &entry.members;
                 let ptr_size = core::mem::size_of::<*mut c_char>();
                 let mut needed = pname.len() + 1;
-                for m in &members {
+                for m in members {
                     needed += m.len() + 1;
                 }
                 let ptrs_offset = (needed + (ptr_size - 1)) & !(ptr_size - 1);

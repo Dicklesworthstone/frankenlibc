@@ -19,6 +19,7 @@ compile_error!(
     this crate can build on it."
 );
 
+pub mod aliases;
 pub mod ctype;
 pub mod dirent;
 pub mod dlfcn;
