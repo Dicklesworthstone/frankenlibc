@@ -44,12 +44,9 @@ fn get_progname() -> Vec<u8> {
         .clone()
 }
 
-fn basename_bytes(bytes: &[u8]) -> &[u8] {
-    bytes
-        .iter()
-        .rposition(|&b| b == b'/')
-        .map_or(bytes, |idx| &bytes[idx + 1..])
-}
+// `basename_bytes` is now provided by frankenlibc-core::err::basename_bytes
+// (bd-err-1, epic bd-err-epic).
+use frankenlibc_core::err::basename_bytes;
 
 fn proc_cmdline_progname() -> Option<Vec<u8>> {
     let cmdline = std::fs::read("/proc/self/cmdline").ok()?;
@@ -73,36 +70,33 @@ fn proc_comm_progname() -> Option<Vec<u8>> {
 
 /// Format and write an err.h-style message to stderr.
 ///
-/// If `fmt_bytes` is non-empty, the message is printf-formatted from the
-/// provided arg buffer. If `with_errno` is true, appends ": strerror(errno)".
+/// Delegates the byte-level formatting to
+/// [`frankenlibc_core::err::format_err_message`] (bd-err-2). This abi
+/// layer remains responsible for: rendering the printf template +
+/// args, looking up the errno string, and atomically writing the
+/// result to fd 2.
 fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_errno: bool) {
     let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
     let progname = get_progname();
 
-    // Build the output: "progname: "
-    let mut out = Vec::with_capacity(256);
-    out.extend_from_slice(&progname);
-    out.extend_from_slice(b": ");
+    // Render the printf template into bytes.
+    let message: Vec<u8> = if fmt_bytes.is_empty() {
+        Vec::new()
+    } else {
+        unsafe { super::stdio_abi::render_printf(fmt_bytes, arg_buf.as_ptr(), arg_count) }
+    };
 
-    // Append formatted message if format string is non-empty.
-    if !fmt_bytes.is_empty() {
-        let rendered =
-            unsafe { super::stdio_abi::render_printf(fmt_bytes, arg_buf.as_ptr(), arg_count) };
-        out.extend_from_slice(&rendered);
-    }
+    // Resolve errno → byte string (lifetime is &'static so we can pass
+    // a reference through to the formatter).
+    let errno_msg_opt: Option<&[u8]> = if with_errno {
+        Some(strerror_bytes(saved_errno))
+    } else {
+        None
+    };
 
-    // Append errno string if requested.
-    if with_errno {
-        if !fmt_bytes.is_empty() {
-            out.extend_from_slice(b": ");
-        }
-        let errno_msg = strerror_bytes(saved_errno);
-        out.extend_from_slice(errno_msg);
-    }
+    let out =
+        frankenlibc_core::err::format_err_message(&progname, &message, errno_msg_opt);
 
-    out.push(b'\n');
-
-    // Write to stderr (fd 2) atomically.
     unsafe {
         crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());
         crate::errno_abi::set_abi_errno(saved_errno);
