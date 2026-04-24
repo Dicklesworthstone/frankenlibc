@@ -17,5 +17,7 @@
 //! responsibility for raw-pointer / NUL-terminated C string adaptation.
 
 pub mod path;
+pub mod walker;
 
 pub use path::{WalkFlags, WalkType, base_offset_of, build_child_path};
+pub use walker::{FsOps, StatLike, walk_tree};
