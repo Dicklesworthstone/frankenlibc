@@ -149,16 +149,30 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     crate::pthread_abi::run_atfork_prepare();
     let _pipeline_guard =
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    // Acquire ENVIRON_LOCK before fork so the child does not inherit a held
+    // state from another parent thread mid-setenv. Without this, the child's
+    // first getenv/setenv after fork would deadlock waiting for a lock that
+    // no thread can ever release in the new address space. Mirrors the
+    // pipeline atfork pattern. (REVIEW round 4: fork-after-setenv deadlock.)
+    let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
 
     let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
         Ok(p) => p,
         Err(e) => {
+            // Drop guards in failure path before returning so the parent
+            // can resume normal env operations.
+            drop(_environ_guard);
+            drop(_pipeline_guard);
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
             return -1;
         }
     };
 
+    // Both parent and child release their copies of these guards. The
+    // parking_lot mutex state lives inline in the static; the guard's Drop
+    // releases the lock owned by the current thread on each side of fork.
+    drop(_environ_guard);
     drop(_pipeline_guard);
 
     if pid == 0 {
