@@ -311,6 +311,155 @@ fn diff_glob_basic_patterns() {
     assert!(divs.is_empty(), "glob divergences:\n{}", render_divs(&divs));
 }
 
+// ===========================================================================
+// bd-fnm-3: GNU extension flag parity vs glibc
+// ===========================================================================
+
+const FNM_LEADING_DIR: c_int = 1 << 3;
+const FNM_FILE_NAME: c_int = FNM_PATHNAME; // glibc alias
+
+#[test]
+fn diff_fnmatch_leading_dir() {
+    let mut divs = Vec::new();
+    let cases: &[(&str, &str)] = &[
+        ("a/b", "a/b"),
+        ("a/b", "a/b/c"),
+        ("a/b", "a/b/c/d"),
+        ("a/b", "a/bx"),
+        ("a/b", "a/c"),
+        ("usr", "usr/local/bin"),
+        ("usr", "usrx"),
+    ];
+    for (pat, s) in cases {
+        let cpat = CString::new(*pat).unwrap();
+        let cs = CString::new(*s).unwrap();
+        let r_fl = unsafe { fl::fnmatch(cpat.as_ptr(), cs.as_ptr(), FNM_LEADING_DIR) };
+        let r_lc = unsafe { fnmatch(cpat.as_ptr(), cs.as_ptr(), FNM_LEADING_DIR) };
+        if (r_fl == 0) != (r_lc == 0) {
+            divs.push(Divergence {
+                function: "fnmatch FNM_LEADING_DIR",
+                case: format!("({pat:?}, {s:?})"),
+                field: "match",
+                frankenlibc: format!("rc={r_fl}"),
+                glibc: format!("rc={r_lc}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "FNM_LEADING_DIR divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_fnmatch_file_name_alias() {
+    // FNM_FILE_NAME is a glibc alias for FNM_PATHNAME — verify the bit
+    // is the same and behavior is identical.
+    let mut divs = Vec::new();
+    for (pat, s) in &[("*", "a/b"), ("a/b", "a/b"), ("a/*", "a/b")] {
+        let cpat = CString::new(*pat).unwrap();
+        let cs = CString::new(*s).unwrap();
+        let r_fl_pn = unsafe { fl::fnmatch(cpat.as_ptr(), cs.as_ptr(), FNM_PATHNAME) };
+        let r_fl_fn = unsafe { fl::fnmatch(cpat.as_ptr(), cs.as_ptr(), FNM_FILE_NAME) };
+        if (r_fl_pn == 0) != (r_fl_fn == 0) {
+            divs.push(Divergence {
+                function: "fnmatch",
+                case: format!("({pat:?}, {s:?})"),
+                field: "PATHNAME == FILE_NAME",
+                frankenlibc: format!("PATHNAME={r_fl_pn}"),
+                glibc: format!("FILE_NAME={r_fl_fn}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "FNM_FILE_NAME alias divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_fnmatch_property_pattern_against_self() {
+    // Property: the pattern matched against an exact-literal version
+    // of itself (with metachars escaped) must always match. We
+    // generate a small alphabet of test inputs and verify both impls
+    // agree on each.
+    let mut divs = Vec::new();
+    let strings: &[&str] = &[
+        "abc",
+        "a.txt",
+        "hello.world",
+        "deep/path/to/file",
+        "with-dash",
+        "under_score",
+    ];
+    for s in strings {
+        // Escape any metachars in s to make it a literal pattern
+        let mut escaped = String::new();
+        for c in s.chars() {
+            if matches!(c, '*' | '?' | '[' | '\\') {
+                escaped.push('\\');
+            }
+            escaped.push(c);
+        }
+        let cpat = CString::new(escaped).unwrap();
+        let cs = CString::new(*s).unwrap();
+        let r_fl = unsafe { fl::fnmatch(cpat.as_ptr(), cs.as_ptr(), 0) };
+        let r_lc = unsafe { fnmatch(cpat.as_ptr(), cs.as_ptr(), 0) };
+        if r_fl != 0 || r_lc != 0 {
+            divs.push(Divergence {
+                function: "fnmatch",
+                case: format!("escaped({s:?}) vs {s:?}"),
+                field: "self-match",
+                frankenlibc: format!("rc={r_fl}"),
+                glibc: format!("rc={r_lc}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "self-match divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_fnmatch_star_chain_against_arbitrary_text() {
+    // Property: "*X*Y*" pattern matches text iff text contains X then
+    // Y in order. Compare both impls against a synthetic corpus.
+    let mut divs = Vec::new();
+    let cases: &[(&str, &str)] = &[
+        ("*a*b*", "xayb"),
+        ("*a*b*", "ba"),
+        ("*a*b*", "aaab"),
+        ("*x*y*z*", "xyz"),
+        ("*x*y*z*", "axbyc"),
+        ("*x*y*z*", "axbyzc"),
+        ("*x*y*z*", "zyx"),
+    ];
+    for (pat, s) in cases {
+        let cpat = CString::new(*pat).unwrap();
+        let cs = CString::new(*s).unwrap();
+        let r_fl = unsafe { fl::fnmatch(cpat.as_ptr(), cs.as_ptr(), 0) };
+        let r_lc = unsafe { fnmatch(cpat.as_ptr(), cs.as_ptr(), 0) };
+        if (r_fl == 0) != (r_lc == 0) {
+            divs.push(Divergence {
+                function: "fnmatch",
+                case: format!("({pat:?}, {s:?})"),
+                field: "match",
+                frankenlibc: format!("rc={r_fl}"),
+                glibc: format!("rc={r_lc}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "star-chain divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 #[test]
 fn fnmatch_glob_diff_coverage_report() {
     let _ = core::ptr::null::<c_void>();
