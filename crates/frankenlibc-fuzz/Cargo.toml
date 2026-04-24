@@ -275,4 +275,9 @@ name = "fuzz_ptrace"
 path = "fuzz_targets/fuzz_ptrace.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_io_uring"
+path = "fuzz_targets/fuzz_io_uring.rs"
+doc = false
+
 [workspace]
