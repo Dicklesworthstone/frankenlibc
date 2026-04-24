@@ -11,7 +11,7 @@
 //!
 //! Bead: CONFORMANCE: libc search.h diff matrix.
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::Mutex;
 
 use frankenlibc_abi::search_abi as fl;
@@ -100,9 +100,10 @@ fn diff_lfind_present_absent() {
                 arr.as_ptr() as *const c_void,
                 &mut nel,
                 core::mem::size_of::<i32>(),
-                core::mem::transmute::<extern "C" fn(*const c_void, *const c_void) -> c_int, _>(
-                    cmp_i32,
-                ),
+                core::mem::transmute::<
+                    extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                >(cmp_i32),
             )
         };
         let mut nel2: usize = arr.len();
@@ -178,9 +179,10 @@ fn diff_lsearch_insert() {
                 buf_fl.as_mut_ptr() as *mut c_void,
                 &mut nel_fl,
                 core::mem::size_of::<i32>(),
-                core::mem::transmute::<extern "C" fn(*const c_void, *const c_void) -> c_int, _>(
-                    cmp_i32,
-                ),
+                core::mem::transmute::<
+                    extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                >(cmp_i32),
             )
         };
     }
@@ -340,7 +342,7 @@ fn diff_hsearch_find_missing() {
         r_fl,
         r_lc
     );
-    let _ = CStr::from_bytes_with_nul(b"x\0").unwrap();
+    let _ = c"x";
 }
 
 #[test]
