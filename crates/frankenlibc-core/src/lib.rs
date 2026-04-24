@@ -40,6 +40,7 @@ pub mod pwd;
 pub mod rcu;
 pub mod resolv;
 pub mod resource;
+pub mod search;
 pub mod setjmp;
 pub mod signal;
 pub mod socket;
