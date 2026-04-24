@@ -4,7 +4,7 @@
 //! these names and rejects all others. `localeconv` returns C-locale defaults.
 
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::sync::{Mutex, OnceLock};
 
@@ -13,6 +13,38 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
+use crate::util::scan_c_string;
+
+#[inline]
+fn known_locale_string_remaining(ptr: usize) -> Option<usize> {
+    #[cfg(not(test))]
+    {
+        crate::malloc_abi::known_remaining(ptr)
+    }
+
+    #[cfg(test)]
+    {
+        let _ = ptr;
+        None
+    }
+}
+
+/// Read a user-supplied C string pointer with a known-region bound so a
+/// non-NUL-terminated argument cannot walk arbitrary process memory.
+/// Returns `None` for null, empty, or unterminated input. (bd-z4k96)
+#[inline]
+unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) =
+        unsafe { scan_c_string(ptr, known_locale_string_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+    Some(bytes.to_vec())
+}
 
 /// Static C-locale name string.
 static C_LOCALE_NAME: &[u8] = b"C\0";
@@ -121,10 +153,14 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
         return C_LOCALE_NAME.as_ptr() as *const c_char;
     }
 
-    // Parse the locale name.
-    let name = unsafe { CStr::from_ptr(locale) }.to_bytes();
+    // Parse the locale name with a known-region bound. A non-NUL-terminated
+    // pointer must be rejected instead of walking unbounded memory. (bd-z4k96)
+    let Some(name) = (unsafe { read_bounded_cstr(locale) }) else {
+        runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, true);
+        return std::ptr::null();
+    };
 
-    if locale_core::is_c_locale(name) {
+    if locale_core::is_c_locale(&name) {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
         C_LOCALE_NAME.as_ptr() as *const c_char
     } else if mode.heals_enabled() {
@@ -347,18 +383,26 @@ pub unsafe extern "C" fn textdomain(domainname: *const c_char) -> *mut c_char {
     let storage = text_domain_storage();
     let mut current = storage.lock().unwrap_or_else(|e| e.into_inner());
     if domainname.is_null() {
-        current.current
-    } else if unsafe { *domainname } == 0 {
-        current.current = DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char;
-        current.current
-    } else {
-        let name = unsafe { CStr::from_ptr(domainname) }.to_bytes();
-        let owned = CString::new(name).expect("textdomain name must be NUL-free");
-        let ptr = owned.as_ptr() as *mut c_char;
-        current.pool.push(owned);
-        current.current = ptr;
-        ptr
+        return current.current;
     }
+    // Read the domain name through the bounded helper so a non-NUL-terminated
+    // pointer cannot walk arbitrary memory, and the empty-string path is
+    // discovered from the bounded bytes rather than a raw dereference of the
+    // first byte. (bd-z4k96)
+    let Some(name) = (unsafe { read_bounded_cstr(domainname) }) else {
+        return current.current;
+    };
+    if name.is_empty() {
+        current.current = DEFAULT_TEXT_DOMAIN.as_ptr() as *mut c_char;
+        return current.current;
+    }
+    let Ok(owned) = CString::new(name) else {
+        return current.current;
+    };
+    let ptr = owned.as_ptr() as *mut c_char;
+    current.pool.push(owned);
+    current.current = ptr;
+    ptr
 }
 
 /// GNU `bindtextdomain` — bind a text domain to a locale directory.
@@ -370,11 +414,11 @@ pub unsafe extern "C" fn bindtextdomain(
     domainname: *const c_char,
     dirname: *const c_char,
 ) -> *mut c_char {
-    if domainname.is_null() {
+    // Bound both inputs to prevent unbounded memory walks via CStr::from_ptr
+    // when a caller passes a non-NUL-terminated pointer. (bd-z4k96)
+    let Some(domain) = (unsafe { read_bounded_cstr(domainname) }) else {
         return std::ptr::null_mut();
-    }
-
-    let domain = unsafe { CStr::from_ptr(domainname) }.to_bytes();
+    };
     if domain.is_empty() {
         return std::ptr::null_mut();
     }
@@ -382,17 +426,21 @@ pub unsafe extern "C" fn bindtextdomain(
     let mut bindings = storage.lock().unwrap_or_else(|e| e.into_inner());
 
     if dirname.is_null() {
-        if let Some(bound) = bindings.current_by_domain.get(domain) {
+        if let Some(bound) = bindings.current_by_domain.get(&domain) {
             *bound
         } else {
             DEFAULT_LOCALE_DIR.as_ptr() as *mut c_char
         }
     } else {
-        let dir = unsafe { CStr::from_ptr(dirname) }.to_bytes();
-        let owned = CString::new(dir).expect("locale directory must be NUL-free");
+        let Some(dir) = (unsafe { read_bounded_cstr(dirname) }) else {
+            return std::ptr::null_mut();
+        };
+        let Ok(owned) = CString::new(dir) else {
+            return std::ptr::null_mut();
+        };
         let ptr = owned.as_ptr() as *mut c_char;
         bindings.pool.push(owned);
-        bindings.current_by_domain.insert(domain.to_vec(), ptr);
+        bindings.current_by_domain.insert(domain, ptr);
         ptr
     }
 }
@@ -438,8 +486,12 @@ pub unsafe extern "C" fn newlocale(
     let accept = if locale.is_null() {
         true
     } else {
-        let name = unsafe { CStr::from_ptr(locale) }.to_bytes();
-        locale_core::is_c_locale(name)
+        // Bounded read rejects non-NUL-terminated pointers at the boundary
+        // instead of walking memory through CStr::from_ptr. (bd-z4k96)
+        match unsafe { read_bounded_cstr(locale) } {
+            Some(name) => locale_core::is_c_locale(&name),
+            None => false,
+        }
     };
 
     let _ = base;
@@ -659,8 +711,12 @@ pub unsafe extern "C" fn catopen(name: *const c_char, _oflag: c_int) -> nl_catd 
         return INVALID_NL_CATD;
     }
 
-    let name = unsafe { CStr::from_ptr(name) };
-    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(name.to_bytes()));
+    // Bounded read rejects non-NUL-terminated pointers at the boundary. (bd-z4k96)
+    let Some(name_bytes) = (unsafe { read_bounded_cstr(name) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return INVALID_NL_CATD;
+    };
+    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&name_bytes));
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -732,6 +788,7 @@ pub unsafe extern "C" fn catclose(catd: nl_catd) -> c_int {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     #[test]
     fn setlocale_query_returns_c() {
