@@ -1077,7 +1077,12 @@ fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
         return false;
     }
     let ts = unsafe { &*abstime };
-    (0..1_000_000_000).contains(&ts.tv_nsec)
+    // POSIX pthread_cond_timedwait requires tv_nsec in [0, 10^9) AND
+    // tv_sec >= 0 — a CLOCK_REALTIME absolute deadline cannot be before
+    // the epoch. Without the tv_sec guard, `deadline - now` in
+    // futex_wait_timed would panic in debug (i64 subtract overflow) or
+    // wrap to a ~9e18-second "infinite" timeout in release. (bd-dc9mc)
+    ts.tv_sec >= 0 && (0..1_000_000_000).contains(&ts.tv_nsec)
 }
 
 /// Futex wait with an absolute CLOCK_REALTIME deadline.
@@ -1099,12 +1104,25 @@ fn futex_wait_timed(
         }
     };
     let deadline = unsafe { &*abstime };
+    // Use checked_sub so that extreme tv_sec values (already filtered by
+    // absolute_timespec_valid, but kept defensive for untrusted callers)
+    // produce ETIMEDOUT instead of panicking in debug or wrapping to a
+    // ~9e18-second "infinite" timeout in release. (bd-dc9mc)
+    let Some(sec_diff) = deadline.tv_sec.checked_sub(now.tv_sec) else {
+        unsafe { set_abi_errno(libc::ETIMEDOUT) };
+        return -1;
+    };
     let mut rel = libc::timespec {
-        tv_sec: deadline.tv_sec - now.tv_sec,
+        tv_sec: sec_diff,
         tv_nsec: deadline.tv_nsec - now.tv_nsec,
     };
     if rel.tv_nsec < 0 {
-        rel.tv_sec -= 1;
+        // tv_sec may already be at i64::MIN; fail closed with ETIMEDOUT.
+        let Some(adj) = rel.tv_sec.checked_sub(1) else {
+            unsafe { set_abi_errno(libc::ETIMEDOUT) };
+            return -1;
+        };
+        rel.tv_sec = adj;
         rel.tv_nsec += 1_000_000_000;
     }
     if rel.tv_sec < 0 || (rel.tv_sec == 0 && rel.tv_nsec <= 0) {

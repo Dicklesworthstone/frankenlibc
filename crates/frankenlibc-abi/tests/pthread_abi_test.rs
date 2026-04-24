@@ -651,6 +651,74 @@ fn condvar_broadcast_no_waiters() {
     }
 }
 
+// Regression for bd-dc9mc. Negative tv_sec in an absolute deadline must be
+// rejected at the API boundary — before the fix, the subsequent
+// `deadline.tv_sec - now.tv_sec` subtraction in futex_wait_timed would
+// panic ("attempt to subtract with overflow") in debug and wrap to a
+// ~9.2e18-second "infinite" timeout in release.
+#[test]
+fn cond_timedwait_rejects_negative_tv_sec() {
+    unsafe {
+        let mut cond: libc::pthread_cond_t = std::mem::zeroed();
+        let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(pthread_cond_init(&mut cond, ptr::null()), 0);
+        assert_eq!(pthread_mutex_init(&mut mutex, ptr::null()), 0);
+        assert_eq!(pthread_mutex_lock(&mut mutex), 0);
+
+        let ts = libc::timespec {
+            tv_sec: -1,
+            tv_nsec: 0,
+        };
+        let rc = pthread_cond_timedwait(&mut cond, &mut mutex, &ts);
+        assert_eq!(rc, libc::EINVAL, "negative tv_sec must return EINVAL");
+
+        // Most extreme: tv_sec = i64::MIN — in buggy code this was the
+        // path that actually panicked in debug / wrapped in release.
+        let ts_min = libc::timespec {
+            tv_sec: i64::MIN,
+            tv_nsec: 0,
+        };
+        let rc2 = pthread_cond_timedwait(&mut cond, &mut mutex, &ts_min);
+        assert_eq!(
+            rc2,
+            libc::EINVAL,
+            "tv_sec=i64::MIN must return EINVAL without panicking"
+        );
+
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+        assert_eq!(pthread_cond_destroy(&mut cond), 0);
+    }
+}
+
+#[test]
+fn cond_timedwait_rejects_out_of_range_tv_nsec() {
+    unsafe {
+        let mut cond: libc::pthread_cond_t = std::mem::zeroed();
+        let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(pthread_cond_init(&mut cond, ptr::null()), 0);
+        assert_eq!(pthread_mutex_init(&mut mutex, ptr::null()), 0);
+        assert_eq!(pthread_mutex_lock(&mut mutex), 0);
+
+        for tv_nsec in [-1_i64, 1_000_000_000_i64, i64::MAX] {
+            let ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec,
+            };
+            let rc = pthread_cond_timedwait(&mut cond, &mut mutex, &ts);
+            assert_eq!(
+                rc,
+                libc::EINVAL,
+                "tv_nsec={tv_nsec} out of [0, 10^9) must return EINVAL"
+            );
+        }
+
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+        assert_eq!(pthread_cond_destroy(&mut cond), 0);
+    }
+}
+
 // ===========================================================================
 // Condvar attributes
 // ===========================================================================
