@@ -444,6 +444,116 @@ fn effective_output_speed(termios: &libc::termios) -> libc::speed_t {
     }
 }
 
+fn input_speed_bits(speed: libc::speed_t) -> libc::tcflag_t {
+    ((speed as libc::tcflag_t) << 16) & libc::CIBAUD as libc::tcflag_t
+}
+
+fn zeroed_termios() -> libc::termios {
+    let termios = std::mem::MaybeUninit::<libc::termios>::zeroed();
+    // SAFETY: termios is a plain C ABI record; all-zero initialization is
+    // accepted by the existing tests and immediately overwritten before use
+    // in ioctl conversion paths.
+    unsafe { termios.assume_init() }
+}
+
+fn zeroed_termios2() -> libc::termios2 {
+    let termios = std::mem::MaybeUninit::<libc::termios2>::zeroed();
+    // SAFETY: termios2 is a plain Linux UAPI record; zeroing padding and
+    // control slots is valid before copying explicit fields into it.
+    unsafe { termios.assume_init() }
+}
+
+fn baud_rate_to_constant(speed: libc::speed_t) -> libc::speed_t {
+    match speed {
+        0 => libc::B0,
+        50 => libc::B50,
+        75 => libc::B75,
+        110 => libc::B110,
+        134 => libc::B134,
+        150 => libc::B150,
+        200 => libc::B200,
+        300 => libc::B300,
+        600 => libc::B600,
+        1200 => libc::B1200,
+        1800 => libc::B1800,
+        2400 => libc::B2400,
+        4800 => libc::B4800,
+        9600 => libc::B9600,
+        19200 => libc::B19200,
+        38400 => libc::B38400,
+        57600 => libc::B57600,
+        115200 => libc::B115200,
+        230400 => libc::B230400,
+        460800 => libc::B460800,
+        500000 => libc::B500000,
+        576000 => libc::B576000,
+        921600 => libc::B921600,
+        1000000 => libc::B1000000,
+        1152000 => libc::B1152000,
+        1500000 => libc::B1500000,
+        2000000 => libc::B2000000,
+        2500000 => libc::B2500000,
+        3000000 => libc::B3000000,
+        3500000 => libc::B3500000,
+        4000000 => libc::B4000000,
+        _ if termios_core::valid_baud_rate(speed) => speed,
+        _ => libc::BOTHER,
+    }
+}
+
+fn termios2_to_termios(src: &libc::termios2) -> libc::termios {
+    let mut dst = zeroed_termios();
+    dst.c_iflag = src.c_iflag;
+    dst.c_oflag = src.c_oflag;
+    dst.c_cflag = src.c_cflag;
+    dst.c_lflag = src.c_lflag;
+    dst.c_line = src.c_line;
+    let cc_len = dst.c_cc.len().min(src.c_cc.len());
+    dst.c_cc[..cc_len].copy_from_slice(&src.c_cc[..cc_len]);
+    dst.c_ispeed = src.c_ispeed;
+    dst.c_ospeed = src.c_ospeed;
+    let input_rate = if src.c_ispeed == 0 {
+        src.c_ospeed
+    } else {
+        src.c_ispeed
+    };
+    let input_code = baud_rate_to_constant(input_rate);
+    dst.c_cflag = (dst.c_cflag & !(libc::CIBAUD as libc::tcflag_t)) | input_speed_bits(input_code);
+    dst
+}
+
+fn termios_to_termios2(src: &libc::termios) -> libc::termios2 {
+    let mut dst = zeroed_termios2();
+    dst.c_iflag = src.c_iflag;
+    dst.c_oflag = src.c_oflag;
+    dst.c_cflag = src.c_cflag;
+    dst.c_lflag = src.c_lflag;
+    dst.c_line = src.c_line;
+    let cc_len = dst.c_cc.len().min(src.c_cc.len());
+    dst.c_cc[..cc_len].copy_from_slice(&src.c_cc[..cc_len]);
+    dst.c_ispeed = src.c_ispeed;
+    dst.c_ospeed = src.c_ospeed;
+    dst
+}
+
+fn read_termios2(fd: c_int) -> Result<libc::termios2, c_int> {
+    let mut termios2 = std::mem::MaybeUninit::<libc::termios2>::zeroed();
+    match unsafe { syscall::sys_ioctl(fd, libc::TCGETS2 as usize, termios2.as_mut_ptr() as usize) }
+    {
+        Ok(_) => Ok(unsafe { termios2.assume_init() }),
+        Err(e) => Err(e),
+    }
+}
+
+fn tcsets2_request(optional_actions: c_int) -> libc::Ioctl {
+    match optional_actions {
+        termios_core::TCSANOW => libc::TCSETS2,
+        termios_core::TCSADRAIN => libc::TCSETSW2,
+        termios_core::TCSAFLUSH => libc::TCSETSF2,
+        _ => libc::TCSETS2,
+    }
+}
+
 fn analyze_transition(
     before: &libc::termios,
     after: &libc::termios,
@@ -558,8 +668,11 @@ pub unsafe extern "C" fn tcgetattr(fd: c_int, termios_p: *mut libc::termios) -> 
         return -1;
     }
 
-    let rc = match unsafe { syscall::sys_ioctl(fd, libc::TCGETS as usize, termios_p as usize) } {
-        Ok(_) => 0,
+    let rc = match read_termios2(fd) {
+        Ok(termios2) => {
+            unsafe { std::ptr::write(termios_p, termios2_to_termios(&termios2)) };
+            0
+        }
         Err(e) => {
             unsafe { set_abi_errno(e) };
             -1
@@ -607,20 +720,18 @@ pub unsafe extern "C" fn tcsetattr(
         optional_actions
     };
 
-    let request = match act {
-        termios_core::TCSANOW => libc::TCSETS,
-        termios_core::TCSADRAIN => libc::TCSETSW,
-        termios_core::TCSAFLUSH => libc::TCSETSF,
-        _ => libc::TCSETS,
-    };
-    let mut previous = std::mem::MaybeUninit::<libc::termios>::uninit();
-    let previous_snapshot = match unsafe {
-        syscall::sys_ioctl(fd, libc::TCGETS as usize, previous.as_mut_ptr() as usize)
+    let request = tcsets2_request(act);
+    let previous_snapshot = read_termios2(fd)
+        .ok()
+        .map(|termios2| termios2_to_termios(&termios2));
+    let mut kernel_termios = unsafe { termios_to_termios2(&*termios_p) };
+    let rc = match unsafe {
+        syscall::sys_ioctl(
+            fd,
+            request as usize,
+            (&mut kernel_termios as *mut libc::termios2) as usize,
+        )
     } {
-        Ok(_) => Some(unsafe { previous.assume_init() }),
-        Err(_) => None,
-    };
-    let rc = match unsafe { syscall::sys_ioctl(fd, request as usize, termios_p as usize) } {
         Ok(_) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -689,12 +800,15 @@ pub unsafe extern "C" fn cfsetispeed(termios_p: *mut libc::termios, speed: u32) 
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    if !termios_core::valid_baud_rate(speed) {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
     let before = unsafe { std::ptr::read(termios_p) };
+    let input_code = if termios_core::valid_baud_rate(speed) {
+        speed as libc::speed_t
+    } else {
+        libc::BOTHER
+    };
     unsafe {
+        (*termios_p).c_cflag = ((*termios_p).c_cflag & !(libc::CIBAUD as libc::tcflag_t))
+            | input_speed_bits(input_code);
         (*termios_p).c_ispeed = speed as libc::speed_t;
     }
     let after = unsafe { std::ptr::read(termios_p) };
@@ -733,14 +847,15 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
-    if !termios_core::valid_baud_rate(speed) {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
-        return -1;
-    }
     let before = unsafe { std::ptr::read(termios_p) };
+    let output_code = if termios_core::valid_baud_rate(speed) {
+        speed as libc::speed_t
+    } else {
+        libc::BOTHER
+    };
     unsafe {
-        let next = (*termios_p).c_cflag & !termios_core::CBAUD | (speed & termios_core::CBAUD);
+        let next = ((*termios_p).c_cflag & !(libc::CBAUD as libc::tcflag_t))
+            | output_code as libc::tcflag_t;
         (*termios_p).c_cflag = next as libc::tcflag_t;
         (*termios_p).c_ospeed = speed as libc::speed_t;
     }
@@ -900,7 +1015,7 @@ mod tests {
     }
 
     fn cooked_termios() -> libc::termios {
-        let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
+        let mut termios = zeroed_termios();
         termios.c_iflag = (libc::ICRNL | libc::IXON) as libc::tcflag_t;
         termios.c_oflag = libc::OPOST as libc::tcflag_t;
         termios.c_cflag = (libc::CS8 | libc::CREAD | libc::B9600) as libc::tcflag_t;
@@ -1044,7 +1159,7 @@ mod tests {
             return;
         };
 
-        let mut original = unsafe { std::mem::zeroed::<libc::termios>() };
+        let mut original = zeroed_termios();
         let rc = unsafe { tcgetattr(slave, &mut original) };
         assert_eq!(rc, 0);
 

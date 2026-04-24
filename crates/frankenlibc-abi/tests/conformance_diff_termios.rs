@@ -98,6 +98,13 @@ fn open_pty_master() -> Option<c_int> {
     Some(fd)
 }
 
+fn zeroed_termios() -> libc::termios {
+    let termios = std::mem::MaybeUninit::<libc::termios>::zeroed();
+    // SAFETY: libc::termios is a C ABI record used as ioctl/cfset input and
+    // output in this harness; all fields are valid when zero-initialized.
+    unsafe { termios.assume_init() }
+}
+
 // ===========================================================================
 // cfgetispeed / cfgetospeed — read speed back from a struct after setting
 // it via libc and via fl. Both impls must read the same kernel-encoded
@@ -120,7 +127,7 @@ fn diff_cf_get_speed_after_libc_set() {
         ("B115200", B115200),
     ];
     for (label, speed) in speeds {
-        let mut t: libc::termios = unsafe { core::mem::zeroed() };
+        let mut t = zeroed_termios();
         // Set both i and o speeds via libc.
         let _ = unsafe { cfsetispeed(&mut t as *mut _, *speed) };
         let _ = unsafe { cfsetospeed(&mut t as *mut _, *speed) };
@@ -170,8 +177,8 @@ fn diff_cf_set_speed_then_libc_read() {
         ("B115200", B115200),
     ];
     for (label, speed) in speeds {
-        let mut t_fl: libc::termios = unsafe { core::mem::zeroed() };
-        let mut t_lc: libc::termios = unsafe { core::mem::zeroed() };
+        let mut t_fl = zeroed_termios();
+        let mut t_lc = zeroed_termios();
         let r_fl_i = unsafe { fl::cfsetispeed(&mut t_fl as *mut _, *speed) };
         let r_fl_o = unsafe { fl::cfsetospeed(&mut t_fl as *mut _, *speed) };
         let r_lc_i = unsafe { cfsetispeed(&mut t_lc as *mut _, *speed) };
@@ -233,20 +240,17 @@ fn diff_cf_set_speed_then_libc_read() {
 // POSIX 2017 cfsetispeed/cfsetospeed: "may return -1 and set errno to
 // [EINVAL] if the speed value is not a valid one." This is documented as
 // implementation-defined behavior, both impls are conformant, but they
-// behave differently:
-//   - frankenlibc validates and rejects unknown speeds with EINVAL
-//   - glibc accepts arbitrary u32 speeds (writes them straight into c_cflag)
-// We only assert that frankenlibc's behavior is at least as strict as
-// glibc's. This is logged as a known conformance divergence but not a
-// failure.
+// now agree on Linux: arbitrary numeric speeds are accepted and represented
+// through BOTHER + explicit c_ispeed/c_ospeed fields for later TCSETS2 use.
+// We keep this as a documentation test because POSIX permits either policy.
 #[test]
 fn diff_cfsetspeed_invalid_documented() {
     let bogus_speeds: &[u32] = &[0xdead_beef, 0x10000, 0xffff_ffff];
     let mut fl_rejects = 0;
     let mut lc_rejects = 0;
     for speed in bogus_speeds {
-        let mut t_fl: libc::termios = unsafe { core::mem::zeroed() };
-        let mut t_lc: libc::termios = unsafe { core::mem::zeroed() };
+        let mut t_fl = zeroed_termios();
+        let mut t_lc = zeroed_termios();
         let r_fl = unsafe { fl::cfsetispeed(&mut t_fl as *mut _, *speed) };
         let r_lc = unsafe { cfsetispeed(&mut t_lc as *mut _, *speed) };
         if r_fl != 0 {
@@ -275,8 +279,8 @@ fn diff_tcgetattr_non_tty() {
     let f = std::fs::File::open("/dev/null").expect("open /dev/null");
     let fd = f.as_raw_fd();
 
-    let mut t_fl: libc::termios = unsafe { core::mem::zeroed() };
-    let mut t_lc: libc::termios = unsafe { core::mem::zeroed() };
+    let mut t_fl = zeroed_termios();
+    let mut t_lc = zeroed_termios();
 
     set_errno(0);
     let r_fl = unsafe { fl::tcgetattr(fd, &mut t_fl as *mut _) };
@@ -335,8 +339,8 @@ fn diff_tcgetattr_pty_match() {
         return;
     };
 
-    let mut t_fl: libc::termios = unsafe { core::mem::zeroed() };
-    let mut t_lc: libc::termios = unsafe { core::mem::zeroed() };
+    let mut t_fl = zeroed_termios();
+    let mut t_lc = zeroed_termios();
     let r_fl = unsafe { fl::tcgetattr(master_fd, &mut t_fl as *mut _) };
     let r_lc = unsafe { tcgetattr(master_fd, &mut t_lc as *mut _) };
 
@@ -371,30 +375,14 @@ fn diff_tcgetattr_pty_match() {
                 glibc: format!("{:#x}", t_lc.c_oflag),
             });
         }
-        // Mask off CIBAUD (0x100f0000) when comparing c_cflag.
-        // Modern glibc uses TCGETS2 internally, which preserves the
-        // kernel's CIBAUD bits encoding the input baud rate. FrankenLibC
-        // uses TCGETS, which on legacy x86_64 strips those bits. Both
-        // are POSIX-conformant for non-extended baud rates. Logged as
-        // a known conformance divergence (DISC-TERMIOS-001).
-        const CIBAUD_MASK: libc::tcflag_t = 0x100f_0000;
-        let cflag_fl_norm = t_fl.c_cflag & !CIBAUD_MASK;
-        let cflag_lc_norm = t_lc.c_cflag & !CIBAUD_MASK;
-        if cflag_fl_norm != cflag_lc_norm {
+        if t_fl.c_cflag != t_lc.c_cflag {
             divs.push(Divergence {
                 function: "tcgetattr",
                 case: "ptmx".into(),
-                field: "c_cflag (CIBAUD-masked)",
-                frankenlibc: format!("{cflag_fl_norm:#x}"),
-                glibc: format!("{cflag_lc_norm:#x}"),
+                field: "c_cflag",
+                frankenlibc: format!("{:#x}", t_fl.c_cflag),
+                glibc: format!("{:#x}", t_lc.c_cflag),
             });
-        }
-        if (t_fl.c_cflag & CIBAUD_MASK) != (t_lc.c_cflag & CIBAUD_MASK) {
-            eprintln!(
-                "{{\"family\":\"termios.h\",\"divergence\":\"DISC-TERMIOS-001\",\"field\":\"CIBAUD_bits\",\"fl\":\"{:#x}\",\"glibc\":\"{:#x}\",\"reason\":\"fl uses TCGETS, glibc uses TCGETS2\"}}",
-                t_fl.c_cflag & CIBAUD_MASK,
-                t_lc.c_cflag & CIBAUD_MASK,
-            );
         }
         if t_fl.c_lflag != t_lc.c_lflag {
             divs.push(Divergence {
@@ -443,7 +431,7 @@ fn diff_tcsetattr_pty_roundtrip() {
     };
 
     // Save original
-    let mut orig: libc::termios = unsafe { core::mem::zeroed() };
+    let mut orig = zeroed_termios();
     if unsafe { tcgetattr(master_fd, &mut orig as *mut _) } != 0 {
         unsafe {
             close(master_fd);
@@ -457,15 +445,9 @@ fn diff_tcsetattr_pty_roundtrip() {
     modified.c_lflag &= !(libc::ECHO | libc::ICANON);
 
     // Apply via fl
-    let r_set_fl = unsafe {
-        fl::tcsetattr(
-            master_fd,
-            TCSANOW,
-            &modified as *const _ as *const _ as *const libc::termios,
-        )
-    };
+    let r_set_fl = unsafe { fl::tcsetattr(master_fd, TCSANOW, &modified as *const _) };
     // Read back via libc
-    let mut readback_lc: libc::termios = unsafe { core::mem::zeroed() };
+    let mut readback_lc = zeroed_termios();
     let r_get_lc = unsafe { tcgetattr(master_fd, &mut readback_lc as *mut _) };
     if r_set_fl != 0 || r_get_lc != 0 {
         divs.push(Divergence {
@@ -491,7 +473,7 @@ fn diff_tcsetattr_pty_roundtrip() {
 
     // Now apply modified via libc; read back via fl
     let r_set_lc = unsafe { tcsetattr(master_fd, TCSANOW, &modified as *const _) };
-    let mut readback_fl: libc::termios = unsafe { core::mem::zeroed() };
+    let mut readback_fl = zeroed_termios();
     let r_get_fl = unsafe { fl::tcgetattr(master_fd, &mut readback_fl as *mut _) };
     if r_set_lc != 0 || r_get_fl != 0 {
         divs.push(Divergence {
