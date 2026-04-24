@@ -1123,6 +1123,35 @@ pub unsafe extern "C" fn sigaction(
             )
         })
         .unwrap_or((0, 0));
+
+    // Pre-compute the user handler+flags that the trampoline will dispatch
+    // for this signal, then write them into our per-signal slot BEFORE
+    // installing the kernel-level trampoline. The kernel trampoline reads
+    // the slot on every delivery; if the slot were updated AFTER the
+    // syscall, a signal arriving in the window between the syscall and
+    // the slot store would either invoke the previous handler (stale
+    // entry) or be silently dropped (zero entry). Writing first ensures
+    // the slot is always at-least as current as what the kernel will use.
+    // (REVIEW round 2: sigaction handler-install TOCTOU.)
+    let (new_handler, new_flags) = if act.is_null() {
+        (prev_handler, prev_flags)
+    } else {
+        let raw_handler = kernel_act.sa_handler;
+        if is_default_or_ignore_handler(raw_handler) {
+            (raw_handler, kernel_act.sa_flags)
+        } else {
+            // SAFETY: act is non-null in this branch.
+            let user_act = unsafe { &*act };
+            (user_act.sa_sigaction, user_act.sa_flags as usize)
+        }
+    };
+    if !act.is_null()
+        && let Some(slot) = signal_slot(signum)
+    {
+        slot.handler.store(new_handler, Ordering::Relaxed);
+        slot.flags.store(new_flags, Ordering::Relaxed);
+    }
+
     let rc = match unsafe {
         raw_syscall::sys_rt_sigaction(
             signum,
@@ -1138,28 +1167,20 @@ pub unsafe extern "C" fn sigaction(
         }
     };
     let adverse = rc != 0;
-    if !adverse {
-        if !oldact.is_null() {
-            let mut user_oldact = kernel_to_user_sigaction(&kernel_oldact);
-            rewrite_old_sigaction(&mut user_oldact, prev_handler, prev_flags);
-            // SAFETY: oldact is caller-provided writable storage.
-            unsafe { *oldact = user_oldact };
+    if adverse {
+        // Roll back the slot to its pre-call state so the trampoline never
+        // dispatches a handler that the kernel never accepted.
+        if !act.is_null()
+            && let Some(slot) = signal_slot(signum)
+        {
+            slot.handler.store(prev_handler, Ordering::Relaxed);
+            slot.flags.store(prev_flags, Ordering::Relaxed);
         }
-        if !act.is_null() {
-            let user_handler = kernel_act.sa_handler;
-            if let Some(slot) = signal_slot(signum) {
-                if is_default_or_ignore_handler(user_handler) {
-                    slot.handler.store(user_handler, Ordering::Relaxed);
-                    slot.flags.store(kernel_act.sa_flags, Ordering::Relaxed);
-                } else {
-                    // SAFETY: act is non-null in this branch.
-                    let user_act = unsafe { &*act };
-                    slot.handler.store(user_act.sa_sigaction, Ordering::Relaxed);
-                    slot.flags
-                        .store(user_act.sa_flags as usize, Ordering::Relaxed);
-                }
-            }
-        }
+    } else if !oldact.is_null() {
+        let mut user_oldact = kernel_to_user_sigaction(&kernel_oldact);
+        rewrite_old_sigaction(&mut user_oldact, prev_handler, prev_flags);
+        // SAFETY: oldact is caller-provided writable storage.
+        unsafe { *oldact = user_oldact };
     }
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, adverse);
     rc

@@ -9,7 +9,7 @@
 
 use std::ffi::c_int;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -384,6 +384,91 @@ fn sigaction_install_and_restore() {
     // Restore original
     let rc = unsafe { sigaction(libc::SIGUSR1, &old, std::ptr::null_mut()) };
     assert_eq!(rc, 0);
+}
+
+#[test]
+fn sigaction_pending_signal_invokes_newly_installed_handler() {
+    // REVIEW round 2: pin the handler-install ordering. Before the fix,
+    // sys_rt_sigaction installed the trampoline before our slot was
+    // updated; a signal already pending at install time could be
+    // dispatched against a stale handler (or dropped entirely if the
+    // slot was zero). After the fix, the slot is written first, so any
+    // signal delivered through the trampoline observes the new handler.
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+
+    static FIRST_HITS: AtomicI32 = AtomicI32::new(0);
+    static SECOND_HITS: AtomicI32 = AtomicI32::new(0);
+    FIRST_HITS.store(0, Ordering::SeqCst);
+    SECOND_HITS.store(0, Ordering::SeqCst);
+
+    unsafe extern "C" fn first_handler(_sig: c_int) {
+        FIRST_HITS.fetch_add(1, Ordering::SeqCst);
+    }
+    unsafe extern "C" fn second_handler(_sig: c_int) {
+        SECOND_HITS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    let mut saved: libc::sigaction = unsafe { std::mem::zeroed() };
+    let rc = unsafe { sigaction(libc::SIGUSR2, std::ptr::null(), &mut saved) };
+    assert_eq!(rc, 0);
+
+    // Install first handler.
+    let mut act_a: libc::sigaction = unsafe { std::mem::zeroed() };
+    act_a.sa_sigaction = first_handler as *const () as usize;
+    assert_eq!(
+        unsafe { sigaction(libc::SIGUSR2, &act_a, std::ptr::null_mut()) },
+        0,
+    );
+
+    // Block SIGUSR2 so we can queue a pending signal.
+    let mut block: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        sigemptyset(&mut block);
+        sigaddset(&mut block, libc::SIGUSR2);
+    }
+    let mut prior_mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { sigprocmask(libc::SIG_BLOCK, &block, &mut prior_mask) },
+        0,
+    );
+
+    // Queue SIGUSR2 -- it stays pending while blocked.
+    assert_eq!(unsafe { libc::raise(libc::SIGUSR2) }, 0);
+
+    // Replace the handler while the signal is pending. After the fix,
+    // the slot is updated before sys_rt_sigaction completes, so when
+    // we unblock the signal it must dispatch through second_handler.
+    let mut act_b: libc::sigaction = unsafe { std::mem::zeroed() };
+    act_b.sa_sigaction = second_handler as *const () as usize;
+    assert_eq!(
+        unsafe { sigaction(libc::SIGUSR2, &act_b, std::ptr::null_mut()) },
+        0,
+    );
+
+    // Unblock to allow delivery.
+    assert_eq!(
+        unsafe { sigprocmask(libc::SIG_SETMASK, &prior_mask, std::ptr::null_mut()) },
+        0,
+    );
+
+    // Give the kernel a brief window to deliver, then assert.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert_eq!(
+        SECOND_HITS.load(Ordering::SeqCst),
+        1,
+        "pending SIGUSR2 must dispatch through the newly installed handler",
+    );
+    assert_eq!(
+        FIRST_HITS.load(Ordering::SeqCst),
+        0,
+        "previously installed handler must not run after replacement",
+    );
+
+    // Restore original disposition.
+    assert_eq!(
+        unsafe { sigaction(libc::SIGUSR2, &saved, std::ptr::null_mut()) },
+        0,
+    );
 }
 
 // ---------------------------------------------------------------------------
