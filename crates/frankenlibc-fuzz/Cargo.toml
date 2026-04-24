@@ -270,4 +270,9 @@ name = "fuzz_sysv_ipc"
 path = "fuzz_targets/fuzz_sysv_ipc.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_ptrace"
+path = "fuzz_targets/fuzz_ptrace.rs"
+doc = false
+
 [workspace]
