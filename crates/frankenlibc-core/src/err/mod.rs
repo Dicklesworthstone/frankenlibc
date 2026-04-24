@@ -121,4 +121,77 @@ mod tests {
         let out = format_err_message(b"prog", msg, None);
         assert_eq!(out, b"prog: \x01\x02\x00\x03\x04\n".to_vec());
     }
+
+    // bd-err-3: structural property tests
+
+    #[test]
+    fn property_output_starts_with_progname() {
+        for progname in [&b"a"[..], b"prog", b"long_program_name_here"] {
+            let out = format_err_message(progname, b"msg", None);
+            assert!(
+                out.starts_with(progname),
+                "output {:?} should start with progname {:?}",
+                String::from_utf8_lossy(&out),
+                String::from_utf8_lossy(progname)
+            );
+        }
+    }
+
+    #[test]
+    fn property_output_has_progname_separator() {
+        // Every non-empty output should contain ": " somewhere after
+        // the progname.
+        for progname in [&b"prog"[..], b"foo"] {
+            for msg in [&b""[..], b"msg"] {
+                for errno in [None, Some(b"err".as_slice())] {
+                    let out = format_err_message(progname, msg, errno);
+                    let head_sep = &out[progname.len()..progname.len() + 2];
+                    assert_eq!(
+                        head_sep, b": ",
+                        "expected ': ' separator after progname in {:?}",
+                        String::from_utf8_lossy(&out)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn property_no_double_separator_on_empty_message_with_errno() {
+        // Specifically: "prog: : err\n" (double ': ') is forbidden.
+        let out = format_err_message(b"prog", b"", Some(b"e"));
+        let txt = String::from_utf8(out).unwrap();
+        assert!(!txt.contains(": : "), "got: {txt:?}");
+        assert_eq!(txt, "prog: e\n");
+    }
+
+    #[test]
+    fn property_total_length_predictable() {
+        // Length = progname + 2 + (msg.len if non-empty) + (sep ": " if msg+errno) + (errno.len if any) + 1 (newline)
+        for (progname, msg, errno) in [
+            (&b"prog"[..], &b""[..], None),
+            (b"prog", b"hi", None),
+            (b"prog", b"", Some(b"e".as_slice())),
+            (b"prog", b"hi", Some(b"e".as_slice())),
+        ] {
+            let mut expected = progname.len() + 2 + msg.len();
+            if !msg.is_empty() && errno.is_some() {
+                expected += 2; // ": " separator
+            }
+            if let Some(e) = errno {
+                expected += e.len();
+            }
+            expected += 1; // newline
+            let out = format_err_message(progname, msg, errno);
+            assert_eq!(
+                out.len(),
+                expected,
+                "len mismatch for ({:?}, {:?}, {:?}): got {:?}",
+                String::from_utf8_lossy(progname),
+                String::from_utf8_lossy(msg),
+                errno.map(|e| String::from_utf8_lossy(e).into_owned()),
+                String::from_utf8_lossy(&out)
+            );
+        }
+    }
 }
