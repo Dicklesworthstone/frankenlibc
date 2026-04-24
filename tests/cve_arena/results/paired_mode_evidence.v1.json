@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1m5.7",
-  "generated_at": "2026-04-06T18:58:43Z",
+  "generated_at": "2026-04-24T03:40:34Z",
   "summary": {
     "total_paired_scenarios": 12,
     "strict_detected": 12,
@@ -28,6 +28,8 @@
       "use_after_free"
     ],
     "unique_dossier_ids": 12,
+    "entries_with_complete_artifact_bundle": 12,
+    "unique_artifact_paths": 84,
     "validation_errors": 0,
     "validation_warnings": 0
   },

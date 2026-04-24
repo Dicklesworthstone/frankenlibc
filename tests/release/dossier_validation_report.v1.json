@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-17T23:40:34Z",
+  "generated_at": "2026-04-24T03:42:46Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -27,8 +27,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "90f926aa7c7306e70ede53e46344d0fd8ddd99e4968df9059d204cf54330cee3",
-      "size_bytes": 941324,
+      "sha256": "3f1f3c8a048b6b8c0bf7e49b3e7ed5284a978891cf7591ac5c937dfef86dccf5",
+      "size_bytes": 941627,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -75,8 +75,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "e9e400c318c94fdfadc1feaab4533292b1a5ea098c352593de98ff592c5f0dc7",
-      "size_bytes": 7170,
+      "sha256": "74401970c08f73a67f42e8555cb378ee0984499ac7bdf17db25c3f2c3f8fdd87",
+      "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "691a5e4d2f454abf426c4ab779225a25c33775be1e30c3c11db12959ef83bfa8",
+      "sha256": "35adb2f7621ee44d7c5812c620f176e7be041c021b92272a00b27dfcb1158d8b",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "a91bdc47790d0dceb41508b06f314109914a5956c911b7c9045033e764e44a56",
+      "sha256": "5450404ced0829e2dac794be35d08240c0c07a93a05978c560808428db858277",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -210,8 +210,8 @@
   "integrity_index": {
     "support_matrix": {
       "path": "support_matrix.json",
-      "sha256": "90f926aa7c7306e70ede53e46344d0fd8ddd99e4968df9059d204cf54330cee3",
-      "size_bytes": 941324
+      "sha256": "3f1f3c8a048b6b8c0bf7e49b3e7ed5284a978891cf7591ac5c937dfef86dccf5",
+      "size_bytes": 941627
     },
     "reality_report": {
       "path": "tests/conformance/reality_report.v1.json",
@@ -230,8 +230,8 @@
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "e9e400c318c94fdfadc1feaab4533292b1a5ea098c352593de98ff592c5f0dc7",
-      "size_bytes": 7170
+      "sha256": "74401970c08f73a67f42e8555cb378ee0984499ac7bdf17db25c3f2c3f8fdd87",
+      "size_bytes": 5609
     },
     "replacement_levels": {
       "path": "tests/conformance/replacement_levels.json",
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "691a5e4d2f454abf426c4ab779225a25c33775be1e30c3c11db12959ef83bfa8",
+      "sha256": "35adb2f7621ee44d7c5812c620f176e7be041c021b92272a00b27dfcb1158d8b",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "a91bdc47790d0dceb41508b06f314109914a5956c911b7c9045033e764e44a56",
+      "sha256": "5450404ced0829e2dac794be35d08240c0c07a93a05978c560808428db858277",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -288,89 +288,116 @@
     },
     "entries": [
       {
-        "id": "bd-ng5t",
-        "title": "Execute pwd_ops fixture through isolated harness",
+        "id": "bd-10pq",
+        "title": "Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V)",
         "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-17T02:46:09.517310844Z",
+        "priority": 1,
+        "closed_at": "2026-04-24T03:39:34.405902286Z",
         "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "Upgraded pwd_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+        "labels": [
+          "architecture",
+          "critique",
+          "cross-platform",
+          "feature-parity",
+          "frankenlibc",
+          "gap-closure",
+          "pthread",
+          "testing",
+          "verification"
+        ],
+        "close_reason": "Architecture heterogeneity artifacts are present and verified: rch cargo test -p frankenlibc-membrane --test sos_barrier_arch_independence_test passed 6/6."
       },
       {
-        "id": "bd-jucr",
-        "title": "Execute stdio_file_ops fixture through isolated harness",
-        "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-17T01:01:34.104663411Z",
+        "id": "bd-z4k96",
+        "title": "REVIEW: [HIGH] locale_abi.rs setlocale/newlocale/textdomain/bindtextdomain walk unbounded memory via CStr::from_ptr on user-controlled pointers",
+        "issue_type": "bug",
+        "priority": 1,
+        "closed_at": "2026-04-24T03:35:00.000000000Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "Upgraded stdio_file_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+        "close_reason": "All four named sites (setlocale L158, textdomain L392, bindtextdomain L419+L435, newlocale L491) now use read_bounded_cstr (locale_abi.rs:36) which delegates to scan_c_string + known_locale_string_re\u2026"
       },
       {
-        "id": "bd-6omr",
-        "title": "Execute memcpy_strict fixture through isolated harness",
-        "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-17T00:53:20.884896522Z",
+        "id": "bd-jqy64",
+        "title": "[MODE-1][HIGH] symbolic correctness: c11threads create/join backend mismatch",
+        "issue_type": "bug",
+        "priority": 1,
+        "closed_at": "2026-04-24T03:30:00Z",
         "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "Upgraded memcpy_strict conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+        "labels": [
+          "c11threads",
+          "modes",
+          "review",
+          "symbolic"
+        ],
+        "close_reason": "Already fixed: commit 138c07c3 made pthread_join delegate to host for non-managed handles. 37/37 c11threads_abi_test pass. Verified round 2."
       },
       {
-        "id": "bd-otvz",
-        "title": "Execute strlen_strict fixture through isolated harness",
-        "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-17T00:44:29.251492016Z",
+        "id": "bd-ily44",
+        "title": "REVIEW: [HIGH] iconv() TOCTOU use-after-free with concurrent iconv_close()",
+        "issue_type": "bug",
+        "priority": 1,
+        "closed_at": "2026-04-24T03:30:00Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "Upgraded strlen_strict conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+        "close_reason": "Fixed: commit c8003957 (peer agent) refactored iconv registry to Arc<Mutex<IconvDescriptor>>; concurrent close + iconv no longer UAFs. 41/41 iconv tests pass including the new TOCTOU regression."
       },
       {
-        "id": "bd-4fqz",
-        "title": "Execute string_strtok fixture through isolated harness",
-        "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-17T00:37:23.998288768Z",
+        "id": "bd-cie59",
+        "title": "REVIEW: [HIGH] pthread_cond_wait/timedwait clobbers RECURSIVE/ERRORCHECK mutex owner without ownership check",
+        "issue_type": "bug",
+        "priority": 1,
+        "closed_at": "2026-04-24T03:30:00Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "Upgraded string_strtok conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+        "close_reason": "Fixed: commit 64fb99b2 added owner verification in pthread_cond_wait/timedwait for RECURSIVE/ERRORCHECK; returns EPERM for non-owner. Regression test added."
       },
       {
-        "id": "bd-yecy",
-        "title": "Execute ctype_ops fixture through isolated harness",
-        "issue_type": "task",
+        "id": "bd-9chy.7",
+        "title": "stdio: implement tmpfile/tmpfile64 natively via O_TMPFILE + native fdopen",
+        "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-17T00:31:16.048625797Z",
+        "closed_at": "2026-04-24T03:30:00Z",
         "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "Upgraded ctype_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+        "labels": [
+          "constructor",
+          "stdio"
+        ],
+        "close_reason": "Already implemented: tmpfile uses O_TMPFILE primary + mkstemp/unlink fallback + fdopen_native_impl; tmpfile64 alias. 6/6 stdio tmpfile tests pass."
       },
       {
-        "id": "bd-j6jk",
-        "title": "Execute iconv_phase1 fixture through isolated harness",
-        "issue_type": "task",
+        "id": "bd-9chy.4",
+        "title": "stdio: define versioned JSONL evidence schema + parser + ring buffer",
+        "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-17T00:21:37.264821072Z",
+        "closed_at": "2026-04-24T03:20:58.472918221Z",
         "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "Upgraded iconv_phase1 conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions."
+        "labels": [
+          "evidence",
+          "foundation",
+          "stdio"
+        ],
+        "close_reason": "Stdio evidence schema/parser/ring buffer are implemented and verified: rch cargo test -p frankenlibc-harness --test stdio_evidence_schema passed 4/4."
       },
       {
-        "id": "bd-tpnv",
-        "title": "Execute dlfcn_ops fixture through isolated harness",
-        "issue_type": "task",
-        "priority": 2,
-        "closed_at": "2026-04-17T00:12:22.104109338Z",
+        "id": "bd-4rjgy",
+        "title": "[MODE-5][HIGH] symbolic correctness: runtime_policy env lock poisoning hides root failures",
+        "issue_type": "bug",
+        "priority": 1,
+        "closed_at": "2026-04-24T03:17:39.092744577Z",
         "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "Upgraded dlfcn_ops conformance coverage to execute each fixture case through the isolated harness subprocess path and added fixture metadata assertions."
+        "labels": [
+          "modes",
+          "review",
+          "runtime-policy",
+          "symbolic"
+        ],
+        "close_reason": "Runtime policy switch logging and panic-isolated env lock recovery are present; revalidated runtime_policy regression via rch."
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-ng5t` Execute pwd_ops fixture through isolated harness (task, closed 2026-04-17T02:46:09.517310844Z)\n  Upgraded pwd_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-jucr` Execute stdio_file_ops fixture through isolated harness (task, closed 2026-04-17T01:01:34.104663411Z)\n  Upgraded stdio_file_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-6omr` Execute memcpy_strict fixture through isolated harness (task, closed 2026-04-17T00:53:20.884896522Z)\n  Upgraded memcpy_strict conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-otvz` Execute strlen_strict fixture through isolated harness (task, closed 2026-04-17T00:44:29.251492016Z)\n  Upgraded strlen_strict conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-4fqz` Execute string_strtok fixture through isolated harness (task, closed 2026-04-17T00:37:23.998288768Z)\n  Upgraded string_strtok conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-yecy` Execute ctype_ops fixture through isolated harness (task, closed 2026-04-17T00:31:16.048625797Z)\n  Upgraded ctype_ops conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-j6jk` Execute iconv_phase1 fixture through isolated harness (task, closed 2026-04-17T00:21:37.264821072Z)\n  Upgraded iconv_phase1 conformance coverage to execute every fixture case through the isolated harness subprocess path and added top-level fixture metadata assertions.\n- `bd-tpnv` Execute dlfcn_ops fixture through isolated harness (task, closed 2026-04-17T00:12:22.104109338Z)\n  Upgraded dlfcn_ops conformance coverage to execute each fixture case through the isolated harness subprocess path and added fixture metadata assertions.",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-10pq` Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V) (task, closed 2026-04-24T03:39:34.405902286Z)\n  Architecture heterogeneity artifacts are present and verified: rch cargo test -p frankenlibc-membrane --test sos_barrier_arch_independence_test passed 6/6.\n- `bd-z4k96` REVIEW: [HIGH] locale_abi.rs setlocale/newlocale/textdomain/bindtextdomain walk unbounded memory via CStr::from_ptr on user-controlled pointers (bug, closed 2026-04-24T03:35:00.000000000Z)\n  All four named sites (setlocale L158, textdomain L392, bindtextdomain L419+L435, newlocale L491) now use read_bounded_cstr (locale_abi.rs:36) which delegates to scan_c_string + known_locale_string_re\u2026\n- `bd-jqy64` [MODE-1][HIGH] symbolic correctness: c11threads create/join backend mismatch (bug, closed 2026-04-24T03:30:00Z)\n  Already fixed: commit 138c07c3 made pthread_join delegate to host for non-managed handles. 37/37 c11threads_abi_test pass. Verified round 2.\n- `bd-ily44` REVIEW: [HIGH] iconv() TOCTOU use-after-free with concurrent iconv_close() (bug, closed 2026-04-24T03:30:00Z)\n  Fixed: commit c8003957 (peer agent) refactored iconv registry to Arc<Mutex<IconvDescriptor>>; concurrent close + iconv no longer UAFs. 41/41 iconv tests pass including the new TOCTOU regression.\n- `bd-cie59` REVIEW: [HIGH] pthread_cond_wait/timedwait clobbers RECURSIVE/ERRORCHECK mutex owner without ownership check (bug, closed 2026-04-24T03:30:00Z)\n  Fixed: commit 64fb99b2 added owner verification in pthread_cond_wait/timedwait for RECURSIVE/ERRORCHECK; returns EPERM for non-owner. Regression test added.\n- `bd-9chy.7` stdio: implement tmpfile/tmpfile64 natively via O_TMPFILE + native fdopen (feature, closed 2026-04-24T03:30:00Z)\n  Already implemented: tmpfile uses O_TMPFILE primary + mkstemp/unlink fallback + fdopen_native_impl; tmpfile64 alias. 6/6 stdio tmpfile tests pass.\n- `bd-9chy.4` stdio: define versioned JSONL evidence schema + parser + ring buffer (feature, closed 2026-04-24T03:20:58.472918221Z)\n  Stdio evidence schema/parser/ring buffer are implemented and verified: rch cargo test -p frankenlibc-harness --test stdio_evidence_schema passed 4/4.\n- `bd-4rjgy` [MODE-5][HIGH] symbolic correctness: runtime_policy env lock poisoning hides root failures (bug, closed 2026-04-24T03:17:39.092744577Z)\n  Runtime policy switch logging and panic-isolated env lock recovery are present; revalidated runtime_policy regression via rch.",
     "summary": {
-      "closed_total": 639,
+      "closed_total": 1085,
       "selected": 8,
       "invalid_rows": 0
     }

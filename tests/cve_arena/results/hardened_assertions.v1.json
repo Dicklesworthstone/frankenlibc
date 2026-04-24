@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1m5.6",
-  "generated_at": "2026-04-06T15:37:21Z",
+  "generated_at": "2026-04-24T03:40:34Z",
   "summary": {
     "total_assertions": 12,
     "no_crash_in_hardened": 12,

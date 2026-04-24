@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-w2c3.5.3",
-  "generated_at": "2026-04-07T22:48:06Z",
+  "generated_at": "2026-04-24T03:43:05Z",
   "status": "pass",
   "summary": {
     "total_modules": 69,
@@ -764,7 +764,7 @@
     },
     "ablation_report": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "c8d9e4ddb4f7c70de98281a68511f2efc0f022f07b021763ec72f8e08e014a9b",
+      "sha256": "35adb2f7621ee44d7c5812c620f176e7be041c021b92272a00b27dfcb1158d8b",
       "size_bytes": 35306
     },
     "linkage": {
@@ -779,8 +779,8 @@
     },
     "harness_cargo_manifest": {
       "path": "crates/frankenlibc-harness/Cargo.toml",
-      "sha256": "fe491998aaa791f147c682bb0ee9ccdd872e1db1637e1b1a4276917fb5032292",
-      "size_bytes": 1225
+      "sha256": "1d16247255772811a6ebc1ed2f620daffa13085707ff76087efc7e2d76c1bcc7",
+      "size_bytes": 1301
     }
   },
   "tooling_contract": {
