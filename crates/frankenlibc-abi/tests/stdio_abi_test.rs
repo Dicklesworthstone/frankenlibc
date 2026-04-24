@@ -1348,9 +1348,10 @@ fn stdio_64bit_aliases_match_base_contracts() {
     assert_eq!(unsafe { fgetc(stream) }, b'B' as i32);
 
     // Save 64-bit position.
-    let mut pos = unsafe { std::mem::zeroed::<libc::fpos_t>() };
-    let pos_ptr = (&mut pos as *mut libc::fpos_t).cast();
+    let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+    let pos_ptr = pos.as_mut_ptr().cast();
     assert_eq!(unsafe { fgetpos64(stream, pos_ptr) }, 0);
+    let pos = unsafe { pos.assume_init() };
 
     // Consume two more bytes, then restore.
     assert_eq!(unsafe { fgetc(stream) }, b'C' as i32);
@@ -1388,9 +1389,10 @@ fn fgetpos_fsetpos_save_and_restore_position() {
     assert_eq!(unsafe { fgetc(stream) }, b'B' as i32);
 
     // Save position (should be at offset 2).
-    let mut pos = unsafe { std::mem::zeroed::<libc::fpos_t>() };
+    let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
     // SAFETY: stream is valid and pos is a valid fpos_t.
-    assert_eq!(unsafe { fgetpos(stream, &mut pos) }, 0);
+    assert_eq!(unsafe { fgetpos(stream, pos.as_mut_ptr()) }, 0);
+    let pos = unsafe { pos.assume_init() };
 
     // Read 2 more chars.
     assert_eq!(unsafe { fgetc(stream) }, b'C' as i32);
@@ -1417,13 +1419,16 @@ fn fgetpos_rejects_null_arguments() {
     let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
     assert!(!stream.is_null());
 
-    let mut pos = unsafe { std::mem::zeroed::<libc::fpos_t>() };
+    let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
     // SAFETY: null stream is rejected.
-    assert_eq!(unsafe { fgetpos(std::ptr::null_mut(), &mut pos) }, -1);
+    assert_eq!(
+        unsafe { fgetpos(std::ptr::null_mut(), pos.as_mut_ptr()) },
+        -1
+    );
     // SAFETY: null pos is rejected.
     assert_eq!(unsafe { fgetpos(stream, std::ptr::null_mut()) }, -1);
     // SAFETY: null stream is rejected.
-    assert_eq!(unsafe { fsetpos(std::ptr::null_mut(), &pos) }, -1);
+    assert_eq!(unsafe { fsetpos(std::ptr::null_mut(), pos.as_ptr()) }, -1);
     // SAFETY: null pos is rejected.
     assert_eq!(unsafe { fsetpos(stream, std::ptr::null()) }, -1);
 
@@ -2089,6 +2094,40 @@ fn tmpfile64_creates_writable_stream() {
     assert_eq!(unsafe { fclose(stream) }, 0);
 }
 
+#[test]
+fn tmpfile64_alias_uses_unlinked_update_stream() {
+    let stream = unsafe { tmpfile64() };
+    assert!(!stream.is_null());
+
+    let fd = unsafe { fileno(stream) };
+    assert!(fd >= 0);
+    let proc_fd_path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+    let target =
+        fs::read_link(&proc_fd_path).expect("tmpfile64 fd should be visible in /proc/self/fd");
+    let rendered = target.to_string_lossy();
+    assert!(
+        rendered.contains("/tmp/"),
+        "tmpfile64 backing path should live under /tmp: {rendered}"
+    );
+    assert!(
+        rendered.contains("(deleted)"),
+        "tmpfile64 backing file should already be unlinked while open: {rendered}"
+    );
+
+    let data = b"tmpfile64-alias";
+    let written = unsafe { fwrite(data.as_ptr().cast(), 1, data.len(), stream) };
+    assert_eq!(written, data.len());
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut buf = [0_u8; 32];
+    let read = unsafe { fread(buf.as_mut_ptr().cast(), 1, data.len(), stream) };
+    assert_eq!(read, data.len());
+    assert_eq!(&buf[..data.len()], data);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
 // ---------------------------------------------------------------------------
 // vsnprintf / vsprintf (via variadic wrapper)
 // ---------------------------------------------------------------------------
@@ -2590,11 +2629,9 @@ fn io_internal_fgetpos_variants_restore_position() {
     assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
 
     assert_eq!(unsafe { fgetc(stream) }, b'A' as c_int);
-    let mut pos: libc::fpos_t = unsafe { std::mem::zeroed() };
-    assert_eq!(
-        unsafe { _IO_fgetpos(stream, (&mut pos as *mut libc::fpos_t).cast()) },
-        0
-    );
+    let mut pos = std::mem::MaybeUninit::<libc::fpos_t>::uninit();
+    assert_eq!(unsafe { _IO_fgetpos(stream, pos.as_mut_ptr().cast()) }, 0);
+    let pos = unsafe { pos.assume_init() };
     assert_eq!(unsafe { fgetc(stream) }, b'B' as c_int);
     assert_eq!(
         unsafe { _IO_fsetpos(stream, (&pos as *const libc::fpos_t).cast()) },
@@ -3212,8 +3249,8 @@ fn fclose_closes_fd() {
     unsafe { fclose(stream) };
 
     // fd should now be invalid
-    let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::fstat(fd, &mut stat_buf) };
+    let mut stat_buf = std::mem::MaybeUninit::<libc::stat>::uninit();
+    let rc = unsafe { libc::fstat(fd, stat_buf.as_mut_ptr()) };
     assert_eq!(rc, -1, "fstat on closed fd should fail");
     let err = unsafe { *libc::__errno_location() };
     assert_eq!(err, libc::EBADF, "closed fd should report EBADF");
