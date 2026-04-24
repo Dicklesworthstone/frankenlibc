@@ -26,6 +26,7 @@ pub mod elf;
 pub mod err;
 pub mod errno;
 pub mod ftw;
+pub mod getopt;
 pub mod grp;
 pub mod iconv;
 pub mod inet;
