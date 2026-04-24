@@ -265,4 +265,9 @@ name = "fuzz_mount"
 path = "fuzz_targets/fuzz_mount.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_sysv_ipc"
+path = "fuzz_targets/fuzz_sysv_ipc.rs"
+doc = false
+
 [workspace]
