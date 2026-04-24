@@ -13334,45 +13334,21 @@ pub unsafe extern "C" fn fmtmsg(
     action: *const c_char,
     tag: *const c_char,
 ) -> c_int {
-    // MM_PRINT = 0x100, MM_CONSOLE = 0x200
-    let print = (classification & 0x100) != 0 || (classification & 0x300) == 0;
-    if print {
-        let lbl = if !label.is_null() {
-            unsafe { std::ffi::CStr::from_ptr(label) }
-                .to_str()
-                .unwrap_or("")
-        } else {
-            ""
+    if frankenlibc_core::fmtmsg::should_print(classification) {
+        let cstr_or_empty = |p: *const c_char| -> &[u8] {
+            if p.is_null() {
+                b""
+            } else {
+                unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes()
+            }
         };
-        let sev = match severity {
-            0 => "HALT",
-            1 => "ERROR",
-            2 => "WARNING",
-            3 => "INFO",
-            _ => "",
-        };
-        let txt = if !text.is_null() {
-            unsafe { std::ffi::CStr::from_ptr(text) }
-                .to_str()
-                .unwrap_or("")
-        } else {
-            ""
-        };
-        let act = if !action.is_null() {
-            unsafe { std::ffi::CStr::from_ptr(action) }
-                .to_str()
-                .unwrap_or("")
-        } else {
-            ""
-        };
-        let tg = if !tag.is_null() {
-            unsafe { std::ffi::CStr::from_ptr(tag) }
-                .to_str()
-                .unwrap_or("")
-        } else {
-            ""
-        };
-        let out = format!("{lbl}: {sev}: {txt}\nTO FIX: {act} {tg}\n");
+        let out = frankenlibc_core::fmtmsg::format_fmtmsg_message(
+            cstr_or_empty(label),
+            severity,
+            cstr_or_empty(text),
+            cstr_or_empty(action),
+            cstr_or_empty(tag),
+        );
         unsafe { sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len()) };
     }
     0 // MM_OK

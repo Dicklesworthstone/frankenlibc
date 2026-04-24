@@ -27,6 +27,7 @@ pub mod elf;
 pub mod err;
 pub mod errno;
 pub mod ether;
+pub mod fmtmsg;
 pub mod ftw;
 pub mod getopt;
 pub mod grp;
