@@ -1910,6 +1910,23 @@ mod tests {
     }
 
     #[test]
+    fn env_lock_recovers_after_guarded_panic() {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _lock = env_lock();
+            std::panic::resume_unwind(Box::new("runtime_policy env lock recovery probe"));
+        }));
+
+        assert!(
+            result.is_err(),
+            "regression probe must panic while holding the env lock"
+        );
+
+        let _lock = env_lock();
+        let _env = EnvVarGuard::set(Some("strict"));
+        assert_eq!(parse_mode_from_environ(), Ok(Some(SafetyLevel::Strict)));
+    }
+
+    #[test]
     fn parse_mode_from_environ_accepts_case_insensitive_aliases() {
         let _lock = env_lock();
         let _env = EnvVarGuard::set(Some("RePaIr"));
