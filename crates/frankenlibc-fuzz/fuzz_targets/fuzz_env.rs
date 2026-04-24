@@ -225,7 +225,8 @@ fn apply_op(op: &EnvOp, shadow: &mut BTreeMap<Vec<u8>, Vec<u8>>) {
             // errno to us directly, so we only assert the return is
             // in-contract.
             assert_eq!(
-                rc, -1,
+                rc,
+                -1,
                 "setenv on malformed name ({}) should fail",
                 if *embed_eq { "embed_eq" } else { "empty" }
             );
@@ -256,27 +257,19 @@ fn apply_op(op: &EnvOp, shadow: &mut BTreeMap<Vec<u8>, Vec<u8>>) {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(
-                // SAFETY: we just leaked this slice; we can hand the
-                // reference out one more time. The arena never
-                // outlives the process, and we never mutate through
-                // two paths simultaneously because each entry is
-                // owned by putenv after this call.
-                unsafe {
-                    std::slice::from_raw_parts_mut(leaked.as_mut_ptr(), leaked.len())
-                },
-            );
+                    // SAFETY: we just leaked this slice; we can hand the
+                    // reference out one more time. The arena never
+                    // outlives the process, and we never mutate through
+                    // two paths simultaneously because each entry is
+                    // owned by putenv after this call.
+                    unsafe { std::slice::from_raw_parts_mut(leaked.as_mut_ptr(), leaked.len()) },
+                );
             assert!(rc == 0 || rc == -1, "putenv rc out of contract: {rc}");
             if rc == 0 {
                 // Find the '=' to split name/value for shadow.
                 if let Some(eq) = leaked.iter().position(|&b| b == b'=') {
-                    let value_end = leaked
-                        .iter()
-                        .position(|&b| b == 0)
-                        .unwrap_or(leaked.len());
-                    shadow.insert(
-                        name_bytes.clone(),
-                        leaked[eq + 1..value_end].to_vec(),
-                    );
+                    let value_end = leaked.iter().position(|&b| b == 0).unwrap_or(leaked.len());
+                    shadow.insert(name_bytes.clone(), leaked[eq + 1..value_end].to_vec());
                 }
             }
         }

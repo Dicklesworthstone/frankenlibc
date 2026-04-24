@@ -90,7 +90,10 @@ fn init_hardened_mode() {
 }
 
 fn short_abstime() -> libc::timespec {
-    let mut now: libc::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut now: libc::timespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut now) };
     libc::timespec {
         tv_sec: now.tv_sec,
@@ -219,13 +222,7 @@ fn apply_call_once_exactly_once(times: u8) {
 
 fn apply_thrd_create_join_round_trip() {
     let mut thr: libc::pthread_t = 0;
-    let rc_c = unsafe {
-        thrd_create(
-            &mut thr,
-            Some(fuzz_thrd_worker),
-            std::ptr::null_mut(),
-        )
-    };
+    let rc_c = unsafe { thrd_create(&mut thr, Some(fuzz_thrd_worker), std::ptr::null_mut()) };
     if rc_c != 0 {
         return;
     }
@@ -239,13 +236,7 @@ fn apply_thrd_create_join_round_trip() {
 
 fn apply_thrd_create_detach() {
     let mut thr: libc::pthread_t = 0;
-    let rc_c = unsafe {
-        thrd_create(
-            &mut thr,
-            Some(fuzz_thrd_worker),
-            std::ptr::null_mut(),
-        )
-    };
+    let rc_c = unsafe { thrd_create(&mut thr, Some(fuzz_thrd_worker), std::ptr::null_mut()) };
     if rc_c != 0 {
         return;
     }
@@ -257,7 +248,10 @@ fn apply_thrd_create_detach() {
 }
 
 fn apply_thrd_sleep_short() {
-    let d = libc::timespec { tv_sec: 0, tv_nsec: 1_000 }; // 1 µs
+    let d = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 1_000,
+    }; // 1 µs
     let rc = unsafe { thrd_sleep(&d, std::ptr::null_mut()) };
     // 0 on full sleep, >0 on interrupt. Never negative.
     assert!(rc >= 0, "thrd_sleep rc {rc}");

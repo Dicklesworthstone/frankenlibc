@@ -45,21 +45,71 @@ static ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Arbitrary)]
 enum Op {
-    Socket { type_sel: u8 },
-    Pair { type_sel: u8 },
-    Bind { slot: u8 },
-    Listen { slot: u8, backlog: i16 },
-    Accept { slot: u8, use_accept4: bool, nonblock: bool },
-    Connect { server_slot: u8, client_slot: u8 },
-    Send { slot: u8, len: u16, flags_sel: u8 },
-    Recv { slot: u8, len: u16, flags_sel: u8 },
-    SendTo { slot: u8, len: u16, flags_sel: u8, dst_slot: u8 },
-    RecvFrom { slot: u8, len: u16, flags_sel: u8 },
-    Shutdown { slot: u8, how_sel: u8 },
-    SetOpt { slot: u8, level_sel: u8, optname_sel: u8, value: i32 },
-    GetOpt { slot: u8, level_sel: u8, optname_sel: u8 },
-    GetName { slot: u8, peer: bool },
-    MarkStale { slot: u8 },
+    Socket {
+        type_sel: u8,
+    },
+    Pair {
+        type_sel: u8,
+    },
+    Bind {
+        slot: u8,
+    },
+    Listen {
+        slot: u8,
+        backlog: i16,
+    },
+    Accept {
+        slot: u8,
+        use_accept4: bool,
+        nonblock: bool,
+    },
+    Connect {
+        server_slot: u8,
+        client_slot: u8,
+    },
+    Send {
+        slot: u8,
+        len: u16,
+        flags_sel: u8,
+    },
+    Recv {
+        slot: u8,
+        len: u16,
+        flags_sel: u8,
+    },
+    SendTo {
+        slot: u8,
+        len: u16,
+        flags_sel: u8,
+        dst_slot: u8,
+    },
+    RecvFrom {
+        slot: u8,
+        len: u16,
+        flags_sel: u8,
+    },
+    Shutdown {
+        slot: u8,
+        how_sel: u8,
+    },
+    SetOpt {
+        slot: u8,
+        level_sel: u8,
+        optname_sel: u8,
+        value: i32,
+    },
+    GetOpt {
+        slot: u8,
+        level_sel: u8,
+        optname_sel: u8,
+    },
+    GetName {
+        slot: u8,
+        peer: bool,
+    },
+    MarkStale {
+        slot: u8,
+    },
 }
 
 #[derive(Debug, Arbitrary)]
@@ -163,7 +213,11 @@ fn make_sockaddr_un(name_payload: &[u8; 16]) -> (libc::sockaddr_un, u32) {
         addr.sun_path[i] = b as i8;
     }
     // addrlen = offsetof(sun_path) + length of the abstract name incl. leading NUL.
-    let used = 1 + name_payload.iter().skip(1).position(|&b| b == 0).unwrap_or(15);
+    let used = 1 + name_payload
+        .iter()
+        .skip(1)
+        .position(|&b| b == 0)
+        .unwrap_or(15);
     let addrlen = (std::mem::size_of_val(&addr.sun_family) + used) as u32;
     (addr, addrlen)
 }
@@ -236,13 +290,7 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
             }
             let name = alloc_abstract_name();
             let (addr, addrlen) = make_sockaddr_un(&name);
-            let rc = unsafe {
-                bind(
-                    s.fd,
-                    &addr as *const _ as *const libc::sockaddr,
-                    addrlen,
-                )
-            };
+            let rc = unsafe { bind(s.fd, &addr as *const _ as *const libc::sockaddr, addrlen) };
             assert_rc(rc, "bind");
             if rc == 0 {
                 s.bound_name = Some(name);
@@ -260,7 +308,11 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
             }
             assert_rc(rc, "listen");
         }
-        Op::Accept { slot, use_accept4, nonblock } => {
+        Op::Accept {
+            slot,
+            use_accept4,
+            nonblock,
+        } => {
             let Some((_, s)) = pick_slot(table, *slot) else {
                 return;
             };
@@ -314,7 +366,10 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
                 }
             }
         }
-        Op::Connect { server_slot, client_slot } => {
+        Op::Connect {
+            server_slot,
+            client_slot,
+        } => {
             let Some((_, server)) = pick_slot(table, *server_slot) else {
                 return;
             };
@@ -336,7 +391,11 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
             // nonblocking), or fail. The contract is rc in {0, -1}.
             assert_rc(rc, "connect");
         }
-        Op::Send { slot, len, flags_sel } => {
+        Op::Send {
+            slot,
+            len,
+            flags_sel,
+        } => {
             let Some((_, s)) = pick_slot(table, *slot) else {
                 return;
             };
@@ -355,7 +414,11 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
                 assert_eq!(rc, -1, "send on stale fd must fail");
             }
         }
-        Op::Recv { slot, len, flags_sel } => {
+        Op::Recv {
+            slot,
+            len,
+            flags_sel,
+        } => {
             let Some((_, s)) = pick_slot(table, *slot) else {
                 return;
             };
@@ -374,7 +437,12 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
                 assert_eq!(rc, -1, "recv on stale fd must fail");
             }
         }
-        Op::SendTo { slot, len, flags_sel, dst_slot } => {
+        Op::SendTo {
+            slot,
+            len,
+            flags_sel,
+            dst_slot,
+        } => {
             let Some((_, s)) = pick_slot(table, *slot) else {
                 return;
             };
@@ -408,7 +476,11 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
             };
             assert_signed(rc, "sendto");
         }
-        Op::RecvFrom { slot, len, flags_sel } => {
+        Op::RecvFrom {
+            slot,
+            len,
+            flags_sel,
+        } => {
             let Some((_, s)) = pick_slot(table, *slot) else {
                 return;
             };
@@ -439,7 +511,12 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
             }
             assert_rc(rc, "shutdown");
         }
-        Op::SetOpt { slot, level_sel, optname_sel, value } => {
+        Op::SetOpt {
+            slot,
+            level_sel,
+            optname_sel,
+            value,
+        } => {
             let Some((_, s)) = pick_slot(table, *slot) else {
                 return;
             };
@@ -456,7 +533,11 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
             };
             assert_rc(rc, "setsockopt");
         }
-        Op::GetOpt { slot, level_sel, optname_sel } => {
+        Op::GetOpt {
+            slot,
+            level_sel,
+            optname_sel,
+        } => {
             let Some((_, s)) = pick_slot(table, *slot) else {
                 return;
             };
@@ -482,17 +563,9 @@ fn apply_op(op: &Op, table: &mut Vec<Sock>) {
             let mut addrlen: u32 = std::mem::size_of::<libc::sockaddr_storage>() as u32;
             let rc = unsafe {
                 if *peer {
-                    getpeername(
-                        s.fd,
-                        addr.as_mut_ptr() as *mut libc::sockaddr,
-                        &mut addrlen,
-                    )
+                    getpeername(s.fd, addr.as_mut_ptr() as *mut libc::sockaddr, &mut addrlen)
                 } else {
-                    getsockname(
-                        s.fd,
-                        addr.as_mut_ptr() as *mut libc::sockaddr,
-                        &mut addrlen,
-                    )
+                    getsockname(s.fd, addr.as_mut_ptr() as *mut libc::sockaddr, &mut addrlen)
                 }
             };
             if s.state == State::Stale {

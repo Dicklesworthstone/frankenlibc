@@ -58,22 +58,44 @@ const MAX_OPS: usize = 16;
 enum Op {
     EmptySet,
     FillSet,
-    AddSet { sig_sel: u8, out_of_range: bool },
-    DelSet { sig_sel: u8 },
-    IsMember { sig_sel: u8 },
+    AddSet {
+        sig_sel: u8,
+        out_of_range: bool,
+    },
+    DelSet {
+        sig_sel: u8,
+    },
+    IsMember {
+        sig_sel: u8,
+    },
     /// Round-trip mask: SIG_SETMASK to a fuzzer-built mask and back.
-    MaskRoundTrip { how_sel: u8, fill: bool },
+    MaskRoundTrip {
+        how_sel: u8,
+        fill: bool,
+    },
     /// Same via pthread_sigmask.
-    PthreadMaskRoundTrip { how_sel: u8, fill: bool },
+    PthreadMaskRoundTrip {
+        how_sel: u8,
+        fill: bool,
+    },
     Pending,
     /// Install SIG_DFL / SIG_IGN on a safe signal, capture oldact,
     /// re-install oldact.
-    ActionRoundTrip { sig_sel: u8, want_ign: bool },
+    ActionRoundTrip {
+        sig_sel: u8,
+        want_ign: bool,
+    },
     AltStackQuery,
     /// Safely raise/kill with a default-ignored signal.
-    Raise { sig_sel: u8 },
-    Kill { sig_sel: u8 },
-    KillPg { sig_sel: u8 },
+    Raise {
+        sig_sel: u8,
+    },
+    Kill {
+        sig_sel: u8,
+    },
+    KillPg {
+        sig_sel: u8,
+    },
     /// sigsuspend with a mask that does NOT block the safe signals, so
     /// any pending raise wakes us immediately.
     SuspendShort,
@@ -139,7 +161,10 @@ fn apply_op(op: &Op) {
             let rc = unsafe { sigfillset(m.as_mut_ptr()) };
             assert_eq!(rc, 0, "sigfillset must succeed");
         }
-        Op::AddSet { sig_sel, out_of_range } => {
+        Op::AddSet {
+            sig_sel,
+            out_of_range,
+        } => {
             let sig = if *out_of_range {
                 // Intentionally invalid — expect EINVAL / -1.
                 65
@@ -178,15 +203,13 @@ fn apply_op(op: &Op) {
             let how = pick_how(*how_sel);
             let new_mask = build_mask(*fill);
             let mut old_mask: MaybeUninit<libc::sigset_t> = MaybeUninit::zeroed();
-            let rc_set =
-                unsafe { sigprocmask(how, &new_mask, old_mask.as_mut_ptr()) };
+            let rc_set = unsafe { sigprocmask(how, &new_mask, old_mask.as_mut_ptr()) };
             assert_rc(rc_set, "sigprocmask set");
             if rc_set == 0 {
                 // Restore the original mask.
                 let old = unsafe { old_mask.assume_init() };
-                let rc_restore = unsafe {
-                    sigprocmask(libc::SIG_SETMASK, &old, std::ptr::null_mut())
-                };
+                let rc_restore =
+                    unsafe { sigprocmask(libc::SIG_SETMASK, &old, std::ptr::null_mut()) };
                 assert_eq!(rc_restore, 0, "sigprocmask restore must succeed");
             }
         }
@@ -194,14 +217,12 @@ fn apply_op(op: &Op) {
             let how = pick_how(*how_sel);
             let new_mask = build_mask(*fill);
             let mut old_mask: MaybeUninit<libc::sigset_t> = MaybeUninit::zeroed();
-            let rc_set =
-                unsafe { pthread_sigmask(how, &new_mask, old_mask.as_mut_ptr()) };
+            let rc_set = unsafe { pthread_sigmask(how, &new_mask, old_mask.as_mut_ptr()) };
             assert_rc(rc_set, "pthread_sigmask set");
             if rc_set == 0 {
                 let old = unsafe { old_mask.assume_init() };
-                let rc_restore = unsafe {
-                    pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut())
-                };
+                let rc_restore =
+                    unsafe { pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut()) };
                 assert_eq!(rc_restore, 0, "pthread_sigmask restore must succeed");
             }
         }
@@ -210,9 +231,8 @@ fn apply_op(op: &Op) {
             let rc_ours = unsafe { sigpending(m.as_mut_ptr()) };
             assert_rc(rc_ours, "sigpending");
             let mut sys_m: MaybeUninit<libc::sigset_t> = MaybeUninit::zeroed();
-            let rc_sys = unsafe {
-                libc::syscall(libc::SYS_rt_sigpending, sys_m.as_mut_ptr(), 8) as c_int
-            };
+            let rc_sys =
+                unsafe { libc::syscall(libc::SYS_rt_sigpending, sys_m.as_mut_ptr(), 8) as c_int };
             // Both must succeed or both fail.
             assert_eq!(
                 rc_ours == 0,
@@ -223,7 +243,11 @@ fn apply_op(op: &Op) {
         Op::ActionRoundTrip { sig_sel, want_ign } => {
             // Use a safe signal only — never install a handler pointer.
             let sig = pick_safe_signal(*sig_sel).max(1);
-            let new_handler = if *want_ign { libc::SIG_IGN } else { libc::SIG_DFL };
+            let new_handler = if *want_ign {
+                libc::SIG_IGN
+            } else {
+                libc::SIG_DFL
+            };
             let new_act = libc::sigaction {
                 sa_sigaction: new_handler,
                 sa_mask: build_mask(false),

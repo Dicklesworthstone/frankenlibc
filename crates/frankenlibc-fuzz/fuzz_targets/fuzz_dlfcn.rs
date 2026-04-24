@@ -144,17 +144,26 @@ fn apply_op(op: &Op, table: &mut Vec<Handle>) {
             }
             let h = unsafe { dlopen(std::ptr::null(), pick_flags(*flags_sel)) };
             if !h.is_null() {
-                table.push(Handle { ptr: h, state: State::Live });
+                table.push(Handle {
+                    ptr: h,
+                    state: State::Live,
+                });
             }
         }
-        Op::OpenAllowlist { name_sel, flags_sel } => {
+        Op::OpenAllowlist {
+            name_sel,
+            flags_sel,
+        } => {
             if table.len() >= MAX_HANDLES {
                 return;
             }
             let name = pick_allowlist(*name_sel);
             let h = unsafe { dlopen(name, pick_flags(*flags_sel)) };
             if !h.is_null() {
-                table.push(Handle { ptr: h, state: State::Live });
+                table.push(Handle {
+                    ptr: h,
+                    state: State::Live,
+                });
             }
             // Null return is acceptable (e.g. worker lacks the library);
             // just assert no crash.
@@ -205,10 +214,7 @@ fn apply_op(op: &Op, table: &mut Vec<Handle>) {
                 return;
             }
             let rc = unsafe { dlclose(h.ptr) };
-            assert!(
-                rc == 0 || rc == -1,
-                "dlclose rc out of contract: {rc}"
-            );
+            assert!(rc == 0 || rc == -1, "dlclose rc out of contract: {rc}");
             if rc == 0 {
                 h.state = State::Stale;
                 table[idx] = h;

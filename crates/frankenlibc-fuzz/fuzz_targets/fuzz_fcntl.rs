@@ -129,8 +129,13 @@ fuzz_target!(|input: FcntlInput| {
                     dup_fd = rc;
                 }
             }
-            libc::F_GETFD | libc::F_GETFL | libc::F_GETOWN | F_GETSIG
-            | libc::F_GETLEASE | libc::F_GETPIPE_SZ | libc::F_GET_SEALS => {
+            libc::F_GETFD
+            | libc::F_GETFL
+            | libc::F_GETOWN
+            | F_GETSIG
+            | libc::F_GETLEASE
+            | libc::F_GETPIPE_SZ
+            | libc::F_GET_SEALS => {
                 let rc = unsafe { fcntl(target_fd, cmd, 0) };
                 // Invariant: GET commands return >=0 or -1 (errno set).
                 assert!(
@@ -138,20 +143,21 @@ fuzz_target!(|input: FcntlInput| {
                     "fcntl({cmd}) on live fd returned nonsensical rc={rc}"
                 );
             }
-            libc::F_SETFD | libc::F_SETFL | libc::F_SETOWN | F_SETSIG
-            | libc::F_SETLEASE | libc::F_NOTIFY | libc::F_SETPIPE_SZ | libc::F_ADD_SEALS => {
+            libc::F_SETFD
+            | libc::F_SETFL
+            | libc::F_SETOWN
+            | F_SETSIG
+            | libc::F_SETLEASE
+            | libc::F_NOTIFY
+            | libc::F_SETPIPE_SZ
+            | libc::F_ADD_SEALS => {
                 let rc = unsafe { fcntl(target_fd, cmd, input.arg_int as libc::c_long) };
                 assert!(rc >= -1);
             }
             libc::F_GETLK | libc::F_SETLK | libc::F_SETLKW => {
                 let mut fl = flock_of(&input);
-                let rc = unsafe {
-                    fcntl(
-                        target_fd,
-                        cmd,
-                        &mut fl as *mut libc::flock as libc::c_long,
-                    )
-                };
+                let rc =
+                    unsafe { fcntl(target_fd, cmd, &mut fl as *mut libc::flock as libc::c_long) };
                 assert!(rc >= -1);
             }
             F_GETOWN_EX | F_SETOWN_EX => {
@@ -159,9 +165,7 @@ fuzz_target!(|input: FcntlInput| {
                     type_: 0,
                     pid: input.flock_pid,
                 };
-                let rc = unsafe {
-                    fcntl(target_fd, cmd, &mut fo as *mut _ as libc::c_long)
-                };
+                let rc = unsafe { fcntl(target_fd, cmd, &mut fo as *mut _ as libc::c_long) };
                 assert!(rc >= -1);
             }
             _ => {}

@@ -54,16 +54,36 @@ const MAP_FAILED: *mut c_void = !0_usize as *mut c_void;
 
 #[derive(Debug, Arbitrary)]
 enum Op {
-    Map { len_pages: u8, prot_sel: u8 },
-    Unmap { slot: u8 },
-    Protect { slot: u8, prot_sel: u8 },
-    Sync { slot: u8, flags_sel: u8 },
-    Advise { slot: u8, advice_sel: u8 },
-    Remap { slot: u8, new_len_pages: u8, flags_sel: u8 },
+    Map {
+        len_pages: u8,
+        prot_sel: u8,
+    },
+    Unmap {
+        slot: u8,
+    },
+    Protect {
+        slot: u8,
+        prot_sel: u8,
+    },
+    Sync {
+        slot: u8,
+        flags_sel: u8,
+    },
+    Advise {
+        slot: u8,
+        advice_sel: u8,
+    },
+    Remap {
+        slot: u8,
+        new_len_pages: u8,
+        flags_sel: u8,
+    },
     /// Exercise the use-after-unmap path by unmapping a slot and
     /// forcibly keeping it in the live table as Stale so subsequent
     /// ops read it.
-    MarkStaleInPlace { slot: u8 },
+    MarkStaleInPlace {
+        slot: u8,
+    },
 }
 
 #[derive(Debug, Arbitrary)]
@@ -193,7 +213,8 @@ fn check_guards(m: &Mapping) {
             m.addr, m.len
         );
         assert_eq!(
-            tail, GUARD_BYTE,
+            tail,
+            GUARD_BYTE,
             "guard tail corrupted at {:p}+{}",
             m.addr,
             m.len - 1
@@ -203,7 +224,10 @@ fn check_guards(m: &Mapping) {
 
 fn apply_op(op: &Op, table: &mut Vec<Mapping>) {
     match op {
-        Op::Map { len_pages, prot_sel } => {
+        Op::Map {
+            len_pages,
+            prot_sel,
+        } => {
             if table.len() >= MAX_MAPPINGS {
                 return;
             }
@@ -349,8 +373,7 @@ fn apply_op(op: &Op, table: &mut Vec<Mapping>) {
             }
             let new_len = pick_len_pages(*new_len_pages);
             let flags = pick_remap_flags(*flags_sel) & !libc::MREMAP_FIXED; // keep things safe
-            let new_addr =
-                unsafe { mremap(m.addr, m.len, new_len, flags, std::ptr::null_mut()) };
+            let new_addr = unsafe { mremap(m.addr, m.len, new_len, flags, std::ptr::null_mut()) };
             if new_addr == MAP_FAILED {
                 return;
             }

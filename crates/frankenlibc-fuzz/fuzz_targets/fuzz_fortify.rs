@@ -51,17 +51,64 @@ const MAX_BUF: usize = 1024;
 #[derive(Debug, Arbitrary)]
 #[allow(clippy::enum_variant_names)]
 enum Op {
-    MemcpyChk { len: u16, destlen_extra: u16, use_max_destlen: bool },
-    MemmoveChk { len: u16, destlen_extra: u16, overlap: bool, use_max_destlen: bool },
-    MemsetChk { len: u16, destlen_extra: u16, byte: u8, use_max_destlen: bool },
-    ExplicitBzeroChk { len: u16, destlen_extra: u16, use_max_destlen: bool },
-    StrcpyChk { src: Vec<u8>, destlen_extra: u16, use_max_destlen: bool },
-    StrncpyChk { src: Vec<u8>, n: u16, destlen_extra: u16, use_max_destlen: bool },
-    StrcatChk { dst_prefix: Vec<u8>, src: Vec<u8>, destlen_extra: u16 },
-    StrncatChk { dst_prefix: Vec<u8>, src: Vec<u8>, n: u16, destlen_extra: u16 },
-    StpcpyChk { src: Vec<u8>, destlen_extra: u16 },
-    StpncpyChk { src: Vec<u8>, n: u16, destlen_extra: u16 },
-    SnprintfChk { size: u16, destlen_extra: u16, value: i32 },
+    MemcpyChk {
+        len: u16,
+        destlen_extra: u16,
+        use_max_destlen: bool,
+    },
+    MemmoveChk {
+        len: u16,
+        destlen_extra: u16,
+        overlap: bool,
+        use_max_destlen: bool,
+    },
+    MemsetChk {
+        len: u16,
+        destlen_extra: u16,
+        byte: u8,
+        use_max_destlen: bool,
+    },
+    ExplicitBzeroChk {
+        len: u16,
+        destlen_extra: u16,
+        use_max_destlen: bool,
+    },
+    StrcpyChk {
+        src: Vec<u8>,
+        destlen_extra: u16,
+        use_max_destlen: bool,
+    },
+    StrncpyChk {
+        src: Vec<u8>,
+        n: u16,
+        destlen_extra: u16,
+        use_max_destlen: bool,
+    },
+    StrcatChk {
+        dst_prefix: Vec<u8>,
+        src: Vec<u8>,
+        destlen_extra: u16,
+    },
+    StrncatChk {
+        dst_prefix: Vec<u8>,
+        src: Vec<u8>,
+        n: u16,
+        destlen_extra: u16,
+    },
+    StpcpyChk {
+        src: Vec<u8>,
+        destlen_extra: u16,
+    },
+    StpncpyChk {
+        src: Vec<u8>,
+        n: u16,
+        destlen_extra: u16,
+    },
+    SnprintfChk {
+        size: u16,
+        destlen_extra: u16,
+        value: i32,
+    },
 }
 
 #[derive(Debug, Arbitrary)]
@@ -130,7 +177,11 @@ fn sanitize_cstring(bytes: &[u8], cap: usize) -> CString {
 
 fn apply_op(op: &Op) {
     match op {
-        Op::MemcpyChk { len, destlen_extra, use_max_destlen } => {
+        Op::MemcpyChk {
+            len,
+            destlen_extra,
+            use_max_destlen,
+        } => {
             let copy_len = (*len as usize) % MAX_BUF;
             let destlen = pick_destlen(copy_len, *destlen_extra, *use_max_destlen);
             let dst_size = copy_len + 4; // always wide enough so no OOB write
@@ -138,7 +189,12 @@ fn apply_op(op: &Op) {
             let mut ref_ = make_guarded_buf(dst_size);
             let src: Vec<u8> = (0..copy_len).map(|i| (i as u8) ^ 0x5A).collect();
             unsafe {
-                __memcpy_chk(dst_ptr(&mut ours), src.as_ptr().cast::<c_void>(), copy_len, destlen);
+                __memcpy_chk(
+                    dst_ptr(&mut ours),
+                    src.as_ptr().cast::<c_void>(),
+                    copy_len,
+                    destlen,
+                );
                 memcpy(dst_ptr(&mut ref_), src.as_ptr().cast::<c_void>(), copy_len);
             }
             check_guards(&ours, dst_size, "__memcpy_chk ours");
@@ -149,7 +205,12 @@ fn apply_op(op: &Op) {
                 "__memcpy_chk output diverged from memcpy on safe path"
             );
         }
-        Op::MemmoveChk { len, destlen_extra, overlap, use_max_destlen } => {
+        Op::MemmoveChk {
+            len,
+            destlen_extra,
+            overlap,
+            use_max_destlen,
+        } => {
             let copy_len = (*len as usize) % MAX_BUF;
             let destlen = pick_destlen(copy_len, *destlen_extra, *use_max_destlen);
             // For overlap case we use a single buffer and copy within.
@@ -189,7 +250,12 @@ fn apply_op(op: &Op) {
                 "__memmove_chk diverged from memmove"
             );
         }
-        Op::MemsetChk { len, destlen_extra, byte, use_max_destlen } => {
+        Op::MemsetChk {
+            len,
+            destlen_extra,
+            byte,
+            use_max_destlen,
+        } => {
             let set_len = (*len as usize) % MAX_BUF;
             let destlen = pick_destlen(set_len, *destlen_extra, *use_max_destlen);
             let dst_size = set_len + 4;
@@ -206,7 +272,11 @@ fn apply_op(op: &Op) {
                 "__memset_chk diverged from memset"
             );
         }
-        Op::ExplicitBzeroChk { len, destlen_extra, use_max_destlen } => {
+        Op::ExplicitBzeroChk {
+            len,
+            destlen_extra,
+            use_max_destlen,
+        } => {
             let zero_len = (*len as usize) % MAX_BUF;
             let destlen = pick_destlen(zero_len, *destlen_extra, *use_max_destlen);
             let dst_size = zero_len + 4;
@@ -218,7 +288,9 @@ fn apply_op(op: &Op) {
             unsafe { __explicit_bzero_chk(dst_ptr(&mut ours), zero_len, destlen) };
             check_guards(&ours, dst_size, "__explicit_bzero_chk");
             assert!(
-                ours[GUARD_BYTES..GUARD_BYTES + zero_len].iter().all(|&b| b == 0),
+                ours[GUARD_BYTES..GUARD_BYTES + zero_len]
+                    .iter()
+                    .all(|&b| b == 0),
                 "__explicit_bzero_chk did not zero the first {zero_len} bytes"
             );
             // Tail bytes within dst_size beyond zero_len must be untouched.
@@ -230,7 +302,11 @@ fn apply_op(op: &Op) {
                 );
             }
         }
-        Op::StrcpyChk { src, destlen_extra, use_max_destlen } => {
+        Op::StrcpyChk {
+            src,
+            destlen_extra,
+            use_max_destlen,
+        } => {
             let src_c = sanitize_cstring(src, MAX_BUF - 1);
             let src_len = src_c.as_bytes().len() + 1;
             let destlen = pick_destlen(src_len, *destlen_extra, *use_max_destlen);
@@ -244,9 +320,18 @@ fn apply_op(op: &Op) {
                 src_c.as_bytes(),
                 "__strcpy_chk wrote wrong bytes"
             );
-            assert_eq!(ours[GUARD_BYTES + src_len - 1], 0, "__strcpy_chk missing NUL");
+            assert_eq!(
+                ours[GUARD_BYTES + src_len - 1],
+                0,
+                "__strcpy_chk missing NUL"
+            );
         }
-        Op::StrncpyChk { src, n, destlen_extra, use_max_destlen } => {
+        Op::StrncpyChk {
+            src,
+            n,
+            destlen_extra,
+            use_max_destlen,
+        } => {
             let src_c = sanitize_cstring(src, MAX_BUF - 1);
             let n = (*n as usize) % MAX_BUF;
             let destlen = pick_destlen(n, *destlen_extra, *use_max_destlen);
@@ -255,7 +340,11 @@ fn apply_op(op: &Op) {
             unsafe { __strncpy_chk(dst_ptr_char(&mut ours), src_c.as_ptr(), n, destlen) };
             check_guards(&ours, dst_size, "__strncpy_chk");
         }
-        Op::StrcatChk { dst_prefix, src, destlen_extra } => {
+        Op::StrcatChk {
+            dst_prefix,
+            src,
+            destlen_extra,
+        } => {
             let dst_prefix_c = sanitize_cstring(dst_prefix, 128);
             let src_c = sanitize_cstring(src, 128);
             let prefix_len = dst_prefix_c.as_bytes().len();
@@ -265,8 +354,7 @@ fn apply_op(op: &Op) {
             let dst_size = destlen + 8;
             let mut ours = make_guarded_buf(dst_size);
             // Place the prefix at start of dst (NUL-terminated).
-            ours[GUARD_BYTES..GUARD_BYTES + prefix_len]
-                .copy_from_slice(dst_prefix_c.as_bytes());
+            ours[GUARD_BYTES..GUARD_BYTES + prefix_len].copy_from_slice(dst_prefix_c.as_bytes());
             ours[GUARD_BYTES + prefix_len] = 0;
             unsafe { __strcat_chk(dst_ptr_char(&mut ours), src_c.as_ptr(), destlen) };
             check_guards(&ours, dst_size, "__strcat_chk");
@@ -281,7 +369,12 @@ fn apply_op(op: &Op) {
             );
             assert_eq!(ours[GUARD_BYTES + prefix_len + src_len], 0);
         }
-        Op::StrncatChk { dst_prefix, src, n, destlen_extra } => {
+        Op::StrncatChk {
+            dst_prefix,
+            src,
+            n,
+            destlen_extra,
+        } => {
             let dst_prefix_c = sanitize_cstring(dst_prefix, 64);
             let src_c = sanitize_cstring(src, 64);
             let n = (*n as usize) % 64;
@@ -290,8 +383,7 @@ fn apply_op(op: &Op) {
             let destlen = needed + (*destlen_extra as usize) % 64;
             let dst_size = destlen + 8;
             let mut ours = make_guarded_buf(dst_size);
-            ours[GUARD_BYTES..GUARD_BYTES + prefix_len]
-                .copy_from_slice(dst_prefix_c.as_bytes());
+            ours[GUARD_BYTES..GUARD_BYTES + prefix_len].copy_from_slice(dst_prefix_c.as_bytes());
             ours[GUARD_BYTES + prefix_len] = 0;
             unsafe { __strncat_chk(dst_ptr_char(&mut ours), src_c.as_ptr(), n, destlen) };
             check_guards(&ours, dst_size, "__strncat_chk");
@@ -302,9 +394,7 @@ fn apply_op(op: &Op) {
             let destlen = src_len + (*destlen_extra as usize) % 64;
             let dst_size = destlen + 8;
             let mut ours = make_guarded_buf(dst_size);
-            let ret = unsafe {
-                __stpcpy_chk(dst_ptr_char(&mut ours), src_c.as_ptr(), destlen)
-            };
+            let ret = unsafe { __stpcpy_chk(dst_ptr_char(&mut ours), src_c.as_ptr(), destlen) };
             check_guards(&ours, dst_size, "__stpcpy_chk");
             // stpcpy returns pointer to the copied-in NUL terminator.
             let start = dst_ptr_char(&mut ours);
@@ -315,7 +405,11 @@ fn apply_op(op: &Op) {
                 "__stpcpy_chk returned wrong end pointer"
             );
         }
-        Op::StpncpyChk { src, n, destlen_extra } => {
+        Op::StpncpyChk {
+            src,
+            n,
+            destlen_extra,
+        } => {
             let src_c = sanitize_cstring(src, MAX_BUF - 1);
             let n = (*n as usize) % MAX_BUF;
             let destlen = n + (*destlen_extra as usize) % 64;
@@ -324,7 +418,11 @@ fn apply_op(op: &Op) {
             unsafe { __stpncpy_chk(dst_ptr_char(&mut ours), src_c.as_ptr(), n, destlen) };
             check_guards(&ours, dst_size, "__stpncpy_chk");
         }
-        Op::SnprintfChk { size, destlen_extra, value } => {
+        Op::SnprintfChk {
+            size,
+            destlen_extra,
+            value,
+        } => {
             let sz = (*size as usize) % 256;
             let destlen = sz + (*destlen_extra as usize) % 64;
             let dst_size = destlen + 8;

@@ -49,9 +49,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 
 use arbitrary::Arbitrary;
-use frankenlibc_abi::pthread_abi::{
-    pthread_key_create, pthread_key_delete, pthread_setspecific,
-};
+use frankenlibc_abi::pthread_abi::{pthread_key_create, pthread_key_delete, pthread_setspecific};
 use libc::{pthread_getspecific, pthread_join, pthread_key_t, pthread_t};
 use libfuzzer_sys::fuzz_target;
 
@@ -71,15 +69,27 @@ unsafe extern "C" fn fuzz_tsd_destructor(_val: *mut c_void) {
 
 #[derive(Debug, Arbitrary)]
 enum Op {
-    CreateKey { with_destructor: bool },
-    DeleteKey { slot: u8 },
-    SetSpecific { slot: u8, value_sel: u8 },
-    GetSpecificRoundTrip { slot: u8, value_sel: u8 },
+    CreateKey {
+        with_destructor: bool,
+    },
+    DeleteKey {
+        slot: u8,
+    },
+    SetSpecific {
+        slot: u8,
+        value_sel: u8,
+    },
+    GetSpecificRoundTrip {
+        slot: u8,
+        value_sel: u8,
+    },
     /// Spawn a child thread that sets a non-NULL value for the
     /// selected key, then immediately returns. After the join
     /// completes, assert the destructor counter moved — the
     /// bd-9hq64 tripwire.
-    ChildDestructorRun { slot: u8 },
+    ChildDestructorRun {
+        slot: u8,
+    },
 }
 
 #[derive(Debug, Arbitrary)]

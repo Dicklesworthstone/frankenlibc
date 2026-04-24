@@ -89,10 +89,22 @@ fn fuzz_renameat2(input: &ErrnoPrecedenceInput) {
     };
 
     let flags = rename_flags(input.flag_bits);
-    let oldpath_abi = case.oldpath_abi.as_ref().map_or(ptr::null(), |s| s.as_ptr());
-    let newpath_abi = case.newpath_abi.as_ref().map_or(ptr::null(), |s| s.as_ptr());
-    let oldpath_host = case.oldpath_host.as_ref().map_or(ptr::null(), |s| s.as_ptr());
-    let newpath_host = case.newpath_host.as_ref().map_or(ptr::null(), |s| s.as_ptr());
+    let oldpath_abi = case
+        .oldpath_abi
+        .as_ref()
+        .map_or(ptr::null(), |s| s.as_ptr());
+    let newpath_abi = case
+        .newpath_abi
+        .as_ref()
+        .map_or(ptr::null(), |s| s.as_ptr());
+    let oldpath_host = case
+        .oldpath_host
+        .as_ref()
+        .map_or(ptr::null(), |s| s.as_ptr());
+    let newpath_host = case
+        .newpath_host
+        .as_ref()
+        .map_or(ptr::null(), |s| s.as_ptr());
 
     let (abi_rc, abi_errno) = call_abi_renameat2(
         case.olddirfd_abi,
@@ -110,7 +122,7 @@ fn fuzz_renameat2(input: &ErrnoPrecedenceInput) {
     );
     assert_equivalent("renameat2", abi_rc, abi_errno, host_rc, host_errno);
 
-    cleanup_roots(&case.cleanup_roots);
+    cleanup_rename_case(&case);
 }
 
 fn fuzz_signalfd4(input: &ErrnoPrecedenceInput) {
@@ -159,8 +171,14 @@ fn fuzz_eventfd_write(input: &ErrnoPrecedenceInput) {
     };
     let value = eventfd_value(input.value, input.flag_bits);
     if mode == 3 {
-        assert_eq!(unsafe { libc::eventfd_write(setup.host_fd, u64::MAX - 1) }, 0);
-        assert_eq!(unsafe { libc::eventfd_write(setup.abi_fd, u64::MAX - 1) }, 0);
+        assert_eq!(
+            unsafe { libc::eventfd_write(setup.host_fd, u64::MAX - 1) },
+            0
+        );
+        assert_eq!(
+            unsafe { libc::eventfd_write(setup.abi_fd, u64::MAX - 1) },
+            0
+        );
     }
 
     let (abi_rc, abi_errno) = call_abi_eventfd_write(setup.abi_fd, value);
@@ -254,8 +272,12 @@ fn open_dirfd_for_mode(work: &Path, mode: u8) -> Option<libc::c_int> {
         1 => {
             let bytes = work.as_os_str().as_bytes();
             let path = CString::new(bytes).ok()?;
-            let fd =
-                unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+            let fd = unsafe {
+                libc::open(
+                    path.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                )
+            };
             (fd >= 0).then_some(fd)
         }
         _ => Some(-1),
@@ -317,7 +339,10 @@ fn signalfd_flags(bits: u32) -> libc::c_int {
     flags
 }
 
-fn signalfd_fd_setup(mode: u8, mask_word: u64) -> Option<(FdSetup, Option<libc::c_int>, Option<libc::c_int>)> {
+fn signalfd_fd_setup(
+    mode: u8,
+    mask_word: u64,
+) -> Option<(FdSetup, Option<libc::c_int>, Option<libc::c_int>)> {
     match mode {
         0 => Some((
             FdSetup {
@@ -459,7 +484,13 @@ fn sanitize_cstring(bytes: &[u8], fallback: &[u8]) -> CString {
     CString::new(sanitized).expect("sanitized bytes must be NUL-free")
 }
 
-fn assert_equivalent(op: &str, abi_rc: libc::c_int, abi_errno: libc::c_int, host_rc: libc::c_int, host_errno: libc::c_int) {
+fn assert_equivalent(
+    op: &str,
+    abi_rc: libc::c_int,
+    abi_errno: libc::c_int,
+    host_rc: libc::c_int,
+    host_errno: libc::c_int,
+) {
     assert_eq!(
         abi_rc >= 0,
         host_rc >= 0,
@@ -483,7 +514,9 @@ fn call_abi_renameat2(
     unsafe {
         *frankenlibc_abi::errno_abi::__errno_location() = 0;
     }
-    let rc = unsafe { frankenlibc_abi::unistd_abi::renameat2(olddirfd, oldpath, newdirfd, newpath, flags) };
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::renameat2(olddirfd, oldpath, newdirfd, newpath, flags)
+    };
     let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
     (rc, errno)
 }
@@ -512,7 +545,11 @@ fn call_host_renameat2(
     (rc, errno)
 }
 
-fn call_abi_signalfd4(fd: libc::c_int, mask: *const libc::c_void, flags: libc::c_int) -> (libc::c_int, libc::c_int) {
+fn call_abi_signalfd4(
+    fd: libc::c_int,
+    mask: *const libc::c_void,
+    flags: libc::c_int,
+) -> (libc::c_int, libc::c_int) {
     unsafe {
         *frankenlibc_abi::errno_abi::__errno_location() = 0;
     }
@@ -611,7 +648,14 @@ fn call_host_fsconfig(
         *libc::__errno_location() = 0;
     }
     let rc = unsafe {
-        libc::syscall(libc::SYS_fsconfig, fs_fd, cmd as libc::c_uint, key, value, aux) as libc::c_int
+        libc::syscall(
+            libc::SYS_fsconfig,
+            fs_fd,
+            cmd as libc::c_uint,
+            key,
+            value,
+            aux,
+        ) as libc::c_int
     };
     let errno = unsafe { *libc::__errno_location() };
     (rc, errno)
@@ -624,6 +668,14 @@ fn cleanup_setup_fds(setup: &FdSetup) {
     if setup.close_host_fd {
         cleanup_fd(setup.host_fd);
     }
+}
+
+fn cleanup_rename_case(case: &RenameCase) {
+    cleanup_fd(case.olddirfd_abi);
+    cleanup_fd(case.newdirfd_abi);
+    cleanup_fd(case.olddirfd_host);
+    cleanup_fd(case.newdirfd_host);
+    cleanup_roots(&case.cleanup_roots);
 }
 
 fn cleanup_optional_fd(rc: libc::c_int, original: Option<libc::c_int>) {

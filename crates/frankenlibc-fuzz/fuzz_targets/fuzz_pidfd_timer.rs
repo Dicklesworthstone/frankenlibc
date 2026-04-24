@@ -227,15 +227,10 @@ fn apply_op(op: &Op, table: &mut HandleTable) {
                 return;
             }
             let sig = pick_signal(*sig_idx);
-            let rc = unsafe {
-                pidfd_send_signal(fd, sig, std::ptr::null(), *flags as c_uint)
-            };
+            let rc = unsafe { pidfd_send_signal(fd, sig, std::ptr::null(), *flags as c_uint) };
             assert!(rc == 0 || rc == -1, "pidfd_send_signal rc: {rc}");
             if state == HandleState::Stale {
-                assert_eq!(
-                    rc, -1,
-                    "pidfd_send_signal must fail on stale fd ({fd})"
-                );
+                assert_eq!(rc, -1, "pidfd_send_signal must fail on stale fd ({fd})");
             }
         }
         Op::PidfdClose { slot } => {
@@ -312,15 +307,10 @@ fn apply_op(op: &Op, table: &mut HandleTable) {
             } else {
                 old_value.as_mut_ptr().cast::<c_void>()
             };
-            let rc = unsafe {
-                timer_settime(id as *mut c_void, *flags as c_int, new_ptr, old_ptr)
-            };
+            let rc = unsafe { timer_settime(id as *mut c_void, *flags as c_int, new_ptr, old_ptr) };
             assert!(rc == 0 || rc == -1, "timer_settime rc: {rc}");
             if state == HandleState::Stale {
-                assert_eq!(
-                    rc, -1,
-                    "timer_settime must fail on stale timer id ({id})"
-                );
+                assert_eq!(rc, -1, "timer_settime must fail on stale timer id ({id})");
             }
         }
         Op::TimerGettime { slot, null_curr } => {

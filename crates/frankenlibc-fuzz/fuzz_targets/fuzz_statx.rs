@@ -40,7 +40,7 @@ const MAX_FUZZ_PATH_BYTES: usize = 256;
 /// Small allowlist of inert paths that statx can probe without filesystem
 /// side-effects (statx is read-only, but we still keep the surface bounded).
 const SEED_PATHS: &[&[u8]] = &[
-    b"\0",          // empty path (pairs with AT_EMPTY_PATH)
+    b"\0", // empty path (pairs with AT_EMPTY_PATH)
     b"/\0",
     b"/tmp\0",
     b"/proc/self\0",
@@ -109,10 +109,7 @@ fuzz_target!(|input: StatxInput| {
     };
 
     // Invariant 1: rc must be 0 or -1 (never any other int).
-    assert!(
-        rc == 0 || rc == -1,
-        "statx returned unexpected rc={rc}"
-    );
+    assert!(rc == 0 || rc == -1, "statx returned unexpected rc={rc}");
 
     // Invariant 2: guard bands must be intact regardless of rc.
     for (i, &b) in guarded[..GUARD_BYTES].iter().enumerate() {
@@ -133,11 +130,7 @@ fuzz_target!(|input: StatxInput| {
     if rc == 0 {
         let mut mask_bytes = [0u8; 4];
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                buf_ptr.add(STX_MASK_OFFSET),
-                mask_bytes.as_mut_ptr(),
-                4,
-            );
+            std::ptr::copy_nonoverlapping(buf_ptr.add(STX_MASK_OFFSET), mask_bytes.as_mut_ptr(), 4);
         }
         let _returned = u32::from_ne_bytes(mask_bytes);
     }

@@ -98,8 +98,7 @@ fn pick_clock(sel: u8) -> libc::clockid_t {
 }
 
 fn new_cond_slot() -> CondSlot {
-    let cond: Box<libc::pthread_cond_t> =
-        unsafe { Box::new(MaybeUninit::zeroed().assume_init()) };
+    let cond: Box<libc::pthread_cond_t> = unsafe { Box::new(MaybeUninit::zeroed().assume_init()) };
     let mutex: Box<libc::pthread_mutex_t> =
         unsafe { Box::new(MaybeUninit::zeroed().assume_init()) };
     CondSlot {
@@ -263,7 +262,10 @@ fn apply_op(op: &Op, table: &mut Vec<CondSlot>) {
             // condattr_setclock; mixing CLOCK_REALTIME abstime with a
             // CLOCK_MONOTONIC cond made the deadline ~50 years away
             // and the harness timed out.
-            let mut now: libc::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let mut now: libc::timespec = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
             unsafe { libc::clock_gettime(s.clock, &mut now) };
             let nsec_add = ((*nsec_offset % 1_000_000) as i64).min(999_000);
             let abs = libc::timespec {

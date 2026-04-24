@@ -90,9 +90,9 @@ enum Op {
 
 #[derive(Debug, Arbitrary)]
 struct Scenario {
-    initial_op_mode: u8,         // 0 encode / 1 decode / 2 free
-    buf_init: Vec<u8>,           // pre-populated bytes for decode scenarios
-    buf_size_lie: i32,           // skew between buf_init.len() and size arg
+    initial_op_mode: u8, // 0 encode / 1 decode / 2 free
+    buf_init: Vec<u8>,   // pre-populated bytes for decode scenarios
+    buf_size_lie: i32,   // skew between buf_init.len() and size arg
     ops: Vec<Op>,
 }
 
@@ -202,9 +202,7 @@ fn run(scen: Scenario) {
                 }
                 let mut len = local.len() as c_uint;
                 let mut p = local.as_mut_ptr() as *mut c_char;
-                let _ = unsafe {
-                    xdr_bytes(xp, &mut p, &mut len, maxsize.min(MAX_ARRAY_MAX))
-                };
+                let _ = unsafe { xdr_bytes(xp, &mut p, &mut len, maxsize.min(MAX_ARRAY_MAX)) };
             }
             Op::BytesDecode { maxsize } => {
                 if mode != XDR_DECODE {
@@ -212,9 +210,7 @@ fn run(scen: Scenario) {
                 }
                 let mut p: *mut c_char = std::ptr::null_mut();
                 let mut len: c_uint = 0;
-                let ok = unsafe {
-                    xdr_bytes(xp, &mut p, &mut len, maxsize.min(MAX_ARRAY_MAX))
-                };
+                let ok = unsafe { xdr_bytes(xp, &mut p, &mut len, maxsize.min(MAX_ARRAY_MAX)) };
                 if ok == 1 && !p.is_null() {
                     // XDR_FREE-on-same-slot round trip: parser allocated, we free.
                     // Re-use the handle with XDR_FREE by calling libc::free
@@ -236,18 +232,14 @@ fn run(scen: Scenario) {
                     }
                 }
                 let mut p = local.as_mut_ptr() as *mut c_char;
-                let _ = unsafe {
-                    xdr_string(xp, &mut p, maxsize.min(MAX_STRING_MAX))
-                };
+                let _ = unsafe { xdr_string(xp, &mut p, maxsize.min(MAX_STRING_MAX)) };
             }
             Op::StringDecode { maxsize } => {
                 if mode != XDR_DECODE {
                     continue;
                 }
                 let mut p: *mut c_char = std::ptr::null_mut();
-                let ok = unsafe {
-                    xdr_string(xp, &mut p, maxsize.min(MAX_STRING_MAX))
-                };
+                let ok = unsafe { xdr_string(xp, &mut p, maxsize.min(MAX_STRING_MAX)) };
                 if ok == 1 && !p.is_null() {
                     // invariant: must be NUL-terminated
                     let bound = (maxsize.min(MAX_STRING_MAX) as usize) + 1;
@@ -260,7 +252,10 @@ fn run(scen: Scenario) {
                             }
                         }
                     }
-                    assert!(terminated, "xdr_string decoded buffer not NUL-terminated within maxsize+1");
+                    assert!(
+                        terminated,
+                        "xdr_string decoded buffer not NUL-terminated within maxsize+1"
+                    );
                     unsafe { libc::free(p as *mut c_void) };
                 }
             }

@@ -37,11 +37,10 @@ use std::sync::{Mutex, Once};
 
 use arbitrary::Arbitrary;
 use frankenlibc_abi::pthread_abi::{
-    pthread_rwlock_destroy, pthread_rwlock_init, pthread_rwlock_rdlock,
-    pthread_rwlock_timedrdlock, pthread_rwlock_timedwrlock, pthread_rwlock_tryrdlock,
-    pthread_rwlock_trywrlock, pthread_rwlock_unlock, pthread_rwlock_wrlock,
-    pthread_rwlockattr_destroy, pthread_rwlockattr_getpshared, pthread_rwlockattr_init,
-    pthread_rwlockattr_setpshared,
+    pthread_rwlock_destroy, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_timedrdlock,
+    pthread_rwlock_timedwrlock, pthread_rwlock_tryrdlock, pthread_rwlock_trywrlock,
+    pthread_rwlock_unlock, pthread_rwlock_wrlock, pthread_rwlockattr_destroy,
+    pthread_rwlockattr_getpshared, pthread_rwlockattr_init, pthread_rwlockattr_setpshared,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -52,24 +51,50 @@ static RWLOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Arbitrary)]
 enum Op {
-    AttrRoundTripPshared { pshared: bool },
+    AttrRoundTripPshared {
+        pshared: bool,
+    },
     InitDefault,
-    InitWithAttr { pshared: bool },
-    Destroy { slot: u8 },
-    Rdlock { slot: u8 },
-    Wrlock { slot: u8 },
-    Tryrdlock { slot: u8 },
-    Trywrlock { slot: u8 },
-    TimedrdlockShort { slot: u8 },
-    TimedwrlockShort { slot: u8 },
-    Unlock { slot: u8 },
-    MarkStale { slot: u8 },
+    InitWithAttr {
+        pshared: bool,
+    },
+    Destroy {
+        slot: u8,
+    },
+    Rdlock {
+        slot: u8,
+    },
+    Wrlock {
+        slot: u8,
+    },
+    Tryrdlock {
+        slot: u8,
+    },
+    Trywrlock {
+        slot: u8,
+    },
+    TimedrdlockShort {
+        slot: u8,
+    },
+    TimedwrlockShort {
+        slot: u8,
+    },
+    Unlock {
+        slot: u8,
+    },
+    MarkStale {
+        slot: u8,
+    },
     /// Exercise the reader-reader compat invariant directly:
     /// rdlock(rw); tryrdlock(rw) must succeed; unlock; unlock.
-    ReaderReaderCompat { slot: u8 },
+    ReaderReaderCompat {
+        slot: u8,
+    },
     /// Exercise the writer-writer exclusion invariant:
     /// wrlock(rw); trywrlock(rw) must fail; unlock.
-    WriterWriterExclusion { slot: u8 },
+    WriterWriterExclusion {
+        slot: u8,
+    },
 }
 
 #[derive(Debug, Arbitrary)]
@@ -104,9 +129,12 @@ fn init_hardened_mode() {
 }
 
 fn new_rwlock_slot() -> RwlockSlot {
-    let rw: Box<libc::pthread_rwlock_t> =
-        unsafe { Box::new(MaybeUninit::zeroed().assume_init()) };
-    RwlockSlot { rw, state: State::Live, read_depth: 0 }
+    let rw: Box<libc::pthread_rwlock_t> = unsafe { Box::new(MaybeUninit::zeroed().assume_init()) };
+    RwlockSlot {
+        rw,
+        state: State::Live,
+        read_depth: 0,
+    }
 }
 
 fn pick_slot(table: &mut [RwlockSlot], slot: u8) -> Option<&mut RwlockSlot> {
@@ -138,7 +166,10 @@ fn apply_attr_pshared(pshared: bool) {
 }
 
 fn short_abstime() -> libc::timespec {
-    let mut now: libc::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut now: libc::timespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut now) };
     libc::timespec {
         tv_sec: now.tv_sec,

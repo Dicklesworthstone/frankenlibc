@@ -144,7 +144,15 @@ fuzz_target!(|input: VectorIoInput| {
     let wrote = match input.op % 3 {
         0 => unsafe { writev(fd, iov_w_ptr, iovcnt_w) },
         1 => unsafe { pwritev(fd, iov_w_ptr, iovcnt_w, input.offset.max(0)) },
-        _ => unsafe { pwritev2(fd, iov_w_ptr, iovcnt_w, input.offset.max(0), input.flags as i32) },
+        _ => unsafe {
+            pwritev2(
+                fd,
+                iov_w_ptr,
+                iovcnt_w,
+                input.offset.max(0),
+                input.flags as i32,
+            )
+        },
     };
 
     if wrote < 0 {

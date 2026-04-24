@@ -127,15 +127,13 @@ fn apply_barrier_single_thread_count1() {
 }
 
 fn apply_spinlock_try_twice(pshared: bool) {
-    let mut lock: std::mem::MaybeUninit<libc::pthread_spinlock_t> =
-        std::mem::MaybeUninit::zeroed();
+    let mut lock: std::mem::MaybeUninit<libc::pthread_spinlock_t> = std::mem::MaybeUninit::zeroed();
     let pshared_v = if pshared {
         libc::PTHREAD_PROCESS_SHARED
     } else {
         libc::PTHREAD_PROCESS_PRIVATE
     };
-    let rc_init =
-        unsafe { pthread_spin_init(lock.as_mut_ptr().cast::<c_void>(), pshared_v) };
+    let rc_init = unsafe { pthread_spin_init(lock.as_mut_ptr().cast::<c_void>(), pshared_v) };
     if rc_init != 0 {
         return;
     }

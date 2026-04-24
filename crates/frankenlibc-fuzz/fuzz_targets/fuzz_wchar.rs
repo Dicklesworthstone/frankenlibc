@@ -60,21 +60,63 @@ const GUARD_BYTE: u8 = 0xFD;
 
 #[derive(Debug, Arbitrary)]
 enum Op {
-    Wcslen { len: u16 },
-    WcscpyRoundTrip { s: Vec<u8> },
-    WcsncpyBounded { s: Vec<u8>, n: u16 },
-    WcscatRoundTrip { prefix: Vec<u8>, suffix: Vec<u8> },
-    WcsncatBounded { prefix: Vec<u8>, suffix: Vec<u8>, n: u16 },
-    Wcscmp { a: Vec<u8>, b: Vec<u8> },
-    Wcsncmp { a: Vec<u8>, b: Vec<u8>, n: u16 },
-    Wcschr { s: Vec<u8>, c: u32 },
-    Wcsspn { s: Vec<u8>, accept: Vec<u8> },
-    Wcscspn { s: Vec<u8>, reject: Vec<u8> },
-    Wcsdup { s: Vec<u8> },
-    MbtowcWctombRoundTrip { c: u8 },
-    BtowcWctobAscii { c: u8 },
-    MbstowcsBounded { src: Vec<u8>, n: u16 },
-    WcstombsBounded { src: Vec<u8>, n: u16 },
+    Wcslen {
+        len: u16,
+    },
+    WcscpyRoundTrip {
+        s: Vec<u8>,
+    },
+    WcsncpyBounded {
+        s: Vec<u8>,
+        n: u16,
+    },
+    WcscatRoundTrip {
+        prefix: Vec<u8>,
+        suffix: Vec<u8>,
+    },
+    WcsncatBounded {
+        prefix: Vec<u8>,
+        suffix: Vec<u8>,
+        n: u16,
+    },
+    Wcscmp {
+        a: Vec<u8>,
+        b: Vec<u8>,
+    },
+    Wcsncmp {
+        a: Vec<u8>,
+        b: Vec<u8>,
+        n: u16,
+    },
+    Wcschr {
+        s: Vec<u8>,
+        c: u32,
+    },
+    Wcsspn {
+        s: Vec<u8>,
+        accept: Vec<u8>,
+    },
+    Wcscspn {
+        s: Vec<u8>,
+        reject: Vec<u8>,
+    },
+    Wcsdup {
+        s: Vec<u8>,
+    },
+    MbtowcWctombRoundTrip {
+        c: u8,
+    },
+    BtowcWctobAscii {
+        c: u8,
+    },
+    MbstowcsBounded {
+        src: Vec<u8>,
+        n: u16,
+    },
+    WcstombsBounded {
+        src: Vec<u8>,
+        n: u16,
+    },
 }
 
 #[derive(Debug, Arbitrary)]
@@ -123,7 +165,10 @@ fn check_guards(buf: &[u32], cap: usize, name: &'static str) {
         assert_eq!(v, pat, "{name}: underflow guard corrupted at u32 {i}");
     }
     for (i, &v) in buf[GUARD_BYTES_U32 + cap..].iter().enumerate() {
-        assert_eq!(v, pat, "{name}: overflow guard corrupted at u32 +{i} past cap={cap}");
+        assert_eq!(
+            v, pat,
+            "{name}: overflow guard corrupted at u32 +{i} past cap={cap}"
+        );
     }
 }
 
@@ -253,10 +298,7 @@ fn apply_mbtowc_wctomb_round_trip(c: u8) {
     }
     if c < 128 {
         // ASCII round-trip must be exact.
-        assert_eq!(
-            out[0], c,
-            "mbtowc→wctomb round-trip lost byte for c={c:#x}"
-        );
+        assert_eq!(out[0], c, "mbtowc→wctomb round-trip lost byte for c={c:#x}");
     }
 }
 
@@ -300,7 +342,10 @@ fn apply_wcstombs_bounded(src: &[u8], n: u16) {
         assert_eq!(b, GUARD_BYTE, "wcstombs underflow guard at {i}");
     }
     for (i, &b) in dst[GUARD_BYTES + cap..].iter().enumerate() {
-        assert_eq!(b, GUARD_BYTE, "wcstombs overflow guard at +{i} past cap={cap}");
+        assert_eq!(
+            b, GUARD_BYTE,
+            "wcstombs overflow guard at +{i} past cap={cap}"
+        );
     }
 }
 

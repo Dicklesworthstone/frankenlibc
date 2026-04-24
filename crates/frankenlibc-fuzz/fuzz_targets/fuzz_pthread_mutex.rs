@@ -57,22 +57,47 @@ static PTLOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Arbitrary)]
 enum Op {
-    AttrRoundTripType { type_sel: u8 },
-    AttrRoundTripProtocol { proto_sel: u8 },
-    AttrRoundTripPshared { pshared: bool },
-    AttrRoundTripRobust { robust: bool },
+    AttrRoundTripType {
+        type_sel: u8,
+    },
+    AttrRoundTripProtocol {
+        proto_sel: u8,
+    },
+    AttrRoundTripPshared {
+        pshared: bool,
+    },
+    AttrRoundTripRobust {
+        robust: bool,
+    },
     InitDefault,
-    InitWithAttr { type_sel: u8, robust: bool },
-    Destroy { slot: u8 },
-    Lock { slot: u8 },
-    Trylock { slot: u8 },
-    Unlock { slot: u8 },
-    TimedlockShort { slot: u8 },
-    Consistent { slot: u8 },
+    InitWithAttr {
+        type_sel: u8,
+        robust: bool,
+    },
+    Destroy {
+        slot: u8,
+    },
+    Lock {
+        slot: u8,
+    },
+    Trylock {
+        slot: u8,
+    },
+    Unlock {
+        slot: u8,
+    },
+    TimedlockShort {
+        slot: u8,
+    },
+    Consistent {
+        slot: u8,
+    },
     /// Close the fd-analogue: mark a mutex as destroyed in our shadow
     /// but keep a stale handle in the table so later ops exercise
     /// the stale-handle path.
-    MarkStale { slot: u8 },
+    MarkStale {
+        slot: u8,
+    },
 }
 
 #[derive(Debug, Arbitrary)]
@@ -123,9 +148,13 @@ fn pick_protocol(sel: u8) -> c_int {
 }
 
 fn new_mutex_slot(recursive: bool) -> MutexSlot {
-    let m: Box<libc::pthread_mutex_t> =
-        unsafe { Box::new(MaybeUninit::zeroed().assume_init()) };
-    MutexSlot { m, state: State::Live, depth: 0, recursive }
+    let m: Box<libc::pthread_mutex_t> = unsafe { Box::new(MaybeUninit::zeroed().assume_init()) };
+    MutexSlot {
+        m,
+        state: State::Live,
+        depth: 0,
+        recursive,
+    }
 }
 
 fn pick_slot(table: &mut [MutexSlot], slot: u8) -> Option<&mut MutexSlot> {
@@ -336,7 +365,10 @@ fn apply_op(op: &Op, table: &mut Vec<MutexSlot>) {
             // Absolute time in the near future (1 µs). For an uncontended
             // mutex this must succeed; for a contended one it should
             // return ETIMEDOUT. Either way: no crash.
-            let mut now: libc::timespec = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let mut now: libc::timespec = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
             unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut now) };
             let abs = libc::timespec {
                 tv_sec: now.tv_sec,

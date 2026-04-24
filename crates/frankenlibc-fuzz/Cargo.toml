@@ -260,4 +260,9 @@ name = "fuzz_splice"
 path = "fuzz_targets/fuzz_splice.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_mount"
+path = "fuzz_targets/fuzz_mount.rs"
+doc = false
+
 [workspace]

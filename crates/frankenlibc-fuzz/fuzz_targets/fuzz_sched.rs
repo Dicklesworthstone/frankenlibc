@@ -141,9 +141,8 @@ fn apply_get_scheduler(pid_class: u8) {
     let pid = pick_pid(pid_class);
     let rc_ours = unsafe { sched_getscheduler(pid) };
     // Direct syscall is ground truth.
-    let rc_sys = unsafe {
-        libc::syscall(libc::SYS_sched_getscheduler, pid as libc::c_long) as c_int
-    };
+    let rc_sys =
+        unsafe { libc::syscall(libc::SYS_sched_getscheduler, pid as libc::c_long) as c_int };
     // Both must return the same bucket: success value or -1.
     assert_rc_contract(rc_ours, "sched_getscheduler");
     assert_eq!(
@@ -152,10 +151,7 @@ fn apply_get_scheduler(pid_class: u8) {
         "sched_getscheduler bucket diverged pid={pid}: ours={rc_ours} sys={rc_sys}"
     );
     if rc_ours >= 0 && rc_sys >= 0 {
-        assert_eq!(
-            rc_ours, rc_sys,
-            "sched_getscheduler diverged for pid={pid}"
-        );
+        assert_eq!(rc_ours, rc_sys, "sched_getscheduler diverged for pid={pid}");
     }
 }
 
@@ -209,10 +205,7 @@ fn apply_get_param(pid_class: u8) {
         // SAFETY: both successes wrote into their respective buffers.
         let ours = unsafe { param.assume_init() }.sched_priority;
         let sys = unsafe { sys_param.assume_init() }.sched_priority;
-        assert_eq!(
-            ours, sys,
-            "sched_getparam priority diverged for pid={pid}"
-        );
+        assert_eq!(ours, sys, "sched_getparam priority diverged for pid={pid}");
     }
 }
 
@@ -221,9 +214,7 @@ fn apply_set_param(pid_class: u8, priority: i32) {
     let param = libc::sched_param {
         sched_priority: priority as c_int,
     };
-    let rc = unsafe {
-        sched_setparam(pid, &param as *const _ as *const std::ffi::c_void)
-    };
+    let rc = unsafe { sched_setparam(pid, &param as *const _ as *const std::ffi::c_void) };
     assert_rc_contract(rc, "sched_setparam");
 }
 
@@ -334,7 +325,10 @@ fn apply_op(op: &SchedOp) {
             apply_set_scheduler_invalid(*pid_class, *policy)
         }
         SchedOp::GetParam { pid_class } => apply_get_param(*pid_class),
-        SchedOp::SetParam { pid_class, priority } => apply_set_param(*pid_class, *priority),
+        SchedOp::SetParam {
+            pid_class,
+            priority,
+        } => apply_set_param(*pid_class, *priority),
         SchedOp::GetAffinity { pid_class, size } => apply_get_affinity(*pid_class, *size),
         SchedOp::SetAffinity {
             pid_class,

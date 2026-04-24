@@ -36,8 +36,15 @@ use libfuzzer_sys::fuzz_target;
 
 #[derive(Debug, Arbitrary)]
 enum Op {
-    SetjmpRoundTrip { val: i32, use_underscore: bool },
-    SigsetjmpRoundTrip { val: i32, savemask: bool, use_siglongjmp: bool },
+    SetjmpRoundTrip {
+        val: i32,
+        use_underscore: bool,
+    },
+    SigsetjmpRoundTrip {
+        val: i32,
+        savemask: bool,
+        use_siglongjmp: bool,
+    },
 }
 
 #[derive(Debug, Arbitrary)]
@@ -152,9 +159,10 @@ fuzz_target!(|input: SetjmpFuzzInput| {
 
     for op in &input.ops {
         match op {
-            Op::SetjmpRoundTrip { val, use_underscore } => {
-                apply_setjmp_rt(*val, *use_underscore)
-            }
+            Op::SetjmpRoundTrip {
+                val,
+                use_underscore,
+            } => apply_setjmp_rt(*val, *use_underscore),
             Op::SigsetjmpRoundTrip {
                 val,
                 savemask,
