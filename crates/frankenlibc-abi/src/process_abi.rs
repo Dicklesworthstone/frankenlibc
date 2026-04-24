@@ -13,7 +13,25 @@ use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::scan_c_string;
+
+/// Read a user-supplied C string pointer with a known-region bound so a
+/// non-NUL-terminated argument cannot walk arbitrary process memory through
+/// `CStr::from_ptr`. (REVIEW round 5: same defense class as bd-z4k96.)
+#[inline]
+unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+    Some(bytes.to_vec())
+}
 
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
@@ -59,7 +77,14 @@ unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> 
         return -1;
     }
 
-    let file_bytes = unsafe { std::ffi::CStr::from_ptr(file) }.to_bytes();
+    // Bounded read so a non-NUL-terminated `file` argument doesn't walk
+    // arbitrary process memory. Same defense class as bd-z4k96 / iconv /
+    // dlopen / inet_pton. (REVIEW round 5.)
+    let Some(file_bytes_owned) = (unsafe { read_bounded_cstr(file) }) else {
+        unsafe { set_abi_errno(libc::ENOENT) };
+        return -1;
+    };
+    let file_bytes: &[u8] = &file_bytes_owned;
     if file_bytes.is_empty() {
         unsafe { set_abi_errno(libc::ENOENT) };
         return -1;
