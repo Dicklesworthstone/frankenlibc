@@ -50,6 +50,15 @@ pub enum RbWalkOrder {
     PostOrder,
 }
 
+/// POSIX `VISIT` kind for `<search.h>`-style `twalk`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PosixVisit {
+    PreOrder = 0,
+    PostOrder = 1,
+    EndOrder = 2,
+    Leaf = 3,
+}
+
 /// Balanced binary search tree with LLRB invariants.
 #[derive(Debug)]
 pub struct RbTree<K> {
@@ -136,9 +145,7 @@ impl<K> RbTree<K> {
     /// Delete the key matching `needle`. Returns the removed key on
     /// success; returns `None` if the key was not present.
     pub fn delete<F: Fn(&K, &K) -> Ordering>(&mut self, needle: &K, cmp: &F) -> Option<K> {
-        if self.find(needle, cmp).is_none() {
-            return None;
-        }
+        self.find(needle, cmp)?;
         let prev_len = self.len;
         let (new_root, removed) = Self::delete_rec(self.root.take(), needle, cmp, &mut self.len);
         self.root = new_root;
@@ -331,6 +338,36 @@ impl<K> RbTree<K> {
         }
     }
 
+    /// POSIX `<search.h>`-style `twalk` visit kind.
+    ///
+    /// For every non-leaf node the walker calls `visit` three times in
+    /// the order: PreOrder (before any descendant), PostOrder (after
+    /// left subtree, before right), EndOrder (after right subtree).
+    /// Leaf nodes get a single Leaf visit.
+    pub fn walk_posix<V: FnMut(&K, PosixVisit, usize)>(&self, mut visit: V) {
+        Self::walk_posix_rec(self.root.as_deref(), 0, &mut visit);
+    }
+
+    fn walk_posix_rec<V: FnMut(&K, PosixVisit, usize)>(
+        node: Option<&Node<K>>,
+        depth: usize,
+        visit: &mut V,
+    ) {
+        let n = match node {
+            None => return,
+            Some(n) => n,
+        };
+        if n.left.is_none() && n.right.is_none() {
+            visit(&n.key, PosixVisit::Leaf, depth);
+        } else {
+            visit(&n.key, PosixVisit::PreOrder, depth);
+            Self::walk_posix_rec(n.left.as_deref(), depth + 1, visit);
+            visit(&n.key, PosixVisit::PostOrder, depth);
+            Self::walk_posix_rec(n.right.as_deref(), depth + 1, visit);
+            visit(&n.key, PosixVisit::EndOrder, depth);
+        }
+    }
+
     /// Walk the tree post-order, consuming each key via `take(key)` as
     /// the corresponding node is freed. Used by POSIX `tdestroy`.
     pub fn destroy_with<F: FnMut(K)>(mut self, mut take: F) {
@@ -493,6 +530,26 @@ mod tests {
         t.destroy_with(|k| visited.push(k));
         visited.sort();
         assert_eq!(visited, (1..=10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn walk_posix_emits_three_visits_per_internal_one_per_leaf() {
+        let mut t = RbTree::new();
+        for k in [2i32, 1, 3] {
+            t.insert(k, &cmp_i32);
+        }
+        // Tree should be: 2 (root, internal) -> {1 (leaf), 3 (leaf)}
+        let mut log: Vec<(i32, PosixVisit)> = Vec::new();
+        t.walk_posix(|k, v, _depth| log.push((*k, v)));
+        // Expected (PreOrder, PostOrder, EndOrder) for 2; Leaf for 1 and 3.
+        let twos: Vec<&(i32, PosixVisit)> = log.iter().filter(|(k, _)| *k == 2).collect();
+        assert_eq!(twos.len(), 3, "internal node visited 3 times: {twos:?}");
+        let leaves_one: Vec<&(i32, PosixVisit)> = log.iter().filter(|(k, _)| *k == 1).collect();
+        let leaves_three: Vec<&(i32, PosixVisit)> = log.iter().filter(|(k, _)| *k == 3).collect();
+        assert_eq!(leaves_one.len(), 1);
+        assert_eq!(leaves_three.len(), 1);
+        assert_eq!(leaves_one[0].1, PosixVisit::Leaf);
+        assert_eq!(leaves_three[0].1, PosixVisit::Leaf);
     }
 
     #[test]

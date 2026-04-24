@@ -1,13 +1,14 @@
 #![cfg(target_os = "linux")]
 
-//! Differential conformance harness for `<search.h>` linear/hash search:
+//! Differential conformance harness for `<search.h>` linear/hash/tree
+//! search:
 //!   - lfind  (find-only linear search)
 //!   - lsearch (find-with-insert linear search)
 //!   - hcreate / hsearch / hdestroy (process-global hash table)
-//!
-//! tsearch (binary tree) is intentionally excluded — its caller-allocated
-//! root pointer is layout-incompatible across impls and the API uses
-//! opaque tree-internal types.
+//!   - tsearch / tfind / tdelete (binary tree, fl-side only — root
+//!     pointer layout is implementation-defined across impls so we
+//!     verify our LLRB port preserves POSIX invariants rather than
+//!     comparing against glibc's internal layout)
 //!
 //! Bead: CONFORMANCE: libc search.h diff matrix.
 
@@ -343,6 +344,139 @@ fn diff_hsearch_find_missing() {
         r_lc
     );
     let _ = c"x";
+}
+
+// ===========================================================================
+// tsearch / tfind / tdelete — fl-side LLRB validation (bd-srch-2)
+// ===========================================================================
+
+extern "C" fn tree_cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
+    let av = unsafe { *(a as *const i32) };
+    let bv = unsafe { *(b as *const i32) };
+    av - bv
+}
+
+#[test]
+fn fl_tsearch_insert_then_tfind_returns_match() {
+    let mut root: *mut c_void = std::ptr::null_mut();
+    let keys: Vec<i32> = vec![5, 2, 8, 1, 3, 7, 9];
+    let key_ptrs: Vec<*const c_void> = keys.iter().map(|k| k as *const _ as *const c_void).collect();
+    for &kp in &key_ptrs {
+        let r = unsafe {
+            fl::tsearch(
+                kp,
+                &mut root,
+                core::mem::transmute::<
+                    extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                >(tree_cmp_i32),
+            )
+        };
+        assert!(!r.is_null(), "tsearch should return non-null for {kp:?}");
+    }
+    // tfind every key
+    for &kp in &key_ptrs {
+        let r = unsafe {
+            fl::tfind(
+                kp,
+                &root,
+                core::mem::transmute::<
+                    extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                >(tree_cmp_i32),
+            )
+        };
+        assert!(!r.is_null(), "tfind {kp:?} should succeed");
+        // Dereferenced as void**, the returned pointer yields the user's key
+        let stored: *const c_void = unsafe { *(r as *const *const c_void) };
+        let stored_v = unsafe { *(stored as *const i32) };
+        let want_v = unsafe { *(kp as *const i32) };
+        assert_eq!(stored_v, want_v, "tfind returned wrong key");
+    }
+    // tfind missing
+    let missing: i32 = 999;
+    let mp = &missing as *const _ as *const c_void;
+    let r = unsafe {
+        fl::tfind(
+            mp,
+            &root,
+            core::mem::transmute::<
+                extern "C" fn(*const c_void, *const c_void) -> c_int,
+                unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+            >(tree_cmp_i32),
+        )
+    };
+    assert!(r.is_null(), "tfind missing should return NULL");
+
+    // tdelete each key
+    for &kp in &key_ptrs {
+        let r = unsafe {
+            fl::tdelete(
+                kp,
+                &mut root,
+                core::mem::transmute::<
+                    extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                >(tree_cmp_i32),
+            )
+        };
+        assert!(!r.is_null(), "tdelete {kp:?} should return non-null");
+    }
+    assert!(root.is_null(), "after deleting all, root should be NULL");
+}
+
+#[test]
+fn fl_tsearch_ascending_inserts_balanced_via_llrb() {
+    // Bd-srch-2 promise: LLRB keeps depth O(log n) even for adversarial
+    // ascending-order input. Insert 1024 keys in sorted order; verify
+    // tfind succeeds for all (would still work with unbalanced BST but
+    // would be O(n²) total work — this just validates correctness; the
+    // depth bound is enforced by the core unit test
+    // ascending_inserts_stay_balanced).
+    let mut root: *mut c_void = std::ptr::null_mut();
+    let keys: Vec<i32> = (0..1024).collect();
+    let key_ptrs: Vec<*const c_void> =
+        keys.iter().map(|k| k as *const _ as *const c_void).collect();
+    for &kp in &key_ptrs {
+        let r = unsafe {
+            fl::tsearch(
+                kp,
+                &mut root,
+                core::mem::transmute::<
+                    extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                >(tree_cmp_i32),
+            )
+        };
+        assert!(!r.is_null());
+    }
+    for &kp in &key_ptrs {
+        let r = unsafe {
+            fl::tfind(
+                kp,
+                &root,
+                core::mem::transmute::<
+                    extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                >(tree_cmp_i32),
+            )
+        };
+        assert!(!r.is_null(), "tfind {kp:?} after ascending insert");
+    }
+    // Cleanup
+    for &kp in &key_ptrs {
+        let _ = unsafe {
+            fl::tdelete(
+                kp,
+                &mut root,
+                core::mem::transmute::<
+                    extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                >(tree_cmp_i32),
+            )
+        };
+    }
+    assert!(root.is_null());
 }
 
 #[test]

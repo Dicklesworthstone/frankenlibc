@@ -215,15 +215,37 @@ pub unsafe extern "C" fn hdestroy_r(htab: *mut HsearchData) {
 }
 
 // ---------------------------------------------------------------------------
-// Binary tree: tsearch, tfind, tdelete, twalk
+// Binary tree: tsearch, tfind, tdelete, twalk, twalk_r
 // ---------------------------------------------------------------------------
+//
+// Backed by a left-leaning red-black tree in frankenlibc-core (bd-srch-2,
+// epic bd-srch-epic). The previous unbalanced BST implementation lived
+// here and was O(n) worst case; the LLRB gives glibc-parity O(log n).
+//
+// `*rootp` (the user-visible opaque tree handle) points to a heap-
+// allocated `RbTreeBox` when the tree is non-empty, and is NULL when
+// the tree is empty. POSIX user code only compares against NULL and
+// dereferences via tsearch/tfind/tdelete/twalk; the layout of the
+// pointed-to memory is implementation-defined.
 
-/// Internal binary tree node.
-#[repr(C)]
-struct TreeNode {
-    key: *const c_void,
-    left: *mut TreeNode,
-    right: *mut TreeNode,
+use core::cmp::Ordering;
+use frankenlibc_core::search::{PosixVisit, RbTree};
+
+/// `*const c_void` wrapper so the generic `RbTree<K>` can use raw
+/// pointers as keys without violating Send/Sync expectations from
+/// downstream Send-bound dependencies.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct OpaqueKey(*const c_void);
+
+// SAFETY: tree state is single-threaded per `*rootp`; the user is
+// responsible for serialization (POSIX tsearch is not thread-safe
+// w.r.t. concurrent operations on the same root).
+unsafe impl Send for OpaqueKey {}
+
+/// Heap-allocated tree state pointed to by `*rootp`.
+struct RbTreeBox {
+    tree: RbTree<OpaqueKey>,
 }
 
 /// POSIX `VISIT` — tree walk visit order.
@@ -239,7 +261,21 @@ pub enum Visit {
 /// Comparison function type for tree operations.
 type CompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 
-/// POSIX `tsearch` — search or insert into a binary tree.
+#[inline]
+fn make_cmp_closure(compar: CompareFn) -> impl Fn(&OpaqueKey, &OpaqueKey) -> Ordering {
+    move |a: &OpaqueKey, b: &OpaqueKey| {
+        let r = unsafe { compar(a.0, b.0) };
+        if r < 0 {
+            Ordering::Less
+        } else if r > 0 {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
+/// POSIX `tsearch` — search or insert into a binary tree (LLRB-backed).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tsearch(
     key: *const c_void,
@@ -249,41 +285,27 @@ pub unsafe extern "C" fn tsearch(
     if rootp.is_null() {
         return std::ptr::null_mut();
     }
+    let cmp = make_cmp_closure(compar);
 
-    let root = unsafe { *rootp } as *mut TreeNode;
-    if root.is_null() {
-        // Tree is empty; create root node.
-        let node = Box::into_raw(Box::new(TreeNode {
-            key,
-            left: std::ptr::null_mut(),
-            right: std::ptr::null_mut(),
-        }));
-        unsafe { *rootp = node as *mut c_void };
-        return node as *mut c_void;
-    }
-
-    // Walk the tree.
-    let mut current = root;
-    loop {
-        let cmp = unsafe { compar(key, (*current).key) };
-        if cmp == 0 {
-            return current as *mut c_void;
-        }
-        let next_ptr = if cmp < 0 {
-            unsafe { &mut (*current).left }
-        } else {
-            unsafe { &mut (*current).right }
-        };
-        if (*next_ptr).is_null() {
-            let node = Box::into_raw(Box::new(TreeNode {
-                key,
-                left: std::ptr::null_mut(),
-                right: std::ptr::null_mut(),
+    let handle: &mut RbTreeBox = unsafe {
+        if (*rootp).is_null() {
+            let h = Box::into_raw(Box::new(RbTreeBox {
+                tree: RbTree::new(),
             }));
-            *next_ptr = node;
-            return node as *mut c_void;
+            *rootp = h as *mut c_void;
+            &mut *h
+        } else {
+            &mut *(*rootp as *mut RbTreeBox)
         }
-        current = *next_ptr;
+    };
+
+    handle.tree.insert(OpaqueKey(key), &cmp);
+    // POSIX: returned pointer, when cast to `void**`, dereferences to
+    // the matching key. Our `OpaqueKey` is `#[repr(transparent)]` over
+    // `*const c_void`, so &OpaqueKey IS a void**.
+    match handle.tree.find(&OpaqueKey(key), &cmp) {
+        Some(k) => k as *const OpaqueKey as *mut c_void,
+        None => std::ptr::null_mut(),
     }
 }
 
@@ -294,22 +316,15 @@ pub unsafe extern "C" fn tfind(
     rootp: *const *mut c_void,
     compar: CompareFn,
 ) -> *mut c_void {
-    if rootp.is_null() {
+    if rootp.is_null() || unsafe { (*rootp).is_null() } {
         return std::ptr::null_mut();
     }
-    let mut current = unsafe { *rootp } as *mut TreeNode;
-    while !current.is_null() {
-        let cmp = unsafe { compar(key, (*current).key) };
-        if cmp == 0 {
-            return current as *mut c_void;
-        }
-        current = if cmp < 0 {
-            unsafe { (*current).left }
-        } else {
-            unsafe { (*current).right }
-        };
+    let cmp = make_cmp_closure(compar);
+    let handle: &RbTreeBox = unsafe { &*(*rootp as *const RbTreeBox) };
+    match handle.tree.find(&OpaqueKey(key), &cmp) {
+        Some(k) => k as *const OpaqueKey as *mut c_void,
+        None => std::ptr::null_mut(),
     }
-    std::ptr::null_mut()
 }
 
 /// POSIX `tdelete` — delete a key from a binary tree.
@@ -322,62 +337,31 @@ pub unsafe extern "C" fn tdelete(
     if rootp.is_null() || unsafe { (*rootp).is_null() } {
         return std::ptr::null_mut();
     }
-    tdelete_recursive(key, rootp, std::ptr::null_mut(), compar)
-}
+    let cmp = make_cmp_closure(compar);
+    let handle_ptr = unsafe { *rootp } as *mut RbTreeBox;
+    let handle = unsafe { &mut *handle_ptr };
 
-fn tdelete_recursive(
-    key: *const c_void,
-    nodep: *mut *mut c_void,
-    parent: *mut TreeNode,
-    compar: CompareFn,
-) -> *mut c_void {
-    let node = unsafe { *nodep } as *mut TreeNode;
-    if node.is_null() {
+    let removed = handle.tree.delete(&OpaqueKey(key), &cmp);
+    if removed.is_none() {
         return std::ptr::null_mut();
     }
 
-    let cmp = unsafe { compar(key, (*node).key) };
-    if cmp < 0 {
-        let left_ptr = unsafe { &mut (*node).left as *mut *mut TreeNode as *mut *mut c_void };
-        return tdelete_recursive(key, left_ptr, node, compar);
-    }
-    if cmp > 0 {
-        let right_ptr = unsafe { &mut (*node).right as *mut *mut TreeNode as *mut *mut c_void };
-        return tdelete_recursive(key, right_ptr, node, compar);
-    }
-
-    // Found the node to delete.
-    unsafe {
-        if (*node).left.is_null() {
-            *nodep = (*node).right as *mut c_void;
-            let _ = Box::from_raw(node);
-        } else if (*node).right.is_null() {
-            *nodep = (*node).left as *mut c_void;
-            let _ = Box::from_raw(node);
-        } else {
-            // Two children: find in-order successor (leftmost of right subtree).
-            let mut succ_parent = node;
-            let mut succ = (*node).right;
-            while !(*succ).left.is_null() {
-                succ_parent = succ;
-                succ = (*succ).left;
-            }
-            (*node).key = (*succ).key;
-            if succ_parent == node {
-                (*succ_parent).right = (*succ).right;
-            } else {
-                (*succ_parent).left = (*succ).right;
-            }
-            let _ = Box::from_raw(succ);
-        }
-    }
-
-    if parent.is_null() {
-        // POSIX: return unspecified non-null pointer if root node is deleted.
-        // Returning the address of rootp itself is a common implementation choice.
-        nodep as *mut c_void
+    if handle.tree.is_empty() {
+        // Free the tree state and reset *rootp so subsequent tsearch
+        // sees an empty tree.
+        let _ = unsafe { Box::from_raw(handle_ptr) };
+        unsafe { *rootp = std::ptr::null_mut() };
+        // POSIX: tdelete returns "an unspecified non-null pointer" on
+        // success when the deleted node was the last one. Return the
+        // address of rootp (a stable, non-null pointer) per glibc's
+        // convention.
+        rootp as *mut c_void
     } else {
-        parent as *mut c_void
+        // Successfully deleted, tree non-empty — POSIX says return a
+        // pointer to the parent; our LLRB doesn't track parents
+        // externally and the user only checks non-null, so return
+        // rootp.
+        rootp as *mut c_void
     }
 }
 
@@ -390,38 +374,20 @@ pub unsafe extern "C" fn twalk(
     if root.is_null() {
         return;
     }
-    twalk_recursive(root as *const TreeNode, action, 0);
-}
-
-fn twalk_recursive(
-    node: *const TreeNode,
-    action: unsafe extern "C" fn(*const c_void, Visit, c_int),
-    level: c_int,
-) {
-    if node.is_null() {
-        return;
-    }
-    let left = unsafe { (*node).left };
-    let right = unsafe { (*node).right };
-    let node_ptr = node as *const c_void;
-
-    if left.is_null() && right.is_null() {
-        unsafe { action(node_ptr, Visit::Leaf, level) };
-    } else {
-        unsafe { action(node_ptr, Visit::Preorder, level) };
-        twalk_recursive(left, action, level + 1);
-        unsafe { action(node_ptr, Visit::Postorder, level) };
-        twalk_recursive(right, action, level + 1);
-        unsafe { action(node_ptr, Visit::Endorder, level) };
-    }
+    let handle: &RbTreeBox = unsafe { &*(root as *const RbTreeBox) };
+    handle.tree.walk_posix(|k, visit, depth| {
+        let key_ptr = k as *const OpaqueKey as *const c_void;
+        let v = match visit {
+            PosixVisit::PreOrder => Visit::Preorder,
+            PosixVisit::PostOrder => Visit::Postorder,
+            PosixVisit::EndOrder => Visit::Endorder,
+            PosixVisit::Leaf => Visit::Leaf,
+        };
+        unsafe { action(key_ptr, v, depth as c_int) };
+    });
 }
 
 /// GNU `twalk_r` — traverse a binary tree with closure data (reentrant).
-///
-/// Like `twalk`, but the action callback receives an additional `closure`
-/// pointer, and the `VISIT` enum is passed as a plain `c_int` per the
-/// GNU extension ABI (leaf=0, preorder=1, postorder=2, endorder=3 —
-/// note: glibc actually uses the same `VISIT` enum values mapped to int).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn twalk_r(
     root: *const c_void,
@@ -431,31 +397,17 @@ pub unsafe extern "C" fn twalk_r(
     if root.is_null() {
         return;
     }
-    twalk_r_recursive(root as *const TreeNode, action, closure, 0);
-}
-
-fn twalk_r_recursive(
-    node: *const TreeNode,
-    action: unsafe extern "C" fn(*const c_void, c_int, c_int, *mut c_void),
-    closure: *mut c_void,
-    level: c_int,
-) {
-    if node.is_null() {
-        return;
-    }
-    let left = unsafe { (*node).left };
-    let right = unsafe { (*node).right };
-    let node_ptr = node as *const c_void;
-
-    if left.is_null() && right.is_null() {
-        unsafe { action(node_ptr, Visit::Leaf as c_int, level, closure) };
-    } else {
-        unsafe { action(node_ptr, Visit::Preorder as c_int, level, closure) };
-        twalk_r_recursive(left, action, closure, level + 1);
-        unsafe { action(node_ptr, Visit::Postorder as c_int, level, closure) };
-        twalk_r_recursive(right, action, closure, level + 1);
-        unsafe { action(node_ptr, Visit::Endorder as c_int, level, closure) };
-    }
+    let handle: &RbTreeBox = unsafe { &*(root as *const RbTreeBox) };
+    handle.tree.walk_posix(|k, visit, depth| {
+        let key_ptr = k as *const OpaqueKey as *const c_void;
+        let v = match visit {
+            PosixVisit::PreOrder => 0,
+            PosixVisit::PostOrder => 1,
+            PosixVisit::EndOrder => 2,
+            PosixVisit::Leaf => 3,
+        };
+        unsafe { action(key_ptr, v, depth as c_int, closure) };
+    });
 }
 
 // ---------------------------------------------------------------------------

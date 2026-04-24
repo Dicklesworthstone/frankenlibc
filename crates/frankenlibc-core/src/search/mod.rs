@@ -15,4 +15,4 @@
 
 pub mod rb_tree;
 
-pub use rb_tree::{RbTree, RbWalkOrder};
+pub use rb_tree::{PosixVisit, RbTree, RbWalkOrder};
