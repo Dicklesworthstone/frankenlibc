@@ -49,8 +49,8 @@ if [[ -f "${ROOT}/scripts/perf_baseline.json" ]]; then
     perf_baseline_arg=(--perf-baseline "scripts/perf_baseline.json")
 fi
 
-tmp_out="$(mktemp)"
-trap 'rm -f "${tmp_out}"' EXIT
+tmp_out="${FRANKENLIBC_SYMBOL_LATENCY_GENERATED:-${ROOT}/target/conformance/symbol_latency_baseline.generated.$$.v1.json}"
+mkdir -p "$(dirname "${tmp_out}")"
 
 (
     cd "${ROOT}"

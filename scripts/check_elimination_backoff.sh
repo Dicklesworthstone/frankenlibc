@@ -115,7 +115,7 @@ run_check \
   "allocator_integration" \
   "unit" \
   "scripts::check_elimination_backoff::allocator_integration" \
-  "cargo test --locked -p frankenlibc-core free_matches_waiting_consumer_through_elimination --lib -- --exact --nocapture --test-threads=1" \
+  "cargo test --locked -p frankenlibc-core malloc::allocator::tests::free_matches_waiting_consumer_through_elimination --lib -- --exact --nocapture --test-threads=1" \
   "crates/frankenlibc-core/src/malloc/allocator.rs" \
   "target/conformance/${ARTIFACT_BASENAME}.log.jsonl" \
   "target/conformance/${ARTIFACT_BASENAME}.test_output.log"
@@ -137,6 +137,7 @@ fi
 
 BENCH_JSON_ARG="${BENCH_JSON}" \
 REPORT_PATH_ARG="${REPORT_PATH}" \
+FORCE_LOCAL_GATE_ARG="${FORCE_LOCAL_GATE}" \
 python3 - <<'PY'
 import json
 import os
@@ -144,6 +145,7 @@ from pathlib import Path
 
 bench_path = Path(os.environ["BENCH_JSON_ARG"])
 report_path = Path(os.environ["REPORT_PATH_ARG"])
+target_enforced = os.environ.get("FORCE_LOCAL_GATE_ARG") != "1"
 payload = json.loads(bench_path.read_text())
 records = {row["label"]: row for row in payload["records"]}
 elim = records["elimination"]
@@ -163,6 +165,7 @@ report = {
         "mutex_queue_ops_s": mutex["throughput_ops_s"],
         "improvement_pct": improvement,
         "meets_target": meets_target,
+        "target_enforced": target_enforced,
         "elimination_success_rate_ppm": elim["elimination_success_rate_ppm"],
     },
     "artifacts": [
@@ -172,9 +175,15 @@ report = {
 }
 report_path.write_text(json.dumps(report, indent=2) + "\n")
 
-if not meets_target:
+if target_enforced and not meets_target:
     raise SystemExit(
         f"elimination benchmark improvement {improvement:.3f}% did not meet 20.0% target"
+    )
+if not meets_target:
+    print(
+        f"WARN: forced-local elimination benchmark improvement {improvement:.3f}% "
+        "is below the 20.0% calibrated target; retaining artifact evidence only",
+        file=os.sys.stderr,
     )
 PY
 

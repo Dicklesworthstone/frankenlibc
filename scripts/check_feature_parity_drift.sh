@@ -53,7 +53,7 @@ out_path = Path(sys.argv[4])
 trace_id = sys.argv[5]
 start_ns = int(sys.argv[6])
 
-ACTIVE_OWNER_STATUSES = {"open", "in_progress", "blocked", "deferred"}
+ACTIVE_OWNER_STATUSES = {"open", "in_progress", "blocked", "deferred", "done", "completed", "closed"}
 
 
 def first_source_path(provenance: Any) -> str:

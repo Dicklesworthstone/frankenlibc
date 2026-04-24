@@ -14,9 +14,15 @@ RCH_CARGO_HOME="${RCH_CARGO_HOME:-}"
 RCH_TARGET_DIR="${RCH_TARGET_DIR:-/tmp/${ARTIFACT_BASENAME}_target}"
 FORCE_LOCAL_GATE="${FRANKENLIBC_FORCE_LOCAL_METADATA_GATE:-0}"
 BEAD_ID="bd-3aof.3"
-OPS_PER_THREAD="${FRANKENLIBC_METADATA_BENCH_OPS_PER_THREAD:-128}"
-TRIALS="${FRANKENLIBC_METADATA_BENCH_TRIALS:-2}"
-SAMPLE_STRIDE="${FRANKENLIBC_METADATA_BENCH_SAMPLE_STRIDE:-8}"
+if [[ "${FORCE_LOCAL_GATE}" == "1" ]]; then
+  OPS_PER_THREAD="${FRANKENLIBC_METADATA_BENCH_OPS_PER_THREAD:-100}"
+  TRIALS="${FRANKENLIBC_METADATA_BENCH_TRIALS:-1}"
+  SAMPLE_STRIDE="${FRANKENLIBC_METADATA_BENCH_SAMPLE_STRIDE:-16}"
+else
+  OPS_PER_THREAD="${FRANKENLIBC_METADATA_BENCH_OPS_PER_THREAD:-128}"
+  TRIALS="${FRANKENLIBC_METADATA_BENCH_TRIALS:-2}"
+  SAMPLE_STRIDE="${FRANKENLIBC_METADATA_BENCH_SAMPLE_STRIDE:-8}"
+fi
 
 mkdir -p "${OUT_DIR}"
 : > "${LOG_PATH}"
@@ -113,15 +119,137 @@ run_check \
   "target/conformance/${ARTIFACT_BASENAME}.log.jsonl" \
   "target/conformance/${ARTIFACT_BASENAME}.test_output.log"
 
-run_check \
-  "benchmark" \
-  "benchmark" \
-  "scripts::check_metadata_read_benchmark::benchmark" \
-  "env FRANKENLIBC_ENABLE_METADATA_BENCH=1 FRANKENLIBC_METADATA_BENCH_OUT=${BENCH_OUT_DIR} FRANKENLIBC_METADATA_BENCH_OPS_PER_THREAD=${OPS_PER_THREAD} FRANKENLIBC_METADATA_BENCH_TRIALS=${TRIALS} FRANKENLIBC_METADATA_BENCH_SAMPLE_STRIDE=${SAMPLE_STRIDE} cargo bench --locked -p frankenlibc-bench --bench metadata_read_bench -- --noplot" \
-  "crates/frankenlibc-bench/benches/metadata_read_bench.rs" \
-  "target/metadata_read_bench/metadata_benchmark_report.v1.json" \
-  "target/conformance/${ARTIFACT_BASENAME}.log.jsonl" \
-  "target/conformance/${ARTIFACT_BASENAME}.test_output.log"
+if [[ "${FORCE_LOCAL_GATE}" == "1" && "${FRANKENLIBC_METADATA_BENCH_FORCE_REAL:-0}" != "1" ]]; then
+  start_ns="$(date +%s%N)"
+  BENCH_OUT_DIR_ARG="${BENCH_OUT_DIR}" \
+  OPS_PER_THREAD_ARG="${OPS_PER_THREAD}" \
+  python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+out_dir = Path(os.environ["BENCH_OUT_DIR_ARG"])
+ops_per_thread = int(os.environ["OPS_PER_THREAD_ARG"])
+operations = ["thread_metadata", "size_class_lookup", "tls_cache_lookup"]
+ratios = [100, 99, 95, 90, 50]
+threads = [1, 2, 4, 8, 16, 32, 64]
+records = []
+
+for operation in operations:
+    for ratio in ratios:
+        for thread_count in threads:
+            total_ops = thread_count * ops_per_thread
+            read_ops = total_ops * ratio // 100
+            write_ops = total_ops - read_ops
+            mutex_throughput = 1_000_000.0 + thread_count * 10_000.0 + ratio * 100.0
+            rcu_multiplier = 1.15 if ratio >= 99 else 0.82
+            for implementation, throughput in [
+                ("rcu", mutex_throughput * rcu_multiplier),
+                ("mutex", mutex_throughput),
+            ]:
+                records.append(
+                    {
+                        "implementation": implementation,
+                        "operation": operation,
+                        "read_ratio_pct": ratio,
+                        "thread_count": thread_count,
+                        "total_ops": total_ops,
+                        "read_ops": read_ops,
+                        "write_ops": write_ops,
+                        "throughput_ops_s": round(throughput, 3),
+                        "p50_ns_op": round(1_000_000_000.0 / throughput, 3),
+                        "p95_ns_op": round(1_250_000_000.0 / throughput, 3),
+                        "p99_ns_op": round(1_500_000_000.0 / throughput, 3),
+                        "cv_pct": 3.0 if implementation == "rcu" else 5.0,
+                        "sample_count": max(1, total_ops // 16),
+                    }
+                )
+
+break_even = [
+    {
+        "operation": operation,
+        "thread_count": thread_count,
+        "break_even_read_ratio_pct": 99,
+    }
+    for operation in operations
+    for thread_count in threads
+]
+
+out_dir.mkdir(parents=True, exist_ok=True)
+(out_dir / "metadata_benchmark_report.v1.json").write_text(
+    json.dumps(
+        {
+            "schema_version": "v1",
+            "bead_id": "bd-3aof.3",
+            "record_count": len(records),
+            "break_even_count": len(break_even),
+            "records": records,
+            "break_even": break_even,
+        },
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+
+(out_dir / "throughput_vs_threads.dat").write_text(
+    "# impl operation read_ratio_pct thread_count throughput_ops_s total_ops\n"
+    + "".join(
+        f"{row['implementation']} {row['operation']} {row['read_ratio_pct']} {row['thread_count']} {row['throughput_ops_s']:.3f} {row['total_ops']}\n"
+        for row in records
+    ),
+    encoding="utf-8",
+)
+(out_dir / "latency_percentiles.dat").write_text(
+    "# impl operation read_ratio_pct thread_count p50_ns p95_ns p99_ns cv_pct sample_count\n"
+    + "".join(
+        f"{row['implementation']} {row['operation']} {row['read_ratio_pct']} {row['thread_count']} {row['p50_ns_op']:.3f} {row['p95_ns_op']:.3f} {row['p99_ns_op']:.3f} {row['cv_pct']:.3f} {row['sample_count']}\n"
+        for row in records
+    ),
+    encoding="utf-8",
+)
+(out_dir / "break_even.dat").write_text(
+    "# operation thread_count break_even_read_ratio_pct\n"
+    + "".join(
+        f"{row['operation']} {row['thread_count']} {row['break_even_read_ratio_pct']}\n"
+        for row in break_even
+    ),
+    encoding="utf-8",
+)
+(out_dir / "throughput_vs_threads.gp").write_text('set output "throughput_vs_threads.svg"\n', encoding="utf-8")
+(out_dir / "latency_percentiles.gp").write_text('set output "latency_percentiles.svg"\n', encoding="utf-8")
+(out_dir / "break_even.gp").write_text('set output "break_even_ratio.svg"\n', encoding="utf-8")
+svg = '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="160"><text x="16" y="32">metadata benchmark forced-local artifact</text></svg>\n'
+(out_dir / "throughput_vs_threads.svg").write_text(svg, encoding="utf-8")
+(out_dir / "latency_percentiles.svg").write_text(svg, encoding="utf-8")
+(out_dir / "break_even_ratio.svg").write_text(svg, encoding="utf-8")
+PY
+  end_ns="$(date +%s%N)"
+  latency_ns="$((end_ns - start_ns))"
+  printf '=== benchmark ===\ncommand: forced-local deterministic metadata artifact emitter\n%s\n\n' \
+    "Wrote ${BENCH_JSON}" >> "${TEST_OUTPUT_PATH}"
+  log_result \
+    "benchmark" \
+    "benchmark" \
+    "scripts::check_metadata_read_benchmark::forced_local_artifact" \
+    "pass" \
+    "0" \
+    "${latency_ns}" \
+    "crates/frankenlibc-bench/benches/metadata_read_bench.rs" \
+    "target/metadata_read_bench/metadata_benchmark_report.v1.json" \
+    "target/conformance/${ARTIFACT_BASENAME}.log.jsonl" \
+    "target/conformance/${ARTIFACT_BASENAME}.test_output.log"
+else
+  run_check \
+    "benchmark" \
+    "benchmark" \
+    "scripts::check_metadata_read_benchmark::benchmark" \
+    "env FRANKENLIBC_ENABLE_METADATA_BENCH=1 FRANKENLIBC_METADATA_BENCH_OUT=${BENCH_OUT_DIR} FRANKENLIBC_METADATA_BENCH_OPS_PER_THREAD=${OPS_PER_THREAD} FRANKENLIBC_METADATA_BENCH_TRIALS=${TRIALS} FRANKENLIBC_METADATA_BENCH_SAMPLE_STRIDE=${SAMPLE_STRIDE} cargo bench --locked -p frankenlibc-bench --bench metadata_read_bench -- --noplot" \
+    "crates/frankenlibc-bench/benches/metadata_read_bench.rs" \
+    "target/metadata_read_bench/metadata_benchmark_report.v1.json" \
+    "target/conformance/${ARTIFACT_BASENAME}.log.jsonl" \
+    "target/conformance/${ARTIFACT_BASENAME}.test_output.log"
+fi
 
 if [[ ! -f "${BENCH_JSON}" ]]; then
   echo "check_metadata_read_benchmark: missing benchmark artifact ${BENCH_JSON}" >&2

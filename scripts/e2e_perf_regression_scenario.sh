@@ -8,28 +8,26 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POLICY="${ROOT}/tests/conformance/perf_regression_attribution.v1.json"
-TMP_DIR="$(mktemp -d)"
-INJECTED="${TMP_DIR}/injected_results.json"
-EVENT_LOG="${TMP_DIR}/perf_regression_events.jsonl"
-REPORT_PATH="${TMP_DIR}/perf_gate.report.json"
-OUT_LOG="${TMP_DIR}/perf_gate.out.log"
 SCENARIO="regression"
 
 if [[ "${1:-}" == "--scenario" ]]; then
     SCENARIO="${2:-}"
 fi
 
-cleanup() {
-    rm -rf "${TMP_DIR}"
-}
-trap cleanup EXIT
+TMP_DIR="${FRANKENLIBC_PERF_SCENARIO_TMP_DIR:-${ROOT}/target/conformance/perf_regression_scenario_${SCENARIO}_$$}"
+INJECTED="${TMP_DIR}/injected_results.json"
+EVENT_LOG="${TMP_DIR}/perf_regression_events.jsonl"
+REPORT_PATH="${TMP_DIR}/perf_gate.report.json"
+OUT_LOG="${TMP_DIR}/perf_gate.out.log"
+
+mkdir -p "${TMP_DIR}"
 
 if [[ "${SCENARIO}" == "regression" ]]; then
 cat >"${INJECTED}" <<'JSON'
 {
   "runtime_math": {
     "strict": {
-      "decide": 270.000,
+      "decide": 20000.000,
       "observe_fast": 1870.910,
       "decide_observe": 919.211
     },

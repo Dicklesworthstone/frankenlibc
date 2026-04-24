@@ -66,7 +66,6 @@ append_check() {
         --arg bead_id "bd-5vr" \
         --arg gate_name "${name}" \
         --arg gate "${gate}" \
-        --arg mode "strict+hardened" \
         --arg api_family "runtime_math" \
         --arg symbol "${gate}" \
         --arg decision_path "aggregate_epic_closure" \
@@ -85,7 +84,6 @@ append_check() {
             event: $event,
             bead_id: $bead_id,
             gate: $gate_name,
-            mode: $mode,
             api_family: $api_family,
             symbol: $symbol,
             decision_path: $decision_path,
@@ -96,6 +94,7 @@ append_check() {
             artifact_refs: $artifact_refs,
             details: {
                 gate_id: $gate,
+                modes: ["strict", "hardened"],
                 status: $status,
                 check_cmd: $check_cmd,
                 summary_line: $summary_line,
@@ -259,7 +258,6 @@ jq -nc \
     --arg event "runtime_math.epic_closure.summary" \
     --arg bead_id "bd-5vr" \
     --arg gate "Runtime math epic closure" \
-    --arg mode "strict+hardened" \
     --arg api_family "runtime_math" \
     --arg symbol "bd-5vr" \
     --arg decision_path "aggregate_epic_closure" \
@@ -281,7 +279,6 @@ jq -nc \
         event: $event,
         bead_id: $bead_id,
         gate: $gate,
-        mode: $mode,
         api_family: $api_family,
         symbol: $symbol,
         decision_path: $decision_path,
@@ -290,6 +287,7 @@ jq -nc \
         latency_ns: $latency_ns,
         artifact_refs: [$report_ref, $checks_ref, $log_ref],
         details: {
+            modes: ["strict", "hardened"],
             status: $status,
             total_checks: $total_checks,
             failed_checks: $failed_checks,
