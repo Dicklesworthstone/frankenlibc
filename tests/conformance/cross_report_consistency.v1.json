@@ -1,14 +1,16 @@
 {
   "schema_version": "v1",
   "bead": "bd-2vv.11",
-  "generated_at": "2026-03-25T19:36:32Z",
+  "generated_at": "2026-04-24T03:40:33Z",
   "consistency_hash": "550ecae0f61e58af",
   "summary": {
     "overall_verdict": "pass",
     "total_findings": 6,
     "by_severity": {
-      "info": 3,
-      "warning": 3
+      "critical": 0,
+      "error": 0,
+      "warning": 3,
+      "info": 3
     },
     "by_verdict": {
       "drift": 1,
@@ -73,7 +75,7 @@
       "report_pair": "support_matrix vs replacement_profile",
       "affected_symbols": [],
       "verdict": "drift",
-      "description": "Module total_call_throughs: support_matrix has 0 callthrough, profile census claims 337"
+      "description": "Module total_call_throughs: support_matrix has 0 callthrough, profile census claims 41"
     },
     {
       "rule": "no_unknown_status",

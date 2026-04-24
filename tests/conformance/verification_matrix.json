@@ -1,6 +1,6 @@
 {
   "matrix_version": 1,
-  "generated_utc": "2026-03-23T23:30:32Z",
+  "generated_utc": "2026-04-24T01:45:27Z",
   "description": "Verification obligations matrix for all open/in_progress critique beads. Maps each bead to required evidence types with current coverage status. Blocks bead closure when evidence is missing.",
   "schema": {
     "coverage_statuses": {
@@ -231,8 +231,8 @@
     "total_critique_beads": 118,
     "total_entries": 118,
     "by_coverage_status": {
-      "complete": 40,
-      "partial": 2,
+      "complete": 41,
+      "partial": 1,
       "missing": 76
     },
     "by_priority": {
@@ -250,8 +250,8 @@
       },
       "P2": {
         "total": 41,
-        "complete": 3,
-        "partial": 1,
+        "complete": 4,
+        "partial": 0,
         "missing": 37
       }
     },
@@ -270,8 +270,8 @@
       },
       "structured_logs": {
         "required": 115,
-        "complete": 38,
-        "partial": 1,
+        "complete": 39,
+        "partial": 0,
         "missing": 76
       },
       "perf_evidence": {
@@ -288,8 +288,8 @@
       },
       "golden_artifacts": {
         "required": 115,
-        "complete": 37,
-        "partial": 1,
+        "complete": 38,
+        "partial": 0,
         "missing": 77
       }
     },
@@ -326,8 +326,8 @@
       },
       "syscall": {
         "total": 24,
-        "complete": 4,
-        "partial": 1,
+        "complete": 5,
+        "partial": 0,
         "missing": 19
       }
     }
@@ -423,7 +423,7 @@
       "title": "Cross-cutting: Architecture heterogeneity (aarch64/x86_64/RISC-V)",
       "priority": 1,
       "status": "open",
-      "assignee": null,
+      "assignee": "ubuntu",
       "labels": [
         "architecture",
         "critique",
@@ -10752,8 +10752,8 @@
       "bead_id": "bd-h5x",
       "title": "EPIC: Remove glibc callthrough (raw syscalls + pthread primitives)",
       "priority": 1,
-      "status": "in_progress",
-      "assignee": "SnowyRabbit",
+      "status": "open",
+      "assignee": "BlueLake",
       "labels": [
         "critique",
         "pthread",

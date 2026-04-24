@@ -94,7 +94,7 @@
       "message": "derived from support_matrix classification coverage",
       "provenance": [
         {
-          "line": 35,
+          "line": 37,
           "path": "FEATURE_PARITY.md"
         }
       ],
@@ -112,7 +112,7 @@
       "message": "derived from reality_report callthrough/stub counts",
       "provenance": [
         {
-          "line": 36,
+          "line": 38,
           "path": "FEATURE_PARITY.md"
         }
       ],
@@ -126,7 +126,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "POSIX/GNU replacement completeness",
       "provenance": {
-        "line": 36,
+        "line": 38,
         "path": "FEATURE_PARITY.md"
       },
       "section": "macro_targets",
@@ -137,7 +137,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "ABI symbol/version fidelity",
       "provenance": {
-        "line": 37,
+        "line": 39,
         "path": "FEATURE_PARITY.md"
       },
       "section": "macro_targets",
@@ -148,7 +148,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Strict mode conformance",
       "provenance": {
-        "line": 38,
+        "line": 40,
         "path": "FEATURE_PARITY.md"
       },
       "section": "macro_targets",
@@ -159,7 +159,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Hardened mode safety",
       "provenance": {
-        "line": 39,
+        "line": 41,
         "path": "FEATURE_PARITY.md"
       },
       "section": "macro_targets",
@@ -170,7 +170,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Transparent Safety Membrane enforcement",
       "provenance": {
-        "line": 40,
+        "line": 42,
         "path": "FEATURE_PARITY.md"
       },
       "section": "macro_targets",
@@ -181,7 +181,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Conformance harness",
       "provenance": {
-        "line": 41,
+        "line": 43,
         "path": "FEATURE_PARITY.md"
       },
       "section": "macro_targets",
@@ -192,7 +192,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Benchmark gates",
       "provenance": {
-        "line": 42,
+        "line": 44,
         "path": "FEATURE_PARITY.md"
       },
       "section": "macro_targets",
@@ -203,7 +203,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "loader/symbol/IFUNC",
       "provenance": {
-        "line": 157,
+        "line": 160,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -214,7 +214,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "allocator",
       "provenance": {
-        "line": 158,
+        "line": 161,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -225,7 +225,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "hot string/memory kernels",
       "provenance": {
-        "line": 159,
+        "line": 162,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -236,7 +236,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "futex/pthread/cancellation",
       "provenance": {
-        "line": 160,
+        "line": 163,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -247,7 +247,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "stdio/parser/locale formatting",
       "provenance": {
-        "line": 161,
+        "line": 164,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -258,7 +258,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "signal/setjmp transfer",
       "provenance": {
-        "line": 162,
+        "line": 165,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -269,7 +269,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "time/timezone/rt timers",
       "provenance": {
-        "line": 163,
+        "line": 166,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -280,7 +280,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "nss/resolv/nscd/sunrpc",
       "provenance": {
-        "line": 164,
+        "line": 167,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -291,7 +291,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "locale/iconv/transliteration",
       "provenance": {
-        "line": 165,
+        "line": 168,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -302,7 +302,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "ABI/time64/layout bridges",
       "provenance": {
-        "line": 166,
+        "line": 169,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -313,7 +313,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "VM transitions",
       "provenance": {
-        "line": 167,
+        "line": 170,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -324,7 +324,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "strict/hardened decision layer",
       "provenance": {
-        "line": 168,
+        "line": 171,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -335,7 +335,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "process bootstrap (`csu`, TLS init, auxv, secure mode)",
       "provenance": {
-        "line": 169,
+        "line": 172,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -346,7 +346,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "cross-ISA syscall glue (`sysdeps/*`)",
       "provenance": {
-        "line": 170,
+        "line": 173,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -357,7 +357,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "System V IPC (`sysvipc`)",
       "provenance": {
-        "line": 171,
+        "line": 174,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -368,7 +368,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "i18n catalogs (`intl`, `catgets`, `localedata`)",
       "provenance": {
-        "line": 172,
+        "line": 175,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -379,7 +379,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "diagnostics/unwinding (`debug`, backtrace)",
       "provenance": {
-        "line": 173,
+        "line": 176,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -390,7 +390,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "session accounting (`login`, `utmp/wtmp`)",
       "provenance": {
-        "line": 174,
+        "line": 177,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -401,7 +401,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "profiling hooks (`gmon`, sampling/probe paths)",
       "provenance": {
-        "line": 175,
+        "line": 178,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -412,7 +412,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "floating-point edges (`soft-fp`, `fenv` exceptional paths)",
       "provenance": {
-        "line": 176,
+        "line": 179,
         "path": "FEATURE_PARITY.md"
       },
       "section": "reverse_core",
@@ -423,7 +423,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "strict refinement theorem",
       "provenance": {
-        "line": 222,
+        "line": 225,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -434,7 +434,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "hardened safety theorem",
       "provenance": {
-        "line": 223,
+        "line": 226,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -445,7 +445,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "deterministic replay theorem",
       "provenance": {
-        "line": 224,
+        "line": 227,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -456,7 +456,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "sequential regression control",
       "provenance": {
-        "line": 225,
+        "line": 228,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -467,7 +467,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "drift detection reliability",
       "provenance": {
-        "line": 226,
+        "line": 229,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -478,7 +478,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "CPOMDP admissibility",
       "provenance": {
-        "line": 227,
+        "line": 230,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -489,7 +489,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "CHC/CEGAR convergence",
       "provenance": {
-        "line": 228,
+        "line": 231,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -500,7 +500,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "superoptimization soundness",
       "provenance": {
-        "line": 229,
+        "line": 232,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -511,7 +511,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "tail-risk control",
       "provenance": {
-        "line": 230,
+        "line": 233,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -522,7 +522,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "barrier invariance",
       "provenance": {
-        "line": 231,
+        "line": 234,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -533,7 +533,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "robust-radius guarantee",
       "provenance": {
-        "line": 232,
+        "line": 235,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -544,7 +544,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "concurrent linearizability",
       "provenance": {
-        "line": 233,
+        "line": 236,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -555,7 +555,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "HJI viability",
       "provenance": {
-        "line": 234,
+        "line": 237,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -566,7 +566,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "sheaf consistency detection",
       "provenance": {
-        "line": 235,
+        "line": 238,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -577,7 +577,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "combinatorial interaction coverage",
       "provenance": {
-        "line": 236,
+        "line": 239,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -588,7 +588,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "probabilistic coupling bounds",
       "provenance": {
-        "line": 237,
+        "line": 240,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -599,7 +599,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "mean-field stability",
       "provenance": {
-        "line": 238,
+        "line": 241,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -610,7 +610,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "entropic transition safety",
       "provenance": {
-        "line": 239,
+        "line": 242,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -621,7 +621,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "SOS invariant synthesis",
       "provenance": {
-        "line": 240,
+        "line": 243,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -632,7 +632,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "large-deviation catastrophe bounds",
       "provenance": {
-        "line": 241,
+        "line": 244,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -643,7 +643,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "topological anomaly detection",
       "provenance": {
-        "line": 242,
+        "line": 245,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -654,7 +654,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "rough-signature feature stability",
       "provenance": {
-        "line": 243,
+        "line": 246,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -665,7 +665,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "tropical latency composition",
       "provenance": {
-        "line": 244,
+        "line": 247,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -676,7 +676,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "online optimizer convergence",
       "provenance": {
-        "line": 245,
+        "line": 248,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -687,7 +687,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "coalgebraic stream bisimulation",
       "provenance": {
-        "line": 246,
+        "line": 249,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -698,7 +698,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Krohn-Rhodes codec factorization",
       "provenance": {
-        "line": 247,
+        "line": 250,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -709,7 +709,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "hybrid temporal reachability",
       "provenance": {
-        "line": 248,
+        "line": 251,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -720,7 +720,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Stackelberg cache-security equilibria",
       "provenance": {
-        "line": 249,
+        "line": 252,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -731,7 +731,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "observability-rate optimality",
       "provenance": {
-        "line": 250,
+        "line": 253,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -742,7 +742,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "loader namespace sheaf consistency",
       "provenance": {
-        "line": 251,
+        "line": 254,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -753,7 +753,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "async nonlocal-control admissibility",
       "provenance": {
-        "line": 252,
+        "line": 255,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -764,7 +764,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "termios/ioctl polyhedral safety",
       "provenance": {
-        "line": 253,
+        "line": 256,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -775,7 +775,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "launch-pattern complexity guarantees",
       "provenance": {
-        "line": 254,
+        "line": 257,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -786,7 +786,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "secure-mode noninterference",
       "provenance": {
-        "line": 255,
+        "line": 258,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -797,7 +797,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "conformal decision validity",
       "provenance": {
-        "line": 256,
+        "line": 259,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -808,7 +808,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "spectral-sequence obstruction convergence",
       "provenance": {
-        "line": 257,
+        "line": 260,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -819,7 +819,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "algebraic normal-form uniqueness",
       "provenance": {
-        "line": 258,
+        "line": 261,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -830,7 +830,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "noncommutative contention stability",
       "provenance": {
-        "line": 259,
+        "line": 262,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -841,7 +841,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "arithmetic compatibility integrity",
       "provenance": {
-        "line": 260,
+        "line": 263,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -852,7 +852,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Serre spectral convergence integrity",
       "provenance": {
-        "line": 261,
+        "line": 264,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -863,7 +863,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Grothendieck descent coherence",
       "provenance": {
-        "line": 262,
+        "line": 265,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -874,7 +874,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "families-index nullity",
       "provenance": {
-        "line": 263,
+        "line": 266,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -885,7 +885,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Atiyah-Bott localization conservativity",
       "provenance": {
-        "line": 264,
+        "line": 267,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -896,7 +896,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "Clifford kernel equivalence",
       "provenance": {
-        "line": 265,
+        "line": 268,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -907,7 +907,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "derived t-structure bootstrap ordering",
       "provenance": {
-        "line": 266,
+        "line": 269,
         "path": "FEATURE_PARITY.md"
       },
       "section": "proof_math",
@@ -918,7 +918,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "2",
       "provenance": {
-        "line": 271,
+        "line": 274,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -929,7 +929,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "3",
       "provenance": {
-        "line": 272,
+        "line": 275,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -940,7 +940,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "4",
       "provenance": {
-        "line": 273,
+        "line": 276,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -951,7 +951,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "5",
       "provenance": {
-        "line": 274,
+        "line": 277,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -962,7 +962,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "6",
       "provenance": {
-        "line": 275,
+        "line": 278,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -973,7 +973,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "7",
       "provenance": {
-        "line": 276,
+        "line": 279,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -984,7 +984,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "8",
       "provenance": {
-        "line": 277,
+        "line": 280,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -995,7 +995,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "8",
       "provenance": {
-        "line": 278,
+        "line": 281,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1006,7 +1006,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "9",
       "provenance": {
-        "line": 279,
+        "line": 282,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1017,7 +1017,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "10",
       "provenance": {
-        "line": 280,
+        "line": 283,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1028,7 +1028,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "11",
       "provenance": {
-        "line": 281,
+        "line": 284,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1039,7 +1039,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "11",
       "provenance": {
-        "line": 282,
+        "line": 285,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1050,7 +1050,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "12",
       "provenance": {
-        "line": 283,
+        "line": 286,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1061,7 +1061,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "13",
       "provenance": {
-        "line": 284,
+        "line": 287,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1072,7 +1072,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "14",
       "provenance": {
-        "line": 285,
+        "line": 288,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1083,7 +1083,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "15",
       "provenance": {
-        "line": 286,
+        "line": 289,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1094,7 +1094,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "16",
       "provenance": {
-        "line": 287,
+        "line": 290,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1105,7 +1105,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "17",
       "provenance": {
-        "line": 288,
+        "line": 291,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1116,7 +1116,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "18",
       "provenance": {
-        "line": 289,
+        "line": 292,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1127,7 +1127,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "19",
       "provenance": {
-        "line": 290,
+        "line": 293,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1138,7 +1138,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "20",
       "provenance": {
-        "line": 291,
+        "line": 294,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1149,7 +1149,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "21",
       "provenance": {
-        "line": 292,
+        "line": 295,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1160,7 +1160,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "22",
       "provenance": {
-        "line": 293,
+        "line": 296,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1171,7 +1171,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "21",
       "provenance": {
-        "line": 294,
+        "line": 297,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1182,7 +1182,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "22",
       "provenance": {
-        "line": 295,
+        "line": 298,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1193,7 +1193,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "23",
       "provenance": {
-        "line": 296,
+        "line": 299,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1204,7 +1204,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "24",
       "provenance": {
-        "line": 297,
+        "line": 300,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1215,7 +1215,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "23",
       "provenance": {
-        "line": 298,
+        "line": 301,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1226,7 +1226,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "24",
       "provenance": {
-        "line": 299,
+        "line": 302,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1237,7 +1237,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "25",
       "provenance": {
-        "line": 300,
+        "line": 303,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1248,7 +1248,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "26",
       "provenance": {
-        "line": 301,
+        "line": 304,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1259,7 +1259,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "27",
       "provenance": {
-        "line": 302,
+        "line": 305,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1270,7 +1270,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "28",
       "provenance": {
-        "line": 303,
+        "line": 306,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1281,7 +1281,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "29",
       "provenance": {
-        "line": 304,
+        "line": 307,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1292,7 +1292,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "30",
       "provenance": {
-        "line": 305,
+        "line": 308,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1303,7 +1303,7 @@
       "kind": "feature_parity_row_status",
       "primary_key": "31",
       "provenance": {
-        "line": 306,
+        "line": 309,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1314,7 +1314,18 @@
       "kind": "feature_parity_row_status",
       "primary_key": "32",
       "provenance": {
-        "line": 307,
+        "line": 310,
+        "path": "FEATURE_PARITY.md"
+      },
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "gap_id": "fp-gap-summary-7bd4926c4439",
+      "kind": "feature_parity_row_status",
+      "primary_key": "33",
+      "provenance": {
+        "line": 311,
         "path": "FEATURE_PARITY.md"
       },
       "section": "gap_summary",
@@ -1354,7 +1365,7 @@
       "message": "derived from support_matrix classification coverage",
       "provenance": [
         {
-          "line": 35,
+          "line": 37,
           "path": "FEATURE_PARITY.md"
         }
       ],
@@ -1367,7 +1378,7 @@
       "message": "derived from reality_report callthrough/stub counts",
       "provenance": [
         {
-          "line": 36,
+          "line": 38,
           "path": "FEATURE_PARITY.md"
         }
       ],
@@ -1385,7 +1396,7 @@
       },
       "primary_key": "Exported symbol classification",
       "provenance": {
-        "line": 35,
+        "line": 37,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-macro-targets-3a739065b069",
@@ -1396,11 +1407,11 @@
       "columns": {
         "Area": "POSIX/GNU replacement completeness",
         "Status": "IN_PROGRESS",
-        "Target": "Remove `GlibcCallThrough` + `Stub` classes from critical surfaces"
+        "Target": "Remove `WrapsHostLibc` + `GlibcCallThrough` + `Stub` classes from critical surfaces"
       },
       "primary_key": "POSIX/GNU replacement completeness",
       "provenance": {
-        "line": 36,
+        "line": 38,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-macro-targets-fa7a23e18f01",
@@ -1415,7 +1426,7 @@
       },
       "primary_key": "ABI symbol/version fidelity",
       "provenance": {
-        "line": 37,
+        "line": 39,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-macro-targets-7b75050a0f03",
@@ -1430,7 +1441,7 @@
       },
       "primary_key": "Strict mode conformance",
       "provenance": {
-        "line": 38,
+        "line": 40,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-macro-targets-025864627e97",
@@ -1445,7 +1456,7 @@
       },
       "primary_key": "Hardened mode safety",
       "provenance": {
-        "line": 39,
+        "line": 41,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-macro-targets-b1b8d5acbeff",
@@ -1460,7 +1471,7 @@
       },
       "primary_key": "Transparent Safety Membrane enforcement",
       "provenance": {
-        "line": 40,
+        "line": 42,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-macro-targets-b1983d62901c",
@@ -1475,7 +1486,7 @@
       },
       "primary_key": "Conformance harness",
       "provenance": {
-        "line": 41,
+        "line": 43,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-macro-targets-556631616b22",
@@ -1490,7 +1501,7 @@
       },
       "primary_key": "Benchmark gates",
       "provenance": {
-        "line": 42,
+        "line": 44,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-macro-targets-1e330b896784",
@@ -1505,7 +1516,7 @@
       },
       "primary_key": "`runtime_math::risk`",
       "provenance": {
-        "line": 94,
+        "line": 97,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-3781ffdeb99f",
@@ -1520,7 +1531,7 @@
       },
       "primary_key": "`runtime_math::bandit`",
       "provenance": {
-        "line": 95,
+        "line": 98,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-2252bcba664b",
@@ -1535,7 +1546,7 @@
       },
       "primary_key": "`runtime_math::control`",
       "provenance": {
-        "line": 96,
+        "line": 99,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-2dfcc1b9ff38",
@@ -1550,7 +1561,7 @@
       },
       "primary_key": "`runtime_math::pareto`",
       "provenance": {
-        "line": 97,
+        "line": 100,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-3e7761feb3e4",
@@ -1565,7 +1576,7 @@
       },
       "primary_key": "`runtime_math::barrier`",
       "provenance": {
-        "line": 98,
+        "line": 101,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-7d158ceef570",
@@ -1580,7 +1591,7 @@
       },
       "primary_key": "`runtime_math::cohomology`",
       "provenance": {
-        "line": 99,
+        "line": 102,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-8ff0b9637eb6",
@@ -1595,7 +1606,7 @@
       },
       "primary_key": "`runtime_math::design`",
       "provenance": {
-        "line": 100,
+        "line": 103,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-2d308a9f541f",
@@ -1610,7 +1621,7 @@
       },
       "primary_key": "`runtime_math::sparse`",
       "provenance": {
-        "line": 101,
+        "line": 104,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-d643d17482cf",
@@ -1625,7 +1636,7 @@
       },
       "primary_key": "`runtime_math::fusion`",
       "provenance": {
-        "line": 102,
+        "line": 105,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-852b80c5f3e8",
@@ -1640,7 +1651,7 @@
       },
       "primary_key": "`runtime_math::equivariant`",
       "provenance": {
-        "line": 103,
+        "line": 106,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-8dbd872ffa79",
@@ -1655,7 +1666,7 @@
       },
       "primary_key": "`runtime_math::eprocess`",
       "provenance": {
-        "line": 104,
+        "line": 107,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-1826bc090e04",
@@ -1670,7 +1681,7 @@
       },
       "primary_key": "`runtime_math::cvar`",
       "provenance": {
-        "line": 105,
+        "line": 108,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-6291aac1b17b",
@@ -1685,7 +1696,7 @@
       },
       "primary_key": "sampled conformal risk fusion (`risk_engine`)",
       "provenance": {
-        "line": 106,
+        "line": 109,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-51c34b097aca",
@@ -1700,7 +1711,7 @@
       },
       "primary_key": "sampled stage-order oracle fusion (`check_oracle`)",
       "provenance": {
-        "line": 107,
+        "line": 110,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-b6488991f4c3",
@@ -1715,7 +1726,7 @@
       },
       "primary_key": "quarantine controller fusion (`quarantine_controller`)",
       "provenance": {
-        "line": 108,
+        "line": 111,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-268eee7aba9d",
@@ -1730,7 +1741,7 @@
       },
       "primary_key": "tropical latency compositor (`tropical_latency`)",
       "provenance": {
-        "line": 109,
+        "line": 112,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-c82781a26331",
@@ -1745,7 +1756,7 @@
       },
       "primary_key": "spectral phase monitor (`spectral_monitor`)",
       "provenance": {
-        "line": 110,
+        "line": 113,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-74941fdad543",
@@ -1760,7 +1771,7 @@
       },
       "primary_key": "rough-path signature monitor (`rough_path`)",
       "provenance": {
-        "line": 111,
+        "line": 114,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-accb19360035",
@@ -1775,7 +1786,7 @@
       },
       "primary_key": "persistent homology detector (`persistence`)",
       "provenance": {
-        "line": 112,
+        "line": 115,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-bcd0784d4038",
@@ -1790,7 +1801,7 @@
       },
       "primary_key": "Schr\u00f6dinger bridge controller (`schrodinger_bridge`)",
       "provenance": {
-        "line": 113,
+        "line": 116,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-5f416da55fac",
@@ -1805,7 +1816,7 @@
       },
       "primary_key": "large-deviations monitor (`large_deviations`)",
       "provenance": {
-        "line": 114,
+        "line": 117,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-007e9d57face",
@@ -1820,7 +1831,7 @@
       },
       "primary_key": "HJI reachability controller (`hji_reachability`)",
       "provenance": {
-        "line": 115,
+        "line": 118,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-d964aec7db4f",
@@ -1835,7 +1846,7 @@
       },
       "primary_key": "mean-field game contention controller (`mean_field_game`)",
       "provenance": {
-        "line": 116,
+        "line": 119,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-0f1d5d146a2a",
@@ -1850,7 +1861,7 @@
       },
       "primary_key": "p-adic valuation error calculus (`padic_valuation`)",
       "provenance": {
-        "line": 117,
+        "line": 120,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-6525ce1c9c73",
@@ -1865,7 +1876,7 @@
       },
       "primary_key": "symplectic reduction IPC guard (`symplectic_reduction`)",
       "provenance": {
-        "line": 118,
+        "line": 121,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-e82cd91e895b",
@@ -1880,7 +1891,7 @@
       },
       "primary_key": "higher-topos descent controller (`higher_topos`)",
       "provenance": {
-        "line": 119,
+        "line": 122,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-70d1e3175860",
@@ -1895,7 +1906,7 @@
       },
       "primary_key": "commitment-audit controller (`commitment_audit`)",
       "provenance": {
-        "line": 120,
+        "line": 123,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-9342ffc7e184",
@@ -1910,7 +1921,7 @@
       },
       "primary_key": "Bayesian change-point detector (`changepoint`)",
       "provenance": {
-        "line": 121,
+        "line": 124,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-1b98c49992cb",
@@ -1925,7 +1936,7 @@
       },
       "primary_key": "conformal risk controller (`conformal`)",
       "provenance": {
-        "line": 122,
+        "line": 125,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-c69d7fd14a10",
@@ -1940,7 +1951,7 @@
       },
       "primary_key": "ADMM budget allocator (`admm_budget`)",
       "provenance": {
-        "line": 123,
+        "line": 126,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-fa5438ef8702",
@@ -1955,7 +1966,7 @@
       },
       "primary_key": "spectral-sequence obstruction detector (`obstruction_detector`)",
       "provenance": {
-        "line": 124,
+        "line": 127,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-a72309715c7d",
@@ -1970,7 +1981,7 @@
       },
       "primary_key": "operator-norm spectral radius monitor (`operator_norm`)",
       "provenance": {
-        "line": 125,
+        "line": 128,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-fadcc81f4d51",
@@ -1985,7 +1996,7 @@
       },
       "primary_key": "Malliavin sensitivity controller (`malliavin_sensitivity`)",
       "provenance": {
-        "line": 126,
+        "line": 129,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-4821dd26d181",
@@ -2000,7 +2011,7 @@
       },
       "primary_key": "information geometry monitor (`info_geometry`)",
       "provenance": {
-        "line": 127,
+        "line": 130,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-72878468431a",
@@ -2015,7 +2026,7 @@
       },
       "primary_key": "matrix concentration monitor (`matrix_concentration`)",
       "provenance": {
-        "line": 128,
+        "line": 131,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-914e63bf47d3",
@@ -2030,7 +2041,7 @@
       },
       "primary_key": "nerve complex monitor (`nerve_complex`)",
       "provenance": {
-        "line": 129,
+        "line": 132,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-c4e302f5613b",
@@ -2045,7 +2056,7 @@
       },
       "primary_key": "Wasserstein drift monitor (`wasserstein_drift`)",
       "provenance": {
-        "line": 130,
+        "line": 133,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-e1660faa9226",
@@ -2060,7 +2071,7 @@
       },
       "primary_key": "kernel MMD monitor (`kernel_mmd`)",
       "provenance": {
-        "line": 131,
+        "line": 134,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-c72e6405aac7",
@@ -2075,7 +2086,7 @@
       },
       "primary_key": "Stein discrepancy monitor (`stein_discrepancy`)",
       "provenance": {
-        "line": 132,
+        "line": 135,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-2b8e721a86d1",
@@ -2090,7 +2101,7 @@
       },
       "primary_key": "POMDP repair controller (`pomdp_repair`)",
       "provenance": {
-        "line": 133,
+        "line": 136,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-e558f817c38f",
@@ -2105,7 +2116,7 @@
       },
       "primary_key": "K-theory contract monitor (`ktheory`)",
       "provenance": {
-        "line": 134,
+        "line": 137,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-95e8b3dcc00b",
@@ -2120,7 +2131,7 @@
       },
       "primary_key": "SOS invariant synthesizer (`sos_invariant`)",
       "provenance": {
-        "line": 135,
+        "line": 138,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-1c086347d0de",
@@ -2135,7 +2146,7 @@
       },
       "primary_key": "pointer validator integration",
       "provenance": {
-        "line": 136,
+        "line": 139,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-26fa1843b2bd",
@@ -2150,7 +2161,7 @@
       },
       "primary_key": "allocator integration",
       "provenance": {
-        "line": 137,
+        "line": 140,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-5854a5928167",
@@ -2165,7 +2176,7 @@
       },
       "primary_key": "string/memory integration",
       "provenance": {
-        "line": 138,
+        "line": 141,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-69775144f57d",
@@ -2180,7 +2191,7 @@
       },
       "primary_key": "math/fenv integration",
       "provenance": {
-        "line": 139,
+        "line": 142,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-850ce9d24711",
@@ -2195,7 +2206,7 @@
       },
       "primary_key": "stdio integration",
       "provenance": {
-        "line": 140,
+        "line": 143,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-3350d65ab25e",
@@ -2210,7 +2221,7 @@
       },
       "primary_key": "pthread/futex integration",
       "provenance": {
-        "line": 141,
+        "line": 144,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-3c6b5f6c7257",
@@ -2225,7 +2236,7 @@
       },
       "primary_key": "process integration",
       "provenance": {
-        "line": 142,
+        "line": 145,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-42b59bcb8c96",
@@ -2240,7 +2251,7 @@
       },
       "primary_key": "virtual memory integration",
       "provenance": {
-        "line": 143,
+        "line": 146,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-9154f2cb685e",
@@ -2255,7 +2266,7 @@
       },
       "primary_key": "poll integration",
       "provenance": {
-        "line": 144,
+        "line": 147,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-fdc29c4fcb58",
@@ -2270,7 +2281,7 @@
       },
       "primary_key": "resolver/NSS integration",
       "provenance": {
-        "line": 145,
+        "line": 148,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-a94b6554ba63",
@@ -2285,7 +2296,7 @@
       },
       "primary_key": "unistd/POSIX integration",
       "provenance": {
-        "line": 146,
+        "line": 149,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-d59aa9ef67a2",
@@ -2300,7 +2311,7 @@
       },
       "primary_key": "socket integration",
       "provenance": {
-        "line": 147,
+        "line": 150,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-1b7223dd7f66",
@@ -2315,7 +2326,7 @@
       },
       "primary_key": "inet integration",
       "provenance": {
-        "line": 148,
+        "line": 151,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-7f953e76455e",
@@ -2330,7 +2341,7 @@
       },
       "primary_key": "locale integration",
       "provenance": {
-        "line": 149,
+        "line": 152,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-ce42fc35752f",
@@ -2345,7 +2356,7 @@
       },
       "primary_key": "termios integration",
       "provenance": {
-        "line": 150,
+        "line": 153,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-727b5a164922",
@@ -2360,7 +2371,7 @@
       },
       "primary_key": "dlfcn integration",
       "provenance": {
-        "line": 151,
+        "line": 154,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-runtime-math-3c54a9874e9f",
@@ -2376,7 +2387,7 @@
       },
       "primary_key": "loader/symbol/IFUNC",
       "provenance": {
-        "line": 157,
+        "line": 160,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-0191894bf973",
@@ -2392,7 +2403,7 @@
       },
       "primary_key": "allocator",
       "provenance": {
-        "line": 158,
+        "line": 161,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-311e99aff4d6",
@@ -2408,7 +2419,7 @@
       },
       "primary_key": "hot string/memory kernels",
       "provenance": {
-        "line": 159,
+        "line": 162,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-a30cbdd5d2da",
@@ -2424,7 +2435,7 @@
       },
       "primary_key": "futex/pthread/cancellation",
       "provenance": {
-        "line": 160,
+        "line": 163,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-422dc81789ec",
@@ -2440,7 +2451,7 @@
       },
       "primary_key": "stdio/parser/locale formatting",
       "provenance": {
-        "line": 161,
+        "line": 164,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-bbe405ff4f84",
@@ -2456,7 +2467,7 @@
       },
       "primary_key": "signal/setjmp transfer",
       "provenance": {
-        "line": 162,
+        "line": 165,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-97ef5634c70b",
@@ -2472,7 +2483,7 @@
       },
       "primary_key": "time/timezone/rt timers",
       "provenance": {
-        "line": 163,
+        "line": 166,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-bdb29f3d780e",
@@ -2488,7 +2499,7 @@
       },
       "primary_key": "nss/resolv/nscd/sunrpc",
       "provenance": {
-        "line": 164,
+        "line": 167,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-d6c0faa879a5",
@@ -2504,7 +2515,7 @@
       },
       "primary_key": "locale/iconv/transliteration",
       "provenance": {
-        "line": 165,
+        "line": 168,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-36e1946e7f8d",
@@ -2520,7 +2531,7 @@
       },
       "primary_key": "ABI/time64/layout bridges",
       "provenance": {
-        "line": 166,
+        "line": 169,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-c16c9c1ae7a4",
@@ -2536,7 +2547,7 @@
       },
       "primary_key": "VM transitions",
       "provenance": {
-        "line": 167,
+        "line": 170,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-83ea12557c2f",
@@ -2552,7 +2563,7 @@
       },
       "primary_key": "strict/hardened decision layer",
       "provenance": {
-        "line": 168,
+        "line": 171,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-afa6d92abe42",
@@ -2568,7 +2579,7 @@
       },
       "primary_key": "process bootstrap (`csu`, TLS init, auxv, secure mode)",
       "provenance": {
-        "line": 169,
+        "line": 172,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-a764fe234295",
@@ -2584,7 +2595,7 @@
       },
       "primary_key": "cross-ISA syscall glue (`sysdeps/*`)",
       "provenance": {
-        "line": 170,
+        "line": 173,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-3ac0cb0d65a2",
@@ -2600,7 +2611,7 @@
       },
       "primary_key": "System V IPC (`sysvipc`)",
       "provenance": {
-        "line": 171,
+        "line": 174,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-757002295174",
@@ -2616,7 +2627,7 @@
       },
       "primary_key": "i18n catalogs (`intl`, `catgets`, `localedata`)",
       "provenance": {
-        "line": 172,
+        "line": 175,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-8f333dadeb11",
@@ -2632,7 +2643,7 @@
       },
       "primary_key": "diagnostics/unwinding (`debug`, backtrace)",
       "provenance": {
-        "line": 173,
+        "line": 176,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-8f05cebd7805",
@@ -2648,7 +2659,7 @@
       },
       "primary_key": "session accounting (`login`, `utmp/wtmp`)",
       "provenance": {
-        "line": 174,
+        "line": 177,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-b4b2f8e772cb",
@@ -2664,7 +2675,7 @@
       },
       "primary_key": "profiling hooks (`gmon`, sampling/probe paths)",
       "provenance": {
-        "line": 175,
+        "line": 178,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-44162ed23382",
@@ -2680,7 +2691,7 @@
       },
       "primary_key": "floating-point edges (`soft-fp`, `fenv` exceptional paths)",
       "provenance": {
-        "line": 176,
+        "line": 179,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-reverse-core-a559b1461f71",
@@ -2695,7 +2706,7 @@
       },
       "primary_key": "strict refinement theorem",
       "provenance": {
-        "line": 222,
+        "line": 225,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-b821b415a5d6",
@@ -2710,7 +2721,7 @@
       },
       "primary_key": "hardened safety theorem",
       "provenance": {
-        "line": 223,
+        "line": 226,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-f3e03ea48a96",
@@ -2725,7 +2736,7 @@
       },
       "primary_key": "deterministic replay theorem",
       "provenance": {
-        "line": 224,
+        "line": 227,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-0dbb786935af",
@@ -2740,7 +2751,7 @@
       },
       "primary_key": "sequential regression control",
       "provenance": {
-        "line": 225,
+        "line": 228,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-df8f42355e99",
@@ -2755,7 +2766,7 @@
       },
       "primary_key": "drift detection reliability",
       "provenance": {
-        "line": 226,
+        "line": 229,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-6d3837dc2cdd",
@@ -2770,7 +2781,7 @@
       },
       "primary_key": "CPOMDP admissibility",
       "provenance": {
-        "line": 227,
+        "line": 230,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-1a1ed91c6ee8",
@@ -2785,7 +2796,7 @@
       },
       "primary_key": "CHC/CEGAR convergence",
       "provenance": {
-        "line": 228,
+        "line": 231,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-5a7ebb15c2f5",
@@ -2800,7 +2811,7 @@
       },
       "primary_key": "superoptimization soundness",
       "provenance": {
-        "line": 229,
+        "line": 232,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-4577b75545e4",
@@ -2815,7 +2826,7 @@
       },
       "primary_key": "tail-risk control",
       "provenance": {
-        "line": 230,
+        "line": 233,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-b9be3da6001d",
@@ -2830,7 +2841,7 @@
       },
       "primary_key": "barrier invariance",
       "provenance": {
-        "line": 231,
+        "line": 234,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-8c76410adba7",
@@ -2845,7 +2856,7 @@
       },
       "primary_key": "robust-radius guarantee",
       "provenance": {
-        "line": 232,
+        "line": 235,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-2a49b40113a6",
@@ -2860,7 +2871,7 @@
       },
       "primary_key": "concurrent linearizability",
       "provenance": {
-        "line": 233,
+        "line": 236,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-638859dcb801",
@@ -2875,7 +2886,7 @@
       },
       "primary_key": "HJI viability",
       "provenance": {
-        "line": 234,
+        "line": 237,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-eb51f3bf762d",
@@ -2890,7 +2901,7 @@
       },
       "primary_key": "sheaf consistency detection",
       "provenance": {
-        "line": 235,
+        "line": 238,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-9c25ab032255",
@@ -2905,7 +2916,7 @@
       },
       "primary_key": "combinatorial interaction coverage",
       "provenance": {
-        "line": 236,
+        "line": 239,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-77bcaf571ca9",
@@ -2920,7 +2931,7 @@
       },
       "primary_key": "probabilistic coupling bounds",
       "provenance": {
-        "line": 237,
+        "line": 240,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-c76d1265a4b8",
@@ -2935,7 +2946,7 @@
       },
       "primary_key": "mean-field stability",
       "provenance": {
-        "line": 238,
+        "line": 241,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-96c6e9c65324",
@@ -2950,7 +2961,7 @@
       },
       "primary_key": "entropic transition safety",
       "provenance": {
-        "line": 239,
+        "line": 242,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-f929ecc9dcd6",
@@ -2965,7 +2976,7 @@
       },
       "primary_key": "SOS invariant synthesis",
       "provenance": {
-        "line": 240,
+        "line": 243,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-5fa634c732ac",
@@ -2980,7 +2991,7 @@
       },
       "primary_key": "large-deviation catastrophe bounds",
       "provenance": {
-        "line": 241,
+        "line": 244,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-d7e5810905ab",
@@ -2995,7 +3006,7 @@
       },
       "primary_key": "topological anomaly detection",
       "provenance": {
-        "line": 242,
+        "line": 245,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-f6429eb2d1c8",
@@ -3010,7 +3021,7 @@
       },
       "primary_key": "rough-signature feature stability",
       "provenance": {
-        "line": 243,
+        "line": 246,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-37337d818152",
@@ -3025,7 +3036,7 @@
       },
       "primary_key": "tropical latency composition",
       "provenance": {
-        "line": 244,
+        "line": 247,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-0a9c8933d821",
@@ -3040,7 +3051,7 @@
       },
       "primary_key": "online optimizer convergence",
       "provenance": {
-        "line": 245,
+        "line": 248,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-c215c413371b",
@@ -3055,7 +3066,7 @@
       },
       "primary_key": "coalgebraic stream bisimulation",
       "provenance": {
-        "line": 246,
+        "line": 249,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-a0873d9da0f5",
@@ -3070,7 +3081,7 @@
       },
       "primary_key": "Krohn-Rhodes codec factorization",
       "provenance": {
-        "line": 247,
+        "line": 250,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-bccf06e26bab",
@@ -3085,7 +3096,7 @@
       },
       "primary_key": "hybrid temporal reachability",
       "provenance": {
-        "line": 248,
+        "line": 251,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-050acfed5d6f",
@@ -3100,7 +3111,7 @@
       },
       "primary_key": "Stackelberg cache-security equilibria",
       "provenance": {
-        "line": 249,
+        "line": 252,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-fa21b6b68812",
@@ -3115,7 +3126,7 @@
       },
       "primary_key": "observability-rate optimality",
       "provenance": {
-        "line": 250,
+        "line": 253,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-76ad47f58ff9",
@@ -3130,7 +3141,7 @@
       },
       "primary_key": "loader namespace sheaf consistency",
       "provenance": {
-        "line": 251,
+        "line": 254,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-fcb2fed207e1",
@@ -3145,7 +3156,7 @@
       },
       "primary_key": "async nonlocal-control admissibility",
       "provenance": {
-        "line": 252,
+        "line": 255,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-a4fd102d5fd8",
@@ -3160,7 +3171,7 @@
       },
       "primary_key": "termios/ioctl polyhedral safety",
       "provenance": {
-        "line": 253,
+        "line": 256,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-25ac141c57f6",
@@ -3175,7 +3186,7 @@
       },
       "primary_key": "launch-pattern complexity guarantees",
       "provenance": {
-        "line": 254,
+        "line": 257,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-0d50ca59b972",
@@ -3190,7 +3201,7 @@
       },
       "primary_key": "secure-mode noninterference",
       "provenance": {
-        "line": 255,
+        "line": 258,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-f4c99678233a",
@@ -3205,7 +3216,7 @@
       },
       "primary_key": "conformal decision validity",
       "provenance": {
-        "line": 256,
+        "line": 259,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-498e3ada4658",
@@ -3220,7 +3231,7 @@
       },
       "primary_key": "spectral-sequence obstruction convergence",
       "provenance": {
-        "line": 257,
+        "line": 260,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-76cb028ebd3b",
@@ -3235,7 +3246,7 @@
       },
       "primary_key": "algebraic normal-form uniqueness",
       "provenance": {
-        "line": 258,
+        "line": 261,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-7d4ac141f993",
@@ -3250,7 +3261,7 @@
       },
       "primary_key": "noncommutative contention stability",
       "provenance": {
-        "line": 259,
+        "line": 262,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-10bc920debc7",
@@ -3265,7 +3276,7 @@
       },
       "primary_key": "arithmetic compatibility integrity",
       "provenance": {
-        "line": 260,
+        "line": 263,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-d09a6233acb5",
@@ -3280,7 +3291,7 @@
       },
       "primary_key": "Serre spectral convergence integrity",
       "provenance": {
-        "line": 261,
+        "line": 264,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-7c593b074cca",
@@ -3295,7 +3306,7 @@
       },
       "primary_key": "Grothendieck descent coherence",
       "provenance": {
-        "line": 262,
+        "line": 265,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-cecd99919641",
@@ -3310,7 +3321,7 @@
       },
       "primary_key": "families-index nullity",
       "provenance": {
-        "line": 263,
+        "line": 266,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-c9faf981c807",
@@ -3325,7 +3336,7 @@
       },
       "primary_key": "Atiyah-Bott localization conservativity",
       "provenance": {
-        "line": 264,
+        "line": 267,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-1cf962a06c67",
@@ -3340,7 +3351,7 @@
       },
       "primary_key": "Clifford kernel equivalence",
       "provenance": {
-        "line": 265,
+        "line": 268,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-080870cbbd8d",
@@ -3355,7 +3366,7 @@
       },
       "primary_key": "derived t-structure bootstrap ordering",
       "provenance": {
-        "line": 266,
+        "line": 269,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-proof-math-58baa463bee3",
@@ -3369,7 +3380,7 @@
       },
       "primary_key": "1",
       "provenance": {
-        "line": 270,
+        "line": 273,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-a39363bd3b78",
@@ -3383,7 +3394,7 @@
       },
       "primary_key": "2",
       "provenance": {
-        "line": 271,
+        "line": 274,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-7b67c9268b67",
@@ -3397,7 +3408,7 @@
       },
       "primary_key": "3",
       "provenance": {
-        "line": 272,
+        "line": 275,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-d643858a62b5",
@@ -3411,7 +3422,7 @@
       },
       "primary_key": "4",
       "provenance": {
-        "line": 273,
+        "line": 276,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-7c8a46cdcb5e",
@@ -3425,7 +3436,7 @@
       },
       "primary_key": "5",
       "provenance": {
-        "line": 274,
+        "line": 277,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-b04531fdcdde",
@@ -3439,7 +3450,7 @@
       },
       "primary_key": "6",
       "provenance": {
-        "line": 275,
+        "line": 278,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-3675b24bb188",
@@ -3453,7 +3464,7 @@
       },
       "primary_key": "7",
       "provenance": {
-        "line": 276,
+        "line": 279,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-e0624b12f6a0",
@@ -3467,7 +3478,7 @@
       },
       "primary_key": "8",
       "provenance": {
-        "line": 277,
+        "line": 280,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-be0b24532a7e",
@@ -3481,7 +3492,7 @@
       },
       "primary_key": "8",
       "provenance": {
-        "line": 278,
+        "line": 281,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-0398e27f075e",
@@ -3495,7 +3506,7 @@
       },
       "primary_key": "9",
       "provenance": {
-        "line": 279,
+        "line": 282,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-793c83cceb16",
@@ -3509,7 +3520,7 @@
       },
       "primary_key": "10",
       "provenance": {
-        "line": 280,
+        "line": 283,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-5cbb74613755",
@@ -3523,7 +3534,7 @@
       },
       "primary_key": "11",
       "provenance": {
-        "line": 281,
+        "line": 284,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-db582a1956fa",
@@ -3537,7 +3548,7 @@
       },
       "primary_key": "11",
       "provenance": {
-        "line": 282,
+        "line": 285,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-84240b59cfd1",
@@ -3551,7 +3562,7 @@
       },
       "primary_key": "12",
       "provenance": {
-        "line": 283,
+        "line": 286,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-70370851cacb",
@@ -3565,7 +3576,7 @@
       },
       "primary_key": "13",
       "provenance": {
-        "line": 284,
+        "line": 287,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-205f8c297218",
@@ -3579,7 +3590,7 @@
       },
       "primary_key": "14",
       "provenance": {
-        "line": 285,
+        "line": 288,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-a1d7fcc3399f",
@@ -3593,7 +3604,7 @@
       },
       "primary_key": "15",
       "provenance": {
-        "line": 286,
+        "line": 289,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-10132dfe6278",
@@ -3607,7 +3618,7 @@
       },
       "primary_key": "16",
       "provenance": {
-        "line": 287,
+        "line": 290,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-b95fff14be76",
@@ -3621,7 +3632,7 @@
       },
       "primary_key": "17",
       "provenance": {
-        "line": 288,
+        "line": 291,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-09fac08213b2",
@@ -3635,7 +3646,7 @@
       },
       "primary_key": "18",
       "provenance": {
-        "line": 289,
+        "line": 292,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-5da3dc1c8d50",
@@ -3649,7 +3660,7 @@
       },
       "primary_key": "19",
       "provenance": {
-        "line": 290,
+        "line": 293,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-26353b43713e",
@@ -3663,7 +3674,7 @@
       },
       "primary_key": "20",
       "provenance": {
-        "line": 291,
+        "line": 294,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-5dd50f7bfbf2",
@@ -3677,7 +3688,7 @@
       },
       "primary_key": "21",
       "provenance": {
-        "line": 292,
+        "line": 295,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-e9257a2a9c49",
@@ -3691,7 +3702,7 @@
       },
       "primary_key": "22",
       "provenance": {
-        "line": 293,
+        "line": 296,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-ca75128647d2",
@@ -3705,7 +3716,7 @@
       },
       "primary_key": "21",
       "provenance": {
-        "line": 294,
+        "line": 297,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-a3aed10a522c",
@@ -3719,7 +3730,7 @@
       },
       "primary_key": "22",
       "provenance": {
-        "line": 295,
+        "line": 298,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-03bcda968d0e",
@@ -3733,7 +3744,7 @@
       },
       "primary_key": "23",
       "provenance": {
-        "line": 296,
+        "line": 299,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-267b493369f9",
@@ -3747,7 +3758,7 @@
       },
       "primary_key": "24",
       "provenance": {
-        "line": 297,
+        "line": 300,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-17c934647652",
@@ -3761,7 +3772,7 @@
       },
       "primary_key": "23",
       "provenance": {
-        "line": 298,
+        "line": 301,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-3c88823923b9",
@@ -3775,7 +3786,7 @@
       },
       "primary_key": "24",
       "provenance": {
-        "line": 299,
+        "line": 302,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-994260bdf05c",
@@ -3789,7 +3800,7 @@
       },
       "primary_key": "25",
       "provenance": {
-        "line": 300,
+        "line": 303,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-42c1bf789b12",
@@ -3803,7 +3814,7 @@
       },
       "primary_key": "26",
       "provenance": {
-        "line": 301,
+        "line": 304,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-e1b445fd58b5",
@@ -3817,7 +3828,7 @@
       },
       "primary_key": "27",
       "provenance": {
-        "line": 302,
+        "line": 305,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-a51012652c16",
@@ -3831,7 +3842,7 @@
       },
       "primary_key": "28",
       "provenance": {
-        "line": 303,
+        "line": 306,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-b7a23cbbae29",
@@ -3845,7 +3856,7 @@
       },
       "primary_key": "29",
       "provenance": {
-        "line": 304,
+        "line": 307,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-17d24896af61",
@@ -3859,7 +3870,7 @@
       },
       "primary_key": "30",
       "provenance": {
-        "line": 305,
+        "line": 308,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-99daf17ed425",
@@ -3873,7 +3884,7 @@
       },
       "primary_key": "31",
       "provenance": {
-        "line": 306,
+        "line": 309,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-b679d62602b3",
@@ -3887,10 +3898,24 @@
       },
       "primary_key": "32",
       "provenance": {
-        "line": 307,
+        "line": 310,
         "path": "FEATURE_PARITY.md"
       },
       "row_id": "fp-gap-summary-161e06bc3a3d",
+      "section": "gap_summary",
+      "status": "IN_PROGRESS"
+    },
+    {
+      "columns": {
+        "entry": "HTM fast path live \u2014 `memcpy`, `pthread_mutex_lock`, and the malloc stats combiner now route uncontended hot-path work through an RTM-backed optimistic path with deterministic abort/cooldown/fallback evidence enforced by `scripts/check_htm_fast_path.sh`.",
+        "ordinal": "33"
+      },
+      "primary_key": "33",
+      "provenance": {
+        "line": 311,
+        "path": "FEATURE_PARITY.md"
+      },
+      "row_id": "fp-gap-summary-7bd4926c4439",
       "section": "gap_summary",
       "status": "IN_PROGRESS"
     }
@@ -3906,12 +3931,12 @@
   "summary": {
     "delta_count": 5,
     "drift_delta_count": 4,
-    "gap_count": 113,
+    "gap_count": 114,
     "parse_error_count": 0,
-    "row_count": 169,
+    "row_count": 170,
     "status_counts": {
       "DONE": 60,
-      "IN_PROGRESS": 63,
+      "IN_PROGRESS": 64,
       "PLANNED": 46
     },
     "transition_count": 0

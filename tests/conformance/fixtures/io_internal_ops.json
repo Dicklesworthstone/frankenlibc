@@ -14,11 +14,11 @@
       "mode": "both"
     },
     {
-      "name": "IO_adjust_column_tab_aligns",
+      "name": "IO_adjust_column_tab_is_ordinary",
       "function": "_IO_adjust_column",
       "spec_section": "glibc libio internal",
       "inputs": { "col": 1, "line": "\\t", "count": 1 },
-      "expected_output": "8",
+      "expected_output": "2",
       "expected_errno": 0,
       "mode": "both"
     },

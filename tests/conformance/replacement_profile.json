@@ -103,6 +103,7 @@
       "signal_abi",
       "stdio_abi",
       "stdlib_abi",
+      "string_abi",
       "unistd_abi",
       "socket_abi",
       "dlfcn_abi",
@@ -120,7 +121,17 @@
   },
   "callthrough_families": {
     "source": "replacement_guard_source_scan",
-    "modules": [],
+    "modules": [
+      "dirent_abi",
+      "glibc_internal_abi",
+      "io_internal_abi",
+      "pthread_abi",
+      "rpc_abi",
+      "stdlib_abi",
+      "string_abi",
+      "unistd_abi",
+      "wchar_abi"
+    ],
     "require_fixture_coverage": true
   },
   "dlfcn_boundary_policy": {
@@ -159,77 +170,82 @@
   "call_through_census": {
     "description": "Current census of direct host libc/host pthread escape hatches by ABI module, as scanned by scripts/check_replacement_guard.sh.",
     "modules": {
-      "errno_abi": {
-        "count": 0,
-        "functions": [],
-        "note": "Host errno mirroring is routed through host_resolve helper state; no _abi.rs scan hits remain."
-      },
-      "fortify_abi": {
-        "count": 0,
-        "functions": []
-      },
-      "glibc_internal_abi": {
-        "count": 0,
-        "functions": []
-      },
-      "io_internal_abi": {
-        "count": 0,
-        "functions": []
-      },
-      "malloc_abi": {
-        "count": 0,
-        "functions": [],
-        "note": "Internal raw_alloc/raw_free now share the native host-resolution path, and allocator symbol fallback routes through dlfcn_abi::dlsym."
-      },
-      "process_abi": {
-        "count": 0,
-        "functions": [],
-        "note": "Spawn-attribute signal-set roundtrips now use signal_abi helpers, and the closefrom fallback uses unistd_abi::sysconf."
-      },
-      "pthread_abi": {
-        "count": 0,
-        "functions": [],
-        "note": "Host-backed pthread fallbacks are now routed through non-scanned helper aliases, so the replacement guard sees zero direct _abi.rs call-through tokens."
-      },
-      "rpc_abi": {
-        "count": 0,
-        "functions": [],
-        "note": "XDR stdio helpers now route through stdio_abi entrypoints, and _rpc_dtablesize uses resource_abi::getrlimit."
-      },
-      "signal_abi": {
-        "count": 0,
-        "functions": []
-      },
-      "stdio_abi": {
-        "count": 0,
-        "functions": [],
-        "note": "tmpfile fallback now uses native mkstemp via wchar_abi, and popen cleanup reaps children through process_abi::waitpid."
-      },
-      "stdlib_abi": {
-        "count": 0,
-        "functions": [],
-        "note": "Environment ownership keeps host-allocator semantics through malloc_abi passthrough helpers, and stdlib alias/flush/timer paths no longer emit direct libc call-throughs in _abi.rs."
-      },
-      "termios_abi": {
-        "count": 0,
-        "functions": [],
-        "note": "In-file test helpers now route through native ABI entrypoints, so the replacement guard sees no direct libc call-throughs."
-      },
-      "unistd_abi": {
-        "count": 0,
-        "functions": []
-      },
       "dlfcn_abi": {
         "count": 0,
-        "functions": []
+        "functions": [],
+        "note": "dlfcn phase-1 boundary remains native and must not emit direct host dl* call-through tokens."
+      },
+      "dirent_abi": {
+        "count": 6,
+        "functions": [
+          "free",
+          "malloc"
+        ],
+        "note": "Directory-entry allocation helpers intentionally pair host malloc/free in interpose mode."
+      },
+      "glibc_internal_abi": {
+        "count": 6,
+        "functions": [
+          "free",
+          "malloc"
+        ],
+        "note": "Internal compatibility helpers allocate host-visible directory and scratch buffers in interpose mode."
+      },
+      "io_internal_abi": {
+        "count": 3,
+        "functions": [
+          "fclose",
+          "tmpfile"
+        ],
+        "note": "Temporary-file probing remains host-backed in interpose mode."
+      },
+      "pthread_abi": {
+        "count": 1,
+        "functions": [
+          "pthread_sigqueue"
+        ],
+        "note": "pthread_sigqueue is resolved through the host pthread wrapper in interpose mode only."
+      },
+      "rpc_abi": {
+        "count": 11,
+        "functions": [
+          "calloc",
+          "free",
+          "malloc"
+        ],
+        "note": "RPC/XDR compatibility helpers still allocate host-visible buffers in interpose mode."
+      },
+      "stdlib_abi": {
+        "count": 1,
+        "functions": [
+          "malloc"
+        ],
+        "note": "One stdlib helper returns a host-freeable allocated string in interpose mode."
       },
       "string_abi": {
-        "count": 0,
-        "functions": [],
-        "note": "Legacy regex register allocation now uses the ABI allocator path instead of direct libc calloc/free."
+        "count": 10,
+        "functions": [
+          "free",
+          "malloc"
+        ],
+        "note": "strdup/strndup and GNU argz APIs use host malloc/free so caller-owned buffers pair with libc::free in interpose and test builds."
+      },
+      "unistd_abi": {
+        "count": 2,
+        "functions": [
+          "malloc"
+        ],
+        "note": "Path/name helpers allocate host-visible strings in interpose mode."
+      },
+      "wchar_abi": {
+        "count": 1,
+        "functions": [
+          "malloc"
+        ],
+        "note": "Wide-string duplication returns a host-freeable allocation in interpose mode."
       }
     },
-    "total_call_throughs": 0,
+    "total_call_throughs": 41,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }

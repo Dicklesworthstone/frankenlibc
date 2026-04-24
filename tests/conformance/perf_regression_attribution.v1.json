@@ -170,7 +170,7 @@
   "summary": {
     "mapped_benchmarks": 4,
     "regression_classes": 5,
-    "required_log_fields": 12,
+    "required_log_fields": 13,
     "triage_playbooks": 4,
     "auto_throttle_actions": 1
   }

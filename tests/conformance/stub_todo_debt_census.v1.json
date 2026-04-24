@@ -5,9 +5,9 @@
   "description": "Unified stub/TODO debt census combining exported taxonomy status with critical non-exported source debt and deterministic risk ranking.",
   "source": {
     "support_matrix_path": "support_matrix.json",
-    "support_matrix_sha256": "c1373d9a4106d619aa3c10e1d47f0bd09d282c1fec3d55486db666a340012b37",
+    "support_matrix_sha256": "3f1f3c8a048b6b8c0bf7e49b3e7ed5284a978891cf7591ac5c937dfef86dccf5",
     "replacement_profile_path": "tests/conformance/replacement_profile.json",
-    "replacement_profile_sha256": "8c1307bf3a143a2db1f105310c84797e291b96ac69321872cdb9eda9c5b0a779",
+    "replacement_profile_sha256": "badded98f3322620be298df80f37504b6d738c5413eb1af6a179449a1fa9c8f2",
     "scan_roots": [
       "crates/frankenlibc-core/src",
       "crates/frankenlibc-abi/src"
@@ -104,30 +104,33 @@
       "startup_abi",
       "stdio_abi",
       "stdlib_abi",
+      "string_abi",
       "time_abi",
       "unistd_abi",
       "wchar_abi"
     ],
     "declared_callthrough_family_modules": [
+      "dirent_abi",
       "glibc_internal_abi",
-      "malloc_abi",
-      "process_abi",
+      "io_internal_abi",
       "pthread_abi",
       "rpc_abi",
-      "stdio_abi",
       "stdlib_abi",
-      "unistd_abi"
+      "string_abi",
+      "unistd_abi",
+      "wchar_abi"
     ],
     "actual_callthrough_modules": [],
     "declared_but_not_actual_callthrough_modules": [
+      "dirent_abi",
       "glibc_internal_abi",
-      "malloc_abi",
-      "process_abi",
+      "io_internal_abi",
       "pthread_abi",
       "rpc_abi",
-      "stdio_abi",
       "stdlib_abi",
-      "unistd_abi"
+      "string_abi",
+      "unistd_abi",
+      "wchar_abi"
     ],
     "actual_but_not_declared_callthrough_modules": [],
     "exported_replacement_blockers": [],

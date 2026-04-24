@@ -86,14 +86,14 @@
       "mode": "strict"
     },
     {
-      "name": "pthread_join_self_esrch",
+      "name": "pthread_join_self_edeadlk",
       "function": "pthread_join",
       "spec_section": "POSIX.1-2017 pthread_join",
       "inputs": { "thread": "self" },
-      "expected_output": "ESRCH",
-      "expected_errno": 3,
+      "expected_output": "EDEADLK",
+      "expected_errno": 35,
       "mode": "both",
-      "note": "FrankenLibC returns ESRCH for join-self; POSIX allows EDEADLK"
+      "note": "Joining the current thread is detected before registry lookup."
     },
     {
       "name": "pthread_detach_finished_immediate_cleanup",

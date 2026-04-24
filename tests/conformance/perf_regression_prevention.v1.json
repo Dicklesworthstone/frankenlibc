@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1qfc",
-  "generated_at": "2026-03-25T19:36:50Z",
+  "generated_at": "2026-04-24T03:41:49Z",
   "summary": {
     "total_suites_in_spec": 4,
     "suites_with_bench_files": 4,
@@ -10,7 +10,7 @@
     "baseline_slot_fill_pct": 28.6,
     "hotpath_symbol_coverage_pct": 57.2,
     "total_hotpath_symbols": 145,
-    "extra_bench_files_beyond_spec": 6,
+    "extra_bench_files_beyond_spec": 8,
     "total_issues": 0,
     "total_warnings": 0
   },
@@ -152,6 +152,8 @@
     "alien_cs",
     "baseline_capture",
     "condvar",
+    "elimination",
+    "metadata_read",
     "mutex",
     "runtime_math_kernels",
     "stdio"

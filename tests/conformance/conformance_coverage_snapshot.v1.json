@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-03-25T19:36:24Z",
+  "generated_at": "2026-04-24T03:40:02Z",
   "summary": {
     "total_symbols": 3980,
-    "symbols_with_fixtures": 230,
-    "coverage_pct": 6,
-    "total_fixture_files": 51,
-    "total_fixture_cases": 558,
-    "total_families": 42
+    "symbols_with_fixtures": 277,
+    "coverage_pct": 7,
+    "total_fixture_files": 55,
+    "total_fixture_cases": 1053,
+    "total_families": 45
   },
   "module_coverage": {
     "c11threads_abi": {
@@ -23,8 +23,8 @@
     },
     "dirent_abi": {
       "total": 14,
-      "covered": 3,
-      "pct": 21
+      "covered": 7,
+      "pct": 50
     },
     "dlfcn_abi": {
       "total": 7,
@@ -118,8 +118,8 @@
     },
     "pthread_abi": {
       "total": 141,
-      "covered": 20,
-      "pct": 14
+      "covered": 27,
+      "pct": 19
     },
     "pwd_abi": {
       "total": 27,
@@ -148,8 +148,8 @@
     },
     "search_abi": {
       "total": 2,
-      "covered": 0,
-      "pct": 0
+      "covered": 2,
+      "pct": 100
     },
     "setjmp_abi": {
       "total": 7,
@@ -158,8 +158,8 @@
     },
     "signal_abi": {
       "total": 28,
-      "covered": 3,
-      "pct": 11
+      "covered": 9,
+      "pct": 32
     },
     "socket_abi": {
       "total": 18,
@@ -178,18 +178,18 @@
     },
     "stdio_abi": {
       "total": 124,
-      "covered": 9,
-      "pct": 7
+      "covered": 17,
+      "pct": 14
     },
     "stdlib_abi": {
       "total": 141,
-      "covered": 7,
-      "pct": 5
+      "covered": 15,
+      "pct": 11
     },
     "string_abi": {
       "total": 140,
-      "covered": 21,
-      "pct": 15
+      "covered": 25,
+      "pct": 18
     },
     "termios_abi": {
       "total": 10,
@@ -203,13 +203,13 @@
     },
     "unistd_abi": {
       "total": 631,
-      "covered": 27,
-      "pct": 4
+      "covered": 31,
+      "pct": 5
     },
     "wchar_abi": {
       "total": 147,
-      "covered": 14,
-      "pct": 10
+      "covered": 18,
+      "pct": 12
     }
   },
   "family_coverage": {
@@ -247,11 +247,15 @@
       ]
     },
     "dirent": {
-      "function_count": 3,
+      "function_count": 7,
       "functions": [
         "closedir",
+        "dirfd",
         "opendir",
-        "readdir"
+        "readdir",
+        "rewinddir",
+        "seekdir",
+        "telldir"
       ]
     },
     "dlfcn": {
@@ -275,9 +279,15 @@
       ]
     },
     "errno": {
-      "function_count": 1,
+      "function_count": 7,
       "functions": [
-        "__errno_location"
+        "__errno_location",
+        "errno_constants",
+        "errno_preservation",
+        "perror",
+        "strerror",
+        "strerror_l",
+        "strerror_r"
       ]
     },
     "grp": {
@@ -425,6 +435,13 @@
         "SystemRegime::degradation_active"
       ]
     },
+    "printf": {
+      "function_count": 2,
+      "functions": [
+        "snprintf",
+        "sprintf"
+      ]
+    },
     "process": {
       "function_count": 4,
       "functions": [
@@ -435,9 +452,13 @@
       ]
     },
     "pthread": {
-      "function_count": 21,
+      "function_count": 28,
       "functions": [
+        "__pthread_mutex_trylock",
+        "__pthread_mutex_unlock",
+        "pthread_clockjoin_np",
         "pthread_cond_broadcast",
+        "pthread_cond_clockwait",
         "pthread_cond_destroy",
         "pthread_cond_init",
         "pthread_cond_signal",
@@ -446,6 +467,7 @@
         "pthread_create",
         "pthread_detach",
         "pthread_equal",
+        "pthread_getattr_np",
         "pthread_getspecific",
         "pthread_join",
         "pthread_key_create",
@@ -457,6 +479,8 @@
         "pthread_mutex_unlock",
         "pthread_self",
         "pthread_setspecific",
+        "pthread_timedjoin_np",
+        "pthread_tryjoin_np",
         "teardown_thread_tls"
       ]
     },
@@ -469,12 +493,13 @@
       ]
     },
     "regex": {
-      "function_count": 4,
+      "function_count": 5,
       "functions": [
         "fnmatch",
         "glob",
         "regcomp",
-        "regexec"
+        "regexec",
+        "wordexp"
       ]
     },
     "resolver": {
@@ -493,6 +518,27 @@
       "function_count": 1,
       "functions": [
         "getrlimit"
+      ]
+    },
+    "scanf": {
+      "function_count": 1,
+      "functions": [
+        "sscanf"
+      ]
+    },
+    "search": {
+      "function_count": 10,
+      "functions": [
+        "hsearch",
+        "hsearch_r",
+        "insque",
+        "lfind",
+        "lsearch",
+        "remque",
+        "tdelete",
+        "tfind",
+        "tsearch",
+        "twalk"
       ]
     },
     "session": {
@@ -519,11 +565,19 @@
       ]
     },
     "signal": {
-      "function_count": 3,
+      "function_count": 11,
       "functions": [
+        "gsignal",
         "kill",
         "raise",
-        "sigaction"
+        "sigaction",
+        "sigaddset",
+        "sigdelset",
+        "sigemptyset",
+        "sigfillset",
+        "sigismember",
+        "signal",
+        "ssignal"
       ]
     },
     "socket": {
@@ -553,12 +607,17 @@
       ]
     },
     "stdio": {
-      "function_count": 9,
+      "function_count": 14,
       "functions": [
         "fclose",
+        "feof",
+        "ferror",
         "fflush",
+        "fgetc",
+        "fileno",
         "fopen",
         "fprintf",
+        "fputc",
         "fread",
         "fseek",
         "ftell",
@@ -578,7 +637,7 @@
       ]
     },
     "string": {
-      "function_count": 15,
+      "function_count": 17,
       "functions": [
         "memchr",
         "memcmp",
@@ -589,6 +648,8 @@
         "strchr",
         "strcmp",
         "strcpy",
+        "strlcat",
+        "strlcpy",
         "strncat",
         "strncpy",
         "strrchr",
@@ -663,16 +724,20 @@
       ]
     },
     "wide": {
-      "function_count": 14,
+      "function_count": 18,
       "functions": [
         "wcscat",
         "wcschr",
         "wcscmp",
         "wcscpy",
+        "wcscspn",
         "wcslen",
+        "wcsncat",
         "wcsncmp",
         "wcsncpy",
+        "wcspbrk",
         "wcsrchr",
+        "wcsspn",
         "wcsstr",
         "wmemchr",
         "wmemcmp",
@@ -685,7 +750,7 @@
   "fixtures": {
     "allocator": {
       "file": "allocator.json",
-      "sha256": "3ed17b70c74892f87b87364fd9197e1f802c1f9cae0f1a045033f53c2a54bb66",
+      "sha256": "83d01e46032b363e8b47654c0478b02ae277f2e4aacfbdf9b55d5164b948d40f",
       "case_count": 5,
       "functions": [
         "calloc",
@@ -699,7 +764,7 @@
     },
     "backtrace_ops": {
       "file": "backtrace_ops.json",
-      "sha256": "674d7b701936af39c82584b4cfdfb3805a6e0d819472a2d1eef0548821bceeb0",
+      "sha256": "1ba6ae75f916aef584e03df4e4a50c59c975bb59d2fd40f792532472a1ee28d3",
       "case_count": 5,
       "functions": [
         "backtrace",
@@ -712,7 +777,7 @@
     },
     "ctype_ops": {
       "file": "ctype_ops.json",
-      "sha256": "14f112bfa1f61dca5422cfc426119f791c0901bf6afd48c59054cfd8ec83c364",
+      "sha256": "7540e1c019d23d15a7ed8c6df8bf46c82d0227a59dbcc1b1bdaeac9571c0d45e",
       "case_count": 37,
       "functions": [
         "isalnum",
@@ -733,12 +798,16 @@
     },
     "dirent_ops": {
       "file": "dirent_ops.json",
-      "sha256": "5f9902405f388675f1529743c012afebd639e9fa1afb504af001e482578fea9e",
-      "case_count": 6,
+      "sha256": "e0d8da1faf520cfad8c2ece4175c39e85f2cf89aff3fbff3a96ce2925e30e440",
+      "case_count": 13,
       "functions": [
         "closedir",
+        "dirfd",
         "opendir",
-        "readdir"
+        "readdir",
+        "rewinddir",
+        "seekdir",
+        "telldir"
       ],
       "families": [
         "dirent"
@@ -746,7 +815,7 @@
     },
     "dlfcn_ops": {
       "file": "dlfcn_ops.json",
-      "sha256": "4b378aabafc1944efd3bc5371815609f8dc34a7d8baacb27e17d005cc44f14a4",
+      "sha256": "5de9df85bb4ce626ceafa3fe9dea15c7c719c5ec6c52fa12740689753bb73c02",
       "case_count": 7,
       "functions": [
         "dlerror",
@@ -759,7 +828,7 @@
     },
     "elf_loader": {
       "file": "elf_loader.json",
-      "sha256": "cd70d632f9629724774c97af522e34a41755ec7b1b639590ca44d307414276a1",
+      "sha256": "2f838996376ac6a2672c3b3936aa62887bb79923984aa29a8b250e5977e6794d",
       "case_count": 17,
       "functions": [
         "Elf64Header::parse",
@@ -776,10 +845,16 @@
     },
     "errno_ops": {
       "file": "errno_ops.json",
-      "sha256": "36f5950a8ef2acc2dc2d3392b0999dab62a23648f88ba63fc327450a0f3e3a36",
-      "case_count": 3,
+      "sha256": "8c218ea9b26764db9dcd6d6ea1df1ba56b796df532dab2bab5a1b9247f3e07ad",
+      "case_count": 23,
       "functions": [
-        "__errno_location"
+        "__errno_location",
+        "errno_constants",
+        "errno_preservation",
+        "perror",
+        "strerror",
+        "strerror_l",
+        "strerror_r"
       ],
       "families": [
         "errno"
@@ -800,7 +875,7 @@
     },
     "iconv_phase1": {
       "file": "iconv_phase1.json",
-      "sha256": "be8d3d6a8a3b1a98e078d427f2cbccb8e2c524c86502522b4ba468266e2439f7",
+      "sha256": "7b3626c078285c7ede5de0afdeedcc3a40086cd0bf68d0e7775da03958452f77",
       "case_count": 13,
       "functions": [
         "iconv",
@@ -813,7 +888,7 @@
     },
     "inet_ops": {
       "file": "inet_ops.json",
-      "sha256": "09fc34639e2c6d09b82e00856a112b879fa703c613c3fc65b5d20e20f52a91c6",
+      "sha256": "0e09aec820aab9735cf0336b801e50b9355b25e8284e2ff796d4c692ca8768f4",
       "case_count": 15,
       "functions": [
         "htonl",
@@ -830,7 +905,7 @@
     },
     "io_internal_ops": {
       "file": "io_internal_ops.json",
-      "sha256": "8a26240ddd05b84de47d2d86ca481631f23336c9618f5bb91b8eb52c3b926644",
+      "sha256": "42c0d1741f62552e1cfa494a0863b20ac17473dcf830f6c6f323b6cfae431d7d",
       "case_count": 31,
       "functions": [
         "_IO_adjust_column",
@@ -883,7 +958,7 @@
     },
     "locale_ops": {
       "file": "locale_ops.json",
-      "sha256": "ca9f30369414f66e38d0d5dd9fad0d545797899228d41b4aff69b06b7f3d6f02",
+      "sha256": "d88cd57121d7e83ecf8b67048656301d5bf081b28b9a2ad1011c07590144ab91",
       "case_count": 20,
       "functions": [
         "duplocale",
@@ -942,8 +1017,8 @@
     },
     "memcpy_strict": {
       "file": "memcpy_strict.json",
-      "sha256": "074bd9fe479197229ade85efb411a6eefefdf958c2af26c7b2bab35d5ce56d67",
-      "case_count": 4,
+      "sha256": "f45b08bdb0453439d0404f3d1b7f707424c5b84ab6bff2f00bc5355ef54e098e",
+      "case_count": 9,
       "functions": [
         "memcpy"
       ],
@@ -968,7 +1043,7 @@
     },
     "poll_ops": {
       "file": "poll_ops.json",
-      "sha256": "ba84351a63d246292065896dd956527d356bed899e4d7ab36ca815bb57376d47",
+      "sha256": "38ee1d80774e814a0be3d2dfd012c11e2e193a7684c0e03fe65156e0aa8fec74",
       "case_count": 6,
       "functions": [
         "poll",
@@ -990,9 +1065,21 @@
         "pressure"
       ]
     },
+    "printf_conformance": {
+      "file": "printf_conformance.json",
+      "sha256": "b8657a70042071e59636fe167d7ffdfb6ae25dab77a173056cec1465ae27c6ad",
+      "case_count": 186,
+      "functions": [
+        "snprintf",
+        "sprintf"
+      ],
+      "families": [
+        "printf"
+      ]
+    },
     "process_ops": {
       "file": "process_ops.json",
-      "sha256": "bc79f96c443c79982d5f6186a8033839d5893cd14b11adf1b98a97a5438de001",
+      "sha256": "c02beb9656197f29b1fbc1b0c4b805ed627e4a37e523c5846d19a4a933f5d231",
       "case_count": 7,
       "functions": [
         "fork",
@@ -1006,7 +1093,7 @@
     },
     "pthread_cond": {
       "file": "pthread_cond.json",
-      "sha256": "7a5ce4972e4653392b99cffde12cbbb65a80c1e0b531ac4c233c299505025a92",
+      "sha256": "d19207c141a005caee72f9fbb7d310ec61c8c034d83a37699045a7d2bc7d35c6",
       "case_count": 24,
       "functions": [
         "pthread_cond_broadcast",
@@ -1020,11 +1107,28 @@
         "pthread"
       ]
     },
+    "pthread_gnu_extensions": {
+      "file": "pthread_gnu_extensions.json",
+      "sha256": "bb10be15e1281b0fce13b9317ab404801217d377ccd0adee1bdbb60b7ec47514",
+      "case_count": 31,
+      "functions": [
+        "pthread_clockjoin_np",
+        "pthread_cond_clockwait",
+        "pthread_getattr_np",
+        "pthread_timedjoin_np",
+        "pthread_tryjoin_np"
+      ],
+      "families": [
+        "pthread"
+      ]
+    },
     "pthread_mutex": {
       "file": "pthread_mutex.json",
-      "sha256": "7d7832d8c826ce3c15959db1159905adcd37358b637d9d3f1bba92fb711982da",
-      "case_count": 8,
+      "sha256": "014bcc46d12d4a6e81734751106f1e7684bf66273527273da17ce970acbbca1c",
+      "case_count": 10,
       "functions": [
+        "__pthread_mutex_trylock",
+        "__pthread_mutex_unlock",
         "pthread_mutex_destroy",
         "pthread_mutex_init",
         "pthread_mutex_lock",
@@ -1037,7 +1141,7 @@
     },
     "pthread_thread": {
       "file": "pthread_thread.json",
-      "sha256": "abfcbdefdc96c0850354451312c989ea4715b858304e8fa8d5f28a4bf847c170",
+      "sha256": "510d0efffabb884e6ca147e8aace210f742351d2627f889f2a7a7aeade2e6e4a",
       "case_count": 11,
       "functions": [
         "pthread_create",
@@ -1067,7 +1171,7 @@
     },
     "pwd_ops": {
       "file": "pwd_ops.json",
-      "sha256": "85970466e3e309e11b60b045b757e166b8baee8b9986c0b7e1a9d6488f5f6194",
+      "sha256": "c1067ec074c21d789cd6c8828d5d68d3c5b695c7ec9b45e4bfebc868f2b72043",
       "case_count": 10,
       "functions": [
         "getpwnam",
@@ -1080,13 +1184,14 @@
     },
     "regex_glob_ops": {
       "file": "regex_glob_ops.json",
-      "sha256": "4a2633272b190540e9e84eb5aba5dd244677bf2c806d00f3bfa64373bbb5e80b",
-      "case_count": 8,
+      "sha256": "62ed158d973dede9b2da6d37d8964b93ff114246ee46acc783f0ae858108f47d",
+      "case_count": 11,
       "functions": [
         "fnmatch",
         "glob",
         "regcomp",
-        "regexec"
+        "regexec",
+        "wordexp"
       ],
       "families": [
         "regex"
@@ -1111,13 +1216,44 @@
     },
     "resource_ops": {
       "file": "resource_ops.json",
-      "sha256": "7994dd123459b2eeae898131e341278baac7d2de267766b63eea5ff3f6ee23f4",
-      "case_count": 5,
+      "sha256": "6a355933fbac0abf6b7b3f0cc3233df5fad0440925ed892c7a9dfceeb1d11ac9",
+      "case_count": 11,
       "functions": [
         "getrlimit"
       ],
       "families": [
         "resource"
+      ]
+    },
+    "scanf_conformance": {
+      "file": "scanf_conformance.json",
+      "sha256": "baacafbf89c39cef0d3c62a835f03cc43ba18ece8021834ed8fa3880d2580ccb",
+      "case_count": 106,
+      "functions": [
+        "sscanf"
+      ],
+      "families": [
+        "scanf"
+      ]
+    },
+    "search_ops": {
+      "file": "search_ops.json",
+      "sha256": "9bfd71b78d54d139e5191870459f70a3eeae7151ce5f0fd707bf05f5036fb934",
+      "case_count": 11,
+      "functions": [
+        "hsearch",
+        "hsearch_r",
+        "insque",
+        "lfind",
+        "lsearch",
+        "remque",
+        "tdelete",
+        "tfind",
+        "tsearch",
+        "twalk"
+      ],
+      "families": [
+        "search"
       ]
     },
     "session_ops": {
@@ -1158,12 +1294,20 @@
     },
     "signal_ops": {
       "file": "signal_ops.json",
-      "sha256": "4e08bffe2c9d4c7fbd547019315e9abc0d0f32c8851d2475727fc21b0039bfd0",
-      "case_count": 6,
+      "sha256": "1f408cf13058bfa1062a7cb8843367f5c50cc4005bb18882c715ae3389f93827",
+      "case_count": 48,
       "functions": [
+        "gsignal",
         "kill",
         "raise",
-        "sigaction"
+        "sigaction",
+        "sigaddset",
+        "sigdelset",
+        "sigemptyset",
+        "sigfillset",
+        "sigismember",
+        "signal",
+        "ssignal"
       ],
       "families": [
         "signal"
@@ -1212,13 +1356,18 @@
     },
     "stdio_file_ops": {
       "file": "stdio_file_ops.json",
-      "sha256": "825a9346a23c28573821b13f7dc4bf61e8d2635349314345684a5dac1ec8872c",
-      "case_count": 15,
+      "sha256": "ab78ae85679876747bce385d301443b8c21b5101dfb45414550635116a0f1d81",
+      "case_count": 28,
       "functions": [
         "fclose",
+        "feof",
+        "ferror",
         "fflush",
+        "fgetc",
+        "fileno",
         "fopen",
         "fprintf",
+        "fputc",
         "fread",
         "fseek",
         "ftell",
@@ -1243,7 +1392,7 @@
     },
     "stdlib_numeric": {
       "file": "stdlib_numeric.json",
-      "sha256": "f65c8840162502b3da2c1c9a4f196cf59c774036d82a63c7d751fcb9dfcfbd88",
+      "sha256": "38922abfe10642ec829969ba2b61bbdcb2cc6baba7e33782ae95e02ad5d192df",
       "case_count": 10,
       "functions": [
         "atoi",
@@ -1257,8 +1406,8 @@
     },
     "stdlib_sort": {
       "file": "stdlib_sort.json",
-      "sha256": "a08abf1cfcca2b764897b1fa1bd3689e9b4d8634a5c3f5cbfaf1697cb3cd8da2",
-      "case_count": 3,
+      "sha256": "ff7eb36ea363367e78b7287e53ecbd28ef43f0fed8337c864d446ae166be71b6",
+      "case_count": 12,
       "functions": [
         "bsearch",
         "qsort"
@@ -1291,8 +1440,8 @@
     },
     "string_ops": {
       "file": "string_ops.json",
-      "sha256": "49bdaa67de7778378cafe8a6f71bf8c5b3a0f4d3a33e533056bc8329b0233087",
-      "case_count": 15,
+      "sha256": "ae58127cda0a41e1d4693bef3c09a919fb5d9ea1d53830fda94e78423d44e559",
+      "case_count": 19,
       "functions": [
         "memchr",
         "memcmp",
@@ -1303,6 +1452,8 @@
         "strchr",
         "strcmp",
         "strcpy",
+        "strlcat",
+        "strlcpy",
         "strncpy",
         "strrchr",
         "strstr"
@@ -1313,7 +1464,7 @@
     },
     "string_strtok": {
       "file": "string_strtok.json",
-      "sha256": "4c6409d181230d3a8df20061e504f896e4a7f11bb6939f5cf603f7f17347e29d",
+      "sha256": "a104f228b944aa5ce550f57ed00f772acb02178b98bac753b22c6ecb017c5d4a",
       "case_count": 8,
       "functions": [
         "strtok",
@@ -1325,8 +1476,8 @@
     },
     "strlen_strict": {
       "file": "strlen_strict.json",
-      "sha256": "61e21fe0d23f5ef974ea32882162d8aedd204770aa77b6a46bb40dfbdb8f5832",
-      "case_count": 3,
+      "sha256": "b5509edb2fc90403daf10fbef4944369aff58e26569d6a03b77b6317c646667f",
+      "case_count": 9,
       "functions": [
         "strlen"
       ],
@@ -1435,12 +1586,27 @@
     },
     "wide_string": {
       "file": "wide_string.json",
-      "sha256": "b674eb31c28054f4c61e7da5234020d0839e60b21eafa9c815e8a76b6cd71d2f",
-      "case_count": 4,
+      "sha256": "d03c74d74670a84390584b6a6f7fe5e26f14026e33d62905f0fd007599164e77",
+      "case_count": 48,
       "functions": [
+        "wcscat",
+        "wcschr",
         "wcscmp",
         "wcscpy",
-        "wcslen"
+        "wcscspn",
+        "wcslen",
+        "wcsncat",
+        "wcsncmp",
+        "wcsncpy",
+        "wcspbrk",
+        "wcsrchr",
+        "wcsspn",
+        "wcsstr",
+        "wmemchr",
+        "wmemcmp",
+        "wmemcpy",
+        "wmemmove",
+        "wmemset"
       ],
       "families": [
         "wide"

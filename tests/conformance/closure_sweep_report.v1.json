@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-w2c3.10.3",
-  "generated_at": "2026-03-25T19:36:24Z",
+  "generated_at": "2026-04-24T03:40:02Z",
   "status": "pass",
   "summary": {
     "errors": 0,
@@ -9,7 +9,7 @@
     "total_findings": 0,
     "coverage_pct": 6,
     "callthrough_remaining": 0,
-    "open_gap_beads": 39,
+    "open_gap_beads": 0,
     "closure_ready": false
   },
   "findings": [],
@@ -288,66 +288,11 @@
         "search_abi",
         "stdbit_abi"
       ]
-    },
-    {
-      "category": "open_beads",
-      "detail": "39 gap-closure beads remain open"
     }
   ],
   "drift_gates_status": "armed",
   "open_gap_beads": {
-    "count": 39,
-    "top_priorities": [
-      {
-        "id": "bd-26xb.5",
-        "priority": 0,
-        "title": "Flagship 5: Counterfactual Policy Simulator + Safe Promotion"
-      },
-      {
-        "id": "bd-26xb.4",
-        "priority": 0,
-        "title": "Flagship 4: Explainability Workbench (frankentui)"
-      },
-      {
-        "id": "bd-26xb.3",
-        "priority": 0,
-        "title": "Flagship 3: Compatibility SLO + Certification Packs"
-      },
-      {
-        "id": "bd-26xb.2",
-        "priority": 0,
-        "title": "Flagship 2: Change-Impact Oracle + Budget-Aware Test Scheduler"
-      },
-      {
-        "id": "bd-26xb.1",
-        "priority": 0,
-        "title": "Flagship 1: Failure-to-Fix Autoreducer Pipeline"
-      },
-      {
-        "id": "bd-w2c3.10.1",
-        "priority": 0,
-        "title": "T9.1 Claim Reconciliation: FEATURE_PARITY/support/reality/replacement/docs"
-      },
-      {
-        "id": "bd-w2c3.10",
-        "priority": 0,
-        "title": "Track 9: Release Claim-Control + Closure Protocol"
-      },
-      {
-        "id": "bd-w2c3.9.3",
-        "priority": 0,
-        "title": "T8.3 Structured Log/Evidence Unification + Artifact Index"
-      },
-      {
-        "id": "bd-w2c3.9.2",
-        "priority": 0,
-        "title": "T8.2 Deterministic E2E Packs: smoke/stress/fault/stability/security"
-      },
-      {
-        "id": "bd-w2c3.9",
-        "priority": 0,
-        "title": "Track 8: Testing + Observability + Deterministic Replay Expansion"
-      }
-    ]
+    "count": 0,
+    "top_priorities": []
   }
 }

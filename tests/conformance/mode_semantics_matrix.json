@@ -61,7 +61,7 @@
       "family": "StringMemory",
       "api_family_enum": "StringMemory",
       "module": "string_abi",
-      "heals_call_sites": 38,
+      "heals_call_sites": 40,
       "symbols": [
         "memcpy",
         "memmove",
@@ -135,7 +135,7 @@
       "family": "Stdio",
       "api_family_enum": "Stdio",
       "module": "stdio_abi",
-      "heals_call_sites": 5,
+      "heals_call_sites": 11,
       "symbols": [
         "fopen",
         "fclose",
@@ -164,7 +164,7 @@
       "family": "Stdlib",
       "api_family_enum": "Stdlib",
       "module": "stdlib_abi",
-      "heals_call_sites": 10,
+      "heals_call_sites": 13,
       "symbols": [
         "atoi",
         "atol",
@@ -416,7 +416,7 @@
       "family": "Loader",
       "api_family_enum": "Loader",
       "module": "dlfcn_abi",
-      "heals_call_sites": 1,
+      "heals_call_sites": 7,
       "symbols": [
         "dlopen",
         "dlclose",
@@ -516,7 +516,7 @@
       "family": "Resolver",
       "api_family_enum": "Resolver",
       "module": "resolv_abi",
-      "heals_call_sites": 4,
+      "heals_call_sites": 6,
       "symbols": [
         "getaddrinfo",
         "freeaddrinfo",
@@ -573,7 +573,7 @@
   "summary": {
     "total_families": 20,
     "families_with_healing": 18,
-    "total_heals_call_sites": 134,
+    "total_heals_call_sites": 153,
     "healing_actions": [
       "ClampSize",
       "TruncateWithNull",

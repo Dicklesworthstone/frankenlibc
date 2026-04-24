@@ -254,12 +254,12 @@
     { "name": "sprintf_e_round_half_even", "function": "sprintf", "spec_section": "C11 7.21.6.1 %.0e banker's", "inputs": { "format": "%.0e", "args": [2.5] }, "expected_output": "2e+00", "expected_errno": 0, "mode": "strict" },
     { "name": "sprintf_e_round_half_even_3_5", "function": "sprintf", "spec_section": "C11 7.21.6.1 %.0e banker's 3.5", "inputs": { "format": "%.0e", "args": [3.5] }, "expected_output": "4e+00", "expected_errno": 0, "mode": "strict" },
 
-    { "name": "sprintf_g_basic", "function": "sprintf", "spec_section": "C11 7.21.6.1 %g basic", "inputs": { "format": "%g", "args": [0.0001] }, "expected_output": "0.0001", "expected_errno": 0, "mode": "strict" },
-    { "name": "sprintf_g_large", "function": "sprintf", "spec_section": "C11 7.21.6.1 %g large", "inputs": { "format": "%g", "args": [1000000.0] }, "expected_output": "1e+06", "expected_errno": 0, "mode": "strict" },
-    { "name": "sprintf_g_precision", "function": "sprintf", "spec_section": "C11 7.21.6.1 %.2g", "inputs": { "format": "%.2g", "args": [1.234] }, "expected_output": "1.2", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_g_small_fixed", "function": "sprintf", "spec_section": "C11 7.21.6.1 %g basic", "inputs": { "format": "%g", "args": [0.0001] }, "expected_output": "0.0001", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_g_power_large", "function": "sprintf", "spec_section": "C11 7.21.6.1 %g large", "inputs": { "format": "%g", "args": [1000000.0] }, "expected_output": "1e+06", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_g_precision_rounds", "function": "sprintf", "spec_section": "C11 7.21.6.1 %.2g", "inputs": { "format": "%.2g", "args": [1.234] }, "expected_output": "1.2", "expected_errno": 0, "mode": "strict" },
 
-    { "name": "sprintf_f_very_small", "function": "sprintf", "spec_section": "C11 7.21.6.1 %f very small", "inputs": { "format": "%.10f", "args": [0.0000000001] }, "expected_output": "0.0000000001", "expected_errno": 0, "mode": "strict" },
-    { "name": "sprintf_f_very_large", "function": "sprintf", "spec_section": "C11 7.21.6.1 %f very large", "inputs": { "format": "%.0f", "args": [1e15] }, "expected_output": "1000000000000000", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_f_subnanosecond_precision", "function": "sprintf", "spec_section": "C11 7.21.6.1 %f very small", "inputs": { "format": "%.10f", "args": [0.0000000001] }, "expected_output": "0.0000000001", "expected_errno": 0, "mode": "strict" },
+    { "name": "sprintf_f_integer_precision_large", "function": "sprintf", "spec_section": "C11 7.21.6.1 %f very large", "inputs": { "format": "%.0f", "args": [1e15] }, "expected_output": "1000000000000000", "expected_errno": 0, "mode": "strict" },
 
     { "name": "sprintf_d_zero_width", "function": "sprintf", "spec_section": "C11 7.21.6.1 %0d", "inputs": { "format": "%05d", "args": [0] }, "expected_output": "00000", "expected_errno": 0, "mode": "strict" },
     { "name": "sprintf_d_neg_zero_pad", "function": "sprintf", "spec_section": "C11 7.21.6.1 %0d negative", "inputs": { "format": "%05d", "args": [-1] }, "expected_output": "-0001", "expected_errno": 0, "mode": "strict" },

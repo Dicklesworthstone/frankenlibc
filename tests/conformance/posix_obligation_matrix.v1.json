@@ -5,18 +5,147 @@
   "summary": {
     "total_exported": 3980,
     "tracked_symbols": 3980,
-    "total_obligations": 223,
-    "covered_obligations": 82,
-    "mapped_without_execution": 72,
-    "obligations_with_execution_failures": 69,
-    "error_condition_obligations": 47,
-    "async_concurrency_obligations": 41,
-    "symbols_missing_any_mapping": 3802,
-    "symbols_missing_execution_evidence": 44,
-    "symbols_missing_error_conditions": 135,
+    "total_obligations": 258,
+    "covered_obligations": 89,
+    "mapped_without_execution": 105,
+    "obligations_with_execution_failures": 64,
+    "error_condition_obligations": 60,
+    "async_concurrency_obligations": 52,
+    "symbols_missing_any_mapping": 3775,
+    "symbols_missing_execution_evidence": 69,
+    "symbols_missing_error_conditions": 152,
     "symbols_missing_async_concurrency": 0
   },
   "obligations": [
+    {
+      "obligation_id": "__errno_location::posix_errno",
+      "posix_ref": "POSIX errno",
+      "symbol": "__errno_location",
+      "symbol_family": "errno_ops",
+      "owner": "errno_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::errno_set_read_roundtrip::hardened",
+        "fixture::errno_ops::errno_set_read_roundtrip::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/errno_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "__errno_location::posix_errno_thread_safety",
+      "posix_ref": "POSIX errno thread-safety",
+      "symbol": "__errno_location",
+      "symbol_family": "errno_ops",
+      "owner": "errno_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "async_concurrency",
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::errno_thread_local_isolation::hardened",
+        "fixture::errno_ops::errno_thread_local_isolation::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/errno_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "__pthread_mutex_trylock::posix_1_2017_pthread_mutex_trylock",
+      "posix_ref": "POSIX.1-2017 pthread_mutex_trylock",
+      "symbol": "__pthread_mutex_trylock",
+      "symbol_family": "pthread/mutex",
+      "owner": "pthread_abi",
+      "support_status": "Implemented",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "async_concurrency",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::pthread/mutex::alias_mutex_trylock_unlocked::hardened",
+        "fixture::pthread/mutex::alias_mutex_trylock_unlocked::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/pthread_mutex.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "__pthread_mutex_unlock::posix_1_2017_pthread_mutex_unlock",
+      "posix_ref": "POSIX.1-2017 pthread_mutex_unlock",
+      "symbol": "__pthread_mutex_unlock",
+      "symbol_family": "pthread/mutex",
+      "owner": "pthread_abi",
+      "support_status": "Implemented",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "async_concurrency",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::pthread/mutex::alias_mutex_unlock::hardened",
+        "fixture::pthread/mutex::alias_mutex_unlock::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/pthread_mutex.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
     {
       "obligation_id": "_setjmp::posix_sigsetjmp",
       "posix_ref": "POSIX sigsetjmp",
@@ -582,6 +711,37 @@
       }
     },
     {
+      "obligation_id": "dirfd::posix_dirfd",
+      "posix_ref": "POSIX dirfd",
+      "symbol": "dirfd",
+      "symbol_family": "dirent_ops",
+      "owner": "dirent_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::dirent_ops::dirfd_valid_hardened::hardened",
+        "fixture::dirent_ops::dirfd_valid_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/dirent_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
       "obligation_id": "dlclose::posix_dlclose_3",
       "posix_ref": "POSIX dlclose(3)",
       "symbol": "dlclose",
@@ -923,6 +1083,70 @@
       }
     },
     {
+      "obligation_id": "errno_constants::posix_1_2017_errno_h",
+      "posix_ref": "POSIX.1-2017 errno.h",
+      "symbol": "errno_constants",
+      "symbol_family": "errno_ops",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::errno_macro_all_standard_values::hardened",
+        "fixture::errno_ops::errno_macro_all_standard_values::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/errno_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "errno_preservation::posix_errno_semantics",
+      "posix_ref": "POSIX errno semantics",
+      "symbol": "errno_preservation",
+      "symbol_family": "errno_ops",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::errno_preserved_across_successful_call::hardened",
+        "fixture::errno_ops::errno_preserved_across_successful_call::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/errno_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
       "obligation_id": "execve::posix_execve_2",
       "posix_ref": "POSIX execve(2)",
       "symbol": "execve",
@@ -1104,6 +1328,38 @@
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
         "tests/integration/fixture_stdio.c"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "fileno::posix_1_2017_fileno",
+      "posix_ref": "POSIX.1-2017 fileno",
+      "symbol": "fileno",
+      "symbol_family": "stdio_file_ops",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::stdio_file_ops::fileno_devnull_hardened::hardened",
+        "fixture::stdio_file_ops::fileno_devnull_strict::strict",
+        "fixture::stdio_file_ops::fileno_devzero_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdio_file_ops.json"
       ],
       "execution": {
         "total": 0,
@@ -2293,6 +2549,12 @@
         "strict"
       ],
       "test_refs": [
+        "fixture::resource_ops::getrlimit_as_strict::strict",
+        "fixture::resource_ops::getrlimit_core_strict::strict",
+        "fixture::resource_ops::getrlimit_cpu_hardened::hardened",
+        "fixture::resource_ops::getrlimit_cpu_strict::strict",
+        "fixture::resource_ops::getrlimit_data_strict::strict",
+        "fixture::resource_ops::getrlimit_fsize_strict::strict",
         "fixture::resource_ops::getrlimit_invalid_hardened::hardened",
         "fixture::resource_ops::getrlimit_invalid_strict::strict",
         "fixture::resource_ops::getrlimit_nofile_hardened::hardened",
@@ -2461,6 +2723,72 @@
         "pass": 0,
         "fail": 0,
         "error": 2,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "hsearch::posix_1_2017_hsearch",
+      "posix_ref": "POSIX.1-2017 hsearch",
+      "symbol": "hsearch",
+      "symbol_family": "search/ops",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "async_concurrency",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::search/ops::hcreate_hsearch_hdestroy_find_missing_key::hardened",
+        "fixture::search/ops::hcreate_hsearch_hdestroy_find_missing_key::strict",
+        "fixture::search/ops::hcreate_hsearch_hdestroy_replace_existing_data::hardened",
+        "fixture::search/ops::hcreate_hsearch_hdestroy_replace_existing_data::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/search_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "hsearch_r::posix_1_2017_hsearch_r",
+      "posix_ref": "POSIX.1-2017 hsearch_r",
+      "symbol": "hsearch_r",
+      "symbol_family": "search/ops",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "async_concurrency",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::search/ops::hcreate_r_hsearch_r_hdestroy_r_replace_existing_data::hardened",
+        "fixture::search/ops::hcreate_r_hsearch_r_hdestroy_r_replace_existing_data::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/search_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -3467,6 +3795,37 @@
       }
     },
     {
+      "obligation_id": "lfind::posix_1_2017_lfind",
+      "posix_ref": "POSIX.1-2017 lfind",
+      "symbol": "lfind",
+      "symbol_family": "search/ops",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::search/ops::lfind_existing_index::hardened",
+        "fixture::search/ops::lfind_existing_index::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/search_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
       "obligation_id": "listen::posix_listen",
       "posix_ref": "POSIX listen",
       "symbol": "listen",
@@ -3547,6 +3906,37 @@
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
         "tests/integration/fixture_math.c"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "lsearch::posix_1_2017_lsearch",
+      "posix_ref": "POSIX.1-2017 lsearch",
+      "symbol": "lsearch",
+      "symbol_family": "search/ops",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::search/ops::lsearch_appends_missing::hardened",
+        "fixture::search/ops::lsearch_appends_missing::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/search_ops.json"
       ],
       "execution": {
         "total": 0,
@@ -3756,13 +4146,19 @@
         "functional"
       ],
       "modes": [
+        "hardened",
         "strict"
       ],
       "test_refs": [
         "fixture::string/memcpy::copy_full_8::strict",
+        "fixture::string/memcpy::copy_full_8_hardened::hardened",
+        "fixture::string/memcpy::copy_high_bytes_strict::strict",
+        "fixture::string/memcpy::copy_larger_16_strict::strict",
         "fixture::string/memcpy::copy_partial_4::strict",
         "fixture::string/memcpy::copy_single_byte::strict",
-        "fixture::string/memcpy::copy_zero::strict"
+        "fixture::string/memcpy::copy_single_byte_hardened::hardened",
+        "fixture::string/memcpy::copy_zero::strict",
+        "fixture::string/memcpy::copy_zero_hardened::hardened"
       ],
       "artifact_refs": [
         "tests/conformance/fixtures/memcpy_strict.json"
@@ -4287,6 +4683,42 @@
         "pass": 0,
         "fail": 0,
         "error": 4,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "perror::posix_1_2017_perror",
+      "posix_ref": "POSIX.1-2017 perror",
+      "symbol": "perror",
+      "symbol_family": "errno_ops",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::perror_empty_prefix::hardened",
+        "fixture::errno_ops::perror_empty_prefix::strict",
+        "fixture::errno_ops::perror_null_prefix::hardened",
+        "fixture::errno_ops::perror_null_prefix::strict",
+        "fixture::errno_ops::perror_prefix::hardened",
+        "fixture::errno_ops::perror_prefix::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/errno_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5068,7 +5500,7 @@
       "symbol_family": "pthread/mutex",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5086,9 +5518,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5100,7 +5532,7 @@
       "symbol_family": "pthread/mutex",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -5121,9 +5553,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
+        "pass": 4,
         "fail": 0,
-        "error": 4,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5135,7 +5567,7 @@
       "symbol_family": "pthread/mutex",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5154,9 +5586,9 @@
       ],
       "execution": {
         "total": 3,
-        "pass": 0,
+        "pass": 3,
         "fail": 0,
-        "error": 3,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5168,7 +5600,7 @@
       "symbol_family": "pthread/mutex",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -5189,9 +5621,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
+        "pass": 4,
         "fail": 0,
-        "error": 4,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5203,7 +5635,7 @@
       "symbol_family": "pthread/mutex",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5221,9 +5653,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5540,6 +5972,66 @@
         "pass": 0,
         "fail": 0,
         "error": 2,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "rewinddir::posix_rewinddir",
+      "posix_ref": "POSIX rewinddir",
+      "symbol": "rewinddir",
+      "symbol_family": "dirent_ops",
+      "owner": "dirent_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::dirent_ops::rewinddir_valid_hardened::hardened",
+        "fixture::dirent_ops::rewinddir_valid_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/dirent_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "seekdir::posix_seekdir",
+      "posix_ref": "POSIX seekdir",
+      "symbol": "seekdir",
+      "symbol_family": "dirent_ops",
+      "owner": "dirent_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::dirent_ops::seekdir_zero_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/dirent_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -6101,6 +6593,225 @@
       }
     },
     {
+      "obligation_id": "sigaddset::posix_sigaddset",
+      "posix_ref": "POSIX sigaddset",
+      "symbol": "sigaddset",
+      "symbol_family": "signal_ops",
+      "owner": "signal_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "async_concurrency",
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigaddset_invalid_strict::strict",
+        "fixture::signal_ops::sigaddset_sigint_strict::strict",
+        "fixture::signal_ops::sigaddset_sigterm_strict::strict",
+        "fixture::signal_ops::sigaddset_sigusr1_hardened::hardened"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/signal_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "sigdelset::posix_sigdelset",
+      "posix_ref": "POSIX sigdelset",
+      "symbol": "sigdelset",
+      "symbol_family": "signal_ops",
+      "owner": "signal_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "async_concurrency",
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigdelset_invalid_strict::strict",
+        "fixture::signal_ops::sigdelset_sigint_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/signal_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "sigemptyset::posix_sigemptyset",
+      "posix_ref": "POSIX sigemptyset",
+      "symbol": "sigemptyset",
+      "symbol_family": "signal_ops",
+      "owner": "signal_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "async_concurrency",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigemptyset_basic_hardened::hardened",
+        "fixture::signal_ops::sigemptyset_basic_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/signal_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "sigfillset::posix_sigfillset",
+      "posix_ref": "POSIX sigfillset",
+      "symbol": "sigfillset",
+      "symbol_family": "signal_ops",
+      "owner": "signal_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "async_concurrency",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigfillset_basic_hardened::hardened",
+        "fixture::signal_ops::sigfillset_basic_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/signal_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "sigismember::posix_sigismember",
+      "posix_ref": "POSIX sigismember",
+      "symbol": "sigismember",
+      "symbol_family": "signal_ops",
+      "owner": "signal_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "async_concurrency",
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigismember_empty_set_strict::strict",
+        "fixture::signal_ops::sigismember_full_hardened::hardened",
+        "fixture::signal_ops::sigismember_full_set_strict::strict",
+        "fixture::signal_ops::sigismember_invalid_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/signal_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "signal::posix_signal",
+      "posix_ref": "POSIX signal",
+      "symbol": "signal",
+      "symbol_family": "signal_ops",
+      "owner": "signal_abi",
+      "support_status": "RawSyscall",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "async_concurrency",
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::signal_install_above_max_both::hardened",
+        "fixture::signal_ops::signal_install_above_max_both::strict",
+        "fixture::signal_ops::signal_install_negative_both::hardened",
+        "fixture::signal_ops::signal_install_negative_both::strict",
+        "fixture::signal_ops::signal_install_sighup_both::hardened",
+        "fixture::signal_ops::signal_install_sighup_both::strict",
+        "fixture::signal_ops::signal_install_sigkill_both::hardened",
+        "fixture::signal_ops::signal_install_sigkill_both::strict",
+        "fixture::signal_ops::signal_install_sigrtmax_both::hardened",
+        "fixture::signal_ops::signal_install_sigrtmax_both::strict",
+        "fixture::signal_ops::signal_install_sigstop_both::hardened",
+        "fixture::signal_ops::signal_install_sigstop_both::strict",
+        "fixture::signal_ops::signal_install_sigterm_both::hardened",
+        "fixture::signal_ops::signal_install_sigterm_both::strict",
+        "fixture::signal_ops::signal_install_sigusr1_both::hardened",
+        "fixture::signal_ops::signal_install_sigusr1_both::strict",
+        "fixture::signal_ops::signal_install_sigusr2_both::hardened",
+        "fixture::signal_ops::signal_install_sigusr2_both::strict",
+        "fixture::signal_ops::signal_install_zero_both::hardened",
+        "fixture::signal_ops::signal_install_zero_both::strict",
+        "fixture::signal_ops::signal_invalid_signal_both::hardened",
+        "fixture::signal_ops::signal_invalid_signal_both::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/signal_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
       "obligation_id": "sin::posix_1_2017_math_h_sin_cos_exp_log_floor_ceil_fmod_contracts",
       "posix_ref": "POSIX.1-2017 <math.h>: sin/cos/exp/log/floor/ceil/fmod contracts",
       "symbol": "sin",
@@ -6222,6 +6933,122 @@
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
         "tests/integration/fixture_socket.c"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "sprintf::posix_fprintf_positional_args",
+      "posix_ref": "POSIX fprintf() positional args",
+      "symbol": "sprintf",
+      "symbol_family": "printf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::printf_conformance::sprintf_positional_basic::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/printf_conformance.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "sprintf::posix_fprintf_positional_reorder",
+      "posix_ref": "POSIX fprintf() positional reorder",
+      "symbol": "sprintf",
+      "symbol_family": "printf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::printf_conformance::sprintf_positional_reorder::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/printf_conformance.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "sprintf::posix_fprintf_positional_repeat",
+      "posix_ref": "POSIX fprintf() positional repeat",
+      "symbol": "sprintf",
+      "symbol_family": "printf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::printf_conformance::sprintf_positional_repeat::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/printf_conformance.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "sprintf::posix_fprintf_positional_width",
+      "posix_ref": "POSIX fprintf() positional width",
+      "symbol": "sprintf",
+      "symbol_family": "printf_conformance",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::printf_conformance::sprintf_positional_width::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/printf_conformance.json"
       ],
       "execution": {
         "total": 0,
@@ -6390,6 +7217,122 @@
       }
     },
     {
+      "obligation_id": "strerror::posix_1_2017_strerror",
+      "posix_ref": "POSIX.1-2017 strerror",
+      "symbol": "strerror",
+      "symbol_family": "errno_ops",
+      "owner": "string_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::strerror_eacces::hardened",
+        "fixture::errno_ops::strerror_eacces::strict",
+        "fixture::errno_ops::strerror_eexist::hardened",
+        "fixture::errno_ops::strerror_eexist::strict",
+        "fixture::errno_ops::strerror_einval::hardened",
+        "fixture::errno_ops::strerror_einval::strict",
+        "fixture::errno_ops::strerror_enoent::hardened",
+        "fixture::errno_ops::strerror_enoent::strict",
+        "fixture::errno_ops::strerror_enosys::hardened",
+        "fixture::errno_ops::strerror_enosys::strict",
+        "fixture::errno_ops::strerror_etimedout::hardened",
+        "fixture::errno_ops::strerror_etimedout::strict",
+        "fixture::errno_ops::strerror_negative::hardened",
+        "fixture::errno_ops::strerror_negative::strict",
+        "fixture::errno_ops::strerror_unknown_positive::hardened",
+        "fixture::errno_ops::strerror_unknown_positive::strict",
+        "fixture::errno_ops::strerror_zero::hardened",
+        "fixture::errno_ops::strerror_zero::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/errno_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "strerror_l::posix_1_2017_strerror_l",
+      "posix_ref": "POSIX.1-2017 strerror_l",
+      "symbol": "strerror_l",
+      "symbol_family": "errno_ops",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::strerror_l_einval::hardened",
+        "fixture::errno_ops::strerror_l_einval::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/errno_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "strerror_r::posix_1_2017_strerror_r_xsi",
+      "posix_ref": "POSIX.1-2017 strerror_r (XSI)",
+      "symbol": "strerror_r",
+      "symbol_family": "errno_ops",
+      "owner": "string_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::strerror_r_buffer_too_small::hardened",
+        "fixture::errno_ops::strerror_r_buffer_too_small::strict",
+        "fixture::errno_ops::strerror_r_null_buffer::hardened",
+        "fixture::errno_ops::strerror_r_null_buffer::strict",
+        "fixture::errno_ops::strerror_r_success::hardened",
+        "fixture::errno_ops::strerror_r_success::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/errno_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
       "obligation_id": "strlen::posix_1_2017_strlen",
       "posix_ref": "POSIX.1-2017 strlen",
       "symbol": "strlen",
@@ -6401,11 +7344,18 @@
         "functional"
       ],
       "modes": [
+        "hardened",
         "strict"
       ],
       "test_refs": [
+        "fixture::string/strlen::embedded_high_byte_strict::strict",
         "fixture::string/strlen::empty_string::strict",
+        "fixture::string/strlen::empty_string_hardened::hardened",
         "fixture::string/strlen::hello::strict",
+        "fixture::string/strlen::hello_hardened::hardened",
+        "fixture::string/strlen::high_bytes_hardened::hardened",
+        "fixture::string/strlen::high_bytes_strict::strict",
+        "fixture::string/strlen::longer_string_strict::strict",
         "fixture::string/strlen::single_char::strict"
       ],
       "artifact_refs": [
@@ -6707,6 +7657,37 @@
       }
     },
     {
+      "obligation_id": "tdelete::posix_1_2017_tdelete",
+      "posix_ref": "POSIX.1-2017 tdelete",
+      "symbol": "tdelete",
+      "symbol_family": "search/ops",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::search/ops::tdelete_removes_leaf::hardened",
+        "fixture::search/ops::tdelete_removes_leaf::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/search_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
       "obligation_id": "teardown_thread_tls::posix_1_2017_pthread_key_create_destructor_semantics",
       "posix_ref": "POSIX.1-2017 pthread_key_create (destructor semantics)",
       "symbol": "teardown_thread_tls",
@@ -6738,6 +7719,68 @@
       "execution": {
         "total": 8,
         "pass": 8,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "telldir::posix_telldir",
+      "posix_ref": "POSIX telldir",
+      "symbol": "telldir",
+      "symbol_family": "dirent_ops",
+      "owner": "dirent_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::dirent_ops::telldir_valid_hardened::hardened",
+        "fixture::dirent_ops::telldir_valid_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/dirent_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "tfind::posix_1_2017_tfind",
+      "posix_ref": "POSIX.1-2017 tfind",
+      "symbol": "tfind",
+      "symbol_family": "search/ops",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::search/ops::tfind_existing_and_missing::hardened",
+        "fixture::search/ops::tfind_existing_and_missing::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/search_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6914,6 +7957,68 @@
       }
     },
     {
+      "obligation_id": "tsearch::posix_1_2017_tsearch",
+      "posix_ref": "POSIX.1-2017 tsearch",
+      "symbol": "tsearch",
+      "symbol_family": "search/ops",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::search/ops::tsearch_insert_and_find::hardened",
+        "fixture::search/ops::tsearch_insert_and_find::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/search_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "twalk::posix_1_2017_twalk",
+      "posix_ref": "POSIX.1-2017 twalk",
+      "symbol": "twalk",
+      "symbol_family": "search/ops",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::search/ops::twalk_visit_sequence::hardened",
+        "fixture::search/ops::twalk_visit_sequence::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/search_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
       "obligation_id": "ungetc::posix_1_2017_stdio_stream_operations_fopen_fclose_fflush_fread_fwrite_fgetc_fputc_fgets_fputs_ungetc_fileno_setvbuf_setbuf",
       "posix_ref": "POSIX.1-2017 stdio stream operations: fopen/fclose/fflush/fread/fwrite/fgetc/fputc/fgets/fputs/ungetc/fileno/setvbuf/setbuf",
       "symbol": "ungetc",
@@ -6997,6 +8102,38 @@
       "execution": {
         "total": 1,
         "pass": 1,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "vasprintf::posix_1_2017_stdio_formatted_i_o_contracts_for_snprintf_sprintf_fprintf_printf_dprintf_and_va_list_variants_vsnprintf_vsprintf_vdprintf_with_return_length_semantics",
+      "posix_ref": "POSIX.1-2017 stdio formatted I/O contracts for snprintf/sprintf/fprintf/printf/dprintf and va_list variants vsnprintf/vsprintf/vdprintf with return-length semantics",
+      "symbol": "vasprintf",
+      "symbol_family": "stdio",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "c_fixture::fixture_stdio_printf::hardened",
+        "c_fixture::fixture_stdio_printf::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/c_fixture_spec.json",
+        "tests/integration/fixture_stdio_printf.c"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7108,6 +8245,7 @@
       "support_status": "RawSyscall",
       "coverage_state": "execution_failures",
       "obligation_kinds": [
+        "error_condition",
         "functional"
       ],
       "modes": [
@@ -7125,6 +8263,41 @@
         "pass": 0,
         "fail": 0,
         "error": 2,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "wordexp::posix_wordexp_3",
+      "posix_ref": "POSIX wordexp(3)",
+      "symbol": "wordexp",
+      "symbol_family": "regex_glob_ops",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "coverage_state": "mapped_without_execution",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::regex_glob_ops::wordexp_nocmd_single_quoted_literal_both::hardened",
+        "fixture::regex_glob_ops::wordexp_nocmd_single_quoted_literal_both::strict",
+        "fixture::regex_glob_ops::wordexp_quoted_semicolon_both::hardened",
+        "fixture::regex_glob_ops::wordexp_quoted_semicolon_both::strict",
+        "fixture::regex_glob_ops::wordexp_undef_double_quoted_variable_both::hardened",
+        "fixture::regex_glob_ops::wordexp_undef_double_quoted_variable_both::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/regex_glob_ops.json"
+      ],
+      "execution": {
+        "total": 0,
+        "pass": 0,
+        "fail": 0,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -9805,11 +10978,18 @@
       "symbol_family": "errno",
       "owner": "errno_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX errno",
+        "POSIX errno thread-safety"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::errno_set_read_roundtrip::hardened",
+        "fixture::errno_ops::errno_set_read_roundtrip::strict",
+        "fixture::errno_ops::errno_thread_local_isolation::hardened",
+        "fixture::errno_ops::errno_thread_local_isolation::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence"
       ]
     },
     {
@@ -14005,11 +15185,15 @@
       "symbol_family": "pthread",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 pthread_mutex_trylock"
+      ],
+      "test_refs": [
+        "fixture::pthread/mutex::alias_mutex_trylock_unlocked::hardened",
+        "fixture::pthread/mutex::alias_mutex_trylock_unlocked::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -14017,11 +15201,15 @@
       "symbol_family": "pthread",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 pthread_mutex_unlock"
+      ],
+      "test_refs": [
+        "fixture::pthread/mutex::alias_mutex_unlock::hardened",
+        "fixture::pthread/mutex::alias_mutex_unlock::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -23897,11 +25085,16 @@
       "symbol_family": "dirent",
       "owner": "dirent_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX dirfd"
+      ],
+      "test_refs": [
+        "fixture::dirent_ops::dirfd_valid_hardened::hardened",
+        "fixture::dirent_ops::dirfd_valid_strict::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -27667,11 +28860,15 @@
       "owner": "stdio_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [
+        "POSIX.1-2017 fileno",
         "POSIX.1-2017 stdio stream operations: fopen/fclose/fflush/fread/fwrite/fgetc/fputc/fgets/fputs/ungetc/fileno/setvbuf/setbuf"
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "fixture::stdio_file_ops::fileno_devnull_hardened::hardened",
+        "fixture::stdio_file_ops::fileno_devnull_strict::strict",
+        "fixture::stdio_file_ops::fileno_devzero_strict::strict"
       ],
       "gap_reasons": [
         "missing_execution_evidence",
@@ -33066,11 +34263,18 @@
       "symbol_family": "stdlib",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 hsearch"
+      ],
+      "test_refs": [
+        "fixture::search/ops::hcreate_hsearch_hdestroy_find_missing_key::hardened",
+        "fixture::search/ops::hcreate_hsearch_hdestroy_find_missing_key::strict",
+        "fixture::search/ops::hcreate_hsearch_hdestroy_replace_existing_data::hardened",
+        "fixture::search/ops::hcreate_hsearch_hdestroy_replace_existing_data::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -33078,11 +34282,16 @@
       "symbol_family": "stdlib",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 hsearch_r"
+      ],
+      "test_refs": [
+        "fixture::search/ops::hcreate_r_hsearch_r_hdestroy_r_replace_existing_data::hardened",
+        "fixture::search/ops::hcreate_r_hsearch_r_hdestroy_r_replace_existing_data::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -35618,11 +36827,16 @@
       "symbol_family": "stdlib",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 lfind"
+      ],
+      "test_refs": [
+        "fixture::search/ops::lfind_existing_index::hardened",
+        "fixture::search/ops::lfind_existing_index::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -37402,11 +38616,16 @@
       "symbol_family": "stdlib",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 lsearch"
+      ],
+      "test_refs": [
+        "fixture::search/ops::lsearch_appends_missing::hardened",
+        "fixture::search/ops::lsearch_appends_missing::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -37899,9 +39118,14 @@
       ],
       "test_refs": [
         "fixture::string/memcpy::copy_full_8::strict",
+        "fixture::string/memcpy::copy_full_8_hardened::hardened",
+        "fixture::string/memcpy::copy_high_bytes_strict::strict",
+        "fixture::string/memcpy::copy_larger_16_strict::strict",
         "fixture::string/memcpy::copy_partial_4::strict",
         "fixture::string/memcpy::copy_single_byte::strict",
-        "fixture::string/memcpy::copy_zero::strict"
+        "fixture::string/memcpy::copy_single_byte_hardened::hardened",
+        "fixture::string/memcpy::copy_zero::strict",
+        "fixture::string/memcpy::copy_zero_hardened::hardened"
       ],
       "gap_reasons": [
         "missing_error_condition_obligation"
@@ -39968,11 +41192,19 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 perror"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::perror_empty_prefix::hardened",
+        "fixture::errno_ops::perror_empty_prefix::strict",
+        "fixture::errno_ops::perror_null_prefix::hardened",
+        "fixture::errno_ops::perror_null_prefix::strict",
+        "fixture::errno_ops::perror_prefix::hardened",
+        "fixture::errno_ops::perror_prefix::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence"
       ]
     },
     {
@@ -44228,11 +45460,16 @@
       "symbol_family": "dirent",
       "owner": "dirent_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX rewinddir"
+      ],
+      "test_refs": [
+        "fixture::dirent_ops::rewinddir_valid_hardened::hardened",
+        "fixture::dirent_ops::rewinddir_valid_strict::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -45380,11 +46617,15 @@
       "symbol_family": "dirent",
       "owner": "dirent_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX seekdir"
+      ],
+      "test_refs": [
+        "fixture::dirent_ops::seekdir_zero_strict::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -46727,11 +47968,17 @@
       "symbol_family": "signal",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX sigaddset"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigaddset_invalid_strict::strict",
+        "fixture::signal_ops::sigaddset_sigint_strict::strict",
+        "fixture::signal_ops::sigaddset_sigterm_strict::strict",
+        "fixture::signal_ops::sigaddset_sigusr1_hardened::hardened"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence"
       ]
     },
     {
@@ -46775,11 +48022,15 @@
       "symbol_family": "signal",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX sigdelset"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigdelset_invalid_strict::strict",
+        "fixture::signal_ops::sigdelset_sigint_strict::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence"
       ]
     },
     {
@@ -46799,11 +48050,16 @@
       "symbol_family": "signal",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX sigemptyset"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigemptyset_basic_hardened::hardened",
+        "fixture::signal_ops::sigemptyset_basic_strict::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -46811,11 +48067,16 @@
       "symbol_family": "signal",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX sigfillset"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigfillset_basic_hardened::hardened",
+        "fixture::signal_ops::sigfillset_basic_strict::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -46883,11 +48144,17 @@
       "symbol_family": "signal",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX sigismember"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::sigismember_empty_set_strict::strict",
+        "fixture::signal_ops::sigismember_full_hardened::hardened",
+        "fixture::signal_ops::sigismember_full_set_strict::strict",
+        "fixture::signal_ops::sigismember_invalid_strict::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence"
       ]
     },
     {
@@ -46907,11 +48174,35 @@
       "symbol_family": "signal",
       "owner": "signal_abi",
       "support_status": "RawSyscall",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX signal"
+      ],
+      "test_refs": [
+        "fixture::signal_ops::signal_install_above_max_both::hardened",
+        "fixture::signal_ops::signal_install_above_max_both::strict",
+        "fixture::signal_ops::signal_install_negative_both::hardened",
+        "fixture::signal_ops::signal_install_negative_both::strict",
+        "fixture::signal_ops::signal_install_sighup_both::hardened",
+        "fixture::signal_ops::signal_install_sighup_both::strict",
+        "fixture::signal_ops::signal_install_sigkill_both::hardened",
+        "fixture::signal_ops::signal_install_sigkill_both::strict",
+        "fixture::signal_ops::signal_install_sigrtmax_both::hardened",
+        "fixture::signal_ops::signal_install_sigrtmax_both::strict",
+        "fixture::signal_ops::signal_install_sigstop_both::hardened",
+        "fixture::signal_ops::signal_install_sigstop_both::strict",
+        "fixture::signal_ops::signal_install_sigterm_both::hardened",
+        "fixture::signal_ops::signal_install_sigterm_both::strict",
+        "fixture::signal_ops::signal_install_sigusr1_both::hardened",
+        "fixture::signal_ops::signal_install_sigusr1_both::strict",
+        "fixture::signal_ops::signal_install_sigusr2_both::hardened",
+        "fixture::signal_ops::signal_install_sigusr2_both::strict",
+        "fixture::signal_ops::signal_install_zero_both::hardened",
+        "fixture::signal_ops::signal_install_zero_both::strict",
+        "fixture::signal_ops::signal_invalid_signal_both::hardened",
+        "fixture::signal_ops::signal_invalid_signal_both::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence"
       ]
     },
     {
@@ -47638,11 +48929,19 @@
       "owner": "stdio_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [
+        "POSIX fprintf() positional args",
+        "POSIX fprintf() positional reorder",
+        "POSIX fprintf() positional repeat",
+        "POSIX fprintf() positional width",
         "POSIX.1-2017 stdio formatted I/O contracts for snprintf/sprintf/fprintf/printf/dprintf and va_list variants vsnprintf/vsprintf/vdprintf with return-length semantics"
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "fixture::printf_conformance::sprintf_positional_basic::strict",
+        "fixture::printf_conformance::sprintf_positional_reorder::strict",
+        "fixture::printf_conformance::sprintf_positional_repeat::strict",
+        "fixture::printf_conformance::sprintf_positional_width::strict"
       ],
       "gap_reasons": [
         "missing_execution_evidence",
@@ -49027,11 +50326,31 @@
       "symbol_family": "string",
       "owner": "string_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 strerror"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::strerror_eacces::hardened",
+        "fixture::errno_ops::strerror_eacces::strict",
+        "fixture::errno_ops::strerror_eexist::hardened",
+        "fixture::errno_ops::strerror_eexist::strict",
+        "fixture::errno_ops::strerror_einval::hardened",
+        "fixture::errno_ops::strerror_einval::strict",
+        "fixture::errno_ops::strerror_enoent::hardened",
+        "fixture::errno_ops::strerror_enoent::strict",
+        "fixture::errno_ops::strerror_enosys::hardened",
+        "fixture::errno_ops::strerror_enosys::strict",
+        "fixture::errno_ops::strerror_etimedout::hardened",
+        "fixture::errno_ops::strerror_etimedout::strict",
+        "fixture::errno_ops::strerror_negative::hardened",
+        "fixture::errno_ops::strerror_negative::strict",
+        "fixture::errno_ops::strerror_unknown_positive::hardened",
+        "fixture::errno_ops::strerror_unknown_positive::strict",
+        "fixture::errno_ops::strerror_zero::hardened",
+        "fixture::errno_ops::strerror_zero::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence"
       ]
     },
     {
@@ -49039,11 +50358,15 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 strerror_l"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::strerror_l_einval::hardened",
+        "fixture::errno_ops::strerror_l_einval::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence"
       ]
     },
     {
@@ -49051,11 +50374,19 @@
       "symbol_family": "string",
       "owner": "string_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 strerror_r (XSI)"
+      ],
+      "test_refs": [
+        "fixture::errno_ops::strerror_r_buffer_too_small::hardened",
+        "fixture::errno_ops::strerror_r_buffer_too_small::strict",
+        "fixture::errno_ops::strerror_r_null_buffer::hardened",
+        "fixture::errno_ops::strerror_r_null_buffer::strict",
+        "fixture::errno_ops::strerror_r_success::hardened",
+        "fixture::errno_ops::strerror_r_success::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence"
       ]
     },
     {
@@ -49271,8 +50602,14 @@
         "POSIX.1-2017 strlen"
       ],
       "test_refs": [
+        "fixture::string/strlen::embedded_high_byte_strict::strict",
         "fixture::string/strlen::empty_string::strict",
+        "fixture::string/strlen::empty_string_hardened::hardened",
         "fixture::string/strlen::hello::strict",
+        "fixture::string/strlen::hello_hardened::hardened",
+        "fixture::string/strlen::high_bytes_hardened::hardened",
+        "fixture::string/strlen::high_bytes_strict::strict",
+        "fixture::string/strlen::longer_string_strict::strict",
         "fixture::string/strlen::single_char::strict"
       ],
       "gap_reasons": [
@@ -50875,11 +52212,16 @@
       "symbol_family": "stdlib",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 tdelete"
+      ],
+      "test_refs": [
+        "fixture::search/ops::tdelete_removes_leaf::hardened",
+        "fixture::search/ops::tdelete_removes_leaf::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -50911,11 +52253,16 @@
       "symbol_family": "dirent",
       "owner": "dirent_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX telldir"
+      ],
+      "test_refs": [
+        "fixture::dirent_ops::telldir_valid_hardened::hardened",
+        "fixture::dirent_ops::telldir_valid_strict::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -50947,11 +52294,16 @@
       "symbol_family": "stdlib",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 tfind"
+      ],
+      "test_refs": [
+        "fixture::search/ops::tfind_existing_and_missing::hardened",
+        "fixture::search/ops::tfind_existing_and_missing::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -51889,11 +53241,16 @@
       "symbol_family": "stdlib",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 tsearch"
+      ],
+      "test_refs": [
+        "fixture::search/ops::tsearch_insert_and_find::hardened",
+        "fixture::search/ops::tsearch_insert_and_find::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -51985,11 +53342,16 @@
       "symbol_family": "stdlib",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 twalk"
+      ],
+      "test_refs": [
+        "fixture::search/ops::twalk_visit_sequence::hardened",
+        "fixture::search/ops::twalk_visit_sequence::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -52619,11 +53981,16 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX.1-2017 stdio formatted I/O contracts for snprintf/sprintf/fprintf/printf/dprintf and va_list variants vsnprintf/vsprintf/vdprintf with return-length semantics"
+      ],
+      "test_refs": [
+        "c_fixture::fixture_stdio_printf::hardened",
+        "c_fixture::fixture_stdio_printf::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
@@ -52999,22 +54366,6 @@
       "gap_reasons": [
         "missing_test_mapping",
         "missing_posix_traceability"
-      ]
-    },
-    {
-      "symbol": "waitpid",
-      "symbol_family": "process",
-      "owner": "process_abi",
-      "support_status": "RawSyscall",
-      "mapped_posix_refs": [
-        "POSIX waitpid"
-      ],
-      "test_refs": [
-        "fixture::process_ops::waitpid_nohang_no_child_strict::strict",
-        "fixture::process_ops::waitpid_reaps_child_strict::strict"
-      ],
-      "gap_reasons": [
-        "missing_error_condition_obligation"
       ]
     },
     {
@@ -53994,11 +55345,20 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "Implemented",
-      "mapped_posix_refs": [],
-      "test_refs": [],
+      "mapped_posix_refs": [
+        "POSIX wordexp(3)"
+      ],
+      "test_refs": [
+        "fixture::regex_glob_ops::wordexp_nocmd_single_quoted_literal_both::hardened",
+        "fixture::regex_glob_ops::wordexp_nocmd_single_quoted_literal_both::strict",
+        "fixture::regex_glob_ops::wordexp_quoted_semicolon_both::hardened",
+        "fixture::regex_glob_ops::wordexp_quoted_semicolon_both::strict",
+        "fixture::regex_glob_ops::wordexp_undef_double_quoted_variable_both::hardened",
+        "fixture::regex_glob_ops::wordexp_undef_double_quoted_variable_both::strict"
+      ],
       "gap_reasons": [
-        "missing_test_mapping",
-        "missing_posix_traceability"
+        "missing_execution_evidence",
+        "missing_error_condition_obligation"
       ]
     },
     {
