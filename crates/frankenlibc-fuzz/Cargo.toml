@@ -255,4 +255,9 @@ name = "fuzz_ioctl"
 path = "fuzz_targets/fuzz_ioctl.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_splice"
+path = "fuzz_targets/fuzz_splice.rs"
+doc = false
+
 [workspace]
