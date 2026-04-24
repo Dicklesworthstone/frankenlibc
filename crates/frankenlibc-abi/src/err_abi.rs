@@ -94,8 +94,7 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
         None
     };
 
-    let out =
-        frankenlibc_core::err::format_err_message(&progname, &message, errno_msg_opt);
+    let out = frankenlibc_core::err::format_err_message(&progname, &message, errno_msg_opt);
 
     unsafe {
         crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());

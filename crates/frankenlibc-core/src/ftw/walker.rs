@@ -182,10 +182,13 @@ mod tests {
         }
     }
 
+    type MockNode = (MockStat, Vec<Vec<u8>>, Option<Vec<u8>>);
+    type MockNodes = BTreeMap<Vec<u8>, MockNode>;
+
     /// In-memory filesystem mock. Each path maps to (stat, dir_entries,
     /// optional_symlink_target_path).
     struct MockFs {
-        nodes: BTreeMap<Vec<u8>, (MockStat, Vec<Vec<u8>>, Option<Vec<u8>>)>,
+        nodes: MockNodes,
     }
 
     impl FsOps for MockFs {
@@ -441,7 +444,10 @@ mod tests {
             0
         });
         assert!(sym, "live symlink should be reported as Symlink");
-        assert!(sln, "dangling symlink should be reported as DanglingSymlink");
+        assert!(
+            sln,
+            "dangling symlink should be reported as DanglingSymlink"
+        );
     }
 
     #[test]

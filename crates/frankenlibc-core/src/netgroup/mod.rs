@@ -228,10 +228,7 @@ mod tests {
         // Multiple lines with the same group name: triples accumulate.
         let content = b"x (h1,u1,d1)\nx (h2,u2,d2)\n";
         let r = parse_netgroup_triples(content, b"x");
-        assert_eq!(
-            r,
-            vec![t(b"h1", b"u1", b"d1"), t(b"h2", b"u2", b"d2")]
-        );
+        assert_eq!(r, vec![t(b"h1", b"u1", b"d1"), t(b"h2", b"u2", b"d2")]);
     }
 
     #[test]

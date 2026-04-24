@@ -386,13 +386,7 @@ ubuntu:x:1000:
     #[test]
     fn format_with_multiple_members() {
         let mut out = Vec::new();
-        format_group_line(
-            b"adm",
-            b"x",
-            4,
-            &[b"alice", b"bob", b"carol"],
-            &mut out,
-        );
+        format_group_line(b"adm", b"x", 4, &[b"alice", b"bob", b"carol"], &mut out);
         assert_eq!(out, b"adm:x:4:alice,bob,carol\n".to_vec());
     }
 

@@ -103,11 +103,7 @@ mod tests {
         assert_eq!(e.number, 100000);
         assert_eq!(
             e.aliases,
-            vec![
-                b"portmap".to_vec(),
-                b"sunrpc".to_vec(),
-                b"rpcbind".to_vec()
-            ]
+            vec![b"portmap".to_vec(), b"sunrpc".to_vec(), b"rpcbind".to_vec()]
         );
     }
 
@@ -178,10 +174,7 @@ mod tests {
     #[test]
     fn lookup_by_name_case_insensitive() {
         let content = b"nfs 100003\nmountd 100005\n";
-        assert_eq!(
-            lookup_rpc_by_name(content, b"NFS").unwrap().number,
-            100003
-        );
+        assert_eq!(lookup_rpc_by_name(content, b"NFS").unwrap().number, 100003);
         assert_eq!(
             lookup_rpc_by_name(content, b"MoUnTd").unwrap().number,
             100005
@@ -208,10 +201,7 @@ mod tests {
     #[test]
     fn lookup_by_number() {
         let content = b"portmapper 100000 portmap\nnfs 100003\nmountd 100005\n";
-        assert_eq!(
-            lookup_rpc_by_number(content, 100003).unwrap().name,
-            b"nfs"
-        );
+        assert_eq!(lookup_rpc_by_number(content, 100003).unwrap().name, b"nfs");
         assert_eq!(
             lookup_rpc_by_number(content, 100005).unwrap().name,
             b"mountd"
@@ -227,21 +217,27 @@ mod tests {
 
     #[test]
     fn lookup_skips_comments_and_blanks() {
-        let content =
-            b"# RPC services\n\nportmapper 100000 portmap\n# more\nnfs 100003\n";
-        assert_eq!(
-            lookup_rpc_by_name(content, b"nfs").unwrap().number,
-            100003
-        );
+        let content = b"# RPC services\n\nportmapper 100000 portmap\n# more\nnfs 100003\n";
+        assert_eq!(lookup_rpc_by_name(content, b"nfs").unwrap().number, 100003);
     }
 
     #[test]
     fn parse_real_world_rpc_lines() {
         // Lines from a typical /etc/rpc on Linux
         let cases = [
-            (&b"portmapper      100000  portmap sunrpc rpcbind"[..], b"portmapper".as_slice(), 100000, 3),
+            (
+                &b"portmapper      100000  portmap sunrpc rpcbind"[..],
+                b"portmapper".as_slice(),
+                100000,
+                3,
+            ),
             (b"nfs             100003  nfsprog", b"nfs", 100003, 1),
-            (b"mountd          100005  mount showmount", b"mountd", 100005, 2),
+            (
+                b"mountd          100005  mount showmount",
+                b"mountd",
+                100005,
+                2,
+            ),
             (b"ypserv          100004  ypprog", b"ypserv", 100004, 1),
         ];
         for (line, name, num, alias_count) in cases {

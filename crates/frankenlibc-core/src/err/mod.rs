@@ -35,13 +35,10 @@ pub fn basename_bytes(bytes: &[u8]) -> &[u8] {
 /// is empty). Pass `None` for warnx/errx-style "no errno" output.
 ///
 /// Always appends a trailing `\n`.
-pub fn format_err_message(
-    progname: &[u8],
-    message: &[u8],
-    errno_msg: Option<&[u8]>,
-) -> Vec<u8> {
-    let mut out =
-        Vec::with_capacity(progname.len() + 2 + message.len() + 2 + errno_msg.map_or(0, |s| s.len()) + 1);
+pub fn format_err_message(progname: &[u8], message: &[u8], errno_msg: Option<&[u8]>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(
+        progname.len() + 2 + message.len() + 2 + errno_msg.map_or(0, |s| s.len()) + 1,
+    );
     out.extend_from_slice(progname);
     out.extend_from_slice(b": ");
     if !message.is_empty() {
@@ -147,7 +144,8 @@ mod tests {
                     let out = format_err_message(progname, msg, errno);
                     let head_sep = &out[progname.len()..progname.len() + 2];
                     assert_eq!(
-                        head_sep, b": ",
+                        head_sep,
+                        b": ",
                         "expected ': ' separator after progname in {:?}",
                         String::from_utf8_lossy(&out)
                     );

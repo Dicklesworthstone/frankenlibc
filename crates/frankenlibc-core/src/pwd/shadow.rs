@@ -31,6 +31,20 @@ pub struct ShadowEntry {
     pub flag: u64,
 }
 
+/// Borrowed fields for serializing one `/etc/shadow` line.
+#[derive(Debug, Clone, Copy)]
+pub struct ShadowLineFields<'a> {
+    pub name: &'a [u8],
+    pub passwd: &'a [u8],
+    pub lstchg: i64,
+    pub min: i64,
+    pub max: i64,
+    pub warn: i64,
+    pub inact: i64,
+    pub expire: i64,
+    pub flag: u64,
+}
+
 /// Parse a shadow numeric field per glibc convention.
 ///
 /// Returns `-1` for an empty or non-numeric field — the canonical
@@ -129,36 +143,25 @@ fn trim_leading_ws(s: &[u8]) -> &[u8] {
 /// `u64::MAX` (flag) renders as the empty string. Non-sentinel
 /// values are written as decimal (with leading `-` for negatives).
 /// Field bytes are written verbatim.
-pub fn format_shadow_line(
-    name: &[u8],
-    passwd: &[u8],
-    lstchg: i64,
-    min: i64,
-    max: i64,
-    warn: i64,
-    inact: i64,
-    expire: i64,
-    flag: u64,
-    out: &mut Vec<u8>,
-) {
-    out.extend_from_slice(name);
+pub fn format_shadow_line(fields: ShadowLineFields<'_>, out: &mut Vec<u8>) {
+    out.extend_from_slice(fields.name);
     out.push(b':');
-    out.extend_from_slice(passwd);
+    out.extend_from_slice(fields.passwd);
     out.push(b':');
-    write_signed_or_empty(out, lstchg);
+    write_signed_or_empty(out, fields.lstchg);
     out.push(b':');
-    write_signed_or_empty(out, min);
+    write_signed_or_empty(out, fields.min);
     out.push(b':');
-    write_signed_or_empty(out, max);
+    write_signed_or_empty(out, fields.max);
     out.push(b':');
-    write_signed_or_empty(out, warn);
+    write_signed_or_empty(out, fields.warn);
     out.push(b':');
-    write_signed_or_empty(out, inact);
+    write_signed_or_empty(out, fields.inact);
     out.push(b':');
-    write_signed_or_empty(out, expire);
+    write_signed_or_empty(out, fields.expire);
     out.push(b':');
-    if flag != u64::MAX {
-        write_u64_decimal(out, flag);
+    if fields.flag != u64::MAX {
+        write_u64_decimal(out, fields.flag);
     }
     out.push(b'\n');
 }
@@ -217,15 +220,17 @@ mod tests {
     fn format_typical_locked_account() {
         let mut out = Vec::new();
         format_shadow_line(
-            b"root",
-            b"!locked",
-            19500,
-            0,
-            99999,
-            7,
-            -1,
-            -1,
-            u64::MAX,
+            ShadowLineFields {
+                name: b"root",
+                passwd: b"!locked",
+                lstchg: 19500,
+                min: 0,
+                max: 99999,
+                warn: 7,
+                inact: -1,
+                expire: -1,
+                flag: u64::MAX,
+            },
             &mut out,
         );
         // -1 fields and the all-ones flag render as empty
@@ -236,15 +241,17 @@ mod tests {
     fn format_all_sentinels_render_empty() {
         let mut out = Vec::new();
         format_shadow_line(
-            b"u",
-            b"*",
-            -1,
-            -1,
-            -1,
-            -1,
-            -1,
-            -1,
-            u64::MAX,
+            ShadowLineFields {
+                name: b"u",
+                passwd: b"*",
+                lstchg: -1,
+                min: -1,
+                max: -1,
+                warn: -1,
+                inact: -1,
+                expire: -1,
+                flag: u64::MAX,
+            },
             &mut out,
         );
         assert_eq!(out, b"u:*:::::::\n".to_vec());
@@ -253,7 +260,20 @@ mod tests {
     #[test]
     fn format_zero_is_not_empty() {
         let mut out = Vec::new();
-        format_shadow_line(b"u", b"x", 0, 0, 0, 0, 0, 0, 0, &mut out);
+        format_shadow_line(
+            ShadowLineFields {
+                name: b"u",
+                passwd: b"x",
+                lstchg: 0,
+                min: 0,
+                max: 0,
+                warn: 0,
+                inact: 0,
+                expire: 0,
+                flag: 0,
+            },
+            &mut out,
+        );
         assert_eq!(out, b"u:x:0:0:0:0:0:0:0\n".to_vec());
     }
 
@@ -261,15 +281,17 @@ mod tests {
     fn format_with_explicit_flag() {
         let mut out = Vec::new();
         format_shadow_line(
-            b"u",
-            b"x",
-            19000,
-            0,
-            -1,
-            -1,
-            -1,
-            -1,
-            42,
+            ShadowLineFields {
+                name: b"u",
+                passwd: b"x",
+                lstchg: 19000,
+                min: 0,
+                max: -1,
+                warn: -1,
+                inact: -1,
+                expire: -1,
+                flag: 42,
+            },
             &mut out,
         );
         assert_eq!(out, b"u:x:19000:0:::::42\n".to_vec());
@@ -279,15 +301,17 @@ mod tests {
     fn format_handles_large_values() {
         let mut out = Vec::new();
         format_shadow_line(
-            b"u",
-            b"x",
-            i64::MAX,
-            0,
-            -1,
-            -1,
-            -1,
-            -1,
-            u64::MAX - 1,
+            ShadowLineFields {
+                name: b"u",
+                passwd: b"x",
+                lstchg: i64::MAX,
+                min: 0,
+                max: -1,
+                warn: -1,
+                inact: -1,
+                expire: -1,
+                flag: u64::MAX - 1,
+            },
             &mut out,
         );
         // i64::MAX = 9223372036854775807
@@ -301,7 +325,20 @@ mod tests {
     #[test]
     fn format_appends_to_existing_buffer() {
         let mut out = b"prefix:".to_vec();
-        format_shadow_line(b"u", b"x", -1, -1, -1, -1, -1, -1, u64::MAX, &mut out);
+        format_shadow_line(
+            ShadowLineFields {
+                name: b"u",
+                passwd: b"x",
+                lstchg: -1,
+                min: -1,
+                max: -1,
+                warn: -1,
+                inact: -1,
+                expire: -1,
+                flag: u64::MAX,
+            },
+            &mut out,
+        );
         assert_eq!(out, b"prefix:u:x:::::::\n".to_vec());
     }
 
@@ -310,7 +347,18 @@ mod tests {
         // Only -1 is the sentinel — other negatives write through.
         let mut out = Vec::new();
         format_shadow_line(
-            b"u", b"x", -2, -7, 99, 0, -1, -1, u64::MAX, &mut out,
+            ShadowLineFields {
+                name: b"u",
+                passwd: b"x",
+                lstchg: -2,
+                min: -7,
+                max: 99,
+                warn: 0,
+                inact: -1,
+                expire: -1,
+                flag: u64::MAX,
+            },
+            &mut out,
         );
         assert_eq!(out, b"u:x:-2:-7:99:0:::\n".to_vec());
     }
@@ -423,7 +471,17 @@ mod tests {
         let e = parse_shadow_line(line).unwrap();
         let mut out = Vec::new();
         format_shadow_line(
-            &e.name, &e.passwd, e.lstchg, e.min, e.max, e.warn, e.inact, e.expire, e.flag,
+            ShadowLineFields {
+                name: &e.name,
+                passwd: &e.passwd,
+                lstchg: e.lstchg,
+                min: e.min,
+                max: e.max,
+                warn: e.warn,
+                inact: e.inact,
+                expire: e.expire,
+                flag: e.flag,
+            },
             &mut out,
         );
         assert_eq!(out, line.to_vec());
@@ -435,15 +493,17 @@ mod tests {
         // identity-preserving through format -> parse -> format.
         let mut out = Vec::new();
         format_shadow_line(
-            b"u",
-            b"*",
-            -1,
-            -1,
-            -1,
-            -1,
-            -1,
-            -1,
-            u64::MAX,
+            ShadowLineFields {
+                name: b"u",
+                passwd: b"*",
+                lstchg: -1,
+                min: -1,
+                max: -1,
+                warn: -1,
+                inact: -1,
+                expire: -1,
+                flag: u64::MAX,
+            },
             &mut out,
         );
         let e = parse_shadow_line(&out).unwrap();
@@ -451,7 +511,17 @@ mod tests {
         assert_eq!(e.flag, u64::MAX);
         let mut out2 = Vec::new();
         format_shadow_line(
-            &e.name, &e.passwd, e.lstchg, e.min, e.max, e.warn, e.inact, e.expire, e.flag,
+            ShadowLineFields {
+                name: &e.name,
+                passwd: &e.passwd,
+                lstchg: e.lstchg,
+                min: e.min,
+                max: e.max,
+                warn: e.warn,
+                inact: e.inact,
+                expire: e.expire,
+                flag: e.flag,
+            },
             &mut out2,
         );
         assert_eq!(out2, out);

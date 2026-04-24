@@ -273,9 +273,7 @@ pub fn parse_networks_line(line: &[u8]) -> Option<NetworkEntry> {
         line
     };
     let mut fields = line
-        .split(|&b| {
-            b == b' ' || b == b'\t' || b == b'\n' || b == b'\r'
-        })
+        .split(|&b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r')
         .filter(|f| !f.is_empty());
     let name = fields.next()?;
     let num_str = core::str::from_utf8(fields.next()?).ok()?;

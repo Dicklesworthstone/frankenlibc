@@ -5694,13 +5694,15 @@ pub unsafe extern "C" fn putpwent(pw: *const c_void, fp: *mut c_void) -> c_int {
     let mut line =
         Vec::with_capacity(64 + name.len() + passwd.len() + gecos.len() + dir.len() + shell.len());
     frankenlibc_core::pwd::format_passwd_line(
-        name,
-        passwd,
-        unsafe { (*p).pw_uid },
-        unsafe { (*p).pw_gid },
-        gecos,
-        dir,
-        shell,
+        frankenlibc_core::pwd::PasswdLineFields {
+            name,
+            passwd,
+            uid: unsafe { (*p).pw_uid },
+            gid: unsafe { (*p).pw_gid },
+            gecos,
+            dir,
+            shell,
+        },
         &mut line,
     );
     let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), fp) };

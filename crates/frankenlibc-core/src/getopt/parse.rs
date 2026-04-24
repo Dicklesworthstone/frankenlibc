@@ -80,9 +80,18 @@ mod tests {
 
     #[test]
     fn arg_mode_required() {
-        assert_eq!(getopt_arg_mode(b"a:bc", b'a'), Some(GetoptArgMode::Required));
-        assert_eq!(getopt_arg_mode(b"ab:c", b'b'), Some(GetoptArgMode::Required));
-        assert_eq!(getopt_arg_mode(b"abc:", b'c'), Some(GetoptArgMode::Required));
+        assert_eq!(
+            getopt_arg_mode(b"a:bc", b'a'),
+            Some(GetoptArgMode::Required)
+        );
+        assert_eq!(
+            getopt_arg_mode(b"ab:c", b'b'),
+            Some(GetoptArgMode::Required)
+        );
+        assert_eq!(
+            getopt_arg_mode(b"abc:", b'c'),
+            Some(GetoptArgMode::Required)
+        );
     }
 
     #[test]
@@ -120,13 +129,19 @@ mod tests {
         // Last char with no trailing ':' → None
         assert_eq!(getopt_arg_mode(b"abc", b'c'), Some(GetoptArgMode::None));
         // Last char with ':' suffix → Required
-        assert_eq!(getopt_arg_mode(b"abc:", b'c'), Some(GetoptArgMode::Required));
+        assert_eq!(
+            getopt_arg_mode(b"abc:", b'c'),
+            Some(GetoptArgMode::Required)
+        );
     }
 
     #[test]
     fn arg_mode_leading_colon_doesnt_break_lookup() {
         // ":a:b" — leading ':' is the opterr toggle; 'a' is required, 'b' is none.
-        assert_eq!(getopt_arg_mode(b":a:b", b'a'), Some(GetoptArgMode::Required));
+        assert_eq!(
+            getopt_arg_mode(b":a:b", b'a'),
+            Some(GetoptArgMode::Required)
+        );
         assert_eq!(getopt_arg_mode(b":a:b", b'b'), Some(GetoptArgMode::None));
     }
 }

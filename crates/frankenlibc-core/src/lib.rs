@@ -47,8 +47,8 @@ pub mod pwd;
 #[allow(unsafe_code)]
 pub mod rcu;
 pub mod resolv;
-pub mod rpc;
 pub mod resource;
+pub mod rpc;
 pub mod search;
 pub mod setjmp;
 pub mod signal;

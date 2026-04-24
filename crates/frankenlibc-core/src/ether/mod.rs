@@ -157,14 +157,8 @@ mod tests {
     #[test]
     fn parse_single_digit_octets() {
         // glibc ether_aton accepts shortened single-digit forms.
-        assert_eq!(
-            parse_ether_addr(b"0:0:0:0:0:0"),
-            Some([0, 0, 0, 0, 0, 0])
-        );
-        assert_eq!(
-            parse_ether_addr(b"1:2:3:4:5:6"),
-            Some([1, 2, 3, 4, 5, 6])
-        );
+        assert_eq!(parse_ether_addr(b"0:0:0:0:0:0"), Some([0, 0, 0, 0, 0, 0]));
+        assert_eq!(parse_ether_addr(b"1:2:3:4:5:6"), Some([1, 2, 3, 4, 5, 6]));
     }
 
     #[test]
@@ -221,7 +215,10 @@ mod tests {
     #[test]
     fn format_zero_padded_lowercase() {
         // Even single-digit-able values get padded to two hex digits.
-        assert_eq!(&format_ether_addr(&[0, 0, 0, 0, 0, 0]), b"00:00:00:00:00:00");
+        assert_eq!(
+            &format_ether_addr(&[0, 0, 0, 0, 0, 0]),
+            b"00:00:00:00:00:00"
+        );
     }
 
     #[test]

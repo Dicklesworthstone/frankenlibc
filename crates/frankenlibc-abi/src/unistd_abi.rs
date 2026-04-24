@@ -2182,7 +2182,10 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
         libc_optopt = state.optopt as c_int;
         GETOPT_NEXTCHAR = state.nextchar;
         libc_optarg = match state.optarg {
-            Some(ArgRef { argv_idx, byte_offset }) => {
+            Some(ArgRef {
+                argv_idx,
+                byte_offset,
+            }) => {
                 let base = *argv.add(argv_idx);
                 if base.is_null() {
                     std::ptr::null_mut()
@@ -3279,7 +3282,7 @@ impl frankenlibc_core::ftw::StatLike for AbiStat {
         (self.0.st_mode & libc::S_IFMT) == libc::S_IFLNK
     }
     fn dev_id(&self) -> u64 {
-        self.0.st_dev as u64
+        self.0.st_dev
     }
 }
 
@@ -3427,11 +3430,8 @@ pub unsafe extern "C" fn nftw(
 
     let fs = AbiFs;
     let core_flags = frankenlibc_core::ftw::WalkFlags::from_bits(flags as u32);
-    let r = frankenlibc_core::ftw::walk_tree(
-        path_bytes,
-        &fs,
-        core_flags,
-        |p, st, t, level, base| {
+    let r =
+        frankenlibc_core::ftw::walk_tree(path_bytes, &fs, core_flags, |p, st, t, level, base| {
             let mut buf = p.to_vec();
             buf.push(0);
             let mut info = FtwInfo {
@@ -3446,8 +3446,7 @@ pub unsafe extern "C" fn nftw(
                     &mut info as *mut FtwInfo as *mut c_void,
                 )
             }
-        },
-    );
+        });
     if r == -1 {
         unsafe { set_abi_errno(errno::ENOENT) };
     }
@@ -8247,8 +8246,8 @@ pub unsafe extern "C" fn addmntent(stream: *mut c_void, mnt: *const c_void) -> c
         dir: unsafe { std::ffi::CStr::from_ptr(dir) }.to_bytes(),
         mtype: unsafe { std::ffi::CStr::from_ptr(mtype) }.to_bytes(),
         opts: unsafe { std::ffi::CStr::from_ptr(opts) }.to_bytes(),
-        freq: freq as i32,
-        passno: passno as i32,
+        freq,
+        passno,
     };
     let mut line = Vec::with_capacity(
         fields.fsname.len() + fields.dir.len() + fields.mtype.len() + fields.opts.len() + 16,
@@ -13267,18 +13266,21 @@ pub unsafe extern "C" fn putspent(sp: *const libc::spwd, stream: *mut libc::FILE
 
     let mut line = Vec::with_capacity(96 + name.len() + passwd.len());
     frankenlibc_core::pwd::shadow::format_shadow_line(
-        name,
-        passwd,
-        spw.sp_lstchg,
-        spw.sp_min,
-        spw.sp_max,
-        spw.sp_warn,
-        spw.sp_inact,
-        spw.sp_expire,
-        spw.sp_flag,
+        frankenlibc_core::pwd::shadow::ShadowLineFields {
+            name,
+            passwd,
+            lstchg: spw.sp_lstchg,
+            min: spw.sp_min,
+            max: spw.sp_max,
+            warn: spw.sp_warn,
+            inact: spw.sp_inact,
+            expire: spw.sp_expire,
+            flag: spw.sp_flag,
+        },
         &mut line,
     );
-    let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), stream.cast()) };
+    let written =
+        unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), stream.cast()) };
     if written == line.len() { 0 } else { -1 }
 }
 
@@ -14004,7 +14006,7 @@ std::thread_local! {
         const { std::cell::UnsafeCell::new(AliasIterState::new()) };
 }
 
-/// Parse an /etc/aliases line into name + member list.
+// Parse an /etc/aliases line into name + member list.
 // parse_aliases_line moved to frankenlibc_core::aliases. Callers below
 // use frankenlibc_core::aliases::parse_aliases_line directly and access
 // the owned name / members fields of the returned AliasEntry.
@@ -14113,8 +14115,7 @@ pub unsafe extern "C" fn getaliasbyname(name: *const c_char) -> *mut c_void {
         {
             return ALIAS_ITER.with(|cell| {
                 let state = unsafe { &mut *cell.get() };
-                let member_refs: Vec<&[u8]> =
-                    entry.members.iter().map(|v| v.as_slice()).collect();
+                let member_refs: Vec<&[u8]> = entry.members.iter().map(|v| v.as_slice()).collect();
                 unsafe { fill_aliasent_buf(state, &entry.name, &member_refs) }
             });
         }
@@ -14256,8 +14257,7 @@ pub unsafe extern "C" fn getaliasent_r(
                 Err(_) => return libc::ENOENT,
                 Ok(_) => {}
             }
-            if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(&state.line_buf)
-            {
+            if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(&state.line_buf) {
                 let pname = &entry.name;
                 let members = &entry.members;
                 let ptr_size = core::mem::size_of::<*mut c_char>();

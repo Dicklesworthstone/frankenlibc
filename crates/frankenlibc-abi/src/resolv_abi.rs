@@ -1444,9 +1444,9 @@ thread_local! {
         RefCell::new(ProtoentTlsStorage::new());
 }
 
-/// Parse a single line from /etc/protocols.
-///
-/// Format: `<protocol-name> <number> [<alias>...]`
+// Parse a single line from /etc/protocols.
+//
+// Format: `<protocol-name> <number> [<alias>...]`
 // parse_protocols_line moved to frankenlibc_core::resolv. Local callers
 // use frankenlibc_core::resolv::parse_protocols_line directly.
 

@@ -27,9 +27,7 @@ pub struct MntFields<'a> {
 pub fn parse_mntent_line(line: &[u8]) -> Option<MntFields<'_>> {
     let trimmed = strip_trailing_eol(line);
 
-    let first_nonblank = trimmed
-        .iter()
-        .position(|&b| b != b' ' && b != b'\t')?;
+    let first_nonblank = trimmed.iter().position(|&b| b != b' ' && b != b'\t')?;
     if trimmed[first_nonblank] == b'#' {
         return None;
     }

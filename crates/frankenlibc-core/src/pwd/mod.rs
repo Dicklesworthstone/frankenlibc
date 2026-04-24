@@ -38,6 +38,18 @@ pub struct ParseStats {
     pub skipped_lines: usize,
 }
 
+/// Borrowed fields for serializing one `/etc/passwd` line.
+#[derive(Debug, Clone, Copy)]
+pub struct PasswdLineFields<'a> {
+    pub name: &'a [u8],
+    pub passwd: &'a [u8],
+    pub uid: u32,
+    pub gid: u32,
+    pub gecos: &'a [u8],
+    pub dir: &'a [u8],
+    pub shell: &'a [u8],
+}
+
 /// Parse a single line from `/etc/passwd`.
 ///
 /// Format: `name:passwd:uid:gid:gecos:dir:shell`
@@ -110,29 +122,20 @@ pub fn lookup_by_uid(content: &[u8], uid: u32) -> Option<Passwd> {
 /// `/etc/passwd` line shape consumed by `parse_passwd_line`. Field
 /// bytes are written verbatim; the caller is responsible for ensuring
 /// no embedded `:` or `\n` would corrupt the format.
-pub fn format_passwd_line(
-    name: &[u8],
-    passwd: &[u8],
-    uid: u32,
-    gid: u32,
-    gecos: &[u8],
-    dir: &[u8],
-    shell: &[u8],
-    out: &mut Vec<u8>,
-) {
-    out.extend_from_slice(name);
+pub fn format_passwd_line(fields: PasswdLineFields<'_>, out: &mut Vec<u8>) {
+    out.extend_from_slice(fields.name);
     out.push(b':');
-    out.extend_from_slice(passwd);
+    out.extend_from_slice(fields.passwd);
     out.push(b':');
-    write_u32_decimal(out, uid);
+    write_u32_decimal(out, fields.uid);
     out.push(b':');
-    write_u32_decimal(out, gid);
+    write_u32_decimal(out, fields.gid);
     out.push(b':');
-    out.extend_from_slice(gecos);
+    out.extend_from_slice(fields.gecos);
     out.push(b':');
-    out.extend_from_slice(dir);
+    out.extend_from_slice(fields.dir);
     out.push(b':');
-    out.extend_from_slice(shell);
+    out.extend_from_slice(fields.shell);
     out.push(b'\n');
 }
 
@@ -367,7 +370,16 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     fn format_basic_round_trip() {
         let mut out = Vec::new();
         format_passwd_line(
-            b"root", b"x", 0, 0, b"root", b"/root", b"/bin/bash", &mut out,
+            PasswdLineFields {
+                name: b"root",
+                passwd: b"x",
+                uid: 0,
+                gid: 0,
+                gecos: b"root",
+                dir: b"/root",
+                shell: b"/bin/bash",
+            },
+            &mut out,
         );
         assert_eq!(out, b"root:x:0:0:root:/root:/bin/bash\n".to_vec());
         let parsed = parse_passwd_line(&out).expect("reparsed");
@@ -380,13 +392,15 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     fn format_handles_max_uid_gid() {
         let mut out = Vec::new();
         format_passwd_line(
-            b"big",
-            b"x",
-            u32::MAX,
-            u32::MAX,
-            b"",
-            b"/",
-            b"/bin/sh",
+            PasswdLineFields {
+                name: b"big",
+                passwd: b"x",
+                uid: u32::MAX,
+                gid: u32::MAX,
+                gecos: b"",
+                dir: b"/",
+                shell: b"/bin/sh",
+            },
             &mut out,
         );
         assert_eq!(out, b"big:x:4294967295:4294967295::/:/bin/sh\n".to_vec());
@@ -395,7 +409,18 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     #[test]
     fn format_handles_empty_optional_fields() {
         let mut out = Vec::new();
-        format_passwd_line(b"u", b"", 1, 2, b"", b"", b"", &mut out);
+        format_passwd_line(
+            PasswdLineFields {
+                name: b"u",
+                passwd: b"",
+                uid: 1,
+                gid: 2,
+                gecos: b"",
+                dir: b"",
+                shell: b"",
+            },
+            &mut out,
+        );
         // 7 fields, 6 separators: name:passwd:uid:gid:gecos:dir:shell
         assert_eq!(out, b"u::1:2:::\n".to_vec());
     }
@@ -403,7 +428,18 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     #[test]
     fn format_appends_to_existing_buffer() {
         let mut out = b"# header\n".to_vec();
-        format_passwd_line(b"a", b"x", 0, 0, b"", b"/", b"/", &mut out);
+        format_passwd_line(
+            PasswdLineFields {
+                name: b"a",
+                passwd: b"x",
+                uid: 0,
+                gid: 0,
+                gecos: b"",
+                dir: b"/",
+                shell: b"/",
+            },
+            &mut out,
+        );
         assert_eq!(out, b"# header\na:x:0:0::/:/\n".to_vec());
     }
 
@@ -411,13 +447,15 @@ ubuntu:x:1000:1000:Ubuntu,,,:/home/ubuntu:/bin/bash
     fn format_round_trip_with_gecos_commas() {
         let mut out = Vec::new();
         format_passwd_line(
-            b"ubuntu",
-            b"x",
-            1000,
-            1000,
-            b"Ubuntu,,,",
-            b"/home/ubuntu",
-            b"/bin/bash",
+            PasswdLineFields {
+                name: b"ubuntu",
+                passwd: b"x",
+                uid: 1000,
+                gid: 1000,
+                gecos: b"Ubuntu,,,",
+                dir: b"/home/ubuntu",
+                shell: b"/bin/bash",
+            },
             &mut out,
         );
         let parsed = parse_passwd_line(&out).expect("reparsed");

@@ -233,10 +233,7 @@ mod tests {
     #[test]
     fn bundled_short_options() {
         let (codes, state, args) = run(&["prog", "-abc"], "abc");
-        assert_eq!(
-            codes,
-            vec![b'a' as i32, b'b' as i32, b'c' as i32]
-        );
+        assert_eq!(codes, vec![b'a' as i32, b'b' as i32, b'c' as i32]);
         assert!(args.iter().all(|a| a.is_none()));
         assert_eq!(state.optind, 2);
     }
