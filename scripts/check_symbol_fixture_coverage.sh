@@ -35,8 +35,9 @@ print(time.time_ns())
 PY
 )"
 
-tmp="$(mktemp)"
-trap 'rm -f "${tmp}"' EXIT
+GEN_DIR="${ROOT}/target/conformance"
+mkdir -p "${GEN_DIR}"
+tmp="${GEN_DIR}/symbol_fixture_coverage.generated.$$.v1.json"
 
 (
     cd "${ROOT}"
