@@ -921,6 +921,71 @@ fn condvar_wait_signal_wakeup() {
 }
 
 #[test]
+fn condvar_wait_errorcheck_without_lock_returns_eperm() {
+    // bd-cie59: pthread_cond_wait/timedwait must verify the calling thread
+    // owns the mutex before clearing the recursive/errorcheck bookkeeping.
+    // Without this check, a non-owning caller would clobber the real owner.
+    unsafe {
+        let mut mutex_attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+        assert_eq!(pthread_mutexattr_init(&mut mutex_attr), 0);
+        assert_eq!(
+            pthread_mutexattr_settype(&mut mutex_attr, libc::PTHREAD_MUTEX_ERRORCHECK),
+            0,
+        );
+
+        let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+        assert_eq!(pthread_mutex_init(&mut mutex, &mutex_attr), 0);
+        pthread_mutexattr_destroy(&mut mutex_attr);
+
+        let mut cond: libc::pthread_cond_t = std::mem::zeroed();
+        assert_eq!(pthread_cond_init(&mut cond, ptr::null()), 0);
+
+        // First thread acquires the mutex; we simulate the wrong-owner call
+        // by locking on this thread, spawning another thread that calls
+        // cond_wait without locking, and asserting EPERM.
+        assert_eq!(pthread_mutex_lock(&mut mutex), 0);
+
+        struct WrongOwnerCtx {
+            cond: *mut libc::pthread_cond_t,
+            mutex: *mut libc::pthread_mutex_t,
+            rc: AtomicI32,
+        }
+        unsafe impl Send for WrongOwnerCtx {}
+        unsafe impl Sync for WrongOwnerCtx {}
+
+        let ctx = Box::new(WrongOwnerCtx {
+            cond: &mut cond,
+            mutex: &mut mutex,
+            rc: AtomicI32::new(0),
+        });
+        unsafe extern "C" fn wrong_owner_wait(arg: *mut c_void) -> *mut c_void {
+            let ctx = unsafe { &*(arg as *const WrongOwnerCtx) };
+            let rc = unsafe { pthread_cond_wait(ctx.cond, ctx.mutex) };
+            ctx.rc.store(rc, Ordering::Release);
+            ptr::null_mut()
+        }
+
+        let mut thr: libc::pthread_t = 0;
+        let ctx_ptr = &*ctx as *const WrongOwnerCtx as *mut c_void;
+        assert_eq!(
+            pthread_create(&mut thr, ptr::null(), Some(wrong_owner_wait), ctx_ptr),
+            0,
+        );
+        assert_eq!(pthread_join(thr, ptr::null_mut()), 0);
+        assert_eq!(
+            ctx.rc.load(Ordering::Acquire),
+            libc::EPERM,
+            "cond_wait on errorcheck mutex without ownership must return EPERM",
+        );
+
+        // Mutex must still be ours and unlockable.
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
+        pthread_cond_destroy(&mut cond);
+        pthread_mutex_destroy(&mut mutex);
+    }
+}
+
+#[test]
 fn condvar_native_attr_stays_on_native_path_for_lifecycle_and_waits() {
     unsafe {
         let mut mutex_attr: libc::pthread_mutexattr_t = std::mem::zeroed();

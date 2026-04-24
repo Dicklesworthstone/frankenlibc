@@ -1499,11 +1499,15 @@ unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_vo
 unsafe fn native_pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
     let thread_key = thread as usize;
     let handle_ptr = thread as *mut ThreadHandle;
+    let my_tid = core_self_tid();
 
     // Self-join detection: compare handles directly for O(1) reliability.
-    if let Some(my_handle) = core_handle_for_tid(core_self_tid())
+    if let Some(my_handle) = core_handle_for_tid(my_tid)
         && handle_ptr == my_handle
     {
+        return libc::EDEADLK;
+    }
+    if my_tid > 0 && thread_key == my_tid as usize {
         return libc::EDEADLK;
     }
 
@@ -2537,8 +2541,16 @@ pub unsafe extern "C" fn pthread_cond_wait(
     let mtype = read_mutex_type(mutex);
     let mut saved_count = 0;
     if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE {
+        // Verify the calling thread actually owns the mutex before clearing
+        // owner/count state. Without this check, a thread that incorrectly
+        // calls cond_wait without holding the mutex would clobber the real
+        // owner's bookkeeping and silently steal the mutex on wake. (bd-cie59)
+        let self_tid = core_self_tid();
         if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
             let owner = unsafe { &*owner_ptr };
+            if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
+                return libc::EPERM;
+            }
             owner.store(MUTEX_NO_OWNER, Ordering::Release);
         }
         if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
@@ -2771,8 +2783,14 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
     let mtype = read_mutex_type(mutex);
     let mut saved_count = 0;
     if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE {
+        // Verify ownership before clobbering the recursive/errorcheck book-
+        // keeping; mirrors pthread_cond_wait. (bd-cie59)
+        let self_tid = core_self_tid();
         if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
             let owner = unsafe { &*owner_ptr };
+            if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
+                return libc::EPERM;
+            }
             owner.store(MUTEX_NO_OWNER, Ordering::Release);
         }
         if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE

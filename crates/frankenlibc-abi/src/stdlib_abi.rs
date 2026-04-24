@@ -2293,15 +2293,43 @@ pub unsafe extern "C" fn gcvt(value: c_double, ndigit: c_int, buf: *mut c_char) 
 /// `abort` — abnormal process termination.
 ///
 /// Raises SIGABRT. If caught, re-raises after resetting the handler.
+///
+/// POSIX: "If the SIGABRT signal is being held or ignored, abort() shall first
+/// unblock or unignore the SIGABRT signal." Without unblocking, raise() leaves
+/// the signal pending and the process never receives the default core-dump
+/// action — production crashes lose their core file. Match glibc abort.c by
+/// unblocking SIGABRT in the calling thread before each raise. (bd-r25ks)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn abort() -> ! {
     // Flush stdout/stderr before aborting.
     let _ = unsafe { crate::stdio_abi::fflush(ptr::null_mut()) };
-    // Raise SIGABRT. If the signal handler returns, re-raise with default.
+
+    // Build a sigset containing only SIGABRT and unblock it in this thread so
+    // a held SIGABRT cannot suppress delivery of the impending raise.
+    let mut unblock_set: libc::sigset_t = unsafe { core::mem::zeroed() };
+    let _ = unsafe { crate::signal_abi::sigemptyset(&mut unblock_set) };
+    let _ = unsafe { crate::signal_abi::sigaddset(&mut unblock_set, libc::SIGABRT) };
+    let _ = unsafe {
+        raw_syscall::sys_rt_sigprocmask(
+            libc::SIG_UNBLOCK,
+            &unblock_set as *const libc::sigset_t as *const u8,
+            ptr::null_mut(),
+            core::mem::size_of::<libc::c_ulong>(),
+        )
+    };
+
     unsafe {
         crate::signal_abi::raise(libc::SIGABRT);
-        // If we get here, reset handler and raise again.
+        // Handler returned (or SIG_IGN was installed). Reset to SIG_DFL so the
+        // next raise produces the default core-dump action, then unblock again
+        // (a handler may have re-blocked the signal) and re-raise.
         crate::signal_abi::signal(libc::SIGABRT, libc::SIG_DFL);
+        let _ = raw_syscall::sys_rt_sigprocmask(
+            libc::SIG_UNBLOCK,
+            &unblock_set as *const libc::sigset_t as *const u8,
+            ptr::null_mut(),
+            core::mem::size_of::<libc::c_ulong>(),
+        );
         crate::signal_abi::raise(libc::SIGABRT);
     }
     // Should never reach here, but the compiler needs a diverging path.
