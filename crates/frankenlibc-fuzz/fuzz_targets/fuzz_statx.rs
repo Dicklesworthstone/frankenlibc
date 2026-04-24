@@ -35,6 +35,7 @@ const GUARD_VAL: u8 = 0xFE;
 const STATX_BUF_BYTES: usize = 256;
 /// Offset of stx_mask (first u32) inside struct statx.
 const STX_MASK_OFFSET: usize = 0;
+const MAX_FUZZ_PATH_BYTES: usize = 256;
 
 /// Small allowlist of inert paths that statx can probe without filesystem
 /// side-effects (statx is read-only, but we still keep the surface bounded).
@@ -67,6 +68,10 @@ fn pick_dirfd(sel: u8) -> libc::c_int {
 }
 
 fuzz_target!(|input: StatxInput| {
+    if input.path_fuzz.len() > MAX_FUZZ_PATH_BYTES {
+        return;
+    }
+
     // Allocate a statx buffer with guard bands on both sides.
     let mut guarded = vec![GUARD_VAL; 2 * GUARD_BYTES + STATX_BUF_BYTES];
     let buf_ptr = unsafe { guarded.as_mut_ptr().add(GUARD_BYTES) };

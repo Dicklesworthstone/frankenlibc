@@ -289,7 +289,10 @@ fn fuzz_message_catalog_backend(input: &LocaleFuzzInput) {
     let domain_name = sanitize_cstring(&input.domain_name, MAX_DOMAIN_NAME);
     let msgid = sanitize_cstring(&input.msgid, MAX_MESSAGE_LEN);
     let path_name = if input.use_null_domain_name || domain_name.as_bytes().is_empty() {
-        CString::new("/tmp/frankenlibc_missing_catalog_fuzz.cat").unwrap()
+        let Ok(path_name) = CString::new("/tmp/frankenlibc_missing_catalog_fuzz.cat") else {
+            return;
+        };
+        path_name
     } else {
         let mut path = b"/tmp/frankenlibc_missing_catalog_".to_vec();
         path.extend(domain_name.as_bytes().iter().map(|byte| {
@@ -300,7 +303,10 @@ fn fuzz_message_catalog_backend(input: &LocaleFuzzInput) {
             }
         }));
         path.extend_from_slice(b".cat");
-        CString::new(path).unwrap()
+        let Ok(path_name) = CString::new(path) else {
+            return;
+        };
+        path_name
     };
 
     let errno_ptr = unsafe { __errno_location() };

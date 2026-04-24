@@ -134,7 +134,7 @@ fuzz_target!(|input: SetjmpFuzzInput| {
     // cargo-fuzz compiles the target with --release but with
     // `-Cdebug-assertions` for ASan. Under `debug_assertions=true`
     // frankenlibc's setjmp ABI takes the deferred-transfer path
-    // which panic!s instead of performing a real longjmp. The
+    // which raises a panic instead of performing a real longjmp. The
     // round-trip contract this harness asserts assumes native
     // setjmp/longjmp (release-without-debug-assertions) — the
     // native x86_64 global_asm! implementation at

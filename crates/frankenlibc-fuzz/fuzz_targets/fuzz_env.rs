@@ -141,13 +141,13 @@ fn make_put_entry(seed: &[u8], value: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     Some((name.into_bytes(), entry))
 }
 
-fn sanitize_value(value: &[u8]) -> CString {
+fn sanitize_value(value: &[u8]) -> Option<CString> {
     let cleaned: Vec<u8> = value
         .iter()
         .take(MAX_VALUE_BYTES)
         .map(|&b| if b == 0 { b'?' } else { b })
         .collect();
-    CString::new(cleaned).expect("NULs stripped")
+    CString::new(cleaned).ok()
 }
 
 /// Reset env state: clear both ABI and shadow.
@@ -196,7 +196,9 @@ fn apply_op(op: &EnvOp, shadow: &mut BTreeMap<Vec<u8>, Vec<u8>>) {
             let Some(name) = make_name(name_seed) else {
                 return;
             };
-            let value_c = sanitize_value(value);
+            let Some(value_c) = sanitize_value(value) else {
+                return;
+            };
             let overwrite_i = if *overwrite { 1 } else { 0 };
             let rc = unsafe { setenv(name.as_ptr(), value_c.as_ptr(), overwrite_i) };
             assert!(rc == 0 || rc == -1, "setenv rc out of contract: {rc}");
@@ -214,7 +216,9 @@ fn apply_op(op: &EnvOp, shadow: &mut BTreeMap<Vec<u8>, Vec<u8>>) {
             } else {
                 c"".as_ptr()
             };
-            let value_c = sanitize_value(value);
+            let Some(value_c) = sanitize_value(value) else {
+                return;
+            };
             let rc = unsafe { setenv(malformed, value_c.as_ptr(), 1) };
             // POSIX: setenv with '=' in name or empty name must fail
             // with EINVAL. The ABI may return -1 without exposing
@@ -248,7 +252,10 @@ fn apply_op(op: &EnvOp, shadow: &mut BTreeMap<Vec<u8>, Vec<u8>>) {
             let rc = unsafe { putenv(ptr) };
             // Record for introspection (so we can scan later if we
             // wanted; currently we just let it leak).
-            PUTENV_ARENA.lock().unwrap().push(
+            PUTENV_ARENA
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(
                 // SAFETY: we just leaked this slice; we can hand the
                 // reference out one more time. The arena never
                 // outlives the process, and we never mutate through
@@ -282,27 +289,27 @@ fn apply_op(op: &EnvOp, shadow: &mut BTreeMap<Vec<u8>, Vec<u8>>) {
 
 fn check_get(name: &CStr, ptr: *const c_char, shadow: &BTreeMap<Vec<u8>, Vec<u8>>) {
     let expected = shadow.get(name.to_bytes());
-    match (ptr.is_null(), expected) {
-        (true, None) => {}
-        (false, Some(expected_bytes)) => {
-            // SAFETY: ptr is non-null and the ABI returns a
-            // NUL-terminated C string.
-            let actual = unsafe { CStr::from_ptr(ptr) }.to_bytes();
-            assert_eq!(
-                actual,
-                &expected_bytes[..],
-                "getenv({}) diverged from shadow",
-                name.to_string_lossy()
-            );
-        }
-        (true, Some(_)) | (false, None) => {
-            panic!(
-                "getenv({}) null-vs-shadow mismatch (null={})",
-                name.to_string_lossy(),
-                ptr.is_null()
-            );
-        }
+    assert_eq!(
+        ptr.is_null(),
+        expected.is_none(),
+        "getenv({}) null-vs-shadow mismatch",
+        name.to_string_lossy()
+    );
+    if ptr.is_null() {
+        return;
     }
+    let Some(expected_bytes) = expected else {
+        return;
+    };
+    // SAFETY: ptr is non-null and the ABI returns a
+    // NUL-terminated C string.
+    let actual = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    assert_eq!(
+        actual,
+        &expected_bytes[..],
+        "getenv({}) diverged from shadow",
+        name.to_string_lossy()
+    );
 }
 
 fuzz_target!(|input: EnvFuzzInput| {
@@ -324,7 +331,9 @@ fuzz_target!(|input: EnvFuzzInput| {
     // without mutating the shadow or vice versa.
     let names: Vec<Vec<u8>> = shadow.keys().cloned().collect();
     for name_bytes in names {
-        let name = CString::new(name_bytes.clone()).unwrap();
+        let Ok(name) = CString::new(name_bytes.clone()) else {
+            continue;
+        };
         let ptr = unsafe { getenv(name.as_ptr()) };
         check_get(&name, ptr, &shadow);
     }

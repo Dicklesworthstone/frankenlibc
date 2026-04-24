@@ -231,7 +231,9 @@ fn run(scen: Scenario) {
                 local.push(0); // NUL-terminate
                 if local.len() > MAX_BUF {
                     local.truncate(MAX_BUF);
-                    *local.last_mut().unwrap() = 0;
+                    if let Some(last) = local.last_mut() {
+                        *last = 0;
+                    }
                 }
                 let mut p = local.as_mut_ptr() as *mut c_char;
                 let _ = unsafe {
@@ -270,7 +272,9 @@ fn run(scen: Scenario) {
                 local.push(0);
                 if local.len() > MAX_BUF {
                     local.truncate(MAX_BUF);
-                    *local.last_mut().unwrap() = 0;
+                    if let Some(last) = local.last_mut() {
+                        *last = 0;
+                    }
                 }
                 let mut p = local.as_mut_ptr() as *mut c_char;
                 let _ = unsafe { xdr_wrapstring(xp, &mut p) };

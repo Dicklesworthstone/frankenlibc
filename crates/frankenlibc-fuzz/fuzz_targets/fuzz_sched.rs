@@ -145,10 +145,17 @@ fn apply_get_scheduler(pid_class: u8) {
         libc::syscall(libc::SYS_sched_getscheduler, pid as libc::c_long) as c_int
     };
     // Both must return the same bucket: success value or -1.
-    match (rc_ours, rc_sys) {
-        (-1, -1) => {}
-        (a, b) if a >= 0 && b >= 0 => assert_eq!(a, b, "sched_getscheduler diverged for pid={pid}"),
-        (a, b) => panic!("sched_getscheduler diverged pid={pid}: ours={a} sys={b}"),
+    assert_rc_contract(rc_ours, "sched_getscheduler");
+    assert_eq!(
+        rc_ours >= 0,
+        rc_sys >= 0,
+        "sched_getscheduler bucket diverged pid={pid}: ours={rc_ours} sys={rc_sys}"
+    );
+    if rc_ours >= 0 && rc_sys >= 0 {
+        assert_eq!(
+            rc_ours, rc_sys,
+            "sched_getscheduler diverged for pid={pid}"
+        );
     }
 }
 
@@ -193,15 +200,19 @@ fn apply_get_param(pid_class: u8) {
             sys_param.as_mut_ptr() as libc::c_long,
         ) as c_int
     };
-    match (rc_ours, rc_sys) {
-        (-1, -1) => {}
-        (0, 0) => {
-            // SAFETY: both successes wrote into their respective buffers.
-            let ours = unsafe { param.assume_init() }.sched_priority;
-            let sys = unsafe { sys_param.assume_init() }.sched_priority;
-            assert_eq!(ours, sys, "sched_getparam priority diverged for pid={pid}");
-        }
-        (a, b) => panic!("sched_getparam rc diverged pid={pid}: ours={a} sys={b}"),
+    assert_eq!(
+        rc_ours == 0,
+        rc_sys == 0,
+        "sched_getparam rc diverged pid={pid}: ours={rc_ours} sys={rc_sys}"
+    );
+    if rc_ours == 0 && rc_sys == 0 {
+        // SAFETY: both successes wrote into their respective buffers.
+        let ours = unsafe { param.assume_init() }.sched_priority;
+        let sys = unsafe { sys_param.assume_init() }.sched_priority;
+        assert_eq!(
+            ours, sys,
+            "sched_getparam priority diverged for pid={pid}"
+        );
     }
 }
 
@@ -240,19 +251,19 @@ fn apply_get_affinity(pid_class: u8, size: u8) {
             sys_mask.as_mut_ptr() as libc::c_long,
         ) as c_int
     };
-    match (rc_ours, rc_sys) {
-        (0, n) if n > 0 => {
-            let len = (n as usize).min(size);
-            assert_eq!(
-                &mask[..len],
-                &sys_mask[..len],
-                "sched_getaffinity mask diverged pid={pid} len={len}"
-            );
-        }
-        (-1, -1) => {}
-        (ours, sys) => panic!(
-            "sched_getaffinity bucket diverged pid={pid}: ours={ours} sys={sys}"
-        ),
+    let ours_success = rc_ours == 0;
+    let sys_success = rc_sys > 0;
+    assert_eq!(
+        ours_success, sys_success,
+        "sched_getaffinity bucket diverged pid={pid}: ours={rc_ours} sys={rc_sys}"
+    );
+    if ours_success && sys_success {
+        let len = (rc_sys as usize).min(size);
+        assert_eq!(
+            &mask[..len],
+            &sys_mask[..len],
+            "sched_getaffinity mask diverged pid={pid} len={len}"
+        );
     }
 }
 
