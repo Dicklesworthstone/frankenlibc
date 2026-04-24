@@ -10,7 +10,7 @@
 
 use std::ffi::{CString, OsStr};
 use std::fs;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::{ffi::OsStrExt, fs::symlink};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -57,6 +57,7 @@ const PATH_PARENT_ESCAPE: u8 = 3;
 const PATH_DEV_NULL: u8 = 4;
 const PATH_RAW_COMPONENT: u8 = 5;
 const PATH_EMPTY: u8 = 6;
+const PATH_SYMLINK: u8 = 7;
 
 const ATFD_CWD: u8 = 0;
 const ATFD_WORK_DIR: u8 = 1;
@@ -95,7 +96,7 @@ fuzz_target!(|input: OpenFuzzInput| {
     let mode = libc::mode_t::from(input.mode & 0o7777);
     let flags = normalize_flags(input.flags);
     let op = input.op % 3;
-    let path_case = input.path_case % 7;
+    let path_case = input.path_case % 8;
     let at_fd_kind = input.at_fd_kind % 3;
 
     let Some(paths) = build_case_paths(roots, case_id, path_case, &input.path) else {
@@ -232,7 +233,7 @@ fn normalize_flags(raw: i32) -> i32 {
         | libc::O_SYNC
         | libc::O_TRUNC;
     #[cfg(target_os = "linux")]
-    let valid_mask = valid_mask | libc::O_DSYNC;
+    let valid_mask = valid_mask | libc::O_DSYNC | libc::O_PATH;
     flags |= raw & valid_mask;
     flags
 }
@@ -272,6 +273,7 @@ fn build_case_paths(
             host_relative: Some(CString::new(Vec::<u8>::new()).expect("empty CString is valid")),
             cleanup_paths: Vec::new(),
         }),
+        PATH_SYMLINK => build_symlink_case(roots, case_id),
         _ => None,
     }
 }
@@ -319,6 +321,40 @@ fn build_parent_escape_case(roots: &TestRoots, case_id: u64) -> Option<CasePaths
         ours_relative: Some(relative.clone()),
         host_relative: Some(relative),
         cleanup_paths: vec![(ours_path, true), (host_path, true)],
+    })
+}
+
+fn build_symlink_case(roots: &TestRoots, case_id: u64) -> Option<CasePaths> {
+    let target_name = named_bytes(b"symlink_target", case_id);
+    let link_name = named_bytes(b"symlink", case_id);
+    let target_name = OsStr::from_bytes(&target_name);
+    let link_name_os = OsStr::from_bytes(&link_name);
+
+    let ours_target = roots.ours_work.join(target_name);
+    let host_target = roots.host_work.join(target_name);
+    let ours_link = roots.ours_work.join(link_name_os);
+    let host_link = roots.host_work.join(link_name_os);
+
+    fs::write(&ours_target, b"symlink-target").ok()?;
+    fs::write(&host_target, b"symlink-target").ok()?;
+    symlink(&ours_target, &ours_link).ok()?;
+    symlink(&host_target, &host_link).ok()?;
+
+    let relative = CString::new(link_name).ok()?;
+    let ours_absolute = CString::new(ours_link.as_os_str().as_bytes()).ok()?;
+    let host_absolute = CString::new(host_link.as_os_str().as_bytes()).ok()?;
+
+    Some(CasePaths {
+        ours_absolute: Some(ours_absolute),
+        host_absolute: Some(host_absolute),
+        ours_relative: Some(relative.clone()),
+        host_relative: Some(relative),
+        cleanup_paths: vec![
+            (ours_link, true),
+            (host_link, true),
+            (ours_target, true),
+            (host_target, true),
+        ],
     })
 }
 
