@@ -235,4 +235,19 @@ name = "fuzz_xdr"
 path = "fuzz_targets/fuzz_xdr.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_vector_io"
+path = "fuzz_targets/fuzz_vector_io.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_fcntl"
+path = "fuzz_targets/fuzz_fcntl.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_statx"
+path = "fuzz_targets/fuzz_statx.rs"
+doc = false
+
 [workspace]
