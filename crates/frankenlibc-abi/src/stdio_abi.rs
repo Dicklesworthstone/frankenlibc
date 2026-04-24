@@ -5945,14 +5945,19 @@ unsafe fn sync_fmemopen_full(id: usize, stream: &StdioStream) {
         && let Some(data) = stream.mem_data()
     {
         let len = data.len().min(info.size);
-        if len > 0 {
+        let copy_len = if stream.is_truncating() && len == info.size && info.size > 0 {
+            info.size - 1
+        } else {
+            len
+        };
+        if copy_len > 0 {
             unsafe {
-                std::ptr::copy_nonoverlapping(data.as_ptr(), info.buf, len);
+                std::ptr::copy_nonoverlapping(data.as_ptr(), info.buf, copy_len);
             }
         }
-        if len < info.size && (len > 0 || stream.is_readable()) {
+        if copy_len < info.size && (copy_len > 0 || stream.is_readable()) {
             unsafe {
-                *info.buf.add(len) = 0;
+                *info.buf.add(copy_len) = 0;
             }
         }
     }

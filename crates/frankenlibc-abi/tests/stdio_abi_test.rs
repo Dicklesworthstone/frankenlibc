@@ -2262,6 +2262,59 @@ fn fmemopen_w_truncate_defers_caller_buffer_change_until_flush() {
 }
 
 #[test]
+fn fmemopen_w_truncate_exact_capacity_preserves_final_nul_slot() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"01234567";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"0123456\0");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_wplus_exact_capacity_readback_sees_terminal_nul() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"w+".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"01234567";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"0123456\0");
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut out = [0u8; 8];
+    let got = unsafe { fread(out.as_mut_ptr().cast(), 1, out.len(), stream) };
+    assert_eq!(got, out.len());
+    assert_eq!(&out, b"0123456\0");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
+fn fmemopen_rplus_exact_capacity_does_not_reserve_final_nul_slot() {
+    let mut buf = *b"ABCDEFGH";
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"r+".as_ptr()) };
+    if stream.is_null() {
+        return;
+    }
+    let payload = b"01234567";
+    let wrote = unsafe { fwrite(payload.as_ptr().cast(), 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+    assert_eq!(&buf, b"ABCDEFGH");
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(&buf, b"01234567");
+    assert_eq!(unsafe { fclose(stream) }, 0);
+}
+
+#[test]
 fn fmemopen_append_flush_writes_nul_after_appended_content() {
     let mut buf = *b"ABC\0ZZZZ";
     let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), c"a".as_ptr()) };

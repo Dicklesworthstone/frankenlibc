@@ -445,6 +445,11 @@ impl StdioStream {
         self.open_flags.writable
     }
 
+    /// Check if the stream was opened with truncation semantics.
+    pub fn is_truncating(&self) -> bool {
+        self.open_flags.truncate
+    }
+
     /// Check if EOF has been reached.
     pub fn is_eof(&self) -> bool {
         self.flags.eof
@@ -653,6 +658,14 @@ impl StdioStream {
         self.flags.eof = false;
         if let Some(ref mut backing) = self.mem_backing {
             let n = backing.write(data);
+            if self.open_flags.truncate
+                && let MemBacking::Fixed { data, pos, .. } = backing
+                && *pos == data.len()
+                && !data.is_empty()
+            {
+                let last = data.len() - 1;
+                data[last] = 0;
+            }
             self.offset = backing.position() as i64;
             n
         } else {
