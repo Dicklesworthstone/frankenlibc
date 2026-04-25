@@ -352,6 +352,53 @@ pub fn lookup_network_by_number(content: &[u8], number: u32) -> Option<NetworkEn
     None
 }
 
+/// Address family classification produced by [`parse_addr_binary`].
+///
+/// Maps to libc::AF_INET / AF_INET6 at the abi boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddrFamily {
+    /// IPv4 (4-byte address).
+    Inet4,
+    /// IPv6 (16-byte address).
+    Inet6,
+}
+
+/// Length in bytes of the canonical address form for an [`AddrFamily`].
+impl AddrFamily {
+    pub fn addr_len(self) -> usize {
+        match self {
+            AddrFamily::Inet4 => 4,
+            AddrFamily::Inet6 => 16,
+        }
+    }
+}
+
+/// Parse an IP address text representation into a fixed 16-byte buffer
+/// plus its family / valid-length triple.
+///
+/// IPv4 addresses fill the first 4 bytes (remaining 12 bytes are
+/// zeroed); IPv6 addresses fill all 16. Returns `None` for malformed
+/// input — both standard `std::net::Ipv4Addr` and `std::net::Ipv6Addr`
+/// parsers are tried in order.
+///
+/// Used by `gethostbyaddr` / `getaddrinfo` paths in the abi to convert
+/// `/etc/hosts` text addresses into the binary form expected by
+/// `struct hostent::h_addr_list`.
+pub fn parse_addr_binary(text: &str) -> Option<([u8; 16], AddrFamily, usize)> {
+    use core::net::{Ipv4Addr, Ipv6Addr};
+    if let Ok(v4) = text.parse::<Ipv4Addr>() {
+        let mut buf = [0u8; 16];
+        buf[..4].copy_from_slice(&v4.octets());
+        return Some((buf, AddrFamily::Inet4, 4));
+    }
+    if let Ok(v6) = text.parse::<Ipv6Addr>() {
+        let mut buf = [0u8; 16];
+        buf.copy_from_slice(&v6.octets());
+        return Some((buf, AddrFamily::Inet6, 16));
+    }
+    None
+}
+
 /// Look up a service name in /etc/services content.
 ///
 /// Returns the port number for the given service name and optional protocol filter.
@@ -1846,5 +1893,95 @@ mod tests {
         let e = lookup_network_by_name(content, b"localnet").unwrap();
         assert_eq!(e.name, b"loopback");
         assert_eq!(e.number, 0x7f00_0000);
+    }
+
+    // ---- parse_addr_binary ----
+
+    #[test]
+    fn addr_family_addr_len() {
+        assert_eq!(AddrFamily::Inet4.addr_len(), 4);
+        assert_eq!(AddrFamily::Inet6.addr_len(), 16);
+    }
+
+    #[test]
+    fn parse_addr_binary_ipv4_loopback() {
+        let (buf, fam, len) = parse_addr_binary("127.0.0.1").unwrap();
+        assert_eq!(fam, AddrFamily::Inet4);
+        assert_eq!(len, 4);
+        assert_eq!(&buf[..4], &[127, 0, 0, 1]);
+        // Trailing 12 bytes should be zeroed.
+        assert_eq!(&buf[4..], &[0; 12]);
+    }
+
+    #[test]
+    fn parse_addr_binary_ipv4_arbitrary() {
+        let (buf, fam, len) = parse_addr_binary("192.168.42.1").unwrap();
+        assert_eq!(fam, AddrFamily::Inet4);
+        assert_eq!(len, 4);
+        assert_eq!(&buf[..4], &[192, 168, 42, 1]);
+    }
+
+    #[test]
+    fn parse_addr_binary_ipv6_loopback_abbrev() {
+        let (buf, fam, len) = parse_addr_binary("::1").unwrap();
+        assert_eq!(fam, AddrFamily::Inet6);
+        assert_eq!(len, 16);
+        let mut expected = [0u8; 16];
+        expected[15] = 1;
+        assert_eq!(buf, expected);
+    }
+
+    #[test]
+    fn parse_addr_binary_ipv6_full_form() {
+        let (buf, fam, len) = parse_addr_binary("2001:db8::1").unwrap();
+        assert_eq!(fam, AddrFamily::Inet6);
+        assert_eq!(len, 16);
+        let mut expected = [0u8; 16];
+        expected[0] = 0x20;
+        expected[1] = 0x01;
+        expected[2] = 0x0d;
+        expected[3] = 0xb8;
+        expected[15] = 1;
+        assert_eq!(buf, expected);
+    }
+
+    #[test]
+    fn parse_addr_binary_ipv6_v4_mapped() {
+        // ::ffff:127.0.0.1 — IPv4-mapped IPv6.
+        let (buf, fam, len) = parse_addr_binary("::ffff:127.0.0.1").unwrap();
+        assert_eq!(fam, AddrFamily::Inet6);
+        assert_eq!(len, 16);
+        // Last 4 bytes = 127.0.0.1, preceded by 0xFFFF.
+        assert_eq!(&buf[10..12], &[0xff, 0xff]);
+        assert_eq!(&buf[12..16], &[127, 0, 0, 1]);
+    }
+
+    #[test]
+    fn parse_addr_binary_rejects_garbage() {
+        assert_eq!(parse_addr_binary("not an address"), None);
+        assert_eq!(parse_addr_binary("256.0.0.1"), None);
+        assert_eq!(parse_addr_binary("foo::bar::baz"), None);
+        assert_eq!(parse_addr_binary(""), None);
+    }
+
+    #[test]
+    fn parse_addr_binary_rejects_trailing_text() {
+        // std parsers require the entire input to be the address.
+        assert_eq!(parse_addr_binary("127.0.0.1 extra"), None);
+        assert_eq!(parse_addr_binary("::1 extra"), None);
+    }
+
+    #[test]
+    fn parse_addr_binary_ipv4_zero_address() {
+        let (buf, fam, len) = parse_addr_binary("0.0.0.0").unwrap();
+        assert_eq!(fam, AddrFamily::Inet4);
+        assert_eq!(len, 4);
+        assert_eq!(buf, [0u8; 16]);
+    }
+
+    #[test]
+    fn parse_addr_binary_ipv4_max_octets() {
+        let (buf, _, _) = parse_addr_binary("255.255.255.255").unwrap();
+        assert_eq!(&buf[..4], &[0xff; 4]);
     }
 }

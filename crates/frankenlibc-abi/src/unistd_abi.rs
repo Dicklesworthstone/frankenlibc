@@ -11194,19 +11194,17 @@ std::thread_local! {
 }
 
 /// Parse address text into binary. Returns (address_bytes, af, length).
+///
+/// Thin shim over `frankenlibc_core::resolv::parse_addr_binary` that
+/// maps the typed `AddrFamily` enum into the `libc::AF_INET` /
+/// `AF_INET6` integer constants the call sites here expect.
 fn parse_addr_binary(addr_str: &str) -> Option<([u8; 16], c_int, c_int)> {
-    use std::net::{Ipv4Addr, Ipv6Addr};
-    if let Ok(v4) = addr_str.parse::<Ipv4Addr>() {
-        let mut buf = [0u8; 16];
-        buf[..4].copy_from_slice(&v4.octets());
-        Some((buf, libc::AF_INET, 4))
-    } else if let Ok(v6) = addr_str.parse::<Ipv6Addr>() {
-        let mut buf = [0u8; 16];
-        buf.copy_from_slice(&v6.octets());
-        Some((buf, libc::AF_INET6, 16))
-    } else {
-        None
-    }
+    let (buf, fam, len) = frankenlibc_core::resolv::parse_addr_binary(addr_str)?;
+    let af = match fam {
+        frankenlibc_core::resolv::AddrFamily::Inet4 => libc::AF_INET,
+        frankenlibc_core::resolv::AddrFamily::Inet6 => libc::AF_INET6,
+    };
+    Some((buf, af, len as c_int))
 }
 
 /// Parse the next hosts entry from the reader.
