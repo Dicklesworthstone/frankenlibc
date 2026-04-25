@@ -20,6 +20,7 @@ compile_error!(
 );
 
 pub mod aliases;
+pub mod crypt;
 pub mod ctype;
 pub mod dirent;
 pub mod dlfcn;

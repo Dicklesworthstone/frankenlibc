@@ -5545,41 +5545,14 @@ fn crypt_b64_encode(input: &[u8], n_chars: usize) -> String {
     result
 }
 
-/// Extract the salt portion from a $N$salt$ or $N$rounds=NNNN$salt$ prefix.
+/// Extract the rounds + salt portion from a `$N$[rounds=NNNN$]salt$` prefix.
+///
+/// Thin shim over `frankenlibc_core::crypt::salt::parse_crypt_salt` that
+/// widens the returned `u32` rounds to `usize` for the existing
+/// `crypt_sha256` / `crypt_sha512` call sites.
 fn parse_crypt_salt(salt_bytes: &[u8], prefix_len: usize) -> (usize, &[u8]) {
-    let rest = &salt_bytes[prefix_len..];
-    // Check for rounds= parameter
-    let (rounds, salt_start) = if rest.starts_with(b"rounds=") {
-        let num_start = 7;
-        let num_end = rest[num_start..]
-            .iter()
-            .position(|&b| b == b'$')
-            .map(|p| num_start + p)
-            .unwrap_or(rest.len());
-        let rounds_str = std::str::from_utf8(&rest[num_start..num_end]).unwrap_or("5000");
-        let r = rounds_str
-            .parse::<usize>()
-            .unwrap_or(5000)
-            .clamp(1000, 999_999_999);
-        (
-            r,
-            if num_end < rest.len() {
-                num_end + 1
-            } else {
-                num_end
-            },
-        )
-    } else {
-        (5000, 0)
-    };
-    let salt_rest = &rest[salt_start..];
-    // Salt is up to 16 chars, terminated by $ or end
-    let salt_end = salt_rest
-        .iter()
-        .position(|&b| b == b'$')
-        .unwrap_or(salt_rest.len())
-        .min(16);
-    (rounds, &salt_rest[..salt_end])
+    let (rounds, salt) = frankenlibc_core::crypt::salt::parse_crypt_salt(salt_bytes, prefix_len);
+    (rounds as usize, salt)
 }
 
 /// SHA-512 crypt ($6$).
