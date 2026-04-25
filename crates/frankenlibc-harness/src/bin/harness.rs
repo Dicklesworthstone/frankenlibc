@@ -1698,7 +1698,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::thread::sleep(Duration::from_secs(30));
             }
             if function == "__harness_test_crash" {
-                std::process::abort();
+                // Use a deterministic abnormal exit instead of abort(3).
+                // On hosts that route core dumps through a helper, abort can
+                // linger long enough for the parent timeout to win the race,
+                // which tests host core-dump policy rather than crash-row
+                // classification.
+                std::process::exit(134);
             }
 
             let envelope =

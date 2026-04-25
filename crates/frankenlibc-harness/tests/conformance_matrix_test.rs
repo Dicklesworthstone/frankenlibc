@@ -297,7 +297,7 @@ fn isolated_case_runner_surfaces_timeout_and_crash_rows() {
         .arg("isolation-test")
         .arg("--isolate")
         .arg("--case-timeout-ms")
-        .arg("100")
+        .arg("1000")
         .output()
         .expect("run isolated conformance matrix");
     assert!(
