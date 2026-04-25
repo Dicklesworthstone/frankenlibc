@@ -134,6 +134,9 @@ rch-install/
 core.*
 core
 *.mcp.json.*.bak
+codex.mcp.json
+cursor.mcp.json
+gemini.mcp.json
 cline.mcp.json
 opencode.json
 windsurf.mcp.json
@@ -172,3 +175,6 @@ git_recent.txt
 git_log.txt
 git_log_*.txt
 git_show_*.txt
+
+# Archived root scratch
+/artifacts/root-scratch/
