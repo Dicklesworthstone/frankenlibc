@@ -1493,96 +1493,29 @@ pub unsafe extern "C" fn ns_name_ntop(
     if src.is_null() || dst.is_null() || dstsiz == 0 {
         return -1;
     }
-    let src = src as *const u8;
+    // Wire form is bounded by NS_MAXDNAME (1025 bytes per glibc).
+    let wire = unsafe {
+        std::slice::from_raw_parts(
+            src as *const u8,
+            frankenlibc_core::resolv::dns_name::NS_MAXDNAME,
+        )
+    };
     let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dstsiz) };
-    // Read wire labels until root. Source has no compression pointers (uncompressed).
-    // We don't know the source buffer size, so read carefully with max wire name length 255.
-    let mut si = 0usize;
-    let mut oi = 0usize;
-    let mut first = true;
-    const NS_MAXDNAME: usize = 1025;
-
-    loop {
-        let b = unsafe { *src.add(si) };
-        if b == 0 {
-            // Root label. If name was empty (root zone), output is just ".".
-            if first {
-                if oi + 1 >= out.len() {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                out[oi] = b'.';
-                oi += 1;
-            }
-            break;
+    match frankenlibc_core::resolv::dns_name::name_ntop(wire, out) {
+        Ok(n) => n as c_int,
+        Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
+            unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
+            -1
         }
-        if b & 0xC0 != 0 {
-            return -1; // Compression pointer or reserved — invalid in uncompressed name.
-        }
-        let label_len = b as usize;
-        if label_len > 63 || si + 1 + label_len > NS_MAXDNAME {
-            return -1;
-        }
-        // Dot separator before non-first labels.
-        if !first {
-            if oi >= out.len() - 1 {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            out[oi] = b'.';
-            oi += 1;
-        }
-        first = false;
-        si += 1;
-        // Copy label bytes with escaping.
-        for j in 0..label_len {
-            let ch = unsafe { *src.add(si + j) };
-            if ch == b'.' || ch == b'\\' {
-                // Escape with backslash.
-                if oi + 2 >= out.len() {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                out[oi] = b'\\';
-                oi += 1;
-                out[oi] = ch;
-                oi += 1;
-            } else if !(0x20..0x7F).contains(&ch) {
-                // Escape non-printable as \DDD.
-                if oi + 4 >= out.len() {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                out[oi] = b'\\';
-                out[oi + 1] = b'0' + ch / 100;
-                out[oi + 2] = b'0' + (ch / 10) % 10;
-                out[oi + 3] = b'0' + ch % 10;
-                oi += 4;
-            } else {
-                if oi >= out.len() - 1 {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                out[oi] = ch;
-                oi += 1;
-            }
-        }
-        si += label_len;
+        Err(_) => -1,
     }
-
-    // NUL-terminate.
-    if oi >= out.len() {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-        return -1;
-    }
-    out[oi] = 0;
-    oi as c_int
 }
 
 /// `ns_name_pton` — convert dotted text to uncompressed wire-format labels (RFC 1035).
 ///
-/// Handles backslash escapes (\. and \DDD). Returns -1 on error, number of
-/// bytes written to dst on success.
+/// Thin shim over `frankenlibc_core::resolv::dns_name::name_pton`.
+/// Returns -1 on error (with errno set to EMSGSIZE for buffer-too-small,
+/// EINVAL for malformed input), number of bytes written on success.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_name_pton(
     src: *const c_char,
@@ -1592,108 +1525,16 @@ pub unsafe extern "C" fn ns_name_pton(
     if src.is_null() || dst.is_null() || dstsiz == 0 {
         return -1;
     }
-    let name = unsafe { std::ffi::CStr::from_ptr(src) };
-    let name_bytes = name.to_bytes();
+    let name_bytes = unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes();
     let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dstsiz) };
-
-    // Empty string or just "." → root.
-    if name_bytes.is_empty() || (name_bytes.len() == 1 && name_bytes[0] == b'.') {
-        if out.is_empty() {
+    match frankenlibc_core::resolv::dns_name::name_pton(name_bytes, out) {
+        Ok(n) => n as c_int,
+        Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
+            -1
         }
-        out[0] = 0;
-        return 1;
+        Err(_) => -1,
     }
-
-    let mut si = 0usize; // source index
-    let mut oi = 0usize; // output index
-    let mut label_start; // where current label length byte is
-
-    // Reserve space for first label length byte.
-    if oi >= out.len() {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-        return -1;
-    }
-    label_start = oi;
-    oi += 1;
-    let mut label_len: u8 = 0;
-
-    while si < name_bytes.len() {
-        let ch = name_bytes[si];
-        if ch == b'.' {
-            // End of label.
-            if label_len == 0 && si + 1 < name_bytes.len() {
-                return -1; // Empty label in middle.
-            }
-            if label_len > 63 {
-                return -1;
-            }
-            out[label_start] = label_len;
-            si += 1;
-            // If this was the trailing dot and we're at end, don't start a new label.
-            if si >= name_bytes.len() {
-                break;
-            }
-            // Start next label.
-            if oi >= out.len() {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            label_start = oi;
-            oi += 1;
-            label_len = 0;
-            continue;
-        }
-        let byte = if ch == b'\\' && si + 1 < name_bytes.len() {
-            si += 1;
-            if name_bytes[si].is_ascii_digit()
-                && si + 2 < name_bytes.len()
-                && name_bytes[si + 1].is_ascii_digit()
-                && name_bytes[si + 2].is_ascii_digit()
-            {
-                // \DDD decimal escape.
-                let val = (name_bytes[si] - b'0') as u16 * 100
-                    + (name_bytes[si + 1] - b'0') as u16 * 10
-                    + (name_bytes[si + 2] - b'0') as u16;
-                si += 2; // si will be incremented again below.
-                if val > 255 {
-                    return -1;
-                }
-                val as u8
-            } else {
-                name_bytes[si]
-            }
-        } else {
-            ch
-        };
-
-        if oi >= out.len() {
-            unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
-        }
-        out[oi] = byte;
-        oi += 1;
-        label_len += 1;
-        si += 1;
-    }
-
-    // Finalize last label if name didn't end with dot.
-    if label_len > 0 {
-        if label_len > 63 {
-            return -1;
-        }
-        out[label_start] = label_len;
-    }
-
-    // Root terminator.
-    if oi >= out.len() {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-        return -1;
-    }
-    out[oi] = 0;
-    oi += 1;
-    oi as c_int
 }
 
 /// `ns_name_unpack` — decompress a compressed wire-format name to uncompressed labels.
@@ -7985,88 +7826,22 @@ const NS_CMPRSFLGS: u8 = 0xC0;
 /// Returns the number of bytes written (including NUL), or -1 on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz: SizeT) -> c_int {
+    // Glibc-internal duplicate of ns_name_ntop — same shim logic.
     if src.is_null() || dst.is_null() || dstsiz == 0 {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    let mut sp = src;
-    let mut dp = 0usize; // index into dst
-    let mut first = true;
-
-    loop {
-        let label_len = unsafe { *sp } as usize;
-        sp = unsafe { sp.add(1) };
-        if label_len == 0 {
-            break;
-        }
-        if label_len > NS_MAXLABEL {
+    let wire =
+        unsafe { std::slice::from_raw_parts(src, frankenlibc_core::resolv::dns_name::NS_MAXDNAME) };
+    let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dstsiz) };
+    match frankenlibc_core::resolv::dns_name::name_ntop(wire, out) {
+        Ok(n) => n as c_int,
+        Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
+            -1
         }
-        // Add dot separator between labels
-        if !first {
-            if dp >= dstsiz {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            unsafe { *dst.add(dp) = b'.' as c_char };
-            dp += 1;
-        }
-        first = false;
-        // Copy label bytes, escaping special characters
-        for _ in 0..label_len {
-            let c = unsafe { *sp };
-            sp = unsafe { sp.add(1) };
-            if c == b'.' || c == b'\\' {
-                // Escape dots and backslashes
-                if dp + 2 > dstsiz {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                unsafe { *dst.add(dp) = b'\\' as c_char };
-                dp += 1;
-                unsafe { *dst.add(dp) = c as c_char };
-                dp += 1;
-            } else if !(0x21..=0x7E).contains(&c) {
-                // Escape non-printable as \DDD
-                if dp + 4 > dstsiz {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                unsafe { *dst.add(dp) = b'\\' as c_char };
-                dp += 1;
-                unsafe { *dst.add(dp) = (b'0' + c / 100) as c_char };
-                dp += 1;
-                unsafe { *dst.add(dp) = (b'0' + (c / 10) % 10) as c_char };
-                dp += 1;
-                unsafe { *dst.add(dp) = (b'0' + c % 10) as c_char };
-                dp += 1;
-            } else {
-                if dp >= dstsiz {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                unsafe { *dst.add(dp) = c as c_char };
-                dp += 1;
-            }
-        }
+        Err(_) => -1,
     }
-    // Handle root domain (empty name)
-    if first {
-        if dp >= dstsiz {
-            unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
-        }
-        unsafe { *dst.add(dp) = b'.' as c_char };
-        dp += 1;
-    }
-    // NUL-terminate
-    if dp >= dstsiz {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-        return -1;
-    }
-    unsafe { *dst.add(dp) = 0 };
-    dp as c_int
 }
 
 /// `__ns_name_pton` — convert presentation (dotted) DNS name to wire format.
@@ -8075,117 +7850,31 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
 /// the input was a fully-qualified name (trailing dot), 0 otherwise.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz: SizeT) -> c_int {
+    // Glibc-internal __ns_name_pton uses the BSD return semantic
+    // (different from the public ns_name_pton):
+    //   -1 on error, 1 if the name was fully qualified (ends with `.`),
+    //   0 if not fully qualified.
+    // The wire-format bytes are written to `dst` in either success case.
     if src.is_null() || dst.is_null() || dstsiz == 0 {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-
-    let mut sp = src;
-    let mut dp = 0usize;
-    let mut label_start;
-    let mut label_len: usize = 0;
-    let mut fully_qualified = false;
-
-    // Reserve space for first label length byte
-    if dp >= dstsiz {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-        return -1;
-    }
-    dp += 1; // skip label length byte, fill in later
-    label_start = dp - 1;
-
-    loop {
-        let c = unsafe { *sp } as u8;
-        if c == 0 {
-            break;
-        }
-        sp = unsafe { sp.add(1) };
-
-        if c == b'.' {
-            // End of label
-            if label_len == 0 || label_len > NS_MAXLABEL {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            // Write label length
-            unsafe { *dst.add(label_start) = label_len as u8 };
-            label_len = 0;
-
-            // Check for trailing dot (next char is NUL = fully qualified)
-            if unsafe { *sp } as u8 == 0 {
-                fully_qualified = true;
-                break;
-            }
-
-            // Start next label
-            if dp >= dstsiz {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            label_start = dp;
-            dp += 1;
-        } else if c == b'\\' {
-            // Escape sequence
-            let next = unsafe { *sp } as u8;
-            if next.is_ascii_digit() {
-                // \DDD decimal escape
-                let d1 = (next - b'0') as u16;
-                sp = unsafe { sp.add(1) };
-                let d2 = (unsafe { *sp } as u8 - b'0') as u16;
-                sp = unsafe { sp.add(1) };
-                let d3 = (unsafe { *sp } as u8 - b'0') as u16;
-                sp = unsafe { sp.add(1) };
-                let val = d1 * 100 + d2 * 10 + d3;
-                if val > 255 {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                if dp >= dstsiz {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                unsafe { *dst.add(dp) = val as u8 };
-                dp += 1;
-                label_len += 1;
+    let name_bytes = unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes();
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
+    match frankenlibc_core::resolv::dns_name::name_pton(name_bytes, out) {
+        Ok(_) => {
+            if name_bytes.last() == Some(&b'.') {
+                1
             } else {
-                // \X literal escape
-                if dp >= dstsiz {
-                    unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                    return -1;
-                }
-                unsafe { *dst.add(dp) = next };
-                dp += 1;
-                sp = unsafe { sp.add(1) };
-                label_len += 1;
+                0
             }
-        } else {
-            if dp >= dstsiz {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            unsafe { *dst.add(dp) = c };
-            dp += 1;
-            label_len += 1;
         }
-    }
-
-    if !fully_qualified {
-        // Write final label length for relative names
-        if label_len > NS_MAXLABEL {
+        Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
+            -1
         }
-        unsafe { *dst.add(label_start) = label_len as u8 };
+        Err(_) => -1,
     }
-
-    // Append terminating zero-length label
-    if dp >= dstsiz {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-        return -1;
-    }
-    unsafe { *dst.add(dp) = 0 };
-
-    if fully_qualified { 1 } else { 0 }
 }
 
 /// `__ns_name_unpack` — unpack compressed DNS name from a message.
