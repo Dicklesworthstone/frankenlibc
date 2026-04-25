@@ -2196,206 +2196,11 @@ pub unsafe extern "C" fn wcsrtombs(
     written
 }
 
-#[inline]
-fn wide_is_space(wc: u32) -> bool {
-    char::from_u32(wc).is_some_and(|c| c.is_whitespace())
-}
-
-#[inline]
-fn wide_digit_value(wc: u32) -> Option<u32> {
-    match wc {
-        wc if (b'0' as u32..=b'9' as u32).contains(&wc) => Some(wc - b'0' as u32),
-        wc if (b'a' as u32..=b'z' as u32).contains(&wc) => Some(wc - b'a' as u32 + 10),
-        wc if (b'A' as u32..=b'Z' as u32).contains(&wc) => Some(wc - b'A' as u32 + 10),
-        _ => None,
-    }
-}
-
-#[inline]
-fn wide_is_ascii_hexdigit(wc: u32) -> bool {
-    matches!(wide_digit_value(wc), Some(0..=15))
-}
-
-fn parse_wide_signed(s: &[u32], base: c_int) -> (i64, usize, ConversionStatus) {
-    let mut i = 0usize;
-    let len = s.len();
-
-    while i < len && wide_is_space(s[i]) {
-        i += 1;
-    }
-    if i == len {
-        return (0, 0, ConversionStatus::Success);
-    }
-
-    let mut negative = false;
-    if s[i] == b'-' as u32 {
-        negative = true;
-        i += 1;
-    } else if s[i] == b'+' as u32 {
-        i += 1;
-    }
-
-    if i == len {
-        return (0, 0, ConversionStatus::Success);
-    }
-
-    let mut effective_base = base as u64;
-    let has_0x_prefix =
-        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
-
-    if base == 0 {
-        if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
-            effective_base = 16;
-            i += 2;
-        } else if s[i] == b'0' as u32 {
-            effective_base = 8;
-        } else {
-            effective_base = 10;
-        }
-    } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
-        i += 2;
-    }
-
-    if !(2..=36).contains(&effective_base) {
-        return (0, 0, ConversionStatus::InvalidBase);
-    }
-
-    let abs_max = if negative {
-        9_223_372_036_854_775_808u64
-    } else {
-        9_223_372_036_854_775_807u64
-    };
-    let cutoff = abs_max / effective_base;
-    let cutlim = abs_max % effective_base;
-
-    let mut acc = 0u64;
-    let mut any_digits = false;
-    let mut overflow = false;
-
-    while i < len {
-        let Some(digit) = wide_digit_value(s[i]) else {
-            break;
-        };
-        if (digit as u64) >= effective_base {
-            break;
-        }
-
-        any_digits = true;
-        if overflow {
-            i += 1;
-            continue;
-        }
-
-        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
-            overflow = true;
-        } else {
-            acc = acc * effective_base + digit as u64;
-        }
-        i += 1;
-    }
-
-    if !any_digits {
-        return (0, 0, ConversionStatus::Success);
-    }
-
-    if overflow {
-        if negative {
-            return (i64::MIN, i, ConversionStatus::Underflow);
-        }
-        return (i64::MAX, i, ConversionStatus::Overflow);
-    }
-
-    let value = if negative {
-        (acc as i64).wrapping_neg()
-    } else {
-        acc as i64
-    };
-    (value, i, ConversionStatus::Success)
-}
-
-fn parse_wide_unsigned(s: &[u32], base: c_int) -> (u64, usize, ConversionStatus) {
-    let mut i = 0usize;
-    let len = s.len();
-
-    while i < len && wide_is_space(s[i]) {
-        i += 1;
-    }
-    if i == len {
-        return (0, 0, ConversionStatus::Success);
-    }
-
-    let mut negative = false;
-    if s[i] == b'-' as u32 {
-        negative = true;
-        i += 1;
-    } else if s[i] == b'+' as u32 {
-        i += 1;
-    }
-
-    if i == len {
-        return (0, 0, ConversionStatus::Success);
-    }
-
-    let mut effective_base = base as u64;
-    let has_0x_prefix =
-        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
-
-    if base == 0 {
-        if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
-            effective_base = 16;
-            i += 2;
-        } else if s[i] == b'0' as u32 {
-            effective_base = 8;
-        } else {
-            effective_base = 10;
-        }
-    } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
-        i += 2;
-    }
-
-    if !(2..=36).contains(&effective_base) {
-        return (0, 0, ConversionStatus::InvalidBase);
-    }
-
-    let cutoff = u64::MAX / effective_base;
-    let cutlim = u64::MAX % effective_base;
-
-    let mut acc = 0u64;
-    let mut any_digits = false;
-    let mut overflow = false;
-
-    while i < len {
-        let Some(digit) = wide_digit_value(s[i]) else {
-            break;
-        };
-        if (digit as u64) >= effective_base {
-            break;
-        }
-
-        any_digits = true;
-        if overflow {
-            i += 1;
-            continue;
-        }
-
-        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
-            overflow = true;
-        } else {
-            acc = acc * effective_base + digit as u64;
-        }
-        i += 1;
-    }
-
-    if !any_digits {
-        return (0, 0, ConversionStatus::Success);
-    }
-    if overflow {
-        return (u64::MAX, i, ConversionStatus::Overflow);
-    }
-
-    let value = if negative { acc.wrapping_neg() } else { acc };
-    (value, i, ConversionStatus::Success)
-}
+// wide_is_space, wide_digit_value, wide_is_ascii_hexdigit,
+// parse_wide_signed, parse_wide_unsigned all moved to
+// frankenlibc_core::stdlib::conversion (wcstol_impl / wcstoul_impl).
+// The wcstol / wcstoul abi shims below call the core functions
+// directly.
 
 fn project_wide_ascii(s: &[u32]) -> Vec<u8> {
     let mut projected = Vec::with_capacity(s.len().saturating_add(1));
@@ -2427,7 +2232,7 @@ pub unsafe extern "C" fn wcstol(
     let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
     // SAFETY: bounded by measured wide-string length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
-    let (value, consumed, status) = parse_wide_signed(slice, base);
+    let (value, consumed, status) = frankenlibc_core::stdlib::conversion::wcstol_impl(slice, base);
 
     if !endptr.is_null() {
         // SAFETY: consumed is bounded by scanned string length.
@@ -2463,7 +2268,7 @@ pub unsafe extern "C" fn wcstoul(
     let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
     // SAFETY: bounded by measured wide-string length.
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
-    let (value, consumed, status) = parse_wide_unsigned(slice, base);
+    let (value, consumed, status) = frankenlibc_core::stdlib::conversion::wcstoul_impl(slice, base);
 
     if !endptr.is_null() {
         // SAFETY: consumed is bounded by scanned string length.

@@ -279,6 +279,238 @@ pub fn strtoumax(s: &[u8], base: i32) -> (u64, usize) {
 }
 
 // ---------------------------------------------------------------------------
+// Wide-character (`wchar_t` / `u32`) integer conversion
+// ---------------------------------------------------------------------------
+
+/// True if `wc` is any Unicode whitespace code point (matches glibc
+/// `iswspace`).
+#[inline]
+pub fn wide_is_space(wc: u32) -> bool {
+    char::from_u32(wc).is_some_and(|c| c.is_whitespace())
+}
+
+/// Numeric value of an ASCII digit (`'0'-'9'`) or an ASCII letter
+/// (`'a'-'z'` / `'A'-'Z'`, returning `10..=35`). Returns `None` for any
+/// other code point — matching the lookup table that backs strtol's
+/// digit handling.
+#[inline]
+pub fn wide_digit_value(wc: u32) -> Option<u32> {
+    match wc {
+        wc if (b'0' as u32..=b'9' as u32).contains(&wc) => Some(wc - b'0' as u32),
+        wc if (b'a' as u32..=b'z' as u32).contains(&wc) => Some(wc - b'a' as u32 + 10),
+        wc if (b'A' as u32..=b'Z' as u32).contains(&wc) => Some(wc - b'A' as u32 + 10),
+        _ => None,
+    }
+}
+
+#[inline]
+fn wide_is_ascii_hexdigit(wc: u32) -> bool {
+    matches!(wide_digit_value(wc), Some(0..=15))
+}
+
+/// Wide-char `wcstol_impl` — structurally identical to [`strtol_impl`]
+/// but operating on `&[u32]` (one `wchar_t` per element) instead of
+/// `&[u8]`.
+///
+/// Returns `(value, consumed_wchars, status)`. Semantics:
+///   - Leading whitespace skipped via [`wide_is_space`] (Unicode-aware).
+///   - Optional `+` / `-` sign consumed.
+///   - `base == 0` auto-detects: `0x`/`0X` prefix → 16, leading `0` → 8,
+///     otherwise 10.
+///   - `base == 16` consumes a `0x`/`0X` prefix when followed by a
+///     hex digit.
+///   - Accumulator overflow returns `i64::MAX` / `i64::MIN` (with
+///     status `Overflow` or `Underflow` respectively); the parser
+///     continues consuming valid digits in the overflow tail to
+///     advance the cursor past the full numeric run.
+///   - Returns `(0, 0, Success)` for empty / whitespace-only / sign-
+///     only inputs.
+///   - Returns `(0, 0, InvalidBase)` for `base` outside `0` ∪ `2..=36`.
+pub fn wcstol_impl(s: &[u32], base: i32) -> (i64, usize, ConversionStatus) {
+    let mut i = 0usize;
+    let len = s.len();
+
+    while i < len && wide_is_space(s[i]) {
+        i += 1;
+    }
+    if i == len {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    let mut negative = false;
+    if s[i] == b'-' as u32 {
+        negative = true;
+        i += 1;
+    } else if s[i] == b'+' as u32 {
+        i += 1;
+    }
+
+    if i == len {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    let mut effective_base = base as u64;
+    let has_0x_prefix =
+        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
+
+    if base == 0 {
+        if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+            effective_base = 16;
+            i += 2;
+        } else if s[i] == b'0' as u32 {
+            effective_base = 8;
+        } else {
+            effective_base = 10;
+        }
+    } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+        i += 2;
+    }
+
+    if !(2..=36).contains(&effective_base) {
+        return (0, 0, ConversionStatus::InvalidBase);
+    }
+
+    let abs_max = if negative {
+        9_223_372_036_854_775_808u64
+    } else {
+        9_223_372_036_854_775_807u64
+    };
+    let cutoff = abs_max / effective_base;
+    let cutlim = abs_max % effective_base;
+
+    let mut acc = 0u64;
+    let mut any_digits = false;
+    let mut overflow = false;
+
+    while i < len {
+        let Some(digit) = wide_digit_value(s[i]) else {
+            break;
+        };
+        if (digit as u64) >= effective_base {
+            break;
+        }
+
+        any_digits = true;
+        if overflow {
+            i += 1;
+            continue;
+        }
+
+        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
+            overflow = true;
+        } else {
+            acc = acc * effective_base + digit as u64;
+        }
+        i += 1;
+    }
+
+    if !any_digits {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    if overflow {
+        if negative {
+            return (i64::MIN, i, ConversionStatus::Underflow);
+        }
+        return (i64::MAX, i, ConversionStatus::Overflow);
+    }
+
+    let value = if negative {
+        (acc as i64).wrapping_neg()
+    } else {
+        acc as i64
+    };
+    (value, i, ConversionStatus::Success)
+}
+
+/// Wide-char `wcstoul_impl` — unsigned counterpart to
+/// [`wcstol_impl`]. Negative inputs are accepted and the sign is
+/// applied via two's-complement wrap (matching glibc's `wcstoul`).
+pub fn wcstoul_impl(s: &[u32], base: i32) -> (u64, usize, ConversionStatus) {
+    let mut i = 0usize;
+    let len = s.len();
+
+    while i < len && wide_is_space(s[i]) {
+        i += 1;
+    }
+    if i == len {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    let mut negative = false;
+    if s[i] == b'-' as u32 {
+        negative = true;
+        i += 1;
+    } else if s[i] == b'+' as u32 {
+        i += 1;
+    }
+
+    if i == len {
+        return (0, 0, ConversionStatus::Success);
+    }
+
+    let mut effective_base = base as u64;
+    let has_0x_prefix =
+        i + 1 < len && s[i] == b'0' as u32 && (s[i + 1] == b'x' as u32 || s[i + 1] == b'X' as u32);
+
+    if base == 0 {
+        if has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+            effective_base = 16;
+            i += 2;
+        } else if s[i] == b'0' as u32 {
+            effective_base = 8;
+        } else {
+            effective_base = 10;
+        }
+    } else if base == 16 && has_0x_prefix && i + 2 < len && wide_is_ascii_hexdigit(s[i + 2]) {
+        i += 2;
+    }
+
+    if !(2..=36).contains(&effective_base) {
+        return (0, 0, ConversionStatus::InvalidBase);
+    }
+
+    let cutoff = u64::MAX / effective_base;
+    let cutlim = u64::MAX % effective_base;
+
+    let mut acc = 0u64;
+    let mut any_digits = false;
+    let mut overflow = false;
+
+    while i < len {
+        let Some(digit) = wide_digit_value(s[i]) else {
+            break;
+        };
+        if (digit as u64) >= effective_base {
+            break;
+        }
+
+        any_digits = true;
+        if overflow {
+            i += 1;
+            continue;
+        }
+
+        if acc > cutoff || (acc == cutoff && (digit as u64) > cutlim) {
+            overflow = true;
+        } else {
+            acc = acc * effective_base + digit as u64;
+        }
+        i += 1;
+    }
+
+    if !any_digits {
+        return (0, 0, ConversionStatus::Success);
+    }
+    if overflow {
+        return (u64::MAX, i, ConversionStatus::Overflow);
+    }
+
+    let value = if negative { acc.wrapping_neg() } else { acc };
+    (value, i, ConversionStatus::Success)
+}
+
+// ---------------------------------------------------------------------------
 // Floating-point conversion
 // ---------------------------------------------------------------------------
 
@@ -834,6 +1066,315 @@ mod tests {
 
             prop_assert_eq!(status_signed, ConversionStatus::InvalidBase);
             prop_assert_eq!(status_unsigned, ConversionStatus::InvalidBase);
+        }
+    }
+
+    // ---- wide_is_space / wide_digit_value ----
+
+    #[test]
+    fn wide_is_space_recognizes_ascii_whitespace() {
+        for c in [' ', '\t', '\n', '\r', '\x0b', '\x0c'] {
+            assert!(wide_is_space(c as u32), "{c:?} should be whitespace");
+        }
+        for c in ['a', '0', '+', '-', '.'] {
+            assert!(!wide_is_space(c as u32));
+        }
+    }
+
+    #[test]
+    fn wide_is_space_recognizes_unicode_whitespace() {
+        // U+00A0 NO-BREAK SPACE, U+2000 EN QUAD, U+3000 IDEOGRAPHIC SPACE
+        assert!(wide_is_space(0x00A0));
+        assert!(wide_is_space(0x2000));
+        assert!(wide_is_space(0x3000));
+    }
+
+    #[test]
+    fn wide_digit_value_decimal() {
+        for d in 0..10u32 {
+            assert_eq!(wide_digit_value(b'0' as u32 + d), Some(d));
+        }
+    }
+
+    #[test]
+    fn wide_digit_value_lowercase_alpha() {
+        assert_eq!(wide_digit_value(b'a' as u32), Some(10));
+        assert_eq!(wide_digit_value(b'f' as u32), Some(15));
+        assert_eq!(wide_digit_value(b'z' as u32), Some(35));
+    }
+
+    #[test]
+    fn wide_digit_value_uppercase_alpha() {
+        assert_eq!(wide_digit_value(b'A' as u32), Some(10));
+        assert_eq!(wide_digit_value(b'F' as u32), Some(15));
+        assert_eq!(wide_digit_value(b'Z' as u32), Some(35));
+    }
+
+    #[test]
+    fn wide_digit_value_rejects_non_digit() {
+        assert_eq!(wide_digit_value(b'+' as u32), None);
+        assert_eq!(wide_digit_value(b' ' as u32), None);
+        assert_eq!(wide_digit_value(0x00A0), None);
+    }
+
+    // ---- wcstol_impl ----
+
+    fn ws(s: &str) -> Vec<u32> {
+        s.chars().map(|c| c as u32).collect()
+    }
+
+    #[test]
+    fn wcstol_basic_decimal() {
+        let s = ws("42");
+        let (val, consumed, status) = wcstol_impl(&s, 10);
+        assert_eq!(val, 42);
+        assert_eq!(consumed, 2);
+        assert_eq!(status, ConversionStatus::Success);
+    }
+
+    #[test]
+    fn wcstol_negative() {
+        let s = ws("-9223372036854775808");
+        let (val, consumed, status) = wcstol_impl(&s, 10);
+        assert_eq!(val, i64::MIN);
+        assert_eq!(consumed, s.len());
+        assert_eq!(status, ConversionStatus::Success);
+    }
+
+    #[test]
+    fn wcstol_positive_max() {
+        let s = ws("9223372036854775807");
+        let (val, _, status) = wcstol_impl(&s, 10);
+        assert_eq!(val, i64::MAX);
+        assert_eq!(status, ConversionStatus::Success);
+    }
+
+    #[test]
+    fn wcstol_overflow_clamps_to_max() {
+        let s = ws("9223372036854775808"); // i64::MAX + 1
+        let (val, _, status) = wcstol_impl(&s, 10);
+        assert_eq!(val, i64::MAX);
+        assert_eq!(status, ConversionStatus::Overflow);
+    }
+
+    #[test]
+    fn wcstol_underflow_clamps_to_min() {
+        let s = ws("-9223372036854775809"); // i64::MIN - 1
+        let (val, _, status) = wcstol_impl(&s, 10);
+        assert_eq!(val, i64::MIN);
+        assert_eq!(status, ConversionStatus::Underflow);
+    }
+
+    #[test]
+    fn wcstol_skips_leading_whitespace() {
+        let s = ws("   42");
+        let (val, consumed, _) = wcstol_impl(&s, 10);
+        assert_eq!(val, 42);
+        assert_eq!(consumed, s.len());
+    }
+
+    #[test]
+    fn wcstol_skips_unicode_whitespace() {
+        let s = ws("\u{00A0}\u{2000}42");
+        let (val, _, _) = wcstol_impl(&s, 10);
+        assert_eq!(val, 42);
+    }
+
+    #[test]
+    fn wcstol_auto_base_hex() {
+        let s = ws("0xff");
+        let (val, consumed, _) = wcstol_impl(&s, 0);
+        assert_eq!(val, 255);
+        assert_eq!(consumed, 4);
+    }
+
+    #[test]
+    fn wcstol_auto_base_octal() {
+        let s = ws("010");
+        let (val, _, _) = wcstol_impl(&s, 0);
+        assert_eq!(val, 8);
+    }
+
+    #[test]
+    fn wcstol_auto_base_decimal() {
+        let s = ws("42");
+        let (val, _, _) = wcstol_impl(&s, 0);
+        assert_eq!(val, 42);
+    }
+
+    #[test]
+    fn wcstol_explicit_base16_consumes_0x_prefix() {
+        let s = ws("0xff");
+        let (val, consumed, _) = wcstol_impl(&s, 16);
+        assert_eq!(val, 255);
+        assert_eq!(consumed, 4);
+    }
+
+    #[test]
+    fn wcstol_invalid_base_returns_status() {
+        let s = ws("42");
+        let (_, _, status) = wcstol_impl(&s, 1);
+        assert_eq!(status, ConversionStatus::InvalidBase);
+        let (_, _, status) = wcstol_impl(&s, 37);
+        assert_eq!(status, ConversionStatus::InvalidBase);
+    }
+
+    #[test]
+    fn wcstol_empty_returns_zero() {
+        let s = ws("");
+        let (val, consumed, status) = wcstol_impl(&s, 10);
+        assert_eq!(val, 0);
+        assert_eq!(consumed, 0);
+        assert_eq!(status, ConversionStatus::Success);
+    }
+
+    #[test]
+    fn wcstol_sign_only_returns_zero() {
+        for sign in ["+", "-"] {
+            let s = ws(sign);
+            let (val, consumed, status) = wcstol_impl(&s, 10);
+            assert_eq!(val, 0);
+            assert_eq!(consumed, 0);
+            assert_eq!(status, ConversionStatus::Success);
+        }
+    }
+
+    #[test]
+    fn wcstol_stops_at_non_digit() {
+        let s = ws("123abc");
+        let (val, consumed, _) = wcstol_impl(&s, 10);
+        assert_eq!(val, 123);
+        assert_eq!(consumed, 3);
+    }
+
+    #[test]
+    fn wcstol_stops_at_digit_above_base() {
+        let s = ws("129"); // base 8 stops at '9'
+        let (val, consumed, _) = wcstol_impl(&s, 8);
+        assert_eq!(val, 0o12);
+        assert_eq!(consumed, 2);
+    }
+
+    // ---- wcstoul_impl ----
+
+    #[test]
+    fn wcstoul_basic_decimal() {
+        let s = ws("42");
+        let (val, _, status) = wcstoul_impl(&s, 10);
+        assert_eq!(val, 42);
+        assert_eq!(status, ConversionStatus::Success);
+    }
+
+    #[test]
+    fn wcstoul_max_round_trip() {
+        let s = ws("18446744073709551615");
+        let (val, _, status) = wcstoul_impl(&s, 10);
+        assert_eq!(val, u64::MAX);
+        assert_eq!(status, ConversionStatus::Success);
+    }
+
+    #[test]
+    fn wcstoul_overflow_clamps_to_max() {
+        let s = ws("18446744073709551616"); // u64::MAX + 1
+        let (val, _, status) = wcstoul_impl(&s, 10);
+        assert_eq!(val, u64::MAX);
+        assert_eq!(status, ConversionStatus::Overflow);
+    }
+
+    #[test]
+    fn wcstoul_negative_wraps_via_twos_complement() {
+        // Matches glibc: wcstoul("-1", *, 10) == ULONG_MAX.
+        let s = ws("-1");
+        let (val, _, status) = wcstoul_impl(&s, 10);
+        assert_eq!(val, u64::MAX);
+        assert_eq!(status, ConversionStatus::Success);
+    }
+
+    #[test]
+    fn wcstoul_auto_base_hex() {
+        let s = ws("0xdeadbeef");
+        let (val, _, _) = wcstoul_impl(&s, 0);
+        assert_eq!(val, 0xdead_beef);
+    }
+
+    #[test]
+    fn wcstoul_invalid_base_returns_status() {
+        let s = ws("42");
+        let (_, _, status) = wcstoul_impl(&s, 1);
+        assert_eq!(status, ConversionStatus::InvalidBase);
+    }
+
+    // ---- parity with byte-slice strtol_impl/strtoul_impl ----
+
+    #[test]
+    fn wcstol_matches_strtol_on_ascii_decimal() {
+        for input in [
+            "0",
+            "1",
+            "42",
+            "-1",
+            "-42",
+            "+5",
+            " 17 trailing",
+            "999999999",
+            "9223372036854775807",
+            "-9223372036854775808",
+        ] {
+            let bytes = input.as_bytes();
+            let wide = ws(input);
+            let (b_val, b_consumed, b_status) = strtol_impl(bytes, 10);
+            let (w_val, w_consumed, w_status) = wcstol_impl(&wide, 10);
+            assert_eq!(
+                (w_val, w_consumed, w_status),
+                (b_val, b_consumed, b_status),
+                "input={input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wcstoul_matches_strtoul_on_ascii_decimal() {
+        for input in [
+            "0",
+            "1",
+            "42",
+            "-1",
+            "999999999",
+            "18446744073709551615",
+            "18446744073709551616",
+        ] {
+            let bytes = input.as_bytes();
+            let wide = ws(input);
+            let (b_val, b_consumed, b_status) = strtoul_impl(bytes, 10);
+            let (w_val, w_consumed, w_status) = wcstoul_impl(&wide, 10);
+            assert_eq!(
+                (w_val, w_consumed, w_status),
+                (b_val, b_consumed, b_status),
+                "input={input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wcstol_matches_strtol_on_each_base_form() {
+        let cases: &[(&str, i32)] = &[
+            ("0xff", 0),
+            ("0xff", 16),
+            ("010", 0),
+            ("10", 0),
+            ("z", 36),
+            ("ZZ", 36),
+            ("FF", 16),
+        ];
+        for (input, base) in cases {
+            let (b_val, b_consumed, b_status) = strtol_impl(input.as_bytes(), *base);
+            let wide = ws(input);
+            let (w_val, w_consumed, w_status) = wcstol_impl(&wide, *base);
+            assert_eq!(
+                (w_val, w_consumed, w_status),
+                (b_val, b_consumed, b_status),
+                "input={input:?} base={base}"
+            );
         }
     }
 }
