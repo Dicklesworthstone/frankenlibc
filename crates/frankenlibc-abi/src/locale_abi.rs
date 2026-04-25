@@ -564,42 +564,10 @@ pub unsafe extern "C" fn nl_langinfo_l(item: libc::nl_item, _locale: *mut c_void
 pub type nl_catd = isize;
 
 const INVALID_NL_CATD: nl_catd = -1;
-const CATGETS_MAGIC: u32 = 0x9604_08de;
-const CATALOG_HEADER_WORDS: usize = 3;
-const CATALOG_SLOT_WORDS: usize = 3;
 
-struct MessageCatalog {
-    plane_size: usize,
-    plane_depth: usize,
-    table: Box<[u32]>,
-    strings: Box<[u8]>,
-}
-
-impl MessageCatalog {
-    fn message_ptr(&self, set_id: c_int, msg_id: c_int) -> Option<*const c_char> {
-        let stored_set = set_id.checked_add(1)?;
-        if stored_set <= 0 || msg_id < 0 {
-            return None;
-        }
-
-        let stored_set = stored_set as usize;
-        let msg_id = msg_id as usize;
-        let mut idx = ((stored_set * msg_id) % self.plane_size) * CATALOG_SLOT_WORDS;
-
-        for _ in 0..self.plane_depth {
-            if self.table[idx] == stored_set as u32 && self.table[idx + 1] == msg_id as u32 {
-                let offset = self.table[idx + 2] as usize;
-                if offset >= self.strings.len() {
-                    return None;
-                }
-                return Some(self.strings[offset..].as_ptr().cast::<c_char>());
-            }
-            idx += self.plane_size * CATALOG_SLOT_WORDS;
-        }
-
-        None
-    }
-}
+use frankenlibc_core::locale::catgets::{
+    CatalogParseError, MessageCatalog, parse_catalog_bytes as core_parse_catalog_bytes,
+};
 
 struct CatalogRegistry {
     next_id: nl_catd,
@@ -629,79 +597,12 @@ fn next_catalog_id(registry: &mut CatalogRegistry) -> nl_catd {
     }
 }
 
-fn catalog_word(bytes: &[u8], offset: usize, swapped_header: bool) -> Option<u32> {
-    let chunk: [u8; 4] = bytes.get(offset..offset + 4)?.try_into().ok()?;
-    Some(if swapped_header {
-        u32::from_be_bytes(chunk)
-    } else {
-        u32::from_le_bytes(chunk)
-    })
-}
-
+// parse_catalog_bytes / MessageCatalog / catalog_word moved to
+// frankenlibc_core::locale::catgets. The abi shim wrapper below maps
+// the typed CatalogParseError into the libc::EINVAL errno that the
+// previous in-place impl returned.
 fn parse_catalog_bytes(bytes: Vec<u8>) -> Result<MessageCatalog, c_int> {
-    let header_len = CATALOG_HEADER_WORDS * std::mem::size_of::<u32>();
-    if bytes.len() <= header_len {
-        return Err(libc::EINVAL);
-    }
-
-    let magic_le = catalog_word(&bytes, 0, false).ok_or(libc::EINVAL)?;
-    let swapped_header = if magic_le == CATGETS_MAGIC {
-        false
-    } else if catalog_word(&bytes, 0, true).ok_or(libc::EINVAL)? == CATGETS_MAGIC {
-        true
-    } else {
-        return Err(libc::EINVAL);
-    };
-
-    let plane_size = catalog_word(&bytes, 4, swapped_header).ok_or(libc::EINVAL)? as usize;
-    let plane_depth = catalog_word(&bytes, 8, swapped_header).ok_or(libc::EINVAL)? as usize;
-    if plane_size == 0 || plane_depth == 0 {
-        return Err(libc::EINVAL);
-    }
-
-    let table_words = plane_size
-        .checked_mul(plane_depth)
-        .and_then(|count| count.checked_mul(CATALOG_SLOT_WORDS))
-        .ok_or(libc::EINVAL)?;
-    let table_bytes = table_words
-        .checked_mul(std::mem::size_of::<u32>())
-        .ok_or(libc::EINVAL)?;
-    let first_table_end = header_len.checked_add(table_bytes).ok_or(libc::EINVAL)?;
-    let strings_offset = first_table_end
-        .checked_add(table_bytes)
-        .ok_or(libc::EINVAL)?;
-    if strings_offset >= bytes.len() {
-        return Err(libc::EINVAL);
-    }
-
-    let first_table = bytes.get(header_len..first_table_end).ok_or(libc::EINVAL)?;
-    let mut table = Vec::with_capacity(table_words);
-    for chunk in first_table.chunks_exact(4) {
-        let word: [u8; 4] = chunk.try_into().map_err(|_| libc::EINVAL)?;
-        table.push(u32::from_le_bytes(word));
-    }
-    if table.len() != table_words {
-        return Err(libc::EINVAL);
-    }
-
-    let strings = bytes[strings_offset..].to_vec().into_boxed_slice();
-    let max_offset = table
-        .iter()
-        .skip(2)
-        .step_by(CATALOG_SLOT_WORDS)
-        .copied()
-        .max()
-        .unwrap_or(0) as usize;
-    if max_offset >= strings.len() || !strings[max_offset..].contains(&0) {
-        return Err(libc::EINVAL);
-    }
-
-    Ok(MessageCatalog {
-        plane_size,
-        plane_depth,
-        table: table.into_boxed_slice(),
-        strings,
-    })
+    core_parse_catalog_bytes(bytes).map_err(|_: CatalogParseError| libc::EINVAL)
 }
 
 /// Test hook: clear any process-global catalog descriptors for deterministic
@@ -773,8 +674,11 @@ pub unsafe extern "C" fn catgets(
         return s;
     };
 
-    if let Some(message_ptr) = catalog.message_ptr(set_id, msg_id) {
-        message_ptr
+    if let Some(offset) = catalog.message_offset(set_id, msg_id) {
+        // Construct the *const c_char from the catalog's owned strings
+        // blob. The pointer is valid until the descriptor is closed —
+        // that's the documented catgets contract.
+        catalog.strings[offset..].as_ptr().cast::<c_char>()
     } else {
         unsafe { set_abi_errno(libc::ENOMSG) };
         s

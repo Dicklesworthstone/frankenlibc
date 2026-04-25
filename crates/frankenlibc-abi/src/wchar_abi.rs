@@ -139,6 +139,11 @@ unsafe fn scan_w_string(ptr: *const u32, bound: Option<usize>) -> (usize, bool) 
     }
 }
 
+unsafe fn scan_known_multibyte_string(ptr: *const std::ffi::c_char) -> Option<usize> {
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if terminated { Some(len) } else { None }
+}
+
 // ---------------------------------------------------------------------------
 // wcslen
 // ---------------------------------------------------------------------------
@@ -1708,7 +1713,10 @@ pub unsafe extern "C" fn mbstowcs(dst: *mut u32, src: *const u8, n: usize) -> us
     if src.is_null() {
         return usize::MAX; // (size_t)-1
     }
-    let (src_len, _terminated) = unsafe { scan_c_string(src as *const std::ffi::c_char, None) };
+    let Some(src_len) = (unsafe { scan_known_multibyte_string(src.cast()) }) else {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return usize::MAX;
+    };
     let src_slice = unsafe { std::slice::from_raw_parts(src, src_len.saturating_add(1)) }; // include NUL
     if dst.is_null() {
         // Count mode
@@ -2050,7 +2058,11 @@ pub unsafe extern "C" fn mbsrtowcs(
         return 0;
     }
 
-    let (src_len, _terminated) = unsafe { scan_c_string(src_ptr, None) };
+    let Some(src_len) = (unsafe { scan_known_multibyte_string(src_ptr) }) else {
+        // SAFETY: setting thread-local errno through libc ABI helper.
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return usize::MAX;
+    };
     let src_len_with_nul = src_len.saturating_add(1);
     // SAFETY: bounded by strlen + NUL.
     let src_bytes = unsafe { std::slice::from_raw_parts(src_ptr as *const u8, src_len_with_nul) };

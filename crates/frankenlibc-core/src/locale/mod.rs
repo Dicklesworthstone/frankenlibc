@@ -1,5 +1,7 @@
 //! Locale support.
 
+pub mod catgets;
+
 /// POSIX locale category: character classification and conversion.
 pub const LC_CTYPE: i32 = 0;
 /// POSIX locale category: numeric formatting.
