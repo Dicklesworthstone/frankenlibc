@@ -5,11 +5,11 @@
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
-    a64l, at_quick_exit, atoll, clearenv, confstr, drand48, ecvt, erand48, fcvt, gcvt,
+    a64l, at_quick_exit, atoll, clearenv, confstr, drand48, ecvt, erand48, fcvt, freezero, gcvt,
     get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getenv, getsubopt, initstate,
     jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit,
-    qsort_r, random, reallocarray, seed48, setenv, setstate, srand48, srandom, strtod, strtof,
-    strtold, strtoll, strtoq, strtoull, strtouq, system, unsetenv,
+    qsort_r, random, reallocarray, recallocarray, seed48, setenv, setstate, srand48, srandom,
+    strtod, strtof, strtold, strtoll, strtoq, strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -5308,4 +5308,137 @@ fn sched_cpualloc_large_set_roundtrips_and_frees() {
     assert_eq!(count, 3, "__sched_cpucount should count all set bits");
 
     unsafe { __sched_cpufree(set) };
+}
+
+// ---------------------------------------------------------------------------
+// freezero / recallocarray (OpenBSD secret-zeroing allocators)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn freezero_null_is_no_op() {
+    // Must not segfault; matches free(NULL) semantics.
+    unsafe { freezero(ptr::null_mut(), 0) };
+    unsafe { freezero(ptr::null_mut(), 1024) };
+}
+
+#[test]
+fn freezero_zeros_then_frees() {
+    // Allocate, fill with a marker, freezero, then re-allocate and
+    // observe whatever the allocator hands back. We can't reliably
+    // check that the freed slot still reads zero (a different alloc
+    // may take its place), but we can at least check that the call
+    // completes without leaking or aborting.
+    let buf = unsafe { reallocarray(ptr::null_mut(), 64, 1) } as *mut u8;
+    assert!(!buf.is_null());
+    unsafe {
+        for i in 0..64 {
+            *buf.add(i) = 0xab;
+        }
+    }
+    unsafe { freezero(buf.cast(), 64) };
+}
+
+#[test]
+fn recallocarray_null_zero_oldnmemb_acts_like_calloc() {
+    // null + oldnmemb=0 → fresh zero-initialized allocation.
+    let p = unsafe { recallocarray(ptr::null_mut(), 0, 16, 4) } as *mut u8;
+    assert!(!p.is_null());
+    unsafe {
+        for i in 0..64 {
+            assert_eq!(*p.add(i), 0, "fresh recallocarray slot must be zero");
+        }
+        libc::free(p.cast());
+    }
+}
+
+#[test]
+fn recallocarray_null_with_nonzero_oldnmemb_returns_einval() {
+    unsafe { *__errno_location() = 0 };
+    let out = unsafe { recallocarray(ptr::null_mut(), 4, 16, 4) };
+    assert!(out.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn recallocarray_overflow_sets_enomem() {
+    unsafe { *__errno_location() = 0 };
+    let out = unsafe { recallocarray(ptr::null_mut(), 0, usize::MAX, 2) };
+    assert!(out.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOMEM);
+}
+
+#[test]
+fn recallocarray_grow_zeros_new_tail() {
+    // Allocate 16 bytes via recallocarray, fill them with marker bytes,
+    // then grow to 64 bytes and verify the freshly added [16, 64) range
+    // reads as zero (the old prefix can be anything from the allocator).
+    let p = unsafe { recallocarray(ptr::null_mut(), 0, 16, 1) } as *mut u8;
+    assert!(!p.is_null());
+    unsafe {
+        for i in 0..16 {
+            *p.add(i) = 0xcd;
+        }
+    }
+    let grown = unsafe { recallocarray(p.cast(), 16, 64, 1) } as *mut u8;
+    assert!(!grown.is_null());
+    unsafe {
+        // Old prefix is preserved per realloc semantics.
+        for i in 0..16 {
+            assert_eq!(*grown.add(i), 0xcd, "grow must preserve old prefix");
+        }
+        // Newly-acquired tail must be zeroed.
+        for i in 16..64 {
+            assert_eq!(*grown.add(i), 0, "grow must zero new tail at offset {i}");
+        }
+        libc::free(grown.cast());
+    }
+}
+
+#[test]
+fn recallocarray_zero_size_frees_and_returns_null() {
+    // nmemb*size == 0 → free(ptr) with secret-zeroing, return NULL.
+    let p = unsafe { recallocarray(ptr::null_mut(), 0, 32, 1) } as *mut u8;
+    assert!(!p.is_null());
+    unsafe {
+        for i in 0..32 {
+            *p.add(i) = 0xee;
+        }
+    }
+    let out = unsafe { recallocarray(p.cast(), 32, 0, 1) };
+    assert!(out.is_null(), "zero-size recallocarray must return NULL");
+}
+
+#[test]
+fn recallocarray_shrink_succeeds() {
+    let p = unsafe { recallocarray(ptr::null_mut(), 0, 64, 1) } as *mut u8;
+    assert!(!p.is_null());
+    unsafe {
+        for i in 0..64 {
+            *p.add(i) = 0xaa;
+        }
+    }
+    let shrunk = unsafe { recallocarray(p.cast(), 64, 16, 1) } as *mut u8;
+    assert!(!shrunk.is_null());
+    unsafe {
+        // Surviving prefix retains its contents.
+        for i in 0..16 {
+            assert_eq!(*shrunk.add(i), 0xaa, "shrink must preserve prefix");
+        }
+        libc::free(shrunk.cast());
+    }
+}
+
+#[test]
+fn recallocarray_old_overflow_returns_einval() {
+    // Fresh allocation we can pass back so the (oldnmemb, size) overflow
+    // branch is reachable without violating the realloc contract.
+    let p = unsafe { recallocarray(ptr::null_mut(), 0, 8, 1) } as *mut u8;
+    assert!(!p.is_null());
+    unsafe { *__errno_location() = 0 };
+    let out = unsafe { recallocarray(p.cast(), usize::MAX, 8, 2) };
+    assert!(out.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+    // Caller is responsible for freeing — the failed call is required to
+    // leave the original allocation intact (matches reallocarray).
+    unsafe { libc::free(p.cast()) };
 }

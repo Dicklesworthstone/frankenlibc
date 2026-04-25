@@ -1876,6 +1876,130 @@ pub unsafe extern "C" fn reallocarray(ptr: *mut c_void, nmemb: usize, size: usiz
     out
 }
 
+/// OpenBSD `freezero` — zero `size` bytes at `ptr`, then free the allocation.
+///
+/// Used for buffers that contained secrets (private keys, passwords,
+/// session tokens) so the freed slot can't leak data to a future
+/// allocation that reuses it. Equivalent to:
+///   `explicit_bzero(ptr, size); free(ptr);`
+/// but exposed as a single primitive so callers can't forget to zero
+/// before freeing.
+///
+/// `ptr == NULL` is a no-op (matches `free(NULL)`). `size` should
+/// describe the original allocation size — passing a smaller value
+/// leaves trailing bytes un-zeroed, which is a caller bug but not
+/// undefined behavior here.
+///
+/// # Safety
+///
+/// Caller must ensure `ptr` was returned by an allocator from this
+/// libc (malloc/calloc/realloc family) and that `size` does not
+/// exceed the allocation's true size.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn freezero(ptr: *mut c_void, size: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: caller contract requires `size` bytes valid at `ptr`.
+    // `explicit_bzero` is guaranteed not to be optimized away even
+    // though the memory is about to be freed.
+    unsafe {
+        crate::string_abi::explicit_bzero(ptr, size);
+        crate::malloc_abi::free(ptr);
+    }
+}
+
+/// OpenBSD `recallocarray` — reallocarray with secret-zeroing semantics.
+///
+/// Behaves like `reallocarray(ptr, nmemb, size)` (overflow-checked
+/// `nmemb * size`) with two additional security guarantees:
+///   * On grow: bytes beyond the previous logical size are zeroed
+///     (so callers don't observe the prior contents of recycled
+///     allocator slots).
+///   * On shrink: bytes released back to the allocator are zeroed
+///     before the allocation is reduced — the caller's secrets cannot
+///     leak through the allocator's free-list.
+///
+/// `ptr == NULL` and `oldnmemb == 0` requests a fresh zero-initialized
+/// allocation (matching `calloc(nmemb, size)` semantics). When `ptr`
+/// is non-NULL, `oldnmemb * size` must describe the previously valid
+/// region; if `oldnmemb` overflows, the call fails with `EINVAL`.
+///
+/// # Safety
+///
+/// Caller must ensure that, when `ptr` is non-NULL, it was returned
+/// by a previous call to a libc allocator and that the previous
+/// logical size was `oldnmemb * size`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn recallocarray(
+    ptr: *mut c_void,
+    oldnmemb: usize,
+    nmemb: usize,
+    size: usize,
+) -> *mut c_void {
+    let Some(new_size) = nmemb.checked_mul(size) else {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return ptr::null_mut();
+    };
+
+    if ptr.is_null() {
+        // OpenBSD requires oldnmemb == 0 in this case; otherwise the
+        // request is malformed (we can't honour the contract of
+        // zeroing previously-held bytes if there's no previous block).
+        if oldnmemb != 0 {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return ptr::null_mut();
+        }
+        // Fresh zero-initialized allocation.
+        return unsafe { crate::malloc_abi::calloc(nmemb, size) };
+    }
+
+    let Some(old_size) = oldnmemb.checked_mul(size) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return ptr::null_mut();
+    };
+
+    if new_size == 0 {
+        // Equivalent to free(ptr) after zeroing — preserve the secret-
+        // zeroing guarantee.
+        unsafe {
+            crate::string_abi::explicit_bzero(ptr, old_size);
+            crate::malloc_abi::free(ptr);
+        }
+        return ptr::null_mut();
+    }
+
+    // On shrink: zero the trailing region we're about to release back
+    // to the allocator BEFORE the realloc — the allocator may reuse
+    // those bytes for a future allocation, and secrets must not leak.
+    if new_size < old_size {
+        // SAFETY: caller contract guarantees the [new_size, old_size)
+        // range is part of the original allocation.
+        unsafe {
+            crate::string_abi::explicit_bzero(ptr.add(new_size), old_size - new_size);
+        }
+    }
+
+    let out = unsafe { crate::malloc_abi::realloc(ptr, new_size) };
+    if out.is_null() {
+        // realloc already set errno (typically ENOMEM); leave the
+        // original block untouched per realloc semantics.
+        return ptr::null_mut();
+    }
+
+    // On grow: zero the newly-acquired tail so the caller observes
+    // a clean buffer instead of recycled allocator contents.
+    if new_size > old_size {
+        // SAFETY: realloc returned a buffer of at least new_size bytes;
+        // the [old_size, new_size) range is the freshly added tail.
+        unsafe {
+            crate::string_abi::explicit_bzero(out.add(old_size), new_size - old_size);
+        }
+    }
+
+    out
+}
+
 /// `strtold` — convert string to long double (on x86_64, same as f64).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strtold(nptr: *const c_char, endptr: *mut *mut c_char) -> f64 {
