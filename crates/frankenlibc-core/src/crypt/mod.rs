@@ -1,10 +1,14 @@
-//! `<crypt.h>` — password-hash building blocks (salt parser today).
+//! `<crypt.h>` — password-hash building blocks.
 //!
-//! Pure-safe Rust port of the byte-level prefix logic that previously
-//! lived inline in frankenlibc-abi/src/unistd_abi.rs::parse_crypt_salt.
-//! The actual SHA-256/SHA-512/MD5/DES key-stretching loops still live
-//! in the abi alongside the corresponding crypt() entry points; this
-//! module covers the format-specific parsing piece that's reusable
-//! and trivial to test in isolation.
+//! Pure-safe Rust port of the salt prefix parsing, crypt(3)-style
+//! base-64 encoding, and the SHA-512 / SHA-256 / MD5 password hashing
+//! algorithms. Each lived inline in frankenlibc-abi/src/unistd_abi.rs
+//! before being lifted here. The abi `crypt()` entry point is a thin
+//! shim that dispatches on the salt prefix and packs the result into
+//! a thread-local `*mut c_char` buffer.
 
+pub mod base64;
+pub mod md5;
 pub mod salt;
+pub mod sha256;
+pub mod sha512;
