@@ -1,12 +1,12 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.5",
-  "generated_at": "2026-03-19T17:47:00Z",
+  "generated_at": "2026-04-25T22:45:25Z",
   "summary": {
     "total_fixture_files": 55,
     "valid_fixture_files": 55,
     "invalid_fixture_files": 0,
-    "total_cases": 1072,
+    "total_cases": 1074,
     "total_issues": 0,
     "total_warnings": 0,
     "unique_families": 54,
@@ -17,7 +17,7 @@
     "status": "clean",
     "invalid_fixture_files": [],
     "invalid_fixture_issue_counts": {},
-    "baseline_fixture_digest": "37740126eeda16b70604f1884b5a8f35f1c8786151af66e7634c042da1c8558f"
+    "baseline_fixture_digest": "987ebf965d383b673e3c999aeeafce00263384cf26e49712a67f4cd62db057c9"
   },
   "fixture_results": [
     {
@@ -434,8 +434,8 @@
       "file": "stdlib_numeric.json",
       "version": "v1",
       "family": "stdlib/numeric",
-      "case_count": 20,
-      "fixture_hash": "4052103b74418a72",
+      "case_count": 22,
+      "fixture_hash": "2525cd9c74b24312",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -573,7 +573,7 @@
   ],
   "regression_baseline": {
     "symbol_count": 296,
-    "total_cases": 1072,
+    "total_cases": 1074,
     "symbols": {
       "DnsHeader::new_query": {
         "count": 1,
@@ -1198,7 +1198,7 @@
         ]
       },
       "getbsize": {
-        "count": 10,
+        "count": 12,
         "fixtures": [
           "stdlib_numeric.json"
         ]
@@ -2435,7 +2435,7 @@
     "startup_ops.json": "c9eda25f37ddc3a8",
     "stdio_file_ops.json": "ad33cc9047883394",
     "stdlib_conversion.json": "17f389b5edfb0577",
-    "stdlib_numeric.json": "4052103b74418a72",
+    "stdlib_numeric.json": "2525cd9c74b24312",
     "stdlib_sort.json": "008e876fb94f9b92",
     "string_memory_full.json": "7a37d26dbfc77fef",
     "string_ops.json": "a47cd033f828bb22",

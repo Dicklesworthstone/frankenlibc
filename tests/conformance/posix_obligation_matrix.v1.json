@@ -6,9 +6,9 @@
     "total_exported": 3996,
     "tracked_symbols": 3996,
     "total_obligations": 258,
-    "covered_obligations": 190,
+    "covered_obligations": 194,
     "mapped_without_execution": 64,
-    "obligations_with_execution_failures": 4,
+    "obligations_with_execution_failures": 0,
     "error_condition_obligations": 60,
     "async_concurrency_obligations": 52,
     "symbols_missing_any_mapping": 3791,
@@ -622,7 +622,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -642,8 +642,8 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 2,
-        "fail": 2,
+        "pass": 4,
+        "fail": 0,
         "error": 0,
         "timeout": 0,
         "crash": 0
@@ -3954,7 +3954,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3971,8 +3971,8 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
-        "fail": 2,
+        "pass": 2,
+        "fail": 0,
         "error": 0,
         "timeout": 0,
         "crash": 0
@@ -5768,7 +5768,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -5783,8 +5783,8 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "error": 0,
         "timeout": 0,
         "crash": 0
@@ -8309,7 +8309,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8324,8 +8324,8 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "error": 0,
         "timeout": 0,
         "crash": 0

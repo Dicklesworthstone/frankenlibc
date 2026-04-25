@@ -1169,7 +1169,7 @@
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"hardened\");"
         },
         {
-          "line": 1961,
+          "line": 1966,
           "operation": "write",
           "path": "crates/frankenlibc-harness/src/bin/harness.rs",
           "scope": "harness",
