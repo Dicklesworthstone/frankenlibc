@@ -2112,3 +2112,89 @@ fn timingsafe_memcmp_pins_first_difference() {
     let r = unsafe { timingsafe_memcmp(a.as_ptr().cast(), b.as_ptr().cast(), 4) };
     assert!(r < 0);
 }
+
+// ---------------------------------------------------------------------------
+// strmode (BSD mode-bit-to-`ls -l`-style-string)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::string_abi::strmode;
+
+#[test]
+fn strmode_writes_11_chars_plus_nul_for_directory() {
+    let mut buf = [0xffu8; 12];
+    let mode: libc::mode_t = libc::S_IFDIR | 0o755;
+    unsafe { strmode(mode, buf.as_mut_ptr().cast()) };
+    assert_eq!(&buf[..11], b"drwxr-xr-x ");
+    assert_eq!(buf[11], 0, "trailing byte must be NUL");
+}
+
+#[test]
+fn strmode_regular_file_no_perms() {
+    let mut buf = [0xffu8; 12];
+    let mode: libc::mode_t = libc::S_IFREG;
+    unsafe { strmode(mode, buf.as_mut_ptr().cast()) };
+    assert_eq!(&buf[..11], b"---------- ");
+    assert_eq!(buf[11], 0);
+}
+
+#[test]
+fn strmode_sticky_directory_matches_tmp() {
+    // /tmp is the canonical example: drwxrwxrwt + space + NUL.
+    let mut buf = [0xffu8; 12];
+    let mode: libc::mode_t = libc::S_IFDIR | 0o1777;
+    unsafe { strmode(mode, buf.as_mut_ptr().cast()) };
+    assert_eq!(&buf[..11], b"drwxrwxrwt ");
+    assert_eq!(buf[11], 0);
+}
+
+#[test]
+fn strmode_setuid_with_exec_renders_lowercase_s() {
+    let mut buf = [0xffu8; 12];
+    let mode: libc::mode_t = libc::S_IFREG | 0o4755;
+    unsafe { strmode(mode, buf.as_mut_ptr().cast()) };
+    assert_eq!(&buf[..11], b"-rwsr-xr-x ");
+    assert_eq!(buf[11], 0);
+}
+
+#[test]
+fn strmode_setuid_without_exec_renders_uppercase_s() {
+    let mut buf = [0xffu8; 12];
+    let mode: libc::mode_t = libc::S_IFREG | 0o4644;
+    unsafe { strmode(mode, buf.as_mut_ptr().cast()) };
+    assert_eq!(&buf[..11], b"-rwSr--r-- ");
+    assert_eq!(buf[11], 0);
+}
+
+#[test]
+fn strmode_symlink_full() {
+    let mut buf = [0xffu8; 12];
+    let mode: libc::mode_t = libc::S_IFLNK | 0o777;
+    unsafe { strmode(mode, buf.as_mut_ptr().cast()) };
+    assert_eq!(&buf[..11], b"lrwxrwxrwx ");
+    assert_eq!(buf[11], 0);
+}
+
+#[test]
+fn strmode_null_pointer_is_no_op() {
+    // NULL must not segfault. The contract is undefined in BSD but we
+    // choose a defensive no-op rather than UB.
+    unsafe { strmode(libc::S_IFREG | 0o644, std::ptr::null_mut()) };
+}
+
+#[test]
+fn strmode_does_not_overrun_caller_buffer() {
+    // Place a sentinel byte at index 12 and verify it survives — the
+    // shim must never write past the documented 12-byte window.
+    let mut buf = [0u8; 16];
+    buf[12] = 0xab;
+    buf[13] = 0xcd;
+    buf[14] = 0xef;
+    buf[15] = 0x42;
+    unsafe { strmode(libc::S_IFDIR | 0o755, buf.as_mut_ptr().cast()) };
+    assert_eq!(&buf[..11], b"drwxr-xr-x ");
+    assert_eq!(buf[11], 0);
+    assert_eq!(buf[12], 0xab, "byte past the 12-byte window was clobbered");
+    assert_eq!(buf[13], 0xcd);
+    assert_eq!(buf[14], 0xef);
+    assert_eq!(buf[15], 0x42);
+}

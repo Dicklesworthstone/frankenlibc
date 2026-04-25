@@ -7293,3 +7293,30 @@ pub unsafe extern "C" fn timingsafe_memcmp(
         frankenlibc_core::string::timingsafe::memcmp(a, b, n)
     }
 }
+
+// ---------------------------------------------------------------------------
+// strmode (BSD mode-bit-to-`ls -l`-style-string)
+// ---------------------------------------------------------------------------
+
+/// BSD `strmode(mode, p)` — write the 11-character `ls -l`-style
+/// representation of `mode` into `p`, plus a trailing NUL (12 bytes
+/// total). The byte-level work happens in
+/// `frankenlibc_core::stat::strmode_bytes`; this shim only owns the
+/// raw-pointer copy + NUL termination.
+///
+/// # Safety
+///
+/// Caller must ensure `p` is non-NULL and points to writable storage
+/// of at least 12 bytes — the length BSD's strmode prototype implies.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strmode(mode: libc::mode_t, p: *mut c_char) {
+    if p.is_null() {
+        return;
+    }
+    let bytes = frankenlibc_core::stat::strmode_bytes(mode);
+    // SAFETY: caller contract requires 12 writable bytes at `p`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), p as *mut u8, 11);
+        *p.add(11) = 0;
+    }
+}

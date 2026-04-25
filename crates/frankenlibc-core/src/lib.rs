@@ -56,6 +56,7 @@ pub mod search;
 pub mod setjmp;
 pub mod signal;
 pub mod socket;
+pub mod stat;
 pub mod stdio;
 pub mod stdlib;
 pub mod string;
