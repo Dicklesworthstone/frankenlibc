@@ -102,6 +102,43 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
     }
 }
 
+/// Variant of `write_err_message` for the BSD `*c` family (`warnc`,
+/// `errc`, etc.) that appends the strerror of an explicitly-supplied
+/// error code instead of consulting the global errno.
+fn write_err_message_with_code(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, code: c_int) {
+    let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+    let progname = get_progname();
+
+    let message: Vec<u8> = if fmt_bytes.is_empty() {
+        Vec::new()
+    } else {
+        unsafe { super::stdio_abi::render_printf(fmt_bytes, arg_buf.as_ptr(), arg_count) }
+    };
+
+    let errno_msg = strerror_bytes(code);
+
+    let out = frankenlibc_core::err::format_err_message(&progname, &message, Some(errno_msg));
+
+    unsafe {
+        crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());
+        crate::errno_abi::set_abi_errno(saved_errno);
+    }
+}
+
+/// va_list variant: parse + extract args from `ap`, then write with
+/// the explicit code.
+fn vformat_and_write_with_code(fmt: *const c_char, ap: *mut c_void, code: c_int) {
+    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
+    use frankenlibc_core::stdio::printf::parse_format_string;
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    unsafe {
+        super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count);
+    }
+    write_err_message_with_code(fmt_bytes, &arg_buf, extract_count, code);
+}
+
 /// Convert errno to a human-readable byte string.
 fn strerror_bytes(errnum: c_int) -> &'static [u8] {
     let ptr = unsafe { crate::string_abi::strerror(errnum) };
@@ -305,6 +342,73 @@ pub unsafe extern "C" fn verrx(eval: c_int, fmt: *const c_char, ap: *mut c_void)
         write_err_message(&[], &[], 0, false);
     } else {
         vformat_and_write(fmt, ap, false);
+    }
+    frankenlibc_core::syscall::sys_exit_group(eval)
+}
+
+// ---------------------------------------------------------------------------
+// warnc / vwarnc — BSD/NetBSD explicit-code variants
+// ---------------------------------------------------------------------------
+
+/// BSD `warnc` — like `warn`, but uses the explicitly-supplied error
+/// `code` for the strerror suffix instead of consulting the global
+/// errno. Useful when the caller has already preserved errno or wants
+/// to report a different code than the one currently set.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn warnc(code: c_int, fmt: *const c_char, mut args: ...) {
+    if fmt.is_null() {
+        write_err_message_with_code(&[], &[], 0, code);
+        return;
+    }
+    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
+    use frankenlibc_core::stdio::printf::parse_format_string;
+    let segments = parse_format_string(fmt_bytes);
+    let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
+    let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+    extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
+    write_err_message_with_code(fmt_bytes, &arg_buf, extract_count, code);
+}
+
+/// BSD `vwarnc` — va_list version of `warnc`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn vwarnc(code: c_int, fmt: *const c_char, ap: *mut c_void) {
+    if fmt.is_null() {
+        write_err_message_with_code(&[], &[], 0, code);
+        return;
+    }
+    vformat_and_write_with_code(fmt, ap, code);
+}
+
+// ---------------------------------------------------------------------------
+// errc / verrc — BSD/NetBSD explicit-code exit variants
+// ---------------------------------------------------------------------------
+
+/// BSD `errc` — like `err`, but uses the explicitly-supplied error
+/// `code` for the strerror suffix instead of consulting the global
+/// errno. Always exits with status `eval` after printing.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn errc(eval: c_int, code: c_int, fmt: *const c_char, mut args: ...) -> ! {
+    if fmt.is_null() {
+        write_err_message_with_code(&[], &[], 0, code);
+    } else {
+        let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
+        use frankenlibc_core::stdio::printf::parse_format_string;
+        let segments = parse_format_string(fmt_bytes);
+        let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
+        let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+        extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
+        write_err_message_with_code(fmt_bytes, &arg_buf, extract_count, code);
+    }
+    frankenlibc_core::syscall::sys_exit_group(eval)
+}
+
+/// BSD `verrc` — va_list version of `errc`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn verrc(eval: c_int, code: c_int, fmt: *const c_char, ap: *mut c_void) -> ! {
+    if fmt.is_null() {
+        write_err_message_with_code(&[], &[], 0, code);
+    } else {
+        vformat_and_write_with_code(fmt, ap, code);
     }
     frankenlibc_core::syscall::sys_exit_group(eval)
 }

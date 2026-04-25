@@ -3,7 +3,7 @@
 //! Integration tests for err.h ABI entrypoints (warn/warnx only;
 //! err/errx call _exit and cannot be tested in-process).
 
-use frankenlibc_abi::err_abi::{vwarn, vwarnx, warn, warnx};
+use frankenlibc_abi::err_abi::{vwarn, vwarnc, vwarnx, warn, warnc, warnx};
 use std::ffi::c_char;
 
 // ---------------------------------------------------------------------------
@@ -249,5 +249,121 @@ fn test_warn_alternating_errno() {
         unsafe { *frankenlibc_abi::errno_abi::__errno_location() = e };
         let msg = b"alternating\0";
         unsafe { warn(msg.as_ptr() as *const c_char) };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// warnc / vwarnc — BSD/NetBSD explicit-code variants
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_warnc_uses_explicit_code_not_global_errno() {
+    // Set the global to one value, pass a *different* code to warnc;
+    // both calls must succeed without crashing and global errno must
+    // be preserved across the call (matches warn()'s contract).
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = libc::EACCES };
+    let msg = b"warnc explicit-code test\0";
+    unsafe { warnc(libc::ENOENT, msg.as_ptr() as *const c_char) };
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EACCES,
+        "warnc must preserve the global errno"
+    );
+}
+
+#[test]
+fn test_warnc_null_fmt_uses_code() {
+    // NULL format with an explicit code — must not crash and must use
+    // the supplied code's strerror, not the global.
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = libc::EIO };
+    unsafe { warnc(libc::ENOMEM, std::ptr::null()) };
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EIO,
+        "warnc(NULL, code) must preserve global errno"
+    );
+}
+
+#[test]
+fn test_warnc_zero_code_is_success_message() {
+    // code=0 → strerror(0) → typically "Success".
+    let msg = b"zero code\0";
+    unsafe { warnc(0, msg.as_ptr() as *const c_char) };
+}
+
+#[test]
+fn test_warnc_with_format_args() {
+    // Arguments must be extracted correctly from varargs.
+    let msg = b"warnc with arg %d\0";
+    unsafe { warnc(libc::EINVAL, msg.as_ptr() as *const c_char, 42i32) };
+}
+
+#[test]
+fn test_warnc_rapid_fire_different_codes() {
+    let codes = [
+        libc::ENOENT,
+        libc::EINVAL,
+        libc::EPERM,
+        libc::EACCES,
+        libc::ENOMEM,
+        libc::EIO,
+    ];
+    for &c in &codes {
+        let msg = b"rapid warnc\0";
+        unsafe { warnc(c, msg.as_ptr() as *const c_char) };
+    }
+}
+
+#[test]
+fn test_vwarnc_null_fmt() {
+    unsafe { vwarnc(libc::ENOENT, std::ptr::null(), std::ptr::null_mut()) };
+}
+
+#[test]
+fn test_vwarnc_with_message() {
+    let msg = b"vwarnc test\0";
+    unsafe {
+        vwarnc(
+            libc::EPERM,
+            msg.as_ptr() as *const c_char,
+            std::ptr::null_mut(),
+        )
+    };
+}
+
+#[test]
+fn test_vwarnc_preserves_global_errno() {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = libc::EACCES };
+    let msg = b"vwarnc preserve errno\0";
+    unsafe {
+        vwarnc(
+            libc::ENOSYS,
+            msg.as_ptr() as *const c_char,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EACCES,
+        "vwarnc must preserve global errno across the call"
+    );
+}
+
+#[test]
+fn test_warnc_concurrent() {
+    // Concurrent warnc calls with different codes — exercises the
+    // shared progname cache + per-call code path.
+    let handles: Vec<_> = (0..4)
+        .map(|i| {
+            std::thread::spawn(move || {
+                let msg = format!("thread {} warnc\0", i);
+                let codes = [libc::ENOENT, libc::EINVAL, libc::EPERM, libc::EIO];
+                unsafe { warnc(codes[i % 4], msg.as_ptr() as *const c_char) };
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
     }
 }
