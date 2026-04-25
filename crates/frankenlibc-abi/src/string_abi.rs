@@ -7226,3 +7226,70 @@ pub unsafe extern "C" fn __strfmon_l(
     }
     copy_len as isize
 }
+
+// ---------------------------------------------------------------------------
+// timingsafe_bcmp / timingsafe_memcmp
+// ---------------------------------------------------------------------------
+//
+// OpenBSD-origin constant-time byte comparators (also exposed by glibc 2.39+).
+// Both delegate the byte-level fold to `frankenlibc_core::string::timingsafe`,
+// which is `#![deny(unsafe_code)]` and CT-by-construction.
+
+/// OpenBSD `timingsafe_bcmp` — constant-time byte equality test.
+///
+/// Returns `0` iff the first `n` bytes of `b1` and `b2` are equal,
+/// non-zero (specifically `1`) otherwise. Always touches every byte
+/// regardless of where the inputs differ.
+///
+/// # Safety
+///
+/// Caller must ensure `b1` and `b2` are valid for `n` bytes each.
+/// `n == 0` is always safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timingsafe_bcmp(b1: *const c_void, b2: *const c_void, n: usize) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+    if b1.is_null() || b2.is_null() {
+        return if b1 == b2 { 0 } else { 1 };
+    }
+    // SAFETY: caller contract requires both pointers valid for `n` bytes.
+    unsafe {
+        let a = std::slice::from_raw_parts(b1.cast::<u8>(), n);
+        let b = std::slice::from_raw_parts(b2.cast::<u8>(), n);
+        frankenlibc_core::string::timingsafe::bcmp(a, b, n)
+    }
+}
+
+/// OpenBSD `timingsafe_memcmp` — constant-time, sign-preserving compare.
+///
+/// Returns `0` iff equal, negative if the first differing byte in `b1`
+/// is less than the corresponding byte in `b2`, positive otherwise —
+/// matching `memcmp` semantics, but with branch-free execution.
+///
+/// # Safety
+///
+/// Caller must ensure `b1` and `b2` are valid for `n` bytes each.
+/// `n == 0` is always safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn timingsafe_memcmp(
+    b1: *const c_void,
+    b2: *const c_void,
+    n: usize,
+) -> c_int {
+    if n == 0 {
+        return 0;
+    }
+    if b1.is_null() || b2.is_null() {
+        if b1 == b2 {
+            return 0;
+        }
+        return if b1.is_null() { -1 } else { 1 };
+    }
+    // SAFETY: caller contract requires both pointers valid for `n` bytes.
+    unsafe {
+        let a = std::slice::from_raw_parts(b1.cast::<u8>(), n);
+        let b = std::slice::from_raw_parts(b2.cast::<u8>(), n);
+        frankenlibc_core::string::timingsafe::memcmp(a, b, n)
+    }
+}

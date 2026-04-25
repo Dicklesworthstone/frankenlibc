@@ -8,6 +8,7 @@ pub mod mem;
 pub mod regex;
 pub mod str;
 pub mod strtok;
+pub mod timingsafe;
 pub mod wchar;
 pub mod wide;
 pub mod wildcard;

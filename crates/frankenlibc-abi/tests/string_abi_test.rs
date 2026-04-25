@@ -2025,3 +2025,90 @@ fn re_set_registers_binds_caller_arrays_for_search() {
         regfree((&mut buffer as *mut PublicRegexBuffer).cast());
     }
 }
+
+// ---------------------------------------------------------------------------
+// timingsafe_bcmp / timingsafe_memcmp (OpenBSD constant-time comparators)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::string_abi::{timingsafe_bcmp, timingsafe_memcmp};
+
+#[test]
+fn timingsafe_bcmp_equal_returns_zero() {
+    let a = b"hello world";
+    let b = b"hello world";
+    let r = unsafe { timingsafe_bcmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn timingsafe_bcmp_different_returns_one() {
+    let a = b"hello world";
+    let b = b"hellp world";
+    let r = unsafe { timingsafe_bcmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert_eq!(r, 1);
+}
+
+#[test]
+fn timingsafe_bcmp_zero_n_returns_zero() {
+    // Even with NULL pointers, n == 0 must return 0 (and not deref).
+    let r = unsafe { timingsafe_bcmp(std::ptr::null(), std::ptr::null(), 0) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn timingsafe_bcmp_null_pointer_safe() {
+    // One NULL, one non-NULL with n > 0 — must not deref the non-NULL,
+    // and must return non-zero. (Pre-shim guard catches this.)
+    let buf = [0u8; 4];
+    let r = unsafe { timingsafe_bcmp(std::ptr::null(), buf.as_ptr().cast(), 4) };
+    assert_eq!(r, 1);
+}
+
+#[test]
+fn timingsafe_memcmp_equal_returns_zero() {
+    let a = b"\x00\x01\x02\x03\x04";
+    let b = b"\x00\x01\x02\x03\x04";
+    let r = unsafe { timingsafe_memcmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn timingsafe_memcmp_first_less_returns_negative() {
+    let a = b"abc";
+    let b = b"abd";
+    let r = unsafe { timingsafe_memcmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert!(r < 0);
+}
+
+#[test]
+fn timingsafe_memcmp_first_greater_returns_positive() {
+    let a = b"abd";
+    let b = b"abc";
+    let r = unsafe { timingsafe_memcmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert!(r > 0);
+}
+
+#[test]
+fn timingsafe_memcmp_unsigned_byte_compare() {
+    // 0xff > 0x00 under memcmp's unsigned-byte semantics.
+    let a = [0xffu8];
+    let b = [0x00u8];
+    let r = unsafe { timingsafe_memcmp(a.as_ptr().cast(), b.as_ptr().cast(), 1) };
+    assert!(r > 0);
+}
+
+#[test]
+fn timingsafe_memcmp_zero_n_returns_zero() {
+    let r = unsafe { timingsafe_memcmp(std::ptr::null(), std::ptr::null(), 0) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn timingsafe_memcmp_pins_first_difference() {
+    // Two differences: index 1 (b<c, b1 less) and index 3 (z>a, b1 greater).
+    // Result must reflect only the first → negative.
+    let a = b"abXz";
+    let b = b"acXa";
+    let r = unsafe { timingsafe_memcmp(a.as_ptr().cast(), b.as_ptr().cast(), 4) };
+    assert!(r < 0);
+}
