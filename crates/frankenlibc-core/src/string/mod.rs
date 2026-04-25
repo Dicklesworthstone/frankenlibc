@@ -10,6 +10,7 @@ pub mod str;
 pub mod strtok;
 pub mod wchar;
 pub mod wide;
+pub mod wildcard;
 
 // Re-export commonly used functions.
 pub use mem::{

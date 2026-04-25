@@ -4951,33 +4951,8 @@ fn simple_glob_match(pattern: &str, name: &str) -> bool {
     glob_match_bytes(pattern.as_bytes(), name.as_bytes())
 }
 
-fn glob_match_bytes(pat: &[u8], text: &[u8]) -> bool {
-    let mut pi = 0;
-    let mut ti = 0;
-    let mut star_pi = usize::MAX;
-    let mut star_ti = 0;
-
-    while ti < text.len() {
-        if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == text[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < pat.len() && pat[pi] == b'*' {
-            star_pi = pi;
-            star_ti = ti;
-            pi += 1;
-        } else if star_pi != usize::MAX {
-            pi = star_pi + 1;
-            star_ti += 1;
-            ti = star_ti;
-        } else {
-            return false;
-        }
-    }
-    while pi < pat.len() && pat[pi] == b'*' {
-        pi += 1;
-    }
-    pi == pat.len()
-}
+// glob_match_bytes moved to frankenlibc_core::string::wildcard::wildcard_match.
+use frankenlibc_core::string::wildcard::wildcard_match as glob_match_bytes;
 
 /// POSIX `wordfree` — free memory allocated by `wordexp`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
