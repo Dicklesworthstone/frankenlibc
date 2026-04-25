@@ -499,11 +499,16 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
                 match result {
                     None => {
                         // Matching failure or input exhaustion.
+                        let exhausted_before_conversion = if spec.skips_leading_whitespace() {
+                            skip_ws(input, pos) >= input.len()
+                        } else {
+                            pos >= input.len()
+                        };
                         return ScanResult {
                             values,
                             count,
                             consumed: pos,
-                            input_failure: pos >= input.len() && count == 0,
+                            input_failure: exhausted_before_conversion && count == 0,
                         };
                     }
                     Some((val, new_pos)) => {
@@ -1403,6 +1408,14 @@ mod tests {
         } else {
             panic!("expected Float");
         }
+    }
+
+    #[test]
+    fn test_scan_int_whitespace_only_is_input_failure() {
+        let dirs = parse_scanf_format(b"%d");
+        let result = scan_input(b"   ", &dirs);
+        assert_eq!(result.count, 0);
+        assert!(result.input_failure);
     }
 
     #[test]

@@ -278,18 +278,44 @@ fn format_sequence_expected_value(value: &serde_json::Value) -> String {
             } else if let Some(integer) = number.as_u64() {
                 integer.to_string()
             } else if let Some(float) = number.as_f64() {
-                let rounded = (float * 1e6).round() / 1e6;
-                if rounded == 0.0 {
-                    "0".to_string()
-                } else {
-                    let text = format!("{rounded}");
-                    text.trim_end_matches('0').trim_end_matches('.').to_string()
-                }
+                format_float_expected_value(float)
             } else {
                 number.to_string()
             }
         }
         _ => normalize_expected_output_value(value),
+    }
+}
+
+fn format_float_expected_value(float: f64) -> String {
+    let rounded = (float * 1e6).round() / 1e6;
+    if rounded == 0.0 {
+        return "0".to_string();
+    }
+
+    let abs = rounded.abs();
+    let text = if !(1e-4..1e9).contains(&abs) {
+        format!("{rounded:e}")
+    } else {
+        format!("{rounded}")
+    };
+    trim_float_decimal_zeros(&text)
+}
+
+fn trim_float_decimal_zeros(text: &str) -> String {
+    let (mantissa, exponent) = text
+        .split_once('e')
+        .or_else(|| text.split_once('E'))
+        .map_or((text, ""), |(head, tail)| (head, tail));
+    let trimmed = if mantissa.contains('.') {
+        mantissa.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        mantissa
+    };
+    if exponent.is_empty() {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}e{exponent}")
     }
 }
 
@@ -492,6 +518,31 @@ mod tests {
         .expect("fixture should deserialize");
 
         assert_eq!(fixture.cases[0].expected_output, "2:[42,\"ok\"]");
+    }
+
+    #[test]
+    fn fixture_return_values_preserve_float_exponents() {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "version":"v1",
+                "family":"scanf_conformance",
+                "captured_at":"2026-04-14T00:00:00Z",
+                "cases":[
+                    {
+                        "name":"sscanf_float_exp",
+                        "function":"sscanf",
+                        "spec_section":"C11 7.21.6.2",
+                        "inputs":{"input":"1.5e10","format":"%f"},
+                        "expected_return":1,
+                        "expected_values":[1.5e10],
+                        "mode":"strict"
+                    }
+                ]
+            }"#,
+        )
+        .expect("fixture should deserialize");
+
+        assert_eq!(fixture.cases[0].expected_output, "1:[1.5e10]");
     }
 
     #[test]

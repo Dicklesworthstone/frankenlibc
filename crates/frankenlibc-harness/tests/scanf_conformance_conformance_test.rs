@@ -270,36 +270,9 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-/// Current scanf fixture cases that rely on unsupported multi-arg/width ABI
-/// handling in `execute_sscanf_case`. The matrix-path work here stays focused
-/// on proving subprocess coverage for the cases that are already supported.
-const KNOWN_EXECUTION_GAPS: &[&str] = &[
-    "sscanf_l_d",
-    "sscanf_ll_d",
-    "sscanf_llu_max",
-    "sscanf_llx_large",
-    "sscanf_lld_no_wrap",
-    "sscanf_multiple",
-    "sscanf_z_u",
-    "sscanf_j_d",
-    "sscanf_t_d",
-    "sscanf_Lf_basic",
-    "sscanf_eof_ws_only",
-    "sscanf_u_max",
-    "sscanf_d_overflow",
-    "sscanf_d_underflow",
-    "sscanf_hd_overflow",
-    "sscanf_hhd_overflow",
-    "sscanf_u_overflow",
-    "sscanf_hu_overflow",
-    "sscanf_i_overflow",
-    "sscanf_x_large",
-    "sscanf_o_large",
-    "sscanf_e_basic",
-    "sscanf_f_positive_exp",
-    "sscanf_f_E_exponent",
-    "sscanf_f_exponent",
-];
+/// Current scanf fixture cases with single output and single conversion should
+/// execute directly; multi-output/spec cases are filtered by shape below.
+const KNOWN_EXECUTION_GAPS: &[&str] = &[];
 
 fn case_is_known_execution_gap(name: &str) -> bool {
     KNOWN_EXECUTION_GAPS.contains(&name)

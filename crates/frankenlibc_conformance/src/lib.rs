@@ -1,11 +1,13 @@
 //! Conformance and parity tooling for frankenlibc.
 
 use std::cell::RefCell;
-use std::ffi::{CString, c_char, c_double, c_int, c_long, c_longlong, c_void};
+use std::ffi::{CString, c_char, c_double, c_int, c_long, c_longlong, c_uint, c_void};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
+
+use frankenlibc_core::stdio::printf::LengthMod;
 
 unsafe extern "C" {
     // math.h
@@ -2635,11 +2637,40 @@ fn promote_args_by_format(fmt: &str, args: &mut [PrintfArg]) {
                 }
                 arg_idx += 1;
             }
+            b'p' => {
+                if let Some(slot) = args.get_mut(arg_idx) {
+                    let is_null_pointer = match slot {
+                        PrintfArg::Str(text) => {
+                            text.as_c_str().to_str().is_ok_and(is_null_pointer_literal)
+                        }
+                        _ => false,
+                    };
+                    if is_null_pointer {
+                        *slot = PrintfArg::NullPtr;
+                    }
+                }
+                arg_idx += 1;
+            }
             _ => {
                 arg_idx += 1;
             }
         }
     }
+}
+
+fn is_null_pointer_literal(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed == "0" {
+        return true;
+    }
+    let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    else {
+        return false;
+    };
+
+    !hex.is_empty() && hex.bytes().all(|ch| ch == b'0')
 }
 
 fn parse_printf_args(inputs: &serde_json::Value) -> Result<Vec<PrintfArg>, String> {
@@ -2744,6 +2775,28 @@ fn render_c_buffer(buffer: &[c_char], size: usize) -> String {
         }
         bytes.push(ch as u8);
     }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn render_printf_buffer(buffer: &[c_char], size: usize, return_code: c_int) -> String {
+    if return_code < 0 {
+        return render_c_buffer(buffer, size);
+    }
+
+    let stored_len = if size == 0 {
+        0
+    } else {
+        usize::try_from(return_code)
+            .unwrap_or(usize::MAX)
+            .min(size.saturating_sub(1))
+            .min(buffer.len())
+    };
+    let bytes: Vec<u8> = buffer[..stored_len].iter().map(|&ch| ch as u8).collect();
+    if bytes.contains(&0) {
+        return serde_json::to_string(&bytes)
+            .expect("serializing printf output bytes should not fail");
+    }
+
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
@@ -3197,13 +3250,13 @@ fn execute_snprintf_case(
     promote_args_by_format(&format, &mut args);
 
     let mut impl_buf = vec![0 as c_char; size.max(1)];
-    let _ = run_impl_snprintf(impl_buf.as_mut_ptr(), size, format_c.as_ptr(), &args)?;
-    let impl_output = render_c_buffer(&impl_buf, size);
+    let impl_rc = run_impl_snprintf(impl_buf.as_mut_ptr(), size, format_c.as_ptr(), &args)?;
+    let impl_output = render_printf_buffer(&impl_buf, size, impl_rc);
 
     if strict {
         let mut host_buf = vec![0 as c_char; size.max(1)];
-        let _ = run_host_snprintf(host_buf.as_mut_ptr(), size, format_c.as_ptr(), &args)?;
-        let host_output = render_c_buffer(&host_buf, size);
+        let host_rc = run_host_snprintf(host_buf.as_mut_ptr(), size, format_c.as_ptr(), &args)?;
+        let host_output = render_printf_buffer(&host_buf, size, host_rc);
         let host_parity = host_output == impl_output;
         let note = (!host_parity).then(|| String::from("strict snprintf host parity mismatch"));
         return Ok(DifferentialExecution {
@@ -3240,23 +3293,23 @@ fn execute_sprintf_case(
 
     const SPRINTF_BUF_SIZE: usize = 4096;
     let mut impl_buf = vec![0 as c_char; SPRINTF_BUF_SIZE];
-    let _ = run_impl_snprintf(
+    let impl_rc = run_impl_snprintf(
         impl_buf.as_mut_ptr(),
         SPRINTF_BUF_SIZE,
         format_c.as_ptr(),
         &args,
     )?;
-    let impl_output = render_c_buffer(&impl_buf, SPRINTF_BUF_SIZE);
+    let impl_output = render_printf_buffer(&impl_buf, SPRINTF_BUF_SIZE, impl_rc);
 
     if strict {
         let mut host_buf = vec![0 as c_char; SPRINTF_BUF_SIZE];
-        let _ = run_host_snprintf(
+        let host_rc = run_host_snprintf(
             host_buf.as_mut_ptr(),
             SPRINTF_BUF_SIZE,
             format_c.as_ptr(),
             &args,
         )?;
-        let host_output = render_c_buffer(&host_buf, SPRINTF_BUF_SIZE);
+        let host_output = render_printf_buffer(&host_buf, SPRINTF_BUF_SIZE, host_rc);
         let host_parity = host_output == impl_output;
         let note = (!host_parity).then(|| String::from("strict sprintf host parity mismatch"));
         return Ok(DifferentialExecution {
@@ -3325,8 +3378,111 @@ fn execute_sscanf_case(
 #[derive(Debug, Clone)]
 enum SscanfValue {
     Int(i64),
+    UInt(u64),
     Float(f64),
     Str(String),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SscanfSpec {
+    conversion: char,
+    width: usize,
+    length: LengthMod,
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+struct LongDoubleSlot([u8; 16]);
+
+impl LongDoubleSlot {
+    const fn zeroed() -> Self {
+        Self([0u8; 16])
+    }
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+struct SscanfStorage([u8; 256]);
+
+impl SscanfStorage {
+    const fn sentinel() -> Self {
+        Self([0xa5; 256])
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut c_void {
+        self.0.as_mut_ptr().cast()
+    }
+
+    fn was_written(&self) -> bool {
+        self.0.iter().any(|&byte| byte != 0xa5)
+    }
+
+    fn read_i16(&self) -> i16 {
+        i16::from_ne_bytes([self.0[0], self.0[1]])
+    }
+
+    fn read_u16(&self) -> u16 {
+        u16::from_ne_bytes([self.0[0], self.0[1]])
+    }
+
+    fn read_i32(&self) -> i32 {
+        i32::from_ne_bytes([self.0[0], self.0[1], self.0[2], self.0[3]])
+    }
+
+    fn read_u32(&self) -> u32 {
+        u32::from_ne_bytes([self.0[0], self.0[1], self.0[2], self.0[3]])
+    }
+
+    fn read_i64(&self) -> i64 {
+        i64::from_ne_bytes([
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6], self.0[7],
+        ])
+    }
+
+    fn read_u64(&self) -> u64 {
+        u64::from_ne_bytes([
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6], self.0[7],
+        ])
+    }
+
+    fn read_isize(&self) -> isize {
+        let mut bytes = [0u8; core::mem::size_of::<isize>()];
+        let len = bytes.len();
+        bytes.copy_from_slice(&self.0[..len]);
+        isize::from_ne_bytes(bytes)
+    }
+
+    fn read_usize(&self) -> usize {
+        let mut bytes = [0u8; core::mem::size_of::<usize>()];
+        let len = bytes.len();
+        bytes.copy_from_slice(&self.0[..len]);
+        usize::from_ne_bytes(bytes)
+    }
+
+    fn read_f32(&self) -> f32 {
+        f32::from_ne_bytes([self.0[0], self.0[1], self.0[2], self.0[3]])
+    }
+
+    fn read_f64(&self) -> f64 {
+        f64::from_ne_bytes([
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5], self.0[6], self.0[7],
+        ])
+    }
+
+    fn read_long_double(&self) -> LongDoubleSlot {
+        let mut slot = LongDoubleSlot::zeroed();
+        slot.0.copy_from_slice(&self.0[..16]);
+        slot
+    }
+
+    fn read_c_string(&self) -> String {
+        let len = self
+            .0
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(self.0.len());
+        String::from_utf8_lossy(&self.0[..len]).into_owned()
+    }
 }
 
 fn count_scanf_specs(format: &str) -> usize {
@@ -3361,7 +3517,7 @@ fn count_scanf_specs(format: &str) -> usize {
     count
 }
 
-fn detect_scanf_type(format: &str) -> Vec<(char, usize, bool)> {
+fn detect_scanf_type(format: &str) -> Vec<SscanfSpec> {
     let mut types = Vec::new();
     let mut chars = format.chars().peekable();
     while let Some(c) = chars.next() {
@@ -3385,27 +3541,143 @@ fn detect_scanf_type(format: &str) -> Vec<(char, usize, bool)> {
             while chars.peek().is_some_and(|&c| c.is_ascii_digit()) {
                 width = width * 10 + (chars.next().unwrap() as usize - '0' as usize);
             }
-            let mut has_l = false;
-            while chars.peek().is_some_and(|&c| {
-                c == 'h' || c == 'l' || c == 'L' || c == 'z' || c == 'j' || c == 't'
-            }) {
-                if chars.peek() == Some(&'l') {
-                    has_l = true;
+            let length = match chars.peek().copied() {
+                Some('h') => {
+                    chars.next();
+                    if chars.peek() == Some(&'h') {
+                        chars.next();
+                        LengthMod::Hh
+                    } else {
+                        LengthMod::H
+                    }
                 }
-                chars.next();
-            }
+                Some('l') => {
+                    chars.next();
+                    if chars.peek() == Some(&'l') {
+                        chars.next();
+                        LengthMod::Ll
+                    } else {
+                        LengthMod::L
+                    }
+                }
+                Some('L') => {
+                    chars.next();
+                    LengthMod::BigL
+                }
+                Some('z') => {
+                    chars.next();
+                    LengthMod::Z
+                }
+                Some('j') => {
+                    chars.next();
+                    LengthMod::J
+                }
+                Some('t') => {
+                    chars.next();
+                    LengthMod::T
+                }
+                _ => LengthMod::None,
+            };
             if let Some(&spec) = chars.peek() {
                 if spec == '[' {
-                    types.push(('s', width, false));
+                    types.push(SscanfSpec {
+                        conversion: 's',
+                        width,
+                        length,
+                    });
                     while chars.next().is_some_and(|c| c != ']') {}
                 } else {
-                    types.push((spec, width, has_l));
+                    types.push(SscanfSpec {
+                        conversion: spec,
+                        width,
+                        length,
+                    });
                     chars.next();
                 }
             }
         }
     }
     types
+}
+
+fn long_double_slot_to_f64(slot: &LongDoubleSlot) -> f64 {
+    let significand = u64::from_le_bytes(
+        slot.0[..8]
+            .try_into()
+            .expect("long double significand slice has fixed width"),
+    );
+    let sign_exp = u16::from_le_bytes(
+        slot.0[8..10]
+            .try_into()
+            .expect("long double exponent slice has fixed width"),
+    );
+    let sign = if sign_exp & 0x8000 == 0 { 1.0 } else { -1.0 };
+    let exponent = i32::from(sign_exp & 0x7fff);
+
+    if exponent == 0 && significand == 0 {
+        return sign * 0.0;
+    }
+    if exponent == 0x7fff {
+        let fraction = significand & !(1u64 << 63);
+        return if fraction == 0 {
+            sign * f64::INFINITY
+        } else {
+            f64::NAN
+        };
+    }
+
+    let power = if exponent == 0 {
+        1 - 16383 - 63
+    } else {
+        exponent - 16383 - 63
+    };
+    sign * (significand as f64) * 2f64.powi(power)
+}
+
+fn push_float_value(vals: &mut Vec<SscanfValue>, value: f64) {
+    if value.is_infinite() {
+        vals.push(SscanfValue::Str(if value > 0.0 {
+            "inf".into()
+        } else {
+            "-inf".into()
+        }));
+    } else if value.is_nan() {
+        vals.push(SscanfValue::Str("nan".into()));
+    } else {
+        vals.push(SscanfValue::Float(value));
+    }
+}
+
+fn format_sscanf_float_value(value: f64) -> String {
+    let rounded = (value * 1e6).round() / 1e6;
+    if rounded == 0.0 {
+        return "0".to_string();
+    }
+
+    let abs = rounded.abs();
+    let text = if !(1e-4..1e9).contains(&abs) {
+        format!("{rounded:e}")
+    } else {
+        format!("{rounded}")
+    };
+    trim_float_decimal_zeros(&text)
+}
+
+fn trim_float_decimal_zeros(text: &str) -> String {
+    let (mantissa, exponent) = text
+        .split_once('e')
+        .or_else(|| text.split_once('E'))
+        .map_or((text, ""), |(head, tail)| (head, tail));
+    let trimmed = if mantissa.contains('.') {
+        mantissa.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        mantissa
+    };
+    if exponent.is_empty() {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}e{exponent}")
+    }
 }
 
 fn run_impl_sscanf(
@@ -3421,36 +3693,165 @@ fn run_impl_sscanf(
             let ret = unsafe { frankenlibc_abi::stdio_abi::sscanf(input, format) };
             Ok((ret, vals))
         }
-        [(t, width, has_l)] => {
-            let ret = match t {
-                'd' | 'i' | 'u' | 'o' | 'x' | 'X' => {
-                    let mut v: c_int = 0;
-                    let r = unsafe {
-                        frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut c_int)
-                    };
-                    if r > 0 {
-                        vals.push(SscanfValue::Int(v as i64));
+        [spec] => {
+            let ret = match spec.conversion {
+                'd' | 'i' => match spec.length {
+                    LengthMod::Hh => {
+                        let mut v: i8 = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut i8)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(i64::from(v)));
+                        }
+                        r
                     }
-                    r
-                }
+                    LengthMod::H => {
+                        let mut v: i16 = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut i16)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(i64::from(v)));
+                        }
+                        r
+                    }
+                    LengthMod::L => {
+                        let mut v: c_long = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut c_long)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(v as i64));
+                        }
+                        r
+                    }
+                    LengthMod::Ll | LengthMod::J => {
+                        let mut v: c_longlong = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(
+                                input,
+                                format,
+                                &mut v as *mut c_longlong,
+                            )
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(v as i64));
+                        }
+                        r
+                    }
+                    LengthMod::Z | LengthMod::T => {
+                        let mut v: isize = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut isize)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(v as i64));
+                        }
+                        r
+                    }
+                    _ => {
+                        let mut v: c_int = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut c_int)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(i64::from(v)));
+                        }
+                        r
+                    }
+                },
+                'u' | 'o' | 'x' | 'X' => match spec.length {
+                    LengthMod::Hh => {
+                        let mut v: u8 = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut u8)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(u64::from(v)));
+                        }
+                        r
+                    }
+                    LengthMod::H => {
+                        let mut v: u16 = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut u16)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(u64::from(v)));
+                        }
+                        r
+                    }
+                    LengthMod::L => {
+                        let mut v: libc::c_ulong = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(
+                                input,
+                                format,
+                                &mut v as *mut libc::c_ulong,
+                            )
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(v as u64));
+                        }
+                        r
+                    }
+                    LengthMod::Ll | LengthMod::J => {
+                        let mut v: libc::c_ulonglong = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(
+                                input,
+                                format,
+                                &mut v as *mut libc::c_ulonglong,
+                            )
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(v as u64));
+                        }
+                        r
+                    }
+                    LengthMod::Z | LengthMod::T => {
+                        let mut v: usize = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut usize)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(v as u64));
+                        }
+                        r
+                    }
+                    _ => {
+                        let mut v: c_uint = 0;
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut c_uint)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(u64::from(v)));
+                        }
+                        r
+                    }
+                },
                 'f' | 'e' | 'g' | 'E' | 'G' | 'a' | 'A' => {
-                    if *has_l {
+                    if spec.length == LengthMod::BigL {
+                        let mut v = LongDoubleSlot::zeroed();
+                        let r = unsafe {
+                            frankenlibc_abi::stdio_abi::sscanf(
+                                input,
+                                format,
+                                &mut v as *mut LongDoubleSlot,
+                            )
+                        };
+                        if r > 0 {
+                            push_float_value(&mut vals, long_double_slot_to_f64(&v));
+                        }
+                        r
+                    } else if spec.length == LengthMod::L {
                         let mut v: f64 = 0.0;
                         let r = unsafe {
                             frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut f64)
                         };
                         if r > 0 {
-                            if v.is_infinite() {
-                                vals.push(SscanfValue::Str(if v > 0.0 {
-                                    "inf".into()
-                                } else {
-                                    "-inf".into()
-                                }));
-                            } else if v.is_nan() {
-                                vals.push(SscanfValue::Str("nan".into()));
-                            } else {
-                                vals.push(SscanfValue::Float(v));
-                            }
+                            push_float_value(&mut vals, v);
                         }
                         r
                     } else {
@@ -3459,17 +3860,7 @@ fn run_impl_sscanf(
                             frankenlibc_abi::stdio_abi::sscanf(input, format, &mut v as *mut f32)
                         };
                         if r > 0 {
-                            if v.is_infinite() {
-                                vals.push(SscanfValue::Str(if v > 0.0 {
-                                    "inf".into()
-                                } else {
-                                    "-inf".into()
-                                }));
-                            } else if v.is_nan() {
-                                vals.push(SscanfValue::Str("nan".into()));
-                            } else {
-                                vals.push(SscanfValue::Float(v as f64));
-                            }
+                            push_float_value(&mut vals, f64::from(v));
                         }
                         r
                     }
@@ -3491,8 +3882,8 @@ fn run_impl_sscanf(
                         frankenlibc_abi::stdio_abi::sscanf(input, format, buf.as_mut_ptr())
                     };
                     if r > 0 {
-                        if *width > 1 {
-                            let s = String::from_utf8_lossy(&buf[..*width]).into_owned();
+                        if spec.width > 1 {
+                            let s = String::from_utf8_lossy(&buf[..spec.width]).into_owned();
                             vals.push(SscanfValue::Str(s));
                         } else {
                             vals.push(SscanfValue::Int(buf[0] as i64));
@@ -3522,11 +3913,11 @@ fn run_impl_sscanf(
                     }
                     r
                 }
-                _ => return Err(format!("unsupported scanf spec: {t}")),
+                _ => return Err(format!("unsupported scanf spec: {}", spec.conversion)),
             };
             Ok((ret, vals))
         }
-        _ => Err(format!("unsupported sscanf arg count: {}", types.len())),
+        _ => run_impl_sscanf_multi(input, format, &types),
     }
 }
 
@@ -3543,49 +3934,132 @@ fn run_host_sscanf(
             let ret = unsafe { libc::sscanf(input, format) };
             Ok((ret, vals))
         }
-        [(t, width, has_l)] => {
-            let ret = match t {
-                'd' | 'i' | 'u' | 'o' | 'x' | 'X' => {
-                    let mut v: c_int = 0;
-                    let r = unsafe { libc::sscanf(input, format, &mut v as *mut c_int) };
-                    if r > 0 {
-                        vals.push(SscanfValue::Int(v as i64));
+        [spec] => {
+            let ret = match spec.conversion {
+                'd' | 'i' => match spec.length {
+                    LengthMod::Hh => {
+                        let mut v: i8 = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut i8) };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(i64::from(v)));
+                        }
+                        r
                     }
-                    r
-                }
+                    LengthMod::H => {
+                        let mut v: i16 = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut i16) };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(i64::from(v)));
+                        }
+                        r
+                    }
+                    LengthMod::L => {
+                        let mut v: c_long = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut c_long) };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(v as i64));
+                        }
+                        r
+                    }
+                    LengthMod::Ll | LengthMod::J => {
+                        let mut v: c_longlong = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut c_longlong) };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(v as i64));
+                        }
+                        r
+                    }
+                    LengthMod::Z | LengthMod::T => {
+                        let mut v: isize = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut isize) };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(v as i64));
+                        }
+                        r
+                    }
+                    _ => {
+                        let mut v: c_int = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut c_int) };
+                        if r > 0 {
+                            vals.push(SscanfValue::Int(i64::from(v)));
+                        }
+                        r
+                    }
+                },
+                'u' | 'o' | 'x' | 'X' => match spec.length {
+                    LengthMod::Hh => {
+                        let mut v: u8 = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut u8) };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(u64::from(v)));
+                        }
+                        r
+                    }
+                    LengthMod::H => {
+                        let mut v: u16 = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut u16) };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(u64::from(v)));
+                        }
+                        r
+                    }
+                    LengthMod::L => {
+                        let mut v: libc::c_ulong = 0;
+                        let r =
+                            unsafe { libc::sscanf(input, format, &mut v as *mut libc::c_ulong) };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(v as u64));
+                        }
+                        r
+                    }
+                    LengthMod::Ll | LengthMod::J => {
+                        let mut v: libc::c_ulonglong = 0;
+                        let r = unsafe {
+                            libc::sscanf(input, format, &mut v as *mut libc::c_ulonglong)
+                        };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(v as u64));
+                        }
+                        r
+                    }
+                    LengthMod::Z | LengthMod::T => {
+                        let mut v: usize = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut usize) };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(v as u64));
+                        }
+                        r
+                    }
+                    _ => {
+                        let mut v: c_uint = 0;
+                        let r = unsafe { libc::sscanf(input, format, &mut v as *mut c_uint) };
+                        if r > 0 {
+                            vals.push(SscanfValue::UInt(u64::from(v)));
+                        }
+                        r
+                    }
+                },
                 'f' | 'e' | 'g' | 'E' | 'G' | 'a' | 'A' => {
-                    if *has_l {
+                    if spec.length == LengthMod::BigL {
+                        let mut v = LongDoubleSlot::zeroed();
+                        let r =
+                            unsafe { libc::sscanf(input, format, &mut v as *mut LongDoubleSlot) };
+                        if r > 0 {
+                            push_float_value(&mut vals, long_double_slot_to_f64(&v));
+                        }
+                        r
+                    } else if spec.length == LengthMod::L {
                         let mut v: f64 = 0.0;
                         let r = unsafe { libc::sscanf(input, format, &mut v as *mut f64) };
                         if r > 0 {
-                            if v.is_infinite() {
-                                vals.push(SscanfValue::Str(if v > 0.0 {
-                                    "inf".into()
-                                } else {
-                                    "-inf".into()
-                                }));
-                            } else if v.is_nan() {
-                                vals.push(SscanfValue::Str("nan".into()));
-                            } else {
-                                vals.push(SscanfValue::Float(v));
-                            }
+                            push_float_value(&mut vals, v);
                         }
                         r
                     } else {
                         let mut v: f32 = 0.0;
                         let r = unsafe { libc::sscanf(input, format, &mut v as *mut f32) };
                         if r > 0 {
-                            if v.is_infinite() {
-                                vals.push(SscanfValue::Str(if v > 0.0 {
-                                    "inf".into()
-                                } else {
-                                    "-inf".into()
-                                }));
-                            } else if v.is_nan() {
-                                vals.push(SscanfValue::Str("nan".into()));
-                            } else {
-                                vals.push(SscanfValue::Float(v as f64));
-                            }
+                            push_float_value(&mut vals, f64::from(v));
                         }
                         r
                     }
@@ -3603,8 +4077,8 @@ fn run_host_sscanf(
                     let mut buf = [0u8; 256];
                     let r = unsafe { libc::sscanf(input, format, buf.as_mut_ptr()) };
                     if r > 0 {
-                        if *width > 1 {
-                            let s = String::from_utf8_lossy(&buf[..*width]).into_owned();
+                        if spec.width > 1 {
+                            let s = String::from_utf8_lossy(&buf[..spec.width]).into_owned();
                             vals.push(SscanfValue::Str(s));
                         } else {
                             vals.push(SscanfValue::Int(buf[0] as i64));
@@ -3626,12 +4100,179 @@ fn run_host_sscanf(
                     }
                     r
                 }
-                _ => return Err(format!("unsupported scanf spec: {t}")),
+                _ => return Err(format!("unsupported scanf spec: {}", spec.conversion)),
             };
             Ok((ret, vals))
         }
-        _ => Err(format!("unsupported sscanf arg count: {}", types.len())),
+        _ => run_host_sscanf_multi(input, format, &types),
     }
+}
+
+fn run_impl_sscanf_multi(
+    input: *const c_char,
+    format: *const c_char,
+    types: &[SscanfSpec],
+) -> Result<(c_int, Vec<SscanfValue>), String> {
+    let (ret, slots) = call_sscanf_multi(input, format, types.len(), SscanfTarget::Impl)?;
+    Ok((ret, collect_sscanf_values(ret, types, &slots)?))
+}
+
+fn run_host_sscanf_multi(
+    input: *const c_char,
+    format: *const c_char,
+    types: &[SscanfSpec],
+) -> Result<(c_int, Vec<SscanfValue>), String> {
+    let (ret, slots) = call_sscanf_multi(input, format, types.len(), SscanfTarget::Host)?;
+    Ok((ret, collect_sscanf_values(ret, types, &slots)?))
+}
+
+#[derive(Clone, Copy)]
+enum SscanfTarget {
+    Impl,
+    Host,
+}
+
+fn call_sscanf_multi(
+    input: *const c_char,
+    format: *const c_char,
+    spec_count: usize,
+    target: SscanfTarget,
+) -> Result<(c_int, [SscanfStorage; 8]), String> {
+    if spec_count > 8 {
+        return Err(format!("too many scanf specs: {spec_count}"));
+    }
+
+    let mut slots = [SscanfStorage::sentinel(); 8];
+    let mut ptrs = [std::ptr::null_mut::<c_void>(); 8];
+    for (slot, ptr) in slots.iter_mut().zip(ptrs.iter_mut()) {
+        *ptr = slot.as_mut_ptr();
+    }
+
+    let ret = match target {
+        SscanfTarget::Impl => unsafe {
+            match spec_count {
+                0 => frankenlibc_abi::stdio_abi::sscanf(input, format),
+                1 => frankenlibc_abi::stdio_abi::sscanf(input, format, ptrs[0]),
+                2 => frankenlibc_abi::stdio_abi::sscanf(input, format, ptrs[0], ptrs[1]),
+                3 => frankenlibc_abi::stdio_abi::sscanf(input, format, ptrs[0], ptrs[1], ptrs[2]),
+                4 => frankenlibc_abi::stdio_abi::sscanf(
+                    input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3],
+                ),
+                5 => frankenlibc_abi::stdio_abi::sscanf(
+                    input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrs[4],
+                ),
+                6 => frankenlibc_abi::stdio_abi::sscanf(
+                    input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrs[4], ptrs[5],
+                ),
+                7 => frankenlibc_abi::stdio_abi::sscanf(
+                    input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrs[4], ptrs[5], ptrs[6],
+                ),
+                8 => frankenlibc_abi::stdio_abi::sscanf(
+                    input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrs[4], ptrs[5], ptrs[6],
+                    ptrs[7],
+                ),
+                _ => unreachable!(),
+            }
+        },
+        SscanfTarget::Host => unsafe {
+            match spec_count {
+                0 => libc::sscanf(input, format),
+                1 => libc::sscanf(input, format, ptrs[0]),
+                2 => libc::sscanf(input, format, ptrs[0], ptrs[1]),
+                3 => libc::sscanf(input, format, ptrs[0], ptrs[1], ptrs[2]),
+                4 => libc::sscanf(input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3]),
+                5 => libc::sscanf(input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrs[4]),
+                6 => libc::sscanf(
+                    input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrs[4], ptrs[5],
+                ),
+                7 => libc::sscanf(
+                    input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrs[4], ptrs[5], ptrs[6],
+                ),
+                8 => libc::sscanf(
+                    input, format, ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrs[4], ptrs[5], ptrs[6],
+                    ptrs[7],
+                ),
+                _ => unreachable!(),
+            }
+        },
+    };
+    Ok((ret, slots))
+}
+
+fn collect_sscanf_values(
+    ret: c_int,
+    types: &[SscanfSpec],
+    slots: &[SscanfStorage; 8],
+) -> Result<Vec<SscanfValue>, String> {
+    let converted = usize::try_from(ret).unwrap_or(0);
+    let mut counted = 0usize;
+    let mut vals = Vec::new();
+
+    for (idx, spec) in types.iter().enumerate() {
+        if spec.conversion == 'n' {
+            if slots[idx].was_written() {
+                vals.push(read_sscanf_value(spec, &slots[idx])?);
+            }
+            continue;
+        }
+        if counted >= converted {
+            break;
+        }
+        vals.push(read_sscanf_value(spec, &slots[idx])?);
+        counted += 1;
+    }
+
+    Ok(vals)
+}
+
+fn read_sscanf_value(spec: &SscanfSpec, slot: &SscanfStorage) -> Result<SscanfValue, String> {
+    Ok(match spec.conversion {
+        'd' | 'i' | 'n' => SscanfValue::Int(match spec.length {
+            LengthMod::Hh => i64::from(slot.0[0] as i8),
+            LengthMod::H => i64::from(slot.read_i16()),
+            LengthMod::L | LengthMod::Ll | LengthMod::J => slot.read_i64(),
+            LengthMod::Z | LengthMod::T => slot.read_isize() as i64,
+            _ => i64::from(slot.read_i32()),
+        }),
+        'u' | 'o' | 'x' | 'X' => SscanfValue::UInt(match spec.length {
+            LengthMod::Hh => u64::from(slot.0[0]),
+            LengthMod::H => u64::from(slot.read_u16()),
+            LengthMod::L | LengthMod::Ll | LengthMod::J => slot.read_u64(),
+            LengthMod::Z | LengthMod::T => slot.read_usize() as u64,
+            _ => u64::from(slot.read_u32()),
+        }),
+        'f' | 'e' | 'g' | 'E' | 'G' | 'a' | 'A' => {
+            let value = if spec.length == LengthMod::BigL {
+                long_double_slot_to_f64(&slot.read_long_double())
+            } else if spec.length == LengthMod::L {
+                slot.read_f64()
+            } else {
+                f64::from(slot.read_f32())
+            };
+            if value.is_infinite() {
+                SscanfValue::Str(if value > 0.0 {
+                    "inf".into()
+                } else {
+                    "-inf".into()
+                })
+            } else if value.is_nan() {
+                SscanfValue::Str("nan".into())
+            } else {
+                SscanfValue::Float(value)
+            }
+        }
+        's' => SscanfValue::Str(slot.read_c_string()),
+        'c' => {
+            let width = spec.width.max(1);
+            if width > 1 {
+                SscanfValue::Str(String::from_utf8_lossy(&slot.0[..width]).into_owned())
+            } else {
+                SscanfValue::Int(i64::from(slot.0[0]))
+            }
+        }
+        'p' => SscanfValue::Str(format!("0x{:x}", slot.read_usize())),
+        _ => return Err(format!("unsupported scanf spec: {}", spec.conversion)),
+    })
 }
 
 fn format_sscanf_result(ret: c_int, vals: &[SscanfValue]) -> String {
@@ -3639,15 +4280,8 @@ fn format_sscanf_result(ret: c_int, vals: &[SscanfValue]) -> String {
         .iter()
         .map(|v| match v {
             SscanfValue::Int(i) => i.to_string(),
-            SscanfValue::Float(f) => {
-                let rounded = (*f * 1e6).round() / 1e6;
-                if rounded == 0.0 {
-                    "0".to_string()
-                } else {
-                    let s = format!("{rounded}");
-                    s.trim_end_matches('0').trim_end_matches('.').to_string()
-                }
-            }
+            SscanfValue::UInt(i) => i.to_string(),
+            SscanfValue::Float(f) => format_sscanf_float_value(*f),
             SscanfValue::Str(s) => format!("\"{s}\""),
         })
         .collect();
@@ -10944,15 +11578,74 @@ fn execute_access_case(
     Ok(non_host_execution(format!("{result}")))
 }
 
+fn symbolic_fd_fixture(inputs: &serde_json::Value) -> Option<Result<&str, String>> {
+    inputs.get("fd").filter(|fd| fd.is_string()).map(|fd| {
+        fd.as_str()
+            .ok_or_else(|| "fd string should be valid UTF-8".to_string())
+    })
+}
+
+fn open_dev_null_fd(context: &str) -> Result<c_int, String> {
+    let path = CString::new("/dev/null").map_err(|_| "invalid /dev/null path")?;
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(format!("failed to open /dev/null for {context} fixture"));
+    }
+    Ok(fd)
+}
+
+fn pipe_cloexec(context: &str) -> Result<[c_int; 2], String> {
+    let mut pipefd = [0i32; 2];
+    if unsafe { libc::pipe2(pipefd.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(format!("failed to create pipe for {context} fixture"));
+    }
+    Ok(pipefd)
+}
+
+fn close_raw_fd(fd: c_int) {
+    unsafe {
+        libc::close(fd);
+    }
+}
+
+fn parse_write_bytes(inputs: &serde_json::Value) -> Result<Vec<u8>, String> {
+    inputs
+        .get("data")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "missing write data array".to_string())?
+        .iter()
+        .map(|v| {
+            let byte = v
+                .as_u64()
+                .ok_or_else(|| "write data byte must be unsigned".to_string())?;
+            u8::try_from(byte).map_err(|_| format!("write data byte out of range: {byte}"))
+        })
+        .collect()
+}
+
+fn checked_write_count(inputs: &serde_json::Value, data_len: usize) -> Result<usize, String> {
+    let count = parse_usize(inputs, "count").unwrap_or(data_len);
+    if count > data_len {
+        return Err(format!(
+            "write count {count} exceeds fixture buffer length {data_len}"
+        ));
+    }
+    Ok(count)
+}
+
 fn execute_close_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    if let Some(fd_val) = inputs.get("fd")
-        && fd_val.is_string()
-    {
-        return Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()));
+    if let Some(fd_name) = symbolic_fd_fixture(inputs) {
+        let fd_name = fd_name?;
+        if fd_name != "opened_fd" {
+            return Err(format!("unsupported dynamic fd fixture: {fd_name}"));
+        }
+        let fd = open_dev_null_fd("close")?;
+        let result = unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+        return Ok(non_host_execution(format!("{result}")));
     }
     let fd = parse_i32(inputs, "fd")?;
     let result = unsafe { frankenlibc_abi::unistd_abi::close(fd) };
@@ -10964,10 +11657,17 @@ fn execute_lseek_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    if let Some(fd_val) = inputs.get("fd")
-        && fd_val.is_string()
-    {
-        return Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()));
+    if let Some(fd_name) = symbolic_fd_fixture(inputs) {
+        let fd_name = fd_name?;
+        if fd_name != "opened_fd" {
+            return Err(format!("unsupported dynamic fd fixture: {fd_name}"));
+        }
+        let fd = open_dev_null_fd("lseek")?;
+        let offset = inputs.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
+        let whence = parse_i32(inputs, "whence")?;
+        let result = unsafe { frankenlibc_abi::unistd_abi::lseek(fd, offset, whence) };
+        close_raw_fd(fd);
+        return Ok(non_host_execution(format!("{result}")));
     }
     let fd = parse_i32(inputs, "fd")?;
     let offset = inputs.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -10994,12 +11694,39 @@ fn execute_read_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    if let Some(fd_val) = inputs.get("fd")
-        && fd_val.is_string()
-    {
-        return Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()));
+    if let Some(fd_name) = symbolic_fd_fixture(inputs) {
+        let fd_name = fd_name?;
+        if fd_name != "pipe_read_end" {
+            return Err(format!("unsupported dynamic fd fixture: {fd_name}"));
+        }
+        let count = parse_usize(inputs, "count").unwrap_or(0);
+        let pipefd = pipe_cloexec("read")?;
+        let seed = b"Hello";
+        let written = unsafe { libc::write(pipefd[1], seed.as_ptr().cast(), seed.len()) };
+        close_raw_fd(pipefd[1]);
+        if written != seed.len() as isize {
+            close_raw_fd(pipefd[0]);
+            return Err(format!("failed to seed read fixture pipe: wrote {written}"));
+        }
+        let mut buf = vec![0u8; count];
+        let result =
+            unsafe { frankenlibc_abi::unistd_abi::read(pipefd[0], buf.as_mut_ptr().cast(), count) };
+        close_raw_fd(pipefd[0]);
+        if result < 0 {
+            return Ok(non_host_execution(format!("{result}")));
+        }
+        buf.truncate(result as usize);
+        return Ok(non_host_execution(format!("{buf:?}")));
     }
-    Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()))
+    let fd = parse_i32(inputs, "fd")?;
+    let count = parse_usize(inputs, "count").unwrap_or(0);
+    let mut buf = vec![0u8; count];
+    let result = unsafe { frankenlibc_abi::unistd_abi::read(fd, buf.as_mut_ptr().cast(), count) };
+    if result < 0 {
+        return Ok(non_host_execution(format!("{result}")));
+    }
+    buf.truncate(result as usize);
+    Ok(non_host_execution(format!("{buf:?}")))
 }
 
 fn execute_write_case(
@@ -11007,12 +11734,41 @@ fn execute_write_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    if let Some(fd_val) = inputs.get("fd")
-        && fd_val.is_string()
-    {
-        return Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()));
+    if let Some(fd_name) = symbolic_fd_fixture(inputs) {
+        let fd_name = fd_name?;
+        if fd_name != "pipe_write_end" {
+            return Err(format!("unsupported dynamic fd fixture: {fd_name}"));
+        }
+        let data = parse_write_bytes(inputs)?;
+        let count = checked_write_count(inputs, data.len())?;
+        let pipefd = pipe_cloexec("write")?;
+        let result =
+            unsafe { frankenlibc_abi::unistd_abi::write(pipefd[1], data.as_ptr().cast(), count) };
+        close_raw_fd(pipefd[1]);
+        if result >= 0 {
+            let result_len = usize::try_from(result)
+                .map_err(|_| format!("write returned unrepresentable count: {result}"))?;
+            if result_len > data.len() {
+                close_raw_fd(pipefd[0]);
+                return Ok(non_host_execution("WRITE_COUNT_OVERFLOW".to_string()));
+            }
+            let mut observed = vec![0u8; result as usize];
+            let read =
+                unsafe { libc::read(pipefd[0], observed.as_mut_ptr().cast(), observed.len()) };
+            close_raw_fd(pipefd[0]);
+            if read != result || observed != data[..result_len] {
+                return Ok(non_host_execution("WRITE_DATA_MISMATCH".to_string()));
+            }
+        } else {
+            close_raw_fd(pipefd[0]);
+        }
+        return Ok(non_host_execution(format!("{result}")));
     }
-    Ok(non_host_execution("SKIP_DYNAMIC_FD".to_string()))
+    let fd = parse_i32(inputs, "fd")?;
+    let data = parse_write_bytes(inputs)?;
+    let count = checked_write_count(inputs, data.len())?;
+    let result = unsafe { frankenlibc_abi::unistd_abi::write(fd, data.as_ptr().cast(), count) };
+    Ok(non_host_execution(format!("{result}")))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13152,6 +13908,87 @@ fn execute_perror_case(
 mod tests {
     use super::*;
     const HARD_PARTS_TEST_SEED: u64 = 0x1FF3_C0DE_A11A_2026;
+
+    #[test]
+    fn render_printf_buffer_preserves_interior_nul_as_json_bytes() {
+        let buffer = [b'a' as c_char, 0 as c_char, b'b' as c_char, 0 as c_char];
+
+        assert_eq!(render_printf_buffer(&buffer, buffer.len(), 3), "[97,0,98]");
+    }
+
+    #[test]
+    fn percent_p_zero_literal_is_promoted_to_null_pointer() {
+        let inputs = serde_json::json!({ "args": ["0x0"] });
+        let mut args = parse_printf_args(&inputs).expect("printf args should parse");
+
+        promote_args_by_format("%p", &mut args);
+
+        assert!(matches!(args.as_slice(), [PrintfArg::NullPtr]));
+    }
+
+    #[test]
+    fn zero_literal_stays_string_for_percent_s() {
+        let inputs = serde_json::json!({ "args": ["0x0"] });
+        let mut args = parse_printf_args(&inputs).expect("printf args should parse");
+
+        promote_args_by_format("%s", &mut args);
+
+        assert!(matches!(args.as_slice(), [PrintfArg::Str(_)]));
+    }
+
+    #[test]
+    fn sscanf_length_modifier_destinations_match_host() {
+        let cases = [
+            (
+                serde_json::json!({ "input": "2147483647", "format": "%ld" }),
+                "1:[2147483647]",
+            ),
+            (
+                serde_json::json!({ "input": "9223372036854775807", "format": "%lld" }),
+                "1:[9223372036854775807]",
+            ),
+            (
+                serde_json::json!({ "input": "18446744073709551615", "format": "%llu" }),
+                "1:[18446744073709551615]",
+            ),
+            (
+                serde_json::json!({ "input": "32768", "format": "%hd" }),
+                "1:[-32768]",
+            ),
+            (
+                serde_json::json!({ "input": "128", "format": "%hhd" }),
+                "1:[-128]",
+            ),
+            (
+                serde_json::json!({ "input": "12345", "format": "%zu" }),
+                "1:[12345]",
+            ),
+            (
+                serde_json::json!({ "input": "-12345", "format": "%td" }),
+                "1:[-12345]",
+            ),
+            (
+                serde_json::json!({ "input": "3.14159", "format": "%Lf" }),
+                "1:[3.14159]",
+            ),
+            (
+                serde_json::json!({ "input": "1.23e+04", "format": "%e" }),
+                "1:[12300]",
+            ),
+            (
+                serde_json::json!({ "input": "1e+10", "format": "%f" }),
+                "1:[1e10]",
+            ),
+        ];
+
+        for (inputs, expected) in cases {
+            let result = execute_fixture_case("sscanf", &inputs, "strict")
+                .expect("sscanf length modifier fixture should execute");
+            assert_eq!(result.impl_output, expected);
+            assert_eq!(result.host_output, expected);
+            assert!(result.host_parity);
+        }
+    }
 
     #[allow(clippy::too_many_arguments)]
     fn assert_differential_contract(
@@ -16598,33 +17435,7 @@ mod tests {
         ))
         .unwrap();
 
-        let skip_known_issues = [
-            "sscanf_l_d",
-            "sscanf_ll_d",
-            "sscanf_llu_max",
-            "sscanf_llx_large",
-            "sscanf_lld_no_wrap",
-            "sscanf_multiple",
-            "sscanf_z_u",
-            "sscanf_j_d",
-            "sscanf_t_d",
-            "sscanf_Lf_basic",    // ABI alignment
-            "sscanf_eof_ws_only", // ABI returns 0, host returns -1 (EOF divergence)
-            "sscanf_u_max",
-            "sscanf_d_overflow",
-            "sscanf_d_underflow", // overflow wrapping
-            "sscanf_hd_overflow",
-            "sscanf_hhd_overflow",
-            "sscanf_u_overflow",
-            "sscanf_hu_overflow",
-            "sscanf_i_overflow",
-            "sscanf_x_large",
-            "sscanf_o_large", // large unsigned values need c_uint
-            "sscanf_e_basic",
-            "sscanf_f_positive_exp",
-            "sscanf_f_E_exponent",
-            "sscanf_f_exponent", // f32 overflow
-        ];
+        let skip_known_issues: [&str; 0] = [];
         let mut passed = 0;
         let mut skipped = 0;
         for c in fixture.cases {

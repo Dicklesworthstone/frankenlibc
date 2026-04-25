@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{FixtureCase, FixtureSet};
@@ -275,14 +276,19 @@ fn run_case_from_execution(
 
     match execution {
         CaseExecution::Completed(run) => {
-            let tolerance_match = tolerant_numeric_match(&case.expected_output, &run.impl_output);
-            let passed = run.impl_output == case.expected_output || tolerance_match;
+            let exact_match = run.impl_output == case.expected_output;
+            let tolerance_match =
+                !exact_match && tolerant_numeric_match(&case.expected_output, &run.impl_output);
+            let pattern_match = !exact_match
+                && !tolerance_match
+                && regex_contract_match(&case.expected_output, &run.impl_output);
+            let passed = exact_match || tolerance_match || pattern_match;
             let diff_offset = if passed {
                 None
             } else {
                 first_diff_offset(&case.expected_output, &run.impl_output)
             };
-            let note = append_tolerance_note(run.note, tolerance_match);
+            let note = append_match_notes(run.note, tolerance_match, pattern_match);
             ConformanceCaseRow {
                 trace_id,
                 family: fixture_set.family.clone(),
@@ -438,17 +444,46 @@ fn first_diff_offset(expected: &str, actual: &str) -> Option<u64> {
     }
 }
 
-fn append_tolerance_note(note: Option<String>, tolerance_match: bool) -> Option<String> {
-    if !tolerance_match {
-        return note;
+fn append_match_notes(
+    mut note: Option<String>,
+    tolerance_match: bool,
+    pattern_match: bool,
+) -> Option<String> {
+    if tolerance_match {
+        append_note(&mut note, "numeric_tolerance_match");
     }
+    if pattern_match {
+        append_note(&mut note, "expected_output_pattern_match");
+    }
+    note
+}
+
+fn append_note(note: &mut Option<String>, suffix: &str) {
     match note {
-        Some(existing) => Some(format!("{existing}; numeric_tolerance_match")),
-        None => Some("numeric_tolerance_match".to_string()),
+        Some(existing) => {
+            existing.push_str("; ");
+            existing.push_str(suffix);
+        }
+        None => *note = Some(suffix.to_string()),
+    }
+}
+
+fn regex_contract_match(expected: &str, actual: &str) -> bool {
+    if !expected.starts_with('^') || !expected.ends_with('$') {
+        return false;
+    }
+
+    match Regex::new(expected) {
+        Ok(pattern) => pattern.is_match(actual),
+        Err(_) => false,
     }
 }
 
 fn tolerant_numeric_match(expected: &str, actual: &str) -> bool {
+    if tolerant_return_values_match(expected, actual) {
+        return true;
+    }
+
     let exp = match expected.parse::<f64>() {
         Ok(v) => v,
         Err(_) => return false,
@@ -468,6 +503,59 @@ fn tolerant_numeric_match(expected: &str, actual: &str) -> bool {
     let diff = (exp - act).abs();
     let scale = exp.abs().max(act.abs()).max(1.0);
     diff <= 1e-12 * scale
+}
+
+fn tolerant_return_values_match(expected: &str, actual: &str) -> bool {
+    let Some((expected_ret, expected_values)) = split_return_values(expected) else {
+        return false;
+    };
+    let Some((actual_ret, actual_values)) = split_return_values(actual) else {
+        return false;
+    };
+    if expected_ret != actual_ret || expected_values.len() != actual_values.len() {
+        return false;
+    }
+    expected_values
+        .iter()
+        .zip(actual_values.iter())
+        .all(|(expected, actual)| tolerant_return_value_match(expected, actual))
+}
+
+fn split_return_values(text: &str) -> Option<(&str, Vec<&str>)> {
+    let (ret, values) = text.split_once(":[")?;
+    let values = values.strip_suffix(']')?;
+    if values.is_empty() {
+        return Some((ret, Vec::new()));
+    }
+    Some((ret, values.split(',').collect()))
+}
+
+fn tolerant_return_value_match(expected: &str, actual: &str) -> bool {
+    if expected == actual {
+        return true;
+    }
+    if !looks_float_like(expected) && !looks_float_like(actual) {
+        return false;
+    }
+    let Ok(exp) = expected.parse::<f64>() else {
+        return false;
+    };
+    let Ok(act) = actual.parse::<f64>() else {
+        return false;
+    };
+    if exp.is_nan() && act.is_nan() {
+        return true;
+    }
+    if exp.is_infinite() || act.is_infinite() {
+        return exp == act;
+    }
+    let diff = (exp - act).abs();
+    let scale = exp.abs().max(act.abs()).max(1.0);
+    diff <= 1e-6 * scale
+}
+
+fn looks_float_like(value: &str) -> bool {
+    value.contains('.') || value.contains('e') || value.contains('E')
 }
 
 #[cfg(test)]
@@ -513,6 +601,21 @@ mod tests {
         ));
         assert!(tolerant_numeric_match("1.3", "1.2999999999999998"));
         assert!(!tolerant_numeric_match("1.3", "1.31"));
+    }
+
+    #[test]
+    fn tolerant_numeric_match_accepts_scanf_float_storage_delta() {
+        assert!(tolerant_numeric_match("1:[1.5e10]", "1:[15000000512]"));
+        assert!(tolerant_numeric_match("1:[123.4]", "1:[123.400002]"));
+        assert!(!tolerant_numeric_match("1:[42]", "1:[43]"));
+    }
+
+    #[test]
+    fn regex_contract_match_honors_expected_output_patterns() {
+        assert!(regex_contract_match("^0x[0-9a-f]+$", "0x1234abcd"));
+        assert!(regex_contract_match("^\\(nil\\)$|^0x0+$", "(nil)"));
+        assert!(!regex_contract_match("^0x[0-9a-f]+$", "not-a-pointer"));
+        assert!(!regex_contract_match("literal", "literal"));
     }
 
     #[test]

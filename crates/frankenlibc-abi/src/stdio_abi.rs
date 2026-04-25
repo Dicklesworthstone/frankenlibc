@@ -4380,6 +4380,57 @@ use frankenlibc_core::stdio::scanf::{
     ScanDirective, ScanResult, ScanValue, parse_scanf_format, scan_input,
 };
 
+fn x86_extended80_bytes_from_f64(value: f64) -> [u8; 16] {
+    let bits = value.to_bits();
+    let sign = ((bits >> 63) as u16) << 15;
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+
+    let (significand, exponent_bits) = if exponent == 0 {
+        if fraction == 0 {
+            (0u64, sign)
+        } else {
+            let mut normalized = fraction;
+            let mut unbiased = -1022i32;
+            while normalized & (1u64 << 52) == 0 {
+                normalized <<= 1;
+                unbiased -= 1;
+            }
+            normalized &= (1u64 << 52) - 1;
+            (
+                (1u64 << 63) | (normalized << 11),
+                sign | u16::try_from(unbiased + 16383).unwrap_or(0),
+            )
+        }
+    } else if exponent == 0x7ff {
+        let significand = if fraction == 0 {
+            1u64 << 63
+        } else {
+            (1u64 << 63) | (fraction << 11)
+        };
+        (significand, sign | 0x7fff)
+    } else {
+        (
+            (1u64 << 63) | (fraction << 11),
+            sign | u16::try_from(exponent - 1023 + 16383).unwrap_or(0),
+        )
+    };
+
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&significand.to_le_bytes());
+    bytes[8..10].copy_from_slice(&exponent_bits.to_le_bytes());
+    bytes
+}
+
+unsafe fn write_long_double_from_f64(dest: *mut c_void, value: f64) {
+    let bytes = x86_extended80_bytes_from_f64(value);
+    // SAFETY: `%Lf` callers provide a writable long-double destination. On the
+    // supported Linux ABI used by this harness, the storage slot is 16 bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest.cast::<u8>(), bytes.len());
+    }
+}
+
 /// Write scanned values through va_list pointers.
 /// Uses a macro to avoid naming the unstable `VaListImpl` type directly.
 /// `$args` is the variadic `args` from `mut args: ...`.
@@ -4452,7 +4503,11 @@ macro_rules! scanf_write_one {
                 }
             },
             ScanValue::Float(v) => match $spec.length {
-                LengthMod::L | LengthMod::BigL => {
+                LengthMod::BigL => {
+                    let ptr = $args.arg::<*mut c_void>();
+                    write_long_double_from_f64(ptr, *v);
+                }
+                LengthMod::L => {
                     let ptr = $args.arg::<*mut f64>();
                     *ptr = *v;
                 }
@@ -4806,7 +4861,8 @@ pub(crate) unsafe fn vscanf_write_one(
             _ => unsafe { *(dest as *mut u32) = *v as u32 },
         },
         ScanValue::Float(v) => match spec.length {
-            LengthMod::L | LengthMod::BigL => unsafe { *(dest as *mut f64) = *v },
+            LengthMod::BigL => unsafe { write_long_double_from_f64(dest, *v) },
+            LengthMod::L => unsafe { *(dest as *mut f64) = *v },
             _ => unsafe { *(dest as *mut f32) = *v as f32 },
         },
         ScanValue::Char(bytes) => unsafe {
