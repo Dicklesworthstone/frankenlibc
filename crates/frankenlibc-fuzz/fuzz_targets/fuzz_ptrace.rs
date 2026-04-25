@@ -10,6 +10,8 @@
 //! - Always call against a non-existent or invalid pid so we never
 //!   actually attach to a running process. Real attach paths require
 //!   privileges and would risk damaging unrelated processes.
+//! - Deliberately omit PTRACE_TRACEME because that request ignores the
+//!   pid argument and mutates the current fuzzing process instead.
 //! - Cover both the "control" requests (CONT/SYSCALL/DETACH/KILL/SEIZE)
 //!   and the "memory" requests (PEEKDATA/POKEDATA/PEEKTEXT/PEEKUSER) on
 //!   bogus addresses to exercise the kernel's pid-lookup + addr
@@ -31,7 +33,6 @@ use libfuzzer_sys::fuzz_target;
 use frankenlibc_abi::unistd_abi::ptrace;
 
 const REQUESTS: &[libc::c_int] = &[
-    libc::PTRACE_TRACEME as libc::c_int,
     libc::PTRACE_PEEKTEXT as libc::c_int,
     libc::PTRACE_PEEKDATA as libc::c_int,
     libc::PTRACE_PEEKUSER as libc::c_int,

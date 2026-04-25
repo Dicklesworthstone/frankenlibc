@@ -128,7 +128,7 @@ fuzz_target!(|input: VectorIoInput| {
     reset_scratch(fd);
 
     // Build the write iovec array.
-    let mut iov_w = iovec_array(&mut write_bufs);
+    let iov_w = iovec_array(&mut write_bufs);
     let iovcnt_w: libc::c_int = if input.force_above_iov_max {
         ABOVE_IOV_MAX as libc::c_int
     } else {
@@ -174,7 +174,7 @@ fuzz_target!(|input: VectorIoInput| {
     // Read phase: allocate read buffers matching the shape we just wrote
     // (so we can assert round-trip on the succeeded prefix).
     let mut read_bufs: Vec<Vec<u8>> = write_bufs.iter().map(|b| vec![0u8; b.len()]).collect();
-    let mut iov_r = iovec_array(&mut read_bufs);
+    let iov_r = iovec_array(&mut read_bufs);
     let iovcnt_r = iov_r.len() as libc::c_int;
 
     let read_rc = match input.op % 3 {

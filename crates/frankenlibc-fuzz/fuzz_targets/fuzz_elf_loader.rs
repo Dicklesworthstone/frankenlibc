@@ -96,7 +96,7 @@ fn fuzz_raw_views(data: &[u8]) {
         let _ = table.bloom_check(gnu_hash(name));
     }
     if let Some(table) = ElfHashTable::parse(data) {
-        let _ = table.lookup(elf_hash(name), name);
+        let _ = table.lookup(elf_hash(name), name, &[], &[]);
     }
 
     if let Ok(header) = Elf64Header::parse(data) {

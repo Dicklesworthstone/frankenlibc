@@ -13,17 +13,18 @@
 //!
 //! Strategy:
 //! - seccomp: drive SECCOMP_GET_ACTION_AVAIL / SECCOMP_GET_NOTIF_SIZES
-//!   (introspection only, no filter installation), plus the BPF-filter
-//!   path with intentionally-malformed sock_fprog.
+//!   plus invalid operation sentinels. Deliberately avoid strict mode and
+//!   filter installation because both mutate the current fuzzing process.
 //! - perf_event_open: 192-byte guarded buffer for struct
 //!   perf_event_attr (sizeof varies 96-144 across kernels), call against
-//!   pid=-1+cpu=-1 which always fails; close any fd returned.
+//!   known-failing target tuples derived from fuzz seeds, and close any fd
+//!   returned.
 //!
 //! Invariants:
 //! - Never panic for any (op, attr-bytes, flags, pid, cpu) tuple
 //! - rc is -1 or non-negative
 //! - Guard bytes around perf_event_attr survive every call
-//! - Any seccomp-returned fd or perf-returned fd is closed
+//! - Any perf fd returned is closed
 //!
 //! Bead: bd-sec-syscalls
 
@@ -89,6 +90,19 @@ fn assert_guards_intact(buf: &[u8], label: &str) {
     }
 }
 
+fn pick_failing_perf_target(
+    pid_seed: libc::pid_t,
+    cpu_seed: libc::c_int,
+    group_fd_seed: libc::c_int,
+) -> (libc::pid_t, libc::c_int, libc::c_int) {
+    match ((pid_seed as u32) ^ (cpu_seed as u32) ^ (group_fd_seed as u32)) % 4 {
+        0 => (-1, -1, -1),
+        1 => (-1, libc::c_int::MAX, -1),
+        2 => (libc::pid_t::MAX, -1, -1),
+        _ => (libc::pid_t::MIN, -1, -1),
+    }
+}
+
 fuzz_target!(|input: SecInput| {
     if input.seccomp_args_bytes.len() > ATTR_BYTES * 2
         || input.perf_attr_bytes.len() > ATTR_BYTES * 2
@@ -103,10 +117,7 @@ fuzz_target!(|input: SecInput| {
             let mut buf = populate_guard_buf(&input.seccomp_args_bytes);
             let args_ptr = unsafe { buf.as_mut_ptr().add(GUARD_BYTES) as *mut c_void };
             let rc = unsafe { seccomp(secop, input.seccomp_flags, args_ptr) };
-            assert!(
-                rc == 0 || rc == -1 || rc > 0,
-                "seccomp(op={secop:#x}) rc={rc}"
-            );
+            assert!(rc >= -1, "seccomp(op={secop:#x}) rc={rc}");
             assert_guards_intact(&buf, "seccomp");
 
             // Also exercise NULL-args path.
@@ -139,9 +150,11 @@ fuzz_target!(|input: SecInput| {
             assert_guards_intact(&buf, "perf_event_open");
         }
         _ => {
-            // perf_event_open with fuzz-supplied pid/cpu/group_fd to
-            // exercise the kernel's permission-check + cpu-validation
-            // paths. Still uses fuzz-shaped attr.
+            // perf_event_open with fuzz-selected target tuples that should
+            // fail before opening an event, while still exercising permission
+            // and CPU-validation paths with fuzz-shaped attr.
+            let (pid, cpu, group_fd) =
+                pick_failing_perf_target(input.pid, input.cpu, input.group_fd);
             let mut buf = populate_guard_buf(&input.perf_attr_bytes);
             let attr_ptr = if input.null_attr {
                 std::ptr::null_mut()
@@ -151,9 +164,9 @@ fuzz_target!(|input: SecInput| {
             let fd = unsafe {
                 perf_event_open(
                     attr_ptr,
-                    input.pid,
-                    input.cpu,
-                    input.group_fd,
+                    pid,
+                    cpu,
+                    group_fd,
                     input.perf_flags as libc::c_ulong,
                 )
             };
@@ -163,7 +176,7 @@ fuzz_target!(|input: SecInput| {
                     libc::close(fd);
                 }
             }
-            assert_guards_intact(&buf, "perf_event_open(arbitrary)");
+            assert_guards_intact(&buf, "perf_event_open(selected-failing)");
         }
     }
 });
