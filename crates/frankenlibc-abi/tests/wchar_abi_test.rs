@@ -6,6 +6,7 @@ use std::ffi::{CStr, c_char, c_int, c_void};
 
 use frankenlibc_abi::glibc_internal_abi::fwide;
 use frankenlibc_abi::io_internal_abi::verify_native_file;
+use frankenlibc_abi::malloc_abi::{free, malloc};
 use frankenlibc_abi::stdlib_abi::{basename, dirname, realpath};
 use frankenlibc_abi::wchar_abi::*;
 
@@ -713,6 +714,23 @@ fn mbstowcs_converts_utf8_to_wide() {
 }
 
 #[test]
+fn mbstowcs_rejects_unterminated_known_input() {
+    unsafe {
+        let src = malloc(3).cast::<u8>();
+        assert!(!src.is_null());
+        std::ptr::copy_nonoverlapping(b"ABC".as_ptr(), src, 3);
+
+        let mut dst = [0u32; 4];
+        set_errno(0);
+        let n = mbstowcs(dst.as_mut_ptr(), src, dst.len());
+        assert_eq!(n, usize::MAX);
+        assert_eq!(errno_value(), libc::EILSEQ);
+
+        free(src.cast());
+    }
+}
+
+#[test]
 fn wcstombs_converts_wide_to_utf8() {
     let src = [b'A' as u32, 'é' as u32, 0];
     let mut dst = [0u8; 8];
@@ -1160,6 +1178,30 @@ fn mbsrtowcs_converts_and_updates_source_pointer() {
     assert!(src_ptr.is_null());
     assert_eq!(dst[0] as u32, 'é' as u32);
     assert_eq!(dst[1] as u32, 'A' as u32);
+}
+
+#[test]
+fn mbsrtowcs_rejects_unterminated_known_input() {
+    unsafe {
+        let src = malloc(2).cast::<i8>();
+        assert!(!src.is_null());
+        std::ptr::copy_nonoverlapping(b"AZ".as_ptr().cast::<i8>(), src, 2);
+
+        let mut src_ptr = src as *const i8;
+        let mut dst = [0_i32; 4];
+        set_errno(0);
+        let written = mbsrtowcs(
+            dst.as_mut_ptr(),
+            &mut src_ptr as *mut *const i8,
+            dst.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(written, usize::MAX);
+        assert_eq!(errno_value(), libc::EILSEQ);
+        assert_eq!(src_ptr, src as *const i8);
+
+        free(src.cast());
+    }
 }
 
 #[test]
