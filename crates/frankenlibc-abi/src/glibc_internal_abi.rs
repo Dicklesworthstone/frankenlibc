@@ -1454,29 +1454,12 @@ pub unsafe extern "C" fn ns_name_skip(ptrptr: *mut *const c_void, eom: *const c_
         return -1;
     }
     let buf = unsafe { std::slice::from_raw_parts(ptr, eom.offset_from(ptr) as usize) };
-    let mut i = 0usize;
-    loop {
-        if i >= buf.len() {
-            return -1;
+    match frankenlibc_core::resolv::dns_name::name_skip(buf) {
+        Ok(n) => {
+            unsafe { *ptrptr = ptr.add(n) as *const c_void };
+            0
         }
-        let b = buf[i];
-        if b == 0 {
-            // Root label — skip past it.
-            unsafe { *ptrptr = ptr.add(i + 1) as *const c_void };
-            return 0;
-        }
-        if b & 0xC0 == 0xC0 {
-            // Compression pointer (2 bytes).
-            if i + 1 >= buf.len() {
-                return -1;
-            }
-            unsafe { *ptrptr = ptr.add(i + 2) as *const c_void };
-            return 0;
-        }
-        if b & 0xC0 != 0 {
-            return -1; // Reserved label type.
-        }
-        i += 1 + b as usize;
+        Err(_) => -1,
     }
 }
 
@@ -7727,8 +7710,7 @@ pub unsafe extern "C" fn __idna_from_dns_encoding(
 
 /// Maximum length of a fully-qualified DNS name in wire format (RFC 1035).
 const NS_MAXCDNAME: usize = 255;
-/// Compression pointer flag bits. NS_MAXLABEL moved to core::resolv::dns_name.
-const NS_CMPRSFLGS: u8 = 0xC0;
+// NS_MAXLABEL + NS_CMPRSFLGS moved to core::resolv::dns_name.
 
 /// `__ns_name_ntop` — convert network (wire-format) DNS name to presentation (dotted) form.
 ///
@@ -7901,41 +7883,27 @@ pub unsafe extern "C" fn __ns_name_compress(
 /// Advances `*ptrptr` past the name. Returns 0 on success, -1 on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __ns_name_skip(ptrptr: *mut *const u8, eom: *const u8) -> c_int {
+    // Glibc-internal duplicate of ns_name_skip — same shim logic.
     if ptrptr.is_null() || eom.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    let mut cp = unsafe { *ptrptr };
-
-    loop {
-        if cp >= eom {
-            unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
-        }
-        let label_type = unsafe { *cp };
-
-        if (label_type & NS_CMPRSFLGS) == NS_CMPRSFLGS {
-            // Compression pointer — skip 2 bytes and done
-            cp = unsafe { cp.add(2) };
-            break;
-        } else if label_type == 0 {
-            // End of name — skip the zero byte
-            cp = unsafe { cp.add(1) };
-            break;
-        } else {
-            // Regular label — skip length + label bytes
-            let len = label_type as usize;
-            cp = unsafe { cp.add(1 + len) };
-        }
-    }
-
-    if cp > eom {
+    let ptr = unsafe { *ptrptr };
+    if ptr.is_null() || ptr >= eom {
         unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
         return -1;
     }
-
-    unsafe { *ptrptr = cp };
-    0
+    let buf = unsafe { std::slice::from_raw_parts(ptr, eom.offset_from(ptr) as usize) };
+    match frankenlibc_core::resolv::dns_name::name_skip(buf) {
+        Ok(n) => {
+            unsafe { *ptrptr = ptr.add(n) };
+            0
+        }
+        Err(_) => {
+            unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
+            -1
+        }
+    }
 }
 
 /// `__ns_name_uncompressed_p` — check if a DNS name has no compression pointers.
@@ -7947,27 +7915,19 @@ pub unsafe extern "C" fn __ns_name_uncompressed_p(
     eom: *const u8,
     src: *const u8,
 ) -> c_int {
+    // Glibc-internal predicate: 1 if `src..` reaches root with no
+    // compression pointer, 0 otherwise. Delegates to core helper.
     if msg.is_null() || eom.is_null() || src.is_null() {
         return 0;
     }
-    let _ = msg; // msg is not needed for this check
-    let mut cp = src;
-
-    loop {
-        if cp >= eom {
-            return 0;
-        }
-        let label_type = unsafe { *cp };
-        if (label_type & NS_CMPRSFLGS) != 0 {
-            // Found a compression pointer
-            return 0;
-        }
-        if label_type == 0 {
-            // End of name — no compression found
-            return 1;
-        }
-        let len = label_type as usize;
-        cp = unsafe { cp.add(1 + len) };
+    if src >= eom {
+        return 0;
+    }
+    let buf = unsafe { std::slice::from_raw_parts(src, eom.offset_from(src) as usize) };
+    if frankenlibc_core::resolv::dns_name::is_uncompressed(buf) {
+        1
+    } else {
+        0
     }
 }
 

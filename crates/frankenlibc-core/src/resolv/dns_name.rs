@@ -338,6 +338,70 @@ pub fn name_pack(src: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
     }
 }
 
+/// Walk past one wire-format DNS name in `buf`, returning the number
+/// of bytes consumed. A compression pointer is treated as a single
+/// 2-byte unit (the pointer is NOT followed). The root terminator
+/// (zero byte) is included in the consumed count.
+///
+/// Returns `Err(InvalidLabel)` if the buffer ends before the name does
+/// or `Err(CompressionPointer)` for high-bits-set non-pointer label
+/// types (RFC 2671 reserved).
+pub fn name_skip(buf: &[u8]) -> Result<usize, NameError> {
+    let mut i = 0usize;
+    loop {
+        if i >= buf.len() {
+            return Err(NameError::InvalidLabel);
+        }
+        let b = buf[i];
+        if b == 0 {
+            return Ok(i + 1);
+        }
+        if (b & NS_CMPRSFLGS) == NS_CMPRSFLGS {
+            // Compression pointer is exactly 2 bytes.
+            if i + 1 >= buf.len() {
+                return Err(NameError::CompressionPointer);
+            }
+            return Ok(i + 2);
+        }
+        if b & NS_CMPRSFLGS != 0 {
+            // 0x40 / 0x80 prefix — RFC 2671 extended label types, reserved.
+            return Err(NameError::CompressionPointer);
+        }
+        let label_len = b as usize;
+        if label_len > NS_MAXLABEL || i + 1 + label_len > buf.len() {
+            return Err(NameError::InvalidLabel);
+        }
+        i += 1 + label_len;
+    }
+}
+
+/// Predicate: returns `true` iff the name in `buf` reaches the root
+/// terminator without ever encountering a compression pointer
+/// (`0xC0` prefix). Returns `false` for pointers, malformed labels,
+/// or buffers truncated before the root.
+pub fn is_uncompressed(buf: &[u8]) -> bool {
+    let mut i = 0usize;
+    loop {
+        if i >= buf.len() {
+            return false;
+        }
+        let b = buf[i];
+        if (b & NS_CMPRSFLGS) != 0 {
+            // Either a compression pointer (0xC0) or a reserved label
+            // type (0x40/0x80) — both fail the "uncompressed" gate.
+            return false;
+        }
+        if b == 0 {
+            return true;
+        }
+        let label_len = b as usize;
+        if label_len > NS_MAXLABEL {
+            return false;
+        }
+        i += 1 + label_len;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,5 +764,106 @@ mod tests {
         let mut packed = [0u8; 64];
         let n = name_pack(&unpacked[..unpacked_len], &mut packed).unwrap();
         assert_eq!(&packed[..n], msg);
+    }
+
+    // ---- name_skip ----
+
+    #[test]
+    fn skip_root_only() {
+        assert_eq!(name_skip(b"\x00").unwrap(), 1);
+    }
+
+    #[test]
+    fn skip_simple_uncompressed() {
+        let buf = b"\x07example\x03com\x00";
+        assert_eq!(name_skip(buf).unwrap(), buf.len());
+    }
+
+    #[test]
+    fn skip_compression_pointer_consumes_two_bytes() {
+        // 0xC0 0x42 — pointer to offset 0x42; skip returns 2 regardless
+        // of whether the target is valid (skip doesn't follow).
+        let buf = &[0xC0u8, 0x42];
+        assert_eq!(name_skip(buf).unwrap(), 2);
+    }
+
+    #[test]
+    fn skip_pointer_at_end_of_name() {
+        // Two real labels then a pointer to compress the rest.
+        let buf = &[0x03, b'w', b'w', b'w', 0xC0, 0x10];
+        // 4 bytes for "www" label + 2 bytes for the pointer.
+        assert_eq!(name_skip(buf).unwrap(), 6);
+    }
+
+    #[test]
+    fn skip_rejects_truncated_buffer() {
+        // Length 7 promises 7 bytes after but only 3 bytes follow.
+        let buf = &[0x07u8, b'a', b'b', b'c'];
+        assert_eq!(name_skip(buf), Err(NameError::InvalidLabel));
+    }
+
+    #[test]
+    fn skip_rejects_truncated_pointer() {
+        // 0xC0 alone — second pointer byte missing.
+        assert_eq!(name_skip(&[0xC0]), Err(NameError::CompressionPointer));
+    }
+
+    #[test]
+    fn skip_rejects_extended_label_type() {
+        // 0x40 — RFC 2671 extended label, not supported.
+        assert_eq!(name_skip(&[0x40, 0x00]), Err(NameError::CompressionPointer));
+    }
+
+    #[test]
+    fn skip_no_root_terminator() {
+        // Labels but no root — exhausts buffer.
+        let buf = &[0x03u8, b'a', b'b', b'c'];
+        assert_eq!(name_skip(buf), Err(NameError::InvalidLabel));
+    }
+
+    // ---- is_uncompressed ----
+
+    #[test]
+    fn uncompressed_returns_true_for_plain_name() {
+        assert!(is_uncompressed(b"\x07example\x03com\x00"));
+    }
+
+    #[test]
+    fn uncompressed_returns_true_for_root_only() {
+        assert!(is_uncompressed(b"\x00"));
+    }
+
+    #[test]
+    fn uncompressed_returns_false_for_pointer() {
+        // Has labels first then a pointer.
+        assert!(!is_uncompressed(&[0x03, b'w', b'w', b'w', 0xC0, 0x10]));
+    }
+
+    #[test]
+    fn uncompressed_returns_false_for_immediate_pointer() {
+        assert!(!is_uncompressed(&[0xC0, 0x00]));
+    }
+
+    #[test]
+    fn uncompressed_returns_false_for_extended_label() {
+        // 0x40 = extended label type — also fails the "no high bits" gate.
+        assert!(!is_uncompressed(&[0x40, 0x00]));
+    }
+
+    #[test]
+    fn uncompressed_returns_false_for_truncated() {
+        // No root terminator — exhausts buffer.
+        assert!(!is_uncompressed(&[0x03u8, b'a', b'b', b'c']));
+    }
+
+    #[test]
+    fn uncompressed_returns_false_for_label_over_63() {
+        // Label length 64 (0x40) — also catches via high bits.
+        assert!(!is_uncompressed(&[0x40, 0x00]));
+    }
+
+    #[test]
+    fn uncompressed_returns_false_for_empty_buffer() {
+        assert!(!is_uncompressed(&[]));
     }
 }
