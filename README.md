@@ -38,12 +38,12 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind a glibc-shaped A
 
 ### Why Use FrankenLibC?
 
-Current source of truth: `tests/conformance/support_matrix_maintenance_report.v1.json`.
+Current source of truth: `tests/conformance/reality_report.v1.json`.
 
 | Why it matters | Current state |
 |---|---|
-| Large classified ABI surface | `3980` exported symbols classified |
-| Native ownership is already broad | `3576 Implemented` + `404 RawSyscall` = `100.0%` native coverage |
+| Large classified ABI surface | `3996` exported symbols classified |
+| Native ownership is already broad | `3592 Implemented` + `404 RawSyscall` = `100.0%` native coverage |
 | No exported stubs right now | `0 Stub` |
 | Interposition is already usable on many workloads | `target/release/libfrankenlibc_abi.so` via `LD_PRELOAD`, with broader smoke and hardened-mode stability still in progress |
 | Hardened mode exists now | `FRANKENLIBC_MODE=hardened` |
@@ -178,18 +178,18 @@ Declared replacement level claim: **L0 — Interpose**.
 
 | Status | Count | % | Meaning |
 |---|---:|---:|---|
-| `Implemented` | 3576 | 90% | Native ABI-backed Rust-owned behavior |
+| `Implemented` | 3592 | 90% | Native ABI-backed Rust-owned behavior |
 | `RawSyscall` | 404 | 10% | ABI path delegates directly to Linux syscalls |
 | `WrapsHostLibc` | 0 | 0% | Native wrapper that still calls host libc symbols internally |
 | `GlibcCallThrough` | 0 | 0% | No direct host-glibc symbol call-through remains in the current classified surface |
 | `Stub` | 0 | 0% | No exported stubs in the current classified surface |
 
-Total currently classified exports: **3980**.
+Total currently classified exports: **3996**.
 Current native coverage (`Implemented + RawSyscall`): **100.0%**.
 
 Source of truth: `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).
 
-Reality snapshot: total_exported=3980, implemented=3576, raw_syscall=404, wraps_host_libc=0, glibc_call_through=0, stub=0.
+Reality snapshot: total_exported=3996, implemented=3592, raw_syscall=404, wraps_host_libc=0, glibc_call_through=0, stub=0.
 
 In practice:
 
@@ -1100,7 +1100,7 @@ No. The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD
 
 ### Does it already implement a lot of symbols natively?
 
-Yes. The current classified surface is 3980 symbols, with 3576 `Implemented` and 404 `RawSyscall`.
+Yes. The current classified surface is 3996 symbols, with 3592 `Implemented` and 404 `RawSyscall`.
 
 ### Do the CVE validation scripts prove FrankenLibC would have prevented famous exploits in real projects?
 
@@ -1781,7 +1781,7 @@ The `support_matrix.json` file is the machine-readable source of truth for the p
 ```json
 {
   "version": 2,
-  "total_exported": 3980,
+  "total_exported": 3996,
   "taxonomy": {
     "Implemented": "Native Rust, no host libc dependency",
     "RawSyscall": "Direct syscall marshaling",
