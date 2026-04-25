@@ -15,6 +15,7 @@ pub mod random48;
 pub mod random_sv;
 pub mod sort;
 pub mod subopt;
+pub mod wordexp;
 
 pub use base64::{a64l, l64a};
 pub use conversion::{

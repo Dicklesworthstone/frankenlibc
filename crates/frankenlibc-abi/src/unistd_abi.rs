@@ -4617,88 +4617,19 @@ fn expand_tilde(word: &str) -> String {
 }
 
 /// Perform environment variable expansion on a word.
+///
+/// Thin shim over `frankenlibc_core::stdlib::wordexp::expand_vars` —
+/// supplies the env-lookup closure (using `std::env::var`) and maps
+/// the typed `ExpandError::UndefinedVariable` to the `WRDE_BADVAL`
+/// integer return code at the boundary.
 fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
-    let mut result = String::with_capacity(word.len());
-    let bytes = word.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            result.push(bytes[i + 1] as char);
-            i += 2;
-            continue;
-        }
-        if bytes[i] == b'\'' {
-            // Single-quoted string: no expansion
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'\'' {
-                result.push(bytes[i] as char);
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1; // Skip closing quote
-            }
-            continue;
-        }
-        if bytes[i] == b'$' {
-            i += 1;
-            if i >= bytes.len() {
-                result.push('$');
-                continue;
-            }
-            let (var_name, end) = if bytes[i] == b'{' {
-                i += 1;
-                let start = i;
-                while i < bytes.len() && bytes[i] != b'}' {
-                    i += 1;
-                }
-                let name = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
-                if i < bytes.len() {
-                    i += 1; // Skip '}'
-                }
-                (name, i)
-            } else {
-                let start = i;
-                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                    i += 1;
-                }
-                let name = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
-                (name, i)
-            };
-            i = end;
-            if var_name.is_empty() {
-                result.push('$');
-                continue;
-            }
-            match std::env::var(var_name) {
-                Ok(val) => result.push_str(&val),
-                Err(_) => {
-                    if (flags & WRDE_UNDEF) != 0 {
-                        return Err(WRDE_BADVAL);
-                    }
-                    // Undefined variable expands to empty string
-                }
-            }
-            continue;
-        }
-        if bytes[i] == b'"' {
-            // Double-quoted: expand variables inside
-            i += 1;
-            let mut inner = String::new();
-            while i < bytes.len() && bytes[i] != b'"' {
-                inner.push(bytes[i] as char);
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            let expanded = expand_vars(&inner, flags)?;
-            result.push_str(&expanded);
-            continue;
-        }
-        result.push(bytes[i] as char);
-        i += 1;
-    }
-    Ok(result)
+    let undef_is_error = (flags & WRDE_UNDEF) != 0;
+    frankenlibc_core::stdlib::wordexp::expand_vars(word, undef_is_error, |name| {
+        std::env::var(name).ok()
+    })
+    .map_err(|e| match e {
+        frankenlibc_core::stdlib::wordexp::ExpandError::UndefinedVariable(_) => WRDE_BADVAL,
+    })
 }
 
 /// POSIX `wordexp` — perform shell-like word expansion.
