@@ -1560,70 +1560,13 @@ pub unsafe extern "C" fn ns_name_unpack(
         return -1;
     }
     let msg_len = unsafe { eom.offset_from(msg) } as usize;
+    let src_offset = unsafe { src.offset_from(msg) } as usize;
     let msg_slice = unsafe { std::slice::from_raw_parts(msg, msg_len) };
     let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
-
-    let mut pos = unsafe { src.offset_from(msg) } as usize;
-    let mut oi = 0usize;
-    let mut wire_len: Option<usize> = None;
-    let mut jumps = 0u32;
-    const MAX_JUMPS: u32 = 128;
-
-    loop {
-        if pos >= msg_len {
-            return -1;
-        }
-        let b = msg_slice[pos];
-        if b == 0 {
-            // Root label.
-            if wire_len.is_none() {
-                wire_len = Some(pos + 1 - unsafe { src.offset_from(msg) } as usize);
-            }
-            // Write root terminator.
-            if oi >= out.len() {
-                return -1;
-            }
-            out[oi] = 0;
-            break;
-        }
-        if b & 0xC0 == 0xC0 {
-            // Compression pointer.
-            if pos + 1 >= msg_len {
-                return -1;
-            }
-            if wire_len.is_none() {
-                wire_len = Some(pos + 2 - unsafe { src.offset_from(msg) } as usize);
-            }
-            let target = ((b as usize & 0x3F) << 8) | msg_slice[pos + 1] as usize;
-            if target >= msg_len {
-                return -1;
-            }
-            jumps += 1;
-            if jumps > MAX_JUMPS {
-                return -1;
-            }
-            pos = target;
-            continue;
-        }
-        if b & 0xC0 != 0 {
-            return -1; // Reserved label type.
-        }
-        let label_len = b as usize;
-        if pos + 1 + label_len > msg_len || label_len > 63 {
-            return -1;
-        }
-        // Write label length + label data.
-        if oi + 1 + label_len >= out.len() {
-            return -1;
-        }
-        out[oi] = b;
-        oi += 1;
-        out[oi..oi + label_len].copy_from_slice(&msg_slice[pos + 1..pos + 1 + label_len]);
-        oi += label_len;
-        pos += 1 + label_len;
+    match frankenlibc_core::resolv::dns_name::name_unpack(msg_slice, src_offset, out) {
+        Ok(n) => n as c_int,
+        Err(_) => -1,
     }
-
-    wire_len.unwrap_or(0) as c_int
 }
 
 /// `ns_name_pack` — compress uncompressed wire labels into a DNS message.
@@ -1644,46 +1587,15 @@ pub unsafe extern "C" fn ns_name_pack(
     if src.is_null() || dst.is_null() || dstlen < 1 {
         return -1;
     }
+    // The uncompressed input is bounded by NS_MAXCDNAME.
+    let src_slice = unsafe {
+        std::slice::from_raw_parts(src, frankenlibc_core::resolv::dns_name::NS_MAXCDNAME)
+    };
     let out = unsafe { std::slice::from_raw_parts_mut(dst, dstlen as usize) };
-
-    // Copy uncompressed labels verbatim (no compression pointer generation — simple impl).
-    // Walk the source labels and copy them to output.
-    let mut si = 0usize;
-    let mut oi = 0usize;
-
-    loop {
-        let b = unsafe { *src.add(si) };
-        if b == 0 {
-            // Root terminator.
-            if oi >= out.len() {
-                return -1;
-            }
-            out[oi] = 0;
-            oi += 1;
-            break;
-        }
-        if b & 0xC0 != 0 {
-            return -1; // Invalid in uncompressed input.
-        }
-        let label_len = b as usize;
-        if label_len > 63 {
-            return -1;
-        }
-        // Copy length byte + label data.
-        if oi + 1 + label_len > out.len() {
-            return -1;
-        }
-        out[oi] = b;
-        oi += 1;
-        // Read label data from src.
-        for j in 0..label_len {
-            out[oi + j] = unsafe { *src.add(si + 1 + j) };
-        }
-        oi += label_len;
-        si += 1 + label_len;
+    match frankenlibc_core::resolv::dns_name::name_pack(src_slice, out) {
+        Ok(n) => n as c_int,
+        Err(_) => -1,
     }
-
-    oi as c_int
 }
 
 /// `ns_name_compress` — convert dotted text to compressed wire format (RFC 1035).
@@ -7815,9 +7727,7 @@ pub unsafe extern "C" fn __idna_from_dns_encoding(
 
 /// Maximum length of a fully-qualified DNS name in wire format (RFC 1035).
 const NS_MAXCDNAME: usize = 255;
-/// Maximum label length (RFC 1035).
-const NS_MAXLABEL: usize = 63;
-/// Compression pointer flag bits.
+/// Compression pointer flag bits. NS_MAXLABEL moved to core::resolv::dns_name.
 const NS_CMPRSFLGS: u8 = 0xC0;
 
 /// `__ns_name_ntop` — convert network (wire-format) DNS name to presentation (dotted) form.
@@ -7890,83 +7800,24 @@ pub unsafe extern "C" fn __ns_name_unpack(
     dst: *mut u8,
     dstsiz: SizeT,
 ) -> c_int {
+    // Glibc-internal duplicate of ns_name_unpack — same shim logic.
     if msg.is_null() || eom.is_null() || src.is_null() || dst.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
+    if src < msg || src >= eom {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
+        return -1;
+    }
     let msg_len = unsafe { eom.offset_from(msg) } as usize;
-    let mut sp = src;
-    let mut dp = 0usize;
-    let mut checked = 0usize;
-    let mut save_sp: *const u8 = std::ptr::null();
-    let maxdst = if dstsiz > NS_MAXCDNAME {
-        NS_MAXCDNAME
-    } else {
-        dstsiz
-    };
-
-    loop {
-        if sp >= eom {
+    let src_offset = unsafe { src.offset_from(msg) } as usize;
+    let msg_slice = unsafe { std::slice::from_raw_parts(msg, msg_len) };
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
+    match frankenlibc_core::resolv::dns_name::name_unpack(msg_slice, src_offset, out) {
+        Ok(n) => n as c_int,
+        Err(_) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
-        }
-        let label_type = unsafe { *sp };
-
-        if (label_type & NS_CMPRSFLGS) == NS_CMPRSFLGS {
-            // Compression pointer
-            if unsafe { sp.add(1) } >= eom {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            let offset = ((label_type as usize & !NS_CMPRSFLGS as usize) << 8)
-                | unsafe { *sp.add(1) } as usize;
-            if offset >= msg_len {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            checked += 2;
-            if checked >= msg_len {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            if save_sp.is_null() {
-                save_sp = unsafe { sp.add(2) };
-            }
-            sp = unsafe { msg.add(offset) };
-        } else if label_type == 0 {
-            // End of name
-            if dp >= maxdst {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            unsafe { *dst.add(dp) = 0 };
-            let consumed = if save_sp.is_null() {
-                (unsafe { sp.add(1).offset_from(src) }) as c_int
-            } else {
-                (unsafe { save_sp.offset_from(src) }) as c_int
-            };
-            return consumed;
-        } else {
-            // Regular label
-            let len = label_type as usize;
-            if len > NS_MAXLABEL {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            sp = unsafe { sp.add(1) };
-            if dp + len + 1 > maxdst || unsafe { sp.add(len) } > eom {
-                unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-                return -1;
-            }
-            // Write label: length byte + label bytes
-            unsafe { *dst.add(dp) = len as u8 };
-            dp += 1;
-            unsafe { std::ptr::copy_nonoverlapping(sp, dst.add(dp), len) };
-            dp += len;
-            sp = unsafe { sp.add(len) };
-            if save_sp.is_null() {
-                checked += len + 1;
-            }
+            -1
         }
     }
 }
@@ -7984,43 +7835,22 @@ pub unsafe extern "C" fn __ns_name_pack(
     _dnptrs: *mut *const u8,
     _lastdnptr: *const *const u8,
 ) -> c_int {
-    if src.is_null() || dst.is_null() || dstsiz < 0 {
+    // Glibc-internal duplicate of ns_name_pack — same shim logic.
+    if src.is_null() || dst.is_null() || dstsiz < 1 {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    // Simple implementation: copy the uncompressed name without compression.
-    // Full compression pointer support would require tracking the output buffer,
-    // but the basic pack is a straight copy of the wire-format name.
-    let dstsiz = dstsiz as usize;
-    let mut sp = src;
-    let mut dp = 0usize;
-
-    loop {
-        let label_len = unsafe { *sp } as usize;
-        if dp >= dstsiz {
+    let src_slice = unsafe {
+        std::slice::from_raw_parts(src, frankenlibc_core::resolv::dns_name::NS_MAXCDNAME)
+    };
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz as usize) };
+    match frankenlibc_core::resolv::dns_name::name_pack(src_slice, out) {
+        Ok(n) => n as c_int,
+        Err(_) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
+            -1
         }
-        unsafe { *dst.add(dp) = label_len as u8 };
-        dp += 1;
-        if label_len == 0 {
-            break;
-        }
-        if label_len > NS_MAXLABEL {
-            unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
-        }
-        sp = unsafe { sp.add(1) };
-        if dp + label_len > dstsiz {
-            unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
-            return -1;
-        }
-        unsafe { std::ptr::copy_nonoverlapping(sp, dst.add(dp), label_len) };
-        dp += label_len;
-        sp = unsafe { sp.add(label_len) };
     }
-
-    dp as c_int
 }
 
 /// `__ns_name_uncompress` — uncompress DNS name (wrapper around unpack+ntop).

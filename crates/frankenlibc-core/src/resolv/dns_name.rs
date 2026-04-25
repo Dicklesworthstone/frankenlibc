@@ -18,6 +18,11 @@ pub const NS_MAXLABEL: usize = 63;
 pub const NS_MAXCDNAME: usize = 255;
 /// Maximum length of a presentation-format name (glibc's `NS_MAXDNAME`).
 pub const NS_MAXDNAME: usize = 1025;
+/// Top two bits of a label-length byte that indicate a compression pointer.
+pub const NS_CMPRSFLGS: u8 = 0xC0;
+/// Maximum number of compression-pointer follows during decompression
+/// (defends against malicious circular pointer chains).
+pub const NS_MAX_JUMPS: u32 = 128;
 
 /// Errors returned by [`name_ntop`] and [`name_pton`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +216,126 @@ pub fn name_pton(text: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
     dst[oi] = 0;
     oi += 1;
     Ok(oi)
+}
+
+/// Decompress a DNS name from a wire message starting at `src_offset`,
+/// following compression pointers, and write the uncompressed labels to
+/// `dst`. Returns the number of bytes consumed from the original `src`
+/// position (NOT the number written to `dst`) — caller advances its
+/// message-walk cursor by this amount.
+///
+/// Errors:
+///   - `InvalidLabel` if the source doesn't contain a complete name
+///     before the end-of-message marker
+///   - `CompressionPointer` for malformed pointer values (target past
+///     end-of-message, infinite-loop chain)
+///   - `OutputTooSmall` if `dst` can't fit the decompressed name
+///
+/// Per glibc: the compression-pointer follow loop is bounded by
+/// [`NS_MAX_JUMPS`] (128) to defend against malicious circular chains.
+pub fn name_unpack(msg: &[u8], src_offset: usize, dst: &mut [u8]) -> Result<usize, NameError> {
+    if dst.is_empty() || src_offset >= msg.len() {
+        return Err(NameError::OutputTooSmall);
+    }
+
+    let mut pos = src_offset;
+    let mut oi = 0usize;
+    let mut wire_len: Option<usize> = None;
+    let mut jumps = 0u32;
+
+    loop {
+        if pos >= msg.len() {
+            return Err(NameError::InvalidLabel);
+        }
+        let b = msg[pos];
+        if b == 0 {
+            if wire_len.is_none() {
+                wire_len = Some(pos + 1 - src_offset);
+            }
+            if oi >= dst.len() {
+                return Err(NameError::OutputTooSmall);
+            }
+            dst[oi] = 0;
+            return Ok(wire_len.unwrap_or(0));
+        }
+        if (b & NS_CMPRSFLGS) == NS_CMPRSFLGS {
+            // Compression pointer: high 6 bits + next byte = 14-bit target.
+            if pos + 1 >= msg.len() {
+                return Err(NameError::CompressionPointer);
+            }
+            if wire_len.is_none() {
+                wire_len = Some(pos + 2 - src_offset);
+            }
+            let target = ((b as usize & 0x3F) << 8) | msg[pos + 1] as usize;
+            if target >= msg.len() {
+                return Err(NameError::CompressionPointer);
+            }
+            jumps += 1;
+            if jumps > NS_MAX_JUMPS {
+                return Err(NameError::CompressionPointer);
+            }
+            pos = target;
+            continue;
+        }
+        if b & NS_CMPRSFLGS != 0 {
+            // 0x40 / 0x80 prefix — RFC 2671 extended label types, reserved.
+            return Err(NameError::CompressionPointer);
+        }
+        let label_len = b as usize;
+        if pos + 1 + label_len > msg.len() || label_len > NS_MAXLABEL {
+            return Err(NameError::InvalidLabel);
+        }
+        if oi + 1 + label_len >= dst.len() {
+            return Err(NameError::OutputTooSmall);
+        }
+        dst[oi] = b;
+        oi += 1;
+        dst[oi..oi + label_len].copy_from_slice(&msg[pos + 1..pos + 1 + label_len]);
+        oi += label_len;
+        pos += 1 + label_len;
+    }
+}
+
+/// Pack an uncompressed wire-format DNS name into `dst`.
+///
+/// Walks length-prefixed labels in `src` until the root terminator (0)
+/// is reached, copying each label verbatim. The current abi behavior
+/// does NOT perform compression — duplicates are written in full.
+/// Returns the number of bytes written to `dst` (including the root
+/// terminator).
+pub fn name_pack(src: &[u8], dst: &mut [u8]) -> Result<usize, NameError> {
+    if dst.is_empty() {
+        return Err(NameError::OutputTooSmall);
+    }
+    let mut si = 0usize;
+    let mut oi = 0usize;
+    loop {
+        let b = *src.get(si).ok_or(NameError::InvalidLabel)?;
+        if b == 0 {
+            if oi >= dst.len() {
+                return Err(NameError::OutputTooSmall);
+            }
+            dst[oi] = 0;
+            return Ok(oi + 1);
+        }
+        if (b & NS_CMPRSFLGS) != 0 {
+            return Err(NameError::CompressionPointer);
+        }
+        let label_len = b as usize;
+        if label_len > NS_MAXLABEL {
+            return Err(NameError::InvalidLabel);
+        }
+        if si + 1 + label_len > src.len() {
+            return Err(NameError::InvalidLabel);
+        }
+        if oi + 1 + label_len > dst.len() {
+            return Err(NameError::OutputTooSmall);
+        }
+        dst[oi] = b;
+        dst[oi + 1..oi + 1 + label_len].copy_from_slice(&src[si + 1..si + 1 + label_len]);
+        oi += 1 + label_len;
+        si += 1 + label_len;
+    }
 }
 
 #[cfg(test)]
@@ -433,5 +558,147 @@ mod tests {
         let mut text = [0u8; 64];
         let text_len = name_ntop(&wire[..wire_len], &mut text).unwrap();
         assert_eq!(&text[..text_len], b"a\\.b.c");
+    }
+
+    // ---- name_unpack ----
+
+    #[test]
+    fn unpack_simple_uncompressed() {
+        // Message containing exactly one uncompressed name "example.com.".
+        let msg = b"\x07example\x03com\x00";
+        let mut dst = [0u8; 64];
+        let consumed = name_unpack(msg, 0, &mut dst).unwrap();
+        assert_eq!(consumed, msg.len());
+        // Decompressed wire matches input (no compression in source).
+        assert_eq!(&dst[..consumed], msg);
+    }
+
+    #[test]
+    fn unpack_root_only() {
+        let msg = b"\x00";
+        let mut dst = [0u8; 16];
+        let consumed = name_unpack(msg, 0, &mut dst).unwrap();
+        assert_eq!(consumed, 1);
+        assert_eq!(dst[0], 0);
+    }
+
+    #[test]
+    fn unpack_follows_compression_pointer() {
+        // Message: at offset 0, "ns" (uncompressed). At offset 4,
+        // a compression pointer to offset 0.
+        // [\x02 'n' 's' \x00] [\xc0 \x00]
+        // Offset 4 is the start of the second name (the pointer).
+        let msg = &[0x02, b'n', b's', 0x00, 0xc0, 0x00];
+        let mut dst = [0u8; 16];
+        let consumed = name_unpack(msg, 4, &mut dst).unwrap();
+        // Pointer is 2 bytes consumed.
+        assert_eq!(consumed, 2);
+        // Decompressed name is "ns" + root.
+        assert_eq!(&dst[..4], &[0x02, b'n', b's', 0x00]);
+    }
+
+    #[test]
+    fn unpack_rejects_circular_pointer() {
+        // Pointer at offset 0 points to itself.
+        let msg = &[0xc0, 0x00];
+        let mut dst = [0u8; 64];
+        assert_eq!(
+            name_unpack(msg, 0, &mut dst),
+            Err(NameError::CompressionPointer)
+        );
+    }
+
+    #[test]
+    fn unpack_rejects_pointer_past_eom() {
+        let msg = &[0xc0, 0xff];
+        let mut dst = [0u8; 64];
+        assert_eq!(
+            name_unpack(msg, 0, &mut dst),
+            Err(NameError::CompressionPointer)
+        );
+    }
+
+    #[test]
+    fn unpack_rejects_label_past_eom() {
+        // Length byte 7 but only 3 bytes follow.
+        let msg = &[0x07, b'a', b'b', b'c'];
+        let mut dst = [0u8; 16];
+        assert_eq!(name_unpack(msg, 0, &mut dst), Err(NameError::InvalidLabel));
+    }
+
+    #[test]
+    fn unpack_rejects_src_outside_msg() {
+        let msg = b"\x00";
+        let mut dst = [0u8; 16];
+        assert_eq!(
+            name_unpack(msg, 99, &mut dst),
+            Err(NameError::OutputTooSmall)
+        );
+    }
+
+    // ---- name_pack ----
+
+    #[test]
+    fn pack_identity_for_uncompressed_input() {
+        let src = b"\x07example\x03com\x00";
+        let mut dst = [0u8; 64];
+        let n = name_pack(src, &mut dst).unwrap();
+        assert_eq!(n, src.len());
+        assert_eq!(&dst[..n], src);
+    }
+
+    #[test]
+    fn pack_root_only() {
+        let mut dst = [0u8; 16];
+        let n = name_pack(b"\x00", &mut dst).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(dst[0], 0);
+    }
+
+    #[test]
+    fn pack_rejects_compression_pointer_in_src() {
+        let src = &[0xc0u8, 0x00];
+        let mut dst = [0u8; 16];
+        assert_eq!(name_pack(src, &mut dst), Err(NameError::CompressionPointer));
+    }
+
+    #[test]
+    fn pack_rejects_label_over_63() {
+        let mut src = vec![64u8];
+        src.extend(std::iter::repeat_n(b'a', 64));
+        src.push(0);
+        let mut dst = [0u8; 256];
+        // 64 has high bit 01 set → CompressionPointer (matches abi behavior).
+        assert_eq!(
+            name_pack(&src, &mut dst),
+            Err(NameError::CompressionPointer)
+        );
+    }
+
+    #[test]
+    fn pack_rejects_too_small_dst() {
+        let src = b"\x07example\x03com\x00";
+        let mut dst = [0u8; 4];
+        assert_eq!(name_pack(src, &mut dst), Err(NameError::OutputTooSmall));
+    }
+
+    #[test]
+    fn pack_rejects_truncated_src() {
+        // Length 7 but only 3 bytes after.
+        let src = &[0x07, b'a', b'b', b'c'];
+        let mut dst = [0u8; 16];
+        assert_eq!(name_pack(src, &mut dst), Err(NameError::InvalidLabel));
+    }
+
+    #[test]
+    fn unpack_pack_round_trip_for_simple_message() {
+        let msg = b"\x03www\x07example\x03com\x00";
+        let mut unpacked = [0u8; 64];
+        let consumed = name_unpack(msg, 0, &mut unpacked).unwrap();
+        assert_eq!(consumed, msg.len());
+        let unpacked_len = msg.len();
+        let mut packed = [0u8; 64];
+        let n = name_pack(&unpacked[..unpacked_len], &mut packed).unwrap();
+        assert_eq!(&packed[..n], msg);
     }
 }
