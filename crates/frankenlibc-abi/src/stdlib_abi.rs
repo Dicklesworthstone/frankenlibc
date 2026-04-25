@@ -25,6 +25,24 @@ fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
     heals_enabled || matches!(action, MembraneAction::Repair(_))
 }
 
+#[inline]
+unsafe fn set_abi_errno_if_clear(err: c_int) {
+    let slot = unsafe { crate::errno_abi::__errno_location() };
+    if unsafe { std::ptr::read_volatile(slot) } == 0 {
+        unsafe { set_abi_errno(err) };
+    }
+}
+
+const MAX_EXPLICIT_BZERO_LEN: usize = isize::MAX as usize;
+
+#[inline]
+fn bounded_zero_len(ptr: *mut c_void, requested: usize) -> Option<usize> {
+    let len = known_remaining(ptr as usize)
+        .map(|remaining| remaining.min(requested))
+        .unwrap_or(requested);
+    (len <= MAX_EXPLICIT_BZERO_LEN).then_some(len)
+}
+
 unsafe extern "C" {
     #[link_name = "__environ"]
     static mut HOST_ENVIRON: *mut *mut c_char;
@@ -125,24 +143,28 @@ unsafe fn environ_len() -> usize {
 pub fn take_environ_ownership() {
     let _lock = ENVIRON_LOCK.lock();
     // SAFETY: we hold the environ lock.
-    unsafe { ensure_environ_owned() };
+    let _ = unsafe { ensure_environ_owned() };
 }
 
 /// Ensure environ is in our own allocation so we can grow it.
 /// Must be called with ENVIRON_LOCK held.
-unsafe fn ensure_environ_owned() {
+unsafe fn ensure_environ_owned() -> bool {
     use std::sync::atomic::Ordering;
     if ENVIRON_OWNED.load(Ordering::Acquire) {
-        return;
+        return true;
     }
     let count = unsafe { environ_len() };
     // Allocate count + 1 (for NULL) + 8 (growth room) pointers
-    let new_cap = count + 9;
-    let new_array = unsafe {
-        crate::malloc_abi::host_passthrough_malloc(new_cap * core::mem::size_of::<*mut c_char>())
-    } as *mut *mut c_char;
+    let Some(new_bytes) = count
+        .checked_add(9)
+        .and_then(|cap| cap.checked_mul(core::mem::size_of::<*mut c_char>()))
+    else {
+        return false;
+    };
+    let new_array =
+        unsafe { crate::malloc_abi::host_passthrough_malloc(new_bytes) } as *mut *mut c_char;
     if new_array.is_null() {
-        return; // OOM — keep using original
+        return false; // OOM — keep using original
     }
     if !unsafe { HOST_ENVIRON.is_null() } {
         unsafe {
@@ -152,6 +174,7 @@ unsafe fn ensure_environ_owned() {
     unsafe { *new_array.add(count) = std::ptr::null_mut() };
     unsafe { HOST_ENVIRON = new_array };
     ENVIRON_OWNED.store(true, Ordering::Release);
+    true
 }
 
 /// Native setenv: scan environ for NAME=, replace or append.
@@ -174,12 +197,20 @@ unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_
     };
 
     let _lock = ENVIRON_LOCK.lock();
-    unsafe { ensure_environ_owned() };
+    let environ_owned = unsafe { ensure_environ_owned() };
 
     // Build "NAME=value" string
-    let entry_len = name_len + 1 + val_len + 1; // name + '=' + value + NUL
+    let Some(entry_len) = name_len
+        .checked_add(1)
+        .and_then(|len| len.checked_add(val_len))
+        .and_then(|len| len.checked_add(1))
+    else {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return -1;
+    };
     let new_entry = unsafe { crate::malloc_abi::host_passthrough_malloc(entry_len) } as *mut c_char;
     if new_entry.is_null() {
+        unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     }
     unsafe {
@@ -223,15 +254,32 @@ unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_
 
     // Not found — append to environ
     let count = unsafe { environ_len() };
+    if !environ_owned && !unsafe { HOST_ENVIRON.is_null() } {
+        unsafe {
+            crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
+            set_abi_errno(libc::ENOMEM);
+        }
+        return -1;
+    }
     // May need to grow the array
+    let Some(new_array_bytes) = count
+        .checked_add(2)
+        .and_then(|cap| cap.checked_mul(core::mem::size_of::<*mut c_char>()))
+    else {
+        unsafe {
+            crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
+            set_abi_errno(libc::ENOMEM);
+        }
+        return -1;
+    };
     let new_array = unsafe {
-        crate::malloc_abi::host_passthrough_realloc(
-            HOST_ENVIRON as *mut c_void,
-            (count + 2) * core::mem::size_of::<*mut c_char>(),
-        )
+        crate::malloc_abi::host_passthrough_realloc(HOST_ENVIRON as *mut c_void, new_array_bytes)
     } as *mut *mut c_char;
     if new_array.is_null() {
-        unsafe { crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void) };
+        unsafe {
+            crate::malloc_abi::host_passthrough_free(new_entry as *mut c_void);
+            set_abi_errno(libc::ENOMEM);
+        }
         return -1;
     }
     unsafe {
@@ -261,13 +309,14 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
         Some(p) => p,
         None => {
             // No '=': unset the variable (glibc behavior)
+            let _lock = ENVIRON_LOCK.lock();
             return unsafe { remove_from_environ(string) };
         }
     };
     let name_len = eq_pos;
 
     let _lock = ENVIRON_LOCK.lock();
-    unsafe { ensure_environ_owned() };
+    let environ_owned = unsafe { ensure_environ_owned() };
 
     // Scan for existing entry with same name
     if !unsafe { HOST_ENVIRON.is_null() } {
@@ -293,13 +342,22 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
 
     // Not found — append
     let count = unsafe { environ_len() };
+    if !environ_owned && !unsafe { HOST_ENVIRON.is_null() } {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return -1;
+    }
+    let Some(new_array_bytes) = count
+        .checked_add(2)
+        .and_then(|cap| cap.checked_mul(core::mem::size_of::<*mut c_char>()))
+    else {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return -1;
+    };
     let new_array = unsafe {
-        crate::malloc_abi::host_passthrough_realloc(
-            HOST_ENVIRON as *mut c_void,
-            (count + 2) * core::mem::size_of::<*mut c_char>(),
-        )
+        crate::malloc_abi::host_passthrough_realloc(HOST_ENVIRON as *mut c_void, new_array_bytes)
     } as *mut *mut c_char;
     if new_array.is_null() {
+        unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     }
     unsafe {
@@ -1143,7 +1201,7 @@ pub unsafe extern "C" fn setenv(
     // SAFETY: validated NUL-terminated pointers.
     let rc = unsafe { native_setenv(name, value, overwrite) };
     if rc != 0 {
-        unsafe { set_abi_errno(libc::EINVAL) };
+        unsafe { set_abi_errno_if_clear(libc::EINVAL) };
     }
     let adverse = rc != 0;
     runtime_policy::observe(
@@ -1900,11 +1958,19 @@ pub unsafe extern "C" fn freezero(ptr: *mut c_void, size: usize) {
     if ptr.is_null() {
         return;
     }
+    let zero_len = bounded_zero_len(ptr, size);
     // SAFETY: caller contract requires `size` bytes valid at `ptr`.
     // `explicit_bzero` is guaranteed not to be optimized away even
-    // though the memory is about to be freed.
+    // though the memory is about to be freed. When the pointer is a
+    // tracked FrankenLibC allocation, clamp to the true remaining size
+    // so a bad caller-provided length cannot turn the helper into an
+    // out-of-bounds write. If an untracked caller asks for a range Rust
+    // cannot represent as a slice, we still free but skip the impossible
+    // zeroing pass instead of violating explicit_bzero's preconditions.
     unsafe {
-        crate::string_abi::explicit_bzero(ptr, size);
+        if let Some(zero_len) = zero_len {
+            crate::string_abi::explicit_bzero(ptr, zero_len);
+        }
         crate::malloc_abi::free(ptr);
     }
 }
@@ -1958,12 +2024,20 @@ pub unsafe extern "C" fn recallocarray(
         unsafe { set_abi_errno(libc::EINVAL) };
         return ptr::null_mut();
     };
+    let Some(effective_old_size) = bounded_zero_len(ptr, old_size) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return ptr::null_mut();
+    };
+    if new_size > effective_old_size && new_size - effective_old_size > MAX_EXPLICIT_BZERO_LEN {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return ptr::null_mut();
+    }
 
     if new_size == 0 {
         // Equivalent to free(ptr) after zeroing — preserve the secret-
         // zeroing guarantee.
         unsafe {
-            crate::string_abi::explicit_bzero(ptr, old_size);
+            crate::string_abi::explicit_bzero(ptr, effective_old_size);
             crate::malloc_abi::free(ptr);
         }
         return ptr::null_mut();
@@ -1972,11 +2046,12 @@ pub unsafe extern "C" fn recallocarray(
     // On shrink: zero the trailing region we're about to release back
     // to the allocator BEFORE the realloc — the allocator may reuse
     // those bytes for a future allocation, and secrets must not leak.
-    if new_size < old_size {
-        // SAFETY: caller contract guarantees the [new_size, old_size)
-        // range is part of the original allocation.
+    if new_size < effective_old_size {
+        // SAFETY: effective_old_size is clamped to the known allocation
+        // size when the pointer is tracked, so the zeroed range is
+        // bounded by real writable memory even if oldnmemb was wrong.
         unsafe {
-            crate::string_abi::explicit_bzero(ptr.add(new_size), old_size - new_size);
+            crate::string_abi::explicit_bzero(ptr.add(new_size), effective_old_size - new_size);
         }
     }
 
@@ -1989,11 +2064,14 @@ pub unsafe extern "C" fn recallocarray(
 
     // On grow: zero the newly-acquired tail so the caller observes
     // a clean buffer instead of recycled allocator contents.
-    if new_size > old_size {
+    if new_size > effective_old_size {
         // SAFETY: realloc returned a buffer of at least new_size bytes;
         // the [old_size, new_size) range is the freshly added tail.
         unsafe {
-            crate::string_abi::explicit_bzero(out.add(old_size), new_size - old_size);
+            crate::string_abi::explicit_bzero(
+                out.add(effective_old_size),
+                new_size - effective_old_size,
+            );
         }
     }
 
@@ -4295,8 +4373,8 @@ pub unsafe extern "C" fn realpath(
     };
     let fd = match fd {
         Ok(f) => f,
-        Err(_) => {
-            unsafe { set_abi_errno(errno::ENOENT) };
+        Err(err) => {
+            unsafe { set_abi_errno(err) };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
             return std::ptr::null_mut();
         }
@@ -4323,8 +4401,8 @@ pub unsafe extern "C" fn realpath(
 
     let n = match n {
         Ok(len) => len,
-        Err(_) => {
-            unsafe { set_abi_errno(errno::ENOENT) };
+        Err(err) => {
+            unsafe { set_abi_errno(err) };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
             return std::ptr::null_mut();
         }
@@ -4371,4 +4449,133 @@ pub unsafe extern "C" fn realpath(
         false,
     );
     dst
+}
+
+// ---------------------------------------------------------------------------
+// getbsize (BSD libutil block-size header)
+// ---------------------------------------------------------------------------
+//
+// Pure-byte logic lives in `frankenlibc_core::stdlib::getbsize`. This shim
+// owns: (a) reading the BLOCKSIZE environment variable, (b) writing the
+// block size + header length out via the caller's pointers, and (c)
+// publishing the header bytes through process-static storage.
+
+fn publish_getbsize_header(
+    preference: frankenlibc_core::stdlib::getbsize::BlocksizePreference,
+) -> (*mut c_char, usize, u64) {
+    use frankenlibc_core::stdlib::getbsize as core_gb;
+    use std::sync::{Mutex, OnceLock};
+
+    let (buf, header_len) = core_gb::format_preference_header(preference);
+
+    // Process-static storage mirrors BSD's static header buffer while keeping
+    // mutation synchronized on the Rust side. Later calls may update the
+    // bytes when BLOCKSIZE changes; callers that need the string must copy it
+    // before a subsequent getbsize call, as with BSD static-buffer APIs.
+    static HEADER_CELL: OnceLock<Mutex<([u8; 33], usize, u64)>> = OnceLock::new();
+    let cell = HEADER_CELL.get_or_init(|| Mutex::new(([0u8; 33], 0, core_gb::MIN_BLOCKSIZE)));
+    let mut guard = match cell.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    guard.0 = [0u8; 33];
+    guard.0[..header_len].copy_from_slice(&buf[..header_len]);
+    guard.1 = header_len;
+    guard.2 = preference.blocksize;
+    (guard.0.as_mut_ptr() as *mut c_char, guard.1, guard.2)
+}
+
+fn emit_getbsize_diagnostic(
+    diagnostic: frankenlibc_core::stdlib::getbsize::BlocksizeDiagnostic,
+    env_ptr: *mut c_char,
+) {
+    use frankenlibc_core::stdlib::getbsize::BlocksizeDiagnostic;
+
+    match diagnostic {
+        BlocksizeDiagnostic::None => {}
+        BlocksizeDiagnostic::Minimum => unsafe {
+            crate::err_abi::warnx(c"%s: minimum blocksize is 512".as_ptr(), env_ptr);
+        },
+        BlocksizeDiagnostic::Maximum => unsafe {
+            crate::err_abi::warnx(c"maximum blocksize is %ldG".as_ptr(), 1 as c_long);
+        },
+        BlocksizeDiagnostic::Malformed => unsafe {
+            crate::err_abi::warnx(c"%s: unknown blocksize".as_ptr(), env_ptr);
+            crate::err_abi::warnx(c"maximum blocksize is %ldG".as_ptr(), 1 as c_long);
+            crate::err_abi::warnx(c"%s: minimum blocksize is 512".as_ptr(), env_ptr);
+        },
+    }
+}
+
+/// BSD libutil `getbsize(headerlenp, blocksizep)` — read `BLOCKSIZE`
+/// env var, store the resolved block size into `*blocksizep`, the
+/// header string length into `*headerlenp`, and return a pointer to
+/// process-static storage holding the matching header (NUL-terminated).
+///
+/// `headerlenp` and `blocksizep` may be NULL; in that case the
+/// corresponding output is silently skipped (matches NetBSD).
+///
+/// # Safety
+///
+/// Caller must ensure `headerlenp` and `blocksizep`, when non-NULL,
+/// point to writable storage of `c_int` and `c_long` respectively.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getbsize(headerlenp: *mut c_int, blocksizep: *mut c_long) -> *mut c_char {
+    use frankenlibc_core::stdlib::getbsize as core_gb;
+
+    let requested_bytes = usize::from(!headerlenp.is_null()) * core::mem::size_of::<c_int>()
+        + usize::from(!blocksizep.is_null()) * core::mem::size_of::<c_long>();
+    let primary_addr = if !headerlenp.is_null() {
+        headerlenp as usize
+    } else {
+        blocksizep as usize
+    };
+    let bloom_negative = (!headerlenp.is_null() && known_remaining(headerlenp as usize).is_none())
+        || (!blocksizep.is_null() && known_remaining(blocksizep as usize).is_none());
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdlib,
+        primary_addr,
+        requested_bytes,
+        requested_bytes != 0,
+        bloom_negative,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(libc::EPERM) };
+        let (ptr, _, _) = publish_getbsize_header(core_gb::BlocksizePreference::default_512());
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+        return ptr;
+    }
+
+    // Read BLOCKSIZE through the internal environment-table helper. Calling
+    // the public ABI getenv wrapper here would re-enter runtime policy in
+    // hardened mode and can recurse through stdlib policy decisions.
+    let env_ptr = unsafe { native_getenv(b"BLOCKSIZE") };
+    let preference = if env_ptr.is_null() {
+        core_gb::BlocksizePreference::default_512()
+    } else {
+        // SAFETY: getenv returns a NUL-terminated string from process env.
+        let bytes = unsafe { std::ffi::CStr::from_ptr(env_ptr) }.to_bytes();
+        let resolution = core_gb::resolve_preference_with_diagnostic(bytes);
+        emit_getbsize_diagnostic(resolution.diagnostic, env_ptr);
+        resolution.preference
+    };
+
+    let (ptr, header_len, blocksize) = publish_getbsize_header(preference);
+
+    if !headerlenp.is_null() {
+        // SAFETY: caller contract requires a writable c_int.
+        unsafe { *headerlenp = header_len as c_int };
+    }
+    if !blocksizep.is_null() {
+        // SAFETY: caller contract requires a writable c_long.
+        unsafe { *blocksizep = blocksize as c_long };
+    }
+    runtime_policy::observe(
+        ApiFamily::Stdlib,
+        decision.profile,
+        runtime_policy::scaled_cost(8, header_len),
+        false,
+    );
+    ptr
 }

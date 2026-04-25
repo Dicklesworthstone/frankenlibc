@@ -81,6 +81,19 @@ pub fn ntop(src: &[u8], target: &mut [u8]) -> Option<usize> {
 /// skipped to match libresolv `__b64_pton`. Decoding stops at the
 /// first NUL byte if one is encountered.
 pub fn pton(src: &[u8], target: &mut [u8]) -> Option<usize> {
+    pton_impl(src, Some(target))
+}
+
+/// Return the decoded byte length for `src` without writing output.
+///
+/// This follows the same validation rules as [`pton`], including whitespace,
+/// padding, NUL termination, and canonical-padding checks. It exists for the
+/// libresolv ABI query mode where callers pass `target == NULL`.
+pub fn decoded_len(src: &[u8]) -> Option<usize> {
+    pton_impl(src, None)
+}
+
+fn pton_impl(src: &[u8], mut target: Option<&mut [u8]>) -> Option<usize> {
     let mut acc: u32 = 0;
     let mut bits = 0u32;
     let mut o = 0usize;
@@ -121,10 +134,12 @@ pub fn pton(src: &[u8], target: &mut [u8]) -> Option<usize> {
         if bits >= 8 {
             bits -= 8;
             let byte = ((acc >> bits) & 0xff) as u8;
-            if o >= target.len() {
-                return None;
+            if let Some(out) = target.as_deref_mut() {
+                if o >= out.len() {
+                    return None;
+                }
+                out[o] = byte;
             }
-            target[o] = byte;
             o += 1;
         }
     }
@@ -251,6 +266,15 @@ mod tests {
     }
 
     #[test]
+    fn decoded_len_matches_pton_without_allocating_output() {
+        assert_eq!(decoded_len(b""), Some(0));
+        assert_eq!(decoded_len(b"Zg=="), Some(1));
+        assert_eq!(decoded_len(b"Zm8="), Some(2));
+        assert_eq!(decoded_len(b"Zm9v"), Some(3));
+        assert_eq!(decoded_len(b"Zm9v\nYmFy\0ignored"), Some(6));
+    }
+
+    #[test]
     fn pton_skips_whitespace() {
         // Newlines / spaces / tabs inside encoded data are tolerated
         // (libresolv permits wrapped base64).
@@ -314,8 +338,10 @@ mod tests {
         // libresolv rejects this canonical-encoding violation.
         let mut buf = [0u8; 4];
         assert_eq!(pton(b"Zh==", &mut buf), None);
+        assert_eq!(decoded_len(b"Zh=="), None);
         // "Zg==" is canonical (4 leftover bits = 0000).
         assert_eq!(pton(b"Zg==", &mut buf), Some(1));
+        assert_eq!(decoded_len(b"Zg=="), Some(1));
         assert_eq!(buf[0], b'f');
     }
 

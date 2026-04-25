@@ -105,7 +105,7 @@ fn claim_reconciliation_detects_readme_drift_and_routes_owner() {
 
     let mutated_readme = std::fs::read_to_string(&readme_src)
         .expect("README.md should exist")
-        .replace("total_exported=3980", "total_exported=1");
+        .replace("total_exported=3996", "total_exported=1");
     std::fs::write(&mutated_readme_path, mutated_readme).expect("failed to write mutated README");
 
     let output = Command::new("python3")

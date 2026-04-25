@@ -6,10 +6,10 @@ use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atoll, clearenv, confstr, drand48, ecvt, erand48, fcvt, freezero, gcvt,
-    get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getenv, getsubopt, initstate,
-    jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit,
-    qsort_r, random, reallocarray, recallocarray, seed48, setenv, setstate, srand48, srandom,
-    strtod, strtof, strtold, strtoll, strtoq, strtoull, strtouq, system, unsetenv,
+    get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv, getsubopt,
+    initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48,
+    on_exit, qsort_r, random, reallocarray, recallocarray, seed48, setenv, setstate, srand48,
+    srandom, strtod, strtof, strtold, strtoll, strtoq, strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -5339,6 +5339,20 @@ fn freezero_zeros_then_frees() {
 }
 
 #[test]
+fn freezero_clamps_oversized_size_for_tracked_allocation() {
+    let buf = unsafe { reallocarray(ptr::null_mut(), 16, 1) } as *mut u8;
+    assert!(!buf.is_null());
+    unsafe {
+        for i in 0..16 {
+            *buf.add(i) = 0x7a;
+        }
+    }
+    // A bad caller-provided size must not let the zeroing step write
+    // past the tracked allocation before freeing it.
+    unsafe { freezero(buf.cast(), usize::MAX) };
+}
+
+#[test]
 fn recallocarray_null_zero_oldnmemb_acts_like_calloc() {
     // null + oldnmemb=0 → fresh zero-initialized allocation.
     let p = unsafe { recallocarray(ptr::null_mut(), 0, 16, 4) } as *mut u8;
@@ -5395,6 +5409,41 @@ fn recallocarray_grow_zeros_new_tail() {
 }
 
 #[test]
+fn recallocarray_oversized_old_size_uses_tracked_allocation_bound() {
+    let p = unsafe { recallocarray(ptr::null_mut(), 0, 16, 1) } as *mut u8;
+    assert!(!p.is_null());
+    unsafe {
+        for i in 0..16 {
+            *p.add(i) = 0x5c;
+        }
+    }
+
+    // oldnmemb is intentionally larger than the live tracked block.
+    // The implementation should preserve the real prefix and zero the
+    // newly grown tail from the actual allocation size, not from the
+    // untrusted caller-provided old size.
+    let grown = unsafe { recallocarray(p.cast(), 64, 32, 1) } as *mut u8;
+    assert!(!grown.is_null());
+    unsafe {
+        for i in 0..16 {
+            assert_eq!(
+                *grown.add(i),
+                0x5c,
+                "oversized old size must preserve real prefix"
+            );
+        }
+        for i in 16..32 {
+            assert_eq!(
+                *grown.add(i),
+                0,
+                "oversized old size must zero new tail at offset {i}"
+            );
+        }
+        libc::free(grown.cast());
+    }
+}
+
+#[test]
 fn recallocarray_zero_size_frees_and_returns_null() {
     // nmemb*size == 0 → free(ptr) with secret-zeroing, return NULL.
     let p = unsafe { recallocarray(ptr::null_mut(), 0, 32, 1) } as *mut u8;
@@ -5441,4 +5490,185 @@ fn recallocarray_old_overflow_returns_einval() {
     // Caller is responsible for freeing — the failed call is required to
     // leave the original allocation intact (matches reallocarray).
     unsafe { libc::free(p.cast()) };
+}
+
+// ---------------------------------------------------------------------------
+// getbsize (BSD libutil block-size header)
+// ---------------------------------------------------------------------------
+//
+// getbsize returns a process-static header buffer. Calls must return a
+// stable pointer, but the bytes may be updated by later calls after a
+// BLOCKSIZE change.
+//
+// Round-trip parsing of `BLOCKSIZE` values is covered exhaustively by the
+// core stdlib::getbsize unit tests; this integration test only verifies
+// the abi-level contract: NULL-pointer guard, output byte string,
+// caller-pointer outputs, and pointer stability.
+
+#[test]
+fn getbsize_default_returns_512_blocks_header() {
+    let _guard = getbsize_env_lock();
+    unsafe {
+        let name = std::ffi::CString::new("BLOCKSIZE").unwrap();
+        unsetenv(name.as_ptr());
+    }
+
+    let mut header_len: libc::c_int = -1;
+    let mut blocksize: libc::c_long = -1;
+    let p = unsafe { getbsize(&mut header_len, &mut blocksize) };
+    assert!(!p.is_null(), "getbsize must never return NULL");
+
+    let cstr = unsafe { std::ffi::CStr::from_ptr(p) };
+    let bytes = cstr.to_bytes();
+    assert_eq!(bytes, b"512-blocks", "default header bytes mismatch");
+    assert_eq!(header_len, bytes.len() as libc::c_int);
+    assert_eq!(blocksize, 512);
+
+    // Pointer stability: a second call returns the same pointer (the
+    // OnceLock-backed storage is alive for the program lifetime).
+    let mut hl2: libc::c_int = 0;
+    let mut bs2: libc::c_long = 0;
+    let p2 = unsafe { getbsize(&mut hl2, &mut bs2) };
+    assert_eq!(p2, p, "getbsize pointer must remain stable across calls");
+    assert_eq!(hl2, header_len);
+    assert_eq!(bs2, blocksize);
+}
+
+#[test]
+fn getbsize_null_outputs_are_no_op() {
+    let _guard = getbsize_env_lock();
+    // NULL output pointers must not segfault.
+    let p = unsafe { getbsize(std::ptr::null_mut(), std::ptr::null_mut()) };
+    assert!(!p.is_null());
+}
+
+#[test]
+fn getbsize_returns_nul_terminated_string() {
+    let _guard = getbsize_env_lock();
+    let p = unsafe { getbsize(std::ptr::null_mut(), std::ptr::null_mut()) };
+    assert!(!p.is_null());
+    let cstr = unsafe { std::ffi::CStr::from_ptr(p) };
+    let _ = cstr.to_bytes(); // panics if not NUL-terminated within reasonable bound
+}
+
+#[test]
+fn getbsize_preserves_bare_vs_suffixed_header_spelling() {
+    let _guard = getbsize_env_lock();
+    let name = std::ffi::CString::new("BLOCKSIZE").unwrap();
+    let bare = std::ffi::CString::new("1024").unwrap();
+    let kilo = std::ffi::CString::new("1K").unwrap();
+    let implicit_kilo = std::ffi::CString::new("K").unwrap();
+    let negative_zero_kilo = std::ffi::CString::new("-0K").unwrap();
+
+    unsafe {
+        assert_eq!(setenv(name.as_ptr(), bare.as_ptr(), 1), 0);
+    }
+    let mut bare_len: libc::c_int = -1;
+    let mut bare_blocksize: libc::c_long = -1;
+    let bare_ptr = unsafe { getbsize(&mut bare_len, &mut bare_blocksize) };
+    assert!(!bare_ptr.is_null());
+    assert_eq!(
+        unsafe { std::ffi::CStr::from_ptr(bare_ptr) }.to_bytes(),
+        b"1024-blocks"
+    );
+    assert_eq!(bare_len, 11);
+    assert_eq!(bare_blocksize, 1024);
+
+    unsafe {
+        assert_eq!(setenv(name.as_ptr(), kilo.as_ptr(), 1), 0);
+    }
+    let mut kilo_len: libc::c_int = -1;
+    let mut kilo_blocksize: libc::c_long = -1;
+    let kilo_ptr = unsafe { getbsize(&mut kilo_len, &mut kilo_blocksize) };
+    assert_eq!(
+        kilo_ptr, bare_ptr,
+        "BSD getbsize uses static header storage"
+    );
+    assert_eq!(
+        unsafe { std::ffi::CStr::from_ptr(kilo_ptr) }.to_bytes(),
+        b"1K-blocks"
+    );
+    assert_eq!(kilo_len, 9);
+    assert_eq!(kilo_blocksize, 1024);
+
+    unsafe {
+        assert_eq!(setenv(name.as_ptr(), implicit_kilo.as_ptr(), 1), 0);
+    }
+    let mut implicit_len: libc::c_int = -1;
+    let mut implicit_blocksize: libc::c_long = -1;
+    let implicit_ptr = unsafe { getbsize(&mut implicit_len, &mut implicit_blocksize) };
+    assert_eq!(implicit_ptr, bare_ptr);
+    assert_eq!(
+        unsafe { std::ffi::CStr::from_ptr(implicit_ptr) }.to_bytes(),
+        b"1K-blocks"
+    );
+    assert_eq!(implicit_len, 9);
+    assert_eq!(implicit_blocksize, 1024);
+
+    unsafe {
+        assert_eq!(setenv(name.as_ptr(), negative_zero_kilo.as_ptr(), 1), 0);
+    }
+    let mut negative_zero_len: libc::c_int = -1;
+    let mut negative_zero_blocksize: libc::c_long = -1;
+    let negative_zero_ptr =
+        unsafe { getbsize(&mut negative_zero_len, &mut negative_zero_blocksize) };
+    assert_eq!(negative_zero_ptr, bare_ptr);
+    assert_eq!(
+        unsafe { std::ffi::CStr::from_ptr(negative_zero_ptr) }.to_bytes(),
+        b"1K-blocks"
+    );
+    assert_eq!(negative_zero_len, 9);
+    assert_eq!(negative_zero_blocksize, 1024);
+
+    unsafe {
+        unsetenv(name.as_ptr());
+    }
+}
+
+#[test]
+fn getbsize_clamps_out_of_range_values() {
+    let _guard = getbsize_env_lock();
+    let name = std::ffi::CString::new("BLOCKSIZE").unwrap();
+    let tiny = std::ffi::CString::new("100").unwrap();
+    let huge = std::ffi::CString::new("2G").unwrap();
+
+    unsafe {
+        assert_eq!(setenv(name.as_ptr(), tiny.as_ptr(), 1), 0);
+    }
+    let mut tiny_len: libc::c_int = -1;
+    let mut tiny_blocksize: libc::c_long = -1;
+    let tiny_ptr = unsafe { getbsize(&mut tiny_len, &mut tiny_blocksize) };
+    assert!(!tiny_ptr.is_null());
+    assert_eq!(
+        unsafe { std::ffi::CStr::from_ptr(tiny_ptr) }.to_bytes(),
+        b"512-blocks"
+    );
+    assert_eq!(tiny_len, 10);
+    assert_eq!(tiny_blocksize, 512);
+
+    unsafe {
+        assert_eq!(setenv(name.as_ptr(), huge.as_ptr(), 1), 0);
+    }
+    let mut huge_len: libc::c_int = -1;
+    let mut huge_blocksize: libc::c_long = -1;
+    let huge_ptr = unsafe { getbsize(&mut huge_len, &mut huge_blocksize) };
+    assert_eq!(huge_ptr, tiny_ptr);
+    assert_eq!(
+        unsafe { std::ffi::CStr::from_ptr(huge_ptr) }.to_bytes(),
+        b"1G-blocks"
+    );
+    assert_eq!(huge_len, 9);
+    assert_eq!(huge_blocksize, 1 << 30);
+
+    unsafe {
+        unsetenv(name.as_ptr());
+    }
+}
+
+fn getbsize_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
 }

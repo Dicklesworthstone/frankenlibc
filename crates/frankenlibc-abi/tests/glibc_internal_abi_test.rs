@@ -3034,6 +3034,21 @@ fn b64_ntop_null_target_is_error() {
 }
 
 #[test]
+fn b64_ntop_rejects_unrepresentable_target_size() {
+    let src = b"x";
+    let mut buf = [0u8; 1];
+    let n = unsafe {
+        b64_ntop(
+            src.as_ptr(),
+            src.len(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            usize::MAX,
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
 fn b64_pton_rfc4648_vector() {
     let s = b"Zm9vYmFy\0";
     let mut buf = [0u8; 8];
@@ -3077,10 +3092,55 @@ fn b64_pton_returns_minus_one_when_target_too_small() {
 }
 
 #[test]
+fn b64_pton_rejects_unrepresentable_target_size() {
+    let s = b"AA==\0";
+    let mut buf = [0u8; 1];
+    let n = unsafe {
+        b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            buf.as_mut_ptr(),
+            usize::MAX,
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
 fn b64_pton_null_src_is_error() {
     let mut buf = [0u8; 8];
     let n = unsafe { b64_pton(std::ptr::null(), buf.as_mut_ptr(), buf.len()) };
     assert_eq!(n, -1);
+}
+
+#[test]
+fn b64_pton_null_target_reports_decoded_length() {
+    let s = b"Zm9v\0";
+    let n = unsafe {
+        b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    assert_eq!(n, 3);
+
+    let alias_n = unsafe {
+        __b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            std::ptr::null_mut(),
+            128,
+        )
+    };
+    assert_eq!(alias_n, 3);
+
+    let ignored_size_n = unsafe {
+        b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            std::ptr::null_mut(),
+            usize::MAX,
+        )
+    };
+    assert_eq!(ignored_size_n, 3);
 }
 
 #[test]

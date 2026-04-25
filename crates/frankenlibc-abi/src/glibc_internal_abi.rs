@@ -8590,7 +8590,7 @@ pub unsafe extern "C" fn __libc_res_hnok(dn: *const c_char) -> c_int {
 /// BIND `b64_ntop(src, srclength, target, targsize)` — encode `srclength`
 /// bytes from `src` into base64 in `target`, NUL-terminating it.
 /// Returns the number of bytes written excluding the NUL, or -1 if
-/// `target` is too small or any pointer is NULL.
+/// `target` is too small or any pointer contract is invalid.
 ///
 /// # Safety
 ///
@@ -8603,56 +8603,158 @@ pub unsafe extern "C" fn b64_ntop(
     target: *mut c_char,
     targsize: usize,
 ) -> c_int {
+    let invalid_src = src.is_null() && srclength != 0;
+    let (_, decision) = crate::runtime_policy::decide(
+        ApiFamily::Resolver,
+        src as usize,
+        srclength,
+        false,
+        invalid_src,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
     if target.is_null() {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
         return -1;
     }
-    if src.is_null() && srclength != 0 {
+    if invalid_src {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
         return -1;
     }
-    // SAFETY: caller-supplied src is valid for srclength bytes; an empty
-    // input is represented by an empty slice via from_raw_parts(non_null, 0).
+    if targsize > isize::MAX as usize {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
+    if let Some(remaining) = crate::malloc_abi::known_remaining(src as usize)
+        && srclength > remaining
+    {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
+    if let Some(remaining) = crate::malloc_abi::known_remaining(target as usize)
+        && targsize > remaining
+    {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
+    if srclength > ((c_int::MAX as usize) / 4) * 3 {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
+
     let src_slice: &[u8] = if srclength == 0 {
         &[]
     } else {
+        // SAFETY: non-null source and tracked allocation bounds were checked
+        // above when the pointer belongs to FrankenLibC-managed memory.
         unsafe { std::slice::from_raw_parts(src, srclength) }
     };
-    // SAFETY: caller contract requires targsize writable bytes at target.
+    // SAFETY: target is non-null and caller-provided targsize bounds the write.
     let target_slice = unsafe { std::slice::from_raw_parts_mut(target as *mut u8, targsize) };
     match frankenlibc_core::resolv::b64::ntop(src_slice, target_slice) {
-        Some(n) => n as c_int,
-        None => -1,
+        Some(n) => match c_int::try_from(n) {
+            Ok(rc) => {
+                crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, false);
+                rc
+            }
+            Err(_) => {
+                crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+                -1
+            }
+        },
+        None => {
+            crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            -1
+        }
     }
 }
 
 /// BIND `b64_pton(src, target, targsize)` — decode the NUL-terminated
 /// base64 ASCII string `src` into binary `target`. Returns the number
-/// of bytes decoded, or -1 on any of: NULL pointers, invalid base64
+/// of bytes decoded, or -1 on any of: invalid source pointer, invalid base64
 /// characters, mismatched padding, target buffer too small.
+/// A NULL `target` asks for the decoded length without writing.
 ///
 /// # Safety
 ///
-/// Caller must ensure `src` is a valid NUL-terminated C string and
-/// `target` is valid for `targsize` writable bytes.
+/// Caller must ensure `src` is a valid NUL-terminated C string. If `target`
+/// is non-NULL, it must be valid for `targsize` writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn b64_pton(src: *const c_char, target: *mut u8, targsize: usize) -> c_int {
-    if src.is_null() {
+    let requested_output = if target.is_null() { 0 } else { targsize };
+    let (_, decision) = crate::runtime_policy::decide(
+        ApiFamily::Resolver,
+        src as usize,
+        requested_output,
+        false,
+        src.is_null(),
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
         return -1;
     }
-    // SAFETY: src is a valid NUL-terminated C string per the caller.
-    let src_bytes = unsafe { std::ffi::CStr::from_ptr(src).to_bytes() };
-    // Allow target == NULL only when targsize == 0 (no place to write).
-    let target_slice: &mut [u8] = if targsize == 0 {
-        &mut []
-    } else {
-        if target.is_null() {
-            return -1;
-        }
-        // SAFETY: caller contract requires targsize writable bytes.
-        unsafe { std::slice::from_raw_parts_mut(target, targsize) }
+    if src.is_null() {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
+    if !target.is_null() && targsize > isize::MAX as usize {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
+    if !target.is_null()
+        && let Some(remaining) = crate::malloc_abi::known_remaining(target as usize)
+        && targsize > remaining
+    {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
+
+    // SAFETY: src is a C string. If it is a tracked allocation, the scan is
+    // bounded by known_remaining and rejects unterminated inputs.
+    let (src_len, terminated) = unsafe {
+        crate::util::scan_c_string(src, crate::malloc_abi::known_remaining(src as usize))
     };
-    match frankenlibc_core::resolv::b64::pton(src_bytes, target_slice) {
-        Some(n) => n as c_int,
-        None => -1,
+    if !terminated {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
+    if src_len > c_int::MAX as usize {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    }
+    let Some(src_with_nul_len) = src_len.checked_add(1) else {
+        crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return -1;
+    };
+    // SAFETY: scan_c_string found the trailing NUL at src_len.
+    let src_bytes = unsafe { std::slice::from_raw_parts(src.cast::<u8>(), src_with_nul_len) };
+
+    let decoded = if target.is_null() {
+        frankenlibc_core::resolv::b64::decoded_len(src_bytes)
+    } else {
+        // SAFETY: target is non-null and targsize bounds caller-writable output.
+        let target_slice = unsafe { std::slice::from_raw_parts_mut(target, targsize) };
+        frankenlibc_core::resolv::b64::pton(src_bytes, target_slice)
+    };
+    match decoded {
+        Some(n) => match c_int::try_from(n) {
+            Ok(rc) => {
+                crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, false);
+                rc
+            }
+            Err(_) => {
+                crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+                -1
+            }
+        },
+        None => {
+            crate::runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+            -1
+        }
     }
 }
 

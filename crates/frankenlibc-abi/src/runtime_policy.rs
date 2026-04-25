@@ -13,6 +13,11 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
+#[cfg(test)]
+use parking_lot::{ReentrantMutex, ReentrantMutexGuard};
+#[cfg(test)]
+use std::sync::OnceLock;
+
 use frankenlibc_core::syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::config::SafetyLevel;
@@ -79,6 +84,12 @@ static MODE_EVENT_LOGS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 static FFI_PCC_STATE: AtomicU8 = AtomicU8::new(FFI_PCC_STATE_UNVERIFIED);
 static FFI_PCC_HASH_PREFIX: AtomicU64 = AtomicU64::new(0);
 static FFI_PCC_ROW_COUNT: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(test)]
+pub(crate) fn runtime_policy_test_lock() -> ReentrantMutexGuard<'static, ()> {
+    static LOCK: OnceLock<ReentrantMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| ReentrantMutex::new(())).lock()
+}
 
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
@@ -1635,9 +1646,8 @@ pub mod conformance_testing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use parking_lot::{ReentrantMutex, ReentrantMutexGuard};
+    use parking_lot::ReentrantMutexGuard;
     use std::ffi::OsString;
-    use std::sync::OnceLock;
 
     struct ModeSwitchCounterGuard {
         previous: u64,
@@ -1723,8 +1733,7 @@ mod tests {
     }
 
     fn runtime_policy_test_lock() -> ReentrantMutexGuard<'static, ()> {
-        static LOCK: OnceLock<ReentrantMutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| ReentrantMutex::new(())).lock()
+        super::runtime_policy_test_lock()
     }
 
     fn env_lock() -> ReentrantMutexGuard<'static, ()> {

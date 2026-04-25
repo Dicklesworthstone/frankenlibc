@@ -9,6 +9,7 @@ pub mod conversion;
 pub mod ecvt;
 pub mod env;
 pub mod exit;
+pub mod getbsize;
 pub mod math;
 pub mod random;
 pub mod random48;

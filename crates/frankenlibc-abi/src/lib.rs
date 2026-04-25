@@ -75,9 +75,8 @@ pub mod stdbit_abi;
 
 #[cfg(all(not(test), target_os = "linux"))]
 #[used]
-#[unsafe(no_mangle)]
 #[unsafe(link_section = ".init_array")]
-pub static FRANKENLIBC_ABI_INIT_ARRAY: extern "C" fn() = frankenlibc_abi_stdio_init_entry;
+static FRANKENLIBC_ABI_INIT_ARRAY: extern "C" fn() = frankenlibc_abi_stdio_init_entry;
 
 #[cfg(all(not(test), target_os = "linux"))]
 #[inline(never)]

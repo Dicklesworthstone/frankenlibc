@@ -56,6 +56,8 @@ GLIBC_2.2.5 {
         strerror_r;
         strcoll;
         strxfrm;
+        strmode;
+        strnstr;
         strlcat;
         strlcpy;
         strsep;
@@ -86,6 +88,8 @@ GLIBC_2.2.5 {
         bcopy;
         bzero;
         explicit_bzero;
+        timingsafe_bcmp;
+        timingsafe_memcmp;
 
         /* wide string operations */
         wcscat;
@@ -275,6 +279,8 @@ GLIBC_2.2.5 {
         exit;
         atexit;
         reallocarray;
+        recallocarray;
+        freezero;
         mkostemp;
         mkstemps;
         mkostemps;
@@ -306,6 +312,7 @@ GLIBC_2.2.5 {
         gnu_get_libc_version;
         gnu_get_libc_release;
         confstr;
+        getbsize;
 
         /* ctype internal */
         __ctype_b_loc;
@@ -1064,6 +1071,7 @@ GLIBC_2.2.5 {
         read;
         write;
         close;
+        posix_close;
         open;
         creat;
         lseek;
@@ -1203,12 +1211,16 @@ GLIBC_2.2.5 {
         error;
         error_at_line;
         err;
+        errc;
         errx;
         warn;
+        warnc;
         warnx;
         verr;
+        verrc;
         verrx;
         vwarn;
+        vwarnc;
         vwarnx;
 
         /* system info */
@@ -1487,12 +1499,16 @@ GLIBC_2.2.5 {
 
         /* err.h — BSD/GNU error reporting */
         err;
+        errc;
         errx;
         warn;
+        warnc;
         warnx;
         verr;
+        verrc;
         verrx;
         vwarn;
+        vwarnc;
         vwarnx;
 
         /* search.h — hash table, binary tree, linear search */
@@ -1781,6 +1797,10 @@ GLIBC_2.2.5 {
         sched_rr_get_interval;
 
         /* resolver */
+        __b64_ntop;
+        __b64_pton;
+        b64_ntop;
+        b64_pton;
         res_init;
         res_query;
         res_search;

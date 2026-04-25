@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::ffi::{CString, c_char, c_double, c_int, c_long, c_longlong, c_void};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -442,6 +443,7 @@ pub fn execute_fixture_case(
         "atol" => execute_atol_case(inputs, mode),
         "strtol" => execute_strtol_case(inputs, mode),
         "strtoul" => execute_strtoul_case(inputs, mode),
+        "getbsize" => execute_getbsize_case(inputs, mode),
         "dlopen" => execute_dlopen_case(inputs, mode),
         "dlsym" => execute_dlsym_case(inputs, mode),
         "dlclose" => execute_dlclose_case(inputs, mode),
@@ -6970,6 +6972,83 @@ fn execute_strtoul_case(
         host_parity,
         note: None,
     })
+}
+
+fn getbsize_fixture_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn set_abi_blocksize_env(value: Option<&str>) -> Result<(), String> {
+    let name = CString::new("BLOCKSIZE").expect("static env name has no interior NUL");
+    match value {
+        Some(value) => {
+            let c_value =
+                CString::new(value).map_err(|_| String::from("BLOCKSIZE contains NUL byte"))?;
+            let rc =
+                unsafe { frankenlibc_abi::stdlib_abi::setenv(name.as_ptr(), c_value.as_ptr(), 1) };
+            if rc == 0 {
+                Ok(())
+            } else {
+                Err(String::from("frankenlibc setenv(BLOCKSIZE) failed"))
+            }
+        }
+        None => {
+            let rc = unsafe { frankenlibc_abi::stdlib_abi::unsetenv(name.as_ptr()) };
+            if rc == 0 {
+                Ok(())
+            } else {
+                Err(String::from("frankenlibc unsetenv(BLOCKSIZE) failed"))
+            }
+        }
+    }
+}
+
+fn read_abi_blocksize_env() -> Option<String> {
+    let name = CString::new("BLOCKSIZE").expect("static env name has no interior NUL");
+    let ptr = unsafe { frankenlibc_abi::stdlib_abi::getenv(name.as_ptr()) };
+    if ptr.is_null() {
+        None
+    } else {
+        Some(
+            unsafe { std::ffi::CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned(),
+        )
+    }
+}
+
+fn execute_getbsize_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+
+    let env_value = parse_optional_string(inputs, "blocksize_env")?;
+    let _guard = getbsize_fixture_env_lock();
+    let previous = read_abi_blocksize_env();
+    set_abi_blocksize_env(env_value.as_deref())?;
+
+    let mut header_len: c_int = -1;
+    let mut blocksize: c_long = -1;
+    let ptr = unsafe { frankenlibc_abi::stdlib_abi::getbsize(&mut header_len, &mut blocksize) };
+
+    let impl_output = if ptr.is_null() {
+        String::from("NULL")
+    } else {
+        let header = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy();
+        format!("header={header};header_len={header_len};blocksize={blocksize}")
+    };
+
+    let restore = set_abi_blocksize_env(previous.as_deref());
+    if let Err(err) = restore {
+        return Err(format!("getbsize fixture restore failed: {err}"));
+    }
+
+    Ok(non_host_execution(impl_output))
 }
 
 fn format_iconv_open_error(errno: i32) -> String {

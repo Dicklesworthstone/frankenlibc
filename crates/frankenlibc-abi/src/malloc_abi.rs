@@ -130,7 +130,7 @@ static BUMP_HEAP: BumpHeap = BumpHeap(std::cell::UnsafeCell::new([0u8; BUMP_SIZE
 /// reentry protection as the public allocator entrypoints.
 pub(crate) unsafe fn raw_alloc(size: usize) -> *mut c_void {
     let ptr = unsafe { native_libc_malloc(size) };
-    fallback_insert(ptr);
+    fallback_insert_sized(ptr, size.max(1));
     ptr
 }
 
@@ -584,7 +584,7 @@ unsafe fn native_libc_posix_memalign(
     if ptr.is_null() {
         return ENOMEM as c_int;
     }
-    fallback_insert(ptr);
+    fallback_insert_sized(ptr, req);
     // SAFETY: memptr non-null and caller-provided writable out pointer.
     unsafe { *memptr = ptr };
     0
@@ -1091,10 +1091,6 @@ fn fallback_contains(ptr: *mut c_void) -> bool {
     false
 }
 
-fn fallback_insert(ptr: *mut c_void) {
-    fallback_insert_sized(ptr, 0);
-}
-
 fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
     if ptr.is_null() || is_bump_ptr(ptr) {
         return;
@@ -1196,7 +1192,7 @@ fn fallback_remaining(addr: usize) -> Option<usize> {
         let Some(end) = base.checked_add(size) else {
             continue;
         };
-        if base <= addr && addr <= end {
+        if base <= addr && addr < end {
             return Some(end - addr);
         }
     }
@@ -1358,7 +1354,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         let out = unsafe { native_libc_malloc(size.max(1)) };
-        fallback_insert(out);
+        fallback_insert_sized(out, size.max(1));
         return out;
     };
 
@@ -1609,7 +1605,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         let out = unsafe { native_libc_calloc(nmemb, size) };
-        fallback_insert(out);
+        fallback_insert_sized(out, nmemb.saturating_mul(size).max(1));
         return out;
     };
 
@@ -1673,7 +1669,7 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let out = unsafe { native_libc_calloc(nmemb, size) };
-            fallback_insert(out);
+            fallback_insert_sized(out, total);
             out
         }
     };
@@ -1719,7 +1715,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         let out = unsafe { native_libc_realloc(ptr, size) };
         if !out.is_null() {
             let _ = fallback_remove(ptr);
-            fallback_insert(out);
+            fallback_insert_sized(out, size.max(1));
         }
         return out;
     };
@@ -1744,7 +1740,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
             }
         }
-        fallback_insert(out);
+        fallback_insert_sized(out, size.max(1));
         return out;
     }
 
@@ -1822,7 +1818,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         let out = unsafe { native_libc_realloc(ptr, size) };
         if !out.is_null() {
             let _ = fallback_remove(ptr);
-            fallback_insert(out);
+            fallback_insert_sized(out, size.max(1));
         }
         return out;
     };
@@ -1855,7 +1851,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 let out = unsafe { native_libc_realloc(ptr, size) };
                 if !out.is_null() {
                     let _ = fallback_remove(ptr);
-                    fallback_insert(out);
+                    fallback_insert_sized(out, size.max(1));
                 }
                 record_allocator_stage_outcome(
                     &ordering,
@@ -2021,7 +2017,7 @@ pub unsafe extern "C" fn posix_memalign(
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
             let ptr = unsafe { native_libc_memalign(alignment, req) };
             if !ptr.is_null() {
-                fallback_insert(ptr);
+                fallback_insert_sized(ptr, req);
             }
             ptr
         }
@@ -2077,7 +2073,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
         let out = unsafe { native_libc_memalign(alignment, size) };
-        fallback_insert(out);
+        fallback_insert_sized(out, size.max(1));
         return out;
     };
 
@@ -2111,7 +2107,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
         None => {
             let out = unsafe { native_libc_memalign(alignment, req) };
             if !out.is_null() {
-                fallback_insert(out);
+                fallback_insert_sized(out, req);
             }
             out
         }
@@ -2163,7 +2159,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
         let out = unsafe { native_libc_aligned_alloc(alignment, size) };
-        fallback_insert(out);
+        fallback_insert_sized(out, size.max(1));
         return out;
     };
 
@@ -2197,7 +2193,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
         None => {
             let out = unsafe { native_libc_aligned_alloc(alignment, req) };
             if !out.is_null() {
-                fallback_insert(out);
+                fallback_insert_sized(out, req);
             }
             out
         }

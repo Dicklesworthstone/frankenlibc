@@ -532,12 +532,13 @@ mod tests {
 
     #[test]
     fn longjmp_entrypoint_terminates_with_enosys_payload_in_tests() {
+        let _policy_lock = runtime_policy::runtime_policy_test_lock();
         let mut marker = [0u64; 16];
         let env_ptr = marker.as_mut_ptr().cast::<c_void>();
         let _entry = RegistryEntryGuard {
             env_addr: env_ptr as usize,
         };
-        capture_entrypoint(env_ptr, false);
+        assert_eq!(capture_entrypoint(env_ptr, false), 0);
 
         let result = std::panic::catch_unwind(|| {
             restore_entrypoint(env_ptr, 0, false);
@@ -560,12 +561,13 @@ mod tests {
 
     #[test]
     fn siglongjmp_entrypoint_terminates_with_mask_restore_metadata_in_tests() {
+        let _policy_lock = runtime_policy::runtime_policy_test_lock();
         let mut marker = [0u64; 16];
         let env_ptr = marker.as_mut_ptr().cast::<c_void>();
         let _entry = RegistryEntryGuard {
             env_addr: env_ptr as usize,
         };
-        capture_entrypoint(env_ptr, true);
+        assert_eq!(capture_entrypoint(env_ptr, true), 0);
 
         let result = std::panic::catch_unwind(|| {
             restore_entrypoint(env_ptr, 5, true);

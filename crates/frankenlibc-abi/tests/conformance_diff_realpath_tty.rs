@@ -11,6 +11,7 @@
 use std::ffi::{CStr, CString, c_char, c_int};
 use std::os::fd::AsRawFd;
 
+use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::{stdlib_abi as fl_stdlib, unistd_abi as fl_uni};
 
 unsafe extern "C" {
@@ -34,6 +35,21 @@ fn unique_tempfile(label: &str) -> std::path::PathBuf {
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
     std::env::temp_dir().join(format!("fl_rp_diff_{label}_{pid}_{id}"))
+}
+
+fn reset_errno_slots() {
+    unsafe {
+        *__errno_location() = 0;
+        *libc::__errno_location() = 0;
+    }
+}
+
+fn fl_errno() -> c_int {
+    unsafe { *__errno_location() }
+}
+
+fn host_errno() -> c_int {
+    unsafe { *libc::__errno_location() }
 }
 
 #[test]
@@ -85,14 +101,41 @@ fn diff_realpath_nonexistent_returns_null() {
     let cp = CString::new("/this/path/does/not/exist/xyz").unwrap();
     let mut buf_fl = vec![0i8; libc::PATH_MAX as usize];
     let mut buf_lc = vec![0i8; libc::PATH_MAX as usize];
+    reset_errno_slots();
     let r_fl = unsafe { fl_stdlib::realpath(cp.as_ptr(), buf_fl.as_mut_ptr()) };
+    let e_fl = fl_errno();
+    reset_errno_slots();
     let r_lc = unsafe { realpath(cp.as_ptr(), buf_lc.as_mut_ptr()) };
+    let e_lc = host_errno();
     assert_eq!(
         r_fl.is_null(),
         r_lc.is_null(),
         "realpath nonexistent null-match: fl={r_fl:?}, lc={r_lc:?}"
     );
     assert!(r_fl.is_null(), "realpath nonexistent must return NULL");
+    assert_eq!(e_fl, e_lc, "realpath nonexistent errno divergence");
+}
+
+#[test]
+fn diff_realpath_intermediate_file_errno_matches() {
+    let cp = CString::new("/etc/passwd/not-a-directory").unwrap();
+    let mut buf_fl = vec![0i8; libc::PATH_MAX as usize];
+    let mut buf_lc = vec![0i8; libc::PATH_MAX as usize];
+    reset_errno_slots();
+    let r_fl = unsafe { fl_stdlib::realpath(cp.as_ptr(), buf_fl.as_mut_ptr()) };
+    let e_fl = fl_errno();
+    reset_errno_slots();
+    let r_lc = unsafe { realpath(cp.as_ptr(), buf_lc.as_mut_ptr()) };
+    let e_lc = host_errno();
+    assert!(
+        r_fl.is_null() && r_lc.is_null(),
+        "realpath intermediate-file path should fail: fl={r_fl:?}, lc={r_lc:?}"
+    );
+    assert_eq!(e_lc, libc::ENOTDIR, "host realpath errno changed");
+    assert_eq!(
+        e_fl, e_lc,
+        "realpath intermediate-file errno divergence: fl={e_fl}, lc={e_lc}"
+    );
 }
 
 #[test]

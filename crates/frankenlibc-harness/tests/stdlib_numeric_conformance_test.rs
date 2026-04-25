@@ -1,6 +1,6 @@
 //! stdlib numeric operations conformance test suite.
 //!
-//! Validates POSIX/C11 stdlib.h numeric functions: atoi, atol, strtol, strtoul.
+//! Validates POSIX/C11 stdlib.h numeric functions plus BSD libutil getbsize.
 //! Run: cargo test -p frankenlibc-harness --test stdlib_numeric_conformance_test
 
 use serde::Deserialize;
@@ -213,6 +213,55 @@ fn stdlib_numeric_covers_strtoul() {
     );
 }
 
+#[test]
+fn stdlib_numeric_covers_getbsize() {
+    let fixture = load_fixture("stdlib_numeric");
+    let cases: Vec<&FixtureCase> = fixture
+        .cases
+        .iter()
+        .filter(|case| case.function == "getbsize")
+        .collect();
+
+    assert!(
+        cases.len() >= 5,
+        "getbsize needs default, suffix, clamp, and fallback cases"
+    );
+    assert!(
+        cases.iter().any(|case| case.name.contains("default")),
+        "getbsize needs default BLOCKSIZE coverage"
+    );
+    assert!(
+        cases.iter().any(|case| case.name.contains("clamps")),
+        "getbsize needs clamp coverage"
+    );
+    assert!(
+        cases.iter().any(|case| case.name.contains("empty_env")),
+        "getbsize needs empty BLOCKSIZE fallback coverage"
+    );
+    assert!(
+        cases
+            .iter()
+            .any(|case| case.name.contains("lowercase_k_suffix")),
+        "getbsize needs lowercase suffix normalization coverage"
+    );
+    assert!(
+        cases.iter().any(|case| case.name.contains("plus_prefixed")),
+        "getbsize needs signed-prefix suffix coverage"
+    );
+    assert!(
+        cases
+            .iter()
+            .any(|case| case.name.contains("implicit_one_unit")),
+        "getbsize needs bare unit suffix coverage"
+    );
+    assert!(
+        cases
+            .iter()
+            .any(|case| case.name.contains("negative_zero_unit")),
+        "getbsize needs signed zero suffix coverage"
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Error code validation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -309,8 +358,10 @@ fn stdlib_numeric_has_spec_references() {
 
     for case in &fixture.cases {
         assert!(
-            case.spec_section.contains("POSIX") || case.spec_section.contains("C"),
-            "Case {} spec_section should reference POSIX or C standard: {}",
+            case.spec_section.contains("POSIX")
+                || case.spec_section.contains("C")
+                || case.spec_section.contains("BSD"),
+            "Case {} spec_section should reference POSIX, C, or BSD standard/source contract: {}",
             case.name,
             case.spec_section
         );
