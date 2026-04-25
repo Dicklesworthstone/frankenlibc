@@ -313,12 +313,26 @@ fn record_resolver_stage_outcome(
     );
 }
 
-unsafe fn opt_cstr<'a>(ptr: *const c_char) -> Option<&'a CStr> {
+unsafe fn opt_cstr<'a>(ptr: *const c_char) -> Result<Option<&'a CStr>, ()> {
     if ptr.is_null() {
-        return None;
+        return Ok(None);
     }
-    // SAFETY: caller-provided C string pointer.
-    Some(unsafe { CStr::from_ptr(ptr) })
+    // SAFETY: caller supplies a C-string pointer; known allocator bounds stop
+    // the scan before the end of tracked malloc-backed objects.
+    let (len, terminated) =
+        unsafe { crate::util::scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return Err(());
+    }
+    let Some(slice_len) = len.checked_add(1) else {
+        return Err(());
+    };
+    // SAFETY: scan_c_string found a NUL at len, so len + 1 bytes are readable
+    // under the same C-string precondition and include exactly the terminator.
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), slice_len) };
+    // SAFETY: the slice ends at the first observed NUL, so it has a single
+    // trailing terminator and no interior NUL bytes.
+    Ok(Some(unsafe { CStr::from_bytes_with_nul_unchecked(bytes) }))
 }
 
 enum HostsAddress {
@@ -685,6 +699,13 @@ unsafe fn build_addrinfo_v6(
     ai_ptr
 }
 
+unsafe fn free_addrinfo_node(node: *mut libc::addrinfo) {
+    if !node.is_null() {
+        // SAFETY: node is a single addrinfo allocation owned by this resolver path.
+        unsafe { crate::malloc_abi::free(node.cast::<c_void>()) };
+    }
+}
+
 unsafe fn write_c_buffer(
     out: *mut c_char,
     out_len: libc::socklen_t,
@@ -1018,10 +1039,35 @@ pub unsafe extern "C" fn getaddrinfo(
     }
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
 
-    // SAFETY: optional C-string arguments follow getaddrinfo contract.
-    let node_cstr = unsafe { opt_cstr(node) };
-    // SAFETY: optional C-string arguments follow getaddrinfo contract.
-    let service_cstr = unsafe { opt_cstr(service) };
+    // SAFETY: getaddrinfo accepts optional C-string pointers; opt_cstr
+    // validates tracked allocation bounds before producing a CStr view.
+    let node_cstr = match unsafe { opt_cstr(node) } {
+        Ok(value) => value,
+        Err(()) => {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_FAIL;
+        }
+    };
+    // SAFETY: service follows the same optional C-string contract as node.
+    let service_cstr = match unsafe { opt_cstr(service) } {
+        Ok(value) => value,
+        Err(()) => {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_SERVICE;
+        }
+    };
     let hints_ref = if hints.is_null() {
         None
     } else {
@@ -1137,13 +1183,21 @@ pub unsafe extern "C" fn getaddrinfo(
         && let Some(state) = read_addrconfig_state_snapshot()
     {
         let unfiltered = nodes.len();
-        nodes.retain(|node| {
+        let mut filtered = Vec::with_capacity(nodes.len());
+        for node in nodes {
             if node.is_null() {
-                return true;
+                filtered.push(node);
+                continue;
             }
             // SAFETY: non-null nodes were allocated as libc::addrinfo-compatible records.
-            state.supports_family(unsafe { (**node).ai_family })
-        });
+            if state.supports_family(unsafe { (*node).ai_family }) {
+                filtered.push(node);
+            } else {
+                // SAFETY: filtered-out node is not returned to the caller.
+                unsafe { free_addrinfo_node(node) };
+            }
+        }
+        nodes = filtered;
         if nodes.is_empty() && unfiltered != 0 {
             record_resolver_stage_outcome(
                 &ordering,
@@ -1154,6 +1208,22 @@ pub unsafe extern "C" fn getaddrinfo(
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
             return libc::EAI_NONAME;
         }
+    }
+
+    if nodes.iter().any(|node| node.is_null()) {
+        for node in nodes {
+            // SAFETY: non-null nodes in this local vector are not returned after
+            // the allocation failure path.
+            unsafe { free_addrinfo_node(node) };
+        }
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_MEMORY;
     }
 
     // Chain the nodes together.
@@ -1221,12 +1291,7 @@ pub unsafe extern "C" fn freeaddrinfo(res: *mut libc::addrinfo) {
         }
 
         // SAFETY: node ownership belongs to caller of freeaddrinfo.
-        unsafe {
-            // Note: because we might receive addrinfo objects allocated by glibc or by our
-            // own contiguous alloc logic, we must use the standard free mechanism (which is
-            // libc::free under the hood, or our own allocator via process LD_PRELOAD).
-            crate::malloc_abi::free(cur.cast::<c_void>());
-        }
+        unsafe { free_addrinfo_node(cur) };
         cur = next;
     }
     record_resolver_stage_outcome(&ordering, aligned, recent_page, None);
@@ -1479,8 +1544,19 @@ pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut c_void {
     }
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    // SAFETY: optional C string pointer follows gethostbyname contract.
-    let name_cstr = unsafe { opt_cstr(name) };
+    // SAFETY: gethostbyname requires a C-string name; opt_cstr rejects known
+    // malloc-backed unterminated inputs before creating the view.
+    let name_cstr = match unsafe { opt_cstr(name) } {
+        Ok(value) => value,
+        Err(()) => {
+            // SAFETY: null h_errnop means only thread-local h_errno is updated.
+            unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
+            // SAFETY: updates ABI errno TLS for the current thread.
+            unsafe { set_abi_errno(frankenlibc_core::errno::EINVAL) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+            return ptr::null_mut();
+        }
+    };
     let Some((resolved_name, addr)) = resolve_gethostbyname_target(name_cstr, repair) else {
         unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
@@ -1522,8 +1598,16 @@ pub(crate) unsafe fn gethostbyname_r_impl(
     }
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    // SAFETY: optional C string pointer follows gethostbyname_r contract.
-    let name_cstr = unsafe { opt_cstr(name) };
+    // SAFETY: gethostbyname_r has the same C-string name contract.
+    let name_cstr = match unsafe { opt_cstr(name) } {
+        Ok(value) => value,
+        Err(()) => {
+            // SAFETY: h_errnop is the optional caller-provided h_errno pointer.
+            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EINVAL;
+        }
+    };
     let Some((resolved_name, addr)) = resolve_gethostbyname_target(name_cstr, repair) else {
         // SAFETY: optional h_errno pointer from caller.
         unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
@@ -1692,7 +1776,7 @@ pub unsafe extern "C" fn gethostbyaddr(
 /// POSIX `getservbyname` — look up a service by name in /etc/services.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char) -> *mut c_void {
-    let (safety_mode, decision) = runtime_policy::decide(
+    let (_, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         name as usize,
         0,
@@ -1710,17 +1794,10 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
         return ptr::null_mut();
     }
 
-    let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
-    let (name_len, name_terminated) = unsafe {
-        crate::util::scan_c_string(
-            name,
-            if repair {
-                known_remaining(name as usize)
-            } else {
-                None
-            },
-        )
-    };
+    // SAFETY: name is non-null and follows getservbyname's C-string contract;
+    // known_remaining bounds tracked malloc-backed inputs.
+    let (name_len, name_terminated) =
+        unsafe { crate::util::scan_c_string(name, known_remaining(name as usize)) };
     if !name_terminated {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
         return ptr::null_mut();
@@ -1730,16 +1807,10 @@ pub unsafe extern "C" fn getservbyname(name: *const c_char, proto: *const c_char
     let proto_filter = if proto.is_null() {
         None
     } else {
-        let (proto_len, proto_terminated) = unsafe {
-            crate::util::scan_c_string(
-                proto,
-                if repair {
-                    known_remaining(proto as usize)
-                } else {
-                    None
-                },
-            )
-        };
+        // SAFETY: proto is non-null in this branch and has getservbyname's
+        // optional C-string contract.
+        let (proto_len, proto_terminated) =
+            unsafe { crate::util::scan_c_string(proto, known_remaining(proto as usize)) };
         if !proto_terminated {
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
             return ptr::null_mut();
@@ -1822,10 +1893,14 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
 
     let port_host = u16::from_be(port as u16);
 
-    let proto_filter = if proto.is_null() {
-        None
-    } else {
-        Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
+    // SAFETY: proto is optional; opt_cstr returns None for null and rejects
+    // known unterminated storage before any bytes are borrowed.
+    let proto_filter = match unsafe { opt_cstr(proto) } {
+        Ok(value) => value.map(CStr::to_bytes),
+        Err(()) => {
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
     };
 
     let content = match read_services_backend() {
@@ -1877,7 +1952,7 @@ pub unsafe extern "C" fn getservbyport(port: c_int, proto: *const c_char) -> *mu
 /// POSIX `getprotobyname` — look up a protocol by name in /etc/protocols.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
-    let (safety_mode, decision) = runtime_policy::decide(
+    let (_, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         name as usize,
         0,
@@ -1895,17 +1970,10 @@ pub unsafe extern "C" fn getprotobyname(name: *const c_char) -> *mut c_void {
         return ptr::null_mut();
     }
 
-    let repair = repair_enabled(safety_mode.heals_enabled(), decision.action);
-    let (name_len, name_terminated) = unsafe {
-        crate::util::scan_c_string(
-            name,
-            if repair {
-                known_remaining(name as usize)
-            } else {
-                None
-            },
-        )
-    };
+    // SAFETY: name is non-null and follows getprotobyname's C-string contract;
+    // known_remaining bounds tracked malloc-backed inputs.
+    let (name_len, name_terminated) =
+        unsafe { crate::util::scan_c_string(name, known_remaining(name as usize)) };
     if !name_terminated {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
         return ptr::null_mut();

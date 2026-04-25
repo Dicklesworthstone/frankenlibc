@@ -13,6 +13,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::inet_abi;
+use frankenlibc_abi::malloc_abi;
 use frankenlibc_abi::resolv_abi;
 
 const HOST_NOT_FOUND_ERRNO: i32 = 1;
@@ -138,6 +139,39 @@ fn services_alias_fixture() -> Option<(CString, CString, u16)> {
         CString::new(entry.protocol.clone()).ok()?,
         entry.port,
     ))
+}
+
+struct MallocCBuffer {
+    ptr: *mut c_char,
+}
+
+impl MallocCBuffer {
+    fn as_ptr(&self) -> *const c_char {
+        self.ptr.cast_const()
+    }
+}
+
+impl Drop for MallocCBuffer {
+    fn drop(&mut self) {
+        // SAFETY: ptr was allocated by malloc_unterminated and is freed once by this guard.
+        unsafe { malloc_abi::free(self.ptr.cast::<c_void>()) };
+    }
+}
+
+fn malloc_unterminated(bytes: &[u8]) -> MallocCBuffer {
+    assert!(
+        !bytes.is_empty() && !bytes.contains(&0),
+        "fixture must be non-empty and unterminated"
+    );
+    // SAFETY: allocation size is non-zero and checked for null before use.
+    let ptr = unsafe { malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!ptr.is_null(), "malloc-backed fixture should allocate");
+    // SAFETY: ptr points to bytes.len() writable bytes allocated above, and
+    // source and destination do not overlap.
+    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
+    MallocCBuffer {
+        ptr: ptr.cast::<c_char>(),
+    }
 }
 
 // ===========================================================================
@@ -449,6 +483,20 @@ fn getaddrinfo_null_result_returns_error() {
         resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), ptr::null(), ptr::null_mut())
     };
     assert_ne!(rc, 0, "getaddrinfo with null result pointer should fail");
+}
+
+#[test]
+fn getaddrinfo_rejects_known_unterminated_node() {
+    with_resolver_lock(|| {
+        let node = malloc_unterminated(b"127.0.0.1");
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), ptr::null(), &mut res) };
+
+        assert_ne!(rc, 0, "unterminated malloc-backed node must fail");
+        assert!(res.is_null());
+    });
 }
 
 #[test]
@@ -976,6 +1024,18 @@ fn getservbyname_null_name_returns_null() {
 }
 
 #[test]
+fn getservbyname_rejects_known_unterminated_name() {
+    with_resolver_lock(|| {
+        let name = malloc_unterminated(b"ssh");
+        let proto = CString::new("tcp").unwrap();
+
+        let ptr = unsafe { resolv_abi::getservbyname(name.as_ptr(), proto.as_ptr()) };
+
+        assert!(ptr.is_null());
+    });
+}
+
+#[test]
 fn getservbyname_nonexistent_returns_null() {
     with_resolver_lock(|| {
         let name = CString::new("nonexistent_service_zzz").unwrap();
@@ -1075,6 +1135,18 @@ fn getservbyport_nonexistent_returns_null() {
 }
 
 #[test]
+fn getservbyport_rejects_known_unterminated_proto() {
+    with_resolver_lock(|| {
+        let port_net = (22u16).to_be() as c_int;
+        let proto = malloc_unterminated(b"tcp");
+
+        let ptr = unsafe { resolv_abi::getservbyport(port_net, proto.as_ptr()) };
+
+        assert!(ptr.is_null());
+    });
+}
+
+#[test]
 fn getservbyport_reads_updated_overridden_services_backend() {
     with_resolver_backends(None, Some(b"fixture-old 4242/tcp\n"), |paths| {
         let port_net = (4242u16).to_be() as c_int;
@@ -1138,6 +1210,13 @@ fn getprotobyname_icmp_resolves() {
 #[test]
 fn getprotobyname_null_returns_null() {
     let ptr = unsafe { resolv_abi::getprotobyname(ptr::null()) };
+    assert!(ptr.is_null());
+}
+
+#[test]
+fn getprotobyname_rejects_known_unterminated_name() {
+    let name = malloc_unterminated(b"tcp");
+    let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
     assert!(ptr.is_null());
 }
 
