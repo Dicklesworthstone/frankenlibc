@@ -4,6 +4,8 @@
 //! human-readable IP addresses and binary network representations.
 //! All logic is safe Rust with no syscalls.
 
+pub mod nsap;
+
 use crate::socket::{AF_INET, AF_INET6};
 
 /// Returned by `inet_addr` on parse failure (also `INADDR_BROADCAST`).

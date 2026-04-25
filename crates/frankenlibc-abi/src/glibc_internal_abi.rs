@@ -2557,44 +2557,12 @@ pub unsafe extern "C" fn inet_nsap_addr(
     buf: *mut c_void,
     buflen: c_int,
 ) -> c_uint {
-    if cp.is_null() || buf.is_null() {
+    if cp.is_null() || buf.is_null() || buflen <= 0 {
         return 0;
     }
-    let s = unsafe { std::ffi::CStr::from_ptr(cp) }.to_bytes();
-    let dst = buf as *mut u8;
-    let mut i = 0usize; // index into source
-    let mut o = 0usize; // index into output
-    // Skip optional "0x" prefix
-    if s.len() >= 2 && s[0] == b'0' && (s[1] == b'x' || s[1] == b'X') {
-        i = 2;
-    }
-    while i < s.len() && (o as c_int) < buflen {
-        // Skip dots and whitespace
-        if s[i] == b'.' || s[i] == b' ' {
-            i += 1;
-            continue;
-        }
-        let hi = match s[i] {
-            b'0'..=b'9' => s[i] - b'0',
-            b'a'..=b'f' => s[i] - b'a' + 10,
-            b'A'..=b'F' => s[i] - b'A' + 10,
-            _ => return 0, // invalid hex char
-        };
-        i += 1;
-        if i >= s.len() {
-            return 0; // odd number of hex digits
-        }
-        let lo = match s[i] {
-            b'0'..=b'9' => s[i] - b'0',
-            b'a'..=b'f' => s[i] - b'a' + 10,
-            b'A'..=b'F' => s[i] - b'A' + 10,
-            _ => return 0,
-        };
-        i += 1;
-        unsafe { *dst.add(o) = (hi << 4) | lo };
-        o += 1;
-    }
-    o as c_uint
+    let text = unsafe { std::ffi::CStr::from_ptr(cp) }.to_bytes();
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen as usize) };
+    frankenlibc_core::inet::nsap::parse_nsap_addr(text, dst) as c_uint
 }
 // inet_nsap_ntoa: convert binary NSAP address to hex string
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2603,6 +2571,9 @@ pub unsafe extern "C" fn inet_nsap_ntoa(
     cp: *const c_void,
     buf: *mut c_char,
 ) -> *mut c_char {
+    // Static fallback buffer when caller passes NULL buf — preserves
+    // glibc semantics. 512 bytes accommodates any reasonable NSAP
+    // address (up to 20 bytes -> 59 char output + NUL).
     static NSAP_BUF: std::sync::Mutex<[u8; 512]> = std::sync::Mutex::new([0u8; 512]);
     let dst = if buf.is_null() {
         let mut b = NSAP_BUF.lock().unwrap_or_else(|e| e.into_inner());
@@ -2610,21 +2581,16 @@ pub unsafe extern "C" fn inet_nsap_ntoa(
     } else {
         buf
     };
-    let src = cp as *const u8;
-    let hex = b"0123456789abcdef";
-    let mut o = 0usize;
-    for i in 0..(len as usize) {
-        if i > 0 {
-            unsafe { *dst.add(o) = b'.' as c_char };
-            o += 1;
-        }
-        let byte = unsafe { *src.add(i) };
-        unsafe { *dst.add(o) = hex[(byte >> 4) as usize] as c_char };
-        o += 1;
-        unsafe { *dst.add(o) = hex[(byte & 0x0f) as usize] as c_char };
-        o += 1;
+    if cp.is_null() || len < 0 {
+        unsafe { *dst = 0 };
+        return dst;
     }
-    unsafe { *dst.add(o) = 0 };
+    let src = unsafe { std::slice::from_raw_parts(cp as *const u8, len as usize) };
+    let formatted = frankenlibc_core::inet::nsap::format_nsap_addr(src);
+    unsafe {
+        std::ptr::copy_nonoverlapping(formatted.as_ptr(), dst as *mut u8, formatted.len());
+        *dst.add(formatted.len()) = 0;
+    }
     dst
 }
 // __inet_ntop_chk: fortified inet_ntop with buffer size validation
