@@ -3,6 +3,77 @@
 //! Implements `<wchar.h>` / `<stdlib.h>` conversion functions assuming UTF-8
 //! encoding. This is appropriate for the "C.UTF-8" / "POSIX.UTF-8" locale.
 
+/// Unicode "REPLACEMENT CHARACTER" — emitted by [`decode_utf8_lossy`]
+/// for malformed sequences instead of returning an error.
+pub const REPLACEMENT_CODEPOINT: u32 = 0xFFFD;
+
+/// Lossy UTF-8 decode: like [`mbtowc`] but never returns `None`.
+///
+/// Returns `(codepoint, bytes_consumed)` where `codepoint` is the
+/// decoded scalar value for a well-formed sequence, or
+/// [`REPLACEMENT_CODEPOINT`] (`U+FFFD`) for invalid/incomplete input.
+/// On invalid input the consumed-bytes count is the smaller of:
+///   - 1 (continuation-without-lead, empty input, invalid lead byte),
+///   - the candidate sequence length when the lead byte is valid but
+///     a continuation byte is missing/wrong, or
+///   - the full candidate length when the value is rejected for
+///     being overlong / a surrogate / above U+10FFFF.
+///
+/// The "advance past the malformed sequence" guarantee lets callers
+/// walk a buffer end-to-end via `i += n` without getting stuck on
+/// garbage — useful for display / display-width / printf-render
+/// paths where strict rejection would block forward progress.
+pub fn decode_utf8_lossy(bytes: &[u8]) -> (u32, usize) {
+    if bytes.is_empty() {
+        return (REPLACEMENT_CODEPOINT, 1);
+    }
+    let b0 = bytes[0];
+    if b0 < 0x80 {
+        return (b0 as u32, 1);
+    }
+    if b0 < 0xC0 {
+        return (REPLACEMENT_CODEPOINT, 1); // continuation byte without lead
+    }
+
+    let is_cont = |b: u8| (b & 0xC0) == 0x80;
+
+    if b0 < 0xE0 {
+        if bytes.len() < 2 || !is_cont(bytes[1]) {
+            return (REPLACEMENT_CODEPOINT, 1);
+        }
+        let cp = ((b0 as u32 & 0x1F) << 6) | (bytes[1] as u32 & 0x3F);
+        if cp < 0x80 {
+            return (REPLACEMENT_CODEPOINT, 2);
+        }
+        (cp, 2)
+    } else if b0 < 0xF0 {
+        if bytes.len() < 3 || !is_cont(bytes[1]) || !is_cont(bytes[2]) {
+            return (REPLACEMENT_CODEPOINT, 1);
+        }
+        let cp =
+            ((b0 as u32 & 0x0F) << 12) | ((bytes[1] as u32 & 0x3F) << 6) | (bytes[2] as u32 & 0x3F);
+        if cp < 0x800 || (0xD800..=0xDFFF).contains(&cp) {
+            return (REPLACEMENT_CODEPOINT, 3);
+        }
+        (cp, 3)
+    } else if b0 < 0xF8 {
+        if bytes.len() < 4 || !is_cont(bytes[1]) || !is_cont(bytes[2]) || !is_cont(bytes[3]) {
+            return (REPLACEMENT_CODEPOINT, 1);
+        }
+        let cp = ((b0 as u32 & 0x07) << 18)
+            | ((bytes[1] as u32 & 0x3F) << 12)
+            | ((bytes[2] as u32 & 0x3F) << 6)
+            | (bytes[3] as u32 & 0x3F);
+        if !(0x10000..=0x10FFFF).contains(&cp) {
+            return (REPLACEMENT_CODEPOINT, 4);
+        }
+        (cp, 4)
+    } else {
+        // 0xF8..=0xFF: invalid lead byte (5/6-byte UTF-8 forbidden by RFC 3629).
+        (REPLACEMENT_CODEPOINT, 1)
+    }
+}
+
 /// Decode one UTF-8 character from `src`, returning `(wchar, bytes_consumed)`.
 ///
 /// Returns `None` on invalid or incomplete sequence, or if `src` is empty.
@@ -352,5 +423,165 @@ mod tests {
     #[test]
     fn wcwidth_control() {
         assert_eq!(wcwidth(0x01), -1);
+    }
+
+    // ---- decode_utf8_lossy ----
+
+    #[test]
+    fn lossy_ascii() {
+        for c in 0u8..=0x7F {
+            assert_eq!(decode_utf8_lossy(&[c]), (c as u32, 1));
+        }
+    }
+
+    #[test]
+    fn lossy_two_byte_sequence() {
+        // U+00A0 = NO-BREAK SPACE = 0xC2 0xA0
+        assert_eq!(decode_utf8_lossy(&[0xC2, 0xA0]), (0x00A0, 2));
+        // U+07FF = highest 2-byte = 0xDF 0xBF
+        assert_eq!(decode_utf8_lossy(&[0xDF, 0xBF]), (0x07FF, 2));
+    }
+
+    #[test]
+    fn lossy_three_byte_sequence() {
+        // U+0800 = lowest 3-byte = 0xE0 0xA0 0x80
+        assert_eq!(decode_utf8_lossy(&[0xE0, 0xA0, 0x80]), (0x0800, 3));
+        // U+FFFD itself = 0xEF 0xBF 0xBD
+        assert_eq!(
+            decode_utf8_lossy(&[0xEF, 0xBF, 0xBD]),
+            (REPLACEMENT_CODEPOINT, 3)
+        );
+    }
+
+    #[test]
+    fn lossy_four_byte_sequence() {
+        // U+10000 = lowest 4-byte = 0xF0 0x90 0x80 0x80
+        assert_eq!(decode_utf8_lossy(&[0xF0, 0x90, 0x80, 0x80]), (0x10000, 4));
+        // U+10FFFF = highest valid = 0xF4 0x8F 0xBF 0xBF
+        assert_eq!(decode_utf8_lossy(&[0xF4, 0x8F, 0xBF, 0xBF]), (0x10FFFF, 4));
+    }
+
+    #[test]
+    fn lossy_empty_input_yields_replacement_with_advance_one() {
+        assert_eq!(decode_utf8_lossy(&[]), (REPLACEMENT_CODEPOINT, 1));
+    }
+
+    #[test]
+    fn lossy_continuation_without_lead() {
+        for b in [0x80u8, 0xA5, 0xBF] {
+            assert_eq!(decode_utf8_lossy(&[b]), (REPLACEMENT_CODEPOINT, 1));
+        }
+    }
+
+    #[test]
+    fn lossy_invalid_lead_byte() {
+        // 0xF8..=0xFF are RFC 3629-forbidden lead bytes.
+        for b in [0xF8u8, 0xFC, 0xFE, 0xFF] {
+            assert_eq!(
+                decode_utf8_lossy(&[b, 0x80, 0x80, 0x80]),
+                (REPLACEMENT_CODEPOINT, 1)
+            );
+        }
+    }
+
+    #[test]
+    fn lossy_overlong_two_byte_rejected_with_full_advance() {
+        // 0xC0 0x80 would decode U+0000 (overlong NUL) — rejected, but
+        // we still consume both bytes so the caller advances past the
+        // malformed sequence.
+        assert_eq!(decode_utf8_lossy(&[0xC0, 0x80]), (REPLACEMENT_CODEPOINT, 2));
+        // 0xC1 0xBF → overlong U+007F.
+        assert_eq!(decode_utf8_lossy(&[0xC1, 0xBF]), (REPLACEMENT_CODEPOINT, 2));
+    }
+
+    #[test]
+    fn lossy_overlong_three_byte_rejected() {
+        // 0xE0 0x80 0x80 → overlong U+0000.
+        assert_eq!(
+            decode_utf8_lossy(&[0xE0, 0x80, 0x80]),
+            (REPLACEMENT_CODEPOINT, 3)
+        );
+    }
+
+    #[test]
+    fn lossy_surrogate_rejected() {
+        // 0xED 0xA0 0x80 → U+D800 (surrogate).
+        assert_eq!(
+            decode_utf8_lossy(&[0xED, 0xA0, 0x80]),
+            (REPLACEMENT_CODEPOINT, 3)
+        );
+        // 0xED 0xBF 0xBF → U+DFFF (high-surrogate end).
+        assert_eq!(
+            decode_utf8_lossy(&[0xED, 0xBF, 0xBF]),
+            (REPLACEMENT_CODEPOINT, 3)
+        );
+    }
+
+    #[test]
+    fn lossy_above_max_unicode_rejected() {
+        // 0xF4 0x90 0x80 0x80 → U+110000 (one past max).
+        assert_eq!(
+            decode_utf8_lossy(&[0xF4, 0x90, 0x80, 0x80]),
+            (REPLACEMENT_CODEPOINT, 4)
+        );
+    }
+
+    #[test]
+    fn lossy_truncated_two_byte() {
+        assert_eq!(decode_utf8_lossy(&[0xC2]), (REPLACEMENT_CODEPOINT, 1));
+    }
+
+    #[test]
+    fn lossy_truncated_three_byte() {
+        assert_eq!(decode_utf8_lossy(&[0xE0]), (REPLACEMENT_CODEPOINT, 1));
+        assert_eq!(decode_utf8_lossy(&[0xE0, 0xA0]), (REPLACEMENT_CODEPOINT, 1));
+    }
+
+    #[test]
+    fn lossy_truncated_four_byte() {
+        assert_eq!(decode_utf8_lossy(&[0xF0]), (REPLACEMENT_CODEPOINT, 1));
+        assert_eq!(decode_utf8_lossy(&[0xF0, 0x90]), (REPLACEMENT_CODEPOINT, 1));
+        assert_eq!(
+            decode_utf8_lossy(&[0xF0, 0x90, 0x80]),
+            (REPLACEMENT_CODEPOINT, 1)
+        );
+    }
+
+    #[test]
+    fn lossy_invalid_continuation_byte() {
+        // 0xC2 followed by ASCII (not 0x80..=0xBF) — bad continuation.
+        assert_eq!(decode_utf8_lossy(&[0xC2, 0x41]), (REPLACEMENT_CODEPOINT, 1));
+        // 0xE0 0xA0 followed by ASCII.
+        assert_eq!(
+            decode_utf8_lossy(&[0xE0, 0xA0, 0x41]),
+            (REPLACEMENT_CODEPOINT, 1)
+        );
+    }
+
+    #[test]
+    fn lossy_walks_mixed_valid_and_invalid_stream_to_completion() {
+        // "A" (ASCII) + invalid 0xC0 0x80 (overlong) + "ñ" (U+00F1
+        // = 0xC3 0xB1) + truncated 0xE0 + ASCII tail "Z".
+        let stream: &[u8] = &[0x41, 0xC0, 0x80, 0xC3, 0xB1, 0xE0, 0x5A];
+        let mut i = 0;
+        let mut out: Vec<u32> = Vec::new();
+        while i < stream.len() {
+            let (cp, n) = decode_utf8_lossy(&stream[i..]);
+            out.push(cp);
+            i += n;
+        }
+        assert_eq!(
+            out,
+            vec![
+                0x41,                  // 'A'
+                REPLACEMENT_CODEPOINT, // overlong 0xC0 0x80
+                0x00F1,                // 'ñ'
+                REPLACEMENT_CODEPOINT, // truncated 0xE0 (1 byte advanced)
+                0x5A                   // 'Z'
+            ]
+        );
+        // Importantly the loop terminates — every iteration advances by
+        // at least 1 byte.
+        assert_eq!(i, stream.len());
     }
 }

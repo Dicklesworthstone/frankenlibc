@@ -2586,60 +2586,9 @@ fn narrow_to_wide_count(narrow: &[u8]) -> usize {
     count
 }
 
-/// Decode one UTF-8 code point, returning (code_point, bytes_consumed).
-fn decode_utf8(bytes: &[u8]) -> (u32, usize) {
-    if bytes.is_empty() {
-        return (0xFFFD, 1);
-    }
-    let b0 = bytes[0];
-    if b0 < 0x80 {
-        return (b0 as u32, 1);
-    }
-    if b0 < 0xC0 {
-        return (0xFFFD, 1); // Continuation byte without lead.
-    }
-
-    // Validate continuation byte: must be 10xxxxxx (0x80..=0xBF).
-    let is_cont = |b: u8| (b & 0xC0) == 0x80;
-
-    if b0 < 0xE0 {
-        if bytes.len() < 2 || !is_cont(bytes[1]) {
-            return (0xFFFD, 1);
-        }
-        let cp = ((b0 as u32 & 0x1F) << 6) | (bytes[1] as u32 & 0x3F);
-        // Reject overlong: 2-byte must encode >= 0x80
-        if cp < 0x80 {
-            return (0xFFFD, 2);
-        }
-        (cp, 2)
-    } else if b0 < 0xF0 {
-        if bytes.len() < 3 || !is_cont(bytes[1]) || !is_cont(bytes[2]) {
-            return (0xFFFD, 1);
-        }
-        let cp =
-            ((b0 as u32 & 0x0F) << 12) | ((bytes[1] as u32 & 0x3F) << 6) | (bytes[2] as u32 & 0x3F);
-        // Reject overlong: 3-byte must encode >= 0x800
-        // Reject surrogates: 0xD800..=0xDFFF
-        if cp < 0x800 || (0xD800..=0xDFFF).contains(&cp) {
-            return (0xFFFD, 3);
-        }
-        (cp, 3)
-    } else {
-        if bytes.len() < 4 || !is_cont(bytes[1]) || !is_cont(bytes[2]) || !is_cont(bytes[3]) {
-            return (0xFFFD, 1);
-        }
-        let cp = ((b0 as u32 & 0x07) << 18)
-            | ((bytes[1] as u32 & 0x3F) << 12)
-            | ((bytes[2] as u32 & 0x3F) << 6)
-            | (bytes[3] as u32 & 0x3F);
-        // Reject overlong: 4-byte must encode >= 0x10000
-        // Reject above Unicode max: > 0x10FFFF
-        if !(0x10000..=0x10FFFF).contains(&cp) {
-            return (0xFFFD, 4);
-        }
-        (cp, 4)
-    }
-}
+// decode_utf8 moved to frankenlibc_core::string::wchar::decode_utf8_lossy.
+// Use the alias below at the two call sites so they read identically.
+use frankenlibc_core::string::wchar::decode_utf8_lossy as decode_utf8;
 
 /// Read a NUL-terminated wide string into a Vec of bytes (each wchar treated as byte value).
 /// Used for swscanf input: converts wide input to narrow for the scanf engine.
