@@ -1692,7 +1692,7 @@ fn runtime_decision_path(action: MembraneAction) -> &'static str {
 /// Overwrite-on-full decision-card ring buffer.
 pub struct DecisionCardRingBuffer<const CAP: usize> {
     next_decision_id: AtomicU64,
-    slots: [DecisionCardSlot; CAP],
+    slots: Vec<DecisionCardSlot>,
 }
 
 struct DecisionCardSlot {
@@ -1718,9 +1718,13 @@ impl<const CAP: usize> Default for DecisionCardRingBuffer<CAP> {
 impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
     #[must_use]
     pub fn new() -> Self {
+        let mut slots = Vec::with_capacity(CAP);
+        for _ in 0..CAP {
+            slots.push(DecisionCardSlot::new());
+        }
         Self {
             next_decision_id: AtomicU64::new(0),
-            slots: core::array::from_fn(|_| DecisionCardSlot::new()),
+            slots,
         }
     }
 
@@ -1786,7 +1790,7 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
 /// 3. re-read published `seqno` with `Acquire` and accept iff unchanged
 pub struct EvidenceRingBuffer<const CAP: usize> {
     next_seqno: AtomicU64,
-    slots: [EvidenceSlot; CAP],
+    slots: Vec<EvidenceSlot>,
 }
 
 struct EvidenceSlot {
@@ -1813,9 +1817,13 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
     #[must_use]
     pub fn new() -> Self {
         // CAP is expected to be a smallish power of two, but we don't require it.
+        let mut slots = Vec::with_capacity(CAP);
+        for _ in 0..CAP {
+            slots.push(EvidenceSlot::new());
+        }
         Self {
             next_seqno: AtomicU64::new(0),
-            slots: core::array::from_fn(|_| EvidenceSlot::new()),
+            slots,
         }
     }
 
