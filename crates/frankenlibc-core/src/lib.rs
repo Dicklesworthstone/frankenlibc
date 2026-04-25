@@ -41,8 +41,8 @@ pub mod mmap;
 pub mod mntent;
 pub mod netgroup;
 pub mod poll;
-pub mod process;
 pub mod proc_maps;
+pub mod process;
 pub mod pthread;
 pub mod pwd;
 #[allow(unsafe_code)]

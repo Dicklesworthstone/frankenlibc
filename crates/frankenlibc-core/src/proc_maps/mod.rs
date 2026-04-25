@@ -43,7 +43,7 @@ pub struct MapsEntry<'a> {
 /// malformed. The path is optional — anonymous mappings and `---p`
 /// regions have no trailing path.
 pub fn parse_maps_line(line: &str) -> Option<MapsEntry<'_>> {
-    let line = line.trim_end_matches(|c: char| c == '\n' || c == '\r');
+    let line = line.trim_end_matches(['\n', '\r']);
     let mut parts = line.split_whitespace();
     let range = parts.next()?;
     let perms = parts.next()?;
@@ -182,10 +182,7 @@ mod tests {
     fn parse_rejects_extra_trailing_tokens() {
         // path with embedded space arrives as two tokens — we treat
         // that as malformed (caller can re-parse if it needs to).
-        assert!(parse_maps_line(
-            "400000-401000 r--p 0 00:00 0 /tmp/file with space"
-        )
-        .is_none());
+        assert!(parse_maps_line("400000-401000 r--p 0 00:00 0 /tmp/file with space").is_none());
     }
 
     #[test]
