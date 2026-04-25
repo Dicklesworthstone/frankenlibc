@@ -285,4 +285,9 @@ name = "fuzz_security_syscalls"
 path = "fuzz_targets/fuzz_security_syscalls.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_keyring"
+path = "fuzz_targets/fuzz_keyring.rs"
+doc = false
+
 [workspace]
