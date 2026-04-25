@@ -33,6 +33,7 @@ pub mod ftw;
 pub mod getopt;
 pub mod grp;
 pub mod iconv;
+pub mod idna;
 pub mod inet;
 pub mod io;
 pub mod locale;
