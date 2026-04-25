@@ -1,13 +1,13 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-04-24T23:50:59Z",
+  "generated_at": "2026-04-25T21:42:27Z",
   "summary": {
-    "total_symbols": 3980,
-    "symbols_with_fixtures": 277,
+    "total_symbols": 3996,
+    "symbols_with_fixtures": 278,
     "coverage_pct": 7,
     "total_fixture_files": 55,
-    "total_fixture_cases": 1053,
+    "total_fixture_cases": 1065,
     "total_families": 45
   },
   "module_coverage": {
@@ -32,7 +32,7 @@
       "pct": 71
     },
     "err_abi": {
-      "total": 8,
+      "total": 12,
       "covered": 0,
       "pct": 0
     },
@@ -52,7 +52,7 @@
       "pct": 0
     },
     "glibc_internal_abi": {
-      "total": 566,
+      "total": 570,
       "covered": 1,
       "pct": 0
     },
@@ -177,17 +177,17 @@
       "pct": 0
     },
     "stdio_abi": {
-      "total": 124,
+      "total": 126,
       "covered": 17,
-      "pct": 14
+      "pct": 13
     },
     "stdlib_abi": {
-      "total": 141,
-      "covered": 15,
+      "total": 152,
+      "covered": 16,
       "pct": 11
     },
     "string_abi": {
-      "total": 140,
+      "total": 142,
       "covered": 25,
       "pct": 18
     },
@@ -202,12 +202,12 @@
       "pct": 15
     },
     "unistd_abi": {
-      "total": 631,
+      "total": 625,
       "covered": 31,
       "pct": 5
     },
     "wchar_abi": {
-      "total": 147,
+      "total": 146,
       "covered": 18,
       "pct": 12
     }
@@ -626,11 +626,12 @@
       ]
     },
     "stdlib": {
-      "function_count": 6,
+      "function_count": 7,
       "functions": [
         "atoi",
         "atol",
         "bsearch",
+        "getbsize",
         "qsort",
         "strtol",
         "strtoul"
@@ -1392,11 +1393,12 @@
     },
     "stdlib_numeric": {
       "file": "stdlib_numeric.json",
-      "sha256": "38922abfe10642ec829969ba2b61bbdcb2cc6baba7e33782ae95e02ad5d192df",
-      "case_count": 10,
+      "sha256": "1177550d12d64974bc36009cee622695a24483334f6f4c7b22c1d01bdfff41a8",
+      "case_count": 22,
       "functions": [
         "atoi",
         "atol",
+        "getbsize",
         "strtol",
         "strtoul"
       ],

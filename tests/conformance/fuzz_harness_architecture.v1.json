@@ -1,16 +1,16 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.5",
-  "generated_at": "2026-04-24T23:52:11Z",
+  "generated_at": "2026-04-25T21:21:16Z",
   "summary": {
-    "total_targets": 54,
-    "functional_targets": 54,
+    "total_targets": 55,
+    "functional_targets": 55,
     "stub_targets": 0,
-    "checks_passed": 269,
-    "checks_total": 270,
-    "quality_score_pct": 99.6,
-    "total_seed_corpus": 22560,
-    "total_dict_entries": 374,
+    "checks_passed": 275,
+    "checks_total": 275,
+    "quality_score_pct": 100.0,
+    "total_seed_corpus": 22779,
+    "total_dict_entries": 380,
     "cwe_coverage": [
       "CWE-120",
       "CWE-122",
@@ -610,6 +610,47 @@
       "todos": [],
       "implementation_status": "functional",
       "lines": 185
+    },
+    {
+      "target": "fuzz_keyring",
+      "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_keyring.rs",
+      "domain": "unknown",
+      "category": "unknown",
+      "description": "",
+      "priority": "normal",
+      "cwe_coverage": [],
+      "checks": [
+        {
+          "check": "no_main_attr",
+          "passed": true,
+          "description": "Must use #![no_main] attribute"
+        },
+        {
+          "check": "fuzz_target_macro",
+          "passed": true,
+          "description": "Must use fuzz_target! macro"
+        },
+        {
+          "check": "input_size_guard",
+          "passed": true,
+          "description": "Should have bounded input handling or an explicit size guard"
+        },
+        {
+          "check": "no_unwrap",
+          "passed": true,
+          "description": "Should avoid unwrap (use safe alternatives)"
+        },
+        {
+          "check": "no_panic",
+          "passed": true,
+          "description": "Should avoid explicit panics"
+        }
+      ],
+      "checks_passed": 5,
+      "checks_total": 5,
+      "todos": [],
+      "implementation_status": "functional",
+      "lines": 255
     },
     {
       "target": "fuzz_locale",
@@ -1345,7 +1386,7 @@
         },
         {
           "check": "input_size_guard",
-          "passed": false,
+          "passed": true,
           "description": "Should have bounded input handling or an explicit size guard"
         },
         {
@@ -1359,11 +1400,11 @@
           "description": "Should avoid explicit panics"
         }
       ],
-      "checks_passed": 4,
+      "checks_passed": 5,
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 127
+      "lines": 134
     },
     {
       "target": "fuzz_pwd_grp",
@@ -1736,7 +1777,7 @@
       "checks_total": 5,
       "todos": [],
       "implementation_status": "functional",
-      "lines": 165
+      "lines": 182
     },
     {
       "target": "fuzz_setjmp",
@@ -21370,6 +21411,1190 @@
           }
         ],
         "count": 39,
+        "strategy": "deterministic",
+        "reproducible": true
+      },
+      {
+        "target": "fuzz_keyring",
+        "seeds": [
+          {
+            "index": 0,
+            "seed_id": "seed-99f8f713a574",
+            "size_bytes": 37,
+            "sha256_prefix": "99f8f713a574"
+          },
+          {
+            "index": 1,
+            "seed_id": "seed-ab9154b2740c",
+            "size_bytes": 37,
+            "sha256_prefix": "ab9154b2740c"
+          },
+          {
+            "index": 2,
+            "seed_id": "seed-ba35ecd674ec",
+            "size_bytes": 38,
+            "sha256_prefix": "ba35ecd674ec"
+          },
+          {
+            "index": 3,
+            "seed_id": "seed-a3e557ce88d2",
+            "size_bytes": 82,
+            "sha256_prefix": "a3e557ce88d2"
+          },
+          {
+            "index": 4,
+            "seed_id": "seed-20b595f803f0",
+            "size_bytes": 511,
+            "sha256_prefix": "20b595f803f0"
+          },
+          {
+            "index": 5,
+            "seed_id": "seed-5fb3a43f3254",
+            "size_bytes": 269,
+            "sha256_prefix": "5fb3a43f3254"
+          },
+          {
+            "index": 6,
+            "seed_id": "seed-7792330aabfc",
+            "size_bytes": 38,
+            "sha256_prefix": "7792330aabfc"
+          },
+          {
+            "index": 7,
+            "seed_id": "seed-b8a833d0ceb4",
+            "size_bytes": 37,
+            "sha256_prefix": "b8a833d0ceb4"
+          },
+          {
+            "index": 8,
+            "seed_id": "seed-af329f5b6b92",
+            "size_bytes": 37,
+            "sha256_prefix": "af329f5b6b92"
+          },
+          {
+            "index": 9,
+            "seed_id": "seed-8cfb5d9c156c",
+            "size_bytes": 39,
+            "sha256_prefix": "8cfb5d9c156c"
+          },
+          {
+            "index": 10,
+            "seed_id": "seed-f7879e0aaac0",
+            "size_bytes": 37,
+            "sha256_prefix": "f7879e0aaac0"
+          },
+          {
+            "index": 11,
+            "seed_id": "seed-31a47908474f",
+            "size_bytes": 38,
+            "sha256_prefix": "31a47908474f"
+          },
+          {
+            "index": 12,
+            "seed_id": "seed-50820a1c5a90",
+            "size_bytes": 69,
+            "sha256_prefix": "50820a1c5a90"
+          },
+          {
+            "index": 13,
+            "seed_id": "seed-2c7d7e0ccb79",
+            "size_bytes": 1178,
+            "sha256_prefix": "2c7d7e0ccb79"
+          },
+          {
+            "index": 14,
+            "seed_id": "seed-f47e2ec702cf",
+            "size_bytes": 39,
+            "sha256_prefix": "f47e2ec702cf"
+          },
+          {
+            "index": 15,
+            "seed_id": "seed-30060bf736b9",
+            "size_bytes": 38,
+            "sha256_prefix": "30060bf736b9"
+          },
+          {
+            "index": 16,
+            "seed_id": "seed-39adaf6c7d92",
+            "size_bytes": 93,
+            "sha256_prefix": "39adaf6c7d92"
+          },
+          {
+            "index": 17,
+            "seed_id": "seed-f6fbc8437a37",
+            "size_bytes": 261,
+            "sha256_prefix": "f6fbc8437a37"
+          },
+          {
+            "index": 18,
+            "seed_id": "seed-612dcfa96d21",
+            "size_bytes": 41,
+            "sha256_prefix": "612dcfa96d21"
+          },
+          {
+            "index": 19,
+            "seed_id": "seed-23534ff9accc",
+            "size_bytes": 37,
+            "sha256_prefix": "23534ff9accc"
+          },
+          {
+            "index": 20,
+            "seed_id": "seed-8075b14dd90c",
+            "size_bytes": 37,
+            "sha256_prefix": "8075b14dd90c"
+          },
+          {
+            "index": 21,
+            "seed_id": "seed-29a47d0f6103",
+            "size_bytes": 37,
+            "sha256_prefix": "29a47d0f6103"
+          },
+          {
+            "index": 22,
+            "seed_id": "seed-238a07fd513c",
+            "size_bytes": 37,
+            "sha256_prefix": "238a07fd513c"
+          },
+          {
+            "index": 23,
+            "seed_id": "seed-ad762fb6d5ec",
+            "size_bytes": 38,
+            "sha256_prefix": "ad762fb6d5ec"
+          },
+          {
+            "index": 24,
+            "seed_id": "seed-6cb651c5c889",
+            "size_bytes": 41,
+            "sha256_prefix": "6cb651c5c889"
+          },
+          {
+            "index": 25,
+            "seed_id": "seed-cdf8603bf9e4",
+            "size_bytes": 43,
+            "sha256_prefix": "cdf8603bf9e4"
+          },
+          {
+            "index": 26,
+            "seed_id": "seed-ebe3133ffa1d",
+            "size_bytes": 39,
+            "sha256_prefix": "ebe3133ffa1d"
+          },
+          {
+            "index": 27,
+            "seed_id": "seed-a4acfbc33daf",
+            "size_bytes": 37,
+            "sha256_prefix": "a4acfbc33daf"
+          },
+          {
+            "index": 28,
+            "seed_id": "seed-2dff4c62a967",
+            "size_bytes": 37,
+            "sha256_prefix": "2dff4c62a967"
+          },
+          {
+            "index": 29,
+            "seed_id": "seed-9b1dfd80af01",
+            "size_bytes": 40,
+            "sha256_prefix": "9b1dfd80af01"
+          },
+          {
+            "index": 30,
+            "seed_id": "seed-1d0450374d7f",
+            "size_bytes": 38,
+            "sha256_prefix": "1d0450374d7f"
+          },
+          {
+            "index": 31,
+            "seed_id": "seed-2c6545016c10",
+            "size_bytes": 37,
+            "sha256_prefix": "2c6545016c10"
+          },
+          {
+            "index": 32,
+            "seed_id": "seed-6eff3d96839d",
+            "size_bytes": 37,
+            "sha256_prefix": "6eff3d96839d"
+          },
+          {
+            "index": 33,
+            "seed_id": "seed-e0a248d3b6af",
+            "size_bytes": 37,
+            "sha256_prefix": "e0a248d3b6af"
+          },
+          {
+            "index": 34,
+            "seed_id": "seed-d18f9b496fa4",
+            "size_bytes": 37,
+            "sha256_prefix": "d18f9b496fa4"
+          },
+          {
+            "index": 35,
+            "seed_id": "seed-70defe5b745d",
+            "size_bytes": 37,
+            "sha256_prefix": "70defe5b745d"
+          },
+          {
+            "index": 36,
+            "seed_id": "seed-ed58e0d730f4",
+            "size_bytes": 38,
+            "sha256_prefix": "ed58e0d730f4"
+          },
+          {
+            "index": 37,
+            "seed_id": "seed-56bd89e3c74a",
+            "size_bytes": 61,
+            "sha256_prefix": "56bd89e3c74a"
+          },
+          {
+            "index": 38,
+            "seed_id": "seed-c45a01c6d9b7",
+            "size_bytes": 37,
+            "sha256_prefix": "c45a01c6d9b7"
+          },
+          {
+            "index": 39,
+            "seed_id": "seed-f103e255d7d4",
+            "size_bytes": 56,
+            "sha256_prefix": "f103e255d7d4"
+          },
+          {
+            "index": 40,
+            "seed_id": "seed-08945f1fd896",
+            "size_bytes": 37,
+            "sha256_prefix": "08945f1fd896"
+          },
+          {
+            "index": 41,
+            "seed_id": "seed-cc76225abdc4",
+            "size_bytes": 38,
+            "sha256_prefix": "cc76225abdc4"
+          },
+          {
+            "index": 42,
+            "seed_id": "seed-a34c50e30069",
+            "size_bytes": 71,
+            "sha256_prefix": "a34c50e30069"
+          },
+          {
+            "index": 43,
+            "seed_id": "seed-be668d3fd8af",
+            "size_bytes": 37,
+            "sha256_prefix": "be668d3fd8af"
+          },
+          {
+            "index": 44,
+            "seed_id": "seed-e16fd159426c",
+            "size_bytes": 70,
+            "sha256_prefix": "e16fd159426c"
+          },
+          {
+            "index": 45,
+            "seed_id": "seed-b08d0b64d15e",
+            "size_bytes": 38,
+            "sha256_prefix": "b08d0b64d15e"
+          },
+          {
+            "index": 46,
+            "seed_id": "seed-bf27cf4e3698",
+            "size_bytes": 519,
+            "sha256_prefix": "bf27cf4e3698"
+          },
+          {
+            "index": 47,
+            "seed_id": "seed-e7078f9df46d",
+            "size_bytes": 265,
+            "sha256_prefix": "e7078f9df46d"
+          },
+          {
+            "index": 48,
+            "seed_id": "seed-b216df8b0b3a",
+            "size_bytes": 37,
+            "sha256_prefix": "b216df8b0b3a"
+          },
+          {
+            "index": 49,
+            "seed_id": "seed-604d31ac4e9b",
+            "size_bytes": 40,
+            "sha256_prefix": "604d31ac4e9b"
+          },
+          {
+            "index": 50,
+            "seed_id": "seed-7fdd33027b7c",
+            "size_bytes": 510,
+            "sha256_prefix": "7fdd33027b7c"
+          },
+          {
+            "index": 51,
+            "seed_id": "seed-5decb902ea73",
+            "size_bytes": 37,
+            "sha256_prefix": "5decb902ea73"
+          },
+          {
+            "index": 52,
+            "seed_id": "seed-2413cd17a75b",
+            "size_bytes": 44,
+            "sha256_prefix": "2413cd17a75b"
+          },
+          {
+            "index": 53,
+            "seed_id": "seed-a985dc982c7b",
+            "size_bytes": 37,
+            "sha256_prefix": "a985dc982c7b"
+          },
+          {
+            "index": 54,
+            "seed_id": "seed-ca8b01270fe0",
+            "size_bytes": 41,
+            "sha256_prefix": "ca8b01270fe0"
+          },
+          {
+            "index": 55,
+            "seed_id": "seed-456c0437948c",
+            "size_bytes": 46,
+            "sha256_prefix": "456c0437948c"
+          },
+          {
+            "index": 56,
+            "seed_id": "seed-d1ee992f9c89",
+            "size_bytes": 37,
+            "sha256_prefix": "d1ee992f9c89"
+          },
+          {
+            "index": 57,
+            "seed_id": "seed-998aed4f2472",
+            "size_bytes": 210,
+            "sha256_prefix": "998aed4f2472"
+          },
+          {
+            "index": 58,
+            "seed_id": "seed-611dc82d83ef",
+            "size_bytes": 37,
+            "sha256_prefix": "611dc82d83ef"
+          },
+          {
+            "index": 59,
+            "seed_id": "seed-648c87cad79c",
+            "size_bytes": 77,
+            "sha256_prefix": "648c87cad79c"
+          },
+          {
+            "index": 60,
+            "seed_id": "seed-2b81e204cf13",
+            "size_bytes": 37,
+            "sha256_prefix": "2b81e204cf13"
+          },
+          {
+            "index": 61,
+            "seed_id": "seed-3ee1f7e077b2",
+            "size_bytes": 39,
+            "sha256_prefix": "3ee1f7e077b2"
+          },
+          {
+            "index": 62,
+            "seed_id": "seed-623cbe66c3c9",
+            "size_bytes": 72,
+            "sha256_prefix": "623cbe66c3c9"
+          },
+          {
+            "index": 63,
+            "seed_id": "seed-99426b1c7011",
+            "size_bytes": 37,
+            "sha256_prefix": "99426b1c7011"
+          },
+          {
+            "index": 64,
+            "seed_id": "seed-c0ebef9a8f73",
+            "size_bytes": 62,
+            "sha256_prefix": "c0ebef9a8f73"
+          },
+          {
+            "index": 65,
+            "seed_id": "seed-0861a90f05db",
+            "size_bytes": 66,
+            "sha256_prefix": "0861a90f05db"
+          },
+          {
+            "index": 66,
+            "seed_id": "seed-a07adabd848b",
+            "size_bytes": 37,
+            "sha256_prefix": "a07adabd848b"
+          },
+          {
+            "index": 67,
+            "seed_id": "seed-e6c94eb0f976",
+            "size_bytes": 141,
+            "sha256_prefix": "e6c94eb0f976"
+          },
+          {
+            "index": 68,
+            "seed_id": "seed-4bd47b9f7e5b",
+            "size_bytes": 37,
+            "sha256_prefix": "4bd47b9f7e5b"
+          },
+          {
+            "index": 69,
+            "seed_id": "seed-b73cb088c71b",
+            "size_bytes": 37,
+            "sha256_prefix": "b73cb088c71b"
+          },
+          {
+            "index": 70,
+            "seed_id": "seed-5d023d2bbc29",
+            "size_bytes": 76,
+            "sha256_prefix": "5d023d2bbc29"
+          },
+          {
+            "index": 71,
+            "seed_id": "seed-c73cc90e7a5b",
+            "size_bytes": 37,
+            "sha256_prefix": "c73cc90e7a5b"
+          },
+          {
+            "index": 72,
+            "seed_id": "seed-507e37cbd6f1",
+            "size_bytes": 37,
+            "sha256_prefix": "507e37cbd6f1"
+          },
+          {
+            "index": 73,
+            "seed_id": "seed-913bbfb4fe8d",
+            "size_bytes": 67,
+            "sha256_prefix": "913bbfb4fe8d"
+          },
+          {
+            "index": 74,
+            "seed_id": "seed-64a9a5f0ba7c",
+            "size_bytes": 66,
+            "sha256_prefix": "64a9a5f0ba7c"
+          },
+          {
+            "index": 75,
+            "seed_id": "seed-864336615750",
+            "size_bytes": 92,
+            "sha256_prefix": "864336615750"
+          },
+          {
+            "index": 76,
+            "seed_id": "seed-74f6e5be693d",
+            "size_bytes": 38,
+            "sha256_prefix": "74f6e5be693d"
+          },
+          {
+            "index": 77,
+            "seed_id": "seed-df97ef2d1d6e",
+            "size_bytes": 38,
+            "sha256_prefix": "df97ef2d1d6e"
+          },
+          {
+            "index": 78,
+            "seed_id": "seed-22ccc3c8311e",
+            "size_bytes": 38,
+            "sha256_prefix": "22ccc3c8311e"
+          },
+          {
+            "index": 79,
+            "seed_id": "seed-f1a4d36c71b9",
+            "size_bytes": 45,
+            "sha256_prefix": "f1a4d36c71b9"
+          },
+          {
+            "index": 80,
+            "seed_id": "seed-18ada09a6594",
+            "size_bytes": 40,
+            "sha256_prefix": "18ada09a6594"
+          },
+          {
+            "index": 81,
+            "seed_id": "seed-83e61547f93d",
+            "size_bytes": 37,
+            "sha256_prefix": "83e61547f93d"
+          },
+          {
+            "index": 82,
+            "seed_id": "seed-eaac3e06c940",
+            "size_bytes": 38,
+            "sha256_prefix": "eaac3e06c940"
+          },
+          {
+            "index": 83,
+            "seed_id": "seed-2c71ef6b2992",
+            "size_bytes": 37,
+            "sha256_prefix": "2c71ef6b2992"
+          },
+          {
+            "index": 84,
+            "seed_id": "seed-f9330ac6bfbc",
+            "size_bytes": 38,
+            "sha256_prefix": "f9330ac6bfbc"
+          },
+          {
+            "index": 85,
+            "seed_id": "seed-48a7d7101d20",
+            "size_bytes": 37,
+            "sha256_prefix": "48a7d7101d20"
+          },
+          {
+            "index": 86,
+            "seed_id": "seed-aa17a06ae8bf",
+            "size_bytes": 54,
+            "sha256_prefix": "aa17a06ae8bf"
+          },
+          {
+            "index": 87,
+            "seed_id": "seed-062c4dc3b580",
+            "size_bytes": 38,
+            "sha256_prefix": "062c4dc3b580"
+          },
+          {
+            "index": 88,
+            "seed_id": "seed-e0a68aca7c43",
+            "size_bytes": 56,
+            "sha256_prefix": "e0a68aca7c43"
+          },
+          {
+            "index": 89,
+            "seed_id": "seed-2778fe1d1bdb",
+            "size_bytes": 37,
+            "sha256_prefix": "2778fe1d1bdb"
+          },
+          {
+            "index": 90,
+            "seed_id": "seed-9e8748ddf7a8",
+            "size_bytes": 261,
+            "sha256_prefix": "9e8748ddf7a8"
+          },
+          {
+            "index": 91,
+            "seed_id": "seed-0e33e87451a2",
+            "size_bytes": 38,
+            "sha256_prefix": "0e33e87451a2"
+          },
+          {
+            "index": 92,
+            "seed_id": "seed-b83909591c0d",
+            "size_bytes": 38,
+            "sha256_prefix": "b83909591c0d"
+          },
+          {
+            "index": 93,
+            "seed_id": "seed-223365511818",
+            "size_bytes": 39,
+            "sha256_prefix": "223365511818"
+          },
+          {
+            "index": 94,
+            "seed_id": "seed-584200c802e7",
+            "size_bytes": 260,
+            "sha256_prefix": "584200c802e7"
+          },
+          {
+            "index": 95,
+            "seed_id": "seed-6ed72691c0b9",
+            "size_bytes": 37,
+            "sha256_prefix": "6ed72691c0b9"
+          },
+          {
+            "index": 96,
+            "seed_id": "seed-b5a98468ea8a",
+            "size_bytes": 37,
+            "sha256_prefix": "b5a98468ea8a"
+          },
+          {
+            "index": 97,
+            "seed_id": "seed-a48f5ec0ab27",
+            "size_bytes": 72,
+            "sha256_prefix": "a48f5ec0ab27"
+          },
+          {
+            "index": 98,
+            "seed_id": "seed-7df88d232207",
+            "size_bytes": 38,
+            "sha256_prefix": "7df88d232207"
+          },
+          {
+            "index": 99,
+            "seed_id": "seed-bf6ccc8978c6",
+            "size_bytes": 74,
+            "sha256_prefix": "bf6ccc8978c6"
+          },
+          {
+            "index": 100,
+            "seed_id": "seed-2605a09bbd70",
+            "size_bytes": 589,
+            "sha256_prefix": "2605a09bbd70"
+          },
+          {
+            "index": 101,
+            "seed_id": "seed-1643db1c0b32",
+            "size_bytes": 39,
+            "sha256_prefix": "1643db1c0b32"
+          },
+          {
+            "index": 102,
+            "seed_id": "seed-25c58057e8cf",
+            "size_bytes": 37,
+            "sha256_prefix": "25c58057e8cf"
+          },
+          {
+            "index": 103,
+            "seed_id": "seed-795fca5817bc",
+            "size_bytes": 99,
+            "sha256_prefix": "795fca5817bc"
+          },
+          {
+            "index": 104,
+            "seed_id": "seed-89b16271fade",
+            "size_bytes": 42,
+            "sha256_prefix": "89b16271fade"
+          },
+          {
+            "index": 105,
+            "seed_id": "seed-31b0ff21a5b0",
+            "size_bytes": 38,
+            "sha256_prefix": "31b0ff21a5b0"
+          },
+          {
+            "index": 106,
+            "seed_id": "seed-497597d0df46",
+            "size_bytes": 277,
+            "sha256_prefix": "497597d0df46"
+          },
+          {
+            "index": 107,
+            "seed_id": "seed-f3aed5e4c5a3",
+            "size_bytes": 38,
+            "sha256_prefix": "f3aed5e4c5a3"
+          },
+          {
+            "index": 108,
+            "seed_id": "seed-5b3f22214784",
+            "size_bytes": 38,
+            "sha256_prefix": "5b3f22214784"
+          },
+          {
+            "index": 109,
+            "seed_id": "seed-11f0d51c5338",
+            "size_bytes": 37,
+            "sha256_prefix": "11f0d51c5338"
+          },
+          {
+            "index": 110,
+            "seed_id": "seed-d502470f1501",
+            "size_bytes": 38,
+            "sha256_prefix": "d502470f1501"
+          },
+          {
+            "index": 111,
+            "seed_id": "seed-6f1b30715a21",
+            "size_bytes": 37,
+            "sha256_prefix": "6f1b30715a21"
+          },
+          {
+            "index": 112,
+            "seed_id": "seed-a51452980f44",
+            "size_bytes": 43,
+            "sha256_prefix": "a51452980f44"
+          },
+          {
+            "index": 113,
+            "seed_id": "seed-dd9f56be0339",
+            "size_bytes": 75,
+            "sha256_prefix": "dd9f56be0339"
+          },
+          {
+            "index": 114,
+            "seed_id": "seed-3b2001fe39b5",
+            "size_bytes": 37,
+            "sha256_prefix": "3b2001fe39b5"
+          },
+          {
+            "index": 115,
+            "seed_id": "seed-c8668fcf0270",
+            "size_bytes": 37,
+            "sha256_prefix": "c8668fcf0270"
+          },
+          {
+            "index": 116,
+            "seed_id": "seed-28f187083253",
+            "size_bytes": 53,
+            "sha256_prefix": "28f187083253"
+          },
+          {
+            "index": 117,
+            "seed_id": "seed-e842b29f205f",
+            "size_bytes": 37,
+            "sha256_prefix": "e842b29f205f"
+          },
+          {
+            "index": 118,
+            "seed_id": "seed-cf8e0df461d6",
+            "size_bytes": 37,
+            "sha256_prefix": "cf8e0df461d6"
+          },
+          {
+            "index": 119,
+            "seed_id": "seed-19e483a5f058",
+            "size_bytes": 37,
+            "sha256_prefix": "19e483a5f058"
+          },
+          {
+            "index": 120,
+            "seed_id": "seed-e896b58f8998",
+            "size_bytes": 78,
+            "sha256_prefix": "e896b58f8998"
+          },
+          {
+            "index": 121,
+            "seed_id": "seed-b8e8ea10bfc8",
+            "size_bytes": 37,
+            "sha256_prefix": "b8e8ea10bfc8"
+          },
+          {
+            "index": 122,
+            "seed_id": "seed-d65c59e89580",
+            "size_bytes": 260,
+            "sha256_prefix": "d65c59e89580"
+          },
+          {
+            "index": 123,
+            "seed_id": "seed-b8e452081ade",
+            "size_bytes": 37,
+            "sha256_prefix": "b8e452081ade"
+          },
+          {
+            "index": 124,
+            "seed_id": "seed-d9dee32ee47a",
+            "size_bytes": 37,
+            "sha256_prefix": "d9dee32ee47a"
+          },
+          {
+            "index": 125,
+            "seed_id": "seed-a55f6df471c1",
+            "size_bytes": 37,
+            "sha256_prefix": "a55f6df471c1"
+          },
+          {
+            "index": 126,
+            "seed_id": "seed-ad3c918bca7d",
+            "size_bytes": 37,
+            "sha256_prefix": "ad3c918bca7d"
+          },
+          {
+            "index": 127,
+            "seed_id": "seed-95e04a332e76",
+            "size_bytes": 66,
+            "sha256_prefix": "95e04a332e76"
+          },
+          {
+            "index": 128,
+            "seed_id": "seed-6c50f3ffc567",
+            "size_bytes": 61,
+            "sha256_prefix": "6c50f3ffc567"
+          },
+          {
+            "index": 129,
+            "seed_id": "seed-75655b6e02f8",
+            "size_bytes": 74,
+            "sha256_prefix": "75655b6e02f8"
+          },
+          {
+            "index": 130,
+            "seed_id": "seed-3b788bd3b95a",
+            "size_bytes": 257,
+            "sha256_prefix": "3b788bd3b95a"
+          },
+          {
+            "index": 131,
+            "seed_id": "seed-0869f29f9623",
+            "size_bytes": 66,
+            "sha256_prefix": "0869f29f9623"
+          },
+          {
+            "index": 132,
+            "seed_id": "seed-736dbc0f23a8",
+            "size_bytes": 37,
+            "sha256_prefix": "736dbc0f23a8"
+          },
+          {
+            "index": 133,
+            "seed_id": "seed-e728e559c6fb",
+            "size_bytes": 72,
+            "sha256_prefix": "e728e559c6fb"
+          },
+          {
+            "index": 134,
+            "seed_id": "seed-1a665356a28a",
+            "size_bytes": 84,
+            "sha256_prefix": "1a665356a28a"
+          },
+          {
+            "index": 135,
+            "seed_id": "seed-435ab3f70216",
+            "size_bytes": 38,
+            "sha256_prefix": "435ab3f70216"
+          },
+          {
+            "index": 136,
+            "seed_id": "seed-9c0a06a34cfb",
+            "size_bytes": 37,
+            "sha256_prefix": "9c0a06a34cfb"
+          },
+          {
+            "index": 137,
+            "seed_id": "seed-311160b0ab7e",
+            "size_bytes": 42,
+            "sha256_prefix": "311160b0ab7e"
+          },
+          {
+            "index": 138,
+            "seed_id": "seed-343bce0f93ad",
+            "size_bytes": 37,
+            "sha256_prefix": "343bce0f93ad"
+          },
+          {
+            "index": 139,
+            "seed_id": "seed-ff29cf85d1c0",
+            "size_bytes": 37,
+            "sha256_prefix": "ff29cf85d1c0"
+          },
+          {
+            "index": 140,
+            "seed_id": "seed-4ff5281b0c76",
+            "size_bytes": 37,
+            "sha256_prefix": "4ff5281b0c76"
+          },
+          {
+            "index": 141,
+            "seed_id": "seed-70ba8306d6f0",
+            "size_bytes": 37,
+            "sha256_prefix": "70ba8306d6f0"
+          },
+          {
+            "index": 142,
+            "seed_id": "seed-60516867b33e",
+            "size_bytes": 86,
+            "sha256_prefix": "60516867b33e"
+          },
+          {
+            "index": 143,
+            "seed_id": "seed-859b7c57e3b2",
+            "size_bytes": 57,
+            "sha256_prefix": "859b7c57e3b2"
+          },
+          {
+            "index": 144,
+            "seed_id": "seed-0bf2af5a2791",
+            "size_bytes": 37,
+            "sha256_prefix": "0bf2af5a2791"
+          },
+          {
+            "index": 145,
+            "seed_id": "seed-e3f000b4c35c",
+            "size_bytes": 38,
+            "sha256_prefix": "e3f000b4c35c"
+          },
+          {
+            "index": 146,
+            "seed_id": "seed-ad02b2b7866e",
+            "size_bytes": 87,
+            "sha256_prefix": "ad02b2b7866e"
+          },
+          {
+            "index": 147,
+            "seed_id": "seed-9818ce7ce7c5",
+            "size_bytes": 37,
+            "sha256_prefix": "9818ce7ce7c5"
+          },
+          {
+            "index": 148,
+            "seed_id": "seed-32e00014203d",
+            "size_bytes": 37,
+            "sha256_prefix": "32e00014203d"
+          },
+          {
+            "index": 149,
+            "seed_id": "seed-71138a674f40",
+            "size_bytes": 43,
+            "sha256_prefix": "71138a674f40"
+          },
+          {
+            "index": 150,
+            "seed_id": "seed-cefa2967611f",
+            "size_bytes": 37,
+            "sha256_prefix": "cefa2967611f"
+          },
+          {
+            "index": 151,
+            "seed_id": "seed-a336a3cd4ab0",
+            "size_bytes": 37,
+            "sha256_prefix": "a336a3cd4ab0"
+          },
+          {
+            "index": 152,
+            "seed_id": "seed-5845dfe20715",
+            "size_bytes": 37,
+            "sha256_prefix": "5845dfe20715"
+          },
+          {
+            "index": 153,
+            "seed_id": "seed-e5a98f4afaa1",
+            "size_bytes": 37,
+            "sha256_prefix": "e5a98f4afaa1"
+          },
+          {
+            "index": 154,
+            "seed_id": "seed-086844880fd6",
+            "size_bytes": 37,
+            "sha256_prefix": "086844880fd6"
+          },
+          {
+            "index": 155,
+            "seed_id": "seed-fbb564c51f3a",
+            "size_bytes": 70,
+            "sha256_prefix": "fbb564c51f3a"
+          },
+          {
+            "index": 156,
+            "seed_id": "seed-bb83a36f3997",
+            "size_bytes": 71,
+            "sha256_prefix": "bb83a36f3997"
+          },
+          {
+            "index": 157,
+            "seed_id": "seed-5441cc7a5c8e",
+            "size_bytes": 38,
+            "sha256_prefix": "5441cc7a5c8e"
+          },
+          {
+            "index": 158,
+            "seed_id": "seed-4a990b5252c1",
+            "size_bytes": 516,
+            "sha256_prefix": "4a990b5252c1"
+          },
+          {
+            "index": 159,
+            "seed_id": "seed-afdb3508c36e",
+            "size_bytes": 63,
+            "sha256_prefix": "afdb3508c36e"
+          },
+          {
+            "index": 160,
+            "seed_id": "seed-0016f5c3fe91",
+            "size_bytes": 42,
+            "sha256_prefix": "0016f5c3fe91"
+          },
+          {
+            "index": 161,
+            "seed_id": "seed-4fa59fcba3b0",
+            "size_bytes": 52,
+            "sha256_prefix": "4fa59fcba3b0"
+          },
+          {
+            "index": 162,
+            "seed_id": "seed-b1aed7b01cea",
+            "size_bytes": 37,
+            "sha256_prefix": "b1aed7b01cea"
+          },
+          {
+            "index": 163,
+            "seed_id": "seed-d70c0c64d590",
+            "size_bytes": 43,
+            "sha256_prefix": "d70c0c64d590"
+          },
+          {
+            "index": 164,
+            "seed_id": "seed-7f22bee032f8",
+            "size_bytes": 68,
+            "sha256_prefix": "7f22bee032f8"
+          },
+          {
+            "index": 165,
+            "seed_id": "seed-688b47ba24a5",
+            "size_bytes": 72,
+            "sha256_prefix": "688b47ba24a5"
+          },
+          {
+            "index": 166,
+            "seed_id": "seed-26592a2c1c58",
+            "size_bytes": 44,
+            "sha256_prefix": "26592a2c1c58"
+          },
+          {
+            "index": 167,
+            "seed_id": "seed-b5da15f9df22",
+            "size_bytes": 37,
+            "sha256_prefix": "b5da15f9df22"
+          },
+          {
+            "index": 168,
+            "seed_id": "seed-6250e12728a9",
+            "size_bytes": 38,
+            "sha256_prefix": "6250e12728a9"
+          },
+          {
+            "index": 169,
+            "seed_id": "seed-33bcc925cad4",
+            "size_bytes": 37,
+            "sha256_prefix": "33bcc925cad4"
+          },
+          {
+            "index": 170,
+            "seed_id": "seed-23bcda42e6a6",
+            "size_bytes": 58,
+            "sha256_prefix": "23bcda42e6a6"
+          },
+          {
+            "index": 171,
+            "seed_id": "seed-536a4099fde6",
+            "size_bytes": 37,
+            "sha256_prefix": "536a4099fde6"
+          },
+          {
+            "index": 172,
+            "seed_id": "seed-0f888d237bd8",
+            "size_bytes": 48,
+            "sha256_prefix": "0f888d237bd8"
+          },
+          {
+            "index": 173,
+            "seed_id": "seed-a438ca7bbdcf",
+            "size_bytes": 80,
+            "sha256_prefix": "a438ca7bbdcf"
+          },
+          {
+            "index": 174,
+            "seed_id": "seed-bb1b7fd8db7f",
+            "size_bytes": 540,
+            "sha256_prefix": "bb1b7fd8db7f"
+          },
+          {
+            "index": 175,
+            "seed_id": "seed-50972bd4b0d7",
+            "size_bytes": 37,
+            "sha256_prefix": "50972bd4b0d7"
+          },
+          {
+            "index": 176,
+            "seed_id": "seed-57fa305db9cf",
+            "size_bytes": 520,
+            "sha256_prefix": "57fa305db9cf"
+          },
+          {
+            "index": 177,
+            "seed_id": "seed-81c5096ef5ae",
+            "size_bytes": 37,
+            "sha256_prefix": "81c5096ef5ae"
+          },
+          {
+            "index": 178,
+            "seed_id": "seed-6cd55c60bf4e",
+            "size_bytes": 270,
+            "sha256_prefix": "6cd55c60bf4e"
+          },
+          {
+            "index": 179,
+            "seed_id": "seed-3e03e5bdb003",
+            "size_bytes": 44,
+            "sha256_prefix": "3e03e5bdb003"
+          },
+          {
+            "index": 180,
+            "seed_id": "seed-ee06f739b4aa",
+            "size_bytes": 506,
+            "sha256_prefix": "ee06f739b4aa"
+          },
+          {
+            "index": 181,
+            "seed_id": "seed-f39a2be91b70",
+            "size_bytes": 38,
+            "sha256_prefix": "f39a2be91b70"
+          },
+          {
+            "index": 182,
+            "seed_id": "seed-b288dcdb4c19",
+            "size_bytes": 37,
+            "sha256_prefix": "b288dcdb4c19"
+          },
+          {
+            "index": 183,
+            "seed_id": "seed-9ae86c83227a",
+            "size_bytes": 37,
+            "sha256_prefix": "9ae86c83227a"
+          },
+          {
+            "index": 184,
+            "seed_id": "seed-ca86ec78442b",
+            "size_bytes": 43,
+            "sha256_prefix": "ca86ec78442b"
+          },
+          {
+            "index": 185,
+            "seed_id": "seed-6b423bb372ac",
+            "size_bytes": 271,
+            "sha256_prefix": "6b423bb372ac"
+          },
+          {
+            "index": 186,
+            "seed_id": "seed-8e9a8de9c17e",
+            "size_bytes": 37,
+            "sha256_prefix": "8e9a8de9c17e"
+          },
+          {
+            "index": 187,
+            "seed_id": "seed-ef7d7cd6b9dd",
+            "size_bytes": 44,
+            "sha256_prefix": "ef7d7cd6b9dd"
+          },
+          {
+            "index": 188,
+            "seed_id": "seed-c7a8db8a7c14",
+            "size_bytes": 37,
+            "sha256_prefix": "c7a8db8a7c14"
+          },
+          {
+            "index": 189,
+            "seed_id": "seed-4e323ea0cc1e",
+            "size_bytes": 37,
+            "sha256_prefix": "4e323ea0cc1e"
+          },
+          {
+            "index": 190,
+            "seed_id": "seed-227f2b84ae92",
+            "size_bytes": 42,
+            "sha256_prefix": "227f2b84ae92"
+          },
+          {
+            "index": 191,
+            "seed_id": "seed-7a2a891113ef",
+            "size_bytes": 37,
+            "sha256_prefix": "7a2a891113ef"
+          },
+          {
+            "index": 192,
+            "seed_id": "seed-66a9da568b99",
+            "size_bytes": 65,
+            "sha256_prefix": "66a9da568b99"
+          },
+          {
+            "index": 193,
+            "seed_id": "seed-4fec5a003333",
+            "size_bytes": 38,
+            "sha256_prefix": "4fec5a003333"
+          },
+          {
+            "index": 194,
+            "seed_id": "seed-5cb2bc71a4ac",
+            "size_bytes": 37,
+            "sha256_prefix": "5cb2bc71a4ac"
+          },
+          {
+            "index": 195,
+            "seed_id": "seed-d44cea69b2cf",
+            "size_bytes": 73,
+            "sha256_prefix": "d44cea69b2cf"
+          }
+        ],
+        "count": 196,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -71032,102 +72257,240 @@
         "seeds": [
           {
             "index": 0,
-            "seed_id": "seed-2ee8be9fb309",
-            "size_bytes": 27,
-            "sha256_prefix": "2ee8be9fb309"
+            "seed_id": "seed-104e114daab1",
+            "size_bytes": 776,
+            "sha256_prefix": "104e114daab1"
           },
           {
             "index": 1,
-            "seed_id": "seed-69fba23dfd6e",
-            "size_bytes": 27,
-            "sha256_prefix": "69fba23dfd6e"
+            "seed_id": "seed-fa6c416d7c09",
+            "size_bytes": 58,
+            "sha256_prefix": "fa6c416d7c09"
           },
           {
             "index": 2,
-            "seed_id": "seed-fef8d3d06b1a",
+            "seed_id": "seed-aff9938b560f",
             "size_bytes": 27,
-            "sha256_prefix": "fef8d3d06b1a"
+            "sha256_prefix": "aff9938b560f"
           },
           {
             "index": 3,
-            "seed_id": "seed-8d75634e80b8",
+            "seed_id": "seed-b59e71adeb0c",
             "size_bytes": 27,
-            "sha256_prefix": "8d75634e80b8"
+            "sha256_prefix": "b59e71adeb0c"
           },
           {
             "index": 4,
-            "seed_id": "seed-520ee82a404b",
-            "size_bytes": 27,
-            "sha256_prefix": "520ee82a404b"
+            "seed_id": "seed-b957be7894dc",
+            "size_bytes": 74,
+            "sha256_prefix": "b957be7894dc"
           },
           {
             "index": 5,
-            "seed_id": "seed-e570df7bda43",
+            "seed_id": "seed-5ea34be026c3",
             "size_bytes": 27,
-            "sha256_prefix": "e570df7bda43"
+            "sha256_prefix": "5ea34be026c3"
           },
           {
             "index": 6,
-            "seed_id": "seed-9323af3f62da",
+            "seed_id": "seed-f5a95d8851ee",
             "size_bytes": 27,
-            "sha256_prefix": "9323af3f62da"
+            "sha256_prefix": "f5a95d8851ee"
           },
           {
             "index": 7,
-            "seed_id": "seed-45d18a44c45b",
-            "size_bytes": 29,
-            "sha256_prefix": "45d18a44c45b"
+            "seed_id": "seed-ea4d0d8c6a3a",
+            "size_bytes": 266,
+            "sha256_prefix": "ea4d0d8c6a3a"
           },
           {
             "index": 8,
-            "seed_id": "seed-796d44afbdd3",
-            "size_bytes": 27,
-            "sha256_prefix": "796d44afbdd3"
+            "seed_id": "seed-1c2bf92a9d99",
+            "size_bytes": 518,
+            "sha256_prefix": "1c2bf92a9d99"
           },
           {
             "index": 9,
-            "seed_id": "seed-ce998a3df63e",
-            "size_bytes": 28,
-            "sha256_prefix": "ce998a3df63e"
+            "seed_id": "seed-640147ce49de",
+            "size_bytes": 65,
+            "sha256_prefix": "640147ce49de"
           },
           {
             "index": 10,
-            "seed_id": "seed-8ef127d97d50",
+            "seed_id": "seed-f0fd67feb542",
             "size_bytes": 27,
-            "sha256_prefix": "8ef127d97d50"
+            "sha256_prefix": "f0fd67feb542"
           },
           {
             "index": 11,
-            "seed_id": "seed-502e8d0a9fa9",
+            "seed_id": "seed-1bf91e4ae700",
             "size_bytes": 27,
-            "sha256_prefix": "502e8d0a9fa9"
+            "sha256_prefix": "1bf91e4ae700"
           },
           {
             "index": 12,
-            "seed_id": "seed-578d3d8b9f45",
-            "size_bytes": 28,
-            "sha256_prefix": "578d3d8b9f45"
+            "seed_id": "seed-bebe2d777fe8",
+            "size_bytes": 515,
+            "sha256_prefix": "bebe2d777fe8"
           },
           {
             "index": 13,
-            "seed_id": "seed-86368f76bef5",
-            "size_bytes": 27,
-            "sha256_prefix": "86368f76bef5"
+            "seed_id": "seed-e58e8038b621",
+            "size_bytes": 36,
+            "sha256_prefix": "e58e8038b621"
           },
           {
             "index": 14,
-            "seed_id": "seed-f6177a878ecc",
+            "seed_id": "seed-94a053ff9e6b",
             "size_bytes": 27,
-            "sha256_prefix": "f6177a878ecc"
+            "sha256_prefix": "94a053ff9e6b"
           },
           {
             "index": 15,
-            "seed_id": "seed-c12181a6a385",
+            "seed_id": "seed-54b108b02c4f",
+            "size_bytes": 775,
+            "sha256_prefix": "54b108b02c4f"
+          },
+          {
+            "index": 16,
+            "seed_id": "seed-fa605fd34a81",
+            "size_bytes": 29,
+            "sha256_prefix": "fa605fd34a81"
+          },
+          {
+            "index": 17,
+            "seed_id": "seed-06d3a6c6b836",
+            "size_bytes": 68,
+            "sha256_prefix": "06d3a6c6b836"
+          },
+          {
+            "index": 18,
+            "seed_id": "seed-e45e4b4a5f63",
+            "size_bytes": 780,
+            "sha256_prefix": "e45e4b4a5f63"
+          },
+          {
+            "index": 19,
+            "seed_id": "seed-c6371156937b",
+            "size_bytes": 39,
+            "sha256_prefix": "c6371156937b"
+          },
+          {
+            "index": 20,
+            "seed_id": "seed-0698f48a6350",
+            "size_bytes": 273,
+            "sha256_prefix": "0698f48a6350"
+          },
+          {
+            "index": 21,
+            "seed_id": "seed-25b8b573ac0a",
             "size_bytes": 27,
-            "sha256_prefix": "c12181a6a385"
+            "sha256_prefix": "25b8b573ac0a"
+          },
+          {
+            "index": 22,
+            "seed_id": "seed-45dbed41d1ec",
+            "size_bytes": 28,
+            "sha256_prefix": "45dbed41d1ec"
+          },
+          {
+            "index": 23,
+            "seed_id": "seed-7b8aa7e6dfa4",
+            "size_bytes": 27,
+            "sha256_prefix": "7b8aa7e6dfa4"
+          },
+          {
+            "index": 24,
+            "seed_id": "seed-fae2962657ef",
+            "size_bytes": 27,
+            "sha256_prefix": "fae2962657ef"
+          },
+          {
+            "index": 25,
+            "seed_id": "seed-90d8242b53e0",
+            "size_bytes": 77,
+            "sha256_prefix": "90d8242b53e0"
+          },
+          {
+            "index": 26,
+            "seed_id": "seed-0c8993b33c7f",
+            "size_bytes": 66,
+            "sha256_prefix": "0c8993b33c7f"
+          },
+          {
+            "index": 27,
+            "seed_id": "seed-43f558261975",
+            "size_bytes": 63,
+            "sha256_prefix": "43f558261975"
+          },
+          {
+            "index": 28,
+            "seed_id": "seed-10b969c04f7f",
+            "size_bytes": 31,
+            "sha256_prefix": "10b969c04f7f"
+          },
+          {
+            "index": 29,
+            "seed_id": "seed-fb40e561b2a0",
+            "size_bytes": 513,
+            "sha256_prefix": "fb40e561b2a0"
+          },
+          {
+            "index": 30,
+            "seed_id": "seed-0b9b052c62ae",
+            "size_bytes": 517,
+            "sha256_prefix": "0b9b052c62ae"
+          },
+          {
+            "index": 31,
+            "seed_id": "seed-c033f5d2832f",
+            "size_bytes": 34,
+            "sha256_prefix": "c033f5d2832f"
+          },
+          {
+            "index": 32,
+            "seed_id": "seed-63e64e496e36",
+            "size_bytes": 28,
+            "sha256_prefix": "63e64e496e36"
+          },
+          {
+            "index": 33,
+            "seed_id": "seed-7a413ea0c34a",
+            "size_bytes": 27,
+            "sha256_prefix": "7a413ea0c34a"
+          },
+          {
+            "index": 34,
+            "seed_id": "seed-da5d1cedd0fa",
+            "size_bytes": 43,
+            "sha256_prefix": "da5d1cedd0fa"
+          },
+          {
+            "index": 35,
+            "seed_id": "seed-454c744ae058",
+            "size_bytes": 27,
+            "sha256_prefix": "454c744ae058"
+          },
+          {
+            "index": 36,
+            "seed_id": "seed-9818b208b31d",
+            "size_bytes": 27,
+            "sha256_prefix": "9818b208b31d"
+          },
+          {
+            "index": 37,
+            "seed_id": "seed-53e924f85460",
+            "size_bytes": 27,
+            "sha256_prefix": "53e924f85460"
+          },
+          {
+            "index": 38,
+            "seed_id": "seed-98f06b6da55e",
+            "size_bytes": 263,
+            "sha256_prefix": "98f06b6da55e"
           }
         ],
-        "count": 16,
+        "count": 39,
         "strategy": "deterministic",
         "reproducible": true
       },
@@ -138309,6 +139672,19 @@
         "format": "libfuzzer"
       },
       {
+        "target": "fuzz_keyring",
+        "entries": [
+          "\"\\x00\"",
+          "\"\\xff\"",
+          "\"A\"",
+          "\"0\"",
+          "\" \"",
+          "\"\\n\""
+        ],
+        "count": 6,
+        "format": "libfuzzer"
+      },
+      {
         "target": "fuzz_locale",
         "entries": [
           "\"C\"",
@@ -138874,10 +140250,10 @@
     ]
   },
   "quality_checklist": {
-    "convention_compliance": "269/270 checks passed",
-    "implementation_coverage": "54/54 targets functional",
-    "corpus_seeded": "54/54 targets with seeds",
-    "dictionary_created": "54/54 targets with dictionaries",
+    "convention_compliance": "275/275 checks passed",
+    "implementation_coverage": "55/55 targets functional",
+    "corpus_seeded": "55/55 targets with seeds",
+    "dictionary_created": "55/55 targets with dictionaries",
     "cwe_mapping": "17 CWEs covered across targets"
   }
 }

@@ -178,3 +178,8 @@ git_show_*.txt
 
 # Archived root scratch
 /artifacts/root-scratch/
+
+# Conformance harness build artifacts (case-runner binaries are
+# rebuilt per fixture batch and frequently exceed 50 MB)
+tests/conformance/conformance-matrix-case-runner-*.bin
+tests/conformance/*-case-runner-*.bin

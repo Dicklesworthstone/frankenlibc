@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-24ug",
-  "description": "Deterministic staged validation plan for the current 124-symbol stdio_abi surface, keeping bootstrap-critical handle/state primitives isolated from the broader formatted and scanning surface.",
+  "description": "Deterministic staged validation plan for the current 126-symbol stdio_abi surface, keeping bootstrap-critical handle/state primitives isolated from the broader formatted and scanning surface.",
   "generated_from": {
     "support_matrix": "support_matrix.json",
     "callthrough_census": "tests/conformance/callthrough_census.v1.json",
@@ -84,10 +84,12 @@
         "fwrite_unlocked",
         "getdelim",
         "getline",
+        "getw",
         "mktemp",
         "open_memstream",
         "pclose",
         "popen",
+        "putw",
         "remove",
         "setbuf",
         "setbuffer",
@@ -247,10 +249,12 @@
           "fwrite_unlocked",
           "getdelim",
           "getline",
+          "getw",
           "mktemp",
           "open_memstream",
           "pclose",
           "popen",
+          "putw",
           "remove",
           "setbuf",
           "setbuffer",
@@ -360,12 +364,12 @@
     ]
   },
   "summary": {
-    "total_stdio_symbols": 124,
+    "total_stdio_symbols": 126,
     "phase_count": 4,
     "phase1_required_count": 40,
-    "deferred_count": 84,
+    "deferred_count": 86,
     "phase1_ready_count": 40,
-    "deferred_ready_count": 84
+    "deferred_ready_count": 86
   },
   "support_contract": {
     "phase1_required_statuses": [

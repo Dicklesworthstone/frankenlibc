@@ -106,12 +106,12 @@
     }
   },
   "current_assessment": {
-    "total_symbols": 3980,
-    "interpose_ready": 3980,
-    "replace_ready": 3980,
+    "total_symbols": 3996,
+    "interpose_ready": 3996,
+    "replace_ready": 3996,
     "replace_blocked": 0,
     "symbol_distribution": {
-      "Implemented": 3576,
+      "Implemented": 3592,
       "RawSyscall": 404,
       "WrapsHostLibc": 0,
       "GlibcCallThrough": 0,

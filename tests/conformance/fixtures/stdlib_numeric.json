@@ -2,8 +2,8 @@
   "version": "v1",
   "family": "stdlib/numeric",
   "captured_at": "2026-02-09T00:00:00Z",
-  "description": "Mode-specific parity fixtures for POSIX/C numeric conversion operations (atoi, atol, strtol, strtoul).",
-  "spec_reference": "POSIX atoi, atol, strtol, strtoul",
+  "description": "Mode-specific parity fixtures for POSIX/C numeric conversion operations (atoi, atol, strtol, strtoul) plus BSD libutil getbsize block-size parsing.",
+  "spec_reference": "POSIX atoi, atol, strtol, strtoul; BSD libutil getbsize",
   "cases": [
     {
       "name": "atoi_basic",
@@ -94,6 +94,114 @@
       "expected_output": "1000000000",
       "expected_errno": 0,
       "mode": "strict"
+    },
+    {
+      "name": "getbsize_default_unset",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize default BLOCKSIZE",
+      "inputs": { "blocksize_env": null },
+      "expected_output": "header=512-blocks;header_len=10;blocksize=512",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_bare_1024_preserves_byte_header",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize bare byte count",
+      "inputs": { "blocksize_env": "1024" },
+      "expected_output": "header=1024-blocks;header_len=11;blocksize=1024",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_empty_env_falls_back_to_default",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize empty BLOCKSIZE fallback",
+      "inputs": { "blocksize_env": "" },
+      "expected_output": "header=512-blocks;header_len=10;blocksize=512",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_plus_prefixed_mega_suffix",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize signed decimal prefix",
+      "inputs": { "blocksize_env": "+2M" },
+      "expected_output": "header=2M-blocks;header_len=9;blocksize=2097152",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_lowercase_k_suffix_normalizes_header",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize lowercase suffix normalization",
+      "inputs": { "blocksize_env": "4k" },
+      "expected_output": "header=4K-blocks;header_len=9;blocksize=4096",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_one_k_preserves_suffix_header",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize suffix spelling",
+      "inputs": { "blocksize_env": "1K" },
+      "expected_output": "header=1K-blocks;header_len=9;blocksize=1024",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_implicit_one_unit_suffix",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize implicit one-unit suffix",
+      "inputs": { "blocksize_env": "K" },
+      "expected_output": "header=1K-blocks;header_len=9;blocksize=1024",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_negative_zero_unit_suffix",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize signed zero suffix",
+      "inputs": { "blocksize_env": "-0K" },
+      "expected_output": "header=1K-blocks;header_len=9;blocksize=1024",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_tiny_value_clamps_to_floor",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize lower clamp",
+      "inputs": { "blocksize_env": "100" },
+      "expected_output": "header=512-blocks;header_len=10;blocksize=512",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_negative_value_clamps_to_floor",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize signed lower clamp",
+      "inputs": { "blocksize_env": "-4K" },
+      "expected_output": "header=512-blocks;header_len=10;blocksize=512",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_huge_g_value_clamps_to_ceiling",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize upper clamp",
+      "inputs": { "blocksize_env": "2G" },
+      "expected_output": "header=1G-blocks;header_len=9;blocksize=1073741824",
+      "expected_errno": 0,
+      "mode": "both"
+    },
+    {
+      "name": "getbsize_garbage_falls_back_to_default",
+      "function": "getbsize",
+      "spec_section": "BSD libutil getbsize invalid BLOCKSIZE fallback",
+      "inputs": { "blocksize_env": "512bogus" },
+      "expected_output": "header=512-blocks;header_len=10;blocksize=512",
+      "expected_errno": 0,
+      "mode": "both"
     }
   ]
 }

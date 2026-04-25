@@ -473,7 +473,7 @@
         "actual": {
           "sum_counts_equals_total": false,
           "support_count_sum": 0,
-          "support_total_exported": 3980,
+          "support_total_exported": 3996,
           "symbols_count_equals_total": true
         },
         "expected": {
@@ -1998,11 +1998,11 @@
         "actual": {
           "reality_counts": {
             "glibc_call_through": 0,
-            "implemented": 3576,
+            "implemented": 3592,
             "raw_syscall": 404,
             "stub": 0
           },
-          "reality_total": 3980
+          "reality_total": 3996
         },
         "expected": {
           "support_counts": {
@@ -2011,7 +2011,7 @@
             "raw_syscall": 0,
             "stub": 0
           },
-          "support_total": 3980
+          "support_total": 3996
         }
       },
       "gap_id": "gap-machine-support-vs-reality",

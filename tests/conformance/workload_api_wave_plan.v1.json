@@ -11,15 +11,15 @@
     },
     "support_matrix": {
       "path": "support_matrix.json",
-      "sha256": "3f1f3c8a048b6b8c0bf7e49b3e7ed5284a978891cf7591ac5c937dfef86dccf5"
+      "sha256": "d9714dd1c9adcb7fda93d2e51f41089ebac0b6fad76ebe88b34ea3f0713466da"
     },
     "callthrough_census": {
       "path": "tests/conformance/callthrough_census.v1.json",
-      "sha256": "25726a7465e4172dfde912d363ee71c20629e85100bef27bc1959898d4190768"
+      "sha256": "4c3c72ef609cf082d173e7ed208c51276adbf6dcc21a77a609d4f6fd502460ae"
     },
     "stub_todo_debt_census": {
       "path": "tests/conformance/stub_todo_debt_census.v1.json",
-      "sha256": "2e9b5d5f4b57eed91dcf2b9d2e3f92a7dd875453a53e0133d27830f0724cc8c1"
+      "sha256": "308df585308baa26aae762e1955c83926d428de0d332e92ffbdc81085a651f37"
     },
     "stub_regression_waiver_policy": {
       "path": "tests/conformance/stub_regression_waiver_policy.v1.json",

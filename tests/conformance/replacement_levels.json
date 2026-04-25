@@ -249,8 +249,8 @@
   ],
   "current_level": "L0",
   "current_assessment": {
-    "total_symbols": 3980,
-    "implemented": 3576,
+    "total_symbols": 3996,
+    "implemented": 3592,
     "raw_syscall": 404,
     "callthrough": 0,
     "stub": 0,

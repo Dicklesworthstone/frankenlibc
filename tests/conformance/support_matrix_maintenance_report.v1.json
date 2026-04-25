@@ -1,30 +1,30 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-24T03:17:23Z",
+  "generated_at": "2026-04-25T20:21:56Z",
   "summary": {
-    "total_symbols": 3980,
-    "status_validated": 3980,
+    "total_symbols": 3996,
+    "status_validated": 3996,
     "status_invalid": 0,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
-    "fixture_linked": 277,
-    "fixture_unlinked": 3703,
+    "fixture_linked": 278,
+    "fixture_unlinked": 3718,
     "fixture_coverage_pct": 7.0,
-    "total_warnings": 152
+    "total_warnings": 155
   },
   "coverage_dashboard": {
-    "total_symbols": 3980,
+    "total_symbols": 3996,
     "status_counts": {
-      "Implemented": 3576,
+      "Implemented": 3592,
       "RawSyscall": 404,
       "WrapsHostLibc": 0,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 89.8,
-      "RawSyscall": 10.2,
+      "Implemented": 89.9,
+      "RawSyscall": 10.1,
       "WrapsHostLibc": 0.0,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
@@ -65,8 +65,8 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 3576,
-      "fixture_linked": 223
+      "count": 3592,
+      "fixture_linked": 224
     },
     "RawSyscall": {
       "count": 404,
@@ -95,7 +95,7 @@
       "coverage_pct": 71.4
     },
     "err_abi": {
-      "total": 8,
+      "total": 12,
       "linked": 0,
       "coverage_pct": 0.0
     },
@@ -115,7 +115,7 @@
       "coverage_pct": 0.0
     },
     "glibc_internal_abi": {
-      "total": 566,
+      "total": 570,
       "linked": 1,
       "coverage_pct": 0.2
     },
@@ -240,19 +240,19 @@
       "coverage_pct": 0.0
     },
     "stdio_abi": {
-      "total": 124,
+      "total": 126,
       "linked": 17,
-      "coverage_pct": 13.7
+      "coverage_pct": 13.5
     },
     "stdlib_abi": {
-      "total": 141,
-      "linked": 15,
-      "coverage_pct": 10.6
+      "total": 152,
+      "linked": 16,
+      "coverage_pct": 10.5
     },
     "string_abi": {
-      "total": 140,
+      "total": 142,
       "linked": 25,
-      "coverage_pct": 17.9
+      "coverage_pct": 17.6
     },
     "termios_abi": {
       "total": 10,
@@ -265,14 +265,14 @@
       "coverage_pct": 15.4
     },
     "unistd_abi": {
-      "total": 631,
+      "total": 625,
       "linked": 31,
-      "coverage_pct": 4.9
+      "coverage_pct": 5.0
     },
     "wchar_abi": {
-      "total": 147,
+      "total": 146,
       "linked": 18,
-      "coverage_pct": 12.2
+      "coverage_pct": 12.3
     }
   },
   "symbol_status_map": {
@@ -442,6 +442,8 @@
     "__atanhf128_finite": "Implemented",
     "__atanhf_finite": "Implemented",
     "__atanhl_finite": "Implemented",
+    "__b64_ntop": "Implemented",
+    "__b64_pton": "Implemented",
     "__backtrace": "Implemented",
     "__backtrace_symbols": "Implemented",
     "__backtrace_symbols_fd": "Implemented",
@@ -1319,6 +1321,8 @@
     "authnone_create": "Implemented",
     "authunix_create": "Implemented",
     "authunix_create_default": "Implemented",
+    "b64_ntop": "Implemented",
+    "b64_pton": "Implemented",
     "backtrace": "Implemented",
     "backtrace_symbols": "Implemented",
     "backtrace_symbols_fd": "Implemented",
@@ -1754,6 +1758,7 @@
     "erff64x": "Implemented",
     "erfl": "Implemented",
     "err": "Implemented",
+    "errc": "Implemented",
     "errno": "Implemented",
     "error": "Implemented",
     "error_at_line": "Implemented",
@@ -2135,6 +2140,7 @@
     "freeaddrinfo": "Implemented",
     "freeifaddrs": "Implemented",
     "freelocale": "Implemented",
+    "freezero": "Implemented",
     "fremovexattr": "RawSyscall",
     "freopen": "Implemented",
     "freopen64": "Implemented",
@@ -2238,6 +2244,7 @@
     "getaliasent": "Implemented",
     "getaliasent_r": "Implemented",
     "getauxval": "Implemented",
+    "getbsize": "Implemented",
     "getc": "Implemented",
     "getc_unlocked": "Implemented",
     "getchar": "Implemented",
@@ -3010,6 +3017,7 @@
     "pmap_unset": "Implemented",
     "poll": "RawSyscall",
     "popen": "Implemented",
+    "posix_close": "Implemented",
     "posix_fadvise": "RawSyscall",
     "posix_fadvise64": "RawSyscall",
     "posix_fallocate": "RawSyscall",
@@ -3297,6 +3305,7 @@
     "reallocarray": "Implemented",
     "realpath": "Implemented",
     "reboot": "RawSyscall",
+    "recallocarray": "Implemented",
     "recv": "RawSyscall",
     "recvfrom": "RawSyscall",
     "recvmmsg": "RawSyscall",
@@ -3766,6 +3775,7 @@
     "strlcat": "Implemented",
     "strlcpy": "Implemented",
     "strlen": "Implemented",
+    "strmode": "Implemented",
     "strncasecmp": "Implemented",
     "strncasecmp_l": "Implemented",
     "strncat": "Implemented",
@@ -3773,6 +3783,7 @@
     "strncpy": "Implemented",
     "strndup": "Implemented",
     "strnlen": "Implemented",
+    "strnstr": "Implemented",
     "strpbrk": "Implemented",
     "strptime": "Implemented",
     "strptime_l": "Implemented",
@@ -3937,6 +3948,8 @@
     "timespec_get": "Implemented",
     "timespec_getres": "Implemented",
     "timezone": "Implemented",
+    "timingsafe_bcmp": "Implemented",
+    "timingsafe_memcmp": "Implemented",
     "tkill": "RawSyscall",
     "tmpfile": "Implemented",
     "tmpfile64": "Implemented",
@@ -4043,6 +4056,7 @@
     "vasprintf": "Implemented",
     "vdprintf": "Implemented",
     "verr": "Implemented",
+    "verrc": "Implemented",
     "verrx": "Implemented",
     "versionsort": "Implemented",
     "versionsort64": "Implemented",
@@ -4064,6 +4078,7 @@
     "vsyslog": "Implemented",
     "vtimes": "Implemented",
     "vwarn": "Implemented",
+    "vwarnc": "Implemented",
     "vwarnx": "Implemented",
     "vwprintf": "Implemented",
     "vwscanf": "Implemented",
@@ -4073,6 +4088,7 @@
     "waitid": "RawSyscall",
     "waitpid": "RawSyscall",
     "warn": "Implemented",
+    "warnc": "Implemented",
     "warnx": "Implemented",
     "wcpcpy": "Implemented",
     "wcpncpy": "Implemented",
@@ -4500,16 +4516,6 @@
       ]
     },
     {
-      "symbol": "basename",
-      "status": "Implemented",
-      "module": "string_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
-    },
-    {
       "symbol": "chroot",
       "status": "RawSyscall",
       "module": "process_abi",
@@ -4563,26 +4569,6 @@
       "symbol": "closefrom",
       "status": "RawSyscall",
       "module": "process_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
-    },
-    {
-      "symbol": "confstr",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
-    },
-    {
-      "symbol": "dirname",
-      "status": "Implemented",
-      "module": "string_abi",
       "valid": true,
       "findings": [
         "function body not found (may use alternate pattern)"
@@ -5110,16 +5096,6 @@
       ]
     },
     {
-      "symbol": "get_avphys_pages",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
-    },
-    {
       "symbol": "get_current_dir_name",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -5128,36 +5104,6 @@
       "warnings": [
         "WrapsHostLibc candidate (host delegation detected)"
       ]
-    },
-    {
-      "symbol": "get_nprocs",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
-    },
-    {
-      "symbol": "get_nprocs_conf",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
-    },
-    {
-      "symbol": "get_phys_pages",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
     },
     {
       "symbol": "getc",
@@ -5242,12 +5188,12 @@
     {
       "symbol": "getw",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdio_abi",
       "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
     },
     {
       "symbol": "getwc",
@@ -5892,12 +5838,12 @@
     {
       "symbol": "putw",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdio_abi",
       "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
     },
     {
       "symbol": "putwc",
@@ -5942,12 +5888,12 @@
     {
       "symbol": "realpath",
       "status": "Implemented",
-      "module": "wchar_abi",
+      "module": "stdlib_abi",
       "valid": true,
-      "findings": [
-        "function body not found (may use alternate pattern)"
-      ],
-      "warnings": []
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
     },
     {
       "symbol": "rewind",
@@ -9673,6 +9619,8 @@
   "unlinked_symbols": [
     "_Exit",
     "_Fork",
+    "__b64_ntop",
+    "__b64_pton",
     "__asprintf_chk",
     "__chk_fail",
     "__confstr_chk",
@@ -9861,6 +9809,8 @@
     "atexit",
     "atof",
     "atoll",
+    "b64_ntop",
+    "b64_pton",
     "basename",
     "bcmp",
     "bcopy",
@@ -9981,6 +9931,7 @@
     "erfcf",
     "erff",
     "err",
+    "errc",
     "error",
     "error_at_line",
     "errx",
@@ -10096,6 +10047,7 @@
     "fputws",
     "fputws_unlocked",
     "fread_unlocked",
+    "freezero",
     "freeaddrinfo",
     "freeifaddrs",
     "fremovexattr",
@@ -10558,6 +10510,7 @@
     "pkey_mprotect",
     "pkey_set",
     "popen",
+    "posix_close",
     "posix_fadvise",
     "posix_fadvise64",
     "posix_fallocate",
@@ -10751,6 +10704,7 @@
     "readlinkat",
     "readv",
     "reallocarray",
+    "recallocarray",
     "realpath",
     "reboot",
     "recv",
@@ -11021,10 +10975,12 @@
     "strncmp",
     "strndup",
     "strnlen",
+    "strnstr",
     "strpbrk",
     "strptime",
     "strsep",
     "strsignal",
+    "strmode",
     "strspn",
     "strtod",
     "strtod_l",
@@ -11086,6 +11042,8 @@
     "thrd_join",
     "thrd_sleep",
     "thrd_yield",
+    "timingsafe_bcmp",
+    "timingsafe_memcmp",
     "timegm",
     "timelocal",
     "timer_create",
@@ -11147,6 +11105,7 @@
     "vasprintf",
     "vdprintf",
     "verr",
+    "verrc",
     "verrx",
     "versionsort",
     "versionsort64",
@@ -11165,6 +11124,7 @@
     "vswscanf",
     "vsyslog",
     "vwarn",
+    "vwarnc",
     "vwarnx",
     "vwprintf",
     "vwscanf",
@@ -11173,6 +11133,7 @@
     "wait4",
     "waitid",
     "warn",
+    "warnc",
     "warnx",
     "wcpcpy",
     "wcpncpy",

@@ -1,16 +1,16 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-04-24T23:50:59Z",
+  "generated_at": "2026-04-25T21:42:26Z",
   "summary": {
     "total_fixture_files": 55,
-    "total_fixture_cases": 1057,
-    "unique_symbols_in_fixtures": 295,
-    "implemented_symbols": 3980,
-    "symbols_with_fixtures": 277,
-    "symbols_at_threshold": 7,
-    "symbols_below_threshold": 3973,
-    "symbols_with_zero_fixtures": 3703,
+    "total_fixture_cases": 1069,
+    "unique_symbols_in_fixtures": 296,
+    "implemented_symbols": 3996,
+    "symbols_with_fixtures": 278,
+    "symbols_at_threshold": 8,
+    "symbols_below_threshold": 3988,
+    "symbols_with_zero_fixtures": 3718,
     "coverage_pct": 7.0,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
@@ -56,7 +56,7 @@
     },
     {
       "module": "err_abi",
-      "total_symbols": 8,
+      "total_symbols": 12,
       "covered_symbols": 0,
       "at_threshold": 0,
       "total_cases": 0,
@@ -92,7 +92,7 @@
     },
     {
       "module": "glibc_internal_abi",
-      "total_symbols": 566,
+      "total_symbols": 570,
       "covered_symbols": 1,
       "at_threshold": 0,
       "total_cases": 2,
@@ -317,29 +317,29 @@
     },
     {
       "module": "stdio_abi",
-      "total_symbols": 124,
+      "total_symbols": 126,
       "covered_symbols": 17,
       "at_threshold": 3,
       "total_cases": 323,
-      "coverage_pct": 13.7,
+      "coverage_pct": 13.5,
       "threshold_pct": 2.4
     },
     {
       "module": "stdlib_abi",
-      "total_symbols": 141,
-      "covered_symbols": 15,
-      "at_threshold": 0,
-      "total_cases": 40,
-      "coverage_pct": 10.6,
-      "threshold_pct": 0.0
+      "total_symbols": 152,
+      "covered_symbols": 16,
+      "at_threshold": 1,
+      "total_cases": 52,
+      "coverage_pct": 10.5,
+      "threshold_pct": 0.7
     },
     {
       "module": "string_abi",
-      "total_symbols": 140,
+      "total_symbols": 142,
       "covered_symbols": 25,
       "at_threshold": 2,
       "total_cases": 94,
-      "coverage_pct": 17.9,
+      "coverage_pct": 17.6,
       "threshold_pct": 1.4
     },
     {
@@ -362,20 +362,20 @@
     },
     {
       "module": "unistd_abi",
-      "total_symbols": 631,
+      "total_symbols": 625,
       "covered_symbols": 31,
       "at_threshold": 0,
       "total_cases": 60,
-      "coverage_pct": 4.9,
+      "coverage_pct": 5.0,
       "threshold_pct": 0.0
     },
     {
       "module": "wchar_abi",
-      "total_symbols": 147,
+      "total_symbols": 146,
       "covered_symbols": 18,
       "at_threshold": 0,
       "total_cases": 70,
-      "coverage_pct": 12.2,
+      "coverage_pct": 12.3,
       "threshold_pct": 0.0
     }
   ],
@@ -1703,6 +1703,22 @@
     {
       "symbol": "__atanhl_finite",
       "module": "math_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "__b64_ntop",
+      "module": "glibc_internal_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "__b64_pton",
+      "module": "glibc_internal_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -8725,6 +8741,22 @@
       "gap": 10
     },
     {
+      "symbol": "b64_ntop",
+      "module": "glibc_internal_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "b64_pton",
+      "module": "glibc_internal_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "backtrace",
       "module": "unistd_abi",
       "status": "Implemented",
@@ -8750,7 +8782,7 @@
     },
     {
       "symbol": "basename",
-      "module": "string_abi",
+      "module": "stdlib_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -10526,7 +10558,7 @@
     },
     {
       "symbol": "confstr",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -11542,7 +11574,7 @@
     },
     {
       "symbol": "dirname",
-      "module": "string_abi",
+      "module": "stdlib_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -12198,6 +12230,14 @@
     },
     {
       "symbol": "err",
+      "module": "err_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "errc",
       "module": "err_abi",
       "status": "Implemented",
       "fixture_cases": 0,
@@ -15253,6 +15293,14 @@
       "gap": 8
     },
     {
+      "symbol": "freezero",
+      "module": "stdlib_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "fremovexattr",
       "module": "unistd_abi",
       "status": "RawSyscall",
@@ -15966,7 +16014,7 @@
     },
     {
       "symbol": "get_avphys_pages",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -15998,7 +16046,7 @@
     },
     {
       "symbol": "get_nprocs",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -16006,7 +16054,7 @@
     },
     {
       "symbol": "get_nprocs_conf",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -16014,7 +16062,7 @@
     },
     {
       "symbol": "get_phys_pages",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -16075,6 +16123,14 @@
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
+    },
+    {
+      "symbol": "getbsize",
+      "module": "stdlib_abi",
+      "status": "Implemented",
+      "fixture_cases": 12,
+      "meets_threshold": true,
+      "gap": 0
     },
     {
       "symbol": "getc",
@@ -17270,7 +17326,7 @@
     },
     {
       "symbol": "getw",
-      "module": "unistd_abi",
+      "module": "stdio_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -22253,6 +22309,14 @@
       "gap": 10
     },
     {
+      "symbol": "posix_close",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "posix_fadvise",
       "module": "unistd_abi",
       "status": "RawSyscall",
@@ -24110,7 +24174,7 @@
     },
     {
       "symbol": "putw",
-      "module": "unistd_abi",
+      "module": "stdio_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -24534,7 +24598,7 @@
     },
     {
       "symbol": "realpath",
-      "module": "wchar_abi",
+      "module": "stdlib_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -24544,6 +24608,14 @@
       "symbol": "reboot",
       "module": "unistd_abi",
       "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "recallocarray",
+      "module": "stdlib_abi",
+      "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
       "gap": 10
@@ -28301,6 +28373,14 @@
       "gap": 0
     },
     {
+      "symbol": "strmode",
+      "module": "string_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "strncasecmp",
       "module": "string_abi",
       "status": "Implemented",
@@ -28350,6 +28430,14 @@
     },
     {
       "symbol": "strnlen",
+      "module": "string_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "strnstr",
       "module": "string_abi",
       "status": "Implemented",
       "fixture_cases": 0,
@@ -29669,6 +29757,22 @@
       "gap": 10
     },
     {
+      "symbol": "timingsafe_bcmp",
+      "module": "string_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "timingsafe_memcmp",
+      "module": "string_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "tkill",
       "module": "unistd_abi",
       "status": "RawSyscall",
@@ -30517,6 +30621,14 @@
       "gap": 10
     },
     {
+      "symbol": "verrc",
+      "module": "err_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "verrx",
       "module": "err_abi",
       "status": "Implemented",
@@ -30685,6 +30797,14 @@
       "gap": 10
     },
     {
+      "symbol": "vwarnc",
+      "module": "err_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "vwarnx",
       "module": "err_abi",
       "status": "Implemented",
@@ -30750,6 +30870,14 @@
     },
     {
       "symbol": "warn",
+      "module": "err_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "warnc",
       "module": "err_abi",
       "status": "Implemented",
       "fixture_cases": 0,
@@ -32827,13 +32955,14 @@
     },
     {
       "file": "stdlib_numeric.json",
-      "total_cases": 10,
-      "symbols_covered": 4,
+      "total_cases": 22,
+      "symbols_covered": 5,
       "symbols": {
         "atoi": 3,
         "strtol": 2,
         "strtoul": 2,
-        "atol": 3
+        "atol": 3,
+        "getbsize": 12
       },
       "valid": true,
       "issues": []

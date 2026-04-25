@@ -15,8 +15,8 @@
   "ground_truth": {
     "source": "support_matrix.json",
     "generated_at": "2026-02-18T04:49:26Z",
-    "total": 3980,
-    "Implemented": 3576,
+    "total": 3996,
+    "Implemented": 3592,
     "RawSyscall": 404,
     "GlibcCallThrough": 0,
     "Stub": 0

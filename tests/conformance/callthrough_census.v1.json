@@ -4,8 +4,8 @@
   "description": "Current glibc callthrough census from support_matrix plus dependency-aware decommission sequencing.",
   "source": {
     "support_matrix_path": "support_matrix.json",
-    "support_matrix_sha256": "3f1f3c8a048b6b8c0bf7e49b3e7ed5284a978891cf7591ac5c937dfef86dccf5",
-    "total_exported": 3980,
+    "support_matrix_sha256": "d9714dd1c9adcb7fda93d2e51f41089ebac0b6fad76ebe88b34ea3f0713466da",
+    "total_exported": 3996,
     "status_summary_callthrough": 0,
     "derived_callthrough_symbols": 0,
     "summary_delta": 0

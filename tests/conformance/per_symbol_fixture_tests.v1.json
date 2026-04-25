@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-04-24T23:52:50Z",
-  "report_hash": "b5e01c5632f278d8",
+  "generated_at": "2026-04-25T21:42:26Z",
+  "report_hash": "a6b920502d80e20a",
   "summary": {
-    "total_symbols": 3980,
-    "symbols_with_fixtures": 277,
-    "symbols_without_fixtures": 3703,
+    "total_symbols": 3996,
+    "symbols_with_fixtures": 278,
+    "symbols_without_fixtures": 3718,
     "fixture_coverage_pct": 7.0,
     "implemented_coverage_pct": 6.2,
     "total_fixture_files": 55,
-    "total_cases": 1052,
-    "total_format_issues": 117,
-    "symbols_with_edge_cases": 202,
-    "symbols_with_errno_checks": 275,
-    "total_quality_issues": 3588,
-    "uncovered_action_count": 3703
+    "total_cases": 1064,
+    "total_format_issues": 0,
+    "symbols_with_edge_cases": 203,
+    "symbols_with_errno_checks": 276,
+    "total_quality_issues": 3603,
+    "uncovered_action_count": 3718
   },
   "fixture_file_analyses": [
     {
@@ -69,12 +69,10 @@
     {
       "file": "errno_ops.json",
       "family": "errno_ops",
-      "valid": false,
+      "valid": true,
       "total_cases": 23,
       "unique_symbols": 7,
-      "issues": [
-        "Case 'strerror_r_null_buffer': missing field 'expected_output'"
-      ]
+      "issues": []
     },
     {
       "file": "grp_ops.json",
@@ -175,21 +173,10 @@
     {
       "file": "printf_conformance.json",
       "family": "printf_conformance",
-      "valid": false,
+      "valid": true,
       "total_cases": 186,
       "unique_symbols": 2,
-      "issues": [
-        "Case 'sprintf_c_nul': missing field 'expected_output'",
-        "Case 'sprintf_p_basic': missing field 'expected_output'",
-        "Case 'sprintf_p_null': missing field 'expected_output'",
-        "Case 'sprintf_a_basic': missing field 'expected_output'",
-        "Case 'sprintf_A_basic': missing field 'expected_output'",
-        "Case 'sprintf_f_denormal': missing field 'expected_output'",
-        "Case 'snprintf_null_buffer': missing field 'expected_output'",
-        "Case 'sprintf_p_width': missing field 'expected_output'",
-        "Case 'sprintf_a_precision': missing field 'expected_output'",
-        "Case 'sprintf_a_negative': missing field 'expected_output'"
-      ]
+      "issues": []
     },
     {
       "file": "process_ops.json",
@@ -274,117 +261,10 @@
     {
       "file": "scanf_conformance.json",
       "family": "scanf_conformance",
-      "valid": false,
+      "valid": true,
       "total_cases": 106,
       "unique_symbols": 1,
-      "issues": [
-        "Case 'sscanf_d_basic': missing field 'expected_output'",
-        "Case 'sscanf_d_negative': missing field 'expected_output'",
-        "Case 'sscanf_d_leading_ws': missing field 'expected_output'",
-        "Case 'sscanf_d_plus_sign': missing field 'expected_output'",
-        "Case 'sscanf_i_decimal': missing field 'expected_output'",
-        "Case 'sscanf_i_octal': missing field 'expected_output'",
-        "Case 'sscanf_i_hex': missing field 'expected_output'",
-        "Case 'sscanf_i_HEX': missing field 'expected_output'",
-        "Case 'sscanf_u_basic': missing field 'expected_output'",
-        "Case 'sscanf_o_basic': missing field 'expected_output'",
-        "Case 'sscanf_o_leading_zero': missing field 'expected_output'",
-        "Case 'sscanf_x_basic': missing field 'expected_output'",
-        "Case 'sscanf_x_prefix': missing field 'expected_output'",
-        "Case 'sscanf_X_basic': missing field 'expected_output'",
-        "Case 'sscanf_c_basic': missing field 'expected_output'",
-        "Case 'sscanf_c_no_skip_ws': missing field 'expected_output'",
-        "Case 'sscanf_c_width': missing field 'expected_output'",
-        "Case 'sscanf_s_basic': missing field 'expected_output'",
-        "Case 'sscanf_s_leading_ws': missing field 'expected_output'",
-        "Case 'sscanf_s_stops_ws': missing field 'expected_output'",
-        "Case 'sscanf_s_width': missing field 'expected_output'",
-        "Case 'sscanf_f_basic': missing field 'expected_output'",
-        "Case 'sscanf_f_negative': missing field 'expected_output'",
-        "Case 'sscanf_f_exponent': missing field 'expected_output'",
-        "Case 'sscanf_f_neg_exponent': missing field 'expected_output'",
-        "Case 'sscanf_f_no_decimal': missing field 'expected_output'",
-        "Case 'sscanf_f_leading_dot': missing field 'expected_output'",
-        "Case 'sscanf_lf_basic': missing field 'expected_output'",
-        "Case 'sscanf_scanset_basic': missing field 'expected_output'",
-        "Case 'sscanf_scanset_negated': missing field 'expected_output'",
-        "Case 'sscanf_scanset_range': missing field 'expected_output'",
-        "Case 'sscanf_scanset_caret_first': missing field 'expected_output'",
-        "Case 'sscanf_scanset_bracket': missing field 'expected_output'",
-        "Case 'sscanf_suppress_d': missing field 'expected_output'",
-        "Case 'sscanf_suppress_s': missing field 'expected_output'",
-        "Case 'sscanf_literal_match': missing field 'expected_output'",
-        "Case 'sscanf_literal_mismatch': missing field 'expected_output'",
-        "Case 'sscanf_literal_percent': missing field 'expected_output'",
-        "Case 'sscanf_multiple': missing field 'expected_output'",
-        "Case 'sscanf_n_basic': missing field 'expected_output'",
-        "Case 'sscanf_n_after_ws': missing field 'expected_output'",
-        "Case 'sscanf_hh_d': missing field 'expected_output'",
-        "Case 'sscanf_h_d': missing field 'expected_output'",
-        "Case 'sscanf_l_d': missing field 'expected_output'",
-        "Case 'sscanf_ll_d': missing field 'expected_output'",
-        "Case 'sscanf_eof_empty': missing field 'expected_output'",
-        "Case 'sscanf_eof_ws_only': missing field 'expected_output'",
-        "Case 'sscanf_no_match': missing field 'expected_output'",
-        "Case 'sscanf_p_basic': missing field 'expected_output'",
-        "Case 'sscanf_f_inf': missing field 'expected_output'",
-        "Case 'sscanf_f_neg_inf': missing field 'expected_output'",
-        "Case 'sscanf_f_nan': missing field 'expected_output'",
-        "Case 'sscanf_f_infinity_full': missing field 'expected_output'",
-        "Case 'sscanf_d_overflow': missing field 'expected_output'",
-        "Case 'sscanf_d_underflow': missing field 'expected_output'",
-        "Case 'sscanf_u_max': missing field 'expected_output'",
-        "Case 'sscanf_llu_max': missing field 'expected_output'",
-        "Case 'sscanf_x_large': missing field 'expected_output'",
-        "Case 'sscanf_llx_large': missing field 'expected_output'",
-        "Case 'sscanf_o_large': missing field 'expected_output'",
-        "Case 'sscanf_d_width': missing field 'expected_output'",
-        "Case 'sscanf_x_width': missing field 'expected_output'",
-        "Case 'sscanf_f_width': missing field 'expected_output'",
-        "Case 'sscanf_ws_in_format': missing field 'expected_output'",
-        "Case 'sscanf_multi_ws_format': missing field 'expected_output'",
-        "Case 'sscanf_scanset_digits': missing field 'expected_output'",
-        "Case 'sscanf_scanset_alpha': missing field 'expected_output'",
-        "Case 'sscanf_scanset_not_newline': missing field 'expected_output'",
-        "Case 'sscanf_e_basic': missing field 'expected_output'",
-        "Case 'sscanf_g_basic': missing field 'expected_output'",
-        "Case 'sscanf_a_basic': missing field 'expected_output'",
-        "Case 'sscanf_partial_conversion': missing field 'expected_output'",
-        "Case 'sscanf_suppress_multiple': missing field 'expected_output'",
-        "Case 'sscanf_z_u': missing field 'expected_output'",
-        "Case 'sscanf_t_d': missing field 'expected_output'",
-        "Case 'sscanf_j_d': missing field 'expected_output'",
-        "Case 'sscanf_f_hex': missing field 'expected_output'",
-        "Case 'sscanf_d_trailing_text': missing field 'expected_output'",
-        "Case 'sscanf_f_positive_exp': missing field 'expected_output'",
-        "Case 'sscanf_f_E_exponent': missing field 'expected_output'",
-        "Case 'sscanf_complex_format': missing field 'expected_output'",
-        "Case 'sscanf_Lf_basic': missing field 'expected_output'",
-        "Case 'sscanf_a_hex_basic': missing field 'expected_output'",
-        "Case 'sscanf_a_hex_negative': missing field 'expected_output'",
-        "Case 'sscanf_a_hex_neg_exp': missing field 'expected_output'",
-        "Case 'sscanf_A_hex_upper': missing field 'expected_output'",
-        "Case 'sscanf_a_hex_large': missing field 'expected_output'",
-        "Case 'sscanf_a_hex_zero': missing field 'expected_output'",
-        "Case 'sscanf_a_hex_frac_only': missing field 'expected_output'",
-        "Case 'sscanf_f_zero': missing field 'expected_output'",
-        "Case 'sscanf_f_neg_zero': missing field 'expected_output'",
-        "Case 'sscanf_f_small': missing field 'expected_output'",
-        "Case 'sscanf_scanset_hyphen_literal': missing field 'expected_output'",
-        "Case 'sscanf_scanset_empty_match': missing field 'expected_output'",
-        "Case 'sscanf_hd_overflow': missing field 'expected_output'",
-        "Case 'sscanf_hd_underflow': missing field 'expected_output'",
-        "Case 'sscanf_hhd_overflow': missing field 'expected_output'",
-        "Case 'sscanf_hhd_underflow': missing field 'expected_output'",
-        "Case 'sscanf_u_overflow': missing field 'expected_output'",
-        "Case 'sscanf_hu_overflow': missing field 'expected_output'",
-        "Case 'sscanf_lld_no_wrap': missing field 'expected_output'",
-        "Case 'sscanf_i_auto_hex': missing field 'expected_output'",
-        "Case 'sscanf_i_auto_octal': missing field 'expected_output'",
-        "Case 'sscanf_i_auto_decimal': missing field 'expected_output'",
-        "Case 'sscanf_i_negative': missing field 'expected_output'",
-        "Case 'sscanf_i_overflow': missing field 'expected_output'"
-      ]
+      "issues": []
     },
     {
       "file": "search_ops.json",
@@ -470,8 +350,8 @@
       "file": "stdlib_numeric.json",
       "family": "stdlib/numeric",
       "valid": true,
-      "total_cases": 10,
-      "unique_symbols": 4,
+      "total_cases": 22,
+      "unique_symbols": 5,
       "issues": []
     },
     {
@@ -3216,6 +3096,36 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "O1",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "__b64_ntop",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "__b64_pton",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
       "fixture_files": [],
@@ -16398,6 +16308,36 @@
       ]
     },
     {
+      "symbol": "b64_ntop",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "b64_pton",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "backtrace",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -16462,7 +16402,7 @@
     {
       "symbol": "basename",
       "status": "Implemented",
-      "module": "string_abi",
+      "module": "stdlib_abi",
       "perf_class": "",
       "has_fixtures": false,
       "case_count": 0,
@@ -19837,7 +19777,7 @@
     {
       "symbol": "confstr",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
@@ -21743,7 +21683,7 @@
     {
       "symbol": "dirname",
       "status": "Implemented",
-      "module": "string_abi",
+      "module": "stdlib_abi",
       "perf_class": "",
       "has_fixtures": false,
       "case_count": 0,
@@ -22999,6 +22939,21 @@
     },
     {
       "symbol": "err",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "errc",
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
@@ -28796,6 +28751,21 @@
       ]
     },
     {
+      "symbol": "freezero",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "fremovexattr",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -30129,7 +30099,7 @@
     {
       "symbol": "get_avphys_pages",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "fast",
       "has_fixtures": false,
       "case_count": 0,
@@ -30189,7 +30159,7 @@
     {
       "symbol": "get_nprocs",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "fast",
       "has_fixtures": false,
       "case_count": 0,
@@ -30204,7 +30174,7 @@
     {
       "symbol": "get_nprocs_conf",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "fast",
       "has_fixtures": false,
       "case_count": 0,
@@ -30219,7 +30189,7 @@
     {
       "symbol": "get_phys_pages",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "fast",
       "has_fixtures": false,
       "case_count": 0,
@@ -30342,6 +30312,26 @@
       "quality_issues": [
         "implemented symbol has no fixtures"
       ]
+    },
+    {
+      "symbol": "getbsize",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": true,
+      "case_count": 12,
+      "fixture_files": [
+        "stdlib_numeric.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "getc",
@@ -32643,7 +32633,7 @@
     {
       "symbol": "getw",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": false,
       "case_count": 0,
@@ -42109,6 +42099,21 @@
       ]
     },
     {
+      "symbol": "posix_close",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "posix_fadvise",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -45670,7 +45675,7 @@
     {
       "symbol": "putw",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": false,
       "case_count": 0,
@@ -46479,7 +46484,7 @@
     {
       "symbol": "realpath",
       "status": "Implemented",
-      "module": "wchar_abi",
+      "module": "stdlib_abi",
       "perf_class": "default",
       "has_fixtures": false,
       "case_count": 0,
@@ -46503,6 +46508,21 @@
       "edge_cases_covered": [],
       "has_errno_check": false,
       "quality_issues": []
+    },
+    {
+      "symbol": "recallocarray",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
     },
     {
       "symbol": "recv",
@@ -53624,6 +53644,21 @@
       "quality_issues": []
     },
     {
+      "symbol": "strmode",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "strncasecmp",
       "status": "Implemented",
       "module": "string_abi",
@@ -53729,6 +53764,21 @@
     },
     {
       "symbol": "strnlen",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "strnstr",
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
@@ -56233,6 +56283,36 @@
       ]
     },
     {
+      "symbol": "timingsafe_bcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "timingsafe_memcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "tkill",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -57824,6 +57904,21 @@
       ]
     },
     {
+      "symbol": "verrc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "verrx",
       "status": "Implemented",
       "module": "err_abi",
@@ -58135,6 +58230,21 @@
       ]
     },
     {
+      "symbol": "vwarnc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "vwarnx",
       "status": "Implemented",
       "module": "err_abi",
@@ -58255,6 +58365,21 @@
     },
     {
       "symbol": "warn",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "warnc",
       "status": "Implemented",
       "module": "err_abi",
       "perf_class": "cold",
@@ -62096,6 +62221,20 @@
       "symbol": "__atanhl_finite",
       "status": "Implemented",
       "module": "math_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "__b64_ntop",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "__b64_pton",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -68141,9 +68280,23 @@
       "priority": "normal"
     },
     {
+      "symbol": "b64_ntop",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "b64_pton",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "basename",
       "status": "Implemented",
-      "module": "string_abi",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -69613,7 +69766,7 @@
     {
       "symbol": "confstr",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -70488,7 +70641,7 @@
     {
       "symbol": "dirname",
       "status": "Implemented",
-      "module": "string_abi",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -71005,6 +71158,13 @@
     },
     {
       "symbol": "err",
+      "status": "Implemented",
+      "module": "err_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "errc",
       "status": "Implemented",
       "module": "err_abi",
       "action": "create fixture cases",
@@ -73545,6 +73705,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "freezero",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "fremovexattr",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -74149,7 +74316,7 @@
     {
       "symbol": "get_avphys_pages",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -74177,21 +74344,21 @@
     {
       "symbol": "get_nprocs",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
     {
       "symbol": "get_nprocs_conf",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
     {
       "symbol": "get_phys_pages",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -75164,7 +75331,7 @@
     {
       "symbol": "getw",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -79138,6 +79305,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "posix_close",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "posix_fadvise",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -80575,7 +80749,7 @@
     {
       "symbol": "putw",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -80911,7 +81085,7 @@
     {
       "symbol": "realpath",
       "status": "Implemented",
-      "module": "wchar_abi",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -80919,6 +81093,13 @@
       "symbol": "reboot",
       "status": "RawSyscall",
       "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "recallocarray",
+      "status": "Implemented",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -83912,6 +84093,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "strmode",
+      "status": "Implemented",
+      "module": "string_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "strncasecmp",
       "status": "Implemented",
       "module": "string_abi",
@@ -83941,6 +84129,13 @@
     },
     {
       "symbol": "strnlen",
+      "status": "Implemented",
+      "module": "string_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
+      "symbol": "strnstr",
       "status": "Implemented",
       "module": "string_abi",
       "action": "create fixture cases",
@@ -84997,6 +85192,20 @@
       "priority": "normal"
     },
     {
+      "symbol": "timingsafe_bcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
+      "symbol": "timingsafe_memcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
       "symbol": "tkill",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -85704,6 +85913,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "verrc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "verrx",
       "status": "Implemented",
       "module": "err_abi",
@@ -85851,6 +86067,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "vwarnc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "vwarnx",
       "status": "Implemented",
       "module": "err_abi",
@@ -85901,6 +86124,13 @@
     },
     {
       "symbol": "warn",
+      "status": "Implemented",
+      "module": "err_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "warnc",
       "status": "Implemented",
       "module": "err_abi",
       "action": "create fixture cases",

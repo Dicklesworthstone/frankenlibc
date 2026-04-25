@@ -3,16 +3,16 @@
   "bead": "bd-2tq.4",
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "summary": {
-    "total_exported": 3980,
-    "tracked_symbols": 3980,
+    "total_exported": 3996,
+    "tracked_symbols": 3996,
     "total_obligations": 258,
-    "covered_obligations": 89,
-    "mapped_without_execution": 105,
-    "obligations_with_execution_failures": 64,
+    "covered_obligations": 190,
+    "mapped_without_execution": 64,
+    "obligations_with_execution_failures": 4,
     "error_condition_obligations": 60,
     "async_concurrency_obligations": 52,
-    "symbols_missing_any_mapping": 3775,
-    "symbols_missing_execution_evidence": 69,
+    "symbols_missing_any_mapping": 3791,
+    "symbols_missing_execution_evidence": 34,
     "symbols_missing_error_conditions": 152,
     "symbols_missing_async_concurrency": 0
   },
@@ -24,7 +24,7 @@
       "symbol_family": "errno_ops",
       "owner": "errno_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -41,8 +41,8 @@
         "tests/conformance/fixtures/errno_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -56,7 +56,7 @@
       "symbol_family": "errno_ops",
       "owner": "errno_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -74,8 +74,8 @@
         "tests/conformance/fixtures/errno_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -153,7 +153,7 @@
       "symbol_family": "setjmp_ops",
       "owner": "setjmp_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -169,9 +169,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -183,7 +183,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -203,9 +203,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
+        "pass": 4,
         "fail": 0,
-        "error": 4,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -315,7 +315,7 @@
       "symbol_family": "socket_ops",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -331,9 +331,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -472,7 +472,7 @@
       "symbol_family": "termios_ops",
       "owner": "termios_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -487,9 +487,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -501,7 +501,7 @@
       "symbol_family": "termios_ops",
       "owner": "termios_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -516,9 +516,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -530,7 +530,7 @@
       "symbol_family": "termios_ops",
       "owner": "termios_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -545,9 +545,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -559,7 +559,7 @@
       "symbol_family": "termios_ops",
       "owner": "termios_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -574,9 +574,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -588,7 +588,7 @@
       "symbol_family": "time_ops",
       "owner": "time_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -608,9 +608,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
+        "pass": 4,
         "fail": 0,
-        "error": 4,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -642,9 +642,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
-        "fail": 0,
-        "error": 4,
+        "pass": 2,
+        "fail": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -656,7 +656,7 @@
       "symbol_family": "dirent_ops",
       "owner": "dirent_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -671,9 +671,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -717,7 +717,7 @@
       "symbol_family": "dirent_ops",
       "owner": "dirent_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -733,8 +733,8 @@
         "tests/conformance/fixtures/dirent_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -748,7 +748,7 @@
       "symbol_family": "loader_edges",
       "owner": "dlfcn_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -765,9 +765,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -779,7 +779,7 @@
       "symbol_family": "dlfcn_ops",
       "owner": "dlfcn_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -795,9 +795,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -809,7 +809,7 @@
       "symbol_family": "dlfcn_ops",
       "owner": "dlfcn_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -827,9 +827,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -841,7 +841,7 @@
       "symbol_family": "loader_edges",
       "owner": "dlfcn_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -858,9 +858,9 @@
       ],
       "execution": {
         "total": 3,
-        "pass": 0,
+        "pass": 3,
         "fail": 0,
-        "error": 3,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -872,7 +872,7 @@
       "symbol_family": "dlfcn_ops",
       "owner": "dlfcn_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -891,9 +891,9 @@
       ],
       "execution": {
         "total": 3,
-        "pass": 0,
+        "pass": 3,
         "fail": 0,
-        "error": 3,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -905,7 +905,7 @@
       "symbol_family": "loader_edges",
       "owner": "dlfcn_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -921,9 +921,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -1089,7 +1089,7 @@
       "symbol_family": "errno_ops",
       "owner": "unknown",
       "support_status": "Untracked",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -1106,8 +1106,8 @@
         "tests/conformance/fixtures/errno_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1121,7 +1121,7 @@
       "symbol_family": "errno_ops",
       "owner": "unknown",
       "support_status": "Untracked",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -1138,8 +1138,8 @@
         "tests/conformance/fixtures/errno_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1153,7 +1153,7 @@
       "symbol_family": "spawn_exec_ops",
       "owner": "process_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -1170,8 +1170,8 @@
         "tests/conformance/fixtures/spawn_exec_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1345,7 +1345,7 @@
       "symbol_family": "stdio_file_ops",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1362,8 +1362,8 @@
         "tests/conformance/fixtures/stdio_file_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 3,
+        "pass": 3,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1473,7 +1473,7 @@
       "symbol_family": "regex_glob_ops",
       "owner": "string_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1489,9 +1489,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -1535,7 +1535,7 @@
       "symbol_family": "process_ops",
       "owner": "process_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -1553,9 +1553,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -1942,7 +1942,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1959,9 +1959,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -1973,7 +1973,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1990,9 +1990,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2004,7 +2004,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2021,9 +2021,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2035,7 +2035,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2052,9 +2052,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2227,7 +2227,7 @@
       "symbol_family": "session_ops",
       "owner": "unistd_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2244,9 +2244,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2258,7 +2258,7 @@
       "symbol_family": "session_ops",
       "owner": "unistd_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2273,9 +2273,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2287,7 +2287,7 @@
       "symbol_family": "process_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2304,9 +2304,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2318,7 +2318,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2335,9 +2335,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2349,7 +2349,7 @@
       "symbol_family": "process_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2364,9 +2364,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2378,7 +2378,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2395,9 +2395,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2539,7 +2539,7 @@
       "symbol_family": "resource_ops",
       "owner": "resource_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -2565,10 +2565,10 @@
         "tests/conformance/fixtures/resource_ops.json"
       ],
       "execution": {
-        "total": 5,
-        "pass": 0,
+        "total": 11,
+        "pass": 11,
         "fail": 0,
-        "error": 5,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2580,7 +2580,7 @@
       "symbol_family": "session_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2595,9 +2595,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2609,7 +2609,7 @@
       "symbol_family": "socket_ops",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -2625,9 +2625,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2672,7 +2672,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2689,9 +2689,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2703,7 +2703,7 @@
       "symbol_family": "regex_glob_ops",
       "owner": "string_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2720,9 +2720,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -2734,7 +2734,7 @@
       "symbol_family": "search/ops",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -2753,8 +2753,8 @@
         "tests/conformance/fixtures/search_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -2768,7 +2768,7 @@
       "symbol_family": "search/ops",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -2785,8 +2785,8 @@
         "tests/conformance/fixtures/search_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3262,7 +3262,7 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -3282,9 +3282,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
+        "pass": 4,
         "fail": 0,
-        "error": 4,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -3767,7 +3767,7 @@
       "symbol_family": "signal_ops",
       "owner": "signal_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -3787,9 +3787,9 @@
       ],
       "execution": {
         "total": 3,
-        "pass": 0,
+        "pass": 3,
         "fail": 0,
-        "error": 3,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -3801,7 +3801,7 @@
       "symbol_family": "search/ops",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3817,8 +3817,8 @@
         "tests/conformance/fixtures/search_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3832,7 +3832,7 @@
       "symbol_family": "socket_ops",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -3848,9 +3848,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -3862,7 +3862,7 @@
       "symbol_family": "time_ops",
       "owner": "time_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3877,9 +3877,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -3923,7 +3923,7 @@
       "symbol_family": "search/ops",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3939,8 +3939,8 @@
         "tests/conformance/fixtures/search_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3972,8 +3972,8 @@
       "execution": {
         "total": 2,
         "pass": 0,
-        "fail": 0,
-        "error": 2,
+        "fail": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -3985,7 +3985,7 @@
       "symbol_family": "virtual_memory_ops",
       "owner": "mmap_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -4000,9 +4000,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -4164,8 +4164,8 @@
         "tests/conformance/fixtures/memcpy_strict.json"
       ],
       "execution": {
-        "total": 4,
-        "pass": 4,
+        "total": 9,
+        "pass": 9,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -4272,7 +4272,7 @@
       "symbol_family": "virtual_memory_ops",
       "owner": "mmap_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -4293,9 +4293,9 @@
       ],
       "execution": {
         "total": 5,
-        "pass": 0,
+        "pass": 5,
         "fail": 0,
-        "error": 5,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -4307,7 +4307,7 @@
       "symbol_family": "virtual_memory_ops",
       "owner": "mmap_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -4322,9 +4322,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -4336,7 +4336,7 @@
       "symbol_family": "sysv_ipc_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -4350,8 +4350,8 @@
         "tests/conformance/fixtures/sysv_ipc_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -4365,7 +4365,7 @@
       "symbol_family": "virtual_memory_ops",
       "owner": "mmap_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -4380,9 +4380,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -4660,7 +4660,7 @@
       "symbol_family": "dirent_ops",
       "owner": "dirent_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -4680,9 +4680,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
+        "pass": 4,
         "fail": 0,
-        "error": 4,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -4694,7 +4694,7 @@
       "symbol_family": "errno_ops",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -4715,8 +4715,8 @@
         "tests/conformance/fixtures/errno_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 6,
+        "pass": 6,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -4730,7 +4730,7 @@
       "symbol_family": "unistd",
       "owner": "io_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -4747,9 +4747,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -4761,7 +4761,7 @@
       "symbol_family": "poll_ops",
       "owner": "poll_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -4783,9 +4783,9 @@
       ],
       "execution": {
         "total": 5,
-        "pass": 0,
+        "pass": 5,
         "fail": 0,
-        "error": 5,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -4797,7 +4797,7 @@
       "symbol_family": "spawn_exec_ops",
       "owner": "process_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -4816,8 +4816,8 @@
         "tests/conformance/fixtures/spawn_exec_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 3,
+        "pass": 3,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -5220,7 +5220,7 @@
       "symbol_family": "pthread/thread",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5237,9 +5237,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5251,7 +5251,7 @@
       "symbol_family": "pthread/thread",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -5272,9 +5272,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
+        "pass": 4,
         "fail": 0,
-        "error": 4,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5286,7 +5286,7 @@
       "symbol_family": "pthread/thread",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5306,9 +5306,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
+        "pass": 4,
         "fail": 0,
-        "error": 4,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5388,7 +5388,7 @@
       "symbol_family": "pthread/thread",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -5410,9 +5410,9 @@
       ],
       "execution": {
         "total": 5,
-        "pass": 0,
+        "pass": 5,
         "fail": 0,
-        "error": 5,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5667,7 +5667,7 @@
       "symbol_family": "pthread/thread",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5685,9 +5685,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5736,7 +5736,7 @@
       "symbol_family": "signal_ops",
       "owner": "signal_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5754,9 +5754,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5784,8 +5784,8 @@
       "execution": {
         "total": 1,
         "pass": 0,
-        "fail": 0,
-        "error": 1,
+        "fail": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5797,7 +5797,7 @@
       "symbol_family": "dirent_ops",
       "owner": "dirent_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -5812,9 +5812,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5921,7 +5921,7 @@
       "symbol_family": "regex_glob_ops",
       "owner": "string_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -5938,9 +5938,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5952,7 +5952,7 @@
       "symbol_family": "regex_glob_ops",
       "owner": "string_abi",
       "support_status": "Implemented",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5969,9 +5969,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -5983,7 +5983,7 @@
       "symbol_family": "dirent_ops",
       "owner": "dirent_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -5999,8 +5999,8 @@
         "tests/conformance/fixtures/dirent_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6014,7 +6014,7 @@
       "symbol_family": "dirent_ops",
       "owner": "dirent_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6028,8 +6028,8 @@
         "tests/conformance/fixtures/dirent_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6043,7 +6043,7 @@
       "symbol_family": "poll_ops",
       "owner": "poll_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -6059,9 +6059,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -6073,7 +6073,7 @@
       "symbol_family": "sysv_ipc_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6087,8 +6087,8 @@
         "tests/conformance/fixtures/sysv_ipc_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6102,7 +6102,7 @@
       "symbol_family": "sysv_ipc_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6118,8 +6118,8 @@
         "tests/conformance/fixtures/sysv_ipc_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6133,7 +6133,7 @@
       "symbol_family": "sysv_ipc_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -6148,8 +6148,8 @@
         "tests/conformance/fixtures/sysv_ipc_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6354,7 +6354,7 @@
       "symbol_family": "session_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6371,9 +6371,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -6417,7 +6417,7 @@
       "symbol_family": "sysv_ipc_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6431,8 +6431,8 @@
         "tests/conformance/fixtures/sysv_ipc_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6446,7 +6446,7 @@
       "symbol_family": "sysv_ipc_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6460,8 +6460,8 @@
         "tests/conformance/fixtures/sysv_ipc_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6475,7 +6475,7 @@
       "symbol_family": "sysv_ipc_ops",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6491,8 +6491,8 @@
         "tests/conformance/fixtures/sysv_ipc_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6506,7 +6506,7 @@
       "symbol_family": "socket_ops",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -6522,9 +6522,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -6569,7 +6569,7 @@
       "symbol_family": "signal_ops",
       "owner": "signal_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -6585,9 +6585,9 @@
       ],
       "execution": {
         "total": 1,
-        "pass": 0,
+        "pass": 1,
         "fail": 0,
-        "error": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -6599,7 +6599,7 @@
       "symbol_family": "signal_ops",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -6619,8 +6619,8 @@
         "tests/conformance/fixtures/signal_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6634,7 +6634,7 @@
       "symbol_family": "signal_ops",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -6651,8 +6651,8 @@
         "tests/conformance/fixtures/signal_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6666,7 +6666,7 @@
       "symbol_family": "signal_ops",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -6683,8 +6683,8 @@
         "tests/conformance/fixtures/signal_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6698,7 +6698,7 @@
       "symbol_family": "signal_ops",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -6715,8 +6715,8 @@
         "tests/conformance/fixtures/signal_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6730,7 +6730,7 @@
       "symbol_family": "signal_ops",
       "owner": "signal_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -6750,8 +6750,8 @@
         "tests/conformance/fixtures/signal_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6765,7 +6765,7 @@
       "symbol_family": "signal_ops",
       "owner": "signal_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "error_condition",
@@ -6803,8 +6803,8 @@
         "tests/conformance/fixtures/signal_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 22,
+        "pass": 22,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6882,7 +6882,7 @@
       "symbol_family": "socket_ops",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -6903,9 +6903,9 @@
       ],
       "execution": {
         "total": 5,
-        "pass": 0,
+        "pass": 5,
         "fail": 0,
-        "error": 5,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -6950,7 +6950,7 @@
       "symbol_family": "printf_conformance",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6964,8 +6964,8 @@
         "tests/conformance/fixtures/printf_conformance.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6979,7 +6979,7 @@
       "symbol_family": "printf_conformance",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6993,8 +6993,8 @@
         "tests/conformance/fixtures/printf_conformance.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7008,7 +7008,7 @@
       "symbol_family": "printf_conformance",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -7022,8 +7022,8 @@
         "tests/conformance/fixtures/printf_conformance.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7037,7 +7037,7 @@
       "symbol_family": "printf_conformance",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -7051,8 +7051,8 @@
         "tests/conformance/fixtures/printf_conformance.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7223,7 +7223,7 @@
       "symbol_family": "errno_ops",
       "owner": "string_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -7256,8 +7256,8 @@
         "tests/conformance/fixtures/errno_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 18,
+        "pass": 18,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7271,7 +7271,7 @@
       "symbol_family": "errno_ops",
       "owner": "unistd_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -7288,8 +7288,8 @@
         "tests/conformance/fixtures/errno_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7303,7 +7303,7 @@
       "symbol_family": "errno_ops",
       "owner": "string_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -7324,8 +7324,8 @@
         "tests/conformance/fixtures/errno_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 6,
+        "pass": 6,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7362,8 +7362,8 @@
         "tests/conformance/fixtures/strlen_strict.json"
       ],
       "execution": {
-        "total": 3,
-        "pass": 3,
+        "total": 9,
+        "pass": 9,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7629,7 +7629,7 @@
       "symbol_family": "termios_ops",
       "owner": "termios_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -7649,9 +7649,9 @@
       ],
       "execution": {
         "total": 4,
-        "pass": 0,
+        "pass": 4,
         "fail": 0,
-        "error": 4,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -7663,7 +7663,7 @@
       "symbol_family": "search/ops",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -7679,8 +7679,8 @@
         "tests/conformance/fixtures/search_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7732,7 +7732,7 @@
       "symbol_family": "dirent_ops",
       "owner": "dirent_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -7748,8 +7748,8 @@
         "tests/conformance/fixtures/dirent_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7763,7 +7763,7 @@
       "symbol_family": "search/ops",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -7779,8 +7779,8 @@
         "tests/conformance/fixtures/search_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7794,7 +7794,7 @@
       "symbol_family": "time_ops",
       "owner": "time_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -7811,9 +7811,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -7963,7 +7963,7 @@
       "symbol_family": "search/ops",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -7979,8 +7979,8 @@
         "tests/conformance/fixtures/search_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7994,7 +7994,7 @@
       "symbol_family": "search/ops",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8010,8 +8010,8 @@
         "tests/conformance/fixtures/search_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -8243,7 +8243,7 @@
       "symbol_family": "process_ops",
       "owner": "process_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "execution_failures",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -8260,9 +8260,9 @@
       ],
       "execution": {
         "total": 2,
-        "pass": 0,
+        "pass": 2,
         "fail": 0,
-        "error": 2,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -8274,7 +8274,7 @@
       "symbol_family": "regex_glob_ops",
       "owner": "unistd_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8294,8 +8294,8 @@
         "tests/conformance/fixtures/regex_glob_ops.json"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 6,
+        "pass": 6,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -8325,8 +8325,8 @@
       "execution": {
         "total": 1,
         "pass": 0,
-        "fail": 0,
-        "error": 1,
+        "fail": 1,
+        "error": 0,
         "timeout": 0,
         "crash": 0
       }
@@ -10326,6 +10326,30 @@
       ]
     },
     {
+      "symbol": "__b64_ntop",
+      "symbol_family": "glibc_internal",
+      "owner": "glibc_internal_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "__b64_pton",
+      "symbol_family": "glibc_internal",
+      "owner": "glibc_internal_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "__backtrace",
       "symbol_family": "glibc_internal",
       "owner": "glibc_internal_abi",
@@ -10971,25 +10995,6 @@
       "gap_reasons": [
         "missing_test_mapping",
         "missing_posix_traceability"
-      ]
-    },
-    {
-      "symbol": "__errno_location",
-      "symbol_family": "errno",
-      "owner": "errno_abi",
-      "support_status": "Implemented",
-      "mapped_posix_refs": [
-        "POSIX errno",
-        "POSIX errno thread-safety"
-      ],
-      "test_refs": [
-        "fixture::errno_ops::errno_set_read_roundtrip::hardened",
-        "fixture::errno_ops::errno_set_read_roundtrip::strict",
-        "fixture::errno_ops::errno_thread_local_isolation::hardened",
-        "fixture::errno_ops::errno_thread_local_isolation::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
       ]
     },
     {
@@ -20874,6 +20879,30 @@
       ]
     },
     {
+      "symbol": "b64_ntop",
+      "symbol_family": "glibc_internal",
+      "owner": "glibc_internal_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "b64_pton",
+      "symbol_family": "glibc_internal",
+      "owner": "glibc_internal_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "backtrace",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
@@ -20911,8 +20940,8 @@
     },
     {
       "symbol": "basename",
-      "symbol_family": "string",
-      "owner": "string_abi",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -23565,8 +23594,8 @@
     },
     {
       "symbol": "confstr",
-      "symbol_family": "unistd",
-      "owner": "unistd_abi",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -25093,14 +25122,13 @@
         "fixture::dirent_ops::dirfd_valid_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
     {
       "symbol": "dirname",
-      "symbol_family": "string",
-      "owner": "string_abi",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -26102,6 +26130,18 @@
       ]
     },
     {
+      "symbol": "errc",
+      "symbol_family": "err",
+      "owner": "err_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "errno",
       "symbol_family": "glibc_internal",
       "owner": "glibc_internal_abi",
@@ -26363,22 +26403,6 @@
       "gap_reasons": [
         "missing_test_mapping",
         "missing_posix_traceability"
-      ]
-    },
-    {
-      "symbol": "execve",
-      "symbol_family": "process",
-      "owner": "process_abi",
-      "support_status": "RawSyscall",
-      "mapped_posix_refs": [
-        "POSIX execve(2)"
-      ],
-      "test_refs": [
-        "fixture::spawn_exec_ops::execve_eacces_strict::strict",
-        "fixture::spawn_exec_ops::execve_replaces_process_strict::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
       ]
     },
     {
@@ -28871,7 +28895,6 @@
         "fixture::stdio_file_ops::fileno_devzero_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -30771,6 +30794,18 @@
       ]
     },
     {
+      "symbol": "freezero",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "fremovexattr",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
@@ -31845,8 +31880,8 @@
     },
     {
       "symbol": "get_avphys_pages",
-      "symbol_family": "unistd",
-      "owner": "unistd_abi",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -31893,8 +31928,8 @@
     },
     {
       "symbol": "get_nprocs",
-      "symbol_family": "unistd",
-      "owner": "unistd_abi",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -31905,8 +31940,8 @@
     },
     {
       "symbol": "get_nprocs_conf",
-      "symbol_family": "unistd",
-      "owner": "unistd_abi",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -31917,8 +31952,8 @@
     },
     {
       "symbol": "get_phys_pages",
-      "symbol_family": "unistd",
-      "owner": "unistd_abi",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -32009,6 +32044,18 @@
     },
     {
       "symbol": "getauxval",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "getbsize",
       "symbol_family": "stdlib",
       "owner": "stdlib_abi",
       "support_status": "Implemented",
@@ -33872,8 +33919,8 @@
     },
     {
       "symbol": "getw",
-      "symbol_family": "unistd",
-      "owner": "unistd_abi",
+      "symbol_family": "stdio",
+      "owner": "stdio_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -34273,7 +34320,6 @@
         "fixture::search/ops::hcreate_hsearch_hdestroy_replace_existing_data::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -34290,7 +34336,6 @@
         "fixture::search/ops::hcreate_r_hsearch_r_hdestroy_r_replace_existing_data::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -36835,7 +36880,6 @@
         "fixture::search/ops::lfind_existing_index::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -38624,7 +38668,6 @@
         "fixture::search/ops::lsearch_appends_missing::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -39864,7 +39907,6 @@
         "fixture::sysv_ipc_ops::msgget_create_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -41188,26 +41230,6 @@
       ]
     },
     {
-      "symbol": "perror",
-      "symbol_family": "stdio",
-      "owner": "stdio_abi",
-      "support_status": "Implemented",
-      "mapped_posix_refs": [
-        "POSIX.1-2017 perror"
-      ],
-      "test_refs": [
-        "fixture::errno_ops::perror_empty_prefix::hardened",
-        "fixture::errno_ops::perror_empty_prefix::strict",
-        "fixture::errno_ops::perror_null_prefix::hardened",
-        "fixture::errno_ops::perror_null_prefix::strict",
-        "fixture::errno_ops::perror_prefix::hardened",
-        "fixture::errno_ops::perror_prefix::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
-      ]
-    },
-    {
       "symbol": "personality",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
@@ -41464,6 +41486,18 @@
       ]
     },
     {
+      "symbol": "posix_close",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "posix_fadvise",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
@@ -41545,23 +41579,6 @@
       "gap_reasons": [
         "missing_test_mapping",
         "missing_posix_traceability"
-      ]
-    },
-    {
-      "symbol": "posix_spawn",
-      "symbol_family": "process",
-      "owner": "process_abi",
-      "support_status": "Implemented",
-      "mapped_posix_refs": [
-        "POSIX posix_spawn(3)"
-      ],
-      "test_refs": [
-        "fixture::spawn_exec_ops::posix_spawn_echo_hardened::hardened",
-        "fixture::spawn_exec_ops::posix_spawn_echo_strict::strict",
-        "fixture::spawn_exec_ops::posix_spawn_nonexistent_strict::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
       ]
     },
     {
@@ -44121,8 +44138,8 @@
     },
     {
       "symbol": "putw",
-      "symbol_family": "unistd",
-      "owner": "unistd_abi",
+      "symbol_family": "stdio",
+      "owner": "stdio_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -44773,8 +44790,8 @@
     },
     {
       "symbol": "realpath",
-      "symbol_family": "wchar",
-      "owner": "wchar_abi",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -44788,6 +44805,18 @@
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "recallocarray",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
       "gap_reasons": [
@@ -45468,7 +45497,6 @@
         "fixture::dirent_ops::rewinddir_valid_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -46624,7 +46652,6 @@
         "fixture::dirent_ops::seekdir_zero_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -46787,7 +46814,6 @@
         "fixture::sysv_ipc_ops::semctl_setval_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -46804,23 +46830,7 @@
         "fixture::sysv_ipc_ops::semget_create_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
-      ]
-    },
-    {
-      "symbol": "semop",
-      "symbol_family": "unistd",
-      "owner": "unistd_abi",
-      "support_status": "RawSyscall",
-      "mapped_posix_refs": [
-        "POSIX semop(2)"
-      ],
-      "test_refs": [
-        "fixture::sysv_ipc_ops::semop_wait_strict::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
       ]
     },
     {
@@ -47887,7 +47897,6 @@
         "fixture::sysv_ipc_ops::shmat_attach_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -47915,7 +47924,6 @@
         "fixture::sysv_ipc_ops::shmdt_detach_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -47932,7 +47940,6 @@
         "fixture::sysv_ipc_ops::shmget_create_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -47961,24 +47968,6 @@
       ],
       "gap_reasons": [
         "missing_error_condition_obligation"
-      ]
-    },
-    {
-      "symbol": "sigaddset",
-      "symbol_family": "signal",
-      "owner": "signal_abi",
-      "support_status": "Implemented",
-      "mapped_posix_refs": [
-        "POSIX sigaddset"
-      ],
-      "test_refs": [
-        "fixture::signal_ops::sigaddset_invalid_strict::strict",
-        "fixture::signal_ops::sigaddset_sigint_strict::strict",
-        "fixture::signal_ops::sigaddset_sigterm_strict::strict",
-        "fixture::signal_ops::sigaddset_sigusr1_hardened::hardened"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
       ]
     },
     {
@@ -48018,22 +48007,6 @@
       ]
     },
     {
-      "symbol": "sigdelset",
-      "symbol_family": "signal",
-      "owner": "signal_abi",
-      "support_status": "Implemented",
-      "mapped_posix_refs": [
-        "POSIX sigdelset"
-      ],
-      "test_refs": [
-        "fixture::signal_ops::sigdelset_invalid_strict::strict",
-        "fixture::signal_ops::sigdelset_sigint_strict::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
-      ]
-    },
-    {
       "symbol": "sigdescr_np",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
@@ -48058,7 +48031,6 @@
         "fixture::signal_ops::sigemptyset_basic_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -48075,7 +48047,6 @@
         "fixture::signal_ops::sigfillset_basic_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -48140,24 +48111,6 @@
       ]
     },
     {
-      "symbol": "sigismember",
-      "symbol_family": "signal",
-      "owner": "signal_abi",
-      "support_status": "Implemented",
-      "mapped_posix_refs": [
-        "POSIX sigismember"
-      ],
-      "test_refs": [
-        "fixture::signal_ops::sigismember_empty_set_strict::strict",
-        "fixture::signal_ops::sigismember_full_hardened::hardened",
-        "fixture::signal_ops::sigismember_full_set_strict::strict",
-        "fixture::signal_ops::sigismember_invalid_strict::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
-      ]
-    },
-    {
       "symbol": "siglongjmp",
       "symbol_family": "setjmp",
       "owner": "setjmp_abi",
@@ -48167,42 +48120,6 @@
       "gap_reasons": [
         "missing_test_mapping",
         "missing_posix_traceability"
-      ]
-    },
-    {
-      "symbol": "signal",
-      "symbol_family": "signal",
-      "owner": "signal_abi",
-      "support_status": "RawSyscall",
-      "mapped_posix_refs": [
-        "POSIX signal"
-      ],
-      "test_refs": [
-        "fixture::signal_ops::signal_install_above_max_both::hardened",
-        "fixture::signal_ops::signal_install_above_max_both::strict",
-        "fixture::signal_ops::signal_install_negative_both::hardened",
-        "fixture::signal_ops::signal_install_negative_both::strict",
-        "fixture::signal_ops::signal_install_sighup_both::hardened",
-        "fixture::signal_ops::signal_install_sighup_both::strict",
-        "fixture::signal_ops::signal_install_sigkill_both::hardened",
-        "fixture::signal_ops::signal_install_sigkill_both::strict",
-        "fixture::signal_ops::signal_install_sigrtmax_both::hardened",
-        "fixture::signal_ops::signal_install_sigrtmax_both::strict",
-        "fixture::signal_ops::signal_install_sigstop_both::hardened",
-        "fixture::signal_ops::signal_install_sigstop_both::strict",
-        "fixture::signal_ops::signal_install_sigterm_both::hardened",
-        "fixture::signal_ops::signal_install_sigterm_both::strict",
-        "fixture::signal_ops::signal_install_sigusr1_both::hardened",
-        "fixture::signal_ops::signal_install_sigusr1_both::strict",
-        "fixture::signal_ops::signal_install_sigusr2_both::hardened",
-        "fixture::signal_ops::signal_install_sigusr2_both::strict",
-        "fixture::signal_ops::signal_install_zero_both::hardened",
-        "fixture::signal_ops::signal_install_zero_both::strict",
-        "fixture::signal_ops::signal_invalid_signal_both::hardened",
-        "fixture::signal_ops::signal_invalid_signal_both::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
       ]
     },
     {
@@ -48944,7 +48861,6 @@
         "fixture::printf_conformance::sprintf_positional_width::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -50322,74 +50238,6 @@
       ]
     },
     {
-      "symbol": "strerror",
-      "symbol_family": "string",
-      "owner": "string_abi",
-      "support_status": "Implemented",
-      "mapped_posix_refs": [
-        "POSIX.1-2017 strerror"
-      ],
-      "test_refs": [
-        "fixture::errno_ops::strerror_eacces::hardened",
-        "fixture::errno_ops::strerror_eacces::strict",
-        "fixture::errno_ops::strerror_eexist::hardened",
-        "fixture::errno_ops::strerror_eexist::strict",
-        "fixture::errno_ops::strerror_einval::hardened",
-        "fixture::errno_ops::strerror_einval::strict",
-        "fixture::errno_ops::strerror_enoent::hardened",
-        "fixture::errno_ops::strerror_enoent::strict",
-        "fixture::errno_ops::strerror_enosys::hardened",
-        "fixture::errno_ops::strerror_enosys::strict",
-        "fixture::errno_ops::strerror_etimedout::hardened",
-        "fixture::errno_ops::strerror_etimedout::strict",
-        "fixture::errno_ops::strerror_negative::hardened",
-        "fixture::errno_ops::strerror_negative::strict",
-        "fixture::errno_ops::strerror_unknown_positive::hardened",
-        "fixture::errno_ops::strerror_unknown_positive::strict",
-        "fixture::errno_ops::strerror_zero::hardened",
-        "fixture::errno_ops::strerror_zero::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
-      ]
-    },
-    {
-      "symbol": "strerror_l",
-      "symbol_family": "unistd",
-      "owner": "unistd_abi",
-      "support_status": "Implemented",
-      "mapped_posix_refs": [
-        "POSIX.1-2017 strerror_l"
-      ],
-      "test_refs": [
-        "fixture::errno_ops::strerror_l_einval::hardened",
-        "fixture::errno_ops::strerror_l_einval::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
-      ]
-    },
-    {
-      "symbol": "strerror_r",
-      "symbol_family": "string",
-      "owner": "string_abi",
-      "support_status": "Implemented",
-      "mapped_posix_refs": [
-        "POSIX.1-2017 strerror_r (XSI)"
-      ],
-      "test_refs": [
-        "fixture::errno_ops::strerror_r_buffer_too_small::hardened",
-        "fixture::errno_ops::strerror_r_buffer_too_small::strict",
-        "fixture::errno_ops::strerror_r_null_buffer::hardened",
-        "fixture::errno_ops::strerror_r_null_buffer::strict",
-        "fixture::errno_ops::strerror_r_success::hardened",
-        "fixture::errno_ops::strerror_r_success::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
-      ]
-    },
-    {
       "symbol": "strerrordesc_np",
       "symbol_family": "string",
       "owner": "string_abi",
@@ -50617,6 +50465,18 @@
       ]
     },
     {
+      "symbol": "strmode",
+      "symbol_family": "string",
+      "owner": "string_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "strncasecmp",
       "symbol_family": "string",
       "owner": "string_abi",
@@ -50697,6 +50557,18 @@
     },
     {
       "symbol": "strnlen",
+      "symbol_family": "string",
+      "owner": "string_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "strnstr",
       "symbol_family": "string",
       "owner": "string_abi",
       "support_status": "Implemented",
@@ -52220,7 +52092,6 @@
         "fixture::search/ops::tdelete_removes_leaf::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -52261,7 +52132,6 @@
         "fixture::dirent_ops::telldir_valid_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -52302,7 +52172,6 @@
         "fixture::search/ops::tfind_existing_and_missing::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -52686,6 +52555,30 @@
       "symbol": "timezone",
       "symbol_family": "time",
       "owner": "time_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "timingsafe_bcmp",
+      "symbol_family": "string",
+      "owner": "string_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "timingsafe_memcmp",
+      "symbol_family": "string",
+      "owner": "string_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -53249,7 +53142,6 @@
         "fixture::search/ops::tsearch_insert_and_find::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -53350,7 +53242,6 @@
         "fixture::search/ops::twalk_visit_sequence::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -54023,6 +53914,18 @@
       ]
     },
     {
+      "symbol": "verrc",
+      "symbol_family": "err",
+      "owner": "err_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "verrx",
       "symbol_family": "err",
       "owner": "err_abi",
@@ -54285,6 +54188,18 @@
       ]
     },
     {
+      "symbol": "vwarnc",
+      "symbol_family": "err",
+      "owner": "err_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "vwarnx",
       "symbol_family": "err",
       "owner": "err_abi",
@@ -54370,6 +54285,18 @@
     },
     {
       "symbol": "warn",
+      "symbol_family": "err",
+      "owner": "err_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "warnc",
       "symbol_family": "err",
       "owner": "err_abi",
       "support_status": "Implemented",
@@ -55357,7 +55284,6 @@
         "fixture::regex_glob_ops::wordexp_undef_double_quoted_variable_both::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },

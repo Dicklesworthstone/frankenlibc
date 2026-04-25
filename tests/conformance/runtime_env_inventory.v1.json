@@ -833,70 +833,70 @@
       "access_count": 138,
       "accesses": [
         {
-          "line": 128,
+          "line": 139,
           "operation": "write",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "const KEY_EQ: &[u8] = b\"FRANKENLIBC_MODE=\";"
         },
         {
-          "line": 1699,
+          "line": 1709,
           "operation": "read",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "let previous = std::env::var_os(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 1703,
+          "line": 1713,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", v);"
         },
         {
-          "line": 1705,
+          "line": 1715,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::remove_var(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 1717,
+          "line": 1727,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", previous);"
         },
         {
-          "line": 1719,
+          "line": 1729,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::remove_var(\"FRANKENLIBC_MODE\");"
         },
         {
-          "line": 1828,
+          "line": 1837,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 1848,
+          "line": 1857,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 1887,
+          "line": 1896,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",
           "snippet": "std::env::set_var(\"FRANKENLIBC_MODE\", \"strict\");"
         },
         {
-          "line": 1937,
+          "line": 1946,
           "operation": "reference",
           "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
           "scope": "abi",

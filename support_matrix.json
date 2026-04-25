@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 3980,
+  "total_exported": 3996,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -51,6 +51,24 @@
       "perf_class": "O1",
       "strict_semantics": true,
       "hardened_semantics": true,
+      "default_stub": false
+    },
+    {
+      "symbol": "__b64_ntop",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BIND/libresolv RFC 4648 base64 encode into caller buffer with NUL terminator; returns encoded length or -1 on invalid pointers or insufficient target space",
+      "hardened_semantics": "Same pure encoder with resolver runtime-policy mediation and tracked-allocation bounds rejection",
+      "default_stub": false
+    },
+    {
+      "symbol": "__b64_pton",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BIND/libresolv RFC 4648 base64 decode from NUL-terminated source; tolerates wrapped whitespace and returns decoded length or -1 on malformed input / insufficient target space",
+      "hardened_semantics": "Same pure decoder with resolver runtime-policy mediation and tracked-allocation bounds rejection",
       "default_stub": false
     },
     {
@@ -1786,6 +1804,24 @@
       "default_stub": false
     },
     {
+      "symbol": "b64_ntop",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Resolver header alias for __b64_ntop with the same RFC 4648 encode and return-length contract",
+      "hardened_semantics": "Alias of __b64_ntop; same resolver runtime-policy mediation and bounds checks",
+      "default_stub": false
+    },
+    {
+      "symbol": "b64_pton",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Resolver header alias for __b64_pton with the same RFC 4648 decode and return-length contract",
+      "hardened_semantics": "Alias of __b64_pton; same resolver runtime-policy mediation and bounds checks",
+      "default_stub": false
+    },
+    {
       "symbol": "backtrace",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -1818,7 +1854,7 @@
       "family": "unistd",
       "status": "Implemented",
       "notes": "Extract filename from path",
-      "module": "string_abi"
+      "module": "stdlib_abi"
     },
     {
       "symbol": "bcmp",
@@ -2321,7 +2357,7 @@
     {
       "symbol": "confstr",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Native confstr for supported names (currently _CS_PATH) with POSIX copy/length behavior and errno contract",
       "hardened_semantics": "Same semantics with runtime-policy deny handling and deterministic EPERM failure path",
@@ -2520,7 +2556,7 @@
       "family": "unistd",
       "status": "Implemented",
       "notes": "Extract directory from path",
-      "module": "string_abi"
+      "module": "stdlib_abi"
     },
     {
       "symbol": "div",
@@ -3018,6 +3054,15 @@
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "Print error message with program name and errno to stderr, then exit",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "errc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Print error message with program name and explicit errno code to stderr, then exit",
       "hardened_semantics": "Same as strict",
       "default_stub": false
     },
@@ -4154,6 +4199,15 @@
       "default_stub": false
     },
     {
+      "symbol": "freezero",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "OpenBSD secret-zeroing free: explicit_bzero over caller-provided size, then free",
+      "hardened_semantics": "Same zero-before-free path through the ABI allocator",
+      "default_stub": false
+    },
+    {
       "symbol": "freeaddrinfo",
       "status": "Implemented",
       "module": "resolv_abi",
@@ -4677,10 +4731,19 @@
     {
       "symbol": "get_avphys_pages",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "fast",
       "strict_semantics": "SYS_sysinfo-backed available-physical-page estimate normalized by sysconf page size",
       "hardened_semantics": "Same SYS_sysinfo projection with bounded arithmetic",
+      "default_stub": false
+    },
+    {
+      "symbol": "getbsize",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BSD libutil BLOCKSIZE parser; writes static header string, header length, and resolved block size",
+      "hardened_semantics": "Same parser and static-buffer ABI with null output pointers treated as no-ops",
       "default_stub": false
     },
     {
@@ -4695,7 +4758,7 @@
     {
       "symbol": "get_nprocs",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "fast",
       "strict_semantics": "Native CPU-online count via existing sysconf(_SC_NPROCESSORS_ONLN)",
       "hardened_semantics": "Same native sysconf-backed count with positive fallback",
@@ -4704,7 +4767,7 @@
     {
       "symbol": "get_nprocs_conf",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "fast",
       "strict_semantics": "Native configured-CPU count via existing sysconf(_SC_NPROCESSORS_CONF)",
       "hardened_semantics": "Same native sysconf-backed count with positive fallback",
@@ -4713,7 +4776,7 @@
     {
       "symbol": "get_phys_pages",
       "status": "Implemented",
-      "module": "unistd_abi",
+      "module": "stdlib_abi",
       "perf_class": "fast",
       "strict_semantics": "SYS_sysinfo total-physical-page estimate normalized by sysconf page size",
       "hardened_semantics": "Same SYS_sysinfo projection with bounded arithmetic",
@@ -5876,7 +5939,7 @@
       "header": "<stdio.h>",
       "status": "Implemented",
       "notes": "Read int from stream",
-      "module": "unistd_abi"
+      "module": "stdio_abi"
     },
     {
       "symbol": "getwc",
@@ -8781,6 +8844,15 @@
       "notes": ""
     },
     {
+      "symbol": "posix_close",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "POSIX 2024 close wrapper with reserved flag validation and EINPROGRESS translated to success",
+      "hardened_semantics": "Same close syscall path with deterministic EINVAL for non-zero flags",
+      "default_stub": false
+    },
+    {
       "symbol": "posix_fadvise",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -10417,7 +10489,7 @@
       "header": "<stdio.h>",
       "status": "Implemented",
       "notes": "Write int to stream",
-      "module": "unistd_abi"
+      "module": "stdio_abi"
     },
     {
       "symbol": "putwc",
@@ -10731,11 +10803,20 @@
       "default_stub": false
     },
     {
+      "symbol": "recallocarray",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "OpenBSD recallocarray: overflow-checked resize with zeroed growth tail and zeroed released shrink tail",
+      "hardened_semantics": "Same allocator path with explicit zeroing before free or shrink",
+      "default_stub": false
+    },
+    {
       "symbol": "realpath",
       "header": "stdlib.h",
       "family": "unistd",
       "status": "Implemented",
-      "module": "wchar_abi",
+      "module": "stdlib_abi",
       "perf_class": "default",
       "strict_semantics": "Native canonicalization via Rust filesystem path resolution with caller-buffer or malloc output",
       "hardened_semantics": "Same canonicalization path with runtime-policy deny/observe gating and deterministic errno",
@@ -13518,6 +13599,15 @@
       "default_stub": false
     },
     {
+      "symbol": "strnstr",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "BSD bounded substring search over at most n haystack bytes",
+      "hardened_semantics": "Same bounded search with null pointer guards in the ABI shim",
+      "default_stub": false
+    },
+    {
       "symbol": "strpbrk",
       "status": "Implemented",
       "module": "string_abi",
@@ -13560,6 +13650,15 @@
       "perf_class": "default",
       "strict_semantics": "Native signal name lookup via static table + TLS buffer",
       "hardened_semantics": "Native signal name lookup via static table + TLS buffer",
+      "default_stub": false
+    },
+    {
+      "symbol": "strmode",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "BSD mode_t to ls -l style 11-byte string with caller NUL terminator",
+      "hardened_semantics": "Null output pointer is a no-op; otherwise writes the fixed 12-byte result",
       "default_stub": false
     },
     {
@@ -14209,6 +14308,24 @@
       "default_stub": false
     },
     {
+      "symbol": "timingsafe_bcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "OpenBSD constant-time byte equality over n bytes, returning zero for equality and non-zero for mismatch",
+      "hardened_semantics": "Null pointer guards return non-equality for non-zero lengths",
+      "default_stub": false
+    },
+    {
+      "symbol": "timingsafe_memcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "OpenBSD constant-time memcmp-style comparison over n bytes",
+      "hardened_semantics": "Null pointer guards return deterministic ordering for non-zero lengths",
+      "default_stub": false
+    },
+    {
       "symbol": "time",
       "status": "RawSyscall",
       "module": "time_abi",
@@ -14785,6 +14902,15 @@
       "default_stub": false
     },
     {
+      "symbol": "verrc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "va_list version of errc()",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
       "symbol": "verrx",
       "status": "Implemented",
       "module": "err_abi",
@@ -14959,6 +15085,15 @@
       "default_stub": false
     },
     {
+      "symbol": "vwarnc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "va_list version of warnc()",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
       "symbol": "vwarnx",
       "status": "Implemented",
       "module": "err_abi",
@@ -15036,6 +15171,15 @@
       "module": "err_abi",
       "perf_class": "cold",
       "strict_semantics": "Print warning message with program name and errno to stderr",
+      "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "warnc",
+      "status": "Implemented",
+      "module": "err_abi",
+      "perf_class": "cold",
+      "strict_semantics": "Print warning message with program name and explicit errno code to stderr",
       "hardened_semantics": "Same as strict",
       "default_stub": false
     },
@@ -31752,19 +31896,19 @@
     }
   ],
   "summary": {
-    "total": 3980,
-    "implemented": 3576,
+    "total": 3996,
+    "implemented": 3592,
     "raw_syscall": 404,
     "wraps_host_libc": 0,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 3576,
+  "implemented": 3592,
   "raw_syscall": 404,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 3576,
+    "implemented": 3592,
     "raw_syscall": 404,
     "glibc_call_through": 0,
     "stub": 0
