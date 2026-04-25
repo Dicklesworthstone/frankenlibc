@@ -27,8 +27,12 @@ def find_repo_root():
 
 
 def load_json_file(path):
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"ERROR: failed to read {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"ERROR: invalid JSON in {path}: {exc}") from exc
 
 
 # Canonical module-to-family mapping
@@ -66,43 +70,35 @@ MODULE_TO_FAMILY = {
 # Valid support states
 VALID_STATUSES = {"Implemented", "RawSyscall", "WrapsHostLibc", "GlibcCallThrough", "Stub"}
 
-# Valid perf classes
-VALID_PERF_CLASSES = {"strict_hotpath", "coldpath", "hardened_hotpath"}
-
-# Classification confidence levels
-CONFIDENCE_RULES = {
-    "Implemented": {
-        "strict_hotpath": "high",
-        "coldpath": "high",
-        "hardened_hotpath": "high",
-    },
-    "RawSyscall": {
-        "strict_hotpath": "medium",
-        "coldpath": "medium",
-        "hardened_hotpath": "medium",
-    },
-    "WrapsHostLibc": {
-        "strict_hotpath": "low",
-        "coldpath": "low",
-        "hardened_hotpath": "low",
-    },
-    "GlibcCallThrough": {
-        "strict_hotpath": "low",
-        "coldpath": "low",
-        "hardened_hotpath": "low",
-    },
-    "Stub": {
-        "strict_hotpath": "low",
-        "coldpath": "low",
-        "hardened_hotpath": "low",
-    },
-}
-
-# Runtime impact weights
-RUNTIME_IMPACT = {
+# Valid perf classes. The support matrix uses a richer taxonomy than the three
+# budget tiers; this report preserves those labels while assigning a bounded
+# runtime-impact score for prioritization.
+PERF_CLASS_IMPACT = {
     "strict_hotpath": 5,
+    "hotpath": 5,
+    "hot": 5,
+    "strict_fast": 5,
+    "fast": 4,
     "hardened_hotpath": 3,
+    "O1": 3,
+    "syscall_veneer": 3,
+    "syscall": 3,
+    "native": 2,
+    "default": 1,
     "coldpath": 1,
+    "cold": 1,
+    "strict_slow": 1,
+    "trivial": 1,
+    "zero_cost": 1,
+}
+VALID_PERF_CLASSES = set(PERF_CLASS_IMPACT)
+
+CONFIDENCE_BY_STATUS = {
+    "Implemented": "high",
+    "RawSyscall": "medium",
+    "WrapsHostLibc": "low",
+    "GlibcCallThrough": "low",
+    "Stub": "low",
 }
 
 # Replacement complexity by module
@@ -162,10 +158,10 @@ def normalize_symbol(sym_entry):
         issues.append(f"unknown perf_class: {perf_class}")
 
     # Confidence
-    confidence = CONFIDENCE_RULES.get(status, {}).get(perf_class, "unknown")
+    confidence = CONFIDENCE_BY_STATUS.get(status, "unknown")
 
     # Runtime impact score
-    impact = RUNTIME_IMPACT.get(perf_class, 0)
+    impact = PERF_CLASS_IMPACT.get(perf_class, 0)
 
     # Replacement complexity
     complexity_label = MODULE_COMPLEXITY.get(module, "medium")

@@ -394,7 +394,6 @@ def main():
         root / "tests" / "conformance" / "replacement_profile.json")
     stub_census, stub_census_path = load_first_json([
         root / "tests" / "conformance" / "stub_census.json",
-        root / "stub_census.json",  # legacy fallback
     ])
 
     # Run all consistency checks

@@ -27,8 +27,12 @@ def find_repo_root():
 
 
 def load_json_file(path):
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"ERROR: failed to read {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"ERROR: invalid JSON in {path}: {exc}") from exc
 
 
 # Tier boundaries

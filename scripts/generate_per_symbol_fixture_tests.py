@@ -27,11 +27,24 @@ def find_repo_root():
 
 
 def load_json_file(path):
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"ERROR: failed to read {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"ERROR: invalid JSON in {path}: {exc}") from exc
 
 
-REQUIRED_CASE_FIELDS = ["name", "function", "inputs", "expected_output", "mode"]
+REQUIRED_CASE_FIELDS = ["name", "function", "inputs", "mode"]
+EXPECTED_CONTRACT_FIELDS = {
+    "expected_hex",
+    "expected_n_value",
+    "expected_output",
+    "expected_output_bytes",
+    "expected_output_pattern",
+    "expected_return",
+    "expected_values",
+}
 VALID_MODES = {"strict", "hardened", "both"}
 
 # Edge case patterns to look for in inputs
@@ -87,6 +100,8 @@ def analyze_fixture_file(fixture_path):
         for field in REQUIRED_CASE_FIELDS:
             if field not in case:
                 issues.append(f"Case '{name}': missing field '{field}'")
+        if not EXPECTED_CONTRACT_FIELDS.intersection(case):
+            issues.append(f"Case '{name}': missing expected result contract")
 
         mode = case.get("mode", "")
         if mode and mode not in VALID_MODES:
