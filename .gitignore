@@ -106,12 +106,14 @@ storage.recovered.sqlite3
 .beads/*.orphan_*
 .beads/.br_recovery/
 .beads/beads.db.bad_*
+.beads/beads.db-shm.bad_*
 .beads/beads.db-wal.bad_*
 .beads/beads.db.rebuild_*
 .beads/beads.db.stale_*
 .beads/recovery_*/
 .beads_snapshot_*/
 .beads.snapshot_*/
+.beads.recovery_*/
 
 # Ephemeral scratch files
 baseline_decisions
