@@ -274,6 +274,37 @@ pub unsafe extern "C" fn close(fd: c_int) -> c_int {
     rc
 }
 
+/// POSIX 2024 `posix_close` — explicit-error variant of `close`.
+///
+/// Identical to `close(fd)` except that an `EINPROGRESS` failure is
+/// reported as success (return 0). Per IEEE Std 1003.1-2024 §close,
+/// the file descriptor is closed even when an in-progress operation
+/// produces that errno, so the EINPROGRESS reporting is purely
+/// advisory and most callers should ignore it. The `flag` argument
+/// is reserved for future use; POSIX 2024 defines no values, so any
+/// non-zero `flag` returns -1 with errno set to EINVAL.
+///
+/// # Safety
+///
+/// C ABI entrypoint; no additional safety preconditions.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn posix_close(fd: c_int, flag: c_int) -> c_int {
+    if flag != 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let rc = unsafe { close(fd) };
+    if rc < 0 {
+        let err = unsafe { *crate::errno_abi::__errno_location() };
+        if err == errno::EINPROGRESS {
+            // Per POSIX 2024: the fd is closed even on EINPROGRESS;
+            // posix_close translates that to success.
+            return 0;
+        }
+    }
+    rc
+}
+
 /// POSIX `getpid`.
 ///
 /// # Safety

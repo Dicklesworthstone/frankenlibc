@@ -5003,3 +5003,50 @@ fn arc4random_buf_null_pointer_is_noop() {
     unsafe { arc4random_buf(std::ptr::null_mut(), 0) };
     unsafe { arc4random_buf(std::ptr::null_mut(), 64) };
 }
+
+// ===========================================================================
+// posix_close (POSIX 2024 §close)
+// ===========================================================================
+
+use frankenlibc_abi::unistd_abi::posix_close;
+
+#[test]
+fn posix_close_zero_flag_closes_valid_fd() {
+    // Open /dev/null then posix_close it.
+    let path = CString::new("/dev/null").unwrap();
+    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0, "open /dev/null failed");
+    let rc = unsafe { posix_close(fd, 0) };
+    assert_eq!(rc, 0, "posix_close(valid fd, 0) should succeed");
+}
+
+#[test]
+fn posix_close_unknown_flag_returns_einval() {
+    // POSIX 2024 reserves all non-zero flag values. Any non-zero
+    // flag must return -1 with errno=EINVAL — without ever touching
+    // the fd.
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { posix_close(-1, 1) };
+    assert_eq!(rc, -1, "posix_close with unknown flag must return -1");
+    let err = unsafe { *__errno_location() };
+    assert_eq!(
+        err,
+        libc::EINVAL,
+        "posix_close unknown-flag errno must be EINVAL"
+    );
+}
+
+#[test]
+fn posix_close_invalid_fd_returns_minus_one() {
+    // close(-1) sets errno=EBADF; posix_close(-1, 0) propagates that
+    // (EBADF is not EINPROGRESS so no translation).
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { posix_close(-1, 0) };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, libc::EBADF, "posix_close(-1, 0) errno should be EBADF");
+}
