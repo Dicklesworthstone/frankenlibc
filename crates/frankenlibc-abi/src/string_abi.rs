@@ -7320,3 +7320,82 @@ pub unsafe extern "C" fn strmode(mode: libc::mode_t, p: *mut c_char) {
         *p.add(11) = 0;
     }
 }
+
+// ---------------------------------------------------------------------------
+// strnstr (BSD bounded substring search)
+// ---------------------------------------------------------------------------
+
+/// BSD `strnstr(haystack, needle, n)` — like `strstr` but searches at
+/// most `n` bytes of `haystack`. Returns a pointer to the first
+/// occurrence of `needle` (still NUL-terminated) within
+/// `haystack[..min(n, strlen(haystack))]`, or NULL if not found.
+///
+/// An empty `needle` returns `haystack` (same as `strstr` semantics).
+/// `n == 0` with a non-empty needle returns NULL.
+///
+/// # Safety
+///
+/// Caller must ensure `haystack` and `needle` are valid NUL-terminated
+/// C strings (or NULL — both NULL pointers and a NULL haystack with a
+/// non-empty needle yield NULL).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnstr(
+    haystack: *const c_char,
+    needle: *const c_char,
+    n: usize,
+) -> *mut c_char {
+    if needle.is_null() {
+        // Match strstr's well-trodden glibc/BSD behavior: NULL needle
+        // is treated as the empty string and returns haystack.
+        return haystack as *mut c_char;
+    }
+    if haystack.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // Bound the haystack scan at min(n, strlen(haystack)) so we never
+    // read past the caller-provided window even if the caller passed a
+    // non-NUL-terminated buffer with n covering only the valid region.
+    // SAFETY: haystack is a valid C string per caller contract.
+    let hay_len = unsafe { core_strnlen(haystack, n) };
+    let needle_len = unsafe { strlen(needle) };
+
+    // SAFETY: hay_len is the in-bounds length we just measured.
+    let hay_slice = unsafe { std::slice::from_raw_parts(haystack as *const u8, hay_len) };
+    // SAFETY: needle_len is the strlen we just measured.
+    let needle_slice = unsafe { std::slice::from_raw_parts(needle as *const u8, needle_len) };
+
+    if needle_len == 0 {
+        return haystack as *mut c_char;
+    }
+    if needle_len > hay_len {
+        return std::ptr::null_mut();
+    }
+
+    match hay_slice
+        .windows(needle_len)
+        .position(|w| w == needle_slice)
+    {
+        Some(off) => unsafe { haystack.add(off) as *mut c_char },
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Helper: scan `s` for a NUL terminator, returning the count of bytes
+/// before it; if no NUL is found in the first `maxlen` bytes, returns
+/// `maxlen`. Equivalent to glibc `strnlen` minus the membrane wrapper.
+///
+/// # Safety
+///
+/// Caller must ensure `s` is valid for at least `maxlen` bytes.
+unsafe fn core_strnlen(s: *const c_char, maxlen: usize) -> usize {
+    let mut i = 0usize;
+    while i < maxlen {
+        // SAFETY: caller contract guarantees `s` is valid for `maxlen` bytes.
+        if unsafe { *s.add(i) } == 0 {
+            return i;
+        }
+        i += 1;
+    }
+    maxlen
+}

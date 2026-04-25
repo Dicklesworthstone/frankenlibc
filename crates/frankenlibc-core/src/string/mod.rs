@@ -20,7 +20,7 @@ pub use mem::{
 pub use str::{
     stpcpy, stpncpy, strcasecmp, strcasestr, strcat, strchr, strchrnul, strcmp, strcoll, strcpy,
     strcspn, strdup_bytes, strlcat, strlcpy, strlen, strncasecmp, strncat, strncmp, strncpy,
-    strndup_bytes, strnlen, strpbrk, strrchr, strsep, strspn, strstr, strxfrm,
+    strndup_bytes, strnlen, strnstr, strpbrk, strrchr, strsep, strspn, strstr, strxfrm,
 };
 pub use strtok::{strtok, strtok_r};
 pub use wchar::{

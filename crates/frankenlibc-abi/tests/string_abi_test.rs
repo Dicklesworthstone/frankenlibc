@@ -2198,3 +2198,102 @@ fn strmode_does_not_overrun_caller_buffer() {
     assert_eq!(buf[14], 0xef);
     assert_eq!(buf[15], 0x42);
 }
+
+// ---------------------------------------------------------------------------
+// strnstr (BSD bounded substring search)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::string_abi::strnstr;
+
+#[test]
+fn strnstr_finds_within_bound() {
+    let hay = b"hello world\0";
+    let needle = b"world\0";
+    let p = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 11) };
+    assert!(!p.is_null());
+    let off = unsafe { p.offset_from(hay.as_ptr().cast()) };
+    assert_eq!(off, 6);
+}
+
+#[test]
+fn strnstr_returns_null_when_match_truncated_by_bound() {
+    let hay = b"hello world\0";
+    let needle = b"world\0";
+    // n=10 cuts off the 'd' — no match.
+    let p = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 10) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn strnstr_empty_needle_returns_haystack() {
+    let hay = b"abc\0";
+    let needle = b"\0";
+    let p = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 3) };
+    assert_eq!(p as *const i8, hay.as_ptr().cast());
+    // Even with n=0 the empty-needle case must return haystack.
+    let p0 = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 0) };
+    assert_eq!(p0 as *const i8, hay.as_ptr().cast());
+}
+
+#[test]
+fn strnstr_n_zero_with_real_needle_returns_null() {
+    let hay = b"abc\0";
+    let needle = b"a\0";
+    let p = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 0) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn strnstr_null_haystack_returns_null() {
+    let needle = b"a\0";
+    let p = unsafe { strnstr(std::ptr::null(), needle.as_ptr().cast(), 5) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn strnstr_null_needle_returns_haystack() {
+    // BSD-style: NULL needle treated as empty → returns haystack.
+    let hay = b"abc\0";
+    let p = unsafe { strnstr(hay.as_ptr().cast(), std::ptr::null(), 3) };
+    assert_eq!(p as *const i8, hay.as_ptr().cast());
+}
+
+#[test]
+fn strnstr_haystack_truncated_by_internal_nul() {
+    // NUL inside haystack truncates the search — needle past the NUL
+    // must not be found even with a generous n.
+    let hay = b"abc\0def\0";
+    let needle = b"def\0";
+    let p = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 100) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn strnstr_does_not_read_past_n_for_unterminated_haystack() {
+    // Unterminated 4-byte buffer with n=4 — must not read byte 5 even
+    // though there's a needle that would otherwise match starting at 1.
+    let hay = b"xabcGARBAGE-PAST-THE-WINDOW";
+    let needle = b"abc\0";
+    let p = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 4) };
+    assert!(!p.is_null());
+    let off = unsafe { p.offset_from(hay.as_ptr().cast()) };
+    assert_eq!(off, 1);
+}
+
+#[test]
+fn strnstr_finds_first_of_repeated_pattern() {
+    let hay = b"abcabc\0";
+    let needle = b"abc\0";
+    let p = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 6) };
+    assert!(!p.is_null());
+    let off = unsafe { p.offset_from(hay.as_ptr().cast()) };
+    assert_eq!(off, 0);
+}
+
+#[test]
+fn strnstr_match_at_zero() {
+    let hay = b"hello\0";
+    let needle = b"hello\0";
+    let p = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 5) };
+    assert_eq!(p as *const i8, hay.as_ptr().cast());
+}

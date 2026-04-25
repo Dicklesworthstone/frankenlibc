@@ -230,6 +230,28 @@ pub fn strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(n_len).position(|window| window == needle)
 }
 
+/// BSD `strnstr`: like [`strstr`] but searches at most `n` bytes of
+/// `haystack`. Returns the byte index where `needle` starts, or
+/// `None` if `needle` does not occur within `haystack[..min(n,
+/// strlen(haystack))]`.
+///
+/// `haystack` is still treated as a NUL-terminated C string for the
+/// purposes of bounding the search: a NUL byte before `n` truncates
+/// the searched region. An empty `needle` matches at position `0`.
+pub fn strnstr(haystack: &[u8], needle: &[u8], n: usize) -> Option<usize> {
+    let n_len = strlen(needle);
+    if n_len == 0 {
+        return Some(0);
+    }
+    let h_len = strlen(haystack).min(n);
+    if n_len > h_len {
+        return None;
+    }
+    let haystack = &haystack[..h_len];
+    let needle = &needle[..n_len];
+    haystack.windows(n_len).position(|window| window == needle)
+}
+
 /// Case-insensitive comparison of two NUL-terminated byte strings.
 ///
 /// Equivalent to POSIX `strcasecmp`. Compares byte-by-byte after converting
@@ -614,6 +636,84 @@ mod tests {
     #[test]
     fn test_strstr_empty_needle() {
         assert_eq!(strstr(b"hello\0", b"\0"), Some(0));
+    }
+
+    // ---- strnstr (BSD bounded substring search) ----
+
+    #[test]
+    fn test_strnstr_found_within_bound() {
+        assert_eq!(strnstr(b"hello world\0", b"world\0", 11), Some(6));
+    }
+
+    #[test]
+    fn test_strnstr_match_truncated_by_bound() {
+        // "world" starts at offset 6, ends at 11. With n=10 the
+        // searchable region is "hello worl" — needle does not fit.
+        assert_eq!(strnstr(b"hello world\0", b"world\0", 10), None);
+    }
+
+    #[test]
+    fn test_strnstr_match_exactly_at_bound() {
+        // n=11 is exactly enough to fit "world" at offset 6.
+        assert_eq!(strnstr(b"hello world\0", b"world\0", 11), Some(6));
+    }
+
+    #[test]
+    fn test_strnstr_n_larger_than_haystack() {
+        // n exceeds haystack length: clamps to strlen(haystack).
+        assert_eq!(strnstr(b"foo\0", b"oo\0", 1024), Some(1));
+    }
+
+    #[test]
+    fn test_strnstr_not_found_returns_none() {
+        assert_eq!(strnstr(b"abcdef\0", b"xyz\0", 6), None);
+    }
+
+    #[test]
+    fn test_strnstr_empty_needle_matches_at_zero() {
+        // Matches strstr behavior: empty needle returns Some(0)
+        // regardless of n.
+        assert_eq!(strnstr(b"abc\0", b"\0", 0), Some(0));
+        assert_eq!(strnstr(b"abc\0", b"\0", 100), Some(0));
+        assert_eq!(strnstr(b"\0", b"\0", 0), Some(0));
+    }
+
+    #[test]
+    fn test_strnstr_n_zero_with_nonempty_needle_returns_none() {
+        assert_eq!(strnstr(b"abc\0", b"a\0", 0), None);
+    }
+
+    #[test]
+    fn test_strnstr_needle_longer_than_n() {
+        assert_eq!(strnstr(b"abc\0", b"abcd\0", 3), None);
+    }
+
+    #[test]
+    fn test_strnstr_haystack_truncated_by_nul() {
+        // NUL inside the bound truncates the search region — strstr
+        // semantics inherited.
+        assert_eq!(strnstr(b"abc\0def\0", b"def\0", 100), None);
+    }
+
+    #[test]
+    fn test_strnstr_match_at_zero() {
+        assert_eq!(strnstr(b"hello\0", b"hello\0", 5), Some(0));
+    }
+
+    #[test]
+    fn test_strnstr_finds_first_occurrence() {
+        assert_eq!(strnstr(b"abcabc\0", b"abc\0", 6), Some(0));
+        assert_eq!(strnstr(b"xabcabc\0", b"abc\0", 7), Some(1));
+    }
+
+    #[test]
+    fn test_strnstr_overlapping_pattern() {
+        // "aaa" inside "aaaa" — first match at offset 0, regardless
+        // of n.
+        assert_eq!(strnstr(b"aaaa\0", b"aaa\0", 4), Some(0));
+        assert_eq!(strnstr(b"aaaa\0", b"aaa\0", 3), Some(0));
+        // n=2 truncates region to "aa"; needle doesn't fit.
+        assert_eq!(strnstr(b"aaaa\0", b"aaa\0", 2), None);
     }
 
     #[test]
