@@ -1,7 +1,7 @@
 {
   "index_version": 1,
   "bead_id": "bd-2xp3",
-  "generated_utc": "2026-04-24T21:44:54.076Z",
+  "generated_utc": "2026-04-24T23:54:21.584Z",
   "artifacts": [
     {
       "path": "tests/conformance/setjmp_semantics_contract.v1.json",
@@ -16,12 +16,12 @@
     {
       "path": "target/conformance/setjmp_semantics_contract.log.jsonl",
       "kind": "jsonl",
-      "sha256": "238b41368dbaab612011617065cbc1e1522218c6bd411eb792fb5c9e190e2a6a"
+      "sha256": "57034cd852c77bb40492743bb5d6d036d719ec51fa6595a03cfd9f863eedd991"
     },
     {
       "path": "tests/cve_arena/results/bd-2xp3/trace.jsonl",
       "kind": "jsonl",
-      "sha256": "238b41368dbaab612011617065cbc1e1522218c6bd411eb792fb5c9e190e2a6a"
+      "sha256": "57034cd852c77bb40492743bb5d6d036d719ec51fa6595a03cfd9f863eedd991"
     }
   ]
 }

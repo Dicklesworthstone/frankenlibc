@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-24T21:44:17Z",
+  "generated_at": "2026-04-24T23:53:47Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "7b5cb9270b8519fed0e28a4c868b841cd47072189674655d724268e49bb57ca3",
+      "sha256": "75b8b7ba1c2b0f2d8365cc9c4c6018ba4185430ea4adab0a639f6b9065e3913a",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "a8ca225a543f8d64868b3b24cfd57bf46079746402eb4da615abff27799f18ad",
+      "sha256": "9828c77d13745b7e31c0434bb73da277e5166f32c475ae33620531f9ffa6eb1e",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "c18aa9629410822f036b3605321c37eb44da15841f6d23af28f2b656fabfea58",
+      "sha256": "61b10c064a19574d71212e097eefd17df6a5656aaaa9786988d65433668f988c",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -230,7 +230,7 @@
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "7b5cb9270b8519fed0e28a4c868b841cd47072189674655d724268e49bb57ca3",
+      "sha256": "75b8b7ba1c2b0f2d8365cc9c4c6018ba4185430ea4adab0a639f6b9065e3913a",
       "size_bytes": 5609
     },
     "replacement_levels": {
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "a8ca225a543f8d64868b3b24cfd57bf46079746402eb4da615abff27799f18ad",
+      "sha256": "9828c77d13745b7e31c0434bb73da277e5166f32c475ae33620531f9ffa6eb1e",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "c18aa9629410822f036b3605321c37eb44da15841f6d23af28f2b656fabfea58",
+      "sha256": "61b10c064a19574d71212e097eefd17df6a5656aaaa9786988d65433668f988c",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -405,7 +405,7 @@
     ],
     "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-go-1` PORT getopt #1: parse helpers + GetoptArgMode in core (task, closed 2026-04-25T05:00:00.000000000Z)\n  Created crates/frankenlibc-core/src/getopt/parse.rs with: pub enum GetoptArgMode (None / Required / Optional GNU ext), pub fn getopt_prefers_colon(optspec: &[u8]) -> bool, pub fn getopt_arg_mode(opts\u2026\n- `bd-err-epic` PORT: err.h native Rust impl in frankenlibc-core (epic, closed 2026-04-25T04:00:00.000000000Z)\n  Epic complete. All 3 sub-beads closed: bd-err-1 (created core/err/mod.rs with format_err_message + basename_bytes, 8 unit tests), bd-err-2 (replaced 32-line write_err_message inline formatter with 14\u2026\n- `bd-err-3` PORT err.h #3: conformance verification + property tests (task, closed 2026-04-25T04:00:00.000000000Z)\n  Added 4 structural property tests to crates/frankenlibc-core/src/err/mod.rs: property_output_starts_with_progname (3 progname sizes), property_output_has_progname_separator (8 input combos verify ':\u2026\n- `bd-err-2` PORT err.h #2: wire fl warn/warnx/err/errx to delegate (task, closed 2026-04-25T03:45:00.000000000Z)\n  Replaced 32 lines of inline byte-formatting in write_err_message with 14-line shim that calls frankenlibc_core::err::format_err_message. Removed local basename_bytes (now imports from core::err). The\u2026\n- `bd-err-1` PORT err.h #1: format_err_message in frankenlibc-core/src/err/ (task, closed 2026-04-25T03:30:00.000000000Z)\n  Created crates/frankenlibc-core/src/err/mod.rs with: pub fn format_err_message(progname, message, errno_msg) -> Vec<u8> producing the canonical 'progname: [message[: errno_msg]]\\n' BSD-style line; pu\u2026\n- `bd-ftw-epic` PORT: ftw.h native Rust impl in frankenlibc-core (epic, closed 2026-04-25T02:30:00.000000000Z)\n  Epic complete. All 4 sub-beads closed: bd-ftw-1 (path helpers + WalkType + WalkFlags in core/ftw/path.rs, 13 unit tests), bd-ftw-2 (closure-based walker driver in core/ftw/walker.rs with FsOps + Stat\u2026\n- `bd-ftw-4` PORT ftw.h #4: conformance + DISC-FTW-001 regression lock-in (task, closed 2026-04-25T02:30:00.000000000Z)\n  Extended conformance_diff_ftw_nftw.rs with 3 epic-completion regression tests + fixed a latent test-side bug (FTW_DEPTH was defined as 4 = FTW_CHDIR; corrected to 8 per glibc). New tests: diff_nftw_d\u2026\n- `bd-ftw-3` PORT ftw.h #3: wire fl::ftw + fl::nftw to delegate to core (task, closed 2026-04-25T02:00:00.000000000Z)\n  Replaced ~339 lines of inline ftw_walk_dir + nftw + nftw_walk_dir + FtwInfo struct in unistd_abi.rs with a thin shim layer (~155 lines): AbiStat(libc::stat) wrapper implementing core's StatLike trait\u2026",
     "summary": {
-      "closed_total": 1220,
+      "closed_total": 1224,
       "selected": 8,
       "invalid_rows": 0
     }

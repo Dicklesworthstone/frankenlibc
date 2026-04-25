@@ -416,7 +416,7 @@
       "family": "Loader",
       "api_family_enum": "Loader",
       "module": "dlfcn_abi",
-      "heals_call_sites": 6,
+      "heals_call_sites": 5,
       "symbols": [
         "dlopen",
         "dlclose",
@@ -516,7 +516,7 @@
       "family": "Resolver",
       "api_family_enum": "Resolver",
       "module": "resolv_abi",
-      "heals_call_sites": 6,
+      "heals_call_sites": 4,
       "symbols": [
         "getaddrinfo",
         "freeaddrinfo",
@@ -573,7 +573,7 @@
   "summary": {
     "total_families": 20,
     "families_with_healing": 18,
-    "total_heals_call_sites": 152,
+    "total_heals_call_sites": 149,
     "healing_actions": [
       "ClampSize",
       "TruncateWithNull",
