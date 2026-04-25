@@ -10,6 +10,7 @@
 
 pub mod config;
 pub mod dns;
+pub mod messages;
 
 pub use config::ResolverConfig;
 pub use dns::{DnsHeader, DnsMessage, DnsQuestion, DnsRecord};

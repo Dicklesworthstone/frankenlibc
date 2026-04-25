@@ -6874,10 +6874,7 @@ pub unsafe extern "C" fn ether_ntoa_r(addr: *const c_void, buf: *mut c_char) -> 
 // herror / hstrerror — Implemented (native error messages)
 // ---------------------------------------------------------------------------
 
-const H_ERR_HOST_NOT_FOUND: c_int = 1;
-const H_ERR_TRY_AGAIN: c_int = 2;
-const H_ERR_NO_RECOVERY: c_int = 3;
-const H_ERR_NO_DATA: c_int = 4;
+// H_ERR_* constants moved to frankenlibc_core::resolv::messages.
 
 std::thread_local! {
     static H_ERRNO_TLS: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
@@ -6891,11 +6888,15 @@ unsafe fn current_h_errno() -> c_int {
 
 #[inline]
 fn hstrerror_message_ptr(err: c_int) -> *const c_char {
-    match err {
-        H_ERR_HOST_NOT_FOUND => c"Unknown host".as_ptr(),
-        H_ERR_TRY_AGAIN => c"Host name lookup failure".as_ptr(),
-        H_ERR_NO_RECOVERY => c"Unknown server error".as_ptr(),
-        H_ERR_NO_DATA => c"No address associated with name".as_ptr(),
+    // Look up canonical text via core; map back to a NUL-terminated
+    // `c"..."` literal at the FFI boundary so the returned pointer is
+    // valid for the entire program lifetime.
+    let text = frankenlibc_core::resolv::messages::hstrerror_text(err);
+    match text {
+        "Unknown host" => c"Unknown host".as_ptr(),
+        "Host name lookup failure" => c"Host name lookup failure".as_ptr(),
+        "Unknown server error" => c"Unknown server error".as_ptr(),
+        "No address associated with name" => c"No address associated with name".as_ptr(),
         _ => c"Resolver internal error".as_ptr(),
     }
 }

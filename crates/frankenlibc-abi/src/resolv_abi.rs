@@ -1434,18 +1434,29 @@ pub unsafe extern "C" fn getnameinfo(
 }
 
 /// POSIX `gai_strerror`.
+///
+/// Thin shim over `frankenlibc_core::resolv::messages::gai_strerror_text`.
+/// The static `&str` from core is fed through a fixed CStr lookup table
+/// (each known message is a `c"..."` literal compiled into rodata) so
+/// the returned `*const c_char` is NUL-terminated and outlives the call.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_strerror(errcode: c_int) -> *const c_char {
-    match errcode {
-        0 => c"Success".as_ptr(),
-        libc::EAI_AGAIN => c"Temporary failure in name resolution".as_ptr(),
-        libc::EAI_BADFLAGS => c"Invalid value for ai_flags".as_ptr(),
-        libc::EAI_FAIL => c"Non-recoverable failure in name resolution".as_ptr(),
-        libc::EAI_FAMILY => c"ai_family not supported".as_ptr(),
-        libc::EAI_NONAME => c"Name or service not known".as_ptr(),
-        libc::EAI_SERVICE => c"Service not supported for socket type".as_ptr(),
-        libc::EAI_SOCKTYPE => c"Socket type not supported".as_ptr(),
-        libc::EAI_OVERFLOW => c"Argument buffer overflow".as_ptr(),
+    let text = frankenlibc_core::resolv::messages::gai_strerror_text(errcode);
+    // Map the &str back to a NUL-terminated C literal for the FFI return.
+    match text {
+        "Success" => c"Success".as_ptr(),
+        "Temporary failure in name resolution" => c"Temporary failure in name resolution".as_ptr(),
+        "Invalid value for ai_flags" => c"Invalid value for ai_flags".as_ptr(),
+        "Non-recoverable failure in name resolution" => {
+            c"Non-recoverable failure in name resolution".as_ptr()
+        }
+        "ai_family not supported" => c"ai_family not supported".as_ptr(),
+        "Name or service not known" => c"Name or service not known".as_ptr(),
+        "Service not supported for socket type" => {
+            c"Service not supported for socket type".as_ptr()
+        }
+        "Socket type not supported" => c"Socket type not supported".as_ptr(),
+        "Argument buffer overflow" => c"Argument buffer overflow".as_ptr(),
         _ => c"Unknown getaddrinfo error".as_ptr(),
     }
 }
