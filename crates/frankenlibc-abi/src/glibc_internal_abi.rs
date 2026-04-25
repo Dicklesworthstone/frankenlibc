@@ -8578,3 +8578,107 @@ pub unsafe extern "C" fn __libc_res_dnok(dn: *const c_char) -> c_int {
 pub unsafe extern "C" fn __libc_res_hnok(dn: *const c_char) -> c_int {
     unsafe { res_hnok(dn) }
 }
+
+// ==========================================================================
+// b64_ntop / b64_pton — BIND/libresolv RFC 4648 base64 encoder + decoder
+// ==========================================================================
+//
+// Pure-byte logic lives in `frankenlibc_core::resolv::b64`. These shims own
+// the C ABI: NULL guards, raw-pointer-to-slice conversion, and the libresolv
+// return convention (encoded length / decoded length, or -1 on error).
+
+/// BIND `b64_ntop(src, srclength, target, targsize)` — encode `srclength`
+/// bytes from `src` into base64 in `target`, NUL-terminating it.
+/// Returns the number of bytes written excluding the NUL, or -1 if
+/// `target` is too small or any pointer is NULL.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is valid for `srclength` bytes and
+/// `target` is valid for `targsize` bytes (both writable).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn b64_ntop(
+    src: *const u8,
+    srclength: usize,
+    target: *mut c_char,
+    targsize: usize,
+) -> c_int {
+    if target.is_null() {
+        return -1;
+    }
+    if src.is_null() && srclength != 0 {
+        return -1;
+    }
+    // SAFETY: caller-supplied src is valid for srclength bytes; an empty
+    // input is represented by an empty slice via from_raw_parts(non_null, 0).
+    let src_slice: &[u8] = if srclength == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src, srclength) }
+    };
+    // SAFETY: caller contract requires targsize writable bytes at target.
+    let target_slice = unsafe { std::slice::from_raw_parts_mut(target as *mut u8, targsize) };
+    match frankenlibc_core::resolv::b64::ntop(src_slice, target_slice) {
+        Some(n) => n as c_int,
+        None => -1,
+    }
+}
+
+/// BIND `b64_pton(src, target, targsize)` — decode the NUL-terminated
+/// base64 ASCII string `src` into binary `target`. Returns the number
+/// of bytes decoded, or -1 on any of: NULL pointers, invalid base64
+/// characters, mismatched padding, target buffer too small.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is a valid NUL-terminated C string and
+/// `target` is valid for `targsize` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn b64_pton(src: *const c_char, target: *mut u8, targsize: usize) -> c_int {
+    if src.is_null() {
+        return -1;
+    }
+    // SAFETY: src is a valid NUL-terminated C string per the caller.
+    let src_bytes = unsafe { std::ffi::CStr::from_ptr(src).to_bytes() };
+    // Allow target == NULL only when targsize == 0 (no place to write).
+    let target_slice: &mut [u8] = if targsize == 0 {
+        &mut []
+    } else {
+        if target.is_null() {
+            return -1;
+        }
+        // SAFETY: caller contract requires targsize writable bytes.
+        unsafe { std::slice::from_raw_parts_mut(target, targsize) }
+    };
+    match frankenlibc_core::resolv::b64::pton(src_bytes, target_slice) {
+        Some(n) => n as c_int,
+        None => -1,
+    }
+}
+
+/// libresolv-internal `__b64_ntop` — same semantics as `b64_ntop`,
+/// the underscore-prefixed name is what `libresolv.so.2` actually
+/// exports.
+///
+/// # Safety
+///
+/// Same contract as [`b64_ntop`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __b64_ntop(
+    src: *const u8,
+    srclength: usize,
+    target: *mut c_char,
+    targsize: usize,
+) -> c_int {
+    unsafe { b64_ntop(src, srclength, target, targsize) }
+}
+
+/// libresolv-internal `__b64_pton` — same semantics as `b64_pton`.
+///
+/// # Safety
+///
+/// Same contract as [`b64_pton`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __b64_pton(src: *const c_char, target: *mut u8, targsize: usize) -> c_int {
+    unsafe { b64_pton(src, target, targsize) }
+}

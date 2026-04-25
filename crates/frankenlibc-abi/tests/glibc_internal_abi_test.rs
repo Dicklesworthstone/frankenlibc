@@ -2969,3 +2969,205 @@ fn test_call_tls_dtors_drains_list() {
     assert_eq!(AFTER_FIRST_CALL.load(Ordering::SeqCst), 1);
     assert_eq!(AFTER_SECOND_CALL.load(Ordering::SeqCst), 1);
 }
+
+// ---------------------------------------------------------------------------
+// __b64_ntop / __b64_pton (BIND/libresolv RFC 4648 base64)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::glibc_internal_abi::{__b64_ntop, __b64_pton, b64_ntop, b64_pton};
+
+#[test]
+fn b64_ntop_rfc4648_vector() {
+    let src = b"foobar";
+    let mut buf = [0u8; 16];
+    let n = unsafe {
+        b64_ntop(
+            src.as_ptr(),
+            src.len(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, 8);
+    assert_eq!(&buf[..n as usize], b"Zm9vYmFy");
+    assert_eq!(buf[n as usize], 0);
+}
+
+#[test]
+fn b64_ntop_returns_minus_one_when_target_too_small() {
+    let src = b"foobar";
+    let mut buf = [0u8; 4];
+    let n = unsafe {
+        b64_ntop(
+            src.as_ptr(),
+            src.len(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn b64_ntop_handles_empty_src() {
+    let mut buf = [0xffu8; 4];
+    let n = unsafe {
+        b64_ntop(
+            std::ptr::null(),
+            0,
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, 0);
+    assert_eq!(
+        buf[0], 0,
+        "empty src must produce empty NUL-terminated string"
+    );
+}
+
+#[test]
+fn b64_ntop_null_target_is_error() {
+    let src = b"x";
+    let n = unsafe { b64_ntop(src.as_ptr(), src.len(), std::ptr::null_mut(), 0) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn b64_pton_rfc4648_vector() {
+    let s = b"Zm9vYmFy\0";
+    let mut buf = [0u8; 8];
+    let n = unsafe {
+        b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            buf.as_mut_ptr(),
+            buf.len(),
+        )
+    };
+    assert_eq!(n, 6);
+    assert_eq!(&buf[..n as usize], b"foobar");
+}
+
+#[test]
+fn b64_pton_returns_minus_one_for_invalid_char() {
+    let s = b"Zm9v!Zg==\0";
+    let mut buf = [0u8; 8];
+    let n = unsafe {
+        b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            buf.as_mut_ptr(),
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn b64_pton_returns_minus_one_when_target_too_small() {
+    let s = b"Zm9v\0";
+    let mut buf = [0u8; 1];
+    let n = unsafe {
+        b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            buf.as_mut_ptr(),
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn b64_pton_null_src_is_error() {
+    let mut buf = [0u8; 8];
+    let n = unsafe { b64_pton(std::ptr::null(), buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn b64_pton_skips_whitespace_for_wrapped_input() {
+    let s = b"Zm9v\nYmFy\n\0";
+    let mut buf = [0u8; 8];
+    let n = unsafe {
+        b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            buf.as_mut_ptr(),
+            buf.len(),
+        )
+    };
+    assert_eq!(n, 6);
+    assert_eq!(&buf[..n as usize], b"foobar");
+}
+
+#[test]
+fn underscore_b64_ntop_alias_matches_b64_ntop() {
+    let src = b"hi";
+    let mut buf1 = [0u8; 8];
+    let mut buf2 = [0u8; 8];
+    let n1 = unsafe {
+        b64_ntop(
+            src.as_ptr(),
+            src.len(),
+            buf1.as_mut_ptr() as *mut std::ffi::c_char,
+            buf1.len(),
+        )
+    };
+    let n2 = unsafe {
+        __b64_ntop(
+            src.as_ptr(),
+            src.len(),
+            buf2.as_mut_ptr() as *mut std::ffi::c_char,
+            buf2.len(),
+        )
+    };
+    assert_eq!(n1, n2);
+    assert_eq!(buf1, buf2);
+}
+
+#[test]
+fn underscore_b64_pton_alias_matches_b64_pton() {
+    let s = b"aGk=\0";
+    let mut buf1 = [0u8; 4];
+    let mut buf2 = [0u8; 4];
+    let n1 = unsafe {
+        b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            buf1.as_mut_ptr(),
+            buf1.len(),
+        )
+    };
+    let n2 = unsafe {
+        __b64_pton(
+            s.as_ptr() as *const std::ffi::c_char,
+            buf2.as_mut_ptr(),
+            buf2.len(),
+        )
+    };
+    assert_eq!(n1, n2);
+    assert_eq!(buf1, buf2);
+}
+
+#[test]
+fn b64_round_trip_arbitrary_bytes() {
+    let input: Vec<u8> = (0u8..=200).collect();
+    let mut enc = vec![0u8; (input.len().div_ceil(3)) * 4 + 1];
+    let enc_n = unsafe {
+        b64_ntop(
+            input.as_ptr(),
+            input.len(),
+            enc.as_mut_ptr() as *mut std::ffi::c_char,
+            enc.len(),
+        )
+    };
+    assert!(enc_n > 0);
+
+    let mut dec = vec![0u8; input.len()];
+    let dec_n = unsafe {
+        b64_pton(
+            enc.as_ptr() as *const std::ffi::c_char,
+            dec.as_mut_ptr(),
+            dec.len(),
+        )
+    };
+    assert_eq!(dec_n as usize, input.len());
+    assert_eq!(dec, input);
+}

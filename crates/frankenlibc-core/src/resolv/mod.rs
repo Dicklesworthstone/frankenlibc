@@ -8,6 +8,7 @@
 //! - `config`: Parses /etc/resolv.conf configuration
 //! - `dns`: DNS protocol message encoding/decoding
 
+pub mod b64;
 pub mod config;
 pub mod dns;
 pub mod dns_name;
