@@ -278,24 +278,44 @@ fn bench_condvar_wait_signal_roundtrip(_c: &mut Criterion) {
             frankenlibc_core::pthread::condvar_init(Arc::as_ptr(&cv) as *mut CondvarData, 0);
         }
         let mutex_word = Arc::new(AtomicU32::new(0));
-        let go_flag = Arc::new(AtomicU32::new(0));
+        let request_id = Arc::new(AtomicU32::new(0));
+        let completed_id = Arc::new(AtomicU32::new(0));
+        let done = Arc::new(AtomicU32::new(0));
 
         let cv2 = cv.clone();
-        let go2 = go_flag.clone();
+        let request2 = request_id.clone();
+        let completed2 = completed_id.clone();
+        let done2 = done.clone();
 
         let signaler = std::thread::spawn(move || {
             let cv_ptr = Arc::as_ptr(&cv2) as *mut CondvarData;
-            for _ in 0..iters_per_round {
-                while cv2.nwaiters.load(Ordering::Acquire) == 0 {
+            loop {
+                let requested = request2.load(Ordering::Acquire);
+                let completed = completed2.load(Ordering::Acquire);
+                if done2.load(Ordering::Acquire) != 0 && completed >= requested {
+                    break;
+                }
+
+                if requested == 0 || completed >= requested {
+                    std::hint::spin_loop();
+                    continue;
+                }
+
+                if cv2.nwaiters.load(Ordering::Acquire) == 0 {
+                    std::hint::spin_loop();
+                    continue;
+                }
+
+                // POSIX permits condition waits to return without a matching signal.
+                // Keep signaling only while this specific request is still outstanding.
+                while completed2.load(Ordering::Acquire) < requested {
+                    if cv2.nwaiters.load(Ordering::Acquire) > 0 {
+                        unsafe {
+                            frankenlibc_core::pthread::condvar_signal(cv_ptr);
+                        }
+                    }
                     std::hint::spin_loop();
                 }
-                unsafe {
-                    frankenlibc_core::pthread::condvar_signal(cv_ptr);
-                }
-                while go2.load(Ordering::Acquire) == 0 {
-                    std::hint::spin_loop();
-                }
-                go2.store(0, Ordering::Release);
             }
         });
 
@@ -303,14 +323,16 @@ fn bench_condvar_wait_signal_roundtrip(_c: &mut Criterion) {
         let mutex_ptr = Arc::as_ptr(&mutex_word) as *const u32;
 
         let start = Instant::now();
-        for _ in 0..iters_per_round {
+        for iter in 0..iters_per_round {
             mutex_word.store(1, Ordering::Release);
+            request_id.store((iter + 1) as u32, Ordering::Release);
             unsafe {
                 frankenlibc_core::pthread::condvar_wait(cv_ptr, mutex_ptr);
             }
-            go_flag.store(1, Ordering::Release);
+            completed_id.store((iter + 1) as u32, Ordering::Release);
         }
         let dur = start.elapsed().max(Duration::from_nanos(1));
+        done.store(1, Ordering::Release);
         signaler.join().expect("signaler thread panicked");
         stats.record(iters_per_round, dur);
     }
