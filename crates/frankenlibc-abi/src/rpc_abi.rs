@@ -2388,30 +2388,10 @@ pub unsafe extern "C" fn clnt_spcreateerror(s: *const c_char) -> *mut c_char {
     })
 }
 
-/// Map RPC status codes to human-readable strings.
-fn rpc_errstr(stat: c_int) -> &'static str {
-    match stat {
-        0 => "Success",
-        1 => "Can't encode arguments",
-        2 => "Can't decode results",
-        3 => "Unable to send",
-        4 => "Unable to receive",
-        5 => "Timed out",
-        6 => "Incompatible versions of RPC",
-        7 => "Authentication error",
-        8 => "Program unavailable",
-        9 => "Program/version mismatch",
-        10 => "Procedure unavailable",
-        11 => "Server can't decode arguments",
-        12 => "Remote system error",
-        13 => "Unknown host",
-        14 => "Port mapper failure",
-        15 => "Program not registered",
-        16 => "Failed (unspecified error)",
-        17 => "Unknown protocol",
-        _ => "Unknown error",
-    }
-}
+// rpc_errstr moved to frankenlibc_core::rpc::status_message. Local
+// alias preserves the call sites in clnt_perrno / clnt_sperrno /
+// clnt_spcreateerror unchanged.
+use frankenlibc_core::rpc::status_message as rpc_errstr;
 
 // ===========================================================================
 // RPC server / SVC (24 symbols)

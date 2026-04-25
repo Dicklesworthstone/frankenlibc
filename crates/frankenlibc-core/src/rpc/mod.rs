@@ -92,6 +92,36 @@ fn eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
         .all(|(x, y)| x.eq_ignore_ascii_case(y))
 }
 
+/// Map an RPC `clnt_stat` (`rpc/clnt_stat.h`) status code to the
+/// canonical glibc human-readable description string.
+///
+/// Codes in `0..=17` map per `<rpc/clnt_stat.h>`; out-of-range values
+/// return `"Unknown error"`. Used by the abi shims `clnt_perrno`,
+/// `clnt_sperrno`, and `clnt_spcreateerror`.
+pub fn status_message(stat: i32) -> &'static str {
+    match stat {
+        0 => "Success",
+        1 => "Can't encode arguments",
+        2 => "Can't decode results",
+        3 => "Unable to send",
+        4 => "Unable to receive",
+        5 => "Timed out",
+        6 => "Incompatible versions of RPC",
+        7 => "Authentication error",
+        8 => "Program unavailable",
+        9 => "Program/version mismatch",
+        10 => "Procedure unavailable",
+        11 => "Server can't decode arguments",
+        12 => "Remote system error",
+        13 => "Unknown host",
+        14 => "Port mapper failure",
+        15 => "Program not registered",
+        16 => "Failed (unspecified error)",
+        17 => "Unknown protocol",
+        _ => "Unknown error",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +276,44 @@ mod tests {
             assert_eq!(e.number, num);
             assert_eq!(e.aliases.len(), alias_count);
         }
+    }
+
+    // ---- status_message ----
+
+    #[test]
+    fn status_message_zero_is_success() {
+        assert_eq!(status_message(0), "Success");
+    }
+
+    #[test]
+    fn status_message_covers_full_range() {
+        // Spot-check each documented status code (0..=17) returns
+        // a non-empty, non-fallback string.
+        let unknown = status_message(99999);
+        for code in 0..=17 {
+            let msg = status_message(code);
+            assert!(!msg.is_empty(), "code {code} returned empty");
+            assert_ne!(msg, unknown, "code {code} aliased fallback");
+        }
+    }
+
+    #[test]
+    fn status_message_known_codes_match_glibc_text() {
+        // A handful of the most-cited codes verbatim.
+        assert_eq!(status_message(1), "Can't encode arguments");
+        assert_eq!(status_message(5), "Timed out");
+        assert_eq!(status_message(7), "Authentication error");
+        assert_eq!(status_message(9), "Program/version mismatch");
+        assert_eq!(status_message(13), "Unknown host");
+        assert_eq!(status_message(17), "Unknown protocol");
+    }
+
+    #[test]
+    fn status_message_out_of_range_returns_unknown() {
+        assert_eq!(status_message(-1), "Unknown error");
+        assert_eq!(status_message(18), "Unknown error");
+        assert_eq!(status_message(99999), "Unknown error");
+        assert_eq!(status_message(i32::MAX), "Unknown error");
+        assert_eq!(status_message(i32::MIN), "Unknown error");
     }
 }
