@@ -32,6 +32,8 @@ use libfuzzer_sys::fuzz_target;
 
 use frankenlibc_abi::unistd_abi::ptrace;
 
+const MAX_OUT_BUF_BYTES: usize = 256;
+
 const REQUESTS: &[libc::c_int] = &[
     libc::PTRACE_PEEKTEXT as libc::c_int,
     libc::PTRACE_PEEKDATA as libc::c_int,
@@ -99,13 +101,17 @@ fn pick_request(sel: u8) -> libc::c_int {
 }
 
 fuzz_target!(|input: PtraceInput| {
+    if input.out_buf_bytes.len() > MAX_OUT_BUF_BYTES {
+        return;
+    }
+
     let req = pick_request(input.req_sel);
     let pid = pick_pid(input.pid_kind);
 
     // Allocate a small per-iteration buffer that the kernel can write
     // into (for GET* requests). It's bounded so it never causes huge
     // allocations.
-    let mut out_buf = vec![0u8; 256];
+    let mut out_buf = vec![0u8; MAX_OUT_BUF_BYTES];
     let seed = &input.out_buf_bytes;
     let n = seed.len().min(out_buf.len());
     out_buf[..n].copy_from_slice(&seed[..n]);

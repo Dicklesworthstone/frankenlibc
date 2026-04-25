@@ -167,7 +167,7 @@ mod tests {
     fn output_body_uses_only_crypt_base64_alphabet() {
         let h = md5_crypt(b"any key", b"$1$abcdefgh$").unwrap();
         let body_start = h.rfind('$').unwrap() + 1;
-        for &b in h[body_start..].as_bytes() {
+        for &b in &h.as_bytes()[body_start..] {
             assert!(
                 crate::crypt::base64::ALPHABET.contains(&b),
                 "non-alphabet byte 0x{b:02x}"
