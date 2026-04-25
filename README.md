@@ -1,7 +1,7 @@
 # FrankenLibC
 
 <div align="center">
-  <img src="franken_libc_illustration.webp" alt="FrankenLibC illustration" width="720">
+  <img src="docs/assets/images/franken_libc_illustration.webp" alt="FrankenLibC illustration" width="720">
 </div>
 
 <div align="center">

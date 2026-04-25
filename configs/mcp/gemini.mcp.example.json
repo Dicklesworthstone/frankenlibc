@@ -3,7 +3,7 @@
     "mcp-agent-mail": {
       "httpUrl": "http://127.0.0.1:8765/home/ubuntu/.mcp_agent_mail_git_mailbox_repo/",
       "headers": {
-        "Authorization": "Bearer a9d26a73e58bed5c22467fb0e11400414eb391c0add43f39d370d755dbc175b9"
+        "Authorization": "Bearer <MCP_AGENT_MAIL_TOKEN>"
       }
     }
   }
