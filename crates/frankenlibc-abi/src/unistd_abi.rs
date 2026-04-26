@@ -5762,17 +5762,27 @@ pub unsafe extern "C" fn fchmodat2(
     mode: libc::mode_t,
     flags: c_int,
 ) -> c_int {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_fchmodat2,
-            dirfd as libc::c_long,
-            pathname as libc::c_long,
-            mode as libc::c_long,
-            flags as libc::c_long,
-        )
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::IoFd, pathname as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if pathname.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    let rc = match unsafe { syscall::sys_fchmodat2(dirfd, pathname as *const u8, mode, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     };
-    unsafe { raw_syscall_with_errno(rc) }
+    runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, rc != 0);
+    rc
 }
 
 /// Linux `eventfd2(initval, flags) -> int` (`SYS_eventfd2 = 290`)
@@ -5782,15 +5792,13 @@ pub unsafe extern "C" fn fchmodat2(
 /// `eventfd`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn eventfd2(initval: c_uint, flags: c_int) -> c_int {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_eventfd2,
-            initval as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match syscall::sys_eventfd2(initval, flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `rt_sigprocmask(how, *set, *oldset, sigsetsize) -> int`
@@ -5808,17 +5816,16 @@ pub unsafe extern "C" fn rt_sigprocmask(
     oldset: *mut c_void,
     sigsetsize: usize,
 ) -> c_int {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigprocmask,
-            how as libc::c_long,
-            set as libc::c_long,
-            oldset as libc::c_long,
-            sigsetsize as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    // SAFETY: caller owns the kernel ABI pointers and sigset size.
+    match unsafe {
+        syscall::sys_rt_sigprocmask(how, set as *const u8, oldset as *mut u8, sigsetsize)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `rt_sigqueueinfo(tgid, sig, *uinfo) -> int`
@@ -5838,16 +5845,14 @@ pub unsafe extern "C" fn rt_sigqueueinfo(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigqueueinfo,
-            tgid as libc::c_long,
-            sig as libc::c_long,
-            uinfo as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    // SAFETY: caller supplied a non-null siginfo_t pointer for the kernel ABI.
+    match unsafe { syscall::sys_rt_sigqueueinfo(tgid, sig, uinfo as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `rt_sigsuspend(*mask, sigsetsize) -> int`
@@ -5866,15 +5871,14 @@ pub unsafe extern "C" fn rt_sigsuspend(mask: *const c_void, sigsetsize: usize) -
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_sigsuspend,
-            mask as libc::c_long,
-            sigsetsize as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    // SAFETY: caller supplied a non-null signal-mask pointer for the kernel ABI.
+    match unsafe { syscall::sys_rt_sigsuspend(mask as *const u8, sigsetsize) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `rt_tgsigqueueinfo(tgid, tid, sig, *uinfo) -> int`
@@ -5895,17 +5899,14 @@ pub unsafe extern "C" fn rt_tgsigqueueinfo(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rt_tgsigqueueinfo,
-            tgid as libc::c_long,
-            tid as libc::c_long,
-            sig as libc::c_long,
-            uinfo as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    // SAFETY: caller supplied a non-null siginfo_t pointer for the kernel ABI.
+    match unsafe { syscall::sys_rt_tgsigqueueinfo(tgid, tid, sig, uinfo as *const u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
