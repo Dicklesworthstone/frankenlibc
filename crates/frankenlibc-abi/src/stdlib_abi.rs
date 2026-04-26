@@ -4795,3 +4795,72 @@ pub unsafe extern "C" fn expand_number(buf: *const c_char, num: *mut u64) -> c_i
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// humanize_number (NetBSD/FreeBSD libutil byte-count formatter)
+// ---------------------------------------------------------------------------
+//
+// NetBSD/FreeBSD documented `<libutil.h>` constants — the abi shim
+// translates the C-int `scale` parameter's special values (0x10 =
+// HN_GETSCALE, 0x20 = HN_AUTOSCALE) to the internal sentinels in
+// `frankenlibc_core::stdlib::humanize_number`.
+
+/// Public NetBSD `HN_GETSCALE` value: when passed as the `scale`
+/// argument, return the auto-scale level instead of writing.
+const HN_C_GETSCALE: c_int = 0x10;
+/// Public NetBSD `HN_AUTOSCALE` value: pick the largest scale that
+/// keeps the integer part below the divisor.
+const HN_C_AUTOSCALE: c_int = 0x20;
+
+/// NetBSD/FreeBSD `humanize_number(buf, len, bytes, suffix, scale, flags)`
+/// — render `bytes` into a human-readable string in `buf`.
+///
+/// On success returns the number of bytes written excluding the
+/// trailing NUL (or, when `scale == HN_GETSCALE`, the auto-scale
+/// level). Returns -1 on failure (NULL pointers, buffer too small,
+/// invalid scale).
+///
+/// # Safety
+///
+/// Caller must ensure `buf` is valid for `len` writable bytes (with
+/// `len > 0`), and `suffix`, when non-NULL, is a valid NUL-terminated
+/// C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn humanize_number(
+    buf: *mut c_char,
+    len: usize,
+    bytes: i64,
+    suffix: *const c_char,
+    scale: c_int,
+    flags: c_int,
+) -> c_int {
+    use frankenlibc_core::stdlib::humanize_number as core_hn;
+
+    if buf.is_null() || len == 0 {
+        return -1;
+    }
+
+    // Translate the scale sentinels.
+    let scale_internal: i32 = match scale {
+        HN_C_AUTOSCALE => core_hn::HN_AUTOSCALE,
+        HN_C_GETSCALE => core_hn::HN_GETSCALE,
+        n => n,
+    };
+
+    // SAFETY: buf is valid for `len` writable bytes per the caller.
+    let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, len) };
+
+    let suffix_bytes: &[u8] = if suffix.is_null() {
+        &[]
+    } else {
+        // SAFETY: caller-supplied NUL-terminated C string.
+        unsafe { CStr::from_ptr(suffix) }.to_bytes()
+    };
+
+    let core_flags = core_hn::HumanizeFlags(flags as u32 & 0x1f);
+
+    match core_hn::format(buf_slice, bytes, suffix_bytes, scale_internal, core_flags) {
+        Ok(n) => n as c_int,
+        Err(_) => -1,
+    }
+}

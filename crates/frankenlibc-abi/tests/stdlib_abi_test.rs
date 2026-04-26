@@ -2,17 +2,17 @@
 
 //! Integration tests for `<stdlib.h>` ABI entrypoints.
 
-use std::ffi::c_char;
+use std::ffi::{c_char, c_int};
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atoll, clearenv, confstr, dehumanize_number, drand48, ecvt, erand48,
     expand_number, fcvt, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf,
-    get_phys_pages, getbsize, getenv, getsubopt, initstate, jrand48, l64a, lcong48, lrand48,
-    mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, qsort_r, random, reallocarray,
-    reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom, strtod, strtof, strtold,
-    strtoll, strtonum, strtoq, strtoull, strtouq, system, unsetenv,
+    get_phys_pages, getbsize, getenv, getsubopt, humanize_number, initstate, jrand48, l64a,
+    lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, qsort_r, random,
+    reallocarray, reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom, strtod,
+    strtof, strtold, strtoll, strtonum, strtoq, strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -6106,4 +6106,237 @@ fn expand_all_size_suffixes() {
         assert_eq!(rc, 0, "input {s:?} should parse");
         assert_eq!(num, *expected, "input {s:?} value mismatch");
     }
+}
+
+// ---------------------------------------------------------------------------
+// humanize_number (NetBSD/FreeBSD libutil byte-count formatter)
+// ---------------------------------------------------------------------------
+
+const HN_DECIMAL: c_int = 0x01;
+const HN_NOSPACE: c_int = 0x02;
+const HN_B: c_int = 0x04;
+const HN_DIVISOR_1000: c_int = 0x08;
+const HN_IEC_PREFIXES: c_int = 0x10;
+const HN_GETSCALE: c_int = 0x10;
+const HN_AUTOSCALE: c_int = 0x20;
+
+fn hn_string(buf: &[u8], n: c_int) -> String {
+    String::from_utf8(buf[..n as usize].to_vec()).unwrap()
+}
+
+#[test]
+fn humanize_autoscale_kilo() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4096,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            0,
+        )
+    };
+    assert!(n > 0);
+    assert_eq!(hn_string(&buf, n), "4 K");
+}
+
+#[test]
+fn humanize_autoscale_iec_with_b() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            32 * 1024 * 1024,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            HN_IEC_PREFIXES | HN_B,
+        )
+    };
+    assert!(n > 0);
+    assert_eq!(hn_string(&buf, n), "32 MiB");
+}
+
+#[test]
+fn humanize_decimal_renders_one_fraction() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            1536,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            HN_DECIMAL,
+        )
+    };
+    assert_eq!(hn_string(&buf, n), "1.5 K");
+}
+
+#[test]
+fn humanize_nospace_drops_separator() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4096,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            HN_NOSPACE,
+        )
+    };
+    assert_eq!(hn_string(&buf, n), "4K");
+}
+
+#[test]
+fn humanize_divisor_1000() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4_000_000,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            HN_DIVISOR_1000,
+        )
+    };
+    assert_eq!(hn_string(&buf, n), "4 M");
+}
+
+#[test]
+fn humanize_negative_value() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            -2048,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            0,
+        )
+    };
+    assert_eq!(hn_string(&buf, n), "-2 K");
+}
+
+#[test]
+fn humanize_getscale_returns_scale_without_writing() {
+    let mut buf = [0xabu8; 16];
+    let suffix = c"";
+    let scale = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            32 * 1024 * 1024,
+            suffix.as_ptr(),
+            HN_GETSCALE,
+            0,
+        )
+    };
+    assert_eq!(scale, 2, "32 MiB → scale 2");
+    // Buffer must be untouched.
+    for &b in &buf {
+        assert_eq!(b, 0xab, "GETSCALE must not write to buf");
+    }
+}
+
+#[test]
+fn humanize_buffer_too_small_returns_minus_one() {
+    let mut buf = [0u8; 2]; // can't fit "4 K\0"
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4096,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            0,
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn humanize_null_buf_returns_minus_one() {
+    let suffix = c"";
+    let n = unsafe { humanize_number(ptr::null_mut(), 32, 4096, suffix.as_ptr(), HN_AUTOSCALE, 0) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn humanize_zero_len_returns_minus_one() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            0,
+            4096,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            0,
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn humanize_explicit_scale_zero() {
+    let mut buf = [0u8; 32];
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            512,
+            suffix.as_ptr(),
+            0,
+            0,
+        )
+    };
+    assert_eq!(hn_string(&buf, n), "512 ");
+}
+
+#[test]
+fn humanize_writes_nul_terminator() {
+    let mut buf = [0xffu8; 32];
+    let suffix = c"";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4096,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            0,
+        )
+    };
+    assert_eq!(buf[n as usize], 0, "trailing byte must be NUL");
+}
+
+#[test]
+fn humanize_suffix_is_appended_after_prefix() {
+    let mut buf = [0u8; 32];
+    let suffix = c"/s";
+    let n = unsafe {
+        humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4096,
+            suffix.as_ptr(),
+            HN_AUTOSCALE,
+            HN_IEC_PREFIXES | HN_B,
+        )
+    };
+    assert_eq!(hn_string(&buf, n), "4 KiB/s");
 }

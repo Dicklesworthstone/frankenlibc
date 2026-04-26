@@ -12,6 +12,7 @@ pub mod env;
 pub mod exit;
 pub mod expand_number;
 pub mod getbsize;
+pub mod humanize_number;
 pub mod math;
 pub mod random;
 pub mod random48;
