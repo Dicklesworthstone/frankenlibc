@@ -6425,6 +6425,156 @@ fn cxa_guard_null_pointer_returns_zero_no_op() {
     unsafe { __cxa_guard_abort(std::ptr::null_mut()) };
 }
 
+// ---------------------------------------------------------------------------
+// __cxa_thread_atexit / __cxa_tm_cleanup / __cxa_vec_ctor / dtor / cleanup
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cxa_tm_cleanup_is_a_no_op() {
+    use frankenlibc_abi::unistd_abi::__cxa_tm_cleanup;
+    // Just verify that calling it with arbitrary args doesn't crash;
+    // there is no observable side effect to assert.
+    unsafe {
+        __cxa_tm_cleanup(std::ptr::null_mut(), std::ptr::null_mut(), 0);
+        __cxa_tm_cleanup(0xdead_beef_usize as *mut c_void, std::ptr::null_mut(), 7);
+    }
+}
+
+#[test]
+fn cxa_thread_atexit_registers_via_impl() {
+    use frankenlibc_abi::unistd_abi::__cxa_thread_atexit;
+
+    // We can't easily observe the registry side-effect from outside
+    // the abi crate (it lives in startup_abi), but we can verify the
+    // wrapper accepts the call and returns 0 for the standard happy
+    // path that the impl uses.
+    unsafe extern "C" fn noop_dtor(_obj: *mut c_void) {}
+    let mut payload: i32 = 42;
+    let rc = unsafe {
+        __cxa_thread_atexit(
+            noop_dtor,
+            &mut payload as *mut i32 as *mut c_void,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn cxa_vec_ctor_runs_constructor_in_forward_order() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_ctor;
+    use std::sync::Mutex;
+
+    static ORDER: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn ctor_record(p: *mut c_void) {
+        let v = unsafe { *(p as *mut u32) } as usize;
+        ORDER.lock().unwrap().push(v);
+    }
+
+    // Initialize array elements with their indices so the ctor records
+    // the visit order.
+    let mut buf: [u32; 5] = [0, 1, 2, 3, 4];
+    ORDER.lock().unwrap().clear();
+    unsafe {
+        __cxa_vec_ctor(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            Some(ctor_record),
+            None,
+        );
+    }
+    assert_eq!(*ORDER.lock().unwrap(), vec![0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn cxa_vec_dtor_runs_destructor_in_reverse_order() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_dtor;
+    use std::sync::Mutex;
+
+    static ORDER: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn dtor_record(p: *mut c_void) {
+        let v = unsafe { *(p as *mut u32) } as usize;
+        ORDER.lock().unwrap().push(v);
+    }
+
+    let mut buf: [u32; 5] = [10, 11, 12, 13, 14];
+    ORDER.lock().unwrap().clear();
+    unsafe {
+        __cxa_vec_dtor(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            Some(dtor_record),
+        );
+    }
+    assert_eq!(*ORDER.lock().unwrap(), vec![14, 13, 12, 11, 10]);
+}
+
+#[test]
+fn cxa_vec_cleanup_matches_vec_dtor_order() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_cleanup;
+    use std::sync::Mutex;
+
+    static ORDER: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn dtor_record(p: *mut c_void) {
+        let v = unsafe { *(p as *mut u32) } as usize;
+        ORDER.lock().unwrap().push(v);
+    }
+
+    let mut buf: [u32; 3] = [100, 200, 300];
+    ORDER.lock().unwrap().clear();
+    unsafe {
+        __cxa_vec_cleanup(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            Some(dtor_record),
+        );
+    }
+    assert_eq!(*ORDER.lock().unwrap(), vec![300, 200, 100]);
+}
+
+#[test]
+fn cxa_vec_ctor_dtor_tolerate_null_callbacks_and_zero_count() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_ctor, __cxa_vec_dtor};
+
+    let mut buf: [u32; 4] = [0; 4];
+
+    // NULL ctor → no-op. NULL dtor → no-op. zero count → no-op.
+    unsafe {
+        __cxa_vec_ctor(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            None,
+            None,
+        );
+        __cxa_vec_dtor(
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            std::mem::size_of::<u32>(),
+            None,
+        );
+        __cxa_vec_ctor(
+            buf.as_mut_ptr() as *mut c_void,
+            0,
+            std::mem::size_of::<u32>(),
+            None,
+            None,
+        );
+    }
+
+    // NULL array → no-op (must not deref).
+    unsafe {
+        __cxa_vec_ctor(std::ptr::null_mut(), 5, 4, None, None);
+        __cxa_vec_dtor(std::ptr::null_mut(), 5, 4, None);
+    }
+}
+
 #[test]
 fn cxa_get_globals_returns_stable_per_thread_pointer() {
     use frankenlibc_abi::unistd_abi::{__cxa_get_globals, __cxa_get_globals_fast};

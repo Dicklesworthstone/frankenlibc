@@ -11319,6 +11319,98 @@ pub unsafe extern "C" fn __cxa_guard_abort(g: *mut u64) {
     GUARD_CONDVAR.notify_all();
 }
 
+// ---------------------------------------------------------------------------
+// Itanium C++ ABI: thread-local destructors, TM cleanup, vector ctor/dtor
+// ---------------------------------------------------------------------------
+
+/// Itanium C++ ABI `__cxa_thread_atexit(dtor, obj, dso)` — public-name
+/// alias of `__cxa_thread_atexit_impl`. Some toolchains emit calls to
+/// the unprefixed name; both must resolve to the same registry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_thread_atexit(
+    dtor: unsafe extern "C" fn(*mut c_void),
+    obj: *mut c_void,
+    dso_handle: *mut c_void,
+) -> c_int {
+    unsafe { crate::startup_abi::__cxa_thread_atexit_impl(dtor, obj, dso_handle) }
+}
+
+/// Itanium C++ ABI `__cxa_tm_cleanup(this_ptr, x, y)` — Transactional
+/// Memory cleanup hook from the long-deprecated GCC `-fgnu-tm`
+/// extension. Modern toolchains rarely use TM, but link-edit still
+/// resolves the symbol. We accept the call and do nothing.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_tm_cleanup(_this_ptr: *mut c_void, _x: *mut c_void, _y: c_uint) {}
+
+/// Itanium C++ ABI `__cxa_vec_ctor(array, count, size, ctor, dtor)` —
+/// invoke `ctor` on each element of an array of `count` elements of
+/// `size` bytes, in forward order. NULL `ctor` is a documented no-op
+/// (the compiler omits the constructor when the element type is
+/// trivially constructible).
+///
+/// We have no exception runtime, so the `_dtor` parameter (used to
+/// destruct already-constructed elements when a constructor throws)
+/// is accepted and ignored.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_ctor(
+    array: *mut c_void,
+    element_count: usize,
+    element_size: usize,
+    ctor: Option<unsafe extern "C" fn(*mut c_void)>,
+    _dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    if array.is_null() {
+        return;
+    }
+    let Some(ctor) = ctor else {
+        return;
+    };
+    let base = array as *mut u8;
+    for i in 0..element_count {
+        // SAFETY: caller-supplied array of (element_count * element_size).
+        let p = unsafe { base.add(i * element_size) } as *mut c_void;
+        unsafe { ctor(p) };
+    }
+}
+
+/// Itanium C++ ABI `__cxa_vec_dtor(array, count, size, dtor)` —
+/// invoke `dtor` on each element in REVERSE order. NULL `dtor` is a
+/// documented no-op.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_dtor(
+    array: *mut c_void,
+    element_count: usize,
+    element_size: usize,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    if array.is_null() || element_count == 0 {
+        return;
+    }
+    let Some(dtor) = dtor else {
+        return;
+    };
+    let base = array as *mut u8;
+    for i in (0..element_count).rev() {
+        // SAFETY: caller-supplied array of (element_count * element_size).
+        let p = unsafe { base.add(i * element_size) } as *mut c_void;
+        unsafe { dtor(p) };
+    }
+}
+
+/// Itanium C++ ABI `__cxa_vec_cleanup(array, count, size, dtor)` —
+/// EH-time cleanup of a partially-constructed array. Behaves the
+/// same as [`__cxa_vec_dtor`]: invoke `dtor` on each element in
+/// reverse order.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_cleanup(
+    array: *mut c_void,
+    element_count: usize,
+    element_size: usize,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    unsafe { __cxa_vec_dtor(array, element_count, element_size, dtor) };
+}
+
 /// Itanium C++ ABI `__cxa_eh_globals` — per-thread exception
 /// state struct. We expose only the two fields callers can
 /// legally inspect (`caughtExceptions` head pointer and the
