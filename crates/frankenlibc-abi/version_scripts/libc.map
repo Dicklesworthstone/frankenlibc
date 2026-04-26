@@ -1305,6 +1305,7 @@ GLIBC_2.2.5 {
         faccessat;
         fchownat;
         fchmodat;
+        fchmodat2;
         linkat;
         mkfifoat;
         mknodat;
@@ -1401,6 +1402,7 @@ GLIBC_2.2.5 {
 
         /* eventfd / timerfd */
         eventfd;
+        eventfd2;
         eventfd_read;
         eventfd_write;
         timerfd_create;
@@ -1792,6 +1794,10 @@ GLIBC_2.2.5 {
         msgrcv;
 
         /* signal extras */
+        rt_sigprocmask;
+        rt_sigqueueinfo;
+        rt_sigsuspend;
+        rt_tgsigqueueinfo;
         sigqueue;
         sigtimedwait;
         sigwaitinfo;

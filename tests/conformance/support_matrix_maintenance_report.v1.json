@@ -1,30 +1,30 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-26T17:23:35Z",
+  "generated_at": "2026-04-26T17:48:33Z",
   "summary": {
-    "total_symbols": 3996,
-    "status_validated": 3996,
+    "total_symbols": 4002,
+    "status_validated": 4002,
     "status_invalid": 0,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
     "fixture_linked": 366,
-    "fixture_unlinked": 3630,
-    "fixture_coverage_pct": 9.2,
+    "fixture_unlinked": 3636,
+    "fixture_coverage_pct": 9.1,
     "total_warnings": 155
   },
   "coverage_dashboard": {
-    "total_symbols": 3996,
+    "total_symbols": 4002,
     "status_counts": {
       "Implemented": 3592,
-      "RawSyscall": 404,
+      "RawSyscall": 410,
       "WrapsHostLibc": 0,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 89.9,
-      "RawSyscall": 10.1,
+      "Implemented": 89.8,
+      "RawSyscall": 10.2,
       "WrapsHostLibc": 0.0,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
@@ -38,15 +38,22 @@
     "status_count_delta": {
       "GlibcCallThrough": 0,
       "Implemented": 0,
-      "RawSyscall": 0,
+      "RawSyscall": 6,
       "Stub": 0,
       "WrapsHostLibc": 0
     },
     "native_coverage_pct_delta": 0.0,
     "reclassified_symbol_count": 0,
-    "new_symbol_count": 0,
+    "new_symbol_count": 6,
     "removed_symbol_count": 0,
-    "new_symbols": [],
+    "new_symbols": [
+      "eventfd2",
+      "fchmodat2",
+      "rt_sigprocmask",
+      "rt_sigqueueinfo",
+      "rt_sigsuspend",
+      "rt_tgsigqueueinfo"
+    ],
     "removed_symbols": []
   },
   "policy_checks": {
@@ -69,7 +76,7 @@
       "fixture_linked": 309
     },
     "RawSyscall": {
-      "count": 404,
+      "count": 410,
       "fixture_linked": 57
     }
   },
@@ -265,9 +272,9 @@
       "coverage_pct": 15.4
     },
     "unistd_abi": {
-      "total": 625,
+      "total": 631,
       "linked": 31,
-      "coverage_pct": 5.0
+      "coverage_pct": 4.9
     },
     "wchar_abi": {
       "total": 146,
@@ -1775,6 +1782,7 @@
     "ether_ntohost": "Implemented",
     "euidaccess": "RawSyscall",
     "eventfd": "RawSyscall",
+    "eventfd2": "RawSyscall",
     "eventfd_read": "Implemented",
     "eventfd_write": "Implemented",
     "execl": "Implemented",
@@ -1915,6 +1923,7 @@
     "fchflags": "Implemented",
     "fchmod": "RawSyscall",
     "fchmodat": "RawSyscall",
+    "fchmodat2": "RawSyscall",
     "fchown": "RawSyscall",
     "fchownat": "RawSyscall",
     "fclose": "Implemented",
@@ -3410,6 +3419,10 @@
     "rsqrtf64": "Implemented",
     "rsqrtf64x": "Implemented",
     "rsqrtl": "Implemented",
+    "rt_sigprocmask": "RawSyscall",
+    "rt_sigqueueinfo": "RawSyscall",
+    "rt_sigsuspend": "RawSyscall",
+    "rt_tgsigqueueinfo": "RawSyscall",
     "rtime": "Implemented",
     "ruserok": "Implemented",
     "ruserok_af": "Implemented",
@@ -9950,6 +9963,7 @@
     "ether_ntohost",
     "euidaccess",
     "eventfd",
+    "eventfd2",
     "eventfd_read",
     "eventfd_write",
     "execl",
@@ -9977,6 +9991,7 @@
     "fchdir",
     "fchmod",
     "fchmodat",
+    "fchmodat2",
     "fchown",
     "fchownat",
     "fcloseall",
@@ -10841,6 +10856,8 @@
     "sigpause",
     "sigpending",
     "sigprocmask",
+    "rt_sigprocmask",
+    "rt_sigqueueinfo",
     "sigqueue",
     "sigrelse",
     "sigreturn",
@@ -10849,6 +10866,8 @@
     "sigsetmask",
     "sigstack",
     "sigsuspend",
+    "rt_sigsuspend",
+    "rt_tgsigqueueinfo",
     "sigtimedwait",
     "sigvec",
     "sigwait",

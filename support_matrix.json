@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 3996,
+  "total_exported": 4002,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -3174,6 +3174,15 @@
       "semantics": "Linux"
     },
     {
+      "symbol": "eventfd2",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "strict_semantics": "Raw Linux syscall SYS_eventfd2; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall with deterministic errno propagation",
+      "default_stub": false
+    },
+    {
       "symbol": "eventfd_read",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -3417,6 +3426,15 @@
       "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "semantics": "POSIX"
+    },
+    {
+      "symbol": "fchmodat2",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "strict_semantics": "Raw Linux syscall SYS_fchmodat2; POSIX errno on failure",
+      "hardened_semantics": "Raw syscall with null pathname validation and deterministic errno propagation",
+      "default_stub": false
     },
     {
       "symbol": "fchown",
@@ -12257,6 +12275,24 @@
       "default_stub": false
     },
     {
+      "symbol": "rt_sigprocmask",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall",
+      "strict_semantics": "Raw Linux syscall SYS_rt_sigprocmask with explicit sigset_t size argument",
+      "hardened_semantics": "Raw syscall with deterministic errno propagation",
+      "default_stub": false
+    },
+    {
+      "symbol": "rt_sigqueueinfo",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall",
+      "strict_semantics": "Raw Linux syscall SYS_rt_sigqueueinfo with caller-supplied siginfo_t",
+      "hardened_semantics": "Raw syscall with null siginfo_t validation and deterministic errno propagation",
+      "default_stub": false
+    },
+    {
       "symbol": "sigqueue",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -12326,6 +12362,24 @@
       "perf_class": "coldpath",
       "strict_semantics": "Raw Linux syscall SYS_rt_sigsuspend; always returns -1 with EINTR",
       "hardened_semantics": "Raw syscall; membrane-gated signal suspension with EINTR on delivery",
+      "default_stub": false
+    },
+    {
+      "symbol": "rt_sigsuspend",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall",
+      "strict_semantics": "Raw Linux syscall SYS_rt_sigsuspend with explicit sigset_t size argument",
+      "hardened_semantics": "Raw syscall with null mask validation and deterministic errno propagation",
+      "default_stub": false
+    },
+    {
+      "symbol": "rt_tgsigqueueinfo",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall",
+      "strict_semantics": "Raw Linux syscall SYS_rt_tgsigqueueinfo with caller-supplied siginfo_t",
+      "hardened_semantics": "Raw syscall with null siginfo_t validation and deterministic errno propagation",
       "default_stub": false
     },
     {
