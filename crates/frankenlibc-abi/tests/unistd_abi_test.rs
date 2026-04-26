@@ -11033,3 +11033,163 @@ fn nss_compat_initgroups_dyn_returns_notfound_and_sets_errno() {
     assert_eq!(rc, 0);
     assert_eq!(err, libc::ENOENT);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 17 _nss_hesiod_* NSS plugin entrypoints (bd-yz9cj)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_hesiod_end_stubs_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_hesiod_endgrent, _nss_hesiod_endprotoent, _nss_hesiod_endpwent, _nss_hesiod_endservent,
+    };
+    assert_eq!(unsafe { _nss_hesiod_endgrent() }, 1);
+    assert_eq!(unsafe { _nss_hesiod_endpwent() }, 1);
+    assert_eq!(unsafe { _nss_hesiod_endprotoent() }, 1);
+    assert_eq!(unsafe { _nss_hesiod_endservent() }, 1);
+}
+
+#[test]
+fn nss_hesiod_set_stubs_accept_stayopen_and_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_hesiod_setgrent, _nss_hesiod_setprotoent, _nss_hesiod_setpwent, _nss_hesiod_setservent,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            assert_eq!(unsafe { $f(0) }, 1);
+            assert_eq!(unsafe { $f(1) }, 1);
+        }};
+    }
+    check!(_nss_hesiod_setgrent);
+    check!(_nss_hesiod_setpwent);
+    check!(_nss_hesiod_setprotoent);
+    check!(_nss_hesiod_setservent);
+}
+
+#[test]
+fn nss_hesiod_get_by_str_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_hesiod_getgrnam_r, _nss_hesiod_getprotobyname_r, _nss_hesiod_getpwnam_r,
+    };
+    let key = CString::new("nobody").unwrap();
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        key.as_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                    )
+                },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_hesiod_getgrnam_r);
+    check!(_nss_hesiod_getpwnam_r);
+    check!(_nss_hesiod_getprotobyname_r);
+}
+
+#[test]
+fn nss_hesiod_get_by_int_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_hesiod_getgrgid_r, _nss_hesiod_getprotobynumber_r, _nss_hesiod_getpwuid_r,
+    };
+    let mut err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_hesiod_getgrgid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_hesiod_getpwuid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_hesiod_getprotobynumber_r(
+                42,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_hesiod_getservbyname_r_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_hesiod_getservbyname_r;
+    let name = CString::new("ssh").unwrap();
+    let proto = CString::new("tcp").unwrap();
+    let mut err = 0;
+    let rc = unsafe {
+        _nss_hesiod_getservbyname_r(
+            name.as_ptr(),
+            proto.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_hesiod_getservbyport_r_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_hesiod_getservbyport_r;
+    let proto = CString::new("tcp").unwrap();
+    let mut err = 0;
+    let rc = unsafe {
+        _nss_hesiod_getservbyport_r(
+            22,
+            proto.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_hesiod_initgroups_dyn_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_hesiod_initgroups_dyn;
+    let user = CString::new("alice").unwrap();
+    let mut err: c_int = 0;
+    let mut start: std::ffi::c_long = 0;
+    let mut size: std::ffi::c_long = 0;
+    let mut groups: *mut libc::gid_t = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_hesiod_initgroups_dyn(
+            user.as_ptr(),
+            0,
+            &mut start,
+            &mut size,
+            &mut groups,
+            8,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}

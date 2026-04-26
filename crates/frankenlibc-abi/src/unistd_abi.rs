@@ -23713,3 +23713,80 @@ pub unsafe extern "C" fn _nss_compat_initgroups_dyn(
     unsafe { nss_set_errnop_enoent(errnop) };
     NSS_STATUS_NOTFOUND
 }
+
+// ---------------------------------------------------------------------------
+// 17 _nss_hesiod_* NSS plugin entrypoints (bd-yz9cj)
+// ---------------------------------------------------------------------------
+//
+// libnss_hesiod.so.2 implements the MIT Project Athena Hesiod directory
+// service NSS plugin (passwd / group / protocols / services). When no
+// Hesiod servers are configured the plugin returns NSS_STATUS_NOTFOUND
+// with errnop=ENOENT, matching the files-plugin convention.
+
+nss_files_end_stub!(_nss_hesiod_endgrent);
+nss_files_end_stub!(_nss_hesiod_endpwent);
+nss_files_end_stub!(_nss_hesiod_endprotoent);
+nss_files_end_stub!(_nss_hesiod_endservent);
+
+nss_files_set_stayopen_stub!(_nss_hesiod_setgrent);
+nss_files_set_stayopen_stub!(_nss_hesiod_setpwent);
+nss_files_set_stayopen_stub!(_nss_hesiod_setprotoent);
+nss_files_set_stayopen_stub!(_nss_hesiod_setservent);
+
+nss_files_get_by_str_stub!(_nss_hesiod_getgrnam_r);
+nss_files_get_by_str_stub!(_nss_hesiod_getpwnam_r);
+nss_files_get_by_str_stub!(_nss_hesiod_getprotobyname_r);
+
+nss_files_get_by_int_stub!(_nss_hesiod_getgrgid_r, libc::gid_t);
+nss_files_get_by_int_stub!(_nss_hesiod_getpwuid_r, libc::uid_t);
+nss_files_get_by_int_stub!(_nss_hesiod_getprotobynumber_r, c_int);
+
+/// `_nss_hesiod_getservbyname_r(name, proto, *result, *buf, buflen,
+/// *errnop) -> nss_status`. Stub returns NSS_STATUS_NOTFOUND with
+/// errnop=ENOENT.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_hesiod_getservbyname_r(
+    _name: *const c_char,
+    _proto: *const c_char,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_hesiod_getservbyport_r(port, proto, *result, *buf, buflen,
+/// *errnop) -> nss_status`. Stub returns NSS_STATUS_NOTFOUND with
+/// errnop=ENOENT.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_hesiod_getservbyport_r(
+    _port: c_int,
+    _proto: *const c_char,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_hesiod_initgroups_dyn(user, gid, *start, *size, **groupsp,
+/// limit, *errnop) -> nss_status` — supplementary group lookup.
+/// Stub returns NSS_STATUS_NOTFOUND with errnop=ENOENT.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_hesiod_initgroups_dyn(
+    _user: *const c_char,
+    _gid: libc::gid_t,
+    _start: *mut c_long,
+    _size: *mut c_long,
+    _groupsp: *mut *mut libc::gid_t,
+    _limit: c_long,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    NSS_STATUS_NOTFOUND
+}
