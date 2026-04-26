@@ -2792,3 +2792,354 @@ pub unsafe extern "C" fn ns_name_rollback(
         i += 1;
     }
 }
+
+// ===========================================================================
+// libresolv DNS message parser — ns_initparse / ns_parserr / ns_skiprr /
+// ns_msg_getflag
+// ===========================================================================
+//
+// Layout matches glibc's `<arpa/nameser.h>` exactly so callers can pass
+// the same `ns_msg` / `ns_rr` storage between our resolv_abi and any
+// other libresolv-shaped code.
+
+const NS_HFIXEDSZ: usize = 12;
+const NS_QFIXEDSZ: usize = 4;
+const NS_RRFIXEDSZ: usize = 10;
+const NS_MAXDNAME: usize = 1025;
+const NS_S_MAX: usize = 4;
+
+/// C-compatible `ns_msg`. Layout (offsets in bytes):
+///   0:  _msg            8
+///   8:  _eom            8
+///   16: _id             2
+///   18: _flags          2
+///   20: _counts[4]      8
+///   28: padding         4
+///   32: _sections[4]    32
+///   64: _sect           4
+///   68: _rrnum          4
+///   72: _msg_ptr        8
+/// Total: 80 bytes.
+#[repr(C)]
+pub struct CNsMsg {
+    pub _msg: *const u8,
+    pub _eom: *const u8,
+    pub _id: u16,
+    pub _flags: u16,
+    pub _counts: [u16; NS_S_MAX],
+    pub _sections: [*const u8; NS_S_MAX],
+    pub _sect: c_int,
+    pub _rrnum: c_int,
+    pub _msg_ptr: *const u8,
+}
+
+/// C-compatible `ns_rr`. Layout (offsets in bytes):
+///   0:    name[1025]
+///   1026: type      (after 1-byte alignment pad)
+///   1028: rr_class
+///   1030: ttl
+///   1034: rdlength
+///   1040: rdata     (8-byte aligned)
+/// Total: 1048 bytes.
+#[repr(C)]
+pub struct CNsRr {
+    pub name: [c_char; NS_MAXDNAME],
+    pub _type: u16,
+    pub rr_class: u16,
+    pub ttl: u32,
+    pub rdlength: u16,
+    pub rdata: *const u8,
+}
+
+#[inline]
+fn read_be_u16_at(buf: &[u8], pos: usize) -> Option<u16> {
+    if pos + 2 > buf.len() {
+        return None;
+    }
+    Some(u16::from_be_bytes([buf[pos], buf[pos + 1]]))
+}
+
+#[inline]
+fn read_be_u32_at(buf: &[u8], pos: usize) -> Option<u32> {
+    if pos + 4 > buf.len() {
+        return None;
+    }
+    Some(u32::from_be_bytes([
+        buf[pos],
+        buf[pos + 1],
+        buf[pos + 2],
+        buf[pos + 3],
+    ]))
+}
+
+unsafe fn ns_skip_one_rr(
+    msg_buf: &[u8],
+    eom: *const u8,
+    pos: usize,
+    section: c_int,
+) -> Option<usize> {
+    // SAFETY: msg_buf is the linear msg slice; eom is its end pointer.
+    let comp = unsafe { msg_buf.as_ptr().add(pos) };
+    let n = unsafe { crate::unistd_abi::dn_skipname(comp, eom) };
+    if n < 0 {
+        return None;
+    }
+    let mut p = pos.checked_add(n as usize)?;
+    if section == 0 {
+        // Question: name + qtype(2) + qclass(2)
+        p = p.checked_add(NS_QFIXEDSZ)?;
+        if p > msg_buf.len() {
+            return None;
+        }
+    } else {
+        // Answer / Authority / Additional: name + 10 + rdlength bytes
+        let rdlen = read_be_u16_at(msg_buf, p + 8)?;
+        p = p.checked_add(NS_RRFIXEDSZ)?.checked_add(rdlen as usize)?;
+        if p > msg_buf.len() {
+            return None;
+        }
+    }
+    Some(p)
+}
+
+/// libresolv `ns_initparse(msg, msglen, *handle) -> int` — parse a
+/// DNS message header and walk each of the 4 sections (qd / an / ns /
+/// ar) to find their boundaries. The result populates the
+/// caller-supplied [`CNsMsg`] handle so subsequent
+/// [`ns_parserr`] / [`ns_msg_getflag`] calls can index into it.
+///
+/// Returns 0 on success, -1 on a malformed message (header too short,
+/// section walk overruns the message, etc.).
+///
+/// # Safety
+///
+/// `msg` must point to at least `msglen` readable bytes. `handle`
+/// must point to writable [`CNsMsg`] storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_initparse(msg: *const u8, msglen: c_int, handle: *mut CNsMsg) -> c_int {
+    if msg.is_null() || handle.is_null() || msglen < 0 {
+        return -1;
+    }
+    let msglen = msglen as usize;
+    if msglen < NS_HFIXEDSZ {
+        return -1;
+    }
+    // SAFETY: caller-supplied buffer of msglen bytes.
+    let buf = unsafe { core::slice::from_raw_parts(msg, msglen) };
+    let id = u16::from_be_bytes([buf[0], buf[1]]);
+    let flags = u16::from_be_bytes([buf[2], buf[3]]);
+    let counts: [u16; NS_S_MAX] = [
+        u16::from_be_bytes([buf[4], buf[5]]),
+        u16::from_be_bytes([buf[6], buf[7]]),
+        u16::from_be_bytes([buf[8], buf[9]]),
+        u16::from_be_bytes([buf[10], buf[11]]),
+    ];
+
+    // Walk each section to find boundaries.
+    let eom = unsafe { msg.add(msglen) };
+    let mut sections: [*const u8; NS_S_MAX] = [core::ptr::null(); NS_S_MAX];
+    let mut pos = NS_HFIXEDSZ;
+    for section in 0..NS_S_MAX {
+        // SAFETY: msg + pos is within [msg, eom] by construction below.
+        sections[section] = unsafe { msg.add(pos) };
+        for _ in 0..counts[section] {
+            let new_pos = match unsafe { ns_skip_one_rr(buf, eom, pos, section as c_int) } {
+                Some(p) => p,
+                None => return -1,
+            };
+            pos = new_pos;
+        }
+    }
+
+    // SAFETY: caller-supplied writable handle.
+    unsafe {
+        (*handle)._msg = msg;
+        (*handle)._eom = eom;
+        (*handle)._id = id;
+        (*handle)._flags = flags;
+        (*handle)._counts = counts;
+        (*handle)._sections = sections;
+        (*handle)._sect = 0;
+        (*handle)._rrnum = 0;
+        (*handle)._msg_ptr = sections[0];
+    }
+    0
+}
+
+/// libresolv `ns_skiprr(ptr, eom, section, count) -> int` — skip
+/// `count` resource records starting at `ptr` and return the number
+/// of bytes consumed. Returns -1 on malformed input.
+///
+/// # Safety
+///
+/// `ptr` and `eom` must bound a contiguous DNS message buffer with
+/// `ptr <= eom`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_skiprr(
+    ptr: *const u8,
+    eom: *const u8,
+    section: c_int,
+    count: c_int,
+) -> c_int {
+    if ptr.is_null() || eom.is_null() || count < 0 || ptr > eom {
+        return -1;
+    }
+    let len = unsafe { eom.offset_from(ptr) } as usize;
+    let buf = unsafe { core::slice::from_raw_parts(ptr, len) };
+    let mut pos = 0usize;
+    for _ in 0..count {
+        match unsafe { ns_skip_one_rr(buf, eom, pos, section) } {
+            Some(p) => pos = p,
+            None => return -1,
+        }
+    }
+    pos as c_int
+}
+
+/// libresolv `ns_parserr(*handle, section, rrnum, *rr) -> int` —
+/// fetch the `rrnum`-th resource record in the given `section` and
+/// fill the caller's [`CNsRr`].
+///
+/// Walks from the section start each call (no incremental cursor
+/// caching). Returns 0 on success, -1 on bounds error or malformed
+/// message.
+///
+/// # Safety
+///
+/// `handle` must be a [`CNsMsg`] previously initialized by
+/// [`ns_initparse`]. `rr` must point to writable [`CNsRr`] storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_parserr(
+    handle: *mut CNsMsg,
+    section: c_int,
+    rrnum: c_int,
+    rr: *mut CNsRr,
+) -> c_int {
+    if handle.is_null() || rr.is_null() || rrnum < 0 {
+        return -1;
+    }
+    if !(0..NS_S_MAX as c_int).contains(&section) {
+        return -1;
+    }
+    // SAFETY: caller-supplied initialized handle.
+    let msg_ptr = unsafe { (*handle)._msg };
+    let eom = unsafe { (*handle)._eom };
+    let count = unsafe { (*handle)._counts[section as usize] };
+    let section_start = unsafe { (*handle)._sections[section as usize] };
+    if (rrnum as u16) >= count {
+        return -1;
+    }
+    if msg_ptr.is_null() || eom.is_null() || section_start.is_null() {
+        return -1;
+    }
+    let msg_len = unsafe { eom.offset_from(msg_ptr) } as usize;
+    let buf = unsafe { core::slice::from_raw_parts(msg_ptr, msg_len) };
+    let mut pos = unsafe { section_start.offset_from(msg_ptr) } as usize;
+    for _ in 0..rrnum {
+        match unsafe { ns_skip_one_rr(buf, eom, pos, section) } {
+            Some(p) => pos = p,
+            None => return -1,
+        }
+    }
+
+    // Expand the name into the rr.name field.
+    let comp = unsafe { msg_ptr.add(pos) };
+    let name_buf = unsafe { (*rr).name.as_mut_ptr() };
+    let name_len =
+        unsafe { crate::unistd_abi::dn_expand(msg_ptr, eom, comp, name_buf, NS_MAXDNAME as c_int) };
+    if name_len < 0 {
+        return -1;
+    }
+    pos = pos.saturating_add(name_len as usize);
+
+    if section == 0 {
+        // Question: just type + class.
+        let qtype = match read_be_u16_at(buf, pos) {
+            Some(v) => v,
+            None => return -1,
+        };
+        let qclass = match read_be_u16_at(buf, pos + 2) {
+            Some(v) => v,
+            None => return -1,
+        };
+        // SAFETY: writable caller-supplied CNsRr.
+        unsafe {
+            (*rr)._type = qtype;
+            (*rr).rr_class = qclass;
+            (*rr).ttl = 0;
+            (*rr).rdlength = 0;
+            (*rr).rdata = core::ptr::null();
+        }
+    } else {
+        // Resource record: type, class, ttl, rdlength, rdata.
+        let rtype = match read_be_u16_at(buf, pos) {
+            Some(v) => v,
+            None => return -1,
+        };
+        let rclass = match read_be_u16_at(buf, pos + 2) {
+            Some(v) => v,
+            None => return -1,
+        };
+        let ttl = match read_be_u32_at(buf, pos + 4) {
+            Some(v) => v,
+            None => return -1,
+        };
+        let rdlen = match read_be_u16_at(buf, pos + 8) {
+            Some(v) => v,
+            None => return -1,
+        };
+        let rdata_off = pos + NS_RRFIXEDSZ;
+        if rdata_off + (rdlen as usize) > msg_len {
+            return -1;
+        }
+        let rdata = unsafe { msg_ptr.add(rdata_off) };
+        // SAFETY: writable caller-supplied CNsRr.
+        unsafe {
+            (*rr)._type = rtype;
+            (*rr).rr_class = rclass;
+            (*rr).ttl = ttl;
+            (*rr).rdlength = rdlen;
+            (*rr).rdata = rdata;
+        }
+    }
+
+    // Update the handle's "last accessed" cursor (mirrors glibc).
+    // SAFETY: writable caller-supplied handle.
+    unsafe {
+        (*handle)._sect = section;
+        (*handle)._rrnum = rrnum;
+    }
+    0
+}
+
+/// libresolv `ns_msg_getflag(handle, flag) -> int` — extract a
+/// header flag from a parsed DNS message handle.
+///
+/// `flag` is the [`ns_flag`] enum value (0 = QR, 1 = opcode, 2 = AA,
+/// 3 = TC, 4 = RD, 5 = RA, 6 = Z, 7 = AD, 8 = CD, 9 = RCODE).
+///
+/// # Safety
+///
+/// `handle` must be a [`CNsMsg`] previously initialized by
+/// [`ns_initparse`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_msg_getflag(handle: *mut CNsMsg, flag: c_int) -> c_int {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: caller-supplied initialized handle.
+    let f = unsafe { (*handle)._flags };
+    match flag {
+        0 => ((f >> 15) & 0x01) as c_int, // QR
+        1 => ((f >> 11) & 0x0F) as c_int, // opcode (4 bits)
+        2 => ((f >> 10) & 0x01) as c_int, // AA
+        3 => ((f >> 9) & 0x01) as c_int,  // TC
+        4 => ((f >> 8) & 0x01) as c_int,  // RD
+        5 => ((f >> 7) & 0x01) as c_int,  // RA
+        6 => ((f >> 6) & 0x01) as c_int,  // Z
+        7 => ((f >> 5) & 0x01) as c_int,  // AD
+        8 => ((f >> 4) & 0x01) as c_int,  // CD
+        9 => (f & 0x0F) as c_int,         // RCODE (4 bits)
+        _ => 0,
+    }
+}
