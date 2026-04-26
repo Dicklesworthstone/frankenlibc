@@ -18,7 +18,7 @@ use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::signal_abi::{
     __libc_current_sigrtmax, __libc_current_sigrtmin, SIGNAL_SAFETY_MAP, SignalCriticalSectionKind,
     SignalSafetyClassification, current_signal_classification_for_test,
-    enter_signal_critical_section, invoke_signal_handler_for_test, kill,
+    enter_signal_critical_section, invoke_signal_handler_for_test, kill, raise_default_signal,
     reset_signal_delivery_metrics_for_test, sigabbrev_np, sigaction, sigaddset, sigandset,
     sigdelset, sigdescr_np, sigemptyset, sigfillset, sighold, sigignore, siginterrupt,
     sigisemptyset, sigismember, signal, signal_delivery_metrics_for_test, sigorset, sigpending,
@@ -1169,4 +1169,86 @@ fn raise_above_max_signal_rejected() {
     let err = unsafe { *__errno_location() };
     assert_eq!(rc, -1, "raise(65) must fail");
     assert_eq!(err, errno::EINVAL, "raise(65) must set EINVAL");
+}
+
+// ---------------------------------------------------------------------------
+// raise_default_signal (NetBSD libutil graceful-shutdown helper)
+// ---------------------------------------------------------------------------
+
+static RDS_HANDLER_INVOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+unsafe extern "C" fn rds_handler(_sig: c_int) {
+    RDS_HANDLER_INVOCATIONS.fetch_add(1, Ordering::SeqCst);
+}
+
+#[test]
+fn raise_default_signal_with_ignore_default_returns_zero_and_restores_handler() {
+    // SIGURG and SIGCHLD have SIG_DFL == "ignore" — perfect for
+    // testing that raise_default_signal returns control after the
+    // queued signal is delivered under the default action.
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    RDS_HANDLER_INVOCATIONS.store(0, Ordering::SeqCst);
+
+    // Install our counting handler so we can verify it's restored
+    // after raise_default_signal returns.
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    let mut prev: libc::sigaction = unsafe { std::mem::zeroed() };
+    unsafe { libc::sigemptyset(&mut act.sa_mask) };
+    act.sa_flags = 0;
+    act.sa_sigaction = rds_handler as *const () as libc::sighandler_t;
+    let install_rc = unsafe { sigaction(libc::SIGURG, &act, &mut prev) };
+    assert_eq!(install_rc, 0, "install handler must succeed");
+
+    // Call raise_default_signal: SIG_DFL of SIGURG is ignore, so
+    // we expect to get back control with rc==0.
+    let rc = unsafe { raise_default_signal(libc::SIGURG) };
+    assert_eq!(rc, 0, "raise_default_signal must succeed for SIGURG");
+
+    // Our handler must NOT have been invoked (delivery happened
+    // under SIG_DFL).
+    assert_eq!(
+        RDS_HANDLER_INVOCATIONS.load(Ordering::SeqCst),
+        0,
+        "custom handler must not fire — SIG_DFL took over"
+    );
+
+    // Verify our handler is back in place by raising SIGURG via
+    // libc::raise (using our normal sigaction path).
+    let raise_rc = unsafe { libc::raise(libc::SIGURG) };
+    assert_eq!(raise_rc, 0);
+    // Give the kernel a moment to deliver synchronously (raise is
+    // synchronous, so this is just a defensive yield).
+    std::thread::sleep(Duration::from_millis(5));
+    assert!(
+        RDS_HANDLER_INVOCATIONS.load(Ordering::SeqCst) >= 1,
+        "handler should be restored and fire on next raise"
+    );
+
+    // Restore the original sigaction.
+    unsafe { sigaction(libc::SIGURG, &prev, std::ptr::null_mut()) };
+}
+
+#[test]
+fn raise_default_signal_invalid_signum_returns_minus_one_einval() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { raise_default_signal(99999) };
+    assert_eq!(rc, -1, "out-of-range signal must fail");
+    assert_eq!(
+        unsafe { *__errno_location() },
+        errno::EINVAL,
+        "must set EINVAL"
+    );
+}
+
+#[test]
+fn raise_default_signal_zero_signal_is_invalid() {
+    // POSIX raise(0) is the null signal (only permission/existence
+    // check); raise_default_signal has no meaningful "default
+    // action" for the null signal, so it must reject it.
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { raise_default_signal(0) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EINVAL);
 }

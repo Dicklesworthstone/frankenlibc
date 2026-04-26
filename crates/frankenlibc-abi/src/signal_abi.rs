@@ -1606,3 +1606,85 @@ pub unsafe extern "C" fn __libc_current_sigrtmax() -> c_int {
     // SIGRTMAX on Linux x86_64 = 64.
     64
 }
+
+// ---------------------------------------------------------------------------
+// raise_default_signal (NetBSD libutil graceful-shutdown helper)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `raise_default_signal(sig)` — atomically replace the
+/// current handler for `sig` with `SIG_DFL`, raise the signal,
+/// then restore the prior handler. Used by graceful-shutdown code
+/// so that, e.g., a child process catching `SIGTERM` for cleanup
+/// can re-raise it under the default action and have the parent
+/// shell see the correct WTERMSIG exit status.
+///
+/// Algorithm (matching NetBSD libutil's reference impl):
+/// 1. Block `sig` to make the swap-and-raise atomic.
+/// 2. Install `SIG_DFL` and remember the previous `sigaction`.
+/// 3. Raise `sig` (kernel queues it because we hold it blocked).
+/// 4. Restore the prior signal mask (delivers the queued signal
+///    under `SIG_DFL`; if the default is term/core the process
+///    exits and the rest of this function never runs).
+/// 5. If we got control back (default action was ignore, e.g.
+///    `SIGCHLD`), restore the saved handler.
+///
+/// Returns 0 on success, -1 with errno set on failure.
+///
+/// # Safety
+///
+/// `sig` must be a valid signal number. No additional caller
+/// obligations beyond those of `sigaction`/`sigprocmask`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn raise_default_signal(sig: c_int) -> c_int {
+    if !signal_core::valid_signal(sig) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    // Build a mask that contains just `sig`.
+    let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    let mut omask: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        libc::sigemptyset(&mut mask);
+        libc::sigaddset(&mut mask, sig);
+    }
+
+    // 1. Block sig.
+    if unsafe { libc::sigprocmask(libc::SIG_BLOCK, &mask, &mut omask) } == -1 {
+        return -1;
+    }
+
+    // 2. Install SIG_DFL, remembering the old handler.
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    let mut oact: libc::sigaction = unsafe { std::mem::zeroed() };
+    unsafe { libc::sigemptyset(&mut act.sa_mask) };
+    act.sa_flags = 0;
+    act.sa_sigaction = libc::SIG_DFL;
+
+    let mut error: c_int = 0;
+    if unsafe { libc::sigaction(sig, &act, &mut oact) } == -1 {
+        error = -1;
+        // Fall through to restore the mask before returning.
+    } else {
+        // 3. Raise the signal (still blocked, so kernel queues it).
+        if unsafe { libc::raise(sig) } != 0 {
+            error = -1;
+        }
+    }
+
+    // 4. Restore mask. If unblocking the queued sig terminates the
+    //    process under SIG_DFL we never reach the next line.
+    if unsafe { libc::sigprocmask(libc::SIG_SETMASK, &omask, std::ptr::null_mut()) } == -1
+        && error == 0
+    {
+        error = -1;
+    }
+
+    // 5. Restore the saved handler. (Reached only if SIG_DFL was
+    //    "ignore" for this sig.)
+    if unsafe { libc::sigaction(sig, &oact, std::ptr::null_mut()) } == -1 && error == 0 {
+        error = -1;
+    }
+
+    error
+}
