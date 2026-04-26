@@ -6,8 +6,8 @@
     "total_exported": 3996,
     "tracked_symbols": 3996,
     "total_obligations": 268,
-    "covered_obligations": 233,
-    "mapped_without_execution": 35,
+    "covered_obligations": 268,
+    "mapped_without_execution": 0,
     "obligations_with_execution_failures": 0,
     "error_condition_obligations": 62,
     "async_concurrency_obligations": 52,
@@ -348,7 +348,7 @@
       "symbol_family": "socket",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -359,15 +359,17 @@
       ],
       "test_refs": [
         "c_fixture::fixture_socket::hardened",
-        "c_fixture::fixture_socket::strict"
+        "c_fixture::fixture_socket::strict",
+        "conformance_matrix::bind::bind_invalid_fd_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_socket.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -410,7 +412,7 @@
       "symbol_family": "malloc",
       "owner": "malloc_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -421,15 +423,17 @@
       ],
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
-        "c_fixture::fixture_malloc_stress::strict"
+        "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::calloc::calloc_basic::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_malloc_stress.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -979,7 +983,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -989,15 +993,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::dprintf::dprintf_literal_hardened::hardened",
+        "conformance_matrix::dprintf::dprintf_literal_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1100,7 +1107,7 @@
       "symbol_family": "grp",
       "owner": "grp_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1110,15 +1117,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::endgrent::endgrent_void_hardened::hardened",
+        "conformance_matrix::endgrent::endgrent_void_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1163,7 +1173,7 @@
       "symbol_family": "pwd",
       "owner": "pwd_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1173,15 +1183,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::endpwent::endpwent_void_hardened::hardened",
+        "conformance_matrix::endpwent::endpwent_void_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1500,7 +1513,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1510,15 +1523,19 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fileno::fileno_devnull_hardened::hardened",
+        "conformance_matrix::fileno::fileno_devnull_strict::strict",
+        "conformance_matrix::fileno::fileno_devzero_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 3,
+        "pass": 3,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1871,7 +1888,7 @@
       "symbol_family": "malloc",
       "owner": "malloc_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -1882,15 +1899,17 @@
       ],
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
-        "c_fixture::fixture_malloc_stress::strict"
+        "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::free::free_null::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_malloc_stress.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1935,7 +1954,7 @@
       "symbol_family": "resolv",
       "owner": "resolv_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1945,15 +1964,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::freeaddrinfo::freeaddrinfo_numeric_ipv4_hardened::hardened",
+        "conformance_matrix::freeaddrinfo::freeaddrinfo_numeric_ipv4_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -2102,7 +2124,10 @@
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
         "conformance_matrix::getaddrinfo::getaddrinfo_hosts_file_subset::strict",
-        "conformance_matrix::getaddrinfo::getaddrinfo_hosts_file_subset_hardened::hardened"
+        "conformance_matrix::getaddrinfo::getaddrinfo_hosts_file_subset_hardened::hardened",
+        "conformance_matrix::getaddrinfo::getaddrinfo_numeric_ipv4::strict",
+        "conformance_matrix::getaddrinfo::getaddrinfo_numeric_ipv6::strict",
+        "conformance_matrix::getaddrinfo::getaddrinfo_unknown_host::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
@@ -2110,8 +2135,8 @@
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 2,
-        "pass": 2,
+        "total": 5,
+        "pass": 5,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -2282,7 +2307,7 @@
       "symbol_family": "grp",
       "owner": "grp_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2292,15 +2317,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getgrgid::getgrgid_nonexistent_hardened::hardened",
+        "conformance_matrix::getgrgid::getgrgid_nonexistent_strict::strict",
+        "conformance_matrix::getgrgid::getgrgid_zero_hardened::hardened",
+        "conformance_matrix::getgrgid::getgrgid_zero_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -2347,7 +2377,7 @@
       "symbol_family": "grp",
       "owner": "grp_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2357,15 +2387,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getgrnam::getgrnam_nonexistent_hardened::hardened",
+        "conformance_matrix::getgrnam::getgrnam_nonexistent_strict::strict",
+        "conformance_matrix::getgrnam::getgrnam_root_hardened::hardened",
+        "conformance_matrix::getgrnam::getgrnam_root_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -2625,7 +2660,7 @@
       "symbol_family": "pwd",
       "owner": "pwd_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2635,15 +2670,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getpwnam::getpwnam_nonexistent_hardened::hardened",
+        "conformance_matrix::getpwnam::getpwnam_nonexistent_strict::strict",
+        "conformance_matrix::getpwnam::getpwnam_root_hardened::hardened",
+        "conformance_matrix::getpwnam::getpwnam_root_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -2690,7 +2730,7 @@
       "symbol_family": "pwd",
       "owner": "pwd_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -2700,15 +2740,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getpwuid::getpwuid_nonexistent_hardened::hardened",
+        "conformance_matrix::getpwuid::getpwuid_nonexistent_strict::strict",
+        "conformance_matrix::getpwuid::getpwuid_zero_hardened::hardened",
+        "conformance_matrix::getpwuid::getpwuid_zero_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -2853,7 +2898,7 @@
       "symbol_family": "socket",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -2864,15 +2909,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_socket::hardened",
-        "c_fixture::fixture_socket::strict"
+        "c_fixture::fixture_socket::strict",
+        "conformance_matrix::getsockopt::getsockopt_so_type_stream [hardened]::hardened",
+        "conformance_matrix::getsockopt::getsockopt_so_type_stream [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_socket.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3340,7 +3388,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3350,15 +3398,22 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isalnum::isalnum_digit_5 [hardened]::hardened",
+        "conformance_matrix::isalnum::isalnum_digit_5 [strict]::strict",
+        "conformance_matrix::isalnum::isalnum_letter_M [hardened]::hardened",
+        "conformance_matrix::isalnum::isalnum_letter_M [strict]::strict",
+        "conformance_matrix::isalnum::isalnum_underscore [hardened]::hardened",
+        "conformance_matrix::isalnum::isalnum_underscore [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 6,
+        "pass": 6,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3407,7 +3462,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3417,15 +3472,24 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isalpha::isalpha_digit_0 [hardened]::hardened",
+        "conformance_matrix::isalpha::isalpha_digit_0 [strict]::strict",
+        "conformance_matrix::isalpha::isalpha_lowercase_z [hardened]::hardened",
+        "conformance_matrix::isalpha::isalpha_lowercase_z [strict]::strict",
+        "conformance_matrix::isalpha::isalpha_space [hardened]::hardened",
+        "conformance_matrix::isalpha::isalpha_space [strict]::strict",
+        "conformance_matrix::isalpha::isalpha_uppercase_A [hardened]::hardened",
+        "conformance_matrix::isalpha::isalpha_uppercase_A [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 8,
+        "pass": 8,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3510,7 +3574,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3520,15 +3584,22 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isdigit::isdigit_0 [hardened]::hardened",
+        "conformance_matrix::isdigit::isdigit_0 [strict]::strict",
+        "conformance_matrix::isdigit::isdigit_9 [hardened]::hardened",
+        "conformance_matrix::isdigit::isdigit_9 [strict]::strict",
+        "conformance_matrix::isdigit::isdigit_A [hardened]::hardened",
+        "conformance_matrix::isdigit::isdigit_A [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 6,
+        "pass": 6,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3577,7 +3648,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3587,15 +3658,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::islower::islower_A [hardened]::hardened",
+        "conformance_matrix::islower::islower_A [strict]::strict",
+        "conformance_matrix::islower::islower_a [hardened]::hardened",
+        "conformance_matrix::islower::islower_a [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3642,7 +3718,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3652,15 +3728,24 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isprint::isprint_del [hardened]::hardened",
+        "conformance_matrix::isprint::isprint_del [strict]::strict",
+        "conformance_matrix::isprint::isprint_null [hardened]::hardened",
+        "conformance_matrix::isprint::isprint_null [strict]::strict",
+        "conformance_matrix::isprint::isprint_space [hardened]::hardened",
+        "conformance_matrix::isprint::isprint_space [strict]::strict",
+        "conformance_matrix::isprint::isprint_tilde [hardened]::hardened",
+        "conformance_matrix::isprint::isprint_tilde [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 8,
+        "pass": 8,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3711,7 +3796,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3721,15 +3806,22 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::ispunct::ispunct_at [hardened]::hardened",
+        "conformance_matrix::ispunct::ispunct_at [strict]::strict",
+        "conformance_matrix::ispunct::ispunct_exclamation [hardened]::hardened",
+        "conformance_matrix::ispunct::ispunct_exclamation [strict]::strict",
+        "conformance_matrix::ispunct::ispunct_letter [hardened]::hardened",
+        "conformance_matrix::ispunct::ispunct_letter [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 6,
+        "pass": 6,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3778,7 +3870,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3788,15 +3880,24 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isspace::isspace_letter [hardened]::hardened",
+        "conformance_matrix::isspace::isspace_letter [strict]::strict",
+        "conformance_matrix::isspace::isspace_newline [hardened]::hardened",
+        "conformance_matrix::isspace::isspace_newline [strict]::strict",
+        "conformance_matrix::isspace::isspace_space [hardened]::hardened",
+        "conformance_matrix::isspace::isspace_space [strict]::strict",
+        "conformance_matrix::isspace::isspace_tab [hardened]::hardened",
+        "conformance_matrix::isspace::isspace_tab [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 8,
+        "pass": 8,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3847,7 +3948,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3857,15 +3958,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isupper::isupper_A [hardened]::hardened",
+        "conformance_matrix::isupper::isupper_A [strict]::strict",
+        "conformance_matrix::isupper::isupper_a [hardened]::hardened",
+        "conformance_matrix::isupper::isupper_a [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3912,7 +4018,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3922,15 +4028,24 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isxdigit::isxdigit_9 [hardened]::hardened",
+        "conformance_matrix::isxdigit::isxdigit_9 [strict]::strict",
+        "conformance_matrix::isxdigit::isxdigit_A [hardened]::hardened",
+        "conformance_matrix::isxdigit::isxdigit_A [strict]::strict",
+        "conformance_matrix::isxdigit::isxdigit_f [hardened]::hardened",
+        "conformance_matrix::isxdigit::isxdigit_f [strict]::strict",
+        "conformance_matrix::isxdigit::isxdigit_g [hardened]::hardened",
+        "conformance_matrix::isxdigit::isxdigit_g [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 8,
+        "pass": 8,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -4263,7 +4378,7 @@
       "symbol_family": "malloc",
       "owner": "malloc_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -4274,15 +4389,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
-        "c_fixture::fixture_malloc_stress::strict"
+        "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::malloc::malloc_basic::strict",
+        "conformance_matrix::malloc::malloc_zero::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_malloc_stress.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -4470,8 +4588,10 @@
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
         "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::memset::memset_basic::strict",
         "conformance_matrix::memset::memset_basic_strict::strict",
-        "conformance_matrix::memset::memset_zero_len_hardened::hardened"
+        "conformance_matrix::memset::memset_zero_len_hardened::hardened",
+        "conformance_matrix::memset::strict_memset_basic::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
@@ -4479,8 +4599,8 @@
         "tests/integration/fixture_malloc_stress.c"
       ],
       "execution": {
-        "total": 2,
-        "pass": 2,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -5412,7 +5532,7 @@
       "symbol_family": "pthread",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5423,15 +5543,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
-        "c_fixture::fixture_malloc_stress::strict"
+        "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::pthread_create::pthread_create_basic::strict",
+        "conformance_matrix::pthread_create::pthread_create_multiple_concurrent::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_malloc_stress.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -5580,7 +5703,7 @@
       "symbol_family": "pthread",
       "owner": "pthread_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -5591,15 +5714,21 @@
       ],
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
-        "c_fixture::fixture_malloc_stress::strict"
+        "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::pthread_join::pthread_join_null_thread_einval [hardened]::hardened",
+        "conformance_matrix::pthread_join::pthread_join_null_thread_einval [strict]::strict",
+        "conformance_matrix::pthread_join::pthread_join_returns_retval::strict",
+        "conformance_matrix::pthread_join::pthread_join_self_edeadlk [hardened]::hardened",
+        "conformance_matrix::pthread_join::pthread_join_self_edeadlk [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_malloc_stress.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 5,
+        "pass": 5,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6080,7 +6209,7 @@
       "symbol_family": "malloc",
       "owner": "malloc_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -6091,15 +6220,17 @@
       ],
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
-        "c_fixture::fixture_malloc_stress::strict"
+        "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::realloc::realloc_null_is_malloc::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_malloc_stress.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6176,7 +6307,7 @@
       "symbol_family": "socket",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -6187,15 +6318,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_socket::hardened",
-        "c_fixture::fixture_socket::strict"
+        "c_fixture::fixture_socket::strict",
+        "conformance_matrix::recv::recv_invalid_fd [hardened]::hardened",
+        "conformance_matrix::recv::recv_invalid_fd [strict]::strict",
+        "conformance_matrix::recv::recv_socketpair_payload [hardened]::hardened",
+        "conformance_matrix::recv::recv_socketpair_payload [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_socket.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6514,7 +6650,7 @@
       "symbol_family": "socket",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -6525,15 +6661,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_socket::hardened",
-        "c_fixture::fixture_socket::strict"
+        "c_fixture::fixture_socket::strict",
+        "conformance_matrix::send::send_invalid_fd [hardened]::hardened",
+        "conformance_matrix::send::send_invalid_fd [strict]::strict",
+        "conformance_matrix::send::send_socketpair_payload [hardened]::hardened",
+        "conformance_matrix::send::send_socketpair_payload [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_socket.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6613,7 +6754,7 @@
       "symbol_family": "grp",
       "owner": "grp_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6623,15 +6764,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::setgrent::setgrent_endgrent_hardened::hardened",
+        "conformance_matrix::setgrent::setgrent_endgrent_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6676,7 +6820,7 @@
       "symbol_family": "pwd",
       "owner": "pwd_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6686,15 +6830,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::setpwent::setpwent_endpwent_hardened::hardened",
+        "conformance_matrix::setpwent::setpwent_endpwent_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6893,7 +7040,7 @@
       "symbol_family": "socket",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -6904,15 +7051,17 @@
       ],
       "test_refs": [
         "c_fixture::fixture_socket::hardened",
-        "c_fixture::fixture_socket::strict"
+        "c_fixture::fixture_socket::strict",
+        "conformance_matrix::shutdown::shutdown_invalid_fd_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_socket.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7292,7 +7441,7 @@
       "symbol_family": "socket",
       "owner": "socket_abi",
       "support_status": "RawSyscall",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "error_condition",
         "functional"
@@ -7303,15 +7452,21 @@
       ],
       "test_refs": [
         "c_fixture::fixture_socket::hardened",
-        "c_fixture::fixture_socket::strict"
+        "c_fixture::fixture_socket::strict",
+        "conformance_matrix::socket::socket_invalid_domain_hardened::hardened",
+        "conformance_matrix::socket::socket_invalid_domain_strict::strict",
+        "conformance_matrix::socket::socket_tcp_hardened::hardened",
+        "conformance_matrix::socket::socket_tcp_strict::strict",
+        "conformance_matrix::socket::socket_udp_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_socket.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 5,
+        "pass": 5,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7575,6 +7730,10 @@
         "conformance_matrix::sprintf::sprintf_plus_overrides_space::strict",
         "conformance_matrix::sprintf::sprintf_plus_space_interaction::strict",
         "conformance_matrix::sprintf::sprintf_plus_zero::strict",
+        "conformance_matrix::sprintf::sprintf_positional_basic::strict",
+        "conformance_matrix::sprintf::sprintf_positional_reorder::strict",
+        "conformance_matrix::sprintf::sprintf_positional_repeat::strict",
+        "conformance_matrix::sprintf::sprintf_positional_width::strict",
         "conformance_matrix::sprintf::sprintf_precision_d::strict",
         "conformance_matrix::sprintf::sprintf_precision_d_neg::strict",
         "conformance_matrix::sprintf::sprintf_precision_d_zero::strict",
@@ -7632,8 +7791,8 @@
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 173,
-        "pass": 173,
+        "total": 177,
+        "pass": 177,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -8374,7 +8533,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8384,15 +8543,24 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::tolower::tolower_A [hardened]::hardened",
+        "conformance_matrix::tolower::tolower_A [strict]::strict",
+        "conformance_matrix::tolower::tolower_Z [hardened]::hardened",
+        "conformance_matrix::tolower::tolower_Z [strict]::strict",
+        "conformance_matrix::tolower::tolower_already_lower [hardened]::hardened",
+        "conformance_matrix::tolower::tolower_already_lower [strict]::strict",
+        "conformance_matrix::tolower::tolower_digit [hardened]::hardened",
+        "conformance_matrix::tolower::tolower_digit [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 8,
+        "pass": 8,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -8443,7 +8611,7 @@
       "symbol_family": "ctype",
       "owner": "ctype_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8453,15 +8621,24 @@
       ],
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
-        "c_fixture::fixture_ctype::strict"
+        "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::toupper::toupper_a [hardened]::hardened",
+        "conformance_matrix::toupper::toupper_a [strict]::strict",
+        "conformance_matrix::toupper::toupper_already_upper [hardened]::hardened",
+        "conformance_matrix::toupper::toupper_already_upper [strict]::strict",
+        "conformance_matrix::toupper::toupper_digit [hardened]::hardened",
+        "conformance_matrix::toupper::toupper_digit [strict]::strict",
+        "conformance_matrix::toupper::toupper_z [hardened]::hardened",
+        "conformance_matrix::toupper::toupper_z [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_ctype.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 8,
+        "pass": 8,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -8733,7 +8910,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8743,15 +8920,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::vdprintf::vdprintf_literal_hardened::hardened",
+        "conformance_matrix::vdprintf::vdprintf_literal_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -22023,6 +22203,7 @@
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
         "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::calloc::calloc_basic::strict",
         "fixture::allocator::calloc_basic::strict"
       ],
       "gap_reasons": [
@@ -25928,6 +26109,8 @@
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
         "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::dprintf::dprintf_literal_hardened::hardened",
+        "conformance_matrix::dprintf::dprintf_literal_strict::strict",
         "fixture::stdio_file_ops::dprintf_literal_hardened::hardened",
         "fixture::stdio_file_ops::dprintf_literal_strict::strict"
       ],
@@ -26168,6 +26351,8 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::endgrent::endgrent_void_hardened::hardened",
+        "conformance_matrix::endgrent::endgrent_void_strict::strict",
         "fixture::grp_ops::endgrent_void_hardened::hardened",
         "fixture::grp_ops::endgrent_void_strict::strict"
       ],
@@ -26247,6 +26432,8 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::endpwent::endpwent_void_hardened::hardened",
+        "conformance_matrix::endpwent::endpwent_void_strict::strict",
         "fixture::pwd_ops::endpwent_void_hardened::hardened",
         "fixture::pwd_ops::endpwent_void_strict::strict"
       ],
@@ -29502,6 +29689,9 @@
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
         "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fileno::fileno_devnull_hardened::hardened",
+        "conformance_matrix::fileno::fileno_devnull_strict::strict",
+        "conformance_matrix::fileno::fileno_devzero_strict::strict",
         "fixture::stdio_file_ops::fileno_devnull_hardened::hardened",
         "fixture::stdio_file_ops::fileno_devnull_strict::strict",
         "fixture::stdio_file_ops::fileno_devzero_strict::strict"
@@ -31363,6 +31553,7 @@
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
         "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::free::free_null::strict",
         "fixture::allocator::free_null::strict"
       ],
       "gap_reasons": [
@@ -31381,6 +31572,8 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::freeaddrinfo::freeaddrinfo_numeric_ipv4_hardened::hardened",
+        "conformance_matrix::freeaddrinfo::freeaddrinfo_numeric_ipv4_strict::strict",
         "fixture::resolv/dns::freeaddrinfo_numeric_ipv4_hardened::hardened",
         "fixture::resolv/dns::freeaddrinfo_numeric_ipv4_strict::strict"
       ],
@@ -32600,6 +32793,9 @@
         "c_fixture::fixture_nss::strict",
         "conformance_matrix::getaddrinfo::getaddrinfo_hosts_file_subset::strict",
         "conformance_matrix::getaddrinfo::getaddrinfo_hosts_file_subset_hardened::hardened",
+        "conformance_matrix::getaddrinfo::getaddrinfo_numeric_ipv4::strict",
+        "conformance_matrix::getaddrinfo::getaddrinfo_numeric_ipv6::strict",
+        "conformance_matrix::getaddrinfo::getaddrinfo_unknown_host::strict",
         "fixture::resolv/dns::getaddrinfo_numeric_ipv4::strict",
         "fixture::resolv/dns::getaddrinfo_numeric_ipv6::strict",
         "fixture::resolv/dns::getaddrinfo_unknown_host::strict"
@@ -33032,6 +33228,10 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getgrgid::getgrgid_nonexistent_hardened::hardened",
+        "conformance_matrix::getgrgid::getgrgid_nonexistent_strict::strict",
+        "conformance_matrix::getgrgid::getgrgid_zero_hardened::hardened",
+        "conformance_matrix::getgrgid::getgrgid_zero_strict::strict",
         "fixture::grp_ops::getgrgid_nonexistent_hardened::hardened",
         "fixture::grp_ops::getgrgid_nonexistent_strict::strict",
         "fixture::grp_ops::getgrgid_zero_hardened::hardened",
@@ -33065,6 +33265,10 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getgrnam::getgrnam_nonexistent_hardened::hardened",
+        "conformance_matrix::getgrnam::getgrnam_nonexistent_strict::strict",
+        "conformance_matrix::getgrnam::getgrnam_root_hardened::hardened",
+        "conformance_matrix::getgrnam::getgrnam_root_strict::strict",
         "fixture::grp_ops::getgrnam_nonexistent_hardened::hardened",
         "fixture::grp_ops::getgrnam_nonexistent_strict::strict",
         "fixture::grp_ops::getgrnam_root_hardened::hardened",
@@ -33878,6 +34082,10 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getpwnam::getpwnam_nonexistent_hardened::hardened",
+        "conformance_matrix::getpwnam::getpwnam_nonexistent_strict::strict",
+        "conformance_matrix::getpwnam::getpwnam_root_hardened::hardened",
+        "conformance_matrix::getpwnam::getpwnam_root_strict::strict",
         "fixture::pwd_ops::getpwnam_nonexistent_hardened::hardened",
         "fixture::pwd_ops::getpwnam_nonexistent_strict::strict",
         "fixture::pwd_ops::getpwnam_root_hardened::hardened",
@@ -33911,6 +34119,10 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getpwuid::getpwuid_nonexistent_hardened::hardened",
+        "conformance_matrix::getpwuid::getpwuid_nonexistent_strict::strict",
+        "conformance_matrix::getpwuid::getpwuid_zero_hardened::hardened",
+        "conformance_matrix::getpwuid::getpwuid_zero_strict::strict",
         "fixture::pwd_ops::getpwuid_nonexistent_hardened::hardened",
         "fixture::pwd_ops::getpwuid_nonexistent_strict::strict",
         "fixture::pwd_ops::getpwuid_zero_hardened::hardened",
@@ -35970,6 +36182,12 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isalnum::isalnum_digit_5 [hardened]::hardened",
+        "conformance_matrix::isalnum::isalnum_digit_5 [strict]::strict",
+        "conformance_matrix::isalnum::isalnum_letter_M [hardened]::hardened",
+        "conformance_matrix::isalnum::isalnum_letter_M [strict]::strict",
+        "conformance_matrix::isalnum::isalnum_underscore [hardened]::hardened",
+        "conformance_matrix::isalnum::isalnum_underscore [strict]::strict",
         "fixture::ctype::isalnum_digit_5::hardened",
         "fixture::ctype::isalnum_digit_5::strict",
         "fixture::ctype::isalnum_letter_M::hardened",
@@ -36005,6 +36223,14 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isalpha::isalpha_digit_0 [hardened]::hardened",
+        "conformance_matrix::isalpha::isalpha_digit_0 [strict]::strict",
+        "conformance_matrix::isalpha::isalpha_lowercase_z [hardened]::hardened",
+        "conformance_matrix::isalpha::isalpha_lowercase_z [strict]::strict",
+        "conformance_matrix::isalpha::isalpha_space [hardened]::hardened",
+        "conformance_matrix::isalpha::isalpha_space [strict]::strict",
+        "conformance_matrix::isalpha::isalpha_uppercase_A [hardened]::hardened",
+        "conformance_matrix::isalpha::isalpha_uppercase_A [strict]::strict",
         "fixture::ctype::isalpha_digit_0::hardened",
         "fixture::ctype::isalpha_digit_0::strict",
         "fixture::ctype::isalpha_lowercase_z::hardened",
@@ -36126,6 +36352,12 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isdigit::isdigit_0 [hardened]::hardened",
+        "conformance_matrix::isdigit::isdigit_0 [strict]::strict",
+        "conformance_matrix::isdigit::isdigit_9 [hardened]::hardened",
+        "conformance_matrix::isdigit::isdigit_9 [strict]::strict",
+        "conformance_matrix::isdigit::isdigit_A [hardened]::hardened",
+        "conformance_matrix::isdigit::isdigit_A [strict]::strict",
         "fixture::ctype::isdigit_0::hardened",
         "fixture::ctype::isdigit_0::strict",
         "fixture::ctype::isdigit_9::hardened",
@@ -36233,6 +36465,10 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::islower::islower_A [hardened]::hardened",
+        "conformance_matrix::islower::islower_A [strict]::strict",
+        "conformance_matrix::islower::islower_a [hardened]::hardened",
+        "conformance_matrix::islower::islower_a [strict]::strict",
         "fixture::ctype::islower_A::hardened",
         "fixture::ctype::islower_A::strict",
         "fixture::ctype::islower_a::hardened",
@@ -36302,6 +36538,14 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isprint::isprint_del [hardened]::hardened",
+        "conformance_matrix::isprint::isprint_del [strict]::strict",
+        "conformance_matrix::isprint::isprint_null [hardened]::hardened",
+        "conformance_matrix::isprint::isprint_null [strict]::strict",
+        "conformance_matrix::isprint::isprint_space [hardened]::hardened",
+        "conformance_matrix::isprint::isprint_space [strict]::strict",
+        "conformance_matrix::isprint::isprint_tilde [hardened]::hardened",
+        "conformance_matrix::isprint::isprint_tilde [strict]::strict",
         "fixture::ctype::isprint_del::hardened",
         "fixture::ctype::isprint_del::strict",
         "fixture::ctype::isprint_null::hardened",
@@ -36339,6 +36583,12 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::ispunct::ispunct_at [hardened]::hardened",
+        "conformance_matrix::ispunct::ispunct_at [strict]::strict",
+        "conformance_matrix::ispunct::ispunct_exclamation [hardened]::hardened",
+        "conformance_matrix::ispunct::ispunct_exclamation [strict]::strict",
+        "conformance_matrix::ispunct::ispunct_letter [hardened]::hardened",
+        "conformance_matrix::ispunct::ispunct_letter [strict]::strict",
         "fixture::ctype::ispunct_at::hardened",
         "fixture::ctype::ispunct_at::strict",
         "fixture::ctype::ispunct_exclamation::hardened",
@@ -36374,6 +36624,14 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isspace::isspace_letter [hardened]::hardened",
+        "conformance_matrix::isspace::isspace_letter [strict]::strict",
+        "conformance_matrix::isspace::isspace_newline [hardened]::hardened",
+        "conformance_matrix::isspace::isspace_newline [strict]::strict",
+        "conformance_matrix::isspace::isspace_space [hardened]::hardened",
+        "conformance_matrix::isspace::isspace_space [strict]::strict",
+        "conformance_matrix::isspace::isspace_tab [hardened]::hardened",
+        "conformance_matrix::isspace::isspace_tab [strict]::strict",
         "fixture::ctype::isspace_letter::hardened",
         "fixture::ctype::isspace_letter::strict",
         "fixture::ctype::isspace_newline::hardened",
@@ -36411,6 +36669,10 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isupper::isupper_A [hardened]::hardened",
+        "conformance_matrix::isupper::isupper_A [strict]::strict",
+        "conformance_matrix::isupper::isupper_a [hardened]::hardened",
+        "conformance_matrix::isupper::isupper_a [strict]::strict",
         "fixture::ctype::isupper_A::hardened",
         "fixture::ctype::isupper_A::strict",
         "fixture::ctype::isupper_a::hardened",
@@ -36756,6 +37018,14 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::isxdigit::isxdigit_9 [hardened]::hardened",
+        "conformance_matrix::isxdigit::isxdigit_9 [strict]::strict",
+        "conformance_matrix::isxdigit::isxdigit_A [hardened]::hardened",
+        "conformance_matrix::isxdigit::isxdigit_A [strict]::strict",
+        "conformance_matrix::isxdigit::isxdigit_f [hardened]::hardened",
+        "conformance_matrix::isxdigit::isxdigit_f [strict]::strict",
+        "conformance_matrix::isxdigit::isxdigit_g [hardened]::hardened",
+        "conformance_matrix::isxdigit::isxdigit_g [strict]::strict",
         "fixture::ctype::isxdigit_9::hardened",
         "fixture::ctype::isxdigit_9::strict",
         "fixture::ctype::isxdigit_A::hardened",
@@ -39423,6 +39693,8 @@
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
         "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::malloc::malloc_basic::strict",
+        "conformance_matrix::malloc::malloc_zero::strict",
         "fixture::allocator::malloc_basic::strict",
         "fixture::allocator::malloc_zero::strict"
       ],
@@ -39874,8 +40146,10 @@
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
         "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::memset::memset_basic::strict",
         "conformance_matrix::memset::memset_basic_strict::strict",
         "conformance_matrix::memset::memset_zero_len_hardened::hardened",
+        "conformance_matrix::memset::strict_memset_basic::strict",
         "fixture::string/memory::memset_basic::strict",
         "fixture::string/narrow::strict_memset_basic::strict"
       ],
@@ -43618,6 +43892,8 @@
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
         "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::pthread_create::pthread_create_basic::strict",
+        "conformance_matrix::pthread_create::pthread_create_multiple_concurrent::strict",
         "fixture::pthread/thread::pthread_create_basic::strict",
         "fixture::pthread/thread::pthread_create_multiple_concurrent::strict"
       ],
@@ -45386,6 +45662,7 @@
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
         "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::realloc::realloc_null_is_malloc::strict",
         "fixture::allocator::realloc_null_is_malloc::strict"
       ],
       "gap_reasons": [
@@ -47667,6 +47944,8 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::setgrent::setgrent_endgrent_hardened::hardened",
+        "conformance_matrix::setgrent::setgrent_endgrent_strict::strict",
         "fixture::grp_ops::setgrent_endgrent_hardened::hardened",
         "fixture::grp_ops::setgrent_endgrent_strict::strict"
       ],
@@ -48106,6 +48385,8 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::setpwent::setpwent_endpwent_hardened::hardened",
+        "conformance_matrix::setpwent::setpwent_endpwent_strict::strict",
         "fixture::pwd_ops::setpwent_endpwent_hardened::hardened",
         "fixture::pwd_ops::setpwent_endpwent_strict::strict"
       ],
@@ -49578,6 +49859,10 @@
         "conformance_matrix::sprintf::sprintf_plus_overrides_space::strict",
         "conformance_matrix::sprintf::sprintf_plus_space_interaction::strict",
         "conformance_matrix::sprintf::sprintf_plus_zero::strict",
+        "conformance_matrix::sprintf::sprintf_positional_basic::strict",
+        "conformance_matrix::sprintf::sprintf_positional_reorder::strict",
+        "conformance_matrix::sprintf::sprintf_positional_repeat::strict",
+        "conformance_matrix::sprintf::sprintf_positional_width::strict",
         "conformance_matrix::sprintf::sprintf_precision_d::strict",
         "conformance_matrix::sprintf::sprintf_precision_d_neg::strict",
         "conformance_matrix::sprintf::sprintf_precision_d_zero::strict",
@@ -53444,6 +53729,14 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::tolower::tolower_A [hardened]::hardened",
+        "conformance_matrix::tolower::tolower_A [strict]::strict",
+        "conformance_matrix::tolower::tolower_Z [hardened]::hardened",
+        "conformance_matrix::tolower::tolower_Z [strict]::strict",
+        "conformance_matrix::tolower::tolower_already_lower [hardened]::hardened",
+        "conformance_matrix::tolower::tolower_already_lower [strict]::strict",
+        "conformance_matrix::tolower::tolower_digit [hardened]::hardened",
+        "conformance_matrix::tolower::tolower_digit [strict]::strict",
         "fixture::ctype::tolower_A::hardened",
         "fixture::ctype::tolower_A::strict",
         "fixture::ctype::tolower_Z::hardened",
@@ -53673,6 +53966,14 @@
       "test_refs": [
         "c_fixture::fixture_ctype::hardened",
         "c_fixture::fixture_ctype::strict",
+        "conformance_matrix::toupper::toupper_a [hardened]::hardened",
+        "conformance_matrix::toupper::toupper_a [strict]::strict",
+        "conformance_matrix::toupper::toupper_already_upper [hardened]::hardened",
+        "conformance_matrix::toupper::toupper_already_upper [strict]::strict",
+        "conformance_matrix::toupper::toupper_digit [hardened]::hardened",
+        "conformance_matrix::toupper::toupper_digit [strict]::strict",
+        "conformance_matrix::toupper::toupper_z [hardened]::hardened",
+        "conformance_matrix::toupper::toupper_z [strict]::strict",
         "fixture::ctype::toupper_a::hardened",
         "fixture::ctype::toupper_a::strict",
         "fixture::ctype::toupper_already_upper::hardened",
@@ -54671,6 +54972,8 @@
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
         "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::vdprintf::vdprintf_literal_hardened::hardened",
+        "conformance_matrix::vdprintf::vdprintf_literal_strict::strict",
         "fixture::stdio_file_ops::vdprintf_literal_hardened::hardened",
         "fixture::stdio_file_ops::vdprintf_literal_strict::strict"
       ],

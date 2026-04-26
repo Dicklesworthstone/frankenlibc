@@ -1050,14 +1050,33 @@ impl PosixObligationMatrixReport {
                 case.case_name.clone(),
                 case.mode.to_ascii_lowercase(),
             );
+            let fallback_key = (case.symbol.clone(), case.mode.to_ascii_lowercase());
             if let Some(obligation_key) = matrix_case_lookup.get(&lookup_key) {
                 if let Some(aggregate) = obligations.get_mut(obligation_key) {
                     record_posix_execution(&mut aggregate.execution, &case.status);
                 }
+                if let Some(obligation_keys) =
+                    c_fixture_obligations_by_symbol_mode.get(&fallback_key)
+                {
+                    for c_fixture_obligation_key in obligation_keys {
+                        if c_fixture_obligation_key == obligation_key {
+                            continue;
+                        }
+                        if let Some(aggregate) = obligations.get_mut(c_fixture_obligation_key) {
+                            record_posix_execution(&mut aggregate.execution, &case.status);
+                            aggregate.test_refs.insert(format!(
+                                "conformance_matrix::{}::{}::{}",
+                                case.symbol, case.case_name, case.mode
+                            ));
+                            aggregate.artifact_refs.insert(String::from(
+                                "tests/conformance/conformance_matrix.v1.json",
+                            ));
+                        }
+                    }
+                }
                 continue;
             }
 
-            let fallback_key = (case.symbol.clone(), case.mode.to_ascii_lowercase());
             let Some(obligation_keys) = c_fixture_obligations_by_symbol_mode.get(&fallback_key)
             else {
                 continue;
@@ -2484,6 +2503,100 @@ mod tests {
                     .gap_reasons
                     .contains(&"missing_execution_evidence".to_string())
         }));
+    }
+
+    #[test]
+    fn posix_obligation_matrix_also_credits_c_fixture_aggregate_when_direct_row_matches() {
+        let support_matrix = r#"{
+  "generated_at_utc":"2026-02-26T00:00:00Z",
+  "total_exported":1,
+  "symbols":[
+    {"symbol":"isalpha","status":"Implemented","module":"ctype_abi"}
+  ]
+}"#;
+        let fixture_set = FixtureSet::from_json(
+            r#"{
+  "version":"v1",
+  "family":"ctype",
+  "captured_at":"2026-02-26T00:00:00Z",
+  "cases":[
+    {
+      "name":"isalpha_letter_A",
+      "function":"isalpha",
+      "spec_section":"POSIX.1-2017 isalpha",
+      "inputs":{"c":65},
+      "expected_output":"1",
+      "expected_errno":0,
+      "mode":"both"
+    }
+  ]
+}"#,
+        )
+        .expect("fixture set should parse");
+        let conformance_matrix = r#"{
+  "schema_version":"v1",
+  "bead":"bd-l93x.2",
+  "generated_at_utc":"2026-02-26T00:00:00Z",
+  "campaign":"test",
+  "mode":"both",
+  "total_fixture_sets":1,
+  "summary":{"total_cases":2,"passed":2,"failed":0,"errors":0,"pass_rate_percent":100.0},
+  "symbol_matrix":[],
+  "cases":[
+    {"trace_id":"isalpha-strict","family":"ctype","symbol":"isalpha","mode":"strict","case_name":"isalpha_letter_A [strict]","spec_section":"POSIX.1-2017 isalpha","input_hex":"","expected_output":"1","actual_output":"1","host_output":"1","host_parity":true,"note":null,"status":"pass","passed":true,"error":null,"diff_offset":null},
+    {"trace_id":"isalpha-hardened","family":"ctype","symbol":"isalpha","mode":"hardened","case_name":"isalpha_letter_A [hardened]","spec_section":"POSIX.1-2017 isalpha","input_hex":"","expected_output":"1","actual_output":"1","host_output":"1","host_parity":true,"note":null,"status":"pass","passed":true,"error":null,"diff_offset":null}
+  ]
+}"#;
+        let c_fixture_spec = r#"{
+  "schema_version":1,
+  "fixtures":[
+    {
+      "id":"fixture_ctype",
+      "source":"tests/integration/fixture_ctype.c",
+      "description":"ctype aggregate fixture",
+      "covered_symbols":["isalpha"],
+      "covered_modules":["ctype_abi"],
+      "spec_traceability":{
+        "posix":["POSIX.1-2017 <ctype.h>: isalpha/isupper/islower/isdigit/isxdigit/isspace/isprint/ispunct/isalnum and tolower/toupper behavior"]
+      },
+      "mode_expectations":{
+        "strict":{"expected_exit":0},
+        "hardened":{"expected_exit":0}
+      }
+    }
+  ]
+}"#;
+
+        let report = PosixObligationMatrixReport::from_inputs(
+            support_matrix,
+            &[fixture_set],
+            conformance_matrix,
+            c_fixture_spec,
+        )
+        .expect("report should build");
+
+        let aggregate_row = report
+            .obligations
+            .iter()
+            .find(|row| row.symbol == "isalpha" && row.posix_ref.contains("<ctype.h>"))
+            .expect("aggregate ctype obligation row");
+        assert_eq!(aggregate_row.coverage_state, "covered");
+        assert_eq!(aggregate_row.execution.total, 2);
+        assert_eq!(aggregate_row.execution.pass, 2);
+        assert!(
+            aggregate_row
+                .test_refs
+                .iter()
+                .any(|test_ref| test_ref.starts_with("conformance_matrix::isalpha::"))
+        );
+
+        let direct_row = report
+            .obligations
+            .iter()
+            .find(|row| row.symbol == "isalpha" && row.posix_ref == "POSIX.1-2017 isalpha")
+            .expect("direct isalpha obligation row");
+        assert_eq!(direct_row.coverage_state, "covered");
+        assert_eq!(direct_row.execution.total, 2);
     }
 
     #[test]
