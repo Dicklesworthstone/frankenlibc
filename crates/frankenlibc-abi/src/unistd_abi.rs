@@ -9554,6 +9554,19 @@ pub unsafe extern "C" fn strerror_l(errnum: c_int, _locale: *mut c_void) -> *mut
     unsafe { crate::string_abi::strerror(errnum) }
 }
 
+/// glibc reserved-namespace alias for [`strerror_l`]. Some
+/// glibc-internal callers (NSS modules, libstdc++ cancellation
+/// machinery) link against the underscored variant instead of
+/// the public name.
+///
+/// # Safety
+///
+/// Same as [`strerror_l`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strerror_l(errnum: c_int, locale: *mut c_void) -> *mut c_char {
+    unsafe { strerror_l(errnum, locale) }
+}
+
 // ---------------------------------------------------------------------------
 // __xpg_basename — Implemented
 // ---------------------------------------------------------------------------

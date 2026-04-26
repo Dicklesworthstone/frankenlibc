@@ -4405,3 +4405,55 @@ fn mutex_init_rejects_unsupported_extension_attributes() {
         pthread_mutexattr_destroy(&mut attr);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Glibc reserved-namespace aliases:
+// __pthread_self / __pthread_setcancelstate / __pthread_setcanceltype
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_pthread_self_matches_pthread_self() {
+    let a = unsafe { pthread_self() };
+    let b = unsafe { __pthread_self() };
+    assert_eq!(a, b);
+}
+
+#[test]
+fn under_pthread_setcancelstate_round_trip() {
+    let mut prev: c_int = -1;
+    // First call: install ENABLE, capture whatever was prior.
+    let rc = unsafe { __pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &mut prev) };
+    assert_eq!(rc, 0);
+    // Second call: install DISABLE, prev should now be ENABLE.
+    let mut prev2: c_int = -1;
+    let rc = unsafe { __pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &mut prev2) };
+    assert_eq!(rc, 0);
+    assert_eq!(prev2, PTHREAD_CANCEL_ENABLE);
+    // Restore the original state.
+    let _ = unsafe { __pthread_setcancelstate(prev, std::ptr::null_mut()) };
+}
+
+#[test]
+fn under_pthread_setcancelstate_invalid_returns_einval() {
+    let rc = unsafe { __pthread_setcancelstate(99, std::ptr::null_mut()) };
+    assert_eq!(rc, libc::EINVAL);
+}
+
+#[test]
+fn under_pthread_setcanceltype_round_trip() {
+    let mut prev: c_int = -1;
+    let rc = unsafe { __pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &mut prev) };
+    assert_eq!(rc, 0);
+    let mut prev2: c_int = -1;
+    let rc = unsafe { __pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, &mut prev2) };
+    assert_eq!(rc, 0);
+    assert_eq!(prev2, PTHREAD_CANCEL_DEFERRED);
+    // Restore the original type.
+    let _ = unsafe { __pthread_setcanceltype(prev, std::ptr::null_mut()) };
+}
+
+#[test]
+fn under_pthread_setcanceltype_invalid_returns_einval() {
+    let rc = unsafe { __pthread_setcanceltype(99, std::ptr::null_mut()) };
+    assert_eq!(rc, libc::EINVAL);
+}

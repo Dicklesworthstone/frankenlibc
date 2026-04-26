@@ -5853,6 +5853,22 @@ fn secure_path_root_owned_secure_file_passes() {
 }
 
 // ===========================================================================
+// __strerror_l (glibc reserved-namespace alias of strerror_l)
+// ===========================================================================
+
+#[test]
+fn under_strerror_l_matches_strerror_l() {
+    use frankenlibc_abi::unistd_abi::{__strerror_l, strerror_l};
+    let p = unsafe { strerror_l(libc::ENOENT, std::ptr::null_mut()) };
+    let q = unsafe { __strerror_l(libc::ENOENT, std::ptr::null_mut()) };
+    assert!(!p.is_null());
+    assert!(!q.is_null());
+    let a = unsafe { std::ffi::CStr::from_ptr(p) };
+    let b = unsafe { std::ffi::CStr::from_ptr(q) };
+    assert_eq!(a, b);
+}
+
+// ===========================================================================
 // __cxa_pure_virtual (Itanium C++ ABI pure-virtual stub)
 // ===========================================================================
 

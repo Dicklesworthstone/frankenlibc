@@ -3774,6 +3774,34 @@ pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) 
     0
 }
 
+/// glibc reserved-namespace alias for [`pthread_self`]. libstdc++
+/// cancellation-cleanup machinery and a few NSS modules link
+/// against the underscored variant.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_self() -> libc::pthread_t {
+    unsafe { pthread_self() }
+}
+
+/// glibc reserved-namespace alias for [`pthread_setcancelstate`].
+///
+/// # Safety
+///
+/// Same as [`pthread_setcancelstate`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_setcancelstate(state: c_int, oldstate: *mut c_int) -> c_int {
+    unsafe { pthread_setcancelstate(state, oldstate) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_setcanceltype`].
+///
+/// # Safety
+///
+/// Same as [`pthread_setcanceltype`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int {
+    unsafe { pthread_setcanceltype(typ, oldtype) }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_testcancel() {
     if !force_native_threading_enabled()
