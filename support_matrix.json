@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 4050,
+  "total_exported": 4060,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -19816,6 +19816,96 @@
       "module": "rpc_abi"
     },
     {
+      "symbol": "nis_clone_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ directory clone helper is a fail-safe NULL-returning stub because directory object copying is unsupported",
+      "hardened_semantics": "Same NULL-returning clone contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_clone_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ object clone helper is a fail-safe NULL-returning stub because object copying is unsupported",
+      "hardened_semantics": "Same NULL-returning clone contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_clone_result",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ result clone helper is a fail-safe NULL-returning stub because result copying is unsupported",
+      "hardened_semantics": "Same NULL-returning clone contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_dir_cmp",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Case-insensitive NIS+ directory-name comparison returning LOWER_NAME/SAME_NAME/HIGHER_NAME/NOT_SEQUENTIAL enum values",
+      "hardened_semantics": "Same deterministic directory-name comparison contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_domain_of",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local NIS+ helper returning the input name after its first unescaped label",
+      "hardened_semantics": "Same thread-local label-stripping contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_domain_of_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Caller-buffer NIS+ helper returning the input name after its first unescaped label or EINVAL/ERANGE",
+      "hardened_semantics": "Same caller-buffer label-stripping contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_leaf_of",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local NIS+ helper returning the first unescaped label of the input name",
+      "hardened_semantics": "Same thread-local leaf extraction contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_leaf_of_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Caller-buffer NIS+ helper returning the first unescaped label of the input name or EINVAL/ERANGE",
+      "hardened_semantics": "Same caller-buffer leaf extraction contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_name_of",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Thread-local NIS+ helper returning the input name unchanged when no local directory is configured",
+      "hardened_semantics": "Same thread-local pass-through contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_name_of_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Caller-buffer NIS+ helper copying the input name unchanged or failing with EINVAL/ERANGE",
+      "hardened_semantics": "Same caller-buffer pass-through contract",
+      "default_stub": false
+    },
+    {
       "symbol": "nis_free_directory",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -32382,19 +32472,19 @@
     }
   ],
   "summary": {
-    "total": 4050,
-    "implemented": 3640,
+    "total": 4060,
+    "implemented": 3650,
     "raw_syscall": 410,
     "wraps_host_libc": 0,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 3640,
+  "implemented": 3650,
   "raw_syscall": 410,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 3640,
+    "implemented": 3650,
     "raw_syscall": 410,
     "glibc_call_through": 0,
     "stub": 0
