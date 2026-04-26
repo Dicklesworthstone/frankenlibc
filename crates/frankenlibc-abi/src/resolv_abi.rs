@@ -2525,6 +2525,57 @@ pub unsafe extern "C" fn ns_format_ttl(mut src: u32, dst: *mut c_char, dstlen: u
     pos as c_int
 }
 
+#[inline]
+fn ns_date_is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+#[inline]
+fn ns_date_days_in_month(year: i32, month: i32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if ns_date_is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn ns_date_to_epoch_u32(
+    year: i32,
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+) -> Option<u32> {
+    if !(1970..=9999).contains(&year)
+        || !(1..=12).contains(&month)
+        || !(1..=ns_date_days_in_month(year, month) as i32).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        return None;
+    }
+
+    let mut days = 0u64;
+    for y in 1970..year {
+        days += if ns_date_is_leap_year(y) { 366 } else { 365 };
+    }
+    for m in 1..month {
+        days += ns_date_days_in_month(year, m) as u64;
+    }
+    days += (day - 1) as u64;
+
+    let day_seconds = (hour as u64)
+        .checked_mul(3_600)?
+        .checked_add((minute as u64).checked_mul(60)?)?
+        .checked_add(second as u64)?;
+    let total = days.checked_mul(86_400)?.checked_add(day_seconds)?;
+    u32::try_from(total).ok()
+}
+
 /// libresolv `ns_datetosecs(cp, *errp) -> u32` — parse a 14-char
 /// `"YYYYMMDDHHMMSS"` UTC date string into seconds since epoch.
 /// Sets `*errp = 1` on parse error and returns 0; otherwise sets
@@ -2566,32 +2617,16 @@ pub unsafe extern "C" fn ns_datetosecs(cp: *const c_char, errp: *mut c_int) -> u
     let minute = to_n(10..12);
     let second = to_n(12..14);
 
-    if !(1970..=9999).contains(&year)
-        || !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || !(0..=23).contains(&hour)
-        || !(0..=59).contains(&minute)
-        || !(0..=60).contains(&second)
-    {
-        set_err(1);
-        return 0;
+    match ns_date_to_epoch_u32(year, month, day, hour, minute, second) {
+        Some(secs) => {
+            set_err(0);
+            secs
+        }
+        None => {
+            set_err(1);
+            0
+        }
     }
-
-    let mut tm: libc::tm = unsafe { core::mem::zeroed() };
-    tm.tm_year = year - 1900;
-    tm.tm_mon = month - 1;
-    tm.tm_mday = day;
-    tm.tm_hour = hour;
-    tm.tm_min = minute;
-    tm.tm_sec = second;
-    // SAFETY: timegm reads tm by reference; tm is owned and well-formed.
-    let secs = unsafe { libc::timegm(&mut tm as *mut libc::tm) };
-    if secs < 0 {
-        set_err(1);
-        return 0;
-    }
-    set_err(0);
-    secs as u32
 }
 
 // ===========================================================================
@@ -3252,12 +3287,10 @@ fn write_type_into(ty: u16, out: &mut String) {
         1 => out.push('A'),
         2 => out.push_str("NS"),
         5 => out.push_str("CNAME"),
-        6 => out.push_str("SOA"),
         12 => out.push_str("PTR"),
         15 => out.push_str("MX"),
         16 => out.push_str("TXT"),
         28 => out.push_str("AAAA"),
-        33 => out.push_str("SRV"),
         n => {
             let _ = write!(out, "TYPE{n}");
         }
@@ -3363,6 +3396,9 @@ unsafe fn format_rdata(
     out: &mut String,
 ) -> Result<(), ()> {
     let slice = if rdata.is_null() {
+        if rdlen != 0 {
+            return Err(());
+        }
         &[][..]
     } else {
         // SAFETY: caller-supplied rdata buffer of rdlen bytes.
@@ -3485,12 +3521,14 @@ pub unsafe extern "C" fn ns_sprintrr(
     // SAFETY: caller-supplied initialized handle/rr.
     let msg = unsafe { (*handle)._msg };
     let eom = unsafe { (*handle)._eom };
-    let msglen = if msg.is_null() || eom.is_null() {
-        0usize
-    } else {
-        let diff = unsafe { eom.offset_from(msg) };
-        diff as usize
-    };
+    if msg.is_null() || eom.is_null() || (eom as usize) < (msg as usize) {
+        return -1;
+    }
+    let msglen = (eom as usize) - (msg as usize);
+    let rr_name = unsafe { &(*rr).name };
+    if !rr_name.contains(&0) {
+        return -1;
+    }
     let name = unsafe { (*rr).name.as_ptr() };
     let class = unsafe { (*rr).rr_class };
     let ty = unsafe { (*rr)._type };

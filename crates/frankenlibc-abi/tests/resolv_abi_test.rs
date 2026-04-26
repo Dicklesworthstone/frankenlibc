@@ -1633,6 +1633,18 @@ fn ns_datetosecs_parses_valid_utc_strings() {
     let secs = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
     assert_eq!(errp, 0);
     assert_eq!(secs, 0);
+
+    // Valid leap day.
+    let s = std::ffi::CString::new("20240229000000").unwrap();
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 0);
+    assert_eq!(secs, 1_709_164_800);
+
+    // Highest Unix timestamp representable by the u32 return type.
+    let s = std::ffi::CString::new("21060207062815").unwrap();
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 0);
+    assert_eq!(secs, u32::MAX);
 }
 
 #[test]
@@ -1653,6 +1665,18 @@ fn ns_datetosecs_rejects_malformed_strings() {
 
     // Out-of-range month.
     let s = std::ffi::CString::new("20241301000000").unwrap();
+    errp = 0;
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+
+    // Invalid non-leap day must not be normalized by a host libc time parser.
+    let s = std::ffi::CString::new("20230229000000").unwrap();
+    errp = 0;
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+
+    // Values beyond u32::MAX seconds would wrap the API return type.
+    let s = std::ffi::CString::new("21060207062816").unwrap();
     errp = 0;
     let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
     assert_eq!(errp, 1);
@@ -2271,6 +2295,36 @@ fn ns_sprintrrf_rejects_malformed_a_rdata() {
 }
 
 #[test]
+fn ns_sprintrrf_rejects_null_rdata_with_nonzero_len() {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new("foo.com").unwrap();
+    let mut buf = [0u8; 64];
+    let n = unsafe {
+        ns_sprintrrf(
+            std::ptr::null(),
+            0,
+            cname.as_ptr(),
+            1,
+            999,
+            0,
+            std::ptr::null(),
+            3,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn ns_sprintrrf_unsupported_known_type_uses_generic_type_number() {
+    let s = sprintrrf_to_str(&[], "soa.example", 1, 6 /*SOA*/, 0, &[1, 2, 3], 64).unwrap();
+    assert_eq!(s, "soa.example 0S IN TYPE6 \\# 3 010203");
+}
+
+#[test]
 fn ns_sprintrr_wraps_sprintrrf_via_handle_and_rr() {
     use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_initparse, ns_parserr, ns_sprintrr};
     let msg = synthetic_dns_message();
@@ -2302,4 +2356,36 @@ fn ns_sprintrr_wraps_sprintrrf_via_handle_and_rr() {
     let s = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
     assert!(s.contains(" IN A "), "got: {s}");
     assert!(s.contains("127.0.0.1"), "got: {s}");
+}
+
+#[test]
+fn ns_sprintrr_rejects_invalid_handle_bounds() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_sprintrr};
+    let msg = [0u8; 4];
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    handle._msg = unsafe { msg.as_ptr().add(3) };
+    handle._eom = msg.as_ptr();
+
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    for (slot, byte) in rr.name.iter_mut().zip(b"foo.com\0") {
+        *slot = *byte as c_char;
+    }
+    rr._type = 1;
+    rr.rr_class = 1;
+    let rdata = [127u8, 0, 0, 1];
+    rr.rdata = rdata.as_ptr();
+    rr.rdlength = 4;
+
+    let mut buf = [0u8; 64];
+    let n = unsafe {
+        ns_sprintrr(
+            &handle,
+            &rr,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
 }
