@@ -2836,6 +2836,55 @@ pub unsafe extern "C" fn qsort_r(
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 12, false);
 }
 
+// ---------------------------------------------------------------------------
+// bsearch_r (NetBSD reentrant bsearch with thunk)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `bsearch_r(key, base, nmemb, size, compar, thunk)` — same
+/// as POSIX [`bsearch`] but the comparator receives an extra
+/// `void *thunk` parameter so callers can carry context (e.g. a
+/// case-insensitive flag, sort-key index) without resorting to a
+/// global. Returns a pointer to the matching element, or NULL on
+/// no-match / NULL inputs / zero size or count.
+///
+/// # Safety
+///
+/// `base`, when non-NULL, must point to `nmemb * size` readable
+/// bytes laid out as a sorted array of `size`-byte elements.
+/// `key`, when non-NULL, must be readable for the bytes the
+/// comparator reads. `compar`, when set, must be safe to invoke
+/// with `(key, mid_elem, thunk)` triples.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bsearch_r(
+    key: *const c_void,
+    base: *const c_void,
+    nmemb: usize,
+    size: usize,
+    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int>,
+    thunk: *mut c_void,
+) -> *mut c_void {
+    if key.is_null() || base.is_null() || nmemb == 0 || size == 0 {
+        return ptr::null_mut();
+    }
+    let Some(cmp_fn) = compar else {
+        return ptr::null_mut();
+    };
+
+    let mut low: usize = 0;
+    let mut high: usize = nmemb;
+    while low < high {
+        let mid = low + (high - low) / 2;
+        let mid_ptr = unsafe { (base as *const u8).add(mid * size) } as *const c_void;
+        let cmp = unsafe { cmp_fn(key, mid_ptr, thunk) };
+        match cmp.cmp(&0) {
+            core::cmp::Ordering::Equal => return mid_ptr as *mut c_void,
+            core::cmp::Ordering::Less => high = mid,
+            core::cmp::Ordering::Greater => low = mid + 1,
+        }
+    }
+    ptr::null_mut()
+}
+
 // ===========================================================================
 // a64l / l64a (2 functions)
 // ===========================================================================

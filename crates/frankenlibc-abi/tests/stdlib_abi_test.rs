@@ -8,13 +8,13 @@ use std::os::unix::ffi::OsStrExt;
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
-    a64l, at_quick_exit, atoll, clearenv, confstr, dehumanize_number, drand48, ecvt, erand48,
-    expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf,
-    get_phys_pages, getbsize, getenv, getenv_r, getsubopt, humanize_number, initstate, jrand48,
-    l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, qsort_r,
-    random, reallocarray, reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom,
-    strpct, strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull,
-    strtouq, system, unsetenv,
+    a64l, at_quick_exit, atoll, bsearch_r, clearenv, confstr, dehumanize_number, drand48, ecvt,
+    erand48, expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs,
+    get_nprocs_conf, get_phys_pages, getbsize, getenv, getenv_r, getsubopt, humanize_number,
+    initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48,
+    on_exit, qsort_r, random, reallocarray, reallocf, recallocarray, seed48, setenv, setstate,
+    srand48, srandom, strpct, strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq,
+    strtou, strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -7663,4 +7663,184 @@ fn getenv_r_zero_buflen_with_set_value_returns_erange() {
     );
 
     unsafe { libc::unsetenv(key.as_ptr()) };
+}
+
+// ---------------------------------------------------------------------------
+// bsearch_r (NetBSD reentrant bsearch with thunk)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn bsearch_r_cmp_int(
+    a: *const std::ffi::c_void,
+    b: *const std::ffi::c_void,
+    _thunk: *mut std::ffi::c_void,
+) -> c_int {
+    let av = unsafe { *(a as *const i32) };
+    let bv = unsafe { *(b as *const i32) };
+    av.cmp(&bv) as c_int
+}
+
+unsafe extern "C" fn bsearch_r_cmp_int_with_thunk(
+    a: *const std::ffi::c_void,
+    b: *const std::ffi::c_void,
+    thunk: *mut std::ffi::c_void,
+) -> c_int {
+    let counter = thunk as *mut usize;
+    unsafe {
+        *counter += 1;
+    }
+    let av = unsafe { *(a as *const i32) };
+    let bv = unsafe { *(b as *const i32) };
+    av.cmp(&bv) as c_int
+}
+
+#[test]
+fn bsearch_r_finds_existing_element() {
+    let arr: [i32; 7] = [1, 3, 5, 7, 9, 11, 13];
+    let key: i32 = 7;
+    let p = unsafe {
+        bsearch_r(
+            (&key as *const i32).cast(),
+            arr.as_ptr().cast(),
+            arr.len(),
+            std::mem::size_of::<i32>(),
+            Some(bsearch_r_cmp_int),
+            std::ptr::null_mut(),
+        )
+    };
+    assert!(!p.is_null());
+    assert_eq!(unsafe { *(p as *const i32) }, 7);
+}
+
+#[test]
+fn bsearch_r_returns_null_for_missing() {
+    let arr: [i32; 5] = [1, 3, 5, 7, 9];
+    let key: i32 = 4;
+    let p = unsafe {
+        bsearch_r(
+            (&key as *const i32).cast(),
+            arr.as_ptr().cast(),
+            arr.len(),
+            std::mem::size_of::<i32>(),
+            Some(bsearch_r_cmp_int),
+            std::ptr::null_mut(),
+        )
+    };
+    assert!(p.is_null());
+}
+
+#[test]
+fn bsearch_r_finds_leftmost_and_rightmost() {
+    let arr: [i32; 5] = [1, 3, 5, 7, 9];
+    for needle in [1, 9] {
+        let p = unsafe {
+            bsearch_r(
+                (&needle as *const i32).cast(),
+                arr.as_ptr().cast(),
+                arr.len(),
+                std::mem::size_of::<i32>(),
+                Some(bsearch_r_cmp_int),
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(!p.is_null());
+        assert_eq!(unsafe { *(p as *const i32) }, needle);
+    }
+}
+
+#[test]
+fn bsearch_r_passes_thunk_through_each_call() {
+    let arr: [i32; 8] = [10, 20, 30, 40, 50, 60, 70, 80];
+    let key: i32 = 50;
+    let mut counter: usize = 0;
+    let p = unsafe {
+        bsearch_r(
+            (&key as *const i32).cast(),
+            arr.as_ptr().cast(),
+            arr.len(),
+            std::mem::size_of::<i32>(),
+            Some(bsearch_r_cmp_int_with_thunk),
+            (&mut counter as *mut usize).cast(),
+        )
+    };
+    assert!(!p.is_null());
+    assert_eq!(unsafe { *(p as *const i32) }, 50);
+    // log2(8) = 3 — should take at most ~4 comparisons.
+    assert!(counter > 0 && counter <= 4, "counter was {counter}");
+}
+
+#[test]
+fn bsearch_r_null_inputs_return_null() {
+    let key: i32 = 1;
+    let arr: [i32; 1] = [1];
+    assert!(
+        unsafe {
+            bsearch_r(
+                std::ptr::null(),
+                arr.as_ptr().cast(),
+                1,
+                4,
+                Some(bsearch_r_cmp_int),
+                std::ptr::null_mut(),
+            )
+        }
+        .is_null()
+    );
+    assert!(
+        unsafe {
+            bsearch_r(
+                (&key as *const i32).cast(),
+                std::ptr::null(),
+                1,
+                4,
+                Some(bsearch_r_cmp_int),
+                std::ptr::null_mut(),
+            )
+        }
+        .is_null()
+    );
+    assert!(
+        unsafe {
+            bsearch_r(
+                (&key as *const i32).cast(),
+                arr.as_ptr().cast(),
+                1,
+                4,
+                None,
+                std::ptr::null_mut(),
+            )
+        }
+        .is_null()
+    );
+}
+
+#[test]
+fn bsearch_r_zero_size_or_count_returns_null() {
+    let key: i32 = 1;
+    let arr: [i32; 1] = [1];
+    assert!(
+        unsafe {
+            bsearch_r(
+                (&key as *const i32).cast(),
+                arr.as_ptr().cast(),
+                0,
+                4,
+                Some(bsearch_r_cmp_int),
+                std::ptr::null_mut(),
+            )
+        }
+        .is_null()
+    );
+    assert!(
+        unsafe {
+            bsearch_r(
+                (&key as *const i32).cast(),
+                arr.as_ptr().cast(),
+                1,
+                0,
+                Some(bsearch_r_cmp_int),
+                std::ptr::null_mut(),
+            )
+        }
+        .is_null()
+    );
 }
