@@ -4457,3 +4457,87 @@ fn under_pthread_setcanceltype_invalid_returns_einval() {
     let rc = unsafe { __pthread_setcanceltype(99, std::ptr::null_mut()) };
     assert_eq!(rc, libc::EINVAL);
 }
+
+// ---------------------------------------------------------------------------
+// Glibc reserved-namespace aliases:
+// __pthread_create / __pthread_join / __pthread_detach / __pthread_exit
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn under_pthread_lifecycle_worker(arg: *mut c_void) -> *mut c_void {
+    arg
+}
+
+unsafe extern "C" fn under_pthread_lifecycle_exit_worker(arg: *mut c_void) -> *mut c_void {
+    unsafe { __pthread_exit(arg) };
+}
+
+#[test]
+fn under_pthread_create_join_round_trip() {
+    let mut tid: libc::pthread_t = 0;
+    let sentinel: usize = 0xfeed_face;
+    let rc = unsafe {
+        __pthread_create(
+            &mut tid,
+            std::ptr::null(),
+            Some(under_pthread_lifecycle_worker),
+            sentinel as *mut c_void,
+        )
+    };
+    assert_eq!(rc, 0, "__pthread_create should succeed");
+    let mut retval: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe { __pthread_join(tid, &mut retval) };
+    assert_eq!(rc, 0, "__pthread_join should succeed");
+    assert_eq!(retval as usize, sentinel);
+}
+
+#[test]
+fn under_pthread_detach_does_not_panic() {
+    let mut tid: libc::pthread_t = 0;
+    let sentinel: usize = 0xc0ffee;
+    let rc = unsafe {
+        __pthread_create(
+            &mut tid,
+            std::ptr::null(),
+            Some(under_pthread_lifecycle_worker),
+            sentinel as *mut c_void,
+        )
+    };
+    assert_eq!(rc, 0);
+    let rc = unsafe { __pthread_detach(tid) };
+    assert_eq!(rc, 0, "__pthread_detach should succeed on a fresh handle");
+}
+
+#[test]
+fn under_pthread_exit_propagates_retval_through_join() {
+    let mut tid: libc::pthread_t = 0;
+    let sentinel: usize = 0xdead_beef;
+    let rc = unsafe {
+        __pthread_create(
+            &mut tid,
+            std::ptr::null(),
+            Some(under_pthread_lifecycle_exit_worker),
+            sentinel as *mut c_void,
+        )
+    };
+    assert_eq!(rc, 0);
+    let mut retval: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe { __pthread_join(tid, &mut retval) };
+    assert_eq!(rc, 0);
+    assert_eq!(
+        retval as usize, sentinel,
+        "__pthread_exit value must propagate through __pthread_join"
+    );
+}
+
+#[test]
+fn under_pthread_create_null_args_return_einval() {
+    let rc = unsafe {
+        __pthread_create(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            None,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+}

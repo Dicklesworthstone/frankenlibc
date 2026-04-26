@@ -2143,6 +2143,45 @@ pub unsafe extern "C" fn pthread_detach(thread: libc::pthread_t) -> c_int {
     unsafe { native_pthread_detach(thread) }
 }
 
+/// glibc reserved-namespace alias for [`pthread_create`]. libstdc++
+/// thread support and a few NSS modules link against this name.
+///
+/// # Safety
+///
+/// Same as [`pthread_create`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_create(
+    thread_out: *mut libc::pthread_t,
+    attr: *const libc::pthread_attr_t,
+    start_routine: Option<StartRoutine>,
+    arg: *mut c_void,
+) -> c_int {
+    unsafe { pthread_create(thread_out, attr, start_routine, arg) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_join`].
+///
+/// # Safety
+///
+/// Same as [`pthread_join`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_join(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+) -> c_int {
+    unsafe { pthread_join(thread, retval) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_detach`].
+///
+/// # Safety
+///
+/// Same as [`pthread_detach`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_detach(thread: libc::pthread_t) -> c_int {
+    unsafe { pthread_detach(thread) }
+}
+
 // ===========================================================================
 // Mutex operations
 // ===========================================================================
@@ -5792,6 +5831,16 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
     }
 
     raw_syscall::sys_exit_thread(0);
+}
+
+/// glibc reserved-namespace alias for [`pthread_exit`].
+///
+/// # Safety
+///
+/// Same as [`pthread_exit`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_exit(retval: *mut c_void) -> ! {
+    unsafe { pthread_exit(retval) }
 }
 
 /// GNU `pthread_getcpuclockid` — get CPU-time clock for a thread.
