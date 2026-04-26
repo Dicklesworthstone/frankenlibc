@@ -5498,22 +5498,7 @@ pub struct SysSigList(pub [*const c_char; SYS_SIGLIST_LEN]);
 // SAFETY: see SysSigList docs above.
 unsafe impl Sync for SysSigList {}
 
-/// glibc `sys_siglist[NSIG]` — array of human-readable signal
-/// descriptions indexed by signal number. Deprecated in favor of
-/// [`strsignal`] / `sigdescr_np`, but many older programs still
-/// reference this symbol directly. Each entry is a NUL-terminated
-/// C string with the same wording as [`strsignal(n)`].
-///
-/// `sys_siglist[0]` is empty (no signal 0 description). Indices
-/// 32..=64 cover the realtime-signal range and share a generic
-/// placeholder description.
-///
-/// The wrapper around the inner `[*const c_char; 65]` is
-/// `repr(transparent)`, so the symbol's ABI is identical to a
-/// bare C `const char *sys_siglist[NSIG]`.
-#[allow(non_upper_case_globals)]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static sys_siglist: SysSigList = SysSigList([
+const SYS_SIGLIST_ENTRIES: [*const c_char; SYS_SIGLIST_LEN] = [
     SIG_DESC_EMPTY.as_ptr() as *const c_char,  // 0
     SIG_DESC_HUP.as_ptr() as *const c_char,    // 1 SIGHUP
     SIG_DESC_INT.as_ptr() as *const c_char,    // 2 SIGINT
@@ -5580,7 +5565,31 @@ pub static sys_siglist: SysSigList = SysSigList([
     SIG_DESC_RT.as_ptr() as *const c_char, // 62
     SIG_DESC_RT.as_ptr() as *const c_char, // 63
     SIG_DESC_RT.as_ptr() as *const c_char, // 64
-]);
+];
+
+/// glibc `sys_siglist[NSIG]` — array of human-readable signal
+/// descriptions indexed by signal number. Deprecated in favor of
+/// [`strsignal`] / `sigdescr_np`, but many older programs still
+/// reference this symbol directly. Each entry is a NUL-terminated
+/// C string with the same wording as [`strsignal(n)`].
+///
+/// `sys_siglist[0]` is empty (no signal 0 description). Indices
+/// 32..=64 cover the realtime-signal range and share a generic
+/// placeholder description.
+///
+/// The wrapper around the inner `[*const c_char; 65]` is
+/// `repr(transparent)`, so the symbol's ABI is identical to a
+/// bare C `const char *sys_siglist[NSIG]`.
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static sys_siglist: SysSigList = SysSigList(SYS_SIGLIST_ENTRIES);
+
+/// glibc deprecated `_sys_siglist[NSIG]` alias. It must contain the
+/// same populated signal-description table as `sys_siglist`, not a
+/// null placeholder, because old C programs index this symbol directly.
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static _sys_siglist: SysSigList = SysSigList(SYS_SIGLIST_ENTRIES);
 
 // Per-signal short name bytes used by `sys_signame` — uppercase
 // without the "SIG" prefix, matching the BSD convention used by

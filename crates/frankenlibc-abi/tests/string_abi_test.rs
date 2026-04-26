@@ -2428,10 +2428,17 @@ fn under_memrchr_zero_length_returns_null() {
 // sys_siglist (deprecated glibc signal-description array)
 // ---------------------------------------------------------------------------
 
-use frankenlibc_abi::string_abi::sys_siglist;
+use frankenlibc_abi::string_abi::{_sys_siglist, sys_siglist};
 
 fn read_sys_siglist_str(idx: usize) -> &'static [u8] {
     let p = sys_siglist.0[idx];
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    s.to_bytes()
+}
+
+fn read_under_sys_siglist_str(idx: usize) -> &'static [u8] {
+    let p = _sys_siglist.0[idx];
     assert!(!p.is_null());
     let s = unsafe { CStr::from_ptr(p) };
     s.to_bytes()
@@ -2441,6 +2448,14 @@ fn read_sys_siglist_str(idx: usize) -> &'static [u8] {
 fn sys_siglist_has_65_entries() {
     // NSIG on Linux x86_64 = 65 (signals 0..64).
     assert_eq!(sys_siglist.0.len(), 65);
+}
+
+#[test]
+fn under_sys_siglist_has_65_populated_entries() {
+    assert_eq!(_sys_siglist.0.len(), sys_siglist.0.len());
+    for i in 0..sys_siglist.0.len() {
+        assert_eq!(read_under_sys_siglist_str(i), read_sys_siglist_str(i));
+    }
 }
 
 #[test]

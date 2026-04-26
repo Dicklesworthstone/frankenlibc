@@ -3971,8 +3971,6 @@ pub static mut sys_sigabbrev: [*const c_char; 32] = {
 pub static mut _sys_errlist: *const *const c_char = std::ptr::null();
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut sys_errlist: *const *const c_char = std::ptr::null();
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut _sys_siglist: *const *const c_char = std::ptr::null();
 // h_errlist is defined below as a populated array
 
 // ==========================================================================
