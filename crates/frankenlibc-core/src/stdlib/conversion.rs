@@ -269,6 +269,81 @@ pub fn strtoull(s: &[u8], base: i32) -> (u64, usize) {
     strtoul(s, base)
 }
 
+/// NetBSD `strtoi(3)` rstatus codes. Mirrors `<inttypes.h>` returns
+/// for bounded integer parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoundedStatus {
+    /// Parsed value is in `[lo, hi]`.
+    Success,
+    /// Base is outside the valid range (0 or 2..=36).
+    InvalidBase,
+    /// No digits could be consumed.
+    NoDigits,
+    /// Value was outside `[lo, hi]` (or the underlying parser
+    /// overflowed); the caller-visible value has been clamped.
+    OutOfRange,
+}
+
+/// NetBSD `strtoi`-style bounded signed parse. Wraps
+/// [`strtoimax_impl`], then validates the result against
+/// `[lo, hi]` inclusive. On out-of-range or overflow the returned
+/// value is clamped to the violated bound.
+///
+/// Returns `(value, consumed_bytes, status)`. When `status ==
+/// NoDigits` the consumed count is 0 (matches NetBSD: `*endptr ==
+/// nptr`). When `status == InvalidBase` no parsing was attempted.
+pub fn strtoi_impl(s: &[u8], base: i32, lo: i64, hi: i64) -> (i64, usize, BoundedStatus) {
+    let (val, n, status) = strtoimax_impl(s, base);
+    match status {
+        ConversionStatus::InvalidBase => (0, 0, BoundedStatus::InvalidBase),
+        ConversionStatus::Overflow => {
+            // Underlying parser saturated to i64::MAX; clamp again
+            // to the caller's hi (which is at most i64::MAX).
+            (hi, n, BoundedStatus::OutOfRange)
+        }
+        ConversionStatus::Underflow => (lo, n, BoundedStatus::OutOfRange),
+        ConversionStatus::Success => {
+            if n == 0 {
+                (0, 0, BoundedStatus::NoDigits)
+            } else if val < lo {
+                (lo, n, BoundedStatus::OutOfRange)
+            } else if val > hi {
+                (hi, n, BoundedStatus::OutOfRange)
+            } else {
+                (val, n, BoundedStatus::Success)
+            }
+        }
+    }
+}
+
+/// NetBSD `strtou`-style bounded unsigned parse. Wraps
+/// [`strtoumax_impl`], then validates the result against
+/// `[lo, hi]` inclusive (both u64). Out-of-range or overflow
+/// clamps the returned value to the violated bound. Negative
+/// inputs (a leading `-`) are passed through to
+/// [`strtoumax_impl`], whose wrapping_neg behavior matches glibc;
+/// the resulting wrapped value will simply fail the `> hi` check
+/// for any reasonable `hi`.
+pub fn strtou_impl(s: &[u8], base: i32, lo: u64, hi: u64) -> (u64, usize, BoundedStatus) {
+    let (val, n, status) = strtoumax_impl(s, base);
+    match status {
+        ConversionStatus::InvalidBase => (0, 0, BoundedStatus::InvalidBase),
+        ConversionStatus::Overflow => (hi, n, BoundedStatus::OutOfRange),
+        ConversionStatus::Underflow => (lo, n, BoundedStatus::OutOfRange),
+        ConversionStatus::Success => {
+            if n == 0 {
+                (0, 0, BoundedStatus::NoDigits)
+            } else if val < lo {
+                (lo, n, BoundedStatus::OutOfRange)
+            } else if val > hi {
+                (hi, n, BoundedStatus::OutOfRange)
+            } else {
+                (val, n, BoundedStatus::Success)
+            }
+        }
+    }
+}
+
 /// Helper for strtoumax
 pub fn strtoumax_impl(s: &[u8], base: i32) -> (u64, usize, ConversionStatus) {
     strtoul_impl(s, base)

@@ -255,7 +255,11 @@ fn estrlcat_overflow_invokes_callback() {
     let saved = install_test_callback();
     let mut buf = [0u8 as c_char; 8];
     unsafe {
-        std::ptr::copy_nonoverlapping(c"abcde".as_ptr() as *const u8, buf.as_mut_ptr() as *mut u8, 6);
+        std::ptr::copy_nonoverlapping(
+            c"abcde".as_ptr() as *const u8,
+            buf.as_mut_ptr() as *mut u8,
+            6,
+        );
     }
     let src = c"xyzwvu";
     let _ = unsafe { estrlcat(buf.as_mut_ptr(), src.as_ptr(), buf.len()) };

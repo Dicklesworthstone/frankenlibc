@@ -835,6 +835,100 @@ pub unsafe extern "C" fn strtoull(
 }
 
 // ---------------------------------------------------------------------------
+// strtoi / strtou (NetBSD bounded-integer parsers)
+// ---------------------------------------------------------------------------
+
+fn map_bounded_status(s: frankenlibc_core::stdlib::conversion::BoundedStatus) -> c_int {
+    use frankenlibc_core::stdlib::conversion::BoundedStatus as B;
+    match s {
+        B::Success => 0,
+        B::InvalidBase => libc::ENOTSUP,
+        B::NoDigits => libc::EINVAL,
+        B::OutOfRange => libc::ERANGE,
+    }
+}
+
+/// NetBSD `strtoi(nptr, endptr, base, lo, hi, rstatus)` — like
+/// [`strtoimax`] but additionally validates the parsed value against
+/// the inclusive range `[lo, hi]`. On out-of-range or underlying
+/// overflow the returned value is clamped to the violated bound.
+/// `*rstatus` (when non-NULL) receives one of:
+///
+/// - `0` — success, value was in range.
+/// - `EINVAL` — no digits could be parsed (`*endptr == nptr`).
+/// - `ENOTSUP` — `base` was outside `0` or `2..=36`.
+/// - `ERANGE` — value was out of `[lo, hi]` (clamped).
+///
+/// # Safety
+///
+/// `nptr` must be NUL-terminated. `endptr` and `rstatus`, when
+/// non-NULL, must point to writable storage of the appropriate
+/// type.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtoi(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    lo: intmax_t,
+    hi: intmax_t,
+    rstatus: *mut c_int,
+) -> intmax_t {
+    if nptr.is_null() {
+        if !rstatus.is_null() {
+            unsafe { *rstatus = libc::EINVAL };
+        }
+        return 0;
+    }
+    let (len, _terminated) = unsafe { scan_c_string(nptr, None) };
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
+    let (val, consumed, status) =
+        frankenlibc_core::stdlib::conversion::strtoi_impl(slice, base, lo, hi);
+    if !endptr.is_null() {
+        unsafe { *endptr = (nptr as *mut c_char).add(consumed) };
+    }
+    if !rstatus.is_null() {
+        unsafe { *rstatus = map_bounded_status(status) };
+    }
+    val
+}
+
+/// NetBSD `strtou(nptr, endptr, base, lo, hi, rstatus)` — like
+/// [`strtoumax`] but additionally validates the parsed value against
+/// the inclusive range `[lo, hi]` (interpreted as `uintmax_t`). See
+/// [`strtoi`] for the rstatus contract.
+///
+/// # Safety
+///
+/// Same as [`strtoi`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtou(
+    nptr: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+    lo: uintmax_t,
+    hi: uintmax_t,
+    rstatus: *mut c_int,
+) -> uintmax_t {
+    if nptr.is_null() {
+        if !rstatus.is_null() {
+            unsafe { *rstatus = libc::EINVAL };
+        }
+        return 0;
+    }
+    let (len, _terminated) = unsafe { scan_c_string(nptr, None) };
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
+    let (val, consumed, status) =
+        frankenlibc_core::stdlib::conversion::strtou_impl(slice, base, lo, hi);
+    if !endptr.is_null() {
+        unsafe { *endptr = (nptr as *mut c_char).add(consumed) };
+    }
+    if !rstatus.is_null() {
+        unsafe { *rstatus = map_bounded_status(status) };
+    }
+    val
+}
+
+// ---------------------------------------------------------------------------
 // exit
 // ---------------------------------------------------------------------------
 

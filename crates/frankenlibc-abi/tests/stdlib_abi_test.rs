@@ -13,7 +13,8 @@ use frankenlibc_abi::stdlib_abi::{
     get_phys_pages, getbsize, getenv, getsubopt, humanize_number, initstate, jrand48, l64a,
     lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, qsort_r, random,
     reallocarray, reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom, strtod,
-    strtof, strtold, strtoll, strtonum, strtoq, strtoull, strtouq, system, unsetenv,
+    strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq, system,
+    unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -7219,4 +7220,218 @@ fn sradixsort_preserves_input_order_among_collisions() {
             saved_addrs[3]
         ]
     );
+}
+
+// ---------------------------------------------------------------------------
+// strtoi / strtou (NetBSD bounded-integer parsers)
+// ---------------------------------------------------------------------------
+
+use libc::{intmax_t, uintmax_t};
+
+#[test]
+fn strtoi_in_range_returns_value_and_zero_status() {
+    let s = c"42";
+    let mut endptr: *mut c_char = std::ptr::null_mut();
+    let mut rstatus: c_int = -1;
+    let v = unsafe { strtoi(s.as_ptr(), &mut endptr, 10, 0, 100, &mut rstatus) };
+    assert_eq!(v, 42 as intmax_t);
+    assert_eq!(rstatus, 0);
+    // endptr should point past the consumed digits.
+    let consumed = unsafe { endptr.offset_from(s.as_ptr() as *mut c_char) };
+    assert_eq!(consumed, 2);
+}
+
+#[test]
+fn strtoi_below_lo_clamps_and_sets_erange() {
+    let s = c"-5";
+    let mut rstatus: c_int = 0;
+    let v = unsafe { strtoi(s.as_ptr(), std::ptr::null_mut(), 10, 0, 100, &mut rstatus) };
+    assert_eq!(v, 0 as intmax_t);
+    assert_eq!(rstatus, libc::ERANGE);
+}
+
+#[test]
+fn strtoi_above_hi_clamps_and_sets_erange() {
+    let s = c"500";
+    let mut rstatus: c_int = 0;
+    let v = unsafe { strtoi(s.as_ptr(), std::ptr::null_mut(), 10, 0, 100, &mut rstatus) };
+    assert_eq!(v, 100 as intmax_t);
+    assert_eq!(rstatus, libc::ERANGE);
+}
+
+#[test]
+fn strtoi_no_digits_sets_einval() {
+    let s = c"   xyz";
+    let mut endptr: *mut c_char = std::ptr::null_mut();
+    let mut rstatus: c_int = 0;
+    let v = unsafe { strtoi(s.as_ptr(), &mut endptr, 10, 0, 100, &mut rstatus) };
+    assert_eq!(v, 0 as intmax_t);
+    assert_eq!(rstatus, libc::EINVAL);
+    // endptr should match nptr per NetBSD convention on EINVAL.
+    assert_eq!(endptr as *const c_char, s.as_ptr());
+}
+
+#[test]
+fn strtoi_invalid_base_sets_enotsup() {
+    let s = c"42";
+    let mut rstatus: c_int = 0;
+    let v = unsafe { strtoi(s.as_ptr(), std::ptr::null_mut(), 1, 0, 100, &mut rstatus) };
+    assert_eq!(v, 0 as intmax_t);
+    assert_eq!(rstatus, libc::ENOTSUP);
+}
+
+#[test]
+fn strtoi_hex_prefix_with_base_zero_works() {
+    let s = c"0x2a";
+    let mut rstatus: c_int = -1;
+    let v = unsafe { strtoi(s.as_ptr(), std::ptr::null_mut(), 0, 0, 100, &mut rstatus) };
+    assert_eq!(v, 42 as intmax_t);
+    assert_eq!(rstatus, 0);
+}
+
+#[test]
+fn strtoi_negative_value_in_negative_range() {
+    let s = c"-7";
+    let mut rstatus: c_int = -1;
+    let v = unsafe {
+        strtoi(
+            s.as_ptr(),
+            std::ptr::null_mut(),
+            10,
+            -100,
+            100,
+            &mut rstatus,
+        )
+    };
+    assert_eq!(v, -7 as intmax_t);
+    assert_eq!(rstatus, 0);
+}
+
+#[test]
+fn strtoi_null_nptr_sets_einval() {
+    let mut rstatus: c_int = 0;
+    let v = unsafe {
+        strtoi(
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            10,
+            0,
+            100,
+            &mut rstatus,
+        )
+    };
+    assert_eq!(v, 0 as intmax_t);
+    assert_eq!(rstatus, libc::EINVAL);
+}
+
+#[test]
+fn strtoi_null_rstatus_does_not_crash() {
+    let s = c"42";
+    let v = unsafe {
+        strtoi(
+            s.as_ptr(),
+            std::ptr::null_mut(),
+            10,
+            0,
+            100,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(v, 42 as intmax_t);
+}
+
+#[test]
+fn strtoi_partial_consumption_records_endptr() {
+    let s = c"42xyz";
+    let mut endptr: *mut c_char = std::ptr::null_mut();
+    let mut rstatus: c_int = -1;
+    let v = unsafe { strtoi(s.as_ptr(), &mut endptr, 10, 0, 100, &mut rstatus) };
+    assert_eq!(v, 42 as intmax_t);
+    assert_eq!(rstatus, 0);
+    let consumed = unsafe { endptr.offset_from(s.as_ptr() as *mut c_char) };
+    assert_eq!(consumed, 2);
+    // The byte at endptr is 'x'.
+    assert_eq!(unsafe { *endptr } as u8, b'x');
+}
+
+#[test]
+fn strtou_in_range_returns_value_and_zero_status() {
+    let s = c"42";
+    let mut rstatus: c_int = -1;
+    let v = unsafe { strtou(s.as_ptr(), std::ptr::null_mut(), 10, 0, 100, &mut rstatus) };
+    assert_eq!(v, 42 as uintmax_t);
+    assert_eq!(rstatus, 0);
+}
+
+#[test]
+fn strtou_above_hi_clamps_and_sets_erange() {
+    let s = c"1000";
+    let mut rstatus: c_int = 0;
+    let v = unsafe { strtou(s.as_ptr(), std::ptr::null_mut(), 10, 0, 100, &mut rstatus) };
+    assert_eq!(v, 100 as uintmax_t);
+    assert_eq!(rstatus, libc::ERANGE);
+}
+
+#[test]
+fn strtou_below_lo_clamps_and_sets_erange() {
+    let s = c"5";
+    let mut rstatus: c_int = 0;
+    let v = unsafe { strtou(s.as_ptr(), std::ptr::null_mut(), 10, 10, 100, &mut rstatus) };
+    assert_eq!(v, 10 as uintmax_t);
+    assert_eq!(rstatus, libc::ERANGE);
+}
+
+#[test]
+fn strtou_no_digits_sets_einval() {
+    let s = c"   abc";
+    let mut endptr: *mut c_char = std::ptr::null_mut();
+    let mut rstatus: c_int = 0;
+    let v = unsafe { strtou(s.as_ptr(), &mut endptr, 10, 0, 100, &mut rstatus) };
+    assert_eq!(v, 0 as uintmax_t);
+    assert_eq!(rstatus, libc::EINVAL);
+    assert_eq!(endptr as *const c_char, s.as_ptr());
+}
+
+#[test]
+fn strtou_invalid_base_sets_enotsup() {
+    let s = c"42";
+    let mut rstatus: c_int = 0;
+    let v = unsafe { strtou(s.as_ptr(), std::ptr::null_mut(), 99, 0, 100, &mut rstatus) };
+    assert_eq!(v, 0 as uintmax_t);
+    assert_eq!(rstatus, libc::ENOTSUP);
+}
+
+#[test]
+fn strtou_hex_in_range_works() {
+    let s = c"0xff";
+    let mut rstatus: c_int = -1;
+    let v = unsafe {
+        strtou(
+            s.as_ptr(),
+            std::ptr::null_mut(),
+            16,
+            0,
+            0xffff,
+            &mut rstatus,
+        )
+    };
+    assert_eq!(v, 0xff as uintmax_t);
+    assert_eq!(rstatus, 0);
+}
+
+#[test]
+fn strtou_null_nptr_sets_einval() {
+    let mut rstatus: c_int = 0;
+    let v = unsafe {
+        strtou(
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            10,
+            0,
+            100,
+            &mut rstatus,
+        )
+    };
+    assert_eq!(v, 0 as uintmax_t);
+    assert_eq!(rstatus, libc::EINVAL);
 }
