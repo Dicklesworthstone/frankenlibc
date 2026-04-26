@@ -7559,3 +7559,129 @@ fn set_mempolicy_home_node_either_succeeds_or_returns_known_errno() {
         assert_eq!(rc, 0, "non-error return must be 0");
     }
 }
+
+// ---------------------------------------------------------------------------
+// statmount / listmount / finit_module / quotactl_fd / map_shadow_stack /
+// bpf / kexec_load / kexec_file_load
+// ---------------------------------------------------------------------------
+
+#[test]
+fn statmount_null_pointers_return_efault() {
+    use frankenlibc_abi::unistd_abi::statmount;
+    let rc = unsafe { statmount(std::ptr::null(), std::ptr::null_mut(), 0, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn listmount_null_pointers_return_efault() {
+    use frankenlibc_abi::unistd_abi::listmount;
+    let rc = unsafe { listmount(std::ptr::null(), std::ptr::null_mut(), 0, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn finit_module_invalid_fd_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::finit_module;
+    let rc = unsafe { finit_module(-1, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EBADF || errno == libc::EPERM || errno == libc::ENOSYS,
+        "unexpected finit_module errno: {errno}"
+    );
+}
+
+#[test]
+fn quotactl_fd_invalid_fd_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::quotactl_fd;
+    let rc = unsafe { quotactl_fd(0xFFFF_FFFF, 0, 0, std::ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EBADF || errno == libc::EINVAL || errno == libc::ENOSYS,
+        "unexpected quotactl_fd errno: {errno}"
+    );
+}
+
+#[test]
+fn map_shadow_stack_returns_known_errno_or_addr() {
+    use frankenlibc_abi::unistd_abi::map_shadow_stack;
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as libc::c_ulong;
+    let rc = unsafe { map_shadow_stack(0, page, 0) };
+    if rc < 0 {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS
+                || errno == libc::EOPNOTSUPP
+                || errno == libc::EINVAL
+                || errno == libc::ENOTSUP,
+            "unexpected map_shadow_stack errno: {errno}"
+        );
+    }
+}
+
+#[test]
+fn bpf_size_zero_with_null_attr_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::bpf;
+    // BPF_MAP_LOOKUP_ELEM = 1, NULL attr + size 0: kernel typically
+    // returns EINVAL; unprivileged callers may get EPERM.
+    let rc = unsafe { bpf(1, std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EINVAL || errno == libc::EPERM || errno == libc::ENOSYS,
+        "unexpected bpf errno: {errno}"
+    );
+}
+
+#[test]
+fn bpf_null_attr_with_positive_size_returns_efault() {
+    use frankenlibc_abi::unistd_abi::bpf;
+    let rc = unsafe { bpf(0, std::ptr::null_mut(), 16) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn kexec_load_with_null_segments_and_positive_count_returns_efault() {
+    use frankenlibc_abi::unistd_abi::kexec_load;
+    let rc = unsafe { kexec_load(0, 1, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn kexec_load_unprivileged_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::kexec_load;
+    let rc = unsafe { kexec_load(0, 0, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EPERM
+            || errno == libc::ENOSYS
+            || errno == libc::EINVAL
+            || errno == libc::EBUSY,
+        "unexpected kexec_load errno: {errno}"
+    );
+}
+
+#[test]
+fn kexec_file_load_unprivileged_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::kexec_file_load;
+    let rc = unsafe { kexec_file_load(-1, -1, 0, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EPERM
+            || errno == libc::ENOSYS
+            || errno == libc::EBADF
+            || errno == libc::EINVAL,
+        "unexpected kexec_file_load errno: {errno}"
+    );
+}

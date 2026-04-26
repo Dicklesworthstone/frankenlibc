@@ -5240,6 +5240,246 @@ pub unsafe extern "C" fn set_mempolicy_home_node(
 }
 
 // ---------------------------------------------------------------------------
+// Mount API (statmount/listmount), module loader (finit_module), quotactl_fd,
+// map_shadow_stack, bpf, kexec_load, kexec_file_load
+// ---------------------------------------------------------------------------
+
+/// Linux `statmount(*req, *out, bufsize, flags) -> int` (Linux 6.8+,
+/// syscall 457) — query a single mount by ID. Both `req` and `out`
+/// are opaque kernel structs (`struct mnt_id_req` / `struct
+/// statmount`) whose layouts are version-specific.
+///
+/// # Safety
+///
+/// `req` must point to a valid `struct mnt_id_req`. `out` must point
+/// to at least `bufsize` writable bytes that the kernel will fill with
+/// a `struct statmount`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn statmount(
+    req: *const c_void,
+    out: *mut c_void,
+    bufsize: usize,
+    flags: c_uint,
+) -> c_int {
+    if req.is_null() || out.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    const SYS_STATMOUNT: libc::c_long = 457;
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            SYS_STATMOUNT,
+            req as libc::c_long,
+            out as libc::c_long,
+            bufsize as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `listmount(*req, *mnt_ids, count, flags) -> int` (Linux
+/// 6.8+, syscall 458) — list child mount IDs of a mount into a
+/// `u64[count]` array.
+///
+/// # Safety
+///
+/// `req` must point to a valid `struct mnt_id_req`. `mnt_ids` must
+/// point to writable storage for at least `count` `u64` entries.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn listmount(
+    req: *const c_void,
+    mnt_ids: *mut u64,
+    count: usize,
+    flags: c_uint,
+) -> c_int {
+    if req.is_null() || (count > 0 && mnt_ids.is_null()) {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    const SYS_LISTMOUNT: libc::c_long = 458;
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            SYS_LISTMOUNT,
+            req as libc::c_long,
+            mnt_ids as libc::c_long,
+            count as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `finit_module(fd, *param_values, flags) -> int`
+/// (`SYS_finit_module = 313`) — load a kernel module from an open
+/// file descriptor.
+///
+/// # Safety
+///
+/// `param_values`, when non-NULL, must be a NUL-terminated C string
+/// of comma-separated parameter assignments.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn finit_module(
+    fd: c_int,
+    param_values: *const c_char,
+    flags: c_int,
+) -> c_int {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_finit_module,
+            fd as libc::c_long,
+            param_values as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `quotactl_fd(fd, cmd, id, *addr) -> int` (Linux 5.14+,
+/// `SYS_quotactl_fd = 443`) — like quotactl but uses an open fd of
+/// the filesystem instead of a block-device path.
+///
+/// # Safety
+///
+/// `addr` is interpreted per the supplied `cmd` (typically a
+/// pointer to a `struct dqblk`, `struct dqinfo`, etc.). When
+/// non-NULL it must point to readable/writable storage matching
+/// the cmd contract.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn quotactl_fd(
+    fd: c_uint,
+    cmd: c_int,
+    id: c_uint,
+    addr: *mut c_void,
+) -> c_int {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_quotactl_fd,
+            fd as libc::c_long,
+            cmd as libc::c_long,
+            id as libc::c_long,
+            addr as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `map_shadow_stack(addr, size, flags) -> long` (Linux
+/// 6.6+, syscall 453) — allocate a CET shadow stack for the calling
+/// thread on x86_64. `addr == 0` lets the kernel pick.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn map_shadow_stack(addr: c_ulong, size: c_ulong, flags: c_uint) -> c_long {
+    const SYS_MAP_SHADOW_STACK: libc::c_long = 453;
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            SYS_MAP_SHADOW_STACK,
+            addr as libc::c_long,
+            size as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno_long(rc) }
+}
+
+/// Linux `bpf(cmd, *attr, size) -> int` (`SYS_bpf = 321`) —
+/// universal eBPF entry point. The interpretation of `attr`
+/// depends on `cmd` (load program, create map, lookup, ...).
+///
+/// # Safety
+///
+/// `attr` must point to at least `size` bytes describing a valid
+/// `union bpf_attr` for the requested `cmd`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bpf(cmd: c_int, attr: *mut c_void, size: c_uint) -> c_int {
+    if size > 0 && attr.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_bpf,
+            cmd as libc::c_long,
+            attr as libc::c_long,
+            size as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `kexec_load(entry, nr_segments, *segments, flags) -> long`
+/// (`SYS_kexec_load = 246`) — load a kernel image (built up of
+/// in-memory segments) for a future `reboot(LINUX_REBOOT_CMD_KEXEC)`.
+///
+/// # Safety
+///
+/// `segments`, when `nr_segments > 0`, must point to an array of
+/// `nr_segments` `struct kexec_segment` entries.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn kexec_load(
+    entry: c_ulong,
+    nr_segments: c_ulong,
+    segments: *const c_void,
+    flags: c_ulong,
+) -> c_long {
+    if nr_segments > 0 && segments.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_kexec_load,
+            entry as libc::c_long,
+            nr_segments as libc::c_long,
+            segments as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno_long(rc) }
+}
+
+/// Linux `kexec_file_load(kernel_fd, initrd_fd, cmdline_len,
+/// *cmdline, flags) -> long` (`SYS_kexec_file_load = 320`) — load a
+/// kernel image from `kernel_fd` (and an optional `initrd_fd`) for
+/// a future `reboot(LINUX_REBOOT_CMD_KEXEC)`.
+///
+/// # Safety
+///
+/// `cmdline`, when `cmdline_len > 0`, must point to at least
+/// `cmdline_len` readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn kexec_file_load(
+    kernel_fd: c_int,
+    initrd_fd: c_int,
+    cmdline_len: c_ulong,
+    cmdline: *const c_char,
+    flags: c_ulong,
+) -> c_long {
+    if cmdline_len > 0 && cmdline.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_kexec_file_load,
+            kernel_fd as libc::c_long,
+            initrd_fd as libc::c_long,
+            cmdline_len as libc::c_long,
+            cmdline as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno_long(rc) }
+}
+
+// ---------------------------------------------------------------------------
 // Scheduler — RawSyscall
 // ---------------------------------------------------------------------------
 
