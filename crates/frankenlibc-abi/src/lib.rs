@@ -95,6 +95,8 @@ pub mod dirent_abi;
 #[cfg(not(test))]
 pub mod dlfcn_abi;
 #[cfg(not(test))]
+pub mod efun_abi;
+#[cfg(not(test))]
 pub mod err_abi;
 #[cfg(not(test))]
 pub mod fenv_abi;
