@@ -11621,3 +11621,57 @@ fn xattrat_family_propagates_kernel_errno_via_set_abi_errno() {
     let err = unsafe { *libc::__errno_location() };
     assert!(err != 0, "errno must be set after a failing syscall");
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 3 Linux 6.7+ futex2 syscall wrappers (bd-0ar9l)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn futex_wake_unaligned_address_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::futex_wake;
+    let mut buf = [0u8; 16];
+    let unaligned = unsafe { buf.as_mut_ptr().add(1) };
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe {
+        futex_wake(
+            unaligned as *mut c_void,
+            !0u64 as std::ffi::c_ulong,
+            1,
+            0x02,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn futex_wait_with_zero_timeout_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::futex_wait;
+    let word: u32 = 0xdead_beef;
+    let zero: libc::timespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe {
+        futex_wait(
+            &word as *const u32 as *mut c_void,
+            0xdead_beef_u64 as std::ffi::c_ulong,
+            !0u64 as std::ffi::c_ulong,
+            0x02,
+            &zero,
+            libc::CLOCK_MONOTONIC,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn futex_requeue_null_waiters_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::futex_requeue;
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { futex_requeue(std::ptr::null(), 0, 0, 0) };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
