@@ -2116,3 +2116,190 @@ fn inet_neta_zero_address_too_small_buffer_fails() {
     let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
     assert_eq!(errno, libc::EMSGSIZE);
 }
+
+// ---------------------------------------------------------------------------
+// ns_sprintrr / ns_sprintrrf
+// ---------------------------------------------------------------------------
+
+fn sprintrrf_to_str(
+    msg: &[u8],
+    name: &str,
+    class: u16,
+    ty: u16,
+    ttl: u32,
+    rdata: &[u8],
+    cap: usize,
+) -> Option<String> {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new(name).unwrap();
+    let mut buf = vec![0u8; cap];
+    let n = unsafe {
+        ns_sprintrrf(
+            msg.as_ptr(),
+            msg.len(),
+            cname.as_ptr(),
+            class,
+            ty,
+            ttl,
+            if rdata.is_empty() {
+                std::ptr::null()
+            } else {
+                rdata.as_ptr()
+            },
+            rdata.len(),
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    if n < 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&buf[..n as usize]).into_owned())
+}
+
+#[test]
+fn ns_sprintrrf_formats_a_record() {
+    // No msg context needed for A; pass an empty slice (msglen=0).
+    let s = sprintrrf_to_str(
+        &[],
+        "foo.com",
+        1, /*IN*/
+        1, /*A*/
+        3600,
+        &[127, 0, 0, 1],
+        64,
+    )
+    .unwrap();
+    assert_eq!(s, "foo.com 1H IN A 127.0.0.1");
+}
+
+#[test]
+fn ns_sprintrrf_formats_aaaa_record() {
+    let v6 = [
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01,
+    ];
+    let s = sprintrrf_to_str(&[], "host.example", 1, 28 /*AAAA*/, 60, &v6, 128).unwrap();
+    assert!(s.starts_with("host.example 1M IN AAAA "));
+    assert!(s.contains("2001:db8::1"));
+}
+
+#[test]
+fn ns_sprintrrf_formats_mx_record() {
+    // Build one synthetic msg that holds both the rdata bytes and the
+    // embedded target name so dn_expand has a valid view of the
+    // compressed pointer.
+    let mut msg = Vec::new();
+    msg.extend_from_slice(&[0u8; 12]); // dummy header padding
+    let rdata_off = msg.len();
+    msg.extend_from_slice(&[0, 10, 0xC0, 0]); // pref=10, ptr placeholder
+    let name_off = msg.len() as u16;
+    msg[rdata_off + 3] = name_off as u8; // patch ptr's low byte
+    msg.extend_from_slice(&[4, b'm', b'a', b'i', b'l', 3, b'c', b'o', b'm', 0]);
+
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new("example.com").unwrap();
+    let mut buf = [0u8; 128];
+    let n = unsafe {
+        ns_sprintrrf(
+            msg.as_ptr(),
+            msg.len(),
+            cname.as_ptr(),
+            1,
+            15,
+            60,
+            msg.as_ptr().add(rdata_off),
+            4,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(n > 0, "ns_sprintrrf returned {n}");
+    let s = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
+    assert!(s.starts_with("example.com 1M IN MX 10 "), "got: {s}");
+    assert!(s.contains("mail.com"), "got: {s}");
+}
+
+#[test]
+fn ns_sprintrrf_formats_txt_record_with_quoting() {
+    // TXT rdata: 1-byte length-prefixed strings.
+    let rdata = b"\x05hello\x06wo\"rld";
+    let s = sprintrrf_to_str(&[], "txt.example", 1, 16 /*TXT*/, 1, rdata, 128).unwrap();
+    assert_eq!(s, r#"txt.example 1S IN TXT "hello" "wo\"rld""#);
+}
+
+#[test]
+fn ns_sprintrrf_falls_back_to_rfc3597_for_unknown_type() {
+    let rdata = b"\x01\x02\x03";
+    let s = sprintrrf_to_str(&[], "weird.example", 1, 999 /*unknown*/, 0, rdata, 64).unwrap();
+    // Type prints as TYPE999, rdata as RFC 3597 generic.
+    assert_eq!(s, "weird.example 0S IN TYPE999 \\# 3 010203");
+}
+
+#[test]
+fn ns_sprintrrf_returns_minus_one_on_buffer_overflow() {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new("foo.com").unwrap();
+    let mut buf = [0u8; 4]; // way too small
+    let n = unsafe {
+        ns_sprintrrf(
+            std::ptr::null(),
+            0,
+            cname.as_ptr(),
+            1,
+            1,
+            3600,
+            [127u8, 0, 0, 1].as_ptr(),
+            4,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn ns_sprintrrf_rejects_malformed_a_rdata() {
+    // A record requires exactly 4 bytes; passing 3 is malformed.
+    let s = sprintrrf_to_str(&[], "foo.com", 1, 1 /*A*/, 3600, &[1, 2, 3], 64);
+    assert!(s.is_none());
+}
+
+#[test]
+fn ns_sprintrr_wraps_sprintrrf_via_handle_and_rr() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_initparse, ns_parserr, ns_sprintrr};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe {
+            ns_parserr(&mut handle, 1 /*an*/, 0, &mut rr)
+        },
+        0
+    );
+
+    let mut buf = [0u8; 128];
+    let n = unsafe {
+        ns_sprintrr(
+            &handle,
+            &rr,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(n > 0);
+    let s = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
+    assert!(s.contains(" IN A "), "got: {s}");
+    assert!(s.contains("127.0.0.1"), "got: {s}");
+}

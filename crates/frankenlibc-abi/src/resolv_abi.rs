@@ -3220,3 +3220,286 @@ pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) 
     unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr() as *const c_char, dst, needed) };
     odst
 }
+
+// ===========================================================================
+// libresolv ns_sprintrr / ns_sprintrrf — DNS RR text formatter
+// ===========================================================================
+//
+// Emits one resource record in BIND zone-file syntax:
+//
+//     name TTL class type rdata
+//
+// Per-type rdata formatting covers the common types (A, AAAA, NS,
+// CNAME, PTR, MX, TXT). Unknown types fall back to the RFC 3597
+// generic representation: `\# <rdlen> <hex bytes>`.
+
+fn write_class_into(class: u16, out: &mut String) {
+    use std::fmt::Write;
+    match class {
+        1 => out.push_str("IN"),
+        2 => out.push_str("CS"),
+        3 => out.push_str("CH"),
+        4 => out.push_str("HS"),
+        n => {
+            let _ = write!(out, "CLASS{n}");
+        }
+    }
+}
+
+fn write_type_into(ty: u16, out: &mut String) {
+    use std::fmt::Write;
+    match ty {
+        1 => out.push('A'),
+        2 => out.push_str("NS"),
+        5 => out.push_str("CNAME"),
+        6 => out.push_str("SOA"),
+        12 => out.push_str("PTR"),
+        15 => out.push_str("MX"),
+        16 => out.push_str("TXT"),
+        28 => out.push_str("AAAA"),
+        33 => out.push_str("SRV"),
+        n => {
+            let _ = write!(out, "TYPE{n}");
+        }
+    }
+}
+
+fn format_a_rdata(rdata: &[u8], out: &mut String) -> Result<(), ()> {
+    if rdata.len() != 4 {
+        return Err(());
+    }
+    use std::fmt::Write;
+    let _ = write!(out, "{}.{}.{}.{}", rdata[0], rdata[1], rdata[2], rdata[3]);
+    Ok(())
+}
+
+fn format_aaaa_rdata(rdata: &[u8], out: &mut String) -> Result<(), ()> {
+    if rdata.len() != 16 {
+        return Err(());
+    }
+    let bytes: [u8; 16] = rdata.try_into().map_err(|_| ())?;
+    let v6 = std::net::Ipv6Addr::from(bytes);
+    use std::fmt::Write;
+    let _ = write!(out, "{v6}");
+    Ok(())
+}
+
+unsafe fn format_name_rdata(
+    msg: *const u8,
+    msglen: usize,
+    rdata: *const u8,
+    out: &mut String,
+) -> Result<(), ()> {
+    if msg.is_null() || rdata.is_null() {
+        return Err(());
+    }
+    let mut tmp = [0u8; NS_MAXDNAME];
+    let eom = unsafe { msg.add(msglen) };
+    let n = unsafe {
+        crate::unistd_abi::dn_expand(
+            msg,
+            eom,
+            rdata,
+            tmp.as_mut_ptr() as *mut c_char,
+            NS_MAXDNAME as c_int,
+        )
+    };
+    if n < 0 {
+        return Err(());
+    }
+    let len = tmp.iter().position(|&b| b == 0).unwrap_or(tmp.len());
+    out.push_str(&String::from_utf8_lossy(&tmp[..len]));
+    Ok(())
+}
+
+fn format_txt_rdata(rdata: &[u8], out: &mut String) -> Result<(), ()> {
+    use std::fmt::Write;
+    let mut i = 0usize;
+    let mut first = true;
+    while i < rdata.len() {
+        let len = rdata[i] as usize;
+        i += 1;
+        if i + len > rdata.len() {
+            return Err(());
+        }
+        if !first {
+            out.push(' ');
+        }
+        first = false;
+        out.push('"');
+        for &b in &rdata[i..i + len] {
+            if b == b'"' || b == b'\\' {
+                out.push('\\');
+                out.push(b as char);
+            } else if (32..127).contains(&b) {
+                out.push(b as char);
+            } else {
+                let _ = write!(out, "\\{b:03}");
+            }
+        }
+        out.push('"');
+        i += len;
+    }
+    Ok(())
+}
+
+fn format_generic_rdata(rdata: &[u8], out: &mut String) {
+    use std::fmt::Write;
+    let _ = write!(out, "\\# {}", rdata.len());
+    if !rdata.is_empty() {
+        out.push(' ');
+        for &b in rdata {
+            let _ = write!(out, "{b:02X}");
+        }
+    }
+}
+
+unsafe fn format_rdata(
+    msg: *const u8,
+    msglen: usize,
+    ty: u16,
+    rdata: *const u8,
+    rdlen: usize,
+    out: &mut String,
+) -> Result<(), ()> {
+    let slice = if rdata.is_null() {
+        &[][..]
+    } else {
+        // SAFETY: caller-supplied rdata buffer of rdlen bytes.
+        unsafe { core::slice::from_raw_parts(rdata, rdlen) }
+    };
+    match ty {
+        1 => format_a_rdata(slice, out),
+        28 => format_aaaa_rdata(slice, out),
+        2 | 5 | 12 => unsafe { format_name_rdata(msg, msglen, rdata, out) },
+        15 => {
+            // MX: 2-byte preference + name
+            if slice.len() < 3 {
+                return Err(());
+            }
+            let pref = u16::from_be_bytes([slice[0], slice[1]]);
+            use std::fmt::Write;
+            let _ = write!(out, "{pref} ");
+            unsafe { format_name_rdata(msg, msglen, rdata.add(2), out) }
+        }
+        16 => format_txt_rdata(slice, out),
+        _ => {
+            format_generic_rdata(slice, out);
+            Ok(())
+        }
+    }
+}
+
+/// libresolv `ns_sprintrrf(msg, msglen, name, class, type, ttl,
+/// rdata, rdlen, name_ctx, origin, buf, buflen) -> int` — format
+/// one DNS resource record in BIND zone-file syntax.
+///
+/// `name_ctx` and `origin` are accepted for ABI compatibility but
+/// not used (the BIND reference uses them for zone-relative name
+/// shortening; we always emit fully-qualified names).
+///
+/// Returns the number of bytes written (excluding the terminating
+/// NUL) on success, or -1 on overflow / malformed rdata.
+///
+/// # Safety
+///
+/// All pointer arguments must point to readable buffers of the
+/// declared sizes. `buf`, when non-NULL, must point to at least
+/// `buflen` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ns_sprintrrf(
+    msg: *const u8,
+    msglen: usize,
+    name: *const c_char,
+    class: u16,
+    ty: u16,
+    ttl: u32,
+    rdata: *const u8,
+    rdlen: usize,
+    _name_ctx: *const c_char,
+    _origin: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    if buf.is_null() || name.is_null() || buflen == 0 {
+        return -1;
+    }
+    let name_bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+    let name_str = String::from_utf8_lossy(name_bytes);
+
+    let mut out = String::new();
+    out.push_str(&name_str);
+    out.push(' ');
+
+    let mut ttl_buf = [0u8; 32];
+    let ttl_n = unsafe { ns_format_ttl(ttl, ttl_buf.as_mut_ptr() as *mut c_char, ttl_buf.len()) };
+    if ttl_n < 0 {
+        return -1;
+    }
+    out.push_str(&String::from_utf8_lossy(&ttl_buf[..ttl_n as usize]));
+    out.push(' ');
+
+    write_class_into(class, &mut out);
+    out.push(' ');
+    write_type_into(ty, &mut out);
+    out.push(' ');
+
+    if unsafe { format_rdata(msg, msglen, ty, rdata, rdlen, &mut out) }.is_err() {
+        return -1;
+    }
+
+    let bytes = out.as_bytes();
+    let needed = bytes.len() + 1;
+    if needed > buflen {
+        return -1;
+    }
+    // SAFETY: buf has buflen >= needed bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, buf, bytes.len());
+        *buf.add(bytes.len()) = 0;
+    }
+    bytes.len() as c_int
+}
+
+/// libresolv `ns_sprintrr(handle, rr, name_ctx, origin, buf,
+/// buflen) -> int` — extract the fields from a parsed
+/// [`CNsMsg`] / [`CNsRr`] pair and forward to [`ns_sprintrrf`].
+///
+/// # Safety
+///
+/// `handle` and `rr` must be initialized (typically via
+/// [`ns_initparse`] + [`ns_parserr`]).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_sprintrr(
+    handle: *const CNsMsg,
+    rr: *const CNsRr,
+    name_ctx: *const c_char,
+    origin: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
+) -> c_int {
+    if handle.is_null() || rr.is_null() {
+        return -1;
+    }
+    // SAFETY: caller-supplied initialized handle/rr.
+    let msg = unsafe { (*handle)._msg };
+    let eom = unsafe { (*handle)._eom };
+    let msglen = if msg.is_null() || eom.is_null() {
+        0usize
+    } else {
+        let diff = unsafe { eom.offset_from(msg) };
+        diff as usize
+    };
+    let name = unsafe { (*rr).name.as_ptr() };
+    let class = unsafe { (*rr).rr_class };
+    let ty = unsafe { (*rr)._type };
+    let ttl = unsafe { (*rr).ttl };
+    let rdata = unsafe { (*rr).rdata };
+    let rdlen = unsafe { (*rr).rdlength } as usize;
+    unsafe {
+        ns_sprintrrf(
+            msg, msglen, name, class, ty, ttl, rdata, rdlen, name_ctx, origin, buf, buflen,
+        )
+    }
+}
