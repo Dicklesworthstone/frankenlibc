@@ -5207,3 +5207,292 @@ pub unsafe extern "C" fn getmode(bbox: *const c_void, current_mode: libc::mode_t
     };
     core_sm::apply(ops_slice, current_mode)
 }
+
+// ---------------------------------------------------------------------------
+// pidfile_open / pidfile_write / pidfile_close / pidfile_remove / pidfile_fileno
+// ---------------------------------------------------------------------------
+//
+// FreeBSD/libbsd PID-file management for daemons. The lock acquisition
+// path delegates to our just-shipped flopen (O_CREAT | O_RDWR | O_EXLOCK
+// | O_NONBLOCK), which atomically opens + locks. On lock contention we
+// open the file again (no flock) to read the existing locker's PID and
+// surface it through *otherpid.
+//
+// `struct pidfh` is opaque to the caller; we malloc a header that
+// stores the fd, the original path, and the path length so
+// pidfile_remove can unlink without re-resolving.
+
+#[repr(C)]
+pub struct PidFh {
+    fd: c_int,
+    /// Pointer to a malloc'd NUL-terminated copy of the path; freed
+    /// in pidfile_close / pidfile_remove.
+    path: *mut c_char,
+}
+
+const PIDFILE_DEFAULT_MODE: libc::mode_t = 0o600;
+
+unsafe fn copy_c_string(src: *const c_char) -> Option<*mut c_char> {
+    if src.is_null() {
+        return None;
+    }
+    // SAFETY: caller-supplied valid C string.
+    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes_with_nul();
+    let buf = unsafe { crate::malloc_abi::malloc(bytes.len()) } as *mut c_char;
+    if buf.is_null() {
+        return None;
+    }
+    // SAFETY: buf was just allocated for `bytes.len()` bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len());
+    }
+    Some(buf)
+}
+
+/// FreeBSD `pidfile_open(path, mode, *otherpid)` — open or create a
+/// PID-file at `path` with `mode` (defaults to 0o600 when 0) and
+/// acquire an exclusive flock on it. On lock contention returns
+/// NULL with errno=EEXIST and writes the existing locker's PID to
+/// `*otherpid` (parsed from the file's contents; -1 on parse failure).
+///
+/// Other failure modes return NULL with the appropriate errno from
+/// open/flock/malloc. The returned `*mut PidFh` must eventually be
+/// passed to [`pidfile_close`] or [`pidfile_remove`].
+///
+/// # Safety
+///
+/// `path` must be a valid NUL-terminated C string. `otherpid`, when
+/// non-NULL, must point to writable `pid_t` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfile_open(
+    path: *const c_char,
+    mode: libc::mode_t,
+    otherpid: *mut libc::pid_t,
+) -> *mut PidFh {
+    if path.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return ptr::null_mut();
+    }
+    let real_mode = if mode == 0 {
+        PIDFILE_DEFAULT_MODE
+    } else {
+        mode
+    };
+
+    // Try to acquire an exclusive non-blocking lock atomically with
+    // the open. flopen handles the O_EXLOCK | O_NONBLOCK strip + flock.
+    const LIBBSD_O_EXLOCK: c_int = 0x20;
+    let fd = unsafe {
+        crate::unistd_abi::flopen(
+            path,
+            libc::O_CREAT | libc::O_RDWR | LIBBSD_O_EXLOCK | libc::O_NONBLOCK,
+            real_mode,
+        )
+    };
+    if fd < 0 {
+        let err = unsafe { *crate::errno_abi::__errno_location() };
+        if err == libc::EAGAIN || err == libc::EWOULDBLOCK {
+            // Lock contention: read the locker's pid from the file
+            // contents and surface it through *otherpid.
+            unsafe { *crate::errno_abi::__errno_location() = libc::EEXIST };
+            if !otherpid.is_null() {
+                unsafe { *otherpid = read_pid_from_path(path) };
+            }
+        }
+        return ptr::null_mut();
+    }
+
+    // Allocate the opaque pidfh struct + dup the path.
+    let path_copy = match unsafe { copy_c_string(path) } {
+        Some(p) => p,
+        None => {
+            unsafe { crate::unistd_abi::close(fd) };
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return ptr::null_mut();
+        }
+    };
+    let pfh = unsafe { crate::malloc_abi::malloc(core::mem::size_of::<PidFh>()) } as *mut PidFh;
+    if pfh.is_null() {
+        unsafe { crate::malloc_abi::free(path_copy.cast()) };
+        unsafe { crate::unistd_abi::close(fd) };
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return ptr::null_mut();
+    }
+    // SAFETY: pfh is a freshly-allocated PidFh-sized buffer.
+    unsafe {
+        (*pfh).fd = fd;
+        (*pfh).path = path_copy;
+    }
+    pfh
+}
+
+/// FreeBSD `pidfile_write(pfh)` — truncate the underlying file and
+/// write the current process's PID as decimal ASCII. Returns 0 on
+/// success, -1 with errno on failure.
+///
+/// # Safety
+///
+/// `pfh` must be a pointer returned by [`pidfile_open`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfile_write(pfh: *mut PidFh) -> c_int {
+    if pfh.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: pfh came from pidfile_open.
+    let fd = unsafe { (*pfh).fd };
+    if fd < 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+
+    // Render the pid + trailing newline.
+    let pid = unsafe { crate::unistd_abi::getpid() };
+    let mut buf = [0u8; 24];
+    let n = render_pid_decimal(pid as i64, &mut buf);
+
+    // Truncate first so a shorter pid doesn't leave stale bytes.
+    if unsafe { crate::unistd_abi::ftruncate(fd, 0) } != 0 {
+        return -1;
+    }
+    // Seek to start (lseek(fd, 0, SEEK_SET)) — truncate doesn't move
+    // the file position. Use the libc lseek for simplicity.
+    if unsafe { libc::lseek(fd, 0, libc::SEEK_SET) } < 0 {
+        unsafe { set_abi_errno(*crate::errno_abi::__errno_location()) };
+        return -1;
+    }
+    let written = unsafe { crate::unistd_abi::write(fd, buf.as_ptr().cast(), n) };
+    if written != n as libc::ssize_t {
+        return -1;
+    }
+    0
+}
+
+/// FreeBSD `pidfile_close(pfh)` — release the lock and free the
+/// pidfh struct WITHOUT unlinking the file (used in
+/// double-fork patterns where the child inherits the file).
+///
+/// # Safety
+///
+/// `pfh` must be a pointer returned by [`pidfile_open`], not yet
+/// closed/removed.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfile_close(pfh: *mut PidFh) -> c_int {
+    if pfh.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: pfh came from pidfile_open.
+    unsafe {
+        let fd = (*pfh).fd;
+        if fd >= 0 {
+            crate::unistd_abi::close(fd);
+        }
+        if !(*pfh).path.is_null() {
+            crate::malloc_abi::free((*pfh).path.cast());
+        }
+        crate::malloc_abi::free(pfh.cast());
+    }
+    0
+}
+
+/// FreeBSD `pidfile_remove(pfh)` — unlink the file then close the
+/// pidfh struct. Standard daemon cleanup path.
+///
+/// # Safety
+///
+/// `pfh` must be a pointer returned by [`pidfile_open`], not yet
+/// closed/removed.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfile_remove(pfh: *mut PidFh) -> c_int {
+    if pfh.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: pfh came from pidfile_open.
+    let path = unsafe { (*pfh).path };
+    if !path.is_null() {
+        // SAFETY: path is the malloc'd copy made by pidfile_open.
+        unsafe { crate::unistd_abi::unlink(path) };
+    }
+    unsafe { pidfile_close(pfh) }
+}
+
+/// FreeBSD `pidfile_fileno(pfh)` — return the underlying fd or -1
+/// if `pfh` is NULL.
+///
+/// # Safety
+///
+/// `pfh`, when non-NULL, must be a pointer returned by
+/// [`pidfile_open`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfile_fileno(pfh: *const PidFh) -> c_int {
+    if pfh.is_null() {
+        return -1;
+    }
+    // SAFETY: pfh came from pidfile_open.
+    unsafe { (*pfh).fd }
+}
+
+unsafe fn read_pid_from_path(path: *const c_char) -> libc::pid_t {
+    // SAFETY: caller-supplied valid C string.
+    let fd = unsafe { libc::open(path, libc::O_RDONLY) };
+    if fd < 0 {
+        return -1;
+    }
+    let mut buf = [0u8; 32];
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+    unsafe { libc::close(fd) };
+    if n <= 0 {
+        return -1;
+    }
+    parse_decimal_pid(&buf[..n as usize]).unwrap_or(-1)
+}
+
+fn parse_decimal_pid(input: &[u8]) -> Option<libc::pid_t> {
+    let mut i = 0usize;
+    while i < input.len() && (input[i] == b' ' || input[i] == b'\t') {
+        i += 1;
+    }
+    let start = i;
+    let mut value: i64 = 0;
+    while i < input.len() && input[i].is_ascii_digit() {
+        value = value
+            .checked_mul(10)?
+            .checked_add((input[i] - b'0') as i64)?;
+        i += 1;
+    }
+    if i == start {
+        return None;
+    }
+    if value < 0 || value > i32::MAX as i64 {
+        return None;
+    }
+    Some(value as libc::pid_t)
+}
+
+fn render_pid_decimal(pid: i64, out: &mut [u8]) -> usize {
+    let mut tmp = [0u8; 24];
+    let mut len = 0usize;
+    let mut v = pid as u64;
+    if v == 0 {
+        tmp[0] = b'0';
+        len = 1;
+    } else {
+        while v > 0 {
+            tmp[len] = b'0' + (v % 10) as u8;
+            len += 1;
+            v /= 10;
+        }
+    }
+    let mut o = 0usize;
+    for i in 0..len {
+        out[o] = tmp[len - 1 - i];
+        o += 1;
+    }
+    if o < out.len() {
+        out[o] = b'\n';
+        o += 1;
+    }
+    o
+}

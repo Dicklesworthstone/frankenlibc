@@ -3,6 +3,7 @@
 //! Integration tests for `<stdlib.h>` ABI entrypoints.
 
 use std::ffi::{c_char, c_int};
+use std::os::unix::ffi::OsStrExt;
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
@@ -6447,7 +6448,10 @@ fn fmtcheck_pointer_distinct_from_string() {
 // StringList (NetBSD libutil sl_init / sl_add / sl_find / sl_free)
 // ---------------------------------------------------------------------------
 
-use frankenlibc_abi::stdlib_abi::{getmode, setmode, sl_add, sl_find, sl_free, sl_init};
+use frankenlibc_abi::stdlib_abi::{
+    getmode, pidfile_close, pidfile_fileno, pidfile_open, pidfile_remove, pidfile_write, setmode,
+    sl_add, sl_find, sl_free, sl_init,
+};
 
 #[test]
 fn sl_init_returns_empty_list() {
@@ -6704,4 +6708,140 @@ fn setmode_round_trip_with_multiple_clauses_and_apply() {
     let new_mode = unsafe { getmode(bbox, 0o777) };
     assert_eq!(new_mode, 0o4744);
     unsafe { libc::free(bbox) };
+}
+
+// ---------------------------------------------------------------------------
+// pidfile_* (FreeBSD libutil PID-file management)
+// ---------------------------------------------------------------------------
+
+static PIDFILE_TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn pidfile_temp_path(tag: &str) -> std::path::PathBuf {
+    let n = PIDFILE_TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "frankenlibc-pidfile-{tag}-{}-{n}.pid",
+        std::process::id()
+    ))
+}
+
+#[test]
+fn pidfile_open_creates_file_and_acquires_lock() {
+    let path = pidfile_temp_path("create");
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let pfh = unsafe { pidfile_open(cs.as_ptr(), 0, ptr::null_mut()) };
+    assert!(!pfh.is_null());
+    let fd = unsafe { pidfile_fileno(pfh) };
+    assert!(fd >= 0);
+    let rc = unsafe { pidfile_remove(pfh) };
+    assert_eq!(rc, 0);
+    // File should be unlinked.
+    assert!(!path.exists());
+}
+
+#[test]
+fn pidfile_write_then_read_back_pid() {
+    let path = pidfile_temp_path("write");
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let pfh = unsafe { pidfile_open(cs.as_ptr(), 0, ptr::null_mut()) };
+    assert!(!pfh.is_null());
+    let rc = unsafe { pidfile_write(pfh) };
+    assert_eq!(rc, 0);
+
+    // Read back the file contents.
+    let contents = std::fs::read_to_string(&path).unwrap();
+    let trimmed = contents.trim_end_matches(['\n', ' ']);
+    let written_pid: i32 = trimmed.parse().unwrap();
+    assert_eq!(written_pid, std::process::id() as i32);
+
+    let rc = unsafe { pidfile_remove(pfh) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn pidfile_open_when_already_locked_returns_eexist_with_otherpid() {
+    let path = pidfile_temp_path("contend");
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    // First handle takes the lock and writes its pid.
+    let first = unsafe { pidfile_open(cs.as_ptr(), 0, ptr::null_mut()) };
+    assert!(!first.is_null());
+    let rc = unsafe { pidfile_write(first) };
+    assert_eq!(rc, 0);
+
+    // Second open with the same path should fail with EEXIST and
+    // surface the first pid through *otherpid.
+    unsafe { *__errno_location() = 0 };
+    let mut other_pid: libc::pid_t = -1;
+    let second = unsafe { pidfile_open(cs.as_ptr(), 0, &mut other_pid) };
+    assert!(second.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EEXIST);
+    assert_eq!(other_pid, std::process::id() as i32);
+
+    let rc = unsafe { pidfile_remove(first) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn pidfile_close_releases_lock_without_unlinking() {
+    let path = pidfile_temp_path("close");
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let pfh = unsafe { pidfile_open(cs.as_ptr(), 0, ptr::null_mut()) };
+    assert!(!pfh.is_null());
+    let rc = unsafe { pidfile_close(pfh) };
+    assert_eq!(rc, 0);
+    // File should still exist on disk.
+    assert!(path.exists());
+    // Re-acquiring the lock should now succeed.
+    let pfh2 = unsafe { pidfile_open(cs.as_ptr(), 0, ptr::null_mut()) };
+    assert!(!pfh2.is_null(), "lock should be re-acquirable after close");
+    let _ = unsafe { pidfile_remove(pfh2) };
+}
+
+#[test]
+fn pidfile_open_null_path_returns_null_efault() {
+    unsafe { *__errno_location() = 0 };
+    let pfh = unsafe { pidfile_open(ptr::null(), 0, ptr::null_mut()) };
+    assert!(pfh.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+}
+
+#[test]
+fn pidfile_close_null_returns_minus_one() {
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { pidfile_close(ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn pidfile_remove_null_returns_minus_one() {
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { pidfile_remove(ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn pidfile_fileno_null_returns_minus_one() {
+    let fd = unsafe { pidfile_fileno(ptr::null()) };
+    assert_eq!(fd, -1);
+}
+
+#[test]
+fn pidfile_write_overwrites_previous_content() {
+    let path = pidfile_temp_path("overwrite");
+    // Pre-populate with garbage longer than a pid.
+    std::fs::write(&path, b"99999999999\n\nlots-of-junk").unwrap();
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let pfh = unsafe { pidfile_open(cs.as_ptr(), 0, ptr::null_mut()) };
+    assert!(!pfh.is_null());
+    let rc = unsafe { pidfile_write(pfh) };
+    assert_eq!(rc, 0);
+    let contents = std::fs::read_to_string(&path).unwrap();
+    let trimmed = contents.trim_end_matches('\n');
+    let written_pid: i32 = trimmed.parse().unwrap();
+    assert_eq!(written_pid, std::process::id() as i32);
+    // No leftover trailing junk.
+    assert!(contents.len() < 16, "got {contents:?}");
+    let _ = unsafe { pidfile_remove(pfh) };
 }
