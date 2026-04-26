@@ -18304,12 +18304,6 @@ pub unsafe extern "C" fn syscall(number: c_long, mut args: ...) -> c_long {
 // Process lifecycle extensions
 // ===========================================================================
 
-/// C99 `_Exit` — terminate immediately without cleanup.
-#[cfg_attr(not(debug_assertions), unsafe(export_name = "_Exit"))]
-pub unsafe extern "C" fn frankenlibc_exit_immediate(status: c_int) -> ! {
-    frankenlibc_core::syscall::sys_exit_group(status)
-}
-
 /// POSIX `execv` — execute file with argument vector.
 ///
 /// Native implementation: delegates to our own `execve` with inherited `environ`.
@@ -21904,7 +21898,8 @@ pub unsafe extern "C" fn pkey_set(pkey: c_int, rights: c_int) -> c_int {
 // _Exit / _Fork
 // ===========================================================================
 
-// _Exit is defined above as frankenlibc_exit_immediate (export_name = "_Exit")
+// _Exit is defined in process_abi.rs beside _exit so both process-termination
+// entrypoints share the same runtime-policy path.
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_snake_case)]
