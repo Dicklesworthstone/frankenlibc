@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-26T03:06:31Z",
+  "generated_at": "2026-04-26T17:23:35Z",
   "summary": {
     "total_symbols": 3996,
     "status_validated": 3996,
@@ -32,7 +32,7 @@
     "native_coverage_pct": 100.0
   },
   "trend": {
-    "baseline_report_path": "tests/conformance/support_matrix_maintenance_report.v1.json",
+    "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
     "baseline_loaded": true,
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
@@ -7147,6 +7147,16 @@
     },
     {
       "symbol": "__morecore",
+      "status": "Implemented",
+      "module": "glibc_internal_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "__pipe",
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "valid": true,

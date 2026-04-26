@@ -79,6 +79,34 @@
       "expected_outcome": "forbidden"
     },
     {
+      "id": "signal_abi_interpose_sigaction_allowed",
+      "mode": "interpose",
+      "module": "signal_abi",
+      "symbol": "sigaction",
+      "expected_outcome": "allowed"
+    },
+    {
+      "id": "signal_abi_replacement_sigaction_forbidden",
+      "mode": "replacement",
+      "module": "signal_abi",
+      "symbol": "sigaction",
+      "expected_outcome": "forbidden"
+    },
+    {
+      "id": "stdio_abi_interpose_strlen_allowed",
+      "mode": "interpose",
+      "module": "stdio_abi",
+      "symbol": "strlen",
+      "expected_outcome": "allowed"
+    },
+    {
+      "id": "stdio_abi_replacement_strlen_forbidden",
+      "mode": "replacement",
+      "module": "stdio_abi",
+      "symbol": "strlen",
+      "expected_outcome": "forbidden"
+    },
+    {
       "id": "stdlib_abi_interpose_malloc_allowed",
       "mode": "interpose",
       "module": "stdlib_abi",
@@ -154,15 +182,17 @@
     "artifact_refs"
   ],
   "summary": {
-    "fixture_count": 18,
-    "interpose_allowed_count": 9,
-    "replacement_forbidden_count": 9,
+    "fixture_count": 22,
+    "interpose_allowed_count": 11,
+    "replacement_forbidden_count": 11,
     "covered_callthrough_modules": [
       "dirent_abi",
       "glibc_internal_abi",
       "io_internal_abi",
       "pthread_abi",
       "rpc_abi",
+      "signal_abi",
+      "stdio_abi",
       "stdlib_abi",
       "string_abi",
       "unistd_abi",

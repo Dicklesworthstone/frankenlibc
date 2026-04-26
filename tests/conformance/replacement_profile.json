@@ -127,6 +127,8 @@
       "io_internal_abi",
       "pthread_abi",
       "rpc_abi",
+      "signal_abi",
+      "stdio_abi",
       "stdlib_abi",
       "string_abi",
       "unistd_abi",
@@ -184,12 +186,14 @@
         "note": "Directory-entry allocation helpers intentionally pair host malloc/free in interpose mode."
       },
       "glibc_internal_abi": {
-        "count": 6,
+        "count": 11,
         "functions": [
+          "abort",
           "free",
-          "malloc"
+          "malloc",
+          "write"
         ],
-        "note": "Internal compatibility helpers allocate host-visible directory and scratch buffers in interpose mode."
+        "note": "Internal compatibility helpers allocate host-visible directory/scratch buffers and preserve low-level diagnostic abort/write fallbacks in interpose mode."
       },
       "io_internal_abi": {
         "count": 3,
@@ -215,12 +219,35 @@
         ],
         "note": "RPC/XDR compatibility helpers still allocate host-visible buffers in interpose mode."
       },
-      "stdlib_abi": {
-        "count": 1,
+      "signal_abi": {
+        "count": 8,
         "functions": [
-          "malloc"
+          "raise",
+          "sigaction",
+          "sigaddset",
+          "sigemptyset",
+          "sigprocmask"
         ],
-        "note": "One stdlib helper returns a host-freeable allocated string in interpose mode."
+        "note": "Signal compatibility helpers still delegate selected sigset/action paths to host libc in interpose mode."
+      },
+      "stdio_abi": {
+        "count": 4,
+        "functions": [
+          "getenv",
+          "strlen"
+        ],
+        "note": "Stdio compatibility helpers retain selected host environment/string probes in interpose mode."
+      },
+      "stdlib_abi": {
+        "count": 5,
+        "functions": [
+          "close",
+          "lseek",
+          "malloc",
+          "open",
+          "read"
+        ],
+        "note": "Selected stdlib helpers still use host-visible allocation and descriptor probing in interpose mode."
       },
       "string_abi": {
         "count": 10,
@@ -231,11 +258,14 @@
         "note": "strdup/strndup and GNU argz APIs use host malloc/free so caller-owned buffers pair with libc::free in interpose and test builds."
       },
       "unistd_abi": {
-        "count": 2,
+        "count": 20,
         "functions": [
-          "malloc"
+          "abort",
+          "clock_gettime",
+          "malloc",
+          "write"
         ],
-        "note": "Path/name helpers allocate host-visible strings in interpose mode."
+        "note": "Unistd helpers retain host-visible allocation and selected legacy diagnostic/time probes in interpose mode."
       },
       "wchar_abi": {
         "count": 1,
@@ -245,7 +275,7 @@
         "note": "Wide-string duplication returns a host-freeable allocation in interpose mode."
       }
     },
-    "total_call_throughs": 41,
+    "total_call_throughs": 80,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }

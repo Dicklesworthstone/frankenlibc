@@ -2,7 +2,7 @@
   "index_version": 1,
   "run_id": "bd1qy-fixture-v1",
   "bead_id": "bd-1qy",
-  "generated_utc": "2026-04-26T01:07:45.439Z",
+  "generated_utc": "2026-04-26T17:28:42.870Z",
   "artifacts": [
     {
       "path": "tests/cve_arena/results/bd-1qy/bin/fixture_pthread_mutex_adversarial",
@@ -28,8 +28,8 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/hardened/rust_mutex_contention_counters/stderr.txt",
       "kind": "report",
-      "sha256": "17b1a53eb12b8cc11465c43bf989f58483af9221dc3a20745f910dc5333d9535",
-      "size_bytes": 440,
+      "sha256": "42cbb4a2a506f360db94efdb049fb2dc13341b550ecc02e7489eecc50d52ef63",
+      "size_bytes": 390,
       "description": "bd-1qy mutex fixture artifact"
     },
     {
@@ -42,8 +42,8 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/hardened/rust_mutex_destroy_while_locked_ebusy/stderr.txt",
       "kind": "report",
-      "sha256": "17b1a53eb12b8cc11465c43bf989f58483af9221dc3a20745f910dc5333d9535",
-      "size_bytes": 440,
+      "sha256": "f5e176173d9c72cf78e2e914f842260b81d6666b792afd6e5be66cc009a30407",
+      "size_bytes": 390,
       "description": "bd-1qy mutex fixture artifact"
     },
     {
@@ -56,8 +56,8 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/hardened/rust_mutex_roundtrip_trylock_busy/stderr.txt",
       "kind": "report",
-      "sha256": "1a98ecdeefbebf28b10ee0b4801766694ab60b445578d09ba0a574385d774136",
-      "size_bytes": 440,
+      "sha256": "42cbb4a2a506f360db94efdb049fb2dc13341b550ecc02e7489eecc50d52ef63",
+      "size_bytes": 390,
       "description": "bd-1qy mutex fixture artifact"
     },
     {
@@ -70,8 +70,8 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/hardened/rust_mutex_unlock_without_lock_eperm/stderr.txt",
       "kind": "report",
-      "sha256": "1a98ecdeefbebf28b10ee0b4801766694ab60b445578d09ba0a574385d774136",
-      "size_bytes": 440,
+      "sha256": "42cbb4a2a506f360db94efdb049fb2dc13341b550ecc02e7489eecc50d52ef63",
+      "size_bytes": 390,
       "description": "bd-1qy mutex fixture artifact"
     },
     {
@@ -84,7 +84,7 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/report.json",
       "kind": "report",
-      "sha256": "b1c995833d71e269418fffff662d496dd7b27b8ae63cf72cce6c3f965924a213",
+      "sha256": "1ed5ccedafa270c8841edb085a52d7269f2936e75ee3c85bf6247b3d08a1c88b",
       "size_bytes": 4350,
       "description": "bd-1qy mutex fixture artifact"
     },
@@ -105,8 +105,8 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/strict/rust_mutex_contention_counters/stderr.txt",
       "kind": "report",
-      "sha256": "17b1a53eb12b8cc11465c43bf989f58483af9221dc3a20745f910dc5333d9535",
-      "size_bytes": 440,
+      "sha256": "42cbb4a2a506f360db94efdb049fb2dc13341b550ecc02e7489eecc50d52ef63",
+      "size_bytes": 390,
       "description": "bd-1qy mutex fixture artifact"
     },
     {
@@ -119,8 +119,8 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/strict/rust_mutex_destroy_while_locked_ebusy/stderr.txt",
       "kind": "report",
-      "sha256": "17b1a53eb12b8cc11465c43bf989f58483af9221dc3a20745f910dc5333d9535",
-      "size_bytes": 440,
+      "sha256": "42cbb4a2a506f360db94efdb049fb2dc13341b550ecc02e7489eecc50d52ef63",
+      "size_bytes": 390,
       "description": "bd-1qy mutex fixture artifact"
     },
     {
@@ -133,8 +133,8 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/strict/rust_mutex_roundtrip_trylock_busy/stderr.txt",
       "kind": "report",
-      "sha256": "77644c8f700f4f14ae54e1ce2854f7c86f5ecd884cbc50b548b9871f01d55d3c",
-      "size_bytes": 528,
+      "sha256": "8918b60beb6143f8b4e19beae0d044507ad18c561f09f9e1353e6dc6412617ce",
+      "size_bytes": 478,
       "description": "bd-1qy mutex fixture artifact"
     },
     {
@@ -147,8 +147,8 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/strict/rust_mutex_unlock_without_lock_eperm/stderr.txt",
       "kind": "report",
-      "sha256": "17b1a53eb12b8cc11465c43bf989f58483af9221dc3a20745f910dc5333d9535",
-      "size_bytes": 440,
+      "sha256": "f5e176173d9c72cf78e2e914f842260b81d6666b792afd6e5be66cc009a30407",
+      "size_bytes": 390,
       "description": "bd-1qy mutex fixture artifact"
     },
     {
@@ -161,7 +161,7 @@
     {
       "path": "tests/cve_arena/results/bd-1qy/trace.jsonl",
       "kind": "log",
-      "sha256": "f137bf8a06276c388ab83cc37144cbed28da8ae5396739d5577215dcdc6e7c84",
+      "sha256": "2545f4da96655572b5f545d05908465cf738930728d93b851ab2e812294967fc",
       "size_bytes": 12494,
       "description": "bd-1qy mutex fixture artifact"
     }

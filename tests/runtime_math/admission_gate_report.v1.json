@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-w2c3.5.3",
-  "generated_at": "2026-04-26T01:11:15Z",
+  "generated_at": "2026-04-26T17:32:29Z",
   "status": "pass",
   "summary": {
     "total_modules": 69,
@@ -764,7 +764,7 @@
     },
     "ablation_report": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "5214a69db3b61d2495c76ae8bae6347c92ef4bf0a84f85401a8be1276169f2e8",
+      "sha256": "c30f0b2b808e06abefb9435c4f9f5c9b6e8d4f0e6a7e72f90e4c71407e7f3c0d",
       "size_bytes": 35306
     },
     "linkage": {

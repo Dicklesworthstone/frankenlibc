@@ -1,14 +1,14 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-04-26T01:08:16Z",
+  "generated_at": "2026-04-26T17:29:13Z",
   "summary": {
     "total_symbols": 3996,
-    "symbols_with_fixtures": 281,
-    "coverage_pct": 7,
-    "total_fixture_files": 55,
-    "total_fixture_cases": 1070,
-    "total_families": 45
+    "symbols_with_fixtures": 366,
+    "coverage_pct": 9,
+    "total_fixture_files": 56,
+    "total_fixture_cases": 1240,
+    "total_families": 46
   },
   "module_coverage": {
     "c11threads_abi": {
@@ -58,8 +58,8 @@
     },
     "grp_abi": {
       "total": 8,
-      "covered": 3,
-      "pct": 38
+      "covered": 4,
+      "pct": 50
     },
     "iconv_abi": {
       "total": 3,
@@ -123,13 +123,13 @@
     },
     "pwd_abi": {
       "total": 27,
-      "covered": 3,
-      "pct": 11
+      "covered": 4,
+      "pct": 15
     },
     "resolv_abi": {
       "total": 11,
-      "covered": 2,
-      "pct": 18
+      "covered": 3,
+      "pct": 27
     },
     "resource_abi": {
       "total": 2,
@@ -173,13 +173,13 @@
     },
     "stdbit_abi": {
       "total": 70,
-      "covered": 0,
-      "pct": 0
+      "covered": 70,
+      "pct": 100
     },
     "stdio_abi": {
       "total": 126,
-      "covered": 17,
-      "pct": 13
+      "covered": 29,
+      "pct": 23
     },
     "stdlib_abi": {
       "total": 152,
@@ -291,8 +291,9 @@
       ]
     },
     "grp": {
-      "function_count": 3,
+      "function_count": 4,
       "functions": [
+        "endgrent",
         "getgrgid",
         "getgrnam",
         "setgrent"
@@ -485,8 +486,9 @@
       ]
     },
     "pwd": {
-      "function_count": 3,
+      "function_count": 4,
       "functions": [
+        "endpwent",
         "getpwnam",
         "getpwuid",
         "setpwent"
@@ -503,12 +505,13 @@
       ]
     },
     "resolver": {
-      "function_count": 7,
+      "function_count": 8,
       "functions": [
         "DnsHeader::new_query",
         "ResolverConfig::default",
         "ResolverConfig::parse",
         "encode_domain_name",
+        "freeaddrinfo",
         "getaddrinfo",
         "gethostbyname",
         "lookup_hosts"
@@ -609,23 +612,110 @@
         "__libc_start_main"
       ]
     },
-    "stdio": {
-      "function_count": 14,
+    "stdbit": {
+      "function_count": 70,
       "functions": [
+        "stdc_bit_ceil_uc",
+        "stdc_bit_ceil_ui",
+        "stdc_bit_ceil_ul",
+        "stdc_bit_ceil_ull",
+        "stdc_bit_ceil_us",
+        "stdc_bit_floor_uc",
+        "stdc_bit_floor_ui",
+        "stdc_bit_floor_ul",
+        "stdc_bit_floor_ull",
+        "stdc_bit_floor_us",
+        "stdc_bit_width_uc",
+        "stdc_bit_width_ui",
+        "stdc_bit_width_ul",
+        "stdc_bit_width_ull",
+        "stdc_bit_width_us",
+        "stdc_count_ones_uc",
+        "stdc_count_ones_ui",
+        "stdc_count_ones_ul",
+        "stdc_count_ones_ull",
+        "stdc_count_ones_us",
+        "stdc_count_zeros_uc",
+        "stdc_count_zeros_ui",
+        "stdc_count_zeros_ul",
+        "stdc_count_zeros_ull",
+        "stdc_count_zeros_us",
+        "stdc_first_leading_one_uc",
+        "stdc_first_leading_one_ui",
+        "stdc_first_leading_one_ul",
+        "stdc_first_leading_one_ull",
+        "stdc_first_leading_one_us",
+        "stdc_first_leading_zero_uc",
+        "stdc_first_leading_zero_ui",
+        "stdc_first_leading_zero_ul",
+        "stdc_first_leading_zero_ull",
+        "stdc_first_leading_zero_us",
+        "stdc_first_trailing_one_uc",
+        "stdc_first_trailing_one_ui",
+        "stdc_first_trailing_one_ul",
+        "stdc_first_trailing_one_ull",
+        "stdc_first_trailing_one_us",
+        "stdc_first_trailing_zero_uc",
+        "stdc_first_trailing_zero_ui",
+        "stdc_first_trailing_zero_ul",
+        "stdc_first_trailing_zero_ull",
+        "stdc_first_trailing_zero_us",
+        "stdc_has_single_bit_uc",
+        "stdc_has_single_bit_ui",
+        "stdc_has_single_bit_ul",
+        "stdc_has_single_bit_ull",
+        "stdc_has_single_bit_us",
+        "stdc_leading_ones_uc",
+        "stdc_leading_ones_ui",
+        "stdc_leading_ones_ul",
+        "stdc_leading_ones_ull",
+        "stdc_leading_ones_us",
+        "stdc_leading_zeros_uc",
+        "stdc_leading_zeros_ui",
+        "stdc_leading_zeros_ul",
+        "stdc_leading_zeros_ull",
+        "stdc_leading_zeros_us",
+        "stdc_trailing_ones_uc",
+        "stdc_trailing_ones_ui",
+        "stdc_trailing_ones_ul",
+        "stdc_trailing_ones_ull",
+        "stdc_trailing_ones_us",
+        "stdc_trailing_zeros_uc",
+        "stdc_trailing_zeros_ui",
+        "stdc_trailing_zeros_ul",
+        "stdc_trailing_zeros_ull",
+        "stdc_trailing_zeros_us"
+      ]
+    },
+    "stdio": {
+      "function_count": 26,
+      "functions": [
+        "asprintf",
+        "dprintf",
         "fclose",
         "feof",
         "ferror",
         "fflush",
         "fgetc",
+        "fgets",
         "fileno",
         "fopen",
         "fprintf",
         "fputc",
+        "fputs",
         "fread",
         "fseek",
         "ftell",
         "fwrite",
-        "snprintf"
+        "printf",
+        "setbuf",
+        "setvbuf",
+        "snprintf",
+        "ungetc",
+        "vasprintf",
+        "vdprintf",
+        "vsnprintf",
+        "vsprintf"
       ]
     },
     "stdlib": {
@@ -866,9 +956,10 @@
     },
     "grp_ops": {
       "file": "grp_ops.json",
-      "sha256": "d024da84ffd3a64831aa394f12171fdb4f80f7644bc6123c893a12588f4d7f1e",
-      "case_count": 10,
+      "sha256": "e8c6079adeac9771b71afd2285a3f7908db19369666f75d91050631b5edba51b",
+      "case_count": 12,
       "functions": [
+        "endgrent",
         "getgrgid",
         "getgrnam",
         "setgrent"
@@ -1175,9 +1266,10 @@
     },
     "pwd_ops": {
       "file": "pwd_ops.json",
-      "sha256": "c1067ec074c21d789cd6c8828d5d68d3c5b695c7ec9b45e4bfebc868f2b72043",
-      "case_count": 10,
+      "sha256": "0aeff07220053c27647e932c6dc6ef75de4fa0bed53d0d44ea926489a53db5d1",
+      "case_count": 12,
       "functions": [
+        "endpwent",
         "getpwnam",
         "getpwuid",
         "setpwent"
@@ -1203,13 +1295,14 @@
     },
     "resolver": {
       "file": "resolver.json",
-      "sha256": "c8dce7e2fd8f24c451bc9642fdec080f32a2de028f63597bfdd9ff389ca77e63",
-      "case_count": 23,
+      "sha256": "69eef58330af4cfe9dd7dce47c4f9e329c7987877931591bcc95558fdaa7dfef",
+      "case_count": 25,
       "functions": [
         "DnsHeader::new_query",
         "ResolverConfig::default",
         "ResolverConfig::parse",
         "encode_domain_name",
+        "freeaddrinfo",
         "getaddrinfo",
         "gethostbyname",
         "lookup_hosts"
@@ -1361,25 +1454,117 @@
         "startup"
       ]
     },
+    "stdbit_ops": {
+      "file": "stdbit_ops.json",
+      "sha256": "a51ee977912bf7a52592590e060ade89ba228f81cd70935135aa9cb013087044",
+      "case_count": 140,
+      "functions": [
+        "stdc_bit_ceil_uc",
+        "stdc_bit_ceil_ui",
+        "stdc_bit_ceil_ul",
+        "stdc_bit_ceil_ull",
+        "stdc_bit_ceil_us",
+        "stdc_bit_floor_uc",
+        "stdc_bit_floor_ui",
+        "stdc_bit_floor_ul",
+        "stdc_bit_floor_ull",
+        "stdc_bit_floor_us",
+        "stdc_bit_width_uc",
+        "stdc_bit_width_ui",
+        "stdc_bit_width_ul",
+        "stdc_bit_width_ull",
+        "stdc_bit_width_us",
+        "stdc_count_ones_uc",
+        "stdc_count_ones_ui",
+        "stdc_count_ones_ul",
+        "stdc_count_ones_ull",
+        "stdc_count_ones_us",
+        "stdc_count_zeros_uc",
+        "stdc_count_zeros_ui",
+        "stdc_count_zeros_ul",
+        "stdc_count_zeros_ull",
+        "stdc_count_zeros_us",
+        "stdc_first_leading_one_uc",
+        "stdc_first_leading_one_ui",
+        "stdc_first_leading_one_ul",
+        "stdc_first_leading_one_ull",
+        "stdc_first_leading_one_us",
+        "stdc_first_leading_zero_uc",
+        "stdc_first_leading_zero_ui",
+        "stdc_first_leading_zero_ul",
+        "stdc_first_leading_zero_ull",
+        "stdc_first_leading_zero_us",
+        "stdc_first_trailing_one_uc",
+        "stdc_first_trailing_one_ui",
+        "stdc_first_trailing_one_ul",
+        "stdc_first_trailing_one_ull",
+        "stdc_first_trailing_one_us",
+        "stdc_first_trailing_zero_uc",
+        "stdc_first_trailing_zero_ui",
+        "stdc_first_trailing_zero_ul",
+        "stdc_first_trailing_zero_ull",
+        "stdc_first_trailing_zero_us",
+        "stdc_has_single_bit_uc",
+        "stdc_has_single_bit_ui",
+        "stdc_has_single_bit_ul",
+        "stdc_has_single_bit_ull",
+        "stdc_has_single_bit_us",
+        "stdc_leading_ones_uc",
+        "stdc_leading_ones_ui",
+        "stdc_leading_ones_ul",
+        "stdc_leading_ones_ull",
+        "stdc_leading_ones_us",
+        "stdc_leading_zeros_uc",
+        "stdc_leading_zeros_ui",
+        "stdc_leading_zeros_ul",
+        "stdc_leading_zeros_ull",
+        "stdc_leading_zeros_us",
+        "stdc_trailing_ones_uc",
+        "stdc_trailing_ones_ui",
+        "stdc_trailing_ones_ul",
+        "stdc_trailing_ones_ull",
+        "stdc_trailing_ones_us",
+        "stdc_trailing_zeros_uc",
+        "stdc_trailing_zeros_ui",
+        "stdc_trailing_zeros_ul",
+        "stdc_trailing_zeros_ull",
+        "stdc_trailing_zeros_us"
+      ],
+      "families": [
+        "stdbit"
+      ]
+    },
     "stdio_file_ops": {
       "file": "stdio_file_ops.json",
-      "sha256": "ab78ae85679876747bce385d301443b8c21b5101dfb45414550635116a0f1d81",
-      "case_count": 28,
+      "sha256": "363389c7f9177893dd9745a05610a8c47564c6614e3b5b9c155e9213975570be",
+      "case_count": 52,
       "functions": [
+        "asprintf",
+        "dprintf",
         "fclose",
         "feof",
         "ferror",
         "fflush",
         "fgetc",
+        "fgets",
         "fileno",
         "fopen",
         "fprintf",
         "fputc",
+        "fputs",
         "fread",
         "fseek",
         "ftell",
         "fwrite",
-        "snprintf"
+        "printf",
+        "setbuf",
+        "setvbuf",
+        "snprintf",
+        "ungetc",
+        "vasprintf",
+        "vdprintf",
+        "vsnprintf",
+        "vsprintf"
       ],
       "families": [
         "stdio"

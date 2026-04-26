@@ -1,7 +1,7 @@
 {
   "index_version": 1,
   "bead_id": "bd-ahjd",
-  "generated_utc": "2026-04-26T01:11:25.816Z",
+  "generated_utc": "2026-04-26T17:32:41.538Z",
   "artifacts": [
     {
       "path": "tests/conformance/fixtures/setjmp_nested_edges.json",
@@ -16,12 +16,12 @@
     {
       "path": "target/conformance/setjmp_fixture_pack.log.jsonl",
       "kind": "jsonl",
-      "sha256": "a4e8d6741e85daa772ed2a84acd7bfb61b0ef1a02497aa9b38b8c5a756f22c73"
+      "sha256": "3fb921e38504acd30fd912eb5442d4d86ae71aa86e922d7035a07c0ea097b314"
     },
     {
       "path": "tests/cve_arena/results/bd-ahjd/trace.jsonl",
       "kind": "jsonl",
-      "sha256": "a4e8d6741e85daa772ed2a84acd7bfb61b0ef1a02497aa9b38b8c5a756f22c73"
+      "sha256": "3fb921e38504acd30fd912eb5442d4d86ae71aa86e922d7035a07c0ea097b314"
     },
     {
       "path": "docs/setjmp/non_local_jump_triage.md",

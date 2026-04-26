@@ -5,9 +5,9 @@
   "description": "Unified stub/TODO debt census combining exported taxonomy status with critical non-exported source debt and deterministic risk ranking.",
   "source": {
     "support_matrix_path": "support_matrix.json",
-    "support_matrix_sha256": "d9714dd1c9adcb7fda93d2e51f41089ebac0b6fad76ebe88b34ea3f0713466da",
+    "support_matrix_sha256": "9cec31fd68f0dee107918b38c72b6123e31bea8b9399927af652d166d093c453",
     "replacement_profile_path": "tests/conformance/replacement_profile.json",
-    "replacement_profile_sha256": "badded98f3322620be298df80f37504b6d738c5413eb1af6a179449a1fa9c8f2",
+    "replacement_profile_sha256": "0906bdf60021a01756305161d24f500ad5aa04718131056031db0dd153cfbfb8",
     "scan_roots": [
       "crates/frankenlibc-core/src",
       "crates/frankenlibc-abi/src"
@@ -115,6 +115,8 @@
       "io_internal_abi",
       "pthread_abi",
       "rpc_abi",
+      "signal_abi",
+      "stdio_abi",
       "stdlib_abi",
       "string_abi",
       "unistd_abi",
@@ -127,6 +129,8 @@
       "io_internal_abi",
       "pthread_abi",
       "rpc_abi",
+      "signal_abi",
+      "stdio_abi",
       "stdlib_abi",
       "string_abi",
       "unistd_abi",

@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-26T01:10:53Z",
+  "generated_at": "2026-04-26T17:32:01Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -27,8 +27,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "d9714dd1c9adcb7fda93d2e51f41089ebac0b6fad76ebe88b34ea3f0713466da",
-      "size_bytes": 947549,
+      "sha256": "9cec31fd68f0dee107918b38c72b6123e31bea8b9399927af652d166d093c453",
+      "size_bytes": 947625,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "446ff54bbd307fac7fca020a3132138357b89ae6c1cb05406994ca19a126e349",
+      "sha256": "e8cc500dca05fb1e43c422374bb1d65d6e52db1f2fcd15978cdca5770e4c28b8",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "5214a69db3b61d2495c76ae8bae6347c92ef4bf0a84f85401a8be1276169f2e8",
+      "sha256": "c30f0b2b808e06abefb9435c4f9f5c9b6e8d4f0e6a7e72f90e4c71407e7f3c0d",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "f6da039ebcbd4ec7653cf6517b125161830192149b311adccae58fb2cc5e721b",
+      "sha256": "7be13c62d560c6cfcf88e4e5b5c576c9a463393baa35fcd758bf60b55ca7fd4a",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -171,8 +171,8 @@
       "kind": "report",
       "required": true,
       "critical": false,
-      "sha256": "fffd009c03853d5c743be56cc40367e21b0872f76d3211bfb4584d16388f927c",
-      "size_bytes": 1787651,
+      "sha256": "6b4e74f776d6c4cb874a1afd978998b86c2cccf80dbe0814b66413c518397c66",
+      "size_bytes": 1789823,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -210,8 +210,8 @@
   "integrity_index": {
     "support_matrix": {
       "path": "support_matrix.json",
-      "sha256": "d9714dd1c9adcb7fda93d2e51f41089ebac0b6fad76ebe88b34ea3f0713466da",
-      "size_bytes": 947549
+      "sha256": "9cec31fd68f0dee107918b38c72b6123e31bea8b9399927af652d166d093c453",
+      "size_bytes": 947625
     },
     "reality_report": {
       "path": "tests/conformance/reality_report.v1.json",
@@ -230,7 +230,7 @@
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "446ff54bbd307fac7fca020a3132138357b89ae6c1cb05406994ca19a126e349",
+      "sha256": "e8cc500dca05fb1e43c422374bb1d65d6e52db1f2fcd15978cdca5770e4c28b8",
       "size_bytes": 5609
     },
     "replacement_levels": {
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "5214a69db3b61d2495c76ae8bae6347c92ef4bf0a84f85401a8be1276169f2e8",
+      "sha256": "c30f0b2b808e06abefb9435c4f9f5c9b6e8d4f0e6a7e72f90e4c71407e7f3c0d",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "f6da039ebcbd4ec7653cf6517b125161830192149b311adccae58fb2cc5e721b",
+      "sha256": "7be13c62d560c6cfcf88e4e5b5c576c9a463393baa35fcd758bf60b55ca7fd4a",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -270,8 +270,8 @@
     },
     "symbol_fixture_coverage": {
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "fffd009c03853d5c743be56cc40367e21b0872f76d3211bfb4584d16388f927c",
-      "size_bytes": 1787651
+      "sha256": "6b4e74f776d6c4cb874a1afd978998b86c2cccf80dbe0814b66413c518397c66",
+      "size_bytes": 1789823
     },
     "closure_contract": {
       "path": "tests/conformance/closure_contract.v1.json",
@@ -288,89 +288,89 @@
     },
     "entries": [
       {
-        "id": "bd-d8us8",
-        "title": "PORT: __b64_ntop + __b64_pton (RFC 4648 base64 from BIND/libresolv)",
+        "id": "bd-92dkc",
+        "title": "PORT: set_robust_list / get_robust_list + lsm_get_self_attr / set_self_attr / list_modules",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-25T15:28:18.195790239Z",
+        "closed_at": "2026-04-26T17:26:18.912541046Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: core::resolv::b64 (RFC 4648 ntop/pton) + glibc_internal_abi b64_ntop/b64_pton/__b64_ntop/__b64_pton; 17+12 tests; clippy-clean"
+        "close_reason": "shipped: 5 syscall wrappers (set_robust_list, get_robust_list, lsm_get_self_attr, lsm_set_self_attr, lsm_list_modules) + 8 abi tests with thread-runner robust-list round-trip preserved via save/resto\u2026"
       },
       {
-        "id": "bd-voxzi",
-        "title": "PORT: strnstr (BSD bounded substring search)",
+        "id": "bd-dyh3u",
+        "title": "PORT: statmount/listmount + finit_module + quotactl_fd + map_shadow_stack + bpf + kexec_load + kexec_file_load (8 modern Linux syscalls)",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-25T15:18:35.590011542Z",
+        "closed_at": "2026-04-26T17:18:28.136792663Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: core::string::str::strnstr + string_abi::strnstr; 12+10 tests; bound-respecting via core_strnlen; clippy-clean"
+        "close_reason": "shipped: 8 modern Linux syscall wrappers (statmount, listmount, finit_module, quotactl_fd, map_shadow_stack, bpf, kexec_load, kexec_file_load) + 10 abi tests covering NULL guards + privilege/kernel f\u2026"
       },
       {
-        "id": "bd-pjego",
-        "title": "PORT: strmode (BSD mode-bit-to-ls-style-string)",
+        "id": "bd-i8ind",
+        "title": "PORT: NUMA memory-policy family (set/get_mempolicy + mbind + migrate_pages + move_pages + set_mempolicy_home_node)",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-25T15:09:39.325721700Z",
+        "closed_at": "2026-04-26T17:09:37.640743114Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: core::stat::strmode_bytes + string_abi::strmode; new core stat module; 28+8 tests; clippy-clean"
+        "close_reason": "shipped: 6 NUMA memory-policy syscall wrappers + raw_syscall_with_errno_long helper + 6 abi tests including round-trip MPOL_DEFAULT and live page query via move_pages"
       },
       {
-        "id": "bd-vcma4",
-        "title": "PORT: warnc + vwarnc + errc + verrc (BSD err.h explicit-code variants)",
+        "id": "bd-4ny4d",
+        "title": "PORT: mseal + memfd_secret + rseq + cachestat (modern Linux syscall wrappers)",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-25T15:00:22.296941903Z",
+        "closed_at": "2026-04-26T17:00:22.922862800Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: warnc/vwarnc/errc/verrc in err_abi.rs via shared write_err_message_with_code helper; 12 integration tests; clippy-clean"
+        "close_reason": "shipped: 4 modern Linux syscall wrappers (mseal, memfd_secret, rseq, cachestat) + raw_syscall_with_errno helper + 5 abi tests including verified post-seal munmap rejection and 4KiB cachestat round-tr\u2026"
       },
       {
-        "id": "bd-xl4sb",
-        "title": "PORT: freezero + recallocarray (OpenBSD secret-zeroing allocators)",
+        "id": "bd-25xxp",
+        "title": "PORT: openat2 + futex_waitv (modern Linux libc syscall wrappers)",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-25T14:53:57.255131170Z",
+        "closed_at": "2026-04-26T16:51:40.509316267Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: freezero + recallocarray in stdlib_abi.rs delegating to malloc_abi+explicit_bzero; 9 integration tests; clippy-clean"
+        "close_reason": "shipped: openat2 (SYS_openat2 syscall + errno bridge) + futex_waitv (forwards to core sys_futex_waitv); 6 abi tests including happy-path open+read, struct-size validation, NULL guards, and ETIMEDOUT\u2026"
       },
       {
-        "id": "bd-nx5jz",
-        "title": "PORT: timingsafe_bcmp + timingsafe_memcmp (BSD constant-time compare)",
+        "id": "bd-rcrw7",
+        "title": "PORT: mq_clocksend + mq_clockreceive (clockid_t variants of POSIX mq_timed*)",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-25T14:43:51.201486673Z",
+        "closed_at": "2026-04-26T16:42:15.742594619Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: core::string::timingsafe + abi shims (timingsafe_bcmp, timingsafe_memcmp); 23 core + 10 abi tests; clippy-clean"
+        "close_reason": "shipped: mq_clocksend + mq_clockreceive with CLOCK_REALTIME passthrough + CLOCK_MONOTONIC abstime rebasing + EINVAL guard for unknown clockids; 4 abi tests including round-trip on both clocks and ETI\u2026"
       },
       {
-        "id": "bd-h3pp8",
-        "title": "PORT: posix_close (POSIX 2024 explicit-error close)",
+        "id": "bd-cmimx",
+        "title": "PORT: ns_sprintrr + ns_sprintrrf (libresolv RR formatter, common types + RFC3597 fallback)",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-25T14:34:15.741200606Z",
+        "closed_at": "2026-04-26T16:33:05.163322872Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "Duplicate of bd-zuy8 (already shipped at commit 48263c3c). posix_close is implemented in unistd_abi.rs:283 with 3 integration tests covering valid-fd close, unknown-flag EINVAL rejection, and invalid\u2026"
+        "close_reason": "shipped: ns_sprintrr + ns_sprintrrf with per-type rdata formatters for A/AAAA/NS/CNAME/PTR/MX/TXT and RFC 3597 generic fallback for unknown types + 8 abi tests including end-to-end through ns_initpar\u2026"
       },
       {
-        "id": "bd-nsap-epic",
-        "title": "PORT: inet_nsap_addr/ntoa NSAP address text\u2194binary to core::inet::nsap",
-        "issue_type": "epic",
-        "priority": 1,
-        "closed_at": "2026-04-25T12:55:12.426494Z",
-        "closed_by": "unknown",
+        "id": "bd-qvo19",
+        "title": "PORT: libresolv inet_neta (network number to text)",
+        "issue_type": "feature",
+        "priority": 2,
+        "closed_at": "2026-04-26T16:18:57.498236320Z",
+        "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": ""
+        "close_reason": "shipped: peer landed inet_neta + tests in fa4643e0 right before my commit; my local edits duplicated theirs and merged cleanly. impl + 5 abi tests covering trailing/internal/special-zero cases + EMSG\u2026"
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-d8us8` PORT: __b64_ntop + __b64_pton (RFC 4648 base64 from BIND/libresolv) (feature, closed 2026-04-25T15:28:18.195790239Z)\n  shipped: core::resolv::b64 (RFC 4648 ntop/pton) + glibc_internal_abi b64_ntop/b64_pton/__b64_ntop/__b64_pton; 17+12 tests; clippy-clean\n- `bd-voxzi` PORT: strnstr (BSD bounded substring search) (feature, closed 2026-04-25T15:18:35.590011542Z)\n  shipped: core::string::str::strnstr + string_abi::strnstr; 12+10 tests; bound-respecting via core_strnlen; clippy-clean\n- `bd-pjego` PORT: strmode (BSD mode-bit-to-ls-style-string) (feature, closed 2026-04-25T15:09:39.325721700Z)\n  shipped: core::stat::strmode_bytes + string_abi::strmode; new core stat module; 28+8 tests; clippy-clean\n- `bd-vcma4` PORT: warnc + vwarnc + errc + verrc (BSD err.h explicit-code variants) (feature, closed 2026-04-25T15:00:22.296941903Z)\n  shipped: warnc/vwarnc/errc/verrc in err_abi.rs via shared write_err_message_with_code helper; 12 integration tests; clippy-clean\n- `bd-xl4sb` PORT: freezero + recallocarray (OpenBSD secret-zeroing allocators) (feature, closed 2026-04-25T14:53:57.255131170Z)\n  shipped: freezero + recallocarray in stdlib_abi.rs delegating to malloc_abi+explicit_bzero; 9 integration tests; clippy-clean\n- `bd-nx5jz` PORT: timingsafe_bcmp + timingsafe_memcmp (BSD constant-time compare) (feature, closed 2026-04-25T14:43:51.201486673Z)\n  shipped: core::string::timingsafe + abi shims (timingsafe_bcmp, timingsafe_memcmp); 23 core + 10 abi tests; clippy-clean\n- `bd-h3pp8` PORT: posix_close (POSIX 2024 explicit-error close) (feature, closed 2026-04-25T14:34:15.741200606Z)\n  Duplicate of bd-zuy8 (already shipped at commit 48263c3c). posix_close is implemented in unistd_abi.rs:283 with 3 integration tests covering valid-fd close, unknown-flag EINVAL rejection, and invalid\u2026\n- `bd-nsap-epic` PORT: inet_nsap_addr/ntoa NSAP address text\u2194binary to core::inet::nsap (epic, closed 2026-04-25T12:55:12.426494Z)\n  Closed without a recorded reason.",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-92dkc` PORT: set_robust_list / get_robust_list + lsm_get_self_attr / set_self_attr / list_modules (feature, closed 2026-04-26T17:26:18.912541046Z)\n  shipped: 5 syscall wrappers (set_robust_list, get_robust_list, lsm_get_self_attr, lsm_set_self_attr, lsm_list_modules) + 8 abi tests with thread-runner robust-list round-trip preserved via save/resto\u2026\n- `bd-dyh3u` PORT: statmount/listmount + finit_module + quotactl_fd + map_shadow_stack + bpf + kexec_load + kexec_file_load (8 modern Linux syscalls) (feature, closed 2026-04-26T17:18:28.136792663Z)\n  shipped: 8 modern Linux syscall wrappers (statmount, listmount, finit_module, quotactl_fd, map_shadow_stack, bpf, kexec_load, kexec_file_load) + 10 abi tests covering NULL guards + privilege/kernel f\u2026\n- `bd-i8ind` PORT: NUMA memory-policy family (set/get_mempolicy + mbind + migrate_pages + move_pages + set_mempolicy_home_node) (feature, closed 2026-04-26T17:09:37.640743114Z)\n  shipped: 6 NUMA memory-policy syscall wrappers + raw_syscall_with_errno_long helper + 6 abi tests including round-trip MPOL_DEFAULT and live page query via move_pages\n- `bd-4ny4d` PORT: mseal + memfd_secret + rseq + cachestat (modern Linux syscall wrappers) (feature, closed 2026-04-26T17:00:22.922862800Z)\n  shipped: 4 modern Linux syscall wrappers (mseal, memfd_secret, rseq, cachestat) + raw_syscall_with_errno helper + 5 abi tests including verified post-seal munmap rejection and 4KiB cachestat round-tr\u2026\n- `bd-25xxp` PORT: openat2 + futex_waitv (modern Linux libc syscall wrappers) (feature, closed 2026-04-26T16:51:40.509316267Z)\n  shipped: openat2 (SYS_openat2 syscall + errno bridge) + futex_waitv (forwards to core sys_futex_waitv); 6 abi tests including happy-path open+read, struct-size validation, NULL guards, and ETIMEDOUT\u2026\n- `bd-rcrw7` PORT: mq_clocksend + mq_clockreceive (clockid_t variants of POSIX mq_timed*) (feature, closed 2026-04-26T16:42:15.742594619Z)\n  shipped: mq_clocksend + mq_clockreceive with CLOCK_REALTIME passthrough + CLOCK_MONOTONIC abstime rebasing + EINVAL guard for unknown clockids; 4 abi tests including round-trip on both clocks and ETI\u2026\n- `bd-cmimx` PORT: ns_sprintrr + ns_sprintrrf (libresolv RR formatter, common types + RFC3597 fallback) (feature, closed 2026-04-26T16:33:05.163322872Z)\n  shipped: ns_sprintrr + ns_sprintrrf with per-type rdata formatters for A/AAAA/NS/CNAME/PTR/MX/TXT and RFC 3597 generic fallback for unknown types + 8 abi tests including end-to-end through ns_initpar\u2026\n- `bd-qvo19` PORT: libresolv inet_neta (network number to text) (feature, closed 2026-04-26T16:18:57.498236320Z)\n  shipped: peer landed inet_neta + tests in fa4643e0 right before my commit; my local edits duplicated theirs and merged cleanly. impl + 5 abi tests covering trailing/internal/special-zero cases + EMSG\u2026",
     "summary": {
-      "closed_total": 1277,
+      "closed_total": 1366,
       "selected": 8,
       "invalid_rows": 0
     }

@@ -1,3 +1,3 @@
-warning: frankenlibc-core@0.1.0: No SMT solver found for /data/tmp/cargo-target-frankenlibc-codex-socket/debug/build/frankenlibc-core-14c0c4b13ffdf56c/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+warning: frankenlibc-core@0.1.0: No SMT solver found for /data/tmp/cargo-target/debug/build/frankenlibc-core-14c0c4b13ffdf56c/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
-     Running tests/pthread_mutex_core_test.rs (/data/tmp/cargo-target-frankenlibc-codex-socket/debug/deps/pthread_mutex_core_test-51ec8e7954595fe5)
+     Running tests/pthread_mutex_core_test.rs (/data/tmp/cargo-target/debug/deps/pthread_mutex_core_test-51ec8e7954595fe5)

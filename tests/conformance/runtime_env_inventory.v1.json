@@ -185,7 +185,7 @@
       "write_count": 2
     },
     {
-      "access_count": 26,
+      "access_count": 27,
       "accesses": [
         {
           "line": 35,
@@ -202,28 +202,35 @@
           "snippet": "\"env_keys\": [\"FRANKENLIBC_E2E_SEED\"],"
         },
         {
-          "line": 434,
+          "line": 308,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_E2E_SEED\", seed)"
         },
         {
-          "line": 531,
+          "line": 441,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_E2E_SEED\", seed)"
         },
         {
-          "line": 598,
+          "line": 538,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
           "scope": "harness",
           "snippet": ".env(\"FRANKENLIBC_E2E_SEED\", seed)"
         },
         {
-          "line": 689,
+          "line": 605,
+          "operation": "write",
+          "path": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
+          "scope": "harness",
+          "snippet": ".env(\"FRANKENLIBC_E2E_SEED\", seed)"
+        },
+        {
+          "line": 696,
           "operation": "write",
           "path": "crates/frankenlibc-harness/tests/e2e_suite_test.rs",
           "scope": "harness",
@@ -384,7 +391,7 @@
       },
       "read_count": 1,
       "reference_count": 17,
-      "write_count": 8
+      "write_count": 9
     },
     {
       "access_count": 2,
