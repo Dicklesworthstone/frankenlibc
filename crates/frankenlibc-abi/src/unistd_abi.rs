@@ -9219,6 +9219,179 @@ pub unsafe extern "C" fn _nss_dns_getnetbyaddr_r(
     NSS_STATUS_NOTFOUND
 }
 
+// ---------------------------------------------------------------------------
+// __internal_*netgrent + __nss_* GLIBC_PRIVATE helpers (17 stubs)
+// ---------------------------------------------------------------------------
+
+/// `__internal_setnetgrent(*group, *result) -> int` — would set up
+/// netgroup iteration. Stub returns 0 (failure).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __internal_setnetgrent(
+    _group: *const c_char,
+    _result: *mut c_void,
+) -> c_int {
+    0
+}
+
+/// `__internal_getnetgrent_r(**host, **user, **dom, *result, *buf,
+/// buflen, *errnop) -> int` — would advance the netgroup iterator.
+/// Stub returns 0 (no more entries).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn __internal_getnetgrent_r(
+    _host: *mut *mut c_char,
+    _user: *mut *mut c_char,
+    _domain: *mut *mut c_char,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    0
+}
+
+/// `__internal_endnetgrent(*result) -> int` — close the iterator.
+/// Stub returns 1 (success).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __internal_endnetgrent(_result: *mut c_void) -> c_int {
+    1
+}
+
+/// `__nss_database_get(db_id, *result) -> int` — query the
+/// configured NSS sources for a database. Stub returns 0 (no
+/// configuration available; caller falls through to defaults).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_database_get(_db: c_int, _result: *mut *mut c_void) -> c_int {
+    0
+}
+
+/// `__nss_disable_nscd(callback)` — would disable nscd integration.
+/// Stub no-op since we have no nscd hookup.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_disable_nscd(_cb: *mut c_void) {}
+
+/// `__nss_hash(name, len) -> u32` — string hash used by the NSS
+/// dispatcher. Stub returns 0 (a valid hash, just constant).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_hash(_name: *const c_void, _len: usize) -> u32 {
+    0
+}
+
+/// `__nss_lookup(*ni, fct_name, *fct, **resp) -> int` — resolve an
+/// NSS function name within a configured module list. Stub returns
+/// -1 (no module / function found).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_lookup(
+    _ni: *mut *mut c_void,
+    _fct_name: *const c_char,
+    _fct: *const c_char,
+    _resp: *mut *mut c_void,
+) -> c_int {
+    -1
+}
+
+/// `__nss_files_data_open(*kind) -> *FILE` — open the shared
+/// per-database file handle for the files module. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_files_data_open(_kind: *mut c_void) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `__nss_files_data_setent(kind, stayopen) -> nss_status` — Stub
+/// returns NSS_STATUS_UNAVAIL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_files_data_setent(_kind: c_int, _stayopen: c_int) -> c_int {
+    -1 // NSS_STATUS_UNAVAIL
+}
+
+/// `__nss_files_data_endent(kind) -> nss_status` — Stub returns
+/// NSS_STATUS_SUCCESS (= 1) since "ending nothing" succeeds.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_files_data_endent(_kind: c_int) -> c_int {
+    NSS_STATUS_SUCCESS
+}
+
+/// `__nss_files_data_put(kind)` — release the shared file handle.
+/// Stub no-op.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_files_data_put(_kind: c_int) {}
+
+/// `__nss_files_fopen(path) -> FILE*` — open `path` with the
+/// expected flags for an NSS files-module backing file. Stub
+/// returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_files_fopen(_path: *const c_char) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `__nss_group_lookup2(*ni, name, *result, *errnop) -> int` —
+/// typed group lookup helper. Stub returns -1 with errnop=ENOENT.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_group_lookup2(
+    _ni: *mut *mut c_void,
+    _name: *const c_char,
+    _result: *mut c_void,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    -1
+}
+
+/// `__nss_passwd_lookup2(*ni, name, *result, *errnop) -> int` —
+/// typed passwd lookup helper. Stub returns -1 with errnop=ENOENT.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_passwd_lookup2(
+    _ni: *mut *mut c_void,
+    _name: *const c_char,
+    _result: *mut c_void,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    -1
+}
+
+/// `__nss_services_lookup2(*ni, name, *proto, *result, *errnop)
+/// -> int` — typed services lookup helper. Stub returns -1 with
+/// errnop=ENOENT.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_services_lookup2(
+    _ni: *mut *mut c_void,
+    _name: *const c_char,
+    _proto: *const c_char,
+    _result: *mut c_void,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    -1
+}
+
+/// `__nss_parse_line_result(*fp, line, parser_result) -> int` —
+/// converts a parser_data result into an nss_status. Stub returns
+/// 0 (NSS_STATUS_NOTFOUND) so the caller treats the line as
+/// non-matching.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_parse_line_result(
+    _fp: *mut c_void,
+    _line: *mut c_char,
+    _parse_res: c_int,
+) -> c_int {
+    0
+}
+
+/// `__nss_readline(*fp, buf, len, *poffset) -> int` — read the
+/// next non-blank, non-comment line from `fp`. Stub returns -1
+/// (NSS_STATUS_TRYAGAIN) without setting *poffset.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_readline(
+    _fp: *mut c_void,
+    _buf: *mut c_char,
+    _len: usize,
+    _poffset: *mut i64,
+) -> c_int {
+    -1
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.

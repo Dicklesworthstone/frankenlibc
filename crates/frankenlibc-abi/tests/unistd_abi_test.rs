@@ -10169,3 +10169,153 @@ fn nss_dns_getnet_family_returns_notfound_and_sets_h_errnop() {
     assert_eq!(rc, 0);
     assert_eq!(h_errnop, 1);
 }
+
+// ---------------------------------------------------------------------------
+// __internal_*netgrent + __nss_* GLIBC_PRIVATE helpers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn internal_netgrent_iteration_returns_failure_then_success_end() {
+    use frankenlibc_abi::unistd_abi::{
+        __internal_endnetgrent, __internal_getnetgrent_r, __internal_setnetgrent,
+    };
+    let group = CString::new("admins").unwrap();
+    let mut result = [0u8; 64];
+    assert_eq!(
+        unsafe { __internal_setnetgrent(group.as_ptr(), result.as_mut_ptr() as *mut c_void) },
+        0
+    );
+    let mut errnop: c_int = 0;
+    let mut buf = [0u8; 32];
+    let mut h: *mut c_char = std::ptr::null_mut();
+    let mut u: *mut c_char = std::ptr::null_mut();
+    let mut d: *mut c_char = std::ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            __internal_getnetgrent_r(
+                &mut h,
+                &mut u,
+                &mut d,
+                result.as_mut_ptr() as *mut c_void,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+                &mut errnop,
+            )
+        },
+        0
+    );
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(
+        unsafe { __internal_endnetgrent(result.as_mut_ptr() as *mut c_void) },
+        1
+    );
+}
+
+#[test]
+fn nss_database_get_and_disable_nscd_safe() {
+    use frankenlibc_abi::unistd_abi::{__nss_database_get, __nss_disable_nscd};
+    let mut result: *mut c_void = std::ptr::null_mut();
+    assert_eq!(unsafe { __nss_database_get(0, &mut result) }, 0);
+    unsafe { __nss_disable_nscd(std::ptr::null_mut()) };
+}
+
+#[test]
+fn nss_hash_returns_zero_constant() {
+    use frankenlibc_abi::unistd_abi::__nss_hash;
+    let name = b"alice";
+    assert_eq!(
+        unsafe { __nss_hash(name.as_ptr() as *const c_void, name.len()) },
+        0
+    );
+    assert_eq!(unsafe { __nss_hash(std::ptr::null(), 0) }, 0);
+}
+
+#[test]
+fn nss_lookup_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__nss_lookup;
+    let fct = CString::new("getpwnam_r").unwrap();
+    let mut ni: *mut c_void = std::ptr::null_mut();
+    let mut resp: *mut c_void = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { __nss_lookup(&mut ni, fct.as_ptr(), std::ptr::null(), &mut resp) },
+        -1
+    );
+}
+
+#[test]
+fn nss_files_data_helpers_round_trip() {
+    use frankenlibc_abi::unistd_abi::{
+        __nss_files_data_endent, __nss_files_data_open, __nss_files_data_put,
+        __nss_files_data_setent, __nss_files_fopen,
+    };
+    let mut kind: c_int = 0;
+    assert!(unsafe { __nss_files_data_open(&mut kind as *mut c_int as *mut c_void) }.is_null());
+    assert_eq!(unsafe { __nss_files_data_setent(0, 0) }, -1);
+    assert_eq!(unsafe { __nss_files_data_endent(0) }, 1);
+    unsafe { __nss_files_data_put(0) };
+    let path = CString::new("/etc/passwd").unwrap();
+    assert!(unsafe { __nss_files_fopen(path.as_ptr()) }.is_null());
+}
+
+#[test]
+fn nss_typed_lookup2_helpers_return_minus_one_with_errnop_enoent() {
+    use frankenlibc_abi::unistd_abi::{
+        __nss_group_lookup2, __nss_passwd_lookup2, __nss_services_lookup2,
+    };
+    let name = CString::new("alice").unwrap();
+    let proto = CString::new("tcp").unwrap();
+    let mut ni: *mut c_void = std::ptr::null_mut();
+    let mut errnop: c_int = 0;
+
+    assert_eq!(
+        unsafe { __nss_group_lookup2(&mut ni, name.as_ptr(), std::ptr::null_mut(), &mut errnop) },
+        -1
+    );
+    assert_eq!(errnop, libc::ENOENT);
+    errnop = 0;
+
+    assert_eq!(
+        unsafe { __nss_passwd_lookup2(&mut ni, name.as_ptr(), std::ptr::null_mut(), &mut errnop) },
+        -1
+    );
+    assert_eq!(errnop, libc::ENOENT);
+    errnop = 0;
+
+    assert_eq!(
+        unsafe {
+            __nss_services_lookup2(
+                &mut ni,
+                name.as_ptr(),
+                proto.as_ptr(),
+                std::ptr::null_mut(),
+                &mut errnop,
+            )
+        },
+        -1
+    );
+    assert_eq!(errnop, libc::ENOENT);
+}
+
+#[test]
+fn nss_parse_line_result_returns_zero_and_readline_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::{__nss_parse_line_result, __nss_readline};
+    let mut buf = [0u8; 32];
+    assert_eq!(
+        unsafe {
+            __nss_parse_line_result(std::ptr::null_mut(), buf.as_mut_ptr() as *mut c_char, 1)
+        },
+        0
+    );
+    let mut off: i64 = 0;
+    assert_eq!(
+        unsafe {
+            __nss_readline(
+                std::ptr::null_mut(),
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+                &mut off,
+            )
+        },
+        -1
+    );
+}
