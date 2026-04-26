@@ -11411,6 +11411,258 @@ pub unsafe extern "C" fn __cxa_vec_cleanup(
     unsafe { __cxa_vec_dtor(array, element_count, element_size, dtor) };
 }
 
+// ---------------------------------------------------------------------------
+// Itanium C++ ABI: vector new / delete / copy-ctor (cxa_vec_new/delete[2/3])
+// ---------------------------------------------------------------------------
+//
+// The compiler emits these for `new T[n]` / `delete[] arr` over types with
+// non-trivial constructors/destructors. Without these symbols, every C++
+// program that uses array-new fails at link time.
+//
+// Allocation layout when `padding > 0`:
+//
+//     +----------------- padding -----------------+----- count*size -----+
+//     | size_t element_count | (rest unused/0)    | T[0] T[1] ... T[n-1] |
+//     +-------------------------------------------+----------------------+
+//     ^                                           ^
+//     `raw` (returned to free)                    `array` (returned to user)
+//
+// `__cxa_vec_delete` recovers `count` from the start of the padding so it
+// can run the destructors. When `padding == 0` the runtime cannot store
+// the count, so `delete` must be called with a known count via `vec_dtor`
+// directly (callers that allocate without padding take responsibility).
+
+#[inline]
+fn cxa_vec_total_bytes(count: usize, size: usize, padding: usize) -> Option<usize> {
+    count.checked_mul(size).and_then(|n| n.checked_add(padding))
+}
+
+#[inline]
+unsafe fn cxa_vec_stash_count(raw: *mut c_void, padding: usize, count: usize) {
+    if padding >= core::mem::size_of::<usize>() {
+        // SAFETY: caller-allocated raw has at least `padding` bytes.
+        unsafe { (raw as *mut usize).write_unaligned(count) };
+    }
+}
+
+#[inline]
+unsafe fn cxa_vec_recover_count(raw: *const c_void, padding: usize) -> usize {
+    if padding >= core::mem::size_of::<usize>() {
+        // SAFETY: matches the layout written by cxa_vec_stash_count.
+        unsafe { (raw as *const usize).read_unaligned() }
+    } else {
+        0
+    }
+}
+
+/// Itanium C++ ABI `__cxa_vec_new(count, size, padding, ctor, dtor)` —
+/// allocate `count*size + padding` bytes, stash the count at the start
+/// of the padding (so `__cxa_vec_delete` can recover it), invoke the
+/// per-element constructor, and return a pointer to the array (which is
+/// `raw + padding`). Returns NULL on overflow or allocation failure.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_new(
+    element_count: usize,
+    element_size: usize,
+    padding: usize,
+    ctor: Option<unsafe extern "C" fn(*mut c_void)>,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> *mut c_void {
+    let Some(total) = cxa_vec_total_bytes(element_count, element_size, padding) else {
+        return core::ptr::null_mut();
+    };
+    if total == 0 {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: routed through our own malloc, valid with arbitrary size.
+    let raw = unsafe { crate::malloc_abi::malloc(total) };
+    if raw.is_null() {
+        return core::ptr::null_mut();
+    }
+    unsafe { cxa_vec_stash_count(raw, padding, element_count) };
+    let array = unsafe { (raw as *mut u8).add(padding) } as *mut c_void;
+    unsafe { __cxa_vec_ctor(array, element_count, element_size, ctor, dtor) };
+    array
+}
+
+/// Itanium C++ ABI `__cxa_vec_new2` — like `__cxa_vec_new` but uses a
+/// caller-supplied `alloc_func`. Returns NULL on overflow or alloc
+/// failure (the user's `alloc_func` returning NULL).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_new2(
+    element_count: usize,
+    element_size: usize,
+    padding: usize,
+    ctor: Option<unsafe extern "C" fn(*mut c_void)>,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    alloc_func: Option<unsafe extern "C" fn(usize) -> *mut c_void>,
+    _dealloc_func: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> *mut c_void {
+    let Some(total) = cxa_vec_total_bytes(element_count, element_size, padding) else {
+        return core::ptr::null_mut();
+    };
+    if total == 0 {
+        return core::ptr::null_mut();
+    }
+    let Some(alloc_func) = alloc_func else {
+        return core::ptr::null_mut();
+    };
+    // SAFETY: caller-supplied allocator with the agreed signature.
+    let raw = unsafe { alloc_func(total) };
+    if raw.is_null() {
+        return core::ptr::null_mut();
+    }
+    unsafe { cxa_vec_stash_count(raw, padding, element_count) };
+    let array = unsafe { (raw as *mut u8).add(padding) } as *mut c_void;
+    unsafe { __cxa_vec_ctor(array, element_count, element_size, ctor, dtor) };
+    array
+}
+
+/// Itanium C++ ABI `__cxa_vec_new3` — like `__cxa_vec_new2` but the
+/// caller-supplied dealloc function takes both the pointer and the
+/// allocation size (matching sized-deallocation conventions). The
+/// dealloc parameter is unused here because we never unwind (no EH
+/// runtime); it is only invoked by `__cxa_vec_delete3`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_new3(
+    element_count: usize,
+    element_size: usize,
+    padding: usize,
+    ctor: Option<unsafe extern "C" fn(*mut c_void)>,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    alloc_func: Option<unsafe extern "C" fn(usize) -> *mut c_void>,
+    _dealloc_func: Option<unsafe extern "C" fn(*mut c_void, usize)>,
+) -> *mut c_void {
+    let Some(total) = cxa_vec_total_bytes(element_count, element_size, padding) else {
+        return core::ptr::null_mut();
+    };
+    if total == 0 {
+        return core::ptr::null_mut();
+    }
+    let Some(alloc_func) = alloc_func else {
+        return core::ptr::null_mut();
+    };
+    // SAFETY: caller-supplied allocator with the agreed signature.
+    let raw = unsafe { alloc_func(total) };
+    if raw.is_null() {
+        return core::ptr::null_mut();
+    }
+    unsafe { cxa_vec_stash_count(raw, padding, element_count) };
+    let array = unsafe { (raw as *mut u8).add(padding) } as *mut c_void;
+    unsafe { __cxa_vec_ctor(array, element_count, element_size, ctor, dtor) };
+    array
+}
+
+/// Itanium C++ ABI `__cxa_vec_delete(array, size, padding, dtor)` —
+/// invoke `dtor` on each element in reverse order, then free the
+/// allocation. `array` is the pointer originally returned by
+/// `__cxa_vec_new`; the runtime recovers the element count from the
+/// padding region prepended by `__cxa_vec_new`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_delete(
+    array: *mut c_void,
+    element_size: usize,
+    padding: usize,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    if array.is_null() {
+        return;
+    }
+    let raw = unsafe { (array as *mut u8).sub(padding) } as *mut c_void;
+    let count = unsafe { cxa_vec_recover_count(raw, padding) };
+    if count > 0 {
+        unsafe { __cxa_vec_dtor(array, count, element_size, dtor) };
+    }
+    // SAFETY: raw was returned by our crate::malloc_abi::malloc.
+    unsafe { crate::malloc_abi::free(raw) };
+}
+
+/// Itanium C++ ABI `__cxa_vec_delete2(array, size, padding, dtor,
+/// dealloc_func)` — like `__cxa_vec_delete` but uses a
+/// caller-supplied `dealloc_func(*mut c_void)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_delete2(
+    array: *mut c_void,
+    element_size: usize,
+    padding: usize,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    dealloc_func: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    if array.is_null() {
+        return;
+    }
+    let raw = unsafe { (array as *mut u8).sub(padding) } as *mut c_void;
+    let count = unsafe { cxa_vec_recover_count(raw, padding) };
+    if count > 0 {
+        unsafe { __cxa_vec_dtor(array, count, element_size, dtor) };
+    }
+    if let Some(dealloc_func) = dealloc_func {
+        // SAFETY: caller-supplied dealloc with the agreed signature.
+        unsafe { dealloc_func(raw) };
+    }
+}
+
+/// Itanium C++ ABI `__cxa_vec_delete3(array, size, padding, dtor,
+/// dealloc_func)` — like `__cxa_vec_delete` but uses a
+/// caller-supplied `dealloc_func(*mut c_void, usize)` matching the
+/// sized-deallocation convention. The size passed is the recovered
+/// `count*size + padding` total.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_delete3(
+    array: *mut c_void,
+    element_size: usize,
+    padding: usize,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+    dealloc_func: Option<unsafe extern "C" fn(*mut c_void, usize)>,
+) {
+    if array.is_null() {
+        return;
+    }
+    let raw = unsafe { (array as *mut u8).sub(padding) } as *mut c_void;
+    let count = unsafe { cxa_vec_recover_count(raw, padding) };
+    if count > 0 {
+        unsafe { __cxa_vec_dtor(array, count, element_size, dtor) };
+    }
+    if let Some(dealloc_func) = dealloc_func {
+        // We don't track the original total bytes outside the padding
+        // header, so reconstruct it from the recovered count + caller-
+        // supplied element size + padding (saturating on overflow).
+        let total = cxa_vec_total_bytes(count, element_size, padding).unwrap_or(0);
+        // SAFETY: caller-supplied dealloc with the agreed signature.
+        unsafe { dealloc_func(raw, total) };
+    }
+}
+
+/// Itanium C++ ABI `__cxa_vec_cctor(dest, src, count, size, ctor,
+/// dtor)` — copy-construct each element of `dest[i]` from `src[i]`,
+/// in forward order. `ctor` is a binary copy-ctor of signature
+/// `void (dest_elem, src_elem)`. NULL `ctor` is a no-op (the
+/// element type is trivially copyable).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_vec_cctor(
+    dest_array: *mut c_void,
+    src_array: *mut c_void,
+    element_count: usize,
+    element_size: usize,
+    ctor: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+    _dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
+    if dest_array.is_null() || src_array.is_null() {
+        return;
+    }
+    let Some(ctor) = ctor else {
+        return;
+    };
+    let dst = dest_array as *mut u8;
+    let src = src_array as *mut u8;
+    for i in 0..element_count {
+        // SAFETY: caller-supplied arrays of element_count * element_size.
+        let d = unsafe { dst.add(i * element_size) } as *mut c_void;
+        let s = unsafe { src.add(i * element_size) } as *mut c_void;
+        unsafe { ctor(d, s) };
+    }
+}
+
 /// Itanium C++ ABI `__cxa_eh_globals` — per-thread exception
 /// state struct. We expose only the two fields callers can
 /// legally inspect (`caughtExceptions` head pointer and the

@@ -6575,6 +6575,219 @@ fn cxa_vec_ctor_dtor_tolerate_null_callbacks_and_zero_count() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// __cxa_vec_new / new2 / new3 / delete / delete2 / delete3 / cctor
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cxa_vec_new_then_delete_round_trips_with_padding() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_delete, __cxa_vec_new};
+    use std::sync::Mutex;
+
+    static CTOR_VISITS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+    static DTOR_VISITS: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn ctor(p: *mut c_void) {
+        unsafe { *(p as *mut u32) = 0xCAFE };
+        CTOR_VISITS.lock().unwrap().push(p as usize);
+    }
+    unsafe extern "C" fn dtor(p: *mut c_void) {
+        DTOR_VISITS.lock().unwrap().push(p as usize);
+    }
+
+    CTOR_VISITS.lock().unwrap().clear();
+    DTOR_VISITS.lock().unwrap().clear();
+
+    let count = 5usize;
+    let size = std::mem::size_of::<u32>();
+    let padding = std::mem::size_of::<usize>();
+    let arr = unsafe { __cxa_vec_new(count, size, padding, Some(ctor), Some(dtor)) };
+    assert!(!arr.is_null());
+
+    // Each element initialised to 0xCAFE by the ctor.
+    let s = unsafe { std::slice::from_raw_parts(arr as *const u32, count) };
+    for &v in s {
+        assert_eq!(v, 0xCAFE);
+    }
+    assert_eq!(CTOR_VISITS.lock().unwrap().len(), count);
+
+    // Delete recovers count from padding and runs dtor in reverse.
+    unsafe { __cxa_vec_delete(arr, size, padding, Some(dtor)) };
+    let dtor_visits = DTOR_VISITS.lock().unwrap().clone();
+    assert_eq!(dtor_visits.len(), count);
+    // Reverse order: addresses descending.
+    for w in dtor_visits.windows(2) {
+        assert!(w[0] > w[1], "dtor visit order must be reverse");
+    }
+}
+
+#[test]
+fn cxa_vec_new_returns_null_on_overflow() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_new;
+    let p = unsafe { __cxa_vec_new(usize::MAX, 2, 0, None, None) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn cxa_vec_new_returns_null_on_zero_total() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_new;
+    // count=0, padding=0 → 0 bytes total → NULL.
+    let p = unsafe { __cxa_vec_new(0, 4, 0, None, None) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn cxa_vec_new2_uses_caller_supplied_alloc() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_new2;
+    use std::sync::Mutex;
+
+    static ALLOC_BYTES: Mutex<usize> = Mutex::new(0);
+    static SCRATCH: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+
+    unsafe extern "C" fn my_alloc(n: usize) -> *mut c_void {
+        *ALLOC_BYTES.lock().unwrap() = n;
+        let mut buf = vec![0u8; n];
+        let p = buf.as_mut_ptr() as *mut c_void;
+        *SCRATCH.lock().unwrap() = Some(buf);
+        p
+    }
+
+    let count = 3usize;
+    let size = 8usize;
+    let padding = std::mem::size_of::<usize>();
+    let arr = unsafe { __cxa_vec_new2(count, size, padding, None, None, Some(my_alloc), None) };
+    assert!(!arr.is_null());
+    assert_eq!(*ALLOC_BYTES.lock().unwrap(), count * size + padding);
+
+    // Drop the scratch buffer at end of test to avoid leak; the caller
+    // owns the allocation since we used a custom allocator.
+    *SCRATCH.lock().unwrap() = None;
+}
+
+#[test]
+fn cxa_vec_delete2_calls_caller_supplied_dealloc() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_delete2, __cxa_vec_new2};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DEALLOCED_ADDR: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn my_alloc(n: usize) -> *mut c_void {
+        let layout =
+            std::alloc::Layout::from_size_align(n, std::mem::align_of::<usize>()).expect("layout");
+        unsafe { std::alloc::alloc_zeroed(layout) as *mut c_void }
+    }
+    unsafe extern "C" fn my_dealloc(p: *mut c_void) {
+        DEALLOCED_ADDR.store(p as usize, Ordering::SeqCst);
+        // Don't actually free; we'll leak this small allocation.
+        // The test only verifies the dealloc callback fired with the
+        // raw pointer (= array - padding).
+    }
+
+    let count = 4usize;
+    let size = 4usize;
+    let padding = std::mem::size_of::<usize>();
+    let arr = unsafe {
+        __cxa_vec_new2(
+            count,
+            size,
+            padding,
+            None,
+            None,
+            Some(my_alloc),
+            Some(my_dealloc),
+        )
+    };
+    assert!(!arr.is_null());
+
+    DEALLOCED_ADDR.store(0, Ordering::SeqCst);
+    unsafe { __cxa_vec_delete2(arr, size, padding, None, Some(my_dealloc)) };
+    let raw_seen = DEALLOCED_ADDR.load(Ordering::SeqCst);
+    let raw_expected = unsafe { (arr as *mut u8).sub(padding) } as usize;
+    assert_eq!(raw_seen, raw_expected);
+}
+
+#[test]
+fn cxa_vec_delete3_passes_total_size_to_dealloc() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_delete3, __cxa_vec_new3};
+    use std::sync::Mutex;
+
+    static DEALLOC_SIZE: Mutex<usize> = Mutex::new(0);
+
+    unsafe extern "C" fn my_alloc(n: usize) -> *mut c_void {
+        let layout =
+            std::alloc::Layout::from_size_align(n, std::mem::align_of::<usize>()).expect("layout");
+        unsafe { std::alloc::alloc_zeroed(layout) as *mut c_void }
+    }
+    unsafe extern "C" fn my_dealloc(_p: *mut c_void, n: usize) {
+        *DEALLOC_SIZE.lock().unwrap() = n;
+    }
+
+    let count = 6usize;
+    let size = 4usize;
+    let padding = std::mem::size_of::<usize>();
+    let arr = unsafe {
+        __cxa_vec_new3(
+            count,
+            size,
+            padding,
+            None,
+            None,
+            Some(my_alloc),
+            Some(my_dealloc),
+        )
+    };
+    assert!(!arr.is_null());
+
+    *DEALLOC_SIZE.lock().unwrap() = 0;
+    unsafe { __cxa_vec_delete3(arr, size, padding, None, Some(my_dealloc)) };
+    assert_eq!(*DEALLOC_SIZE.lock().unwrap(), count * size + padding);
+}
+
+#[test]
+fn cxa_vec_delete_handles_null_array() {
+    use frankenlibc_abi::unistd_abi::{__cxa_vec_delete, __cxa_vec_delete2, __cxa_vec_delete3};
+    // All three delete variants must accept NULL without crashing.
+    unsafe {
+        __cxa_vec_delete(std::ptr::null_mut(), 4, 8, None);
+        __cxa_vec_delete2(std::ptr::null_mut(), 4, 8, None, None);
+        __cxa_vec_delete3(std::ptr::null_mut(), 4, 8, None, None);
+    }
+}
+
+#[test]
+fn cxa_vec_cctor_invokes_copy_constructor_per_element() {
+    use frankenlibc_abi::unistd_abi::__cxa_vec_cctor;
+    use std::sync::Mutex;
+
+    static PAIRS: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
+
+    unsafe extern "C" fn copy_ctor(d: *mut c_void, s: *mut c_void) {
+        let sv = unsafe { *(s as *mut u32) };
+        unsafe { *(d as *mut u32) = sv * 10 };
+        PAIRS.lock().unwrap().push((sv, sv * 10));
+    }
+
+    let mut src: [u32; 4] = [1, 2, 3, 4];
+    let mut dst: [u32; 4] = [0; 4];
+    PAIRS.lock().unwrap().clear();
+
+    unsafe {
+        __cxa_vec_cctor(
+            dst.as_mut_ptr() as *mut c_void,
+            src.as_mut_ptr() as *mut c_void,
+            src.len(),
+            std::mem::size_of::<u32>(),
+            Some(copy_ctor),
+            None,
+        );
+    }
+    assert_eq!(dst, [10, 20, 30, 40]);
+    assert_eq!(
+        *PAIRS.lock().unwrap(),
+        vec![(1, 10), (2, 20), (3, 30), (4, 40)]
+    );
+}
+
 #[test]
 fn cxa_get_globals_returns_stable_per_thread_pointer() {
     use frankenlibc_abi::unistd_abi::{__cxa_get_globals, __cxa_get_globals_fast};
