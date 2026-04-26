@@ -3231,3 +3231,226 @@ fn b64_round_trip_arbitrary_bytes() {
     assert_eq!(dec_n as usize, input.len());
     assert_eq!(dec, input);
 }
+
+// ---------------------------------------------------------------------------
+// inet_net_pton / inet_net_ntop (BIND/libresolv CIDR codec)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::glibc_internal_abi::{inet_net_ntop, inet_net_pton};
+
+#[test]
+fn inet_net_pton_full_dotted_quad() {
+    let s = c"192.168.0.1";
+    let mut dst = [0u8; 4];
+    let p = unsafe {
+        inet_net_pton(
+            libc::AF_INET,
+            s.as_ptr(),
+            dst.as_mut_ptr() as *mut std::ffi::c_void,
+            dst.len(),
+        )
+    };
+    assert_eq!(p, 32);
+    assert_eq!(dst, [192, 168, 0, 1]);
+}
+
+#[test]
+fn inet_net_pton_implicit_prefix() {
+    let s = c"10";
+    let mut dst = [0u8; 4];
+    let p = unsafe {
+        inet_net_pton(
+            libc::AF_INET,
+            s.as_ptr(),
+            dst.as_mut_ptr() as *mut std::ffi::c_void,
+            dst.len(),
+        )
+    };
+    assert_eq!(p, 8);
+    assert_eq!(dst[0], 10);
+}
+
+#[test]
+fn inet_net_pton_explicit_prefix() {
+    let s = c"192.168.0/24";
+    let mut dst = [0u8; 4];
+    let p = unsafe {
+        inet_net_pton(
+            libc::AF_INET,
+            s.as_ptr(),
+            dst.as_mut_ptr() as *mut std::ffi::c_void,
+            dst.len(),
+        )
+    };
+    assert_eq!(p, 24);
+    assert_eq!(&dst[..3], &[192, 168, 0]);
+}
+
+#[test]
+fn inet_net_pton_invalid_returns_minus_one_with_einval() {
+    let s = c"256.0.0.1";
+    let mut dst = [0u8; 4];
+    unsafe { *__errno_location() = 0 };
+    let p = unsafe {
+        inet_net_pton(
+            libc::AF_INET,
+            s.as_ptr(),
+            dst.as_mut_ptr() as *mut std::ffi::c_void,
+            dst.len(),
+        )
+    };
+    assert_eq!(p, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn inet_net_pton_buffer_too_small_sets_emsgsize() {
+    let s = c"192.168.0.1";
+    let mut dst = [0u8; 1];
+    unsafe { *__errno_location() = 0 };
+    let p = unsafe {
+        inet_net_pton(
+            libc::AF_INET,
+            s.as_ptr(),
+            dst.as_mut_ptr() as *mut std::ffi::c_void,
+            dst.len(),
+        )
+    };
+    assert_eq!(p, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EMSGSIZE);
+}
+
+#[test]
+fn inet_net_pton_unknown_af_sets_eafnosupport() {
+    let s = c"192.168.0/24";
+    let mut dst = [0u8; 4];
+    unsafe { *__errno_location() = 0 };
+    let p = unsafe {
+        inet_net_pton(
+            libc::AF_INET6,
+            s.as_ptr(),
+            dst.as_mut_ptr() as *mut std::ffi::c_void,
+            dst.len(),
+        )
+    };
+    assert_eq!(p, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EAFNOSUPPORT);
+}
+
+#[test]
+fn inet_net_pton_null_src_returns_einval() {
+    let mut dst = [0u8; 4];
+    unsafe { *__errno_location() = 0 };
+    let p = unsafe {
+        inet_net_pton(
+            libc::AF_INET,
+            std::ptr::null(),
+            dst.as_mut_ptr() as *mut std::ffi::c_void,
+            dst.len(),
+        )
+    };
+    assert_eq!(p, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn inet_net_ntop_renders_24_bit_network() {
+    let bytes = [192u8, 168, 0];
+    let mut dst = [0u8; 32];
+    let p = unsafe {
+        inet_net_ntop(
+            libc::AF_INET,
+            bytes.as_ptr() as *const std::ffi::c_void,
+            24,
+            dst.as_mut_ptr() as *mut std::ffi::c_char,
+            dst.len(),
+        )
+    };
+    assert!(!p.is_null());
+    let s = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
+    assert_eq!(s, b"192.168.0/24");
+}
+
+#[test]
+fn inet_net_ntop_renders_full_host() {
+    let bytes = [192u8, 168, 0, 1];
+    let mut dst = [0u8; 32];
+    let p = unsafe {
+        inet_net_ntop(
+            libc::AF_INET,
+            bytes.as_ptr() as *const std::ffi::c_void,
+            32,
+            dst.as_mut_ptr() as *mut std::ffi::c_char,
+            dst.len(),
+        )
+    };
+    assert!(!p.is_null());
+    let s = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
+    assert_eq!(s, b"192.168.0.1");
+}
+
+#[test]
+fn inet_net_ntop_buffer_too_small_returns_null_with_emsgsize() {
+    let bytes = [192u8, 168, 0, 1];
+    let mut dst = [0u8; 4]; // can't fit "192.168.0.1\0"
+    unsafe { *__errno_location() = 0 };
+    let p = unsafe {
+        inet_net_ntop(
+            libc::AF_INET,
+            bytes.as_ptr() as *const std::ffi::c_void,
+            32,
+            dst.as_mut_ptr() as *mut std::ffi::c_char,
+            dst.len(),
+        )
+    };
+    assert!(p.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EMSGSIZE);
+}
+
+#[test]
+fn inet_net_ntop_unknown_af_returns_null_with_eafnosupport() {
+    let bytes = [192u8, 168, 0, 1];
+    let mut dst = [0u8; 32];
+    unsafe { *__errno_location() = 0 };
+    let p = unsafe {
+        inet_net_ntop(
+            libc::AF_INET6,
+            bytes.as_ptr() as *const std::ffi::c_void,
+            32,
+            dst.as_mut_ptr() as *mut std::ffi::c_char,
+            dst.len(),
+        )
+    };
+    assert!(p.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EAFNOSUPPORT);
+}
+
+#[test]
+fn inet_net_round_trip_via_abi() {
+    // pton "10.1/16" → bytes [10,1] + prefix 16 → ntop → "10.1/16".
+    let s = c"10.1/16";
+    let mut bytes = [0u8; 4];
+    let p = unsafe {
+        inet_net_pton(
+            libc::AF_INET,
+            s.as_ptr(),
+            bytes.as_mut_ptr() as *mut std::ffi::c_void,
+            bytes.len(),
+        )
+    };
+    assert_eq!(p, 16);
+
+    let mut dst = [0u8; 32];
+    let out = unsafe {
+        inet_net_ntop(
+            libc::AF_INET,
+            bytes.as_ptr() as *const std::ffi::c_void,
+            p,
+            dst.as_mut_ptr() as *mut std::ffi::c_char,
+            dst.len(),
+        )
+    };
+    assert!(!out.is_null());
+    let result = unsafe { std::ffi::CStr::from_ptr(out) }.to_bytes();
+    assert_eq!(result, b"10.1/16");
+}

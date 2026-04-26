@@ -8784,3 +8784,122 @@ pub unsafe extern "C" fn __b64_ntop(
 pub unsafe extern "C" fn __b64_pton(src: *const c_char, target: *mut u8, targsize: usize) -> c_int {
     unsafe { b64_pton(src, target, targsize) }
 }
+
+// ==========================================================================
+// inet_net_pton / inet_net_ntop — BIND/libresolv CIDR codec
+// ==========================================================================
+
+/// libresolv `inet_net_pton(af, src, dst, size)` — parse a CIDR-like
+/// string into the leading bytes of `dst`. Returns the prefix length
+/// in bits on success; -1 with errno on failure.
+///
+/// Currently AF_INET only (matches libbsd's inet_net_pton scope).
+/// Anything else returns -1 with errno=EAFNOSUPPORT.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is a valid NUL-terminated C string and
+/// `dst` is valid for `size` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet_net_pton(
+    af: c_int,
+    src: *const c_char,
+    dst: *mut c_void,
+    size: usize,
+) -> c_int {
+    use frankenlibc_core::inet::net_pton as core_np;
+
+    if af != libc::AF_INET {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EAFNOSUPPORT) };
+        return -1;
+    }
+    if src.is_null() || (dst.is_null() && size != 0) {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: caller-supplied NUL-terminated C string.
+    let src_bytes = unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes();
+    // SAFETY: caller-supplied writable region of `size` bytes.
+    let dst_slice: &mut [u8] = if size == 0 {
+        &mut []
+    } else {
+        unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, size) }
+    };
+    match core_np::parse(src_bytes, dst_slice) {
+        Ok(p) => p as c_int,
+        Err(core_np::NetPtonError::BufferTooSmall) => {
+            unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
+            -1
+        }
+        Err(core_np::NetPtonError::Invalid) => {
+            unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+            -1
+        }
+    }
+}
+
+/// libresolv `inet_net_ntop(af, src, bits, dst, size)` — render
+/// `src[..⌈bits/8⌉]` plus the prefix into `dst` as a NUL-terminated
+/// CIDR string. Returns `dst` on success; NULL with errno on failure.
+///
+/// Currently AF_INET only.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is valid for `⌈bits/8⌉` readable bytes
+/// and `dst` is valid for `size` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet_net_ntop(
+    af: c_int,
+    src: *const c_void,
+    bits: c_int,
+    dst: *mut c_char,
+    size: usize,
+) -> *mut c_char {
+    use frankenlibc_core::inet::net_pton as core_np;
+
+    if af != libc::AF_INET {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EAFNOSUPPORT) };
+        return std::ptr::null_mut();
+    }
+    if !(0..=32).contains(&bits) {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    if dst.is_null() || size == 0 {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    let bytes_needed = (bits as usize).div_ceil(8);
+    if src.is_null() && bytes_needed != 0 {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller contract guarantees `src` is valid for at least
+    // `bytes_needed` bytes when `bytes_needed > 0`.
+    let src_slice: &[u8] = if bytes_needed == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, bytes_needed) }
+    };
+
+    let formatted = match core_np::format(src_slice, bits as u32) {
+        Ok(v) => v,
+        Err(_) => {
+            unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+            return std::ptr::null_mut();
+        }
+    };
+
+    if formatted.len() + 1 > size {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: caller-supplied writable buffer of `size` bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(formatted.as_ptr(), dst as *mut u8, formatted.len());
+        *dst.add(formatted.len()) = 0;
+    }
+    dst
+}

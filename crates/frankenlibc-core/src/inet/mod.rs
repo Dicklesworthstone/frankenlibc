@@ -4,6 +4,7 @@
 //! human-readable IP addresses and binary network representations.
 //! All logic is safe Rust with no syscalls.
 
+pub mod net_pton;
 pub mod nsap;
 
 use crate::socket::{AF_INET, AF_INET6};
