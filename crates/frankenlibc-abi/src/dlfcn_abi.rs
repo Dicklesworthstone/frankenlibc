@@ -755,3 +755,45 @@ pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int
     set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
     0
 }
+
+// ---------------------------------------------------------------------------
+// __libc_dlopen_mode / __libc_dlsym / __libc_dlclose
+// (glibc internal aliases used by NSS, libidn, locale modules, audit hooks)
+// ---------------------------------------------------------------------------
+
+/// glibc internal `__libc_dlopen_mode(filename, mode)` — private
+/// alias for [`dlopen`]. glibc-internal subsystems (NSS, libidn,
+/// locale modules, audit hooks) link against this name to
+/// dlopen-style load DSOs without entering the public name
+/// namespace. The `mode` argument matches the public dlopen flags
+/// (`RTLD_NOW | RTLD_LAZY | RTLD_GLOBAL | RTLD_LOCAL` etc.).
+///
+/// # Safety
+///
+/// Same as [`dlopen`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_dlopen_mode(filename: *const c_char, mode: c_int) -> *mut c_void {
+    unsafe { dlopen(filename, mode) }
+}
+
+/// glibc internal `__libc_dlsym(handle, name)` — private alias for
+/// [`dlsym`].
+///
+/// # Safety
+///
+/// Same as [`dlsym`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void {
+    unsafe { dlsym(handle, name) }
+}
+
+/// glibc internal `__libc_dlclose(handle)` — private alias for
+/// [`dlclose`].
+///
+/// # Safety
+///
+/// Same as [`dlclose`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_dlclose(handle: *mut c_void) -> c_int {
+    unsafe { dlclose(handle) }
+}

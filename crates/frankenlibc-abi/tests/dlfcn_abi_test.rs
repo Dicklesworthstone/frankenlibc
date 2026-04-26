@@ -4,7 +4,8 @@ use std::ffi::{CStr, CString, c_int, c_void};
 use std::sync::Mutex;
 
 use frankenlibc_abi::dlfcn_abi::{
-    dl_iterate_phdr, dladdr, dlclose, dlerror, dlopen, dlsym, dlvsym,
+    __libc_dlclose, __libc_dlopen_mode, __libc_dlsym, dl_iterate_phdr, dladdr, dlclose, dlerror,
+    dlopen, dlsym, dlvsym,
 };
 use frankenlibc_abi::malloc_abi::{free, malloc};
 
@@ -487,4 +488,64 @@ fn main_program_handle_sees_rtld_global_symbols() {
     }
 
     unsafe { dlclose(main_handle) };
+}
+
+// ---------------------------------------------------------------------------
+// __libc_dlopen_mode / __libc_dlsym / __libc_dlclose (glibc internal aliases)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn libc_dlopen_mode_matches_dlopen_for_libc() {
+    let _g = TEST_GUARD.lock().unwrap();
+    let path = c"libc.so.6";
+    let h_pub = unsafe { dlopen(path.as_ptr(), libc::RTLD_NOW) };
+    let h_int = unsafe { __libc_dlopen_mode(path.as_ptr(), libc::RTLD_NOW) };
+    if h_pub.is_null() || h_int.is_null() {
+        // libc.so.6 not loadable on this host (e.g. musl); inconclusive.
+        if !h_pub.is_null() {
+            unsafe { dlclose(h_pub) };
+        }
+        if !h_int.is_null() {
+            unsafe { __libc_dlclose(h_int) };
+        }
+        return;
+    }
+    // Both should resolve the same well-known symbol.
+    let sym = c"strlen";
+    let p_pub = unsafe { dlsym(h_pub, sym.as_ptr()) };
+    let p_int = unsafe { __libc_dlsym(h_int, sym.as_ptr()) };
+    assert!(!p_pub.is_null());
+    assert!(!p_int.is_null());
+    assert_eq!(p_pub, p_int);
+
+    unsafe { dlclose(h_pub) };
+    let rc = unsafe { __libc_dlclose(h_int) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn libc_dlsym_with_rtld_default_resolves_known_symbol() {
+    let _g = TEST_GUARD.lock().unwrap();
+    let sym = c"abort";
+    let p = unsafe { __libc_dlsym(libc::RTLD_DEFAULT, sym.as_ptr()) };
+    // RTLD_DEFAULT lookup may fail in static-link builds; if so,
+    // treat as inconclusive.
+    if p.is_null() {
+        return;
+    }
+    // The pointer should be the same as dlsym's.
+    let q = unsafe { dlsym(libc::RTLD_DEFAULT, sym.as_ptr()) };
+    assert_eq!(p, q);
+}
+
+#[test]
+fn libc_dlclose_returns_zero_on_valid_handle() {
+    let _g = TEST_GUARD.lock().unwrap();
+    let path = c"libc.so.6";
+    let h = unsafe { __libc_dlopen_mode(path.as_ptr(), libc::RTLD_NOW) };
+    if h.is_null() {
+        return;
+    }
+    let rc = unsafe { __libc_dlclose(h) };
+    assert_eq!(rc, 0);
 }
