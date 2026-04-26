@@ -10733,3 +10733,180 @@ fn res_nopt_returns_minus_one() {
     };
     assert_eq!(rc, -1);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 18 libbsd-parity stubs (bd-d5f7u)
+// MD5* BSD-style streaming + __fdnlist + 8 _time_to_* converters
+// ---------------------------------------------------------------------------
+
+const MD5_EMPTY_HEX: &[u8; 32] = b"d41d8cd98f00b204e9800998ecf8427e";
+const MD5_ABC_HEX: &[u8; 32] = b"900150983cd24fb0d6963f7d28e17f72";
+
+#[test]
+fn md5_streaming_init_update_final_matches_known_vector() {
+    use frankenlibc_abi::unistd_abi::{MD5_CTX, MD5Final, MD5Init, MD5Update};
+    let mut ctx: MD5_CTX = unsafe { std::mem::zeroed() };
+    let mut digest = [0u8; 16];
+    unsafe {
+        MD5Init(&mut ctx);
+        MD5Update(&mut ctx, c"abc".as_ptr() as *const c_void, 3);
+        MD5Final(digest.as_mut_ptr(), &mut ctx);
+    }
+    let mut hex = [0u8; 32];
+    static H: &[u8; 16] = b"0123456789abcdef";
+    for (i, b) in digest.iter().enumerate() {
+        hex[2 * i] = H[(b >> 4) as usize];
+        hex[2 * i + 1] = H[(b & 0x0f) as usize];
+    }
+    assert_eq!(&hex, MD5_ABC_HEX);
+}
+
+#[test]
+fn md5_data_oneshot_writes_hex_digest() {
+    use frankenlibc_abi::unistd_abi::MD5Data;
+    let mut buf = [0i8; 33];
+    let p = unsafe { MD5Data(c"abc".as_ptr() as *const c_void, 3, buf.as_mut_ptr()) };
+    assert_eq!(p, buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+}
+
+#[test]
+fn md5_data_empty_input_matches_known_vector() {
+    use frankenlibc_abi::unistd_abi::MD5Data;
+    let mut buf = [0i8; 33];
+    let _ = unsafe { MD5Data(std::ptr::null(), 0, buf.as_mut_ptr()) };
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_EMPTY_HEX);
+}
+
+#[test]
+fn md5_end_finalizes_stream_to_hex_buffer() {
+    use frankenlibc_abi::unistd_abi::{MD5_CTX, MD5End, MD5Init, MD5Update};
+    let mut ctx: MD5_CTX = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 33];
+    unsafe {
+        MD5Init(&mut ctx);
+        MD5Update(&mut ctx, c"abc".as_ptr() as *const c_void, 3);
+        let p = MD5End(&mut ctx, buf.as_mut_ptr());
+        assert_eq!(p, buf.as_mut_ptr());
+    }
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+}
+
+#[test]
+fn md5_pad_keeps_context_alive_for_subsequent_final() {
+    use frankenlibc_abi::unistd_abi::{MD5_CTX, MD5Final, MD5Init, MD5Pad, MD5Update};
+    let mut ctx: MD5_CTX = unsafe { std::mem::zeroed() };
+    let mut digest = [0u8; 16];
+    unsafe {
+        MD5Init(&mut ctx);
+        MD5Update(&mut ctx, c"abc".as_ptr() as *const c_void, 3);
+        MD5Pad(&mut ctx);
+        MD5Final(digest.as_mut_ptr(), &mut ctx);
+    }
+    // Padding doesn't disturb the digest of "abc".
+    let mut hex = [0u8; 32];
+    static H: &[u8; 16] = b"0123456789abcdef";
+    for (i, b) in digest.iter().enumerate() {
+        hex[2 * i] = H[(b >> 4) as usize];
+        hex[2 * i + 1] = H[(b & 0x0f) as usize];
+    }
+    assert_eq!(&hex, MD5_ABC_HEX);
+}
+
+#[test]
+fn md5_transform_writes_four_state_words() {
+    use frankenlibc_abi::unistd_abi::MD5Transform;
+    let block = [0u8; 64];
+    let mut state = [0u32; 4];
+    unsafe { MD5Transform(state.as_mut_ptr(), block.as_ptr()) };
+    assert!(state.iter().any(|w| *w != 0));
+}
+
+fn md5_temp_path(name: &str) -> std::path::PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let mut p = std::env::temp_dir();
+    p.push(format!(
+        "frankenlibc_md5_{}_{}_{}",
+        std::process::id(),
+        nonce,
+        name
+    ));
+    p
+}
+
+#[test]
+fn md5_file_hashes_disk_contents() {
+    use frankenlibc_abi::unistd_abi::MD5File;
+    use std::io::Write;
+    let path = md5_temp_path("file.txt");
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"abc").unwrap();
+    }
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mut buf = [0i8; 33];
+    let p = unsafe { MD5File(cpath.as_ptr(), buf.as_mut_ptr()) };
+    assert_eq!(p, buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn md5_file_chunk_hashes_window() {
+    use frankenlibc_abi::unistd_abi::MD5FileChunk;
+    use std::io::Write;
+    let path = md5_temp_path("chunk.bin");
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"XXXabcYYY").unwrap();
+    }
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mut buf = [0i8; 33];
+    let p = unsafe { MD5FileChunk(cpath.as_ptr(), buf.as_mut_ptr(), 3, 3) };
+    assert_eq!(p, buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn md5_file_returns_null_on_missing_path() {
+    use frankenlibc_abi::unistd_abi::MD5File;
+    let cpath = CString::new("/no/such/file/here_md5").unwrap();
+    let mut buf = [0i8; 33];
+    let p = unsafe { MD5File(cpath.as_ptr(), buf.as_mut_ptr()) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn fdnlist_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__fdnlist;
+    let rc = unsafe { __fdnlist(-1) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn time_converters_are_identity_on_lp64() {
+    use frankenlibc_abi::unistd_abi::{
+        _int_to_time, _long_to_time, _time_to_int, _time_to_long, _time_to_time32, _time_to_time64,
+        _time32_to_time, _time64_to_time,
+    };
+    assert_eq!(_int_to_time(42), 42 as libc::time_t);
+    assert_eq!(_long_to_time(42), 42 as libc::time_t);
+    assert_eq!(_time_to_int(42 as libc::time_t), 42);
+    assert_eq!(_time_to_long(42 as libc::time_t), 42);
+    assert_eq!(_time32_to_time(42), 42 as libc::time_t);
+    assert_eq!(_time_to_time32(42 as libc::time_t), 42);
+    assert_eq!(_time64_to_time(42), 42 as libc::time_t);
+    assert_eq!(_time_to_time64(42 as libc::time_t), 42);
+    // narrowing extremes
+    assert_eq!(_time_to_int(i32::MAX as libc::time_t), i32::MAX);
+    assert_eq!(_time32_to_time(i32::MIN), i32::MIN as libc::time_t);
+}

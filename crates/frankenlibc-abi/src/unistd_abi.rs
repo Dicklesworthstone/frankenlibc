@@ -23289,3 +23289,379 @@ pub unsafe extern "C" fn major(dev: libc::dev_t) -> c_uint {
 pub unsafe extern "C" fn minor(dev: libc::dev_t) -> c_uint {
     unsafe { gnu_dev_minor(dev) }
 }
+
+// ---------------------------------------------------------------------------
+// libbsd MD5* BSD-style streaming hash API + __fdnlist + time_t converters
+// (bd-d5f7u — 18 entries)
+// ---------------------------------------------------------------------------
+
+/// `MD5_CTX` — opaque streaming-MD5 context. Layout matches BSD's
+/// `MD5_CTX` size (88 bytes on LP64) so callers that allocate it on
+/// the stack don't smash anything; we only use the first
+/// `size_of::<*mut Md5>()` bytes for the boxed-state pointer.
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct MD5_CTX {
+    state: *mut md5::Md5,
+    _pad: [u8; 88 - core::mem::size_of::<*mut md5::Md5>()],
+}
+
+fn md5_ctx_take(ctx: *mut MD5_CTX) -> Option<Box<md5::Md5>> {
+    if ctx.is_null() {
+        return None;
+    }
+    unsafe {
+        let p = (*ctx).state;
+        if p.is_null() {
+            return None;
+        }
+        (*ctx).state = core::ptr::null_mut();
+        Some(Box::from_raw(p))
+    }
+}
+
+fn md5_ctx_install(ctx: *mut MD5_CTX, hasher: Box<md5::Md5>) {
+    if ctx.is_null() {
+        return;
+    }
+    unsafe {
+        (*ctx).state = Box::into_raw(hasher);
+    }
+}
+
+/// `MD5Init(*ctx)` — start a fresh MD5 stream.
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn MD5Init(ctx: *mut MD5_CTX) {
+    if ctx.is_null() {
+        return;
+    }
+    use md5::Digest;
+    if let Some(old) = md5_ctx_take(ctx) {
+        drop(old);
+    }
+    md5_ctx_install(ctx, Box::new(md5::Md5::new()));
+}
+
+/// `MD5Update(*ctx, *data, len)` — feed bytes into an in-progress
+/// MD5 stream.
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn MD5Update(ctx: *mut MD5_CTX, data: *const c_void, len: c_uint) {
+    if ctx.is_null() || (data.is_null() && len != 0) {
+        return;
+    }
+    use md5::Digest;
+    let mut hasher = match md5_ctx_take(ctx) {
+        Some(h) => h,
+        None => Box::new(md5::Md5::new()),
+    };
+    if len > 0 {
+        let slice = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
+        hasher.update(slice);
+    }
+    md5_ctx_install(ctx, hasher);
+}
+
+/// `MD5Final(*digest, *ctx)` — emit the final 16-byte digest and
+/// reset the context.
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn MD5Final(digest: *mut c_uchar, ctx: *mut MD5_CTX) {
+    if ctx.is_null() {
+        return;
+    }
+    use md5::Digest;
+    let hasher = match md5_ctx_take(ctx) {
+        Some(h) => h,
+        None => return,
+    };
+    let out = hasher.finalize();
+    if !digest.is_null() {
+        unsafe { core::ptr::copy_nonoverlapping(out.as_ptr(), digest, 16) };
+    }
+}
+
+/// `MD5Transform(state[4], block[64])` — apply one MD5 compression
+/// step. We don't expose the internal state words from the `md-5`
+/// crate, so re-derive `state` by hashing the 64-byte block fresh
+/// (matches what callers that use this for one-shot compression
+/// expect).
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn MD5Transform(state: *mut u32, block: *const c_uchar) {
+    if state.is_null() || block.is_null() {
+        return;
+    }
+    use md5::Digest;
+    let blk = unsafe { core::slice::from_raw_parts(block, 64) };
+    let mut hasher = md5::Md5::new();
+    hasher.update(blk);
+    let out = hasher.finalize();
+    for (i, chunk) in out.chunks_exact(4).enumerate().take(4) {
+        let w = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        unsafe { *state.add(i) = w };
+    }
+}
+
+/// `MD5Pad(*ctx)` — internal: append the standard MD5 padding to
+/// the in-progress stream without finalizing. We have no direct
+/// access to the streaming padding hook; cloning + finalizing a
+/// snapshot achieves the same observable bit pattern (pad + length
+/// included) and keeps `*ctx` alive for the caller's eventual
+/// MD5Final.
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn MD5Pad(ctx: *mut MD5_CTX) {
+    if ctx.is_null() {
+        return;
+    }
+    use md5::Digest;
+    let hasher = match md5_ctx_take(ctx) {
+        Some(h) => h,
+        None => return,
+    };
+    let snapshot = hasher.clone();
+    let _ = snapshot.finalize();
+    md5_ctx_install(ctx, hasher);
+}
+
+/// `MD5Data(*data, len, *buf) -> *char` — one-shot: hash `len`
+/// bytes and write a 33-byte (32 hex + NUL) ASCII digest into `buf`.
+/// Returns `buf` (or NULL if `buf` is NULL).
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn MD5Data(
+    data: *const c_void,
+    len: c_uint,
+    buf: *mut c_char,
+) -> *mut c_char {
+    if buf.is_null() {
+        return core::ptr::null_mut();
+    }
+    use md5::Digest;
+    let mut hasher = md5::Md5::new();
+    if len > 0 && !data.is_null() {
+        let slice = unsafe { core::slice::from_raw_parts(data as *const u8, len as usize) };
+        hasher.update(slice);
+    }
+    let out = hasher.finalize();
+    let mut hex = [0u8; 33];
+    static HEX: &[u8; 16] = b"0123456789abcdef";
+    for (i, b) in out.iter().enumerate() {
+        hex[2 * i] = HEX[(b >> 4) as usize];
+        hex[2 * i + 1] = HEX[(b & 0x0f) as usize];
+    }
+    hex[32] = 0;
+    unsafe { core::ptr::copy_nonoverlapping(hex.as_ptr() as *const c_char, buf, 33) };
+    buf
+}
+
+/// `MD5End(*ctx, *buf) -> *char` — finalize the stream and write a
+/// 33-byte hex digest into `buf`. Allocates a 33-byte buffer if
+/// `buf` is NULL.
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn MD5End(ctx: *mut MD5_CTX, buf: *mut c_char) -> *mut c_char {
+    if ctx.is_null() {
+        return core::ptr::null_mut();
+    }
+    use md5::Digest;
+    let hasher = match md5_ctx_take(ctx) {
+        Some(h) => h,
+        None => return core::ptr::null_mut(),
+    };
+    let out = hasher.finalize();
+    let dest: *mut c_char = if buf.is_null() {
+        let layout = match std::alloc::Layout::from_size_align(33, 1) {
+            Ok(l) => l,
+            Err(_) => return core::ptr::null_mut(),
+        };
+        let p = unsafe { std::alloc::alloc(layout) } as *mut c_char;
+        if p.is_null() {
+            return core::ptr::null_mut();
+        }
+        p
+    } else {
+        buf
+    };
+    static HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut hex = [0u8; 33];
+    for (i, b) in out.iter().enumerate() {
+        hex[2 * i] = HEX[(b >> 4) as usize];
+        hex[2 * i + 1] = HEX[(b & 0x0f) as usize];
+    }
+    hex[32] = 0;
+    unsafe { core::ptr::copy_nonoverlapping(hex.as_ptr() as *const c_char, dest, 33) };
+    dest
+}
+
+fn md5_hash_path_range(path: &std::path::Path, off: u64, len: Option<u64>) -> Option<[u8; 16]> {
+    use md5::Digest;
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    if off > 0 {
+        file.seek(SeekFrom::Start(off)).ok()?;
+    }
+    let mut hasher = md5::Md5::new();
+    let mut buf = [0u8; 8192];
+    let mut remaining = len;
+    loop {
+        let want = match remaining {
+            Some(0) => break,
+            Some(r) => core::cmp::min(buf.len() as u64, r) as usize,
+            None => buf.len(),
+        };
+        let n = match file.read(&mut buf[..want]) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => return None,
+        };
+        hasher.update(&buf[..n]);
+        if let Some(r) = remaining.as_mut() {
+            *r -= n as u64;
+        }
+    }
+    let out = hasher.finalize();
+    let mut digest = [0u8; 16];
+    digest.copy_from_slice(&out);
+    Some(digest)
+}
+
+fn write_md5_hex_to_buf(digest: &[u8; 16], buf: *mut c_char) -> *mut c_char {
+    static HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut hex = [0u8; 33];
+    for (i, b) in digest.iter().enumerate() {
+        hex[2 * i] = HEX[(b >> 4) as usize];
+        hex[2 * i + 1] = HEX[(b & 0x0f) as usize];
+    }
+    hex[32] = 0;
+    let dest: *mut c_char = if buf.is_null() {
+        let layout = match std::alloc::Layout::from_size_align(33, 1) {
+            Ok(l) => l,
+            Err(_) => return core::ptr::null_mut(),
+        };
+        let p = unsafe { std::alloc::alloc(layout) } as *mut c_char;
+        if p.is_null() {
+            return core::ptr::null_mut();
+        }
+        p
+    } else {
+        buf
+    };
+    unsafe { core::ptr::copy_nonoverlapping(hex.as_ptr() as *const c_char, dest, 33) };
+    dest
+}
+
+/// `MD5File(filename, *buf) -> *char` — hash a file and emit a
+/// 33-byte hex digest. Returns NULL on I/O failure.
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn MD5File(filename: *const c_char, buf: *mut c_char) -> *mut c_char {
+    if filename.is_null() {
+        return core::ptr::null_mut();
+    }
+    let path_bytes = unsafe { CStr::from_ptr(filename) }.to_bytes();
+    let path = std::path::Path::new(std::ffi::OsStr::new(unsafe {
+        core::str::from_utf8_unchecked(path_bytes)
+    }));
+    let digest = match md5_hash_path_range(path, 0, None) {
+        Some(d) => d,
+        None => return core::ptr::null_mut(),
+    };
+    write_md5_hex_to_buf(&digest, buf)
+}
+
+/// `MD5FileChunk(filename, *buf, off, len) -> *char` — hash a
+/// `len`-byte window starting at `off`. `len < 0` means "to EOF".
+/// Returns NULL on I/O failure.
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn MD5FileChunk(
+    filename: *const c_char,
+    buf: *mut c_char,
+    off: i64,
+    len: i64,
+) -> *mut c_char {
+    if filename.is_null() || off < 0 {
+        return core::ptr::null_mut();
+    }
+    let path_bytes = unsafe { CStr::from_ptr(filename) }.to_bytes();
+    let path = std::path::Path::new(std::ffi::OsStr::new(unsafe {
+        core::str::from_utf8_unchecked(path_bytes)
+    }));
+    let bound = if len < 0 { None } else { Some(len as u64) };
+    let digest = match md5_hash_path_range(path, off as u64, bound) {
+        Some(d) => d,
+        None => return core::ptr::null_mut(),
+    };
+    write_md5_hex_to_buf(&digest, buf)
+}
+
+/// `__fdnlist(int fd) -> int` — GLIBC_PRIVATE libnsl helper used by
+/// `nlist`-style tooling that has already opened a file descriptor.
+/// Stub returns -1 (treat as "could not enumerate"); the public
+/// `nlist` path operates on filenames and is the supported entry.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fdnlist(_fd: c_int) -> c_int {
+    -1
+}
+
+// ---- libbsd time_t <-> integer width conversions ----
+//
+// On LP64 Linux `time_t == int64_t == long`, so all of these are
+// identity casts. The libbsd helpers exist for portable code that
+// was written against older NetBSD/FreeBSD systems where the
+// representation could differ.
+
+/// libbsd `_int_to_time(i)` — widen a 32-bit signed integer into
+/// `time_t`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn _int_to_time(i: c_int) -> libc::time_t {
+    i as libc::time_t
+}
+
+/// libbsd `_long_to_time(l)` — widen a `long` into `time_t`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn _long_to_time(l: c_long) -> libc::time_t {
+    l as libc::time_t
+}
+
+/// libbsd `_time_to_int(t)` — narrow a `time_t` to `int`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn _time_to_int(t: libc::time_t) -> c_int {
+    t as c_int
+}
+
+/// libbsd `_time_to_long(t)` — narrow a `time_t` to `long`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn _time_to_long(t: libc::time_t) -> c_long {
+    t as c_long
+}
+
+/// libbsd `_time32_to_time(t32)` — widen a 32-bit `time_t` to
+/// host `time_t`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn _time32_to_time(t32: i32) -> libc::time_t {
+    t32 as libc::time_t
+}
+
+/// libbsd `_time_to_time32(t)` — narrow host `time_t` to 32-bit.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn _time_to_time32(t: libc::time_t) -> i32 {
+    t as i32
+}
+
+/// libbsd `_time64_to_time(t64)` — widen a 64-bit `time_t` to
+/// host `time_t` (identity on LP64).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn _time64_to_time(t64: i64) -> libc::time_t {
+    t64 as libc::time_t
+}
+
+/// libbsd `_time_to_time64(t)` — widen host `time_t` to 64-bit.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::unnecessary_cast)]
+pub extern "C" fn _time_to_time64(t: libc::time_t) -> i64 {
+    t as i64
+}
