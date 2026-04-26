@@ -121,9 +121,13 @@ use frankenlibc_abi::stdio_abi::{
     stdin,
     stdout,
     strnunvis,
+    strnunvisx,
     strnvis,
+    strnvisx,
     strunvis,
+    strunvisx,
     strvis,
+    strvisx,
     take_last_decision_gate_for_tests,
     tmpfile,
     tmpfile64,
@@ -4103,4 +4107,118 @@ fn vis_handles_high_bit_via_meta_prefix() {
         .map(|&c| c as u8)
         .collect();
     assert_eq!(bytes, b"\\M-A");
+}
+
+// ---------------------------------------------------------------------------
+// strvisx / strnvisx / strunvisx / strnunvisx (NetBSD vis(3) extended length)
+// ---------------------------------------------------------------------------
+
+fn vis_collect(buf: &[c_char], n: c_int) -> Vec<u8> {
+    buf[..n as usize].iter().map(|&c| c as u8).collect()
+}
+
+#[test]
+fn strvisx_encodes_buffer_with_embedded_nul() {
+    // Input: "ab\0c" (4 bytes including the embedded NUL).
+    let src: [c_char; 4] = [b'a' as c_char, b'b' as c_char, 0, b'c' as c_char];
+    let mut dst = [0 as c_char; 16];
+    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), src.len(), 0) };
+    assert!(n > 0);
+    let bytes = vis_collect(&dst, n);
+    // Default-mode encoding of NUL is "\^@".
+    assert_eq!(bytes, b"ab\\^@c");
+}
+
+#[test]
+fn strvisx_with_octal_flag_renders_three_digit_octal() {
+    let src: [c_char; 1] = [-1 as c_char];
+    let mut dst = [0 as c_char; 8];
+    let n = unsafe { strvisx(dst.as_mut_ptr(), src.as_ptr(), 1, 0x01) };
+    let bytes = vis_collect(&dst, n);
+    assert_eq!(bytes, b"\\377");
+}
+
+#[test]
+fn strvisx_zero_srclen_produces_empty_output() {
+    let mut dst = [0 as c_char; 8];
+    let n = unsafe { strvisx(dst.as_mut_ptr(), std::ptr::null(), 0, 0) };
+    assert_eq!(n, 0);
+    assert_eq!(dst[0], 0);
+}
+
+#[test]
+fn strvisx_null_dst_returns_minus_one() {
+    let src: [c_char; 1] = [b'a' as c_char];
+    assert_eq!(
+        unsafe { strvisx(std::ptr::null_mut(), src.as_ptr(), 1, 0) },
+        -1
+    );
+}
+
+#[test]
+fn strnvisx_truncates_and_returns_minus_one() {
+    let src: [c_char; 2] = [1, 2];
+    let mut dst = [0 as c_char; 4]; // can't fit 2 × \^X = 6 bytes + NUL
+    let n = unsafe { strnvisx(dst.as_mut_ptr(), dst.len(), src.as_ptr(), 2, 0) };
+    assert_eq!(n, -1);
+    assert_eq!(dst[3], 0, "must NUL-terminate within bounds");
+}
+
+#[test]
+fn strnvisx_fits_exactly() {
+    let src: [c_char; 2] = [b'a' as c_char, b'b' as c_char];
+    let mut dst = [0 as c_char; 3]; // "ab\0" — exactly 3 bytes
+    let n = unsafe { strnvisx(dst.as_mut_ptr(), dst.len(), src.as_ptr(), 2, 0) };
+    assert_eq!(n, 2);
+    assert_eq!(vis_collect(&dst, n), b"ab");
+}
+
+#[test]
+fn strunvisx_decodes_round_trip() {
+    let src = c"\\^@xyz\\377";
+    let mut dst = [0 as c_char; 16];
+    let n = unsafe { strunvisx(dst.as_mut_ptr(), src.as_ptr(), 0) };
+    let bytes = vis_collect(&dst, n);
+    assert_eq!(bytes, vec![0x00, b'x', b'y', b'z', 0xff]);
+}
+
+#[test]
+fn strnunvisx_returns_minus_one_when_too_small() {
+    let src = c"\\^A\\^B\\^C";
+    let mut dst = [0 as c_char; 2]; // can fit 1 + NUL
+    let n = unsafe { strnunvisx(dst.as_mut_ptr(), dst.len(), src.as_ptr(), 0) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strvisx_then_strunvisx_round_trip() {
+    let payload = b"hello\0\xffworld\x01\x02";
+    let mut enc = [0 as c_char; 64];
+    let enc_n = unsafe {
+        strvisx(
+            enc.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+        )
+    };
+    assert!(enc_n > 0);
+    let mut dec = [0 as c_char; 64];
+    let dec_n = unsafe { strunvisx(dec.as_mut_ptr(), enc.as_ptr(), 0) };
+    assert_eq!(dec_n as usize, payload.len());
+    assert_eq!(vis_collect(&dec, dec_n), payload);
+}
+
+#[test]
+fn strunvisx_null_args_return_minus_one() {
+    let src = c"x";
+    let mut dst = [0 as c_char; 8];
+    assert_eq!(
+        unsafe { strunvisx(std::ptr::null_mut(), src.as_ptr(), 0) },
+        -1
+    );
+    assert_eq!(
+        unsafe { strunvisx(dst.as_mut_ptr(), std::ptr::null(), 0) },
+        -1
+    );
 }

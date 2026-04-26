@@ -7177,3 +7177,139 @@ pub unsafe extern "C" fn nvis(
         dst.add(buf.len())
     }
 }
+
+// ---------------------------------------------------------------------------
+// strvisx / strnvisx / strunvisx / strnunvisx (NetBSD vis(3) extended length)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `strvisx(dst, src, srclen, flags)` — encode the first
+/// `srclen` bytes of `src` (may contain embedded NULs) into `dst`.
+/// Returns the encoded length excluding the trailing NUL, or -1 on
+/// NULL input.
+///
+/// # Safety
+///
+/// `dst` must hold at least 4 × srclen + 1 writable bytes (the
+/// worst-case encoded length). `src` must be valid for `srclen`
+/// readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strvisx(
+    dst: *mut c_char,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+) -> c_int {
+    if dst.is_null() || (src.is_null() && srclen != 0) {
+        return -1;
+    }
+    let bytes: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strnvisx(dst, dlen, src, srclen, flags)` — bounded
+/// variant of [`strvisx`]. Returns the encoded length on success;
+/// returns -1 when the encoded form + NUL exceeds `dlen` (the
+/// prefix that fits is still NUL-terminated).
+///
+/// # Safety
+///
+/// Same as [`strvisx`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnvisx(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+) -> c_int {
+    if dst.is_null() || (src.is_null() && srclen != 0) || dlen == 0 {
+        return -1;
+    }
+    let bytes: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    if encoded.len() < dlen {
+        unsafe {
+            std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+            *dst.add(encoded.len()) = 0;
+        }
+        encoded.len() as c_int
+    } else {
+        let copy_len = dlen - 1;
+        unsafe {
+            std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, copy_len);
+            *dst.add(copy_len) = 0;
+        }
+        -1
+    }
+}
+
+/// NetBSD `strunvisx(dst, src, flags)` — decode `src` (NUL-terminated
+/// vis-encoded ASCII) into `dst`. Accepts `flags` for libutil API
+/// compat; current decoder is mode-agnostic so the parameter has no
+/// effect.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is a valid NUL-terminated C string and
+/// `dst` is at least `strlen(src) + 1` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strunvisx(dst: *mut c_char, src: *const c_char, _flags: c_int) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
+        Some(v) => v,
+        None => return -1,
+    };
+    unsafe {
+        std::ptr::copy_nonoverlapping(decoded.as_ptr(), dst as *mut u8, decoded.len());
+        *dst.add(decoded.len()) = 0;
+    }
+    decoded.len() as c_int
+}
+
+/// NetBSD `strnunvisx(dst, dlen, src, flags)` — bounded variant of
+/// [`strunvisx`]. Returns -1 on malformed input or when the decoded
+/// form + NUL exceeds `dlen`.
+///
+/// # Safety
+///
+/// Same as [`strunvisx`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnunvisx(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    _flags: c_int,
+) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
+        Some(v) => v,
+        None => return -1,
+    };
+    if decoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(decoded.as_ptr(), dst as *mut u8, decoded.len());
+        *dst.add(decoded.len()) = 0;
+    }
+    decoded.len() as c_int
+}
