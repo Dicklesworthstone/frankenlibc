@@ -1373,6 +1373,18 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
     std::ptr::null_mut()
 }
 
+/// glibc reserved-namespace alias for [`memrchr`]. Some headers
+/// and a few third-party callers link against the underscored
+/// variant instead of the public name.
+///
+/// # Safety
+///
+/// Same as [`memrchr`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
+    unsafe { memrchr(s, c, n) }
+}
+
 // ---------------------------------------------------------------------------
 // strlen
 // ---------------------------------------------------------------------------
@@ -2463,6 +2475,19 @@ pub unsafe extern "C" fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char {
     let len = unsafe { strlen(s) };
     // SAFETY: len is measured from `s`, so the resulting pointer is within the string object.
     unsafe { s.add(len) as *mut c_char }
+}
+
+/// glibc reserved-namespace alias for [`strchrnul`]. Some headers
+/// and a few third-party callers (notably glibc's own internal
+/// headers and certain RH toolchain shims) link against the
+/// underscored variant instead of the public name.
+///
+/// # Safety
+///
+/// Same as [`strchrnul`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __strchrnul(s: *const c_char, c: c_int) -> *mut c_char {
+    unsafe { strchrnul(s, c) }
 }
 
 // ---------------------------------------------------------------------------

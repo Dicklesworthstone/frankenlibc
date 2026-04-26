@@ -2366,3 +2366,60 @@ fn strnstr_match_at_zero() {
     let p = unsafe { strnstr(hay.as_ptr().cast(), needle.as_ptr().cast(), 5) };
     assert_eq!(p as *const i8, hay.as_ptr().cast());
 }
+
+// ---------------------------------------------------------------------------
+// __strchrnul / __memrchr (glibc reserved-namespace aliases)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::string_abi::{__memrchr, __strchrnul, memrchr, strchrnul};
+
+#[test]
+fn under_strchrnul_matches_strchrnul_for_match() {
+    let s = c"hello, world";
+    let a = unsafe { strchrnul(s.as_ptr(), b'w' as c_int) };
+    let b = unsafe { __strchrnul(s.as_ptr(), b'w' as c_int) };
+    assert_eq!(a, b);
+    assert_eq!(unsafe { *a } as u8, b'w');
+}
+
+#[test]
+fn under_strchrnul_matches_strchrnul_for_no_match() {
+    let s = c"hello";
+    let a = unsafe { strchrnul(s.as_ptr(), b'z' as c_int) };
+    let b = unsafe { __strchrnul(s.as_ptr(), b'z' as c_int) };
+    assert_eq!(a, b);
+    // Should point at the trailing NUL.
+    assert_eq!(unsafe { *a } as u8, 0);
+}
+
+#[test]
+fn under_strchrnul_null_input_returns_null() {
+    let r = unsafe { __strchrnul(std::ptr::null(), b'x' as c_int) };
+    assert!(r.is_null());
+}
+
+#[test]
+fn under_memrchr_matches_memrchr_for_match() {
+    let s: &[u8] = b"abcXdefXghi";
+    let a = unsafe { memrchr(s.as_ptr().cast(), b'X' as c_int, s.len()) };
+    let b = unsafe { __memrchr(s.as_ptr().cast(), b'X' as c_int, s.len()) };
+    assert_eq!(a, b);
+    let off = unsafe { (a as *const u8).offset_from(s.as_ptr()) };
+    assert_eq!(off, 7); // last 'X' is at index 7
+}
+
+#[test]
+fn under_memrchr_matches_memrchr_for_no_match() {
+    let s: &[u8] = b"abcdef";
+    let a = unsafe { memrchr(s.as_ptr().cast(), b'z' as c_int, s.len()) };
+    let b = unsafe { __memrchr(s.as_ptr().cast(), b'z' as c_int, s.len()) };
+    assert_eq!(a, b);
+    assert!(a.is_null());
+}
+
+#[test]
+fn under_memrchr_zero_length_returns_null() {
+    let s: &[u8] = b"abc";
+    let r = unsafe { __memrchr(s.as_ptr().cast(), b'a' as c_int, 0) };
+    assert!(r.is_null());
+}

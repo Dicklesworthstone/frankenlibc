@@ -5400,6 +5400,22 @@ pub unsafe extern "C" fn getline(
     unsafe { getdelim(lineptr, n, b'\n' as c_int, stream) }
 }
 
+/// glibc reserved-namespace alias for [`getline`]. Some headers
+/// and a few third-party callers link against the underscored
+/// variant instead of the public name.
+///
+/// # Safety
+///
+/// Same as [`getline`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getline(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    stream: *mut c_void,
+) -> isize {
+    unsafe { getline(lineptr, n, stream) }
+}
+
 // ---------------------------------------------------------------------------
 // tmpfile / tmpnam
 // ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ use frankenlibc_abi::io_internal_abi::{
 };
 use frankenlibc_abi::io_internal_abi::{_IO_feof, _IO_ferror, _IO_getc, _IO_putc};
 use frankenlibc_abi::stdio_abi::{
+    __getline,
     __isoc99_fscanf,
     __isoc99_sscanf,
     _IO_flockfile,
@@ -5155,4 +5156,48 @@ fn snprintb_m_null_fmt_returns_minus_one() {
     let mut buf = [0 as c_char; 16];
     let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), std::ptr::null(), 0, 8) };
     assert_eq!(n, -1);
+}
+
+// ---------------------------------------------------------------------------
+// __getline (glibc reserved-namespace alias of getline)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_getline_matches_getline() {
+    let path = temp_path("under_getline");
+    let _ = fs::remove_file(&path);
+    let path_c = path_cstring(&path);
+
+    let stream = unsafe { fopen(path_c.as_ptr(), c"w+".as_ptr()) };
+    assert!(!stream.is_null());
+
+    assert_eq!(unsafe { fputs(c"first\nsecond\n".as_ptr(), stream) }, 0);
+    assert_eq!(unsafe { fflush(stream) }, 0);
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut lineptr: *mut i8 = std::ptr::null_mut();
+    let mut n: usize = 0;
+    let len = unsafe { __getline(&mut lineptr, &mut n, stream) };
+    assert_eq!(len, 6); // "first\n"
+    assert_eq!(unsafe { CStr::from_ptr(lineptr) }.to_bytes(), b"first\n");
+
+    let len = unsafe { __getline(&mut lineptr, &mut n, stream) };
+    assert_eq!(len, 7); // "second\n"
+    assert_eq!(unsafe { CStr::from_ptr(lineptr) }.to_bytes(), b"second\n");
+
+    if !lineptr.is_null() {
+        unsafe { libc::free(lineptr as *mut std::ffi::c_void) };
+    }
+    unsafe { fclose(stream) };
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn under_getline_null_args_return_minus_one() {
+    let mut lineptr: *mut i8 = std::ptr::null_mut();
+    let mut n: usize = 0;
+    let r = unsafe { __getline(std::ptr::null_mut(), &mut n, std::ptr::null_mut()) };
+    assert_eq!(r, -1);
+    let r = unsafe { __getline(&mut lineptr, std::ptr::null_mut(), std::ptr::null_mut()) };
+    assert_eq!(r, -1);
 }
