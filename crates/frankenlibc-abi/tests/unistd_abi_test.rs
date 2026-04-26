@@ -10464,3 +10464,272 @@ fn nss_netgroup_parseline_returns_zero_skip_and_sets_errnop() {
     assert_eq!(rc, 0);
     assert_eq!(errnop, libc::ENOENT);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 18 GLIBC_PRIVATE __libc_*/__res_*/__open_catalog stubs (bd-jb7p1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn libc_allocate_once_slow_is_void_noop() {
+    use frankenlibc_abi::unistd_abi::__libc_allocate_once_slow;
+    let mut slot: *mut c_void = std::ptr::null_mut();
+    unsafe {
+        __libc_allocate_once_slow(
+            &mut slot as *mut *mut c_void,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+    }
+    assert!(slot.is_null());
+}
+
+#[test]
+fn libc_clntudp_bufcreate_returns_null() {
+    use frankenlibc_abi::unistd_abi::__libc_clntudp_bufcreate;
+    let mut sock: c_int = -1;
+    let p = unsafe {
+        __libc_clntudp_bufcreate(
+            std::ptr::null_mut(),
+            0,
+            0,
+            0 as libc::c_long,
+            0 as libc::c_long,
+            &mut sock,
+            0,
+            0,
+            0,
+        )
+    };
+    assert!(p.is_null());
+}
+
+#[test]
+fn libc_ifunc_impl_list_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__libc_ifunc_impl_list;
+    let name = CString::new("memcpy").unwrap();
+    let n = unsafe { __libc_ifunc_impl_list(name.as_ptr(), std::ptr::null_mut(), 16) };
+    assert_eq!(n, 0);
+}
+
+#[test]
+fn libc_ns_makecanon_appends_trailing_dot() {
+    use frankenlibc_abi::unistd_abi::__libc_ns_makecanon;
+    let src = CString::new("example").unwrap();
+    let mut dst = [0u8; 32];
+    let rc =
+        unsafe { __libc_ns_makecanon(src.as_ptr(), dst.as_mut_ptr() as *mut c_char, dst.len()) };
+    assert_eq!(rc, 0);
+    let got = unsafe { CStr::from_ptr(dst.as_ptr() as *const c_char) }
+        .to_str()
+        .unwrap();
+    assert_eq!(got, "example.");
+}
+
+#[test]
+fn libc_ns_samename_matches_case_insensitive() {
+    use frankenlibc_abi::unistd_abi::__libc_ns_samename;
+    let a = CString::new("Example.COM.").unwrap();
+    let b = CString::new("example.com.").unwrap();
+    let rc = unsafe { __libc_ns_samename(a.as_ptr(), b.as_ptr()) };
+    assert_eq!(rc, 1);
+}
+
+#[test]
+fn libc_res_nameinquery_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__libc_res_nameinquery;
+    let name = CString::new("example.com").unwrap();
+    let buf = [0u8; 64];
+    let rc = unsafe {
+        __libc_res_nameinquery(
+            name.as_ptr(),
+            1,
+            1,
+            buf.as_ptr() as *const c_void,
+            buf.as_ptr().wrapping_add(buf.len()) as *const c_void,
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn libc_res_queriesmatch_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__libc_res_queriesmatch;
+    let buf1 = [0u8; 64];
+    let buf2 = [0u8; 64];
+    let rc = unsafe {
+        __libc_res_queriesmatch(
+            buf1.as_ptr() as *const c_void,
+            buf1.as_ptr().wrapping_add(buf1.len()) as *const c_void,
+            buf2.as_ptr() as *const c_void,
+            buf2.as_ptr().wrapping_add(buf2.len()) as *const c_void,
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn libc_rpc_getport_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__libc_rpc_getport;
+    let port = unsafe {
+        __libc_rpc_getport(
+            std::ptr::null_mut(),
+            100000,
+            2,
+            17,
+            0 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_long,
+            0 as libc::c_long,
+        )
+    };
+    assert_eq!(port, 0);
+}
+
+#[test]
+fn libc_unwind_link_get_returns_null() {
+    use frankenlibc_abi::unistd_abi::__libc_unwind_link_get;
+    let p = unsafe { __libc_unwind_link_get() };
+    assert!(p.is_null());
+}
+
+#[test]
+fn open_catalog_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__open_catalog;
+    let name = CString::new("messages").unwrap();
+    let rc = unsafe {
+        __open_catalog(
+            name.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn res_context_hostalias_returns_null() {
+    use frankenlibc_abi::unistd_abi::__res_context_hostalias;
+    let name = CString::new("alias").unwrap();
+    let mut buf = [0u8; 32];
+    let p = unsafe {
+        __res_context_hostalias(
+            std::ptr::null_mut(),
+            name.as_ptr(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(p.is_null());
+}
+
+#[test]
+fn res_context_mkquery_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__res_context_mkquery;
+    let dname = CString::new("example.com").unwrap();
+    let mut buf = [0u8; 512];
+    let rc = unsafe {
+        __res_context_mkquery(
+            std::ptr::null_mut(),
+            0,
+            dname.as_ptr(),
+            1,
+            1,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn res_context_query_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__res_context_query;
+    let name = CString::new("example.com").unwrap();
+    let mut buf = [0u8; 512];
+    let rc = unsafe {
+        __res_context_query(
+            std::ptr::null_mut(),
+            name.as_ptr(),
+            1,
+            1,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn res_context_search_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__res_context_search;
+    let name = CString::new("example").unwrap();
+    let mut buf = [0u8; 512];
+    let rc = unsafe {
+        __res_context_search(
+            std::ptr::null_mut(),
+            name.as_ptr(),
+            1,
+            1,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn res_context_send_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__res_context_send;
+    let qbuf = [0u8; 64];
+    let mut answer = [0u8; 512];
+    let mut ansp: *mut c_void = std::ptr::null_mut();
+    let mut ansp2: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe {
+        __res_context_send(
+            std::ptr::null_mut(),
+            qbuf.as_ptr() as *const c_void,
+            qbuf.len() as c_int,
+            std::ptr::null(),
+            0,
+            answer.as_mut_ptr() as *mut c_void,
+            answer.len() as c_int,
+            &mut ansp,
+            &mut ansp2,
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn res_get_nsaddr_returns_null() {
+    use frankenlibc_abi::unistd_abi::__res_get_nsaddr;
+    let p = unsafe { __res_get_nsaddr(std::ptr::null_mut(), 0) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn res_iclose_is_void_noop() {
+    use frankenlibc_abi::unistd_abi::__res_iclose;
+    unsafe { __res_iclose(std::ptr::null_mut(), 0) };
+    unsafe { __res_iclose(std::ptr::null_mut(), 1) };
+}
+
+#[test]
+fn res_nopt_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__res_nopt;
+    let mut buf = [0u8; 512];
+    let rc = unsafe {
+        __res_nopt(
+            std::ptr::null_mut(),
+            0,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+            512,
+        )
+    };
+    assert_eq!(rc, -1);
+}

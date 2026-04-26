@@ -9558,6 +9558,239 @@ pub unsafe extern "C" fn _nss_netgroup_parseline(
     0
 }
 
+// ---------------------------------------------------------------------------
+// __libc_*/__res_*/__open_catalog GLIBC_PRIVATE stubs (18 entries)
+// ---------------------------------------------------------------------------
+
+/// `__libc_allocate_once_slow(*ptr, *constructor, *closure)` —
+/// pthread_once-style helper. Stub no-op; the caller's "is
+/// initialized" check will see whatever they had.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_allocate_once_slow(
+    _ptr: *mut *mut c_void,
+    _constructor: *mut c_void,
+    _closure: *mut c_void,
+) {
+}
+
+/// `__libc_clntudp_bufcreate(addr, prog, vers, wait, sockp, sendsz,
+/// recvsz, flags) -> CLIENT*` — RPC private. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn __libc_clntudp_bufcreate(
+    _addr: *mut c_void,
+    _prog: c_ulong,
+    _vers: c_ulong,
+    _wait_lo: c_long,
+    _wait_hi: c_long,
+    _sockp: *mut c_int,
+    _sendsz: c_uint,
+    _recvsz: c_uint,
+    _flags: c_uint,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `__libc_ifunc_impl_list(name, *array, max) -> usize` — populate
+/// `array` with IFUNC implementation entries for `name`. Stub
+/// returns 0 (no entries available).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_ifunc_impl_list(
+    _name: *const c_char,
+    _array: *mut c_void,
+    _max: usize,
+) -> usize {
+    0
+}
+
+/// `__libc_ns_makecanon(src, dst, dstsiz) -> int` — internal alias
+/// of the public `ns_makecanon` we ship in resolv_abi.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_ns_makecanon(
+    src: *const c_char,
+    dst: *mut c_char,
+    dstsiz: usize,
+) -> c_int {
+    unsafe { crate::resolv_abi::ns_makecanon(src, dst, dstsiz) }
+}
+
+/// `__libc_ns_samename(a, b) -> int` — internal alias of the
+/// public `ns_samename` we ship in resolv_abi.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_ns_samename(a: *const c_char, b: *const c_char) -> c_int {
+    unsafe { crate::resolv_abi::ns_samename(a, b) }
+}
+
+/// `__libc_res_nameinquery(name, type, class, *buf, eom) -> int` —
+/// "is this name in the supplied query?" predicate. Stub returns 0
+/// (not present).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_res_nameinquery(
+    _name: *const c_char,
+    _type: c_int,
+    _class: c_int,
+    _buf: *const c_void,
+    _eom: *const c_void,
+) -> c_int {
+    0
+}
+
+/// `__libc_res_queriesmatch(buf1, eom1, buf2, eom2) -> int` —
+/// "are these two DNS query messages equivalent?". Stub returns 0
+/// (not equivalent).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_res_queriesmatch(
+    _buf1: *const c_void,
+    _eom1: *const c_void,
+    _buf2: *const c_void,
+    _eom2: *const c_void,
+) -> c_int {
+    0
+}
+
+/// `__libc_rpc_getport(*addr, prognum, versnum, protocol, timo,
+/// tottimeout) -> u16` — portmapper lookup. Stub returns 0 (no
+/// port available).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_rpc_getport(
+    _addr: *mut c_void,
+    _prognum: c_ulong,
+    _versnum: c_ulong,
+    _protocol: c_ulong,
+    _timo_lo: c_long,
+    _timo_hi: c_long,
+    _tot_lo: c_long,
+    _tot_hi: c_long,
+) -> u16 {
+    0
+}
+
+/// `__libc_unwind_link_get() -> *unwind_link` — load the libgcc_s
+/// unwind hook. Stub returns NULL (no unwinder bridged).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_unwind_link_get() -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `__open_catalog(name, *result) -> int` — locate and open a
+/// message catalog. Stub returns -1 (catopen failure).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __open_catalog(
+    _name: *const c_char,
+    _nlspath: *const c_char,
+    _env_var: *const c_char,
+    _result: *mut c_void,
+) -> c_int {
+    -1
+}
+
+/// `__res_context_hostalias(*ctx, name, *buf, buflen) ->
+/// *const c_char` — look up the HOSTALIASES entry for `name`.
+/// Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_context_hostalias(
+    _ctx: *mut c_void,
+    _name: *const c_char,
+    _buf: *mut c_char,
+    _buflen: usize,
+) -> *const c_char {
+    core::ptr::null()
+}
+
+/// `__res_context_mkquery(*ctx, op, *dname, class, type, *data,
+/// datalen, *newrr, *buf, buflen) -> int` — build a DNS query
+/// packet. Stub returns -1 (failure).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn __res_context_mkquery(
+    _ctx: *mut c_void,
+    _op: c_int,
+    _dname: *const c_char,
+    _class: c_int,
+    _type: c_int,
+    _data: *const c_void,
+    _datalen: c_int,
+    _newrr: *const c_void,
+    _buf: *mut c_void,
+    _buflen: c_int,
+) -> c_int {
+    -1
+}
+
+/// `__res_context_query(*ctx, name, class, type, *answer,
+/// anslen) -> int` — perform a DNS query. Stub returns -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_context_query(
+    _ctx: *mut c_void,
+    _name: *const c_char,
+    _class: c_int,
+    _type: c_int,
+    _answer: *mut c_void,
+    _anslen: c_int,
+) -> c_int {
+    -1
+}
+
+/// `__res_context_search(*ctx, name, class, type, *answer,
+/// anslen) -> int` — DNS query with search-list expansion. Stub
+/// returns -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_context_search(
+    _ctx: *mut c_void,
+    _name: *const c_char,
+    _class: c_int,
+    _type: c_int,
+    _answer: *mut c_void,
+    _anslen: c_int,
+) -> c_int {
+    -1
+}
+
+/// `__res_context_send(*ctx, *buf, buflen, *buf2, buflen2,
+/// *answer, anslen, *anssiz, *thishreply) -> int` — send a
+/// pre-built DNS query. Stub returns -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn __res_context_send(
+    _ctx: *mut c_void,
+    _buf: *const c_void,
+    _buflen: c_int,
+    _buf2: *const c_void,
+    _buflen2: c_int,
+    _answer: *mut c_void,
+    _anslen: c_int,
+    _ansp: *mut *mut c_void,
+    _ansp2: *mut *mut c_void,
+) -> c_int {
+    -1
+}
+
+/// `__res_get_nsaddr(*statp, n) -> *struct sockaddr_in` — return
+/// nameserver `n`'s address. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_get_nsaddr(_statp: *mut c_void, _n: c_uint) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `__res_iclose(*statp, free_addr) -> ()` — close all the
+/// nameserver sockets in `*statp`. Stub no-op since we have no
+/// sockets to close.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_iclose(_statp: *mut c_void, _free_addr: c_int) {}
+
+/// `__res_nopt(*ctx, n0, *buf, buflen, anslen) -> int` — append an
+/// EDNS OPT pseudo-RR to a DNS query. Stub returns -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_nopt(
+    _ctx: *mut c_void,
+    _n0: c_int,
+    _buf: *mut c_void,
+    _buflen: c_int,
+    _anslen: c_int,
+) -> c_int {
+    -1
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.
