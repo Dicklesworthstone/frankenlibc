@@ -1820,3 +1820,197 @@ fn ns_name_rollback_handles_null_dnptrs() {
         )
     };
 }
+
+// ---------------------------------------------------------------------------
+// ns_initparse / ns_parserr / ns_skiprr / ns_msg_getflag
+// ---------------------------------------------------------------------------
+
+/// Build a synthetic DNS response message:
+///   header: id=0x1234, flags=0x8180 (QR=1, RD=1, RA=1, RCODE=0), qd=1, an=1, ns=0, ar=0
+///   question:  "foo.com" QTYPE=A (1), QCLASS=IN (1)
+///   answer:    name pointer (0xC00C → offset 12 = "foo.com"), TYPE=A, CLASS=IN, TTL=3600, RDLENGTH=4, RDATA=127.0.0.1
+fn synthetic_dns_message() -> Vec<u8> {
+    let mut m = Vec::<u8>::new();
+    // Header
+    m.extend_from_slice(&[0x12, 0x34]); // ID
+    m.extend_from_slice(&[0x81, 0x80]); // flags: 1 QR, 0001 opcode? No, opcode 0; AA=0, TC=0, RD=1, RA=1, Z=0, AD=0, CD=0, RCODE=0
+    m.extend_from_slice(&[0x00, 0x01]); // QDCOUNT=1
+    m.extend_from_slice(&[0x00, 0x01]); // ANCOUNT=1
+    m.extend_from_slice(&[0x00, 0x00]); // NSCOUNT=0
+    m.extend_from_slice(&[0x00, 0x00]); // ARCOUNT=0
+    // Question section: foo.com A IN
+    m.extend_from_slice(&[3, b'f', b'o', b'o', 3, b'c', b'o', b'm', 0]);
+    m.extend_from_slice(&[0x00, 0x01]); // QTYPE=A
+    m.extend_from_slice(&[0x00, 0x01]); // QCLASS=IN
+    // Answer section: pointer to offset 12 (foo.com label), A, IN, TTL=3600, RDLEN=4, 127.0.0.1
+    m.extend_from_slice(&[0xC0, 0x0C]); // name compressed pointer to offset 12
+    m.extend_from_slice(&[0x00, 0x01]); // TYPE=A
+    m.extend_from_slice(&[0x00, 0x01]); // CLASS=IN
+    m.extend_from_slice(&[0x00, 0x00, 0x0E, 0x10]); // TTL=3600
+    m.extend_from_slice(&[0x00, 0x04]); // RDLENGTH=4
+    m.extend_from_slice(&[127, 0, 0, 1]); // RDATA
+    m
+}
+
+#[test]
+fn ns_initparse_parses_synthetic_response() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) };
+    assert_eq!(rc, 0, "ns_initparse must succeed on a well-formed message");
+    assert_eq!(handle._id, 0x1234);
+    assert_eq!(handle._flags, 0x8180);
+    assert_eq!(handle._counts, [1, 1, 0, 0]);
+    // Question section starts immediately after the 12-byte header.
+    assert_eq!(handle._sections[0], unsafe { msg.as_ptr().add(12) });
+}
+
+#[test]
+fn ns_initparse_rejects_truncated_header() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse};
+    let buf: [u8; 5] = [0; 5]; // less than 12-byte header
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_initparse(buf.as_ptr(), buf.len() as c_int, &mut handle) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_initparse_rejects_truncated_section() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse};
+    // Header claims 1 question but no question bytes follow.
+    let mut buf: [u8; 12] = [0; 12];
+    buf[5] = 1; // QDCOUNT=1
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_initparse(buf.as_ptr(), buf.len() as c_int, &mut handle) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_msg_getflag_reads_header_bits() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse, ns_msg_getflag};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+
+    // Flag 0 = QR (we set bit 15 → 1)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 0) }, 1);
+    // Flag 4 = RD (bit 8 → 1)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 4) }, 1);
+    // Flag 5 = RA (bit 7 → 1)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 5) }, 1);
+    // Flag 9 = RCODE (low 4 bits → 0)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 9) }, 0);
+    // Flag 1 = opcode (bits 11-14 → 0)
+    assert_eq!(unsafe { ns_msg_getflag(&mut handle, 1) }, 0);
+}
+
+#[test]
+fn ns_parserr_reads_question_section() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_initparse, ns_parserr};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        ns_parserr(&mut handle, 0 /*qd*/, 0, &mut rr)
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(rr._type, 1, "qtype A");
+    assert_eq!(rr.rr_class, 1, "qclass IN");
+    // Name should be "foo.com" (or "foo.com." depending on dn_expand).
+    let name = unsafe { CStr::from_ptr(rr.name.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert!(
+        name == "foo.com" || name == "foo.com.",
+        "unexpected name: {name:?}"
+    );
+}
+
+#[test]
+fn ns_parserr_reads_answer_section_with_compressed_name() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_initparse, ns_parserr};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        ns_parserr(&mut handle, 1 /*an*/, 0, &mut rr)
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(rr._type, 1);
+    assert_eq!(rr.rr_class, 1);
+    assert_eq!(rr.ttl, 3600);
+    assert_eq!(rr.rdlength, 4);
+    assert!(!rr.rdata.is_null());
+    let octets = unsafe { core::slice::from_raw_parts(rr.rdata, 4) };
+    assert_eq!(octets, &[127u8, 0, 0, 1]);
+
+    let name = unsafe { CStr::from_ptr(rr.name.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    assert!(name == "foo.com" || name == "foo.com.");
+}
+
+#[test]
+fn ns_parserr_rejects_out_of_range_rrnum() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_initparse, ns_parserr};
+    let msg = synthetic_dns_message();
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { ns_initparse(msg.as_ptr(), msg.len() as c_int, &mut handle) },
+        0
+    );
+
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    // Section 0 only has 1 question; rrnum=1 is out of range.
+    let rc = unsafe { ns_parserr(&mut handle, 0, 1, &mut rr) };
+    assert_eq!(rc, -1);
+    // Invalid section index.
+    let rc = unsafe { ns_parserr(&mut handle, 9, 0, &mut rr) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_skiprr_advances_past_question_and_answer() {
+    use frankenlibc_abi::resolv_abi::ns_skiprr;
+    let msg = synthetic_dns_message();
+    let qd_start = unsafe { msg.as_ptr().add(12) };
+    let eom = unsafe { msg.as_ptr().add(msg.len()) };
+
+    // Skip 1 question entry: name (9 bytes "foo.com") + 4 = 13 bytes.
+    let n = unsafe {
+        ns_skiprr(qd_start, eom, 0 /*qd*/, 1)
+    };
+    assert_eq!(n, 13);
+
+    // Then the answer entry: ptr (2 bytes) + 10 fixed + 4 rdata = 16 bytes.
+    let an_start = unsafe { qd_start.add(13) };
+    let n = unsafe {
+        ns_skiprr(an_start, eom, 1 /*an*/, 1)
+    };
+    assert_eq!(n, 16);
+}
+
+#[test]
+fn ns_skiprr_rejects_overrun() {
+    use frankenlibc_abi::resolv_abi::ns_skiprr;
+    let msg = synthetic_dns_message();
+    let qd_start = unsafe { msg.as_ptr().add(12) };
+    let eom = unsafe { msg.as_ptr().add(msg.len()) };
+    // Asking for too many entries should overrun the message.
+    let rc = unsafe { ns_skiprr(qd_start, eom, 0, 100) };
+    assert_eq!(rc, -1);
+}
