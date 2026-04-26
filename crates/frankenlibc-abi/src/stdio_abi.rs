@@ -7409,3 +7409,213 @@ pub unsafe extern "C" fn unvis(
     }
     result
 }
+
+// ---------------------------------------------------------------------------
+// svis / snvis / strsvis / strsnvis / strsvisx / strsnvisx
+// (NetBSD vis(3) extra-bytes family)
+// ---------------------------------------------------------------------------
+
+/// Read the NUL-terminated `extra` argument shared by the svis(3)
+/// family. Returns an empty slice for NULL (caller's choice to skip
+/// extras) and never panics.
+unsafe fn extras_slice<'a>(extra: *const c_char) -> &'a [u8] {
+    if extra.is_null() {
+        return &[];
+    }
+    let len = unsafe { libc::strlen(extra) };
+    unsafe { std::slice::from_raw_parts(extra as *const u8, len) }
+}
+
+/// NetBSD `svis(dst, c, flags, nextc, extra)` — sibling of [`vis`]
+/// that additionally treats every byte in the NUL-terminated `extra`
+/// string as needing escape. Writes encoded bytes followed by NUL,
+/// returns a pointer to the trailing NUL.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` has room for the encoded form plus NUL
+/// (worst case 5 bytes). `extra`, when non-NULL, must point to a
+/// NUL-terminated byte string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svis(
+    dst: *mut c_char,
+    c: c_int,
+    flags: c_int,
+    _nextc: c_int,
+    extra: *const c_char,
+) -> *mut c_char {
+    if dst.is_null() {
+        return std::ptr::null_mut();
+    }
+    let extras = unsafe { extras_slice(extra) };
+    let mut buf: Vec<u8> = Vec::with_capacity(8);
+    frankenlibc_core::stdio::vis::encode_byte_with_extra(c as u8, flags as u32, extras, &mut buf);
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), dst as *mut u8, buf.len());
+        *dst.add(buf.len()) = 0;
+        dst.add(buf.len())
+    }
+}
+
+/// NetBSD `snvis(dst, dlen, c, flags, nextc, extra)` — bounded
+/// variant of [`svis`]. Returns NULL on overflow without writing
+/// anything; otherwise writes encoded bytes + NUL and returns a
+/// pointer to the trailing NUL.
+///
+/// # Safety
+///
+/// Caller must ensure `dst` is valid for `dlen` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn snvis(
+    dst: *mut c_char,
+    dlen: usize,
+    c: c_int,
+    flags: c_int,
+    _nextc: c_int,
+    extra: *const c_char,
+) -> *mut c_char {
+    if dst.is_null() || dlen == 0 {
+        return std::ptr::null_mut();
+    }
+    let extras = unsafe { extras_slice(extra) };
+    let mut buf: Vec<u8> = Vec::with_capacity(8);
+    frankenlibc_core::stdio::vis::encode_byte_with_extra(c as u8, flags as u32, extras, &mut buf);
+    if buf.len() + 1 > dlen {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(buf.as_ptr(), dst as *mut u8, buf.len());
+        *dst.add(buf.len()) = 0;
+        dst.add(buf.len())
+    }
+}
+
+/// NetBSD `strsvis(dst, src, flags, extra)` — sibling of [`strvis`]
+/// that treats every byte in `extra` as needing escape. Returns the
+/// encoded length excluding the trailing NUL, or -1 on NULL `dst` /
+/// `src`.
+///
+/// # Safety
+///
+/// `dst` must hold at least 4 × strlen(src) + 1 writable bytes.
+/// `src` and `extra` (when non-NULL) must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsvis(
+    dst: *mut c_char,
+    src: *const c_char,
+    flags: c_int,
+    extra: *const c_char,
+) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let src_len = unsafe { libc::strlen(src) };
+    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, src_len) };
+    let extras = unsafe { extras_slice(extra) };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strsnvis(dst, dlen, src, flags, extra)` — bounded variant
+/// of [`strsvis`]. Returns the encoded length on success or -1 on
+/// overflow / NULL input. On overflow no bytes are written.
+///
+/// # Safety
+///
+/// Same as [`strsvis`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsnvis(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    flags: c_int,
+    extra: *const c_char,
+) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let src_len = unsafe { libc::strlen(src) };
+    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, src_len) };
+    let extras = unsafe { extras_slice(extra) };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
+    if encoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strsvisx(dst, src, srclen, flags, extra)` — extended
+/// length variant of [`strsvis`] that accepts embedded NULs in
+/// `src`. Returns encoded length excluding trailing NUL, or -1 on
+/// NULL input.
+///
+/// # Safety
+///
+/// `dst` must hold at least 4 × srclen + 1 writable bytes. `src`
+/// must be valid for `srclen` readable bytes. `extra`, when non-NULL,
+/// must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsvisx(
+    dst: *mut c_char,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+    extra: *const c_char,
+) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
+    let extras = unsafe { extras_slice(extra) };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strsnvisx(dst, dlen, src, srclen, flags, extra)` —
+/// bounded variant of [`strsvisx`]. Returns encoded length on
+/// success or -1 on overflow / NULL input. On overflow no bytes are
+/// written.
+///
+/// # Safety
+///
+/// Same as [`strsvisx`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsnvisx(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+    extra: *const c_char,
+) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
+    let extras = unsafe { extras_slice(extra) };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
+    if encoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}

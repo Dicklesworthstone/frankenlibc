@@ -115,6 +115,7 @@ use frankenlibc_abi::stdio_abi::{
     setvbuf,
     signal_runtime_ready_for_tests,
     snprintf,
+    snvis,
     sprintf,
     sscanf,
     stderr,
@@ -124,10 +125,15 @@ use frankenlibc_abi::stdio_abi::{
     strnunvisx,
     strnvis,
     strnvisx,
+    strsnvis,
+    strsnvisx,
+    strsvis,
+    strsvisx,
     strunvis,
     strunvisx,
     strvis,
     strvisx,
+    svis,
     take_last_decision_gate_for_tests,
     tmpfile,
     tmpfile64,
@@ -4434,4 +4440,242 @@ fn unvis_state_persists_across_calls() {
     );
     assert_eq!(cp as u8, b'A');
     assert_eq!(state, 0, "state should be back to Initial after Valid");
+}
+
+// ---------------------------------------------------------------------------
+// svis / snvis / strsvis / strsnvis / strsvisx / strsnvisx
+// (NetBSD vis(3) extra-bytes family)
+// ---------------------------------------------------------------------------
+
+fn svis_collect(buf: &[c_char], end: *mut c_char) -> Vec<u8> {
+    let len = (end as usize).saturating_sub(buf.as_ptr() as usize);
+    (0..len).map(|i| buf[i] as u8).collect()
+}
+
+fn svisx_collect(buf: &[c_char], n: c_int) -> Vec<u8> {
+    (0..n as usize).map(|i| buf[i] as u8).collect()
+}
+
+#[test]
+fn svis_passthrough_byte_not_in_extras() {
+    let extra = c"#";
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { svis(buf.as_mut_ptr(), b'A' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(!end.is_null());
+    assert_eq!(svis_collect(&buf, end), vec![b'A']);
+    // Trailing NUL written.
+    assert_eq!(buf[1] as u8, 0);
+}
+
+#[test]
+fn svis_escapes_byte_listed_in_extras() {
+    let extra = c"#";
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { svis(buf.as_mut_ptr(), b'#' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(!end.is_null());
+    // '#' is 0x23 → caret form would be \^c (0x23 ^ 0x40 = 0x63 = 'c').
+    assert_eq!(svis_collect(&buf, end), b"\\^c".to_vec());
+}
+
+#[test]
+fn svis_with_octal_flag_uses_octal_for_extras() {
+    let extra = c"#";
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe {
+        svis(
+            buf.as_mut_ptr(),
+            b'#' as c_int,
+            frankenlibc_core::stdio::vis::VIS_OCTAL as c_int,
+            0,
+            extra.as_ptr(),
+        )
+    };
+    assert!(!end.is_null());
+    // 0x23 = 0o43 → \043
+    assert_eq!(svis_collect(&buf, end), b"\\043".to_vec());
+}
+
+#[test]
+fn svis_null_extra_matches_vis_behavior() {
+    let mut a = [0 as c_char; 8];
+    let mut b = [0 as c_char; 8];
+    let end_a = unsafe { svis(a.as_mut_ptr(), b'A' as c_int, 0, 0, std::ptr::null()) };
+    let end_b = unsafe { vis(b.as_mut_ptr(), b'A' as c_int, 0, 0) };
+    assert!(!end_a.is_null() && !end_b.is_null());
+    assert_eq!(svis_collect(&a, end_a), svis_collect(&b, end_b));
+}
+
+#[test]
+fn svis_null_dst_returns_null() {
+    let extra = c"#";
+    let r = unsafe { svis(std::ptr::null_mut(), b'A' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(r.is_null());
+}
+
+#[test]
+fn snvis_returns_null_on_overflow() {
+    let extra = c"#";
+    let mut buf = [0 as c_char; 2];
+    // '#' encodes to \^c (3 bytes) + NUL = 4. Buffer of 2 must fail.
+    let r = unsafe { snvis(buf.as_mut_ptr(), 2, b'#' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(r.is_null());
+}
+
+#[test]
+fn snvis_succeeds_with_exact_room() {
+    let extra = c"#";
+    let mut buf = [0xeeu8 as c_char; 8];
+    let end = unsafe { snvis(buf.as_mut_ptr(), 4, b'#' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(!end.is_null());
+    assert_eq!(svis_collect(&buf[..3], end), b"\\^c".to_vec());
+    assert_eq!(buf[3] as u8, 0);
+}
+
+#[test]
+fn strsvis_escapes_only_listed_extras() {
+    let src = c"a#b/c";
+    let extra = c"#/";
+    let mut dst = [0 as c_char; 32];
+    let n = unsafe { strsvis(dst.as_mut_ptr(), src.as_ptr(), 0, extra.as_ptr()) };
+    assert!(n >= 0);
+    // 'a' passthrough; '#' → \^c; 'b' passthrough; '/' is 0x2f → \^o
+    // (0x2f ^ 0x40 = 0x6f); 'c' passthrough.
+    assert_eq!(svisx_collect(&dst, n), b"a\\^cb\\^oc".to_vec());
+    assert_eq!(dst[n as usize] as u8, 0);
+}
+
+#[test]
+fn strsvis_null_extras_matches_strvis() {
+    let src = c"hello\nworld";
+    let mut a = [0 as c_char; 64];
+    let mut b = [0 as c_char; 64];
+    let na = unsafe { strsvis(a.as_mut_ptr(), src.as_ptr(), 0, std::ptr::null()) };
+    let nb = unsafe { strvis(b.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(na, nb);
+    assert_eq!(svisx_collect(&a, na), svisx_collect(&b, nb));
+}
+
+#[test]
+fn strsvis_null_args_return_minus_one() {
+    let src = c"hi";
+    let extra = c"#";
+    let mut dst = [0 as c_char; 8];
+    assert_eq!(
+        unsafe { strsvis(std::ptr::null_mut(), src.as_ptr(), 0, extra.as_ptr()) },
+        -1
+    );
+    assert_eq!(
+        unsafe { strsvis(dst.as_mut_ptr(), std::ptr::null(), 0, extra.as_ptr()) },
+        -1
+    );
+}
+
+#[test]
+fn strsnvis_returns_minus_one_on_overflow() {
+    let src = c"###";
+    let extra = c"#";
+    let mut dst = [0 as c_char; 4];
+    // Encoded length is 9 (\^c × 3) + NUL = 10. Buffer of 4 must fail.
+    let n = unsafe { strsnvis(dst.as_mut_ptr(), 4, src.as_ptr(), 0, extra.as_ptr()) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strsnvis_succeeds_with_room() {
+    let src = c"#";
+    let extra = c"#";
+    let mut dst = [0xeeu8 as c_char; 8];
+    let n = unsafe { strsnvis(dst.as_mut_ptr(), 8, src.as_ptr(), 0, extra.as_ptr()) };
+    assert_eq!(n, 3);
+    assert_eq!(svisx_collect(&dst, n), b"\\^c".to_vec());
+    assert_eq!(dst[n as usize] as u8, 0);
+}
+
+#[test]
+fn strsvisx_handles_embedded_nul() {
+    let payload: &[u8] = b"a\0b#c";
+    let extra = c"#";
+    let mut dst = [0 as c_char; 32];
+    let n = unsafe {
+        strsvisx(
+            dst.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+        )
+    };
+    assert!(n >= 0);
+    // 'a' passthrough; \0 → \^@; 'b' passthrough; '#' → \^c;
+    // 'c' passthrough.
+    assert_eq!(svisx_collect(&dst, n), b"a\\^@b\\^cc".to_vec());
+}
+
+#[test]
+fn strsnvisx_returns_minus_one_on_overflow() {
+    let payload: &[u8] = b"###";
+    let extra = c"#";
+    let mut dst = [0 as c_char; 4];
+    let n = unsafe {
+        strsnvisx(
+            dst.as_mut_ptr(),
+            4,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strsnvisx_succeeds_with_room() {
+    let payload: &[u8] = b"#";
+    let extra = c"#";
+    let mut dst = [0xeeu8 as c_char; 8];
+    let n = unsafe {
+        strsnvisx(
+            dst.as_mut_ptr(),
+            8,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+        )
+    };
+    assert_eq!(n, 3);
+    assert_eq!(svisx_collect(&dst, n), b"\\^c".to_vec());
+    assert_eq!(dst[n as usize] as u8, 0);
+}
+
+#[test]
+fn strsvis_then_strunvis_round_trips_extras() {
+    // svis-encoding plus strunvis decoding must round-trip — strunvis
+    // doesn't care which subset of bytes was forced to escape; it
+    // just decodes whatever escape forms appear.
+    let src = c"hello#world/test";
+    let extra = c"#/";
+    let mut enc = [0 as c_char; 64];
+    let n = unsafe { strsvis(enc.as_mut_ptr(), src.as_ptr(), 0, extra.as_ptr()) };
+    assert!(n >= 0);
+    let mut dec = [0 as c_char; 64];
+    let m = unsafe { strunvis(dec.as_mut_ptr(), enc.as_ptr()) };
+    assert!(m >= 0);
+    let decoded = svisx_collect(&dec, m);
+    assert_eq!(decoded, b"hello#world/test".to_vec());
+}
+
+#[test]
+fn strsvisx_null_args_return_minus_one() {
+    let src = c"hi";
+    let mut dst = [0 as c_char; 8];
+    assert_eq!(
+        unsafe { strsvisx(std::ptr::null_mut(), src.as_ptr(), 2, 0, std::ptr::null(),) },
+        -1
+    );
+    assert_eq!(
+        unsafe { strsvisx(dst.as_mut_ptr(), std::ptr::null(), 2, 0, std::ptr::null()) },
+        -1
+    );
 }

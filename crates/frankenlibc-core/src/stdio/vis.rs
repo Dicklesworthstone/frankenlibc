@@ -99,6 +99,41 @@ pub fn strvis_to_vec(src: &[u8], flags: u32) -> Vec<u8> {
     out
 }
 
+/// Encode a single byte `c` into `out`, treating any byte present in
+/// `extra` as needing escape (even bytes that would otherwise pass
+/// through). Mirrors NetBSD `svis(3)`.
+pub fn encode_byte_with_extra(c: u8, flags: u32, extra: &[u8], out: &mut Vec<u8>) {
+    if extra.contains(&c) && c != b'\\' && (0x20..=0x7e).contains(&c) {
+        // Force-escape this otherwise-printable byte using the same
+        // notation we'd pick for a control byte (caret form by
+        // default, octal under VIS_OCTAL).
+        if flags & VIS_OCTAL != 0 {
+            out.push(b'\\');
+            out.push(b'0' + ((c >> 6) & 0x07));
+            out.push(b'0' + ((c >> 3) & 0x07));
+            out.push(b'0' + (c & 0x07));
+        } else {
+            // Printable bytes are all < 0x80 and != 0x7f, so the
+            // caret form `\^X` (X = c XOR 0x40) is well-defined.
+            out.push(b'\\');
+            out.push(b'^');
+            out.push(c ^ 0x40);
+        }
+        return;
+    }
+    encode_byte(c, flags, out);
+}
+
+/// Encode `src` into a fresh `Vec<u8>` with `extra` bytes also forced
+/// to escape. Mirrors NetBSD `strsvis(dst, src, flags, extra)`.
+pub fn strvis_to_vec_with_extra(src: &[u8], flags: u32, extra: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(src.len() * 4 + 1);
+    for &c in src {
+        encode_byte_with_extra(c, flags, extra, &mut out);
+    }
+    out
+}
+
 /// Result of decoding one logical input element.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DecodeStep {
