@@ -47,10 +47,11 @@ use frankenlibc_abi::unistd_abi::{
     getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64, gsignal,
     isatty, link, logout, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd, open,
     pathconf, pidfd_getfd, process_madvise, process_mrelease, process_vm_readv, process_vm_writev,
-    read, readlink, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
-    setns, setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec,
-    ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, unshare,
-    updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
+    read, readlink, readpassphrase, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent,
+    setnetgrent, setns, setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset,
+    sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname,
+    unlink, unshare, updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp,
+    wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -5369,4 +5370,189 @@ fn flopenat_null_path_returns_minus_one_with_efault() {
     let fd = unsafe { flopenat(libc::AT_FDCWD, std::ptr::null(), libc::O_RDONLY, 0) };
     assert_eq!(fd, -1);
     assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+}
+
+// ---------------------------------------------------------------------------
+// readpassphrase (OpenBSD: passphrase reader)
+// ---------------------------------------------------------------------------
+//
+// We exercise the RPP_STDIN flag path so we can drive the read via a pipe
+// without needing a real /dev/tty. Tests are serialized via a Mutex
+// because they temporarily dup2 over stdin (fd 0).
+
+const RPP_ECHO_ON: c_int = 0x01;
+const RPP_FORCELOWER: c_int = 0x04;
+const RPP_FORCEUPPER: c_int = 0x08;
+const RPP_SEVENBIT: c_int = 0x10;
+const RPP_STDIN: c_int = 0x20;
+
+static READPASSPHRASE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn run_with_piped_stdin(payload: &[u8], call: impl FnOnce()) {
+    let _guard = READPASSPHRASE_LOCK
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let saved_stdin = unsafe { libc::dup(0) };
+    assert!(saved_stdin >= 0);
+
+    let mut pipefds = [0 as c_int; 2];
+    let rc = unsafe { libc::pipe(pipefds.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+
+    let written = unsafe { libc::write(pipefds[1], payload.as_ptr() as *const _, payload.len()) };
+    assert_eq!(written as usize, payload.len());
+    unsafe { libc::close(pipefds[1]) };
+
+    unsafe { libc::dup2(pipefds[0], 0) };
+    unsafe { libc::close(pipefds[0]) };
+
+    call();
+
+    unsafe { libc::dup2(saved_stdin, 0) };
+    unsafe { libc::close(saved_stdin) };
+}
+
+#[test]
+fn readpassphrase_null_buf_returns_null() {
+    let prompt = c"";
+    let p = unsafe { readpassphrase(prompt.as_ptr(), std::ptr::null_mut(), 16, RPP_STDIN) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn readpassphrase_bufsiz_zero_returns_null() {
+    let prompt = c"";
+    let mut buf = [0i8; 16];
+    let p = unsafe { readpassphrase(prompt.as_ptr(), buf.as_mut_ptr(), 0, RPP_STDIN) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn readpassphrase_reads_line_via_stdin() {
+    let mut buf = [0i8; 32];
+    run_with_piped_stdin(b"secret123\n", || {
+        let prompt = c"";
+        let p = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON,
+            )
+        };
+        assert!(!p.is_null());
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"secret123");
+}
+
+#[test]
+fn readpassphrase_strips_trailing_newline_only() {
+    let mut buf = [0i8; 32];
+    run_with_piped_stdin(b"hello-world\n", || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"hello-world");
+}
+
+#[test]
+fn readpassphrase_truncates_at_bufsiz_minus_one() {
+    let mut buf = [0i8; 6]; // 5 chars + NUL
+    run_with_piped_stdin(b"abcdefghij\n", || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"abcde", "must NUL-terminate at bufsiz - 1");
+}
+
+#[test]
+fn readpassphrase_force_upper_uppercases_input() {
+    let mut buf = [0i8; 32];
+    run_with_piped_stdin(b"MixedCase\n", || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON | RPP_FORCEUPPER,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"MIXEDCASE");
+}
+
+#[test]
+fn readpassphrase_force_lower_lowercases_input() {
+    let mut buf = [0i8; 32];
+    run_with_piped_stdin(b"MixedCase\n", || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON | RPP_FORCELOWER,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"mixedcase");
+}
+
+#[test]
+fn readpassphrase_seven_bit_strips_high_bit() {
+    let mut buf = [0i8; 32];
+    let payload = [0xc1u8, 0xa9, b'X', b'\n'];
+    run_with_piped_stdin(&payload, || {
+        let prompt = c"";
+        let _ = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON | RPP_SEVENBIT,
+            )
+        };
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    // 0xc1 & 0x7f = 0x41 = 'A'; 0xa9 & 0x7f = 0x29 = ')'.
+    assert_eq!(s, b"A)X");
+}
+
+#[test]
+fn readpassphrase_empty_input_yields_empty_string() {
+    let mut buf = [0i8; 16];
+    run_with_piped_stdin(b"\n", || {
+        let prompt = c"";
+        let p = unsafe {
+            readpassphrase(
+                prompt.as_ptr(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                RPP_STDIN | RPP_ECHO_ON,
+            )
+        };
+        assert!(!p.is_null());
+    });
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, b"");
 }

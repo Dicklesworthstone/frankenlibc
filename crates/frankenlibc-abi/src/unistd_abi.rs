@@ -8628,6 +8628,149 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
     result
 }
 
+// ---------------------------------------------------------------------------
+// readpassphrase (OpenBSD: passphrase reader with flag-controlled behavior)
+// ---------------------------------------------------------------------------
+//
+// Companion to getpass: same /dev/tty + ioctl(TCGETS/TCSETS) ECHO flip
+// pattern, but with a caller-provided buffer and the documented OpenBSD
+// flag set:
+//   RPP_ECHO_OFF   = 0x00  default — disable echo
+//   RPP_ECHO_ON    = 0x01  echo as typed
+//   RPP_REQUIRE_TTY= 0x02  fail if /dev/tty unavailable
+//   RPP_FORCELOWER = 0x04  convert to lowercase
+//   RPP_FORCEUPPER = 0x08  convert to uppercase
+//   RPP_SEVENBIT   = 0x10  strip the high bit
+//   RPP_STDIN      = 0x20  use stdin/stderr instead of /dev/tty
+
+const RPP_ECHO_ON: c_int = 0x01;
+const RPP_REQUIRE_TTY: c_int = 0x02;
+const RPP_FORCELOWER: c_int = 0x04;
+const RPP_FORCEUPPER: c_int = 0x08;
+const RPP_SEVENBIT: c_int = 0x10;
+const RPP_STDIN: c_int = 0x20;
+
+/// OpenBSD `readpassphrase(prompt, buf, bufsiz, flags)` — read a
+/// passphrase from /dev/tty (or stdin/stderr when [`RPP_STDIN`] is
+/// set) into the caller-supplied `buf` (at most `bufsiz - 1` bytes,
+/// NUL-terminated). Returns `buf` on success, NULL on error or when
+/// `bufsiz == 0`.
+///
+/// # Safety
+///
+/// Caller must ensure `buf` is valid for `bufsiz` writable bytes
+/// and `prompt`, when non-NULL, is a valid NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn readpassphrase(
+    prompt: *const c_char,
+    buf: *mut c_char,
+    bufsiz: usize,
+    flags: c_int,
+) -> *mut c_char {
+    if buf.is_null() || bufsiz == 0 {
+        return std::ptr::null_mut();
+    }
+
+    let want_stdin = flags & RPP_STDIN != 0;
+    let echo_on = flags & RPP_ECHO_ON != 0;
+    let force_lower = flags & RPP_FORCELOWER != 0;
+    let force_upper = flags & RPP_FORCEUPPER != 0;
+    let seven_bit = flags & RPP_SEVENBIT != 0;
+    let require_tty = flags & RPP_REQUIRE_TTY != 0;
+
+    // Open /dev/tty unless RPP_STDIN was requested.
+    let (read_fd, write_fd, owns_fd) = if want_stdin {
+        (0, 2, false) // stdin reads, stderr writes
+    } else {
+        let tty = b"/dev/tty\0";
+        match unsafe { syscall::sys_open(tty.as_ptr(), libc::O_RDWR | libc::O_NOCTTY, 0) } {
+            Ok(fd) => (fd, fd, true),
+            Err(_) => {
+                if require_tty {
+                    return std::ptr::null_mut();
+                }
+                (0, 2, false)
+            }
+        }
+    };
+
+    // Write the prompt to the write fd.
+    if !prompt.is_null() {
+        let prompt_cstr = unsafe { std::ffi::CStr::from_ptr(prompt) };
+        let prompt_bytes = prompt_cstr.to_bytes();
+        let _ = unsafe { syscall::sys_write(write_fd, prompt_bytes.as_ptr(), prompt_bytes.len()) };
+    }
+
+    // Toggle ECHO via ioctl(TCGETS/TCSETS) only when echo should be off.
+    const TCGETS: usize = 0x5401;
+    const TCSETS: usize = 0x5402;
+    const ECHO_FLAG: u32 = 0o10;
+    let mut termios_buf = [0u8; 60];
+    let saved_ok = if !echo_on {
+        let ok = unsafe { syscall::sys_ioctl(read_fd, TCGETS, termios_buf.as_mut_ptr() as usize) }
+            .is_ok();
+        if ok {
+            let mut modified = termios_buf;
+            let lflag_offset = 12;
+            let lflag = u32::from_ne_bytes(
+                modified[lflag_offset..lflag_offset + 4]
+                    .try_into()
+                    .unwrap_or([0; 4]),
+            );
+            let new_lflag = lflag & !ECHO_FLAG;
+            modified[lflag_offset..lflag_offset + 4].copy_from_slice(&new_lflag.to_ne_bytes());
+            let _ = unsafe { syscall::sys_ioctl(read_fd, TCSETS, modified.as_ptr() as usize) };
+        }
+        ok
+    } else {
+        false
+    };
+
+    // Read up to bufsiz-1 bytes, byte-by-byte until newline / EOF.
+    let mut pos = 0usize;
+    let max_pos = bufsiz - 1;
+    loop {
+        let mut ch = 0u8;
+        let n = unsafe { syscall::sys_read(read_fd, &mut ch as *mut u8, 1) }
+            .map(|n| n as isize)
+            .unwrap_or(-1);
+        if n <= 0 || ch == b'\n' || ch == b'\r' {
+            break;
+        }
+        if pos >= max_pos {
+            // Drain remaining input on the line so the user's next
+            // operation isn't fed leftover bytes — matches OpenBSD.
+            continue;
+        }
+        let mut byte = ch;
+        if seven_bit {
+            byte &= 0x7f;
+        }
+        if force_lower {
+            byte = byte.to_ascii_lowercase();
+        } else if force_upper {
+            byte = byte.to_ascii_uppercase();
+        }
+        // SAFETY: pos < max_pos < bufsiz; buf has bufsiz writable bytes.
+        unsafe { *buf.add(pos) = byte as c_char };
+        pos += 1;
+    }
+    // SAFETY: pos <= max_pos < bufsiz; the NUL slot is in range.
+    unsafe { *buf.add(pos) = 0 };
+
+    // Restore the terminal + emit the suppressed newline.
+    if saved_ok {
+        let _ = unsafe { syscall::sys_ioctl(read_fd, TCSETS, termios_buf.as_ptr() as usize) };
+        let _ = unsafe { syscall::sys_write(write_fd, b"\n".as_ptr(), 1) };
+    }
+
+    if owns_fd {
+        let _ = syscall::sys_close(read_fd);
+    }
+
+    buf
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sethostname(name: *const c_char, len: usize) -> c_int {
     let (_, decision) = runtime_policy::decide(
