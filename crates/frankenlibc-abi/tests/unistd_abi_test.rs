@@ -9445,3 +9445,63 @@ fn nss_files_end_stubs_return_nss_status_success() {
     assert_nss_success!(_nss_files_endsgent);
     assert_nss_success!(_nss_files_endspent);
 }
+
+// ---------------------------------------------------------------------------
+// _nss_files_setXX NSS plugin "begin iteration" stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_files_set_void_stubs_return_success() {
+    use frankenlibc_abi::unistd_abi::{_nss_files_setaliasent, _nss_files_setetherent};
+    assert_eq!(unsafe { _nss_files_setaliasent() }, 1);
+    assert_eq!(unsafe { _nss_files_setetherent() }, 1);
+}
+
+#[test]
+fn nss_files_set_stayopen_stubs_return_success_for_both_flag_values() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_setgrent, _nss_files_sethostent, _nss_files_setnetent, _nss_files_setprotoent,
+        _nss_files_setpwent, _nss_files_setrpcent, _nss_files_setservent, _nss_files_setsgent,
+        _nss_files_setspent,
+    };
+
+    macro_rules! check {
+        ($f:ident) => {{
+            assert_eq!(
+                unsafe { $f(0) },
+                1,
+                concat!(stringify!($f), "(0) should return NSS_STATUS_SUCCESS")
+            );
+            assert_eq!(
+                unsafe { $f(1) },
+                1,
+                concat!(stringify!($f), "(1) should return NSS_STATUS_SUCCESS")
+            );
+        }};
+    }
+
+    check!(_nss_files_setgrent);
+    check!(_nss_files_sethostent);
+    check!(_nss_files_setnetent);
+    check!(_nss_files_setprotoent);
+    check!(_nss_files_setpwent);
+    check!(_nss_files_setrpcent);
+    check!(_nss_files_setservent);
+    check!(_nss_files_setsgent);
+    check!(_nss_files_setspent);
+}
+
+#[test]
+fn nss_files_setnetgrent_returns_success_with_null_or_arbitrary_args() {
+    use frankenlibc_abi::unistd_abi::_nss_files_setnetgrent;
+    assert_eq!(
+        unsafe { _nss_files_setnetgrent(std::ptr::null(), std::ptr::null_mut()) },
+        1
+    );
+    let group = CString::new("admins").unwrap();
+    let bogus_result = 0xCAFE_BABE_usize as *mut c_void;
+    assert_eq!(
+        unsafe { _nss_files_setnetgrent(group.as_ptr(), bogus_result) },
+        1
+    );
+}

@@ -8598,6 +8598,59 @@ nss_files_end_stub!(_nss_files_endservent);
 nss_files_end_stub!(_nss_files_endsgent);
 nss_files_end_stub!(_nss_files_endspent);
 
+// ---------------------------------------------------------------------------
+// _nss_files_setXX NSS plugin "begin iteration" stubs
+// ---------------------------------------------------------------------------
+//
+// Each pairs with a corresponding _nss_files_endXX from the prior
+// bead. We never actually open any backing file, so returning
+// NSS_STATUS_SUCCESS (= 1) is the safe stub. Signatures vary per
+// family per the NSS files-module convention.
+
+/// No-arg `set*ent` family: `enum nss_status fn(void)`.
+macro_rules! nss_files_set_void_stub {
+    ($name:ident) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name() -> c_int {
+            NSS_STATUS_SUCCESS
+        }
+    };
+}
+
+/// `int stayopen` family: `enum nss_status fn(int stayopen)`.
+macro_rules! nss_files_set_stayopen_stub {
+    ($name:ident) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(_stayopen: c_int) -> c_int {
+            NSS_STATUS_SUCCESS
+        }
+    };
+}
+
+nss_files_set_void_stub!(_nss_files_setaliasent);
+nss_files_set_void_stub!(_nss_files_setetherent);
+nss_files_set_stayopen_stub!(_nss_files_setgrent);
+nss_files_set_stayopen_stub!(_nss_files_sethostent);
+nss_files_set_stayopen_stub!(_nss_files_setnetent);
+nss_files_set_stayopen_stub!(_nss_files_setprotoent);
+nss_files_set_stayopen_stub!(_nss_files_setpwent);
+nss_files_set_stayopen_stub!(_nss_files_setrpcent);
+nss_files_set_stayopen_stub!(_nss_files_setservent);
+nss_files_set_stayopen_stub!(_nss_files_setsgent);
+nss_files_set_stayopen_stub!(_nss_files_setspent);
+
+/// `_nss_files_setnetgrent(*group, *result) -> nss_status` — special
+/// signature taking the netgroup name plus a `struct __netgrent`
+/// result pointer. Both ignored; returns NSS_STATUS_SUCCESS so the
+/// dispatch layer can move on to the next module.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_setnetgrent(
+    _group: *const c_char,
+    _result: *mut c_void,
+) -> c_int {
+    NSS_STATUS_SUCCESS
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.
