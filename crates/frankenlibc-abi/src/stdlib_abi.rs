@@ -4579,3 +4579,75 @@ pub unsafe extern "C" fn getbsize(headerlenp: *mut c_int, blocksizep: *mut c_lon
     );
     ptr
 }
+
+// ---------------------------------------------------------------------------
+// strtonum (OpenBSD bounded decimal parser)
+// ---------------------------------------------------------------------------
+//
+// Pure-byte parsing logic lives in `frankenlibc_core::stdlib::strtonum`.
+// This shim owns: NUL-terminated C-string handling, NULL `errstr` guard,
+// and publishing OpenBSD's documented static error strings.
+
+/// OpenBSD `strtonum(nptr, minval, maxval, errstr)` — parse `nptr` as
+/// a decimal integer in `[minval, maxval]`. On success returns the
+/// value and stores NULL through `*errstr` (when non-NULL). On
+/// failure returns 0 and stores a pointer to one of OpenBSD's
+/// canonical static C strings:
+///
+/// * `"invalid"`   — `nptr` was empty, contained no digits, had
+///   trailing garbage, or `minval > maxval`.
+/// * `"too small"` — value was below `minval` (or negative overflow).
+/// * `"too large"` — value was above `maxval` (or positive overflow).
+///
+/// # Safety
+///
+/// Caller must ensure `nptr` is a valid NUL-terminated C string and
+/// `errstr`, when non-NULL, points to a writable `*const c_char`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strtonum(
+    nptr: *const c_char,
+    minval: c_longlong,
+    maxval: c_longlong,
+    errstr: *mut *const c_char,
+) -> c_longlong {
+    use frankenlibc_core::stdlib::strtonum as core_st;
+
+    // OpenBSD canonical error strings — process-static, NUL-terminated.
+    static ERR_INVALID: &[u8] = b"invalid\0";
+    static ERR_TOO_SMALL: &[u8] = b"too small\0";
+    static ERR_TOO_LARGE: &[u8] = b"too large\0";
+
+    if nptr.is_null() {
+        if !errstr.is_null() {
+            // SAFETY: caller-supplied writable slot.
+            unsafe { *errstr = ERR_INVALID.as_ptr() as *const c_char };
+        }
+        return 0;
+    }
+
+    // SAFETY: nptr is a valid NUL-terminated C string per the caller.
+    let bytes = unsafe { CStr::from_ptr(nptr) }.to_bytes();
+
+    match core_st::parse(bytes, minval, maxval) {
+        Ok(v) => {
+            if !errstr.is_null() {
+                // SAFETY: caller-supplied writable slot.
+                unsafe { *errstr = std::ptr::null() };
+            }
+            v
+        }
+        Err(e) => {
+            let msg: &[u8] = match e {
+                core_st::StrtonumError::Invalid => ERR_INVALID,
+                core_st::StrtonumError::TooSmall => ERR_TOO_SMALL,
+                core_st::StrtonumError::TooLarge => ERR_TOO_LARGE,
+                core_st::StrtonumError::InvalidRange => ERR_INVALID,
+            };
+            if !errstr.is_null() {
+                // SAFETY: caller-supplied writable slot.
+                unsafe { *errstr = msg.as_ptr() as *const c_char };
+            }
+            0
+        }
+    }
+}
