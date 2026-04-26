@@ -5853,6 +5853,46 @@ fn secure_path_root_owned_secure_file_passes() {
 }
 
 // ===========================================================================
+// __getcwd / __getlogin / __getlogin_r (glibc reserved aliases)
+// ===========================================================================
+
+#[test]
+fn under_getcwd_matches_getcwd() {
+    use frankenlibc_abi::unistd_abi::{__getcwd, getcwd};
+    let mut a = [0 as c_char; 4096];
+    let mut b = [0 as c_char; 4096];
+    let p_a = unsafe { getcwd(a.as_mut_ptr(), a.len()) };
+    let p_b = unsafe { __getcwd(b.as_mut_ptr(), b.len()) };
+    assert!(!p_a.is_null());
+    assert!(!p_b.is_null());
+    let s_a = unsafe { std::ffi::CStr::from_ptr(p_a) };
+    let s_b = unsafe { std::ffi::CStr::from_ptr(p_b) };
+    assert_eq!(s_a, s_b);
+}
+
+#[test]
+fn under_getlogin_resolves() {
+    use frankenlibc_abi::unistd_abi::__getlogin;
+    let _ = unsafe { __getlogin() }; // smoke: just verify it returns
+}
+
+#[test]
+fn under_getlogin_r_matches_getlogin_r_or_returns_einval() {
+    use frankenlibc_abi::unistd_abi::{__getlogin_r, getlogin_r};
+    let mut a = [0 as c_char; 256];
+    let mut b = [0 as c_char; 256];
+    let r_a = unsafe { getlogin_r(a.as_mut_ptr(), a.len()) };
+    let r_b = unsafe { __getlogin_r(b.as_mut_ptr(), b.len()) };
+    // Both should agree on success/failure and (on success) on the result.
+    assert_eq!(r_a, r_b);
+    if r_a == 0 {
+        let s_a = unsafe { std::ffi::CStr::from_ptr(a.as_ptr()) };
+        let s_b = unsafe { std::ffi::CStr::from_ptr(b.as_ptr()) };
+        assert_eq!(s_a, s_b);
+    }
+}
+
+// ===========================================================================
 // __strerror_l (glibc reserved-namespace alias of strerror_l)
 // ===========================================================================
 

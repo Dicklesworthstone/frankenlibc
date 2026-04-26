@@ -570,6 +570,16 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
     }
 }
 
+/// glibc reserved-namespace alias for [`getcwd`].
+///
+/// # Safety
+///
+/// Same as [`getcwd`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
+    unsafe { getcwd(buf, size) }
+}
+
 // ---------------------------------------------------------------------------
 // chdir / fchdir
 // ---------------------------------------------------------------------------
@@ -8457,6 +8467,22 @@ pub unsafe extern "C" fn getlogin_r(buf: *mut c_char, bufsize: usize) -> c_int {
         false,
     );
     0
+}
+
+/// glibc reserved-namespace alias for [`getlogin`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getlogin() -> *mut c_char {
+    unsafe { getlogin() }
+}
+
+/// glibc reserved-namespace alias for [`getlogin_r`].
+///
+/// # Safety
+///
+/// Same as [`getlogin_r`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getlogin_r(buf: *mut c_char, bufsize: usize) -> c_int {
+    unsafe { getlogin_r(buf, bufsize) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

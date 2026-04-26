@@ -5,8 +5,8 @@
 use std::ffi::{c_int, c_uint};
 
 use frankenlibc_abi::io_abi::{
-    copy_file_range, dup, dup2, dup3, fcntl, memfd_create, pipe, pipe2, pread, pwrite, readv,
-    sendfile, splice, writev,
+    __dup3, __pipe2, copy_file_range, dup, dup2, dup3, fcntl, memfd_create, pipe, pipe2, pread,
+    pwrite, readv, sendfile, splice, writev,
 };
 use frankenlibc_abi::unistd_abi::close;
 
@@ -700,4 +700,31 @@ fn copy_file_range_partial() {
 
     unsafe { close(in_fd) };
     unsafe { close(out_fd) };
+}
+
+// ---------------------------------------------------------------------------
+// __dup3 / __pipe2 (glibc reserved-namespace aliases)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_pipe2_works_like_pipe2() {
+    let mut fds: [c_int; 2] = [-1, -1];
+    let rc = unsafe { __pipe2(fds.as_mut_ptr(), 0) };
+    assert_eq!(rc, 0);
+    assert!(fds[0] >= 0 && fds[1] >= 0);
+    unsafe { close(fds[0]) };
+    unsafe { close(fds[1]) };
+}
+
+#[test]
+fn under_dup3_works_like_dup3() {
+    let mut fds: [c_int; 2] = [-1, -1];
+    assert_eq!(unsafe { __pipe2(fds.as_mut_ptr(), 0) }, 0);
+    let target = unsafe { dup(fds[0]) };
+    assert!(target >= 0);
+    let new = unsafe { __dup3(fds[1], target, 0) };
+    assert_eq!(new, target);
+    unsafe { close(fds[0]) };
+    unsafe { close(fds[1]) };
+    unsafe { close(target) };
 }

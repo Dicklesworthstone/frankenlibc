@@ -1342,3 +1342,59 @@ fn file_actions_double_destroy() {
     let rc2 = unsafe { posix_spawn_file_actions_destroy(fa.as_mut_ptr().cast()) };
     assert_eq!(rc2, libc::EINVAL);
 }
+
+// ---------------------------------------------------------------------------
+// __wait3 / __wait4 / __waitid (glibc reserved-namespace aliases)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_wait4_collects_child() {
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0);
+    if pid == 0 {
+        unsafe { libc::_exit(0) };
+    }
+    let mut status: std::ffi::c_int = -1;
+    let waited = unsafe { __wait4(pid, &mut status, 0, std::ptr::null_mut()) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 0);
+}
+
+#[test]
+fn under_wait3_collects_any_child() {
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0);
+    if pid == 0 {
+        unsafe { libc::_exit(7) };
+    }
+    let mut status: std::ffi::c_int = -1;
+    let waited = unsafe { __wait3(&mut status, 0, std::ptr::null_mut()) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(libc::WEXITSTATUS(status), 7);
+}
+
+#[test]
+fn under_waitid_observes_child_termination() {
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0);
+    if pid == 0 {
+        unsafe { libc::_exit(3) };
+    }
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        __waitid(
+            libc::P_PID as i32,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(info.si_signo, libc::SIGCHLD);
+    assert_eq!(info.si_code, libc::CLD_EXITED);
+}

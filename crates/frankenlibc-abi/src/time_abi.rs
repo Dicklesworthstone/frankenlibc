@@ -1129,6 +1129,34 @@ pub unsafe extern "C" fn clock_settime(
     }
 }
 
+/// glibc reserved-namespace alias for [`clock_settime`].
+///
+/// # Safety
+///
+/// Same as [`clock_settime`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __clock_settime(
+    clk_id: libc::clockid_t,
+    tp: *const libc::timespec,
+) -> std::ffi::c_int {
+    unsafe { clock_settime(clk_id, tp) }
+}
+
+/// glibc reserved-namespace alias for [`clock_nanosleep`].
+///
+/// # Safety
+///
+/// Same as [`clock_nanosleep`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __clock_nanosleep(
+    clk_id: libc::clockid_t,
+    flags: std::ffi::c_int,
+    req: *const libc::timespec,
+    rem: *mut libc::timespec,
+) -> std::ffi::c_int {
+    unsafe { clock_nanosleep(clk_id, flags, req, rem) }
+}
+
 // ---------------------------------------------------------------------------
 // timespec_get — Implemented (C11)
 // ---------------------------------------------------------------------------

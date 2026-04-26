@@ -762,3 +762,30 @@ fn timespec_getres_time_utc() {
     );
     assert!(ts.tv_nsec >= 0);
 }
+
+// ---------------------------------------------------------------------------
+// __clock_settime / __clock_nanosleep (glibc reserved aliases)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_clock_nanosleep_zero_time_returns_zero() {
+    let req = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let rc = unsafe {
+        time_abi::__clock_nanosleep(libc::CLOCK_MONOTONIC, 0, &req, std::ptr::null_mut())
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_clock_settime_invalid_clock_fails() {
+    // Setting CLOCK_MONOTONIC is not allowed → __clock_settime returns -1.
+    let ts = libc::timespec {
+        tv_sec: 1,
+        tv_nsec: 0,
+    };
+    let rc = unsafe { time_abi::__clock_settime(libc::CLOCK_MONOTONIC, &ts) };
+    assert_eq!(rc, -1);
+}

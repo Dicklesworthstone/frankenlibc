@@ -202,6 +202,26 @@ pub unsafe extern "C" fn dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int
     }
 }
 
+/// glibc reserved-namespace alias for [`dup3`].
+///
+/// # Safety
+///
+/// Same as [`dup3`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int {
+    unsafe { dup3(oldfd, newfd, flags) }
+}
+
+/// glibc reserved-namespace alias for [`pipe2`].
+///
+/// # Safety
+///
+/// Same as [`pipe2`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pipe2(pipefd: *mut c_int, flags: c_int) -> c_int {
+    unsafe { pipe2(pipefd, flags) }
+}
+
 // ---------------------------------------------------------------------------
 // ioctl
 // ---------------------------------------------------------------------------

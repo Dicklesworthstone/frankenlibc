@@ -456,6 +456,50 @@ pub unsafe extern "C" fn waitid(
     }
 }
 
+/// glibc reserved-namespace alias for [`wait3`].
+///
+/// # Safety
+///
+/// Same as [`wait3`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __wait3(
+    wstatus: *mut c_int,
+    options: c_int,
+    rusage: *mut libc::rusage,
+) -> libc::pid_t {
+    unsafe { wait3(wstatus, options, rusage) }
+}
+
+/// glibc reserved-namespace alias for [`wait4`].
+///
+/// # Safety
+///
+/// Same as [`wait4`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __wait4(
+    pid: libc::pid_t,
+    wstatus: *mut c_int,
+    options: c_int,
+    rusage: *mut libc::rusage,
+) -> libc::pid_t {
+    unsafe { wait4(pid, wstatus, options, rusage) }
+}
+
+/// glibc reserved-namespace alias for [`waitid`].
+///
+/// # Safety
+///
+/// Same as [`waitid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __waitid(
+    idtype: c_int,
+    id: libc::id_t,
+    infop: *mut libc::siginfo_t,
+    options: c_int,
+) -> c_int {
+    unsafe { waitid(idtype, id, infop, options) }
+}
+
 // ---------------------------------------------------------------------------
 // vfork
 // ---------------------------------------------------------------------------
