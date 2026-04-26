@@ -7313,3 +7313,99 @@ pub unsafe extern "C" fn strnunvisx(
     }
     decoded.len() as c_int
 }
+
+// ---------------------------------------------------------------------------
+// unvis (NetBSD vis(3) streaming byte decoder)
+// ---------------------------------------------------------------------------
+//
+// The C ABI threads decoder state through an opaque `int *astate`
+// cell. We round-trip the full UnvisDecoder state through that cell
+// using `UnvisDecoder::save_state` / `from_saved_state` so the
+// streaming machine can continue across successive calls without
+// allocating.
+
+const UNVIS_VALID: c_int = 1;
+const UNVIS_VALIDPUSH: c_int = 2;
+const UNVIS_NOCHAR: c_int = 3;
+const UNVIS_SYNBAD: c_int = -1;
+const UNVIS_END_VAL: c_int = 0;
+const UNVIS_END_FLAG: c_int = 1; // libutil's UNVIS_END flag
+
+fn step_outcome(
+    cp: *mut c_char,
+    dec: &mut frankenlibc_core::stdio::vis::UnvisDecoder,
+    outcome: frankenlibc_core::stdio::vis::UnvisOutcome,
+) -> c_int {
+    use frankenlibc_core::stdio::vis::UnvisOutcome as O;
+    match outcome {
+        O::Valid(b) => {
+            if !cp.is_null() {
+                unsafe { *cp = b as c_char };
+            }
+            UNVIS_VALID
+        }
+        O::ValidPush(b) => {
+            if !cp.is_null() {
+                unsafe { *cp = b as c_char };
+            }
+            UNVIS_VALIDPUSH
+        }
+        O::NoChar => UNVIS_NOCHAR,
+        O::Bad => {
+            dec.reset();
+            UNVIS_SYNBAD
+        }
+        O::End => UNVIS_END_VAL,
+    }
+}
+
+/// NetBSD `unvis(cp, c, astate, flag)` — streaming single-byte
+/// decoder. Caller feeds bytes one at a time, threading the opaque
+/// `*astate` (a single int round-tripped through
+/// [`UnvisDecoder::save_state`]). Returns one of:
+///
+/// * `UNVIS_VALID` (1) — `*cp` holds a fully decoded byte.
+/// * `UNVIS_VALIDPUSH` (2) — `*cp` is decoded; re-feed the current
+///   input byte.
+/// * `UNVIS_NOCHAR` (3) — partial sequence, keep feeding.
+/// * `UNVIS_SYNBAD` (-1) — malformed input.
+/// * `0` — terminal (call with `flag = UNVIS_END = 1` after the last
+///   input byte to flush state).
+///
+/// # Safety
+///
+/// `astate` must point to a writable `c_int` that survives across
+/// successive calls. `cp`, when non-NULL, must point to a writable
+/// `c_char`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn unvis(
+    cp: *mut c_char,
+    c: c_int,
+    astate: *mut c_int,
+    flag: c_int,
+) -> c_int {
+    use frankenlibc_core::stdio::vis::UnvisDecoder;
+
+    if astate.is_null() {
+        return UNVIS_SYNBAD;
+    }
+
+    let packed = unsafe { *astate } as u32;
+    let mut dec = UnvisDecoder::from_saved_state(packed);
+
+    if flag & UNVIS_END_FLAG != 0 {
+        let outcome = dec.feed_end();
+        let result = step_outcome(cp, &mut dec, outcome);
+        unsafe {
+            *astate = dec.save_state() as c_int;
+        }
+        return result;
+    }
+
+    let outcome = dec.feed(c as u8);
+    let result = step_outcome(cp, &mut dec, outcome);
+    unsafe {
+        *astate = dec.save_state() as c_int;
+    }
+    result
+}

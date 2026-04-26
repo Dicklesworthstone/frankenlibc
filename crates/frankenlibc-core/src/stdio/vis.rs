@@ -400,3 +400,459 @@ mod tests {
         assert_eq!(dec, payload);
     }
 }
+
+// ---------------------------------------------------------------------------
+// unvis — streaming single-byte decoder
+// ---------------------------------------------------------------------------
+
+/// Outcome of one [`UnvisDecoder::feed`] call.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnvisOutcome {
+    /// `byte` is a fully-decoded output byte — emit it.
+    Valid(u8),
+    /// `byte` is a fully-decoded output byte — emit it AND re-feed
+    /// the *current* input byte (which closed the previous sequence
+    /// rather than belonging to it).
+    ValidPush(u8),
+    /// Partial sequence — keep feeding bytes.
+    NoChar,
+    /// Malformed input — caller should reset state.
+    Bad,
+    /// Terminal (after caller signals end-of-input via [`feed_end`]):
+    /// no pending byte to flush.
+    End,
+}
+
+/// Streaming decoder state for the BSD `unvis(3)` byte machine.
+/// Construct with [`UnvisDecoder::new`], feed input bytes one at a
+/// time via [`feed`], and call [`feed_end`] after the last input
+/// byte to flush any pending state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub struct UnvisDecoder {
+    state: UnvisState,
+    /// Accumulator for octal triples.
+    octal_value: u8,
+    /// Carry for `\M-` sequences (high bit pending).
+    pending_meta: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+enum UnvisState {
+    #[default]
+    Initial,
+    AfterBackslash,
+    AfterCaret,
+    AfterMeta1, // saw "\M"; expecting "-"
+    AfterMeta2, // saw "\M-"; next byte is the encoded inner char
+    Octal2,     // saw "\D"; expecting two more digits
+    Octal3,     // saw "\DD"; expecting one more digit
+}
+
+impl UnvisDecoder {
+    /// Fresh decoder with empty state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Reset to initial state (caller does this after `Bad`).
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Feed one input byte. The decoder may consume the byte, emit
+    /// a finished output byte, or signal that it needs more input.
+    pub fn feed(&mut self, c: u8) -> UnvisOutcome {
+        match self.state {
+            UnvisState::Initial => {
+                if c == b'\\' {
+                    self.state = UnvisState::AfterBackslash;
+                    UnvisOutcome::NoChar
+                } else {
+                    let out = if self.pending_meta { c | 0x80 } else { c };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+            }
+            UnvisState::AfterBackslash => match c {
+                b'\\' => {
+                    self.state = UnvisState::Initial;
+                    let out = if self.pending_meta { 0x5c | 0x80 } else { 0x5c };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+                b'n' => {
+                    self.state = UnvisState::Initial;
+                    let v = b'\n';
+                    let out = if self.pending_meta { v | 0x80 } else { v };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+                b't' => {
+                    self.state = UnvisState::Initial;
+                    let v = b'\t';
+                    let out = if self.pending_meta { v | 0x80 } else { v };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+                b'r' => {
+                    self.state = UnvisState::Initial;
+                    let v = b'\r';
+                    let out = if self.pending_meta { v | 0x80 } else { v };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+                b'b' => {
+                    self.state = UnvisState::Initial;
+                    let v = 0x08u8;
+                    let out = if self.pending_meta { v | 0x80 } else { v };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+                b'v' => {
+                    self.state = UnvisState::Initial;
+                    let v = 0x0bu8;
+                    let out = if self.pending_meta { v | 0x80 } else { v };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+                b'a' => {
+                    self.state = UnvisState::Initial;
+                    let v = 0x07u8;
+                    let out = if self.pending_meta { v | 0x80 } else { v };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+                b'f' => {
+                    self.state = UnvisState::Initial;
+                    let v = 0x0cu8;
+                    let out = if self.pending_meta { v | 0x80 } else { v };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+                b'^' => {
+                    self.state = UnvisState::AfterCaret;
+                    UnvisOutcome::NoChar
+                }
+                b'M' => {
+                    self.state = UnvisState::AfterMeta1;
+                    UnvisOutcome::NoChar
+                }
+                b'0'..=b'7' => {
+                    self.octal_value = c - b'0';
+                    self.state = UnvisState::Octal2;
+                    UnvisOutcome::NoChar
+                }
+                _ => {
+                    // Unknown escape: emit the byte verbatim.
+                    self.state = UnvisState::Initial;
+                    let out = if self.pending_meta { c | 0x80 } else { c };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                }
+            },
+            UnvisState::AfterCaret => {
+                self.state = UnvisState::Initial;
+                let v = if c == b'?' { 0x7f } else { c ^ 0x40 };
+                let out = if self.pending_meta { v | 0x80 } else { v };
+                self.pending_meta = false;
+                UnvisOutcome::Valid(out)
+            }
+            UnvisState::AfterMeta1 => {
+                if c == b'-' {
+                    self.state = UnvisState::AfterMeta2;
+                    UnvisOutcome::NoChar
+                } else {
+                    self.reset();
+                    UnvisOutcome::Bad
+                }
+            }
+            UnvisState::AfterMeta2 => {
+                // Reset to Initial first; the inner char goes through
+                // the normal state machine but with the high-bit carry
+                // set so the eventual emit ORs in 0x80.
+                self.state = UnvisState::Initial;
+                self.pending_meta = true;
+                self.feed(c)
+            }
+            UnvisState::Octal2 => {
+                if (b'0'..=b'7').contains(&c) {
+                    self.octal_value = (self.octal_value << 3) | (c - b'0');
+                    self.state = UnvisState::Octal3;
+                    UnvisOutcome::NoChar
+                } else {
+                    self.reset();
+                    UnvisOutcome::Bad
+                }
+            }
+            UnvisState::Octal3 => {
+                if (b'0'..=b'7').contains(&c) {
+                    let v = (self.octal_value << 3) | (c - b'0');
+                    self.octal_value = 0;
+                    self.state = UnvisState::Initial;
+                    let out = if self.pending_meta { v | 0x80 } else { v };
+                    self.pending_meta = false;
+                    UnvisOutcome::Valid(out)
+                } else {
+                    self.reset();
+                    UnvisOutcome::Bad
+                }
+            }
+        }
+    }
+
+    /// Signal end-of-input. Returns `End` if there's no pending
+    /// state, or `Bad` if a partial sequence was open.
+    pub fn feed_end(&mut self) -> UnvisOutcome {
+        let was_initial = self.state == UnvisState::Initial && !self.pending_meta;
+        self.reset();
+        if was_initial {
+            UnvisOutcome::End
+        } else {
+            UnvisOutcome::Bad
+        }
+    }
+
+    /// Serialize current decoder state into a single `u32` cell for
+    /// FFI callers that need to thread state through an opaque
+    /// `int *astate` (NetBSD `unvis(3)` ABI). The packing is:
+    ///
+    /// ```text
+    /// bits  0..7   : state tag (0 = Initial, 1 = AfterBackslash, ...)
+    /// bit   8      : pending_meta
+    /// bits 16..23  : octal accumulator
+    /// ```
+    pub fn save_state(&self) -> u32 {
+        let tag: u8 = match self.state {
+            UnvisState::Initial => 0,
+            UnvisState::AfterBackslash => 1,
+            UnvisState::AfterCaret => 2,
+            UnvisState::AfterMeta1 => 3,
+            UnvisState::AfterMeta2 => 4,
+            UnvisState::Octal2 => 5,
+            UnvisState::Octal3 => 6,
+        };
+        let mut packed = tag as u32;
+        if self.pending_meta {
+            packed |= 1 << 8;
+        }
+        packed |= (self.octal_value as u32) << 16;
+        packed
+    }
+
+    /// Restore a decoder previously serialized via [`save_state`].
+    /// Unrecognized state tags are mapped to `Initial`; this is by
+    /// design so a zero-initialized cell is a valid fresh decoder.
+    pub fn from_saved_state(packed: u32) -> Self {
+        let tag = (packed & 0xff) as u8;
+        let state = match tag {
+            1 => UnvisState::AfterBackslash,
+            2 => UnvisState::AfterCaret,
+            3 => UnvisState::AfterMeta1,
+            4 => UnvisState::AfterMeta2,
+            5 => UnvisState::Octal2,
+            6 => UnvisState::Octal3,
+            _ => UnvisState::Initial,
+        };
+        let pending_meta = (packed >> 8) & 1 != 0;
+        let octal_value = ((packed >> 16) & 0xff) as u8;
+        Self {
+            state,
+            octal_value,
+            pending_meta,
+        }
+    }
+}
+
+#[cfg(test)]
+mod unvis_tests {
+    use super::*;
+
+    fn drain(input: &[u8]) -> Result<Vec<u8>, ()> {
+        let mut dec = UnvisDecoder::new();
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        while i < input.len() {
+            match dec.feed(input[i]) {
+                UnvisOutcome::Valid(b) => {
+                    out.push(b);
+                    i += 1;
+                }
+                UnvisOutcome::ValidPush(b) => {
+                    out.push(b);
+                    // Re-feed `input[i]` next iteration.
+                }
+                UnvisOutcome::NoChar => {
+                    i += 1;
+                }
+                UnvisOutcome::Bad => return Err(()),
+                UnvisOutcome::End => unreachable!(),
+            }
+        }
+        match dec.feed_end() {
+            UnvisOutcome::End => Ok(out),
+            _ => Err(()),
+        }
+    }
+
+    #[test]
+    fn passthrough_printable() {
+        assert_eq!(drain(b"hello"), Ok(b"hello".to_vec()));
+    }
+
+    #[test]
+    fn double_backslash() {
+        assert_eq!(drain(b"a\\\\b"), Ok(b"a\\b".to_vec()));
+    }
+
+    #[test]
+    fn caret_escape() {
+        assert_eq!(drain(b"\\^A\\^B"), Ok(b"\x01\x02".to_vec()));
+        assert_eq!(drain(b"\\^?"), Ok(b"\x7f".to_vec()));
+    }
+
+    #[test]
+    fn octal_triple() {
+        assert_eq!(drain(b"\\001"), Ok(b"\x01".to_vec()));
+        assert_eq!(drain(b"\\377"), Ok(vec![0xff]));
+    }
+
+    #[test]
+    fn meta_prefix() {
+        assert_eq!(drain(b"\\M-A"), Ok(vec![0xc1]));
+        assert_eq!(drain(b"\\M-\\^?"), Ok(vec![0xff]));
+        assert_eq!(drain(b"\\M-\\^A"), Ok(vec![0x81]));
+    }
+
+    #[test]
+    fn short_c_escapes() {
+        assert_eq!(
+            drain(b"\\n\\t\\r\\b\\v\\a\\f"),
+            Ok(vec![b'\n', b'\t', b'\r', 0x08, 0x0b, 0x07, 0x0c])
+        );
+    }
+
+    #[test]
+    fn lone_trailing_backslash_is_bad() {
+        // After feeding "\", state is AfterBackslash; feed_end → Bad.
+        assert_eq!(drain(b"\\"), Err(()));
+    }
+
+    #[test]
+    fn malformed_octal_short_is_bad() {
+        // Octal must be 3 digits; "\\1x" feeds 1, then 'x' as second
+        // digit which isn't octal → Bad.
+        assert_eq!(drain(b"\\1x"), Err(()));
+    }
+
+    #[test]
+    fn unknown_escape_emits_byte() {
+        // \z is not recognized; emit 'z' verbatim.
+        assert_eq!(drain(b"\\z"), Ok(b"z".to_vec()));
+    }
+
+    #[test]
+    fn malformed_meta_without_dash_is_bad() {
+        // \M followed by something other than '-' is malformed.
+        assert_eq!(drain(b"\\Mx"), Err(()));
+    }
+
+    #[test]
+    fn round_trip_arbitrary_bytes() {
+        for b in 0u8..=255 {
+            let enc = strvis_to_vec(&[b], 0);
+            let decoded = drain(&enc).unwrap();
+            assert_eq!(decoded, vec![b], "round-trip failed for byte {b:#x}");
+        }
+    }
+
+    #[test]
+    fn save_restore_initial_state_is_zero() {
+        let dec = UnvisDecoder::new();
+        assert_eq!(dec.save_state(), 0);
+        let restored = UnvisDecoder::from_saved_state(0);
+        assert_eq!(restored, UnvisDecoder::new());
+    }
+
+    #[test]
+    fn save_restore_round_trips_every_open_state() {
+        // Drive the decoder into each non-Initial state by feeding
+        // partial sequences, then save/restore and verify behavior
+        // matches the original.
+        let prefixes: &[&[u8]] = &[
+            b"\\",       // AfterBackslash
+            b"\\^",      // AfterCaret
+            b"\\M",      // AfterMeta1
+            b"\\M-",     // AfterMeta2
+            b"\\1",      // Octal2
+            b"\\12",     // Octal3
+            b"\\M-\\",   // pending_meta + AfterBackslash
+            b"\\M-\\1",  // pending_meta + Octal2
+            b"\\M-\\12", // pending_meta + Octal3
+        ];
+        for prefix in prefixes {
+            let mut original = UnvisDecoder::new();
+            for &b in *prefix {
+                let _ = original.feed(b);
+            }
+            let packed = original.save_state();
+            let restored = UnvisDecoder::from_saved_state(packed);
+            assert_eq!(
+                original, restored,
+                "save/restore mismatch after prefix {prefix:?}",
+            );
+
+            // Drive both with the same closing byte and verify the
+            // outcomes line up bit-for-bit.
+            let closer: u8 = match *prefix {
+                b"\\" => b'n',       // → Valid('\n')
+                b"\\^" => b'A',      // → Valid(0x01)
+                b"\\M" => b'-',      // → NoChar (AfterMeta2)
+                b"\\M-" => b'a',     // → Valid(0xe1)
+                b"\\1" => b'2',      // → NoChar (Octal3)
+                b"\\12" => b'3',     // → Valid(0o123)
+                b"\\M-\\" => b'n',   // → Valid(0x8a)
+                b"\\M-\\1" => b'2',  // → NoChar
+                b"\\M-\\12" => b'3', // → Valid(0o123 | 0x80)
+                _ => b'X',
+            };
+            let mut a = original;
+            let mut b = restored;
+            assert_eq!(a.feed(closer), b.feed(closer), "drive mismatch");
+            assert_eq!(a, b, "post-feed state mismatch");
+        }
+    }
+
+    #[test]
+    fn save_restore_streamed_round_trip_full_alphabet() {
+        // Encode every byte, then drive the decoder via the
+        // save/restore cycle on every step (simulating an FFI cell).
+        for b in 0u8..=255 {
+            let enc = strvis_to_vec(&[b], 0);
+            let mut packed: u32 = 0;
+            let mut out: Vec<u8> = Vec::new();
+            let mut i = 0usize;
+            while i < enc.len() {
+                let mut dec = UnvisDecoder::from_saved_state(packed);
+                let outcome = dec.feed(enc[i]);
+                packed = dec.save_state();
+                match outcome {
+                    UnvisOutcome::Valid(v) => {
+                        out.push(v);
+                        i += 1;
+                    }
+                    UnvisOutcome::ValidPush(v) => {
+                        out.push(v);
+                        // Don't advance i — same byte re-fed.
+                    }
+                    UnvisOutcome::NoChar => i += 1,
+                    UnvisOutcome::Bad => panic!("bad on byte {b:#x}"),
+                    UnvisOutcome::End => i += 1,
+                }
+            }
+            // Flush.
+            let mut dec = UnvisDecoder::from_saved_state(packed);
+            let _ = dec.feed_end();
+            assert_eq!(out, vec![b], "streamed round-trip failed for byte {b:#x}");
+        }
+    }
+}

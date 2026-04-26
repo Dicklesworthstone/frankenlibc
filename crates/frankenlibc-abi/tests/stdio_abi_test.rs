@@ -133,6 +133,7 @@ use frankenlibc_abi::stdio_abi::{
     tmpfile64,
     tmpnam,
     ungetc,
+    unvis,
     vasprintf,
     vis,
 };
@@ -4221,4 +4222,216 @@ fn strunvisx_null_args_return_minus_one() {
         unsafe { strunvisx(dst.as_mut_ptr(), std::ptr::null(), 0) },
         -1
     );
+}
+
+// ---------------------------------------------------------------------------
+// unvis (NetBSD vis(3) streaming byte decoder)
+// ---------------------------------------------------------------------------
+
+const ABI_UNVIS_VALID: c_int = 1;
+const ABI_UNVIS_VALIDPUSH: c_int = 2;
+const ABI_UNVIS_NOCHAR: c_int = 3;
+const ABI_UNVIS_SYNBAD: c_int = -1;
+const ABI_UNVIS_END: c_int = 1;
+
+/// Drive the streaming `unvis` shim across a whole input buffer
+/// the way a libutil caller would, returning the decoded bytes.
+fn unvis_drain(input: &[u8]) -> Result<Vec<u8>, &'static str> {
+    let mut state: c_int = 0;
+    let mut scratch: c_char = 0;
+    let mut out: Vec<u8> = Vec::new();
+    let mut i = 0usize;
+    while i < input.len() {
+        let r = unsafe { unvis(&mut scratch, input[i] as c_int, &mut state, 0) };
+        match r {
+            ABI_UNVIS_VALID => {
+                out.push(scratch as u8);
+                i += 1;
+            }
+            ABI_UNVIS_VALIDPUSH => {
+                out.push(scratch as u8);
+                // Re-feed the same input byte without advancing.
+            }
+            ABI_UNVIS_NOCHAR => i += 1,
+            ABI_UNVIS_SYNBAD => return Err("synbad"),
+            other => {
+                return Err(if other == 0 {
+                    "unexpected end"
+                } else {
+                    "unknown"
+                });
+            }
+        }
+    }
+    let r = unsafe { unvis(&mut scratch, 0, &mut state, ABI_UNVIS_END) };
+    if r != 0 {
+        return Err("end did not return 0");
+    }
+    Ok(out)
+}
+
+#[test]
+fn unvis_passthrough_printable_byte() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    let r = unsafe { unvis(&mut cp, b'A' as c_int, &mut state, 0) };
+    assert_eq!(r, ABI_UNVIS_VALID);
+    assert_eq!(cp as u8, b'A');
+    assert_eq!(state, 0, "decoder should be back at Initial");
+}
+
+#[test]
+fn unvis_decodes_caret_escape() {
+    let decoded = unvis_drain(b"\\^A").unwrap();
+    assert_eq!(decoded, vec![0x01]);
+}
+
+#[test]
+fn unvis_decodes_double_backslash() {
+    let decoded = unvis_drain(b"\\\\").unwrap();
+    assert_eq!(decoded, vec![b'\\']);
+}
+
+#[test]
+fn unvis_decodes_octal_triple() {
+    let decoded = unvis_drain(b"\\101").unwrap();
+    assert_eq!(decoded, vec![b'A']);
+}
+
+#[test]
+fn unvis_decodes_meta_sequence() {
+    let decoded = unvis_drain(b"\\M-A").unwrap();
+    assert_eq!(decoded, vec![0xc1]);
+}
+
+#[test]
+fn unvis_decodes_meta_caret_sequence() {
+    let decoded = unvis_drain(b"\\M-\\^A").unwrap();
+    assert_eq!(decoded, vec![0x81]);
+}
+
+#[test]
+fn unvis_decodes_meta_octal_sequence() {
+    let decoded = unvis_drain(b"\\M-\\012").unwrap();
+    assert_eq!(decoded, vec![0o12 | 0x80]);
+}
+
+#[test]
+fn unvis_decodes_meta_named_escape() {
+    let decoded = unvis_drain(b"\\M-\\n").unwrap();
+    assert_eq!(decoded, vec![b'\n' | 0x80]);
+}
+
+#[test]
+fn unvis_round_trips_every_byte() {
+    // Use the in-process core encoder so the test doesn't depend on
+    // strvis's NUL-terminated string contract (NUL itself is a
+    // perfectly valid input byte for the streaming decoder).
+    for b in 0u8..=255 {
+        let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(&[b], 0);
+        let decoded = unvis_drain(&encoded)
+            .unwrap_or_else(|e| panic!("unvis_drain failed for {b:#x}: {e} encoded={encoded:?}"));
+        assert_eq!(decoded, vec![b], "round-trip mismatch for byte {b:#x}");
+    }
+}
+
+#[test]
+fn unvis_returns_synbad_on_malformed_meta() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    // "\M" then a non-'-' byte → SYNBAD.
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'M' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'X' as c_int, &mut state, 0) },
+        ABI_UNVIS_SYNBAD
+    );
+}
+
+#[test]
+fn unvis_returns_synbad_on_malformed_octal() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'1' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'8' as c_int, &mut state, 0) },
+        ABI_UNVIS_SYNBAD
+    );
+}
+
+#[test]
+fn unvis_end_flag_returns_zero_on_idle_state() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    let r = unsafe { unvis(&mut cp, 0, &mut state, ABI_UNVIS_END) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn unvis_end_flag_returns_synbad_on_partial_state() {
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    // Open a backslash sequence, then immediately flag end.
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    let r = unsafe { unvis(&mut cp, 0, &mut state, ABI_UNVIS_END) };
+    assert_eq!(r, ABI_UNVIS_SYNBAD);
+}
+
+#[test]
+fn unvis_null_astate_returns_synbad() {
+    let mut cp: c_char = 0;
+    let r = unsafe { unvis(&mut cp, b'A' as c_int, std::ptr::null_mut(), 0) };
+    assert_eq!(r, ABI_UNVIS_SYNBAD);
+}
+
+#[test]
+fn unvis_null_cp_does_not_crash() {
+    // Caller may pass NULL `cp` if it doesn't care about output; the
+    // shim must still drive the state machine correctly.
+    let mut state: c_int = 0;
+    let r = unsafe { unvis(std::ptr::null_mut(), b'A' as c_int, &mut state, 0) };
+    assert_eq!(r, ABI_UNVIS_VALID);
+}
+
+#[test]
+fn unvis_state_persists_across_calls() {
+    // "\\101" decodes to 'A' across four calls; verify the
+    // packed-state cell threads correctly.
+    let mut state: c_int = 0;
+    let mut cp: c_char = 0;
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'\\' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_ne!(state, 0, "state should be non-zero mid-sequence");
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'1' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'0' as c_int, &mut state, 0) },
+        ABI_UNVIS_NOCHAR
+    );
+    assert_eq!(
+        unsafe { unvis(&mut cp, b'1' as c_int, &mut state, 0) },
+        ABI_UNVIS_VALID
+    );
+    assert_eq!(cp as u8, b'A');
+    assert_eq!(state, 0, "state should be back to Initial after Valid");
 }
