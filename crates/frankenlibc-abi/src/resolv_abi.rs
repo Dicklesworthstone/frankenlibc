@@ -3149,18 +3149,18 @@ pub unsafe extern "C" fn ns_msg_getflag(handle: *mut CNsMsg, flag: c_int) -> c_i
 // ===========================================================================
 
 /// libresolv `inet_neta(src, dst, size) -> *mut c_char` — format an
-/// `in_addr_t` as a CIDR-style network number string. The integer is
-/// in network byte order (so its low byte is the first dotted-quad
-/// octet on a little-endian host).
+/// `in_addr_t` as a CIDR-style network number string.
 ///
-/// Algorithm: walk bytes from low to high; emit a byte unless it is
-/// zero AND there are more non-zero bytes remaining. Trailing zero
-/// bytes are stripped. If the address is 0 we emit `"0.0.0.0"`.
+/// Algorithm: walk integer bytes from most-significant to
+/// least-significant; emit a byte unless it is zero AND there are more
+/// non-zero bytes remaining. This matches libresolv's integer
+/// contract, where `0xc0a80100` formats as `"192.168.1"`. If the
+/// address is 0 we emit `"0.0.0.0"`.
 ///
 /// Examples:
-///   - 127.0.0.0 -> "127"
-///   - 192.168.1.0 -> "192.168.1"
-///   - 192.168.1.5 -> "192.168.1.5"
+///   - 0x7f000000 -> "127"
+///   - 0xc0a80100 -> "192.168.1"
+///   - 0xc0a80105 -> "192.168.1.5"
 ///
 /// Sets `errno = EMSGSIZE` and returns NULL if `dst` is too small.
 ///
@@ -3174,17 +3174,22 @@ pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) 
         return core::ptr::null_mut();
     }
     let odst = dst;
+
+    let mut tmp = [0u8; 16];
     let mut cursor = 0usize;
+    if src == 0 {
+        tmp[..7].copy_from_slice(b"0.0.0.0");
+        cursor = 7;
+    }
+
     while src != 0 {
-        let b = (src & 0xff) as u8;
-        src >>= 8;
+        let b = (src >> 24) as u8;
+        src <<= 8;
         if b != 0 || src == 0 {
-            // "255." + NUL = 5 bytes worst case from cursor.
-            if cursor + 5 > size {
-                unsafe { set_abi_errno(libc::EMSGSIZE) };
-                return core::ptr::null_mut();
+            if cursor != 0 {
+                tmp[cursor] = b'.';
+                cursor += 1;
             }
-            // Format b as decimal (1-3 ASCII digits) into dst[cursor..].
             let mut digits = [0u8; 3];
             let mut n = b;
             let mut len = 0usize;
@@ -3199,28 +3204,19 @@ pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) 
                 }
             }
             for i in 0..len {
-                // SAFETY: cursor + len < size enforced above.
-                unsafe { *dst.add(cursor + i) = digits[len - 1 - i] as c_char };
+                tmp[cursor + i] = digits[len - 1 - i];
             }
             cursor += len;
-            if src != 0 {
-                // SAFETY: cursor still within size by the +5 check.
-                unsafe { *dst.add(cursor) = b'.' as c_char };
-                cursor += 1;
-            }
-            // SAFETY: cursor < size by the +5 check.
-            unsafe { *dst.add(cursor) = 0 };
         }
     }
-    if cursor == 0 {
-        // Address is 0: emit "0.0.0.0".
-        const ZERO: &[u8; 8] = b"0.0.0.0\0";
-        if size < ZERO.len() {
-            unsafe { set_abi_errno(libc::EMSGSIZE) };
-            return core::ptr::null_mut();
-        }
-        // SAFETY: dst has size >= ZERO.len() bytes.
-        unsafe { core::ptr::copy_nonoverlapping(ZERO.as_ptr() as *const c_char, dst, ZERO.len()) };
+
+    let needed = cursor + 1;
+    if size < needed {
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        return core::ptr::null_mut();
     }
+    tmp[cursor] = 0;
+    // SAFETY: dst has at least needed bytes and tmp contains needed bytes.
+    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr() as *const c_char, dst, needed) };
     odst
 }

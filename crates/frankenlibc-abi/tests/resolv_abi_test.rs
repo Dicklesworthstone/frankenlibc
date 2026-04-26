@@ -2030,11 +2030,11 @@ fn neta_to_str(src: u32, capacity: usize) -> Option<String> {
     Some(s)
 }
 
-/// Helper: convert dotted-quad to in_addr_t in NETWORK byte order
-/// (= bytes laid out lowest-to-highest in memory == low byte = first
-/// octet on a little-endian host).
+/// Helper: convert dotted-quad-style octets to the integer contract used by
+/// libresolv `inet_neta`: the first formatted octet is the most-significant
+/// non-zero byte.
 fn na(a: u8, b: u8, c: u8, d: u8) -> u32 {
-    u32::from_le_bytes([a, b, c, d])
+    u32::from_be_bytes([a, b, c, d])
 }
 
 #[test]
@@ -2060,6 +2060,21 @@ fn inet_neta_strips_internal_zeros_too() {
     //   192.0.0.5 → "192.5"
     assert_eq!(neta_to_str(na(10, 0, 5, 0), 32).as_deref(), Some("10.5"));
     assert_eq!(neta_to_str(na(192, 0, 0, 5), 32).as_deref(), Some("192.5"));
+}
+
+#[test]
+fn inet_neta_formats_high_order_bytes_first() {
+    assert_eq!(neta_to_str(0x0001_a8c0, 32).as_deref(), Some("1.168.192"));
+    assert_eq!(neta_to_str(0x0000_007f, 32).as_deref(), Some("127"));
+}
+
+#[test]
+fn inet_neta_accepts_exact_size_buffer() {
+    assert_eq!(neta_to_str(na(127, 0, 0, 0), 4).as_deref(), Some("127"));
+    assert_eq!(
+        neta_to_str(na(192, 168, 1, 5), "192.168.1.5".len() + 1).as_deref(),
+        Some("192.168.1.5")
+    );
 }
 
 #[test]
