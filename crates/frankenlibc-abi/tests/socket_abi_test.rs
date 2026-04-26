@@ -1123,8 +1123,8 @@ fn getpeereid_returns_self_credentials_on_socketpair() {
         unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
     assert_eq!(rc, 0, "socketpair failed");
 
-    let my_uid = unsafe { libc::getuid() };
-    let my_gid = unsafe { libc::getgid() };
+    let my_uid = unsafe { libc::geteuid() };
+    let my_gid = unsafe { libc::getegid() };
 
     let mut peer_uid: libc::uid_t = u32::MAX;
     let mut peer_gid: libc::gid_t = u32::MAX;
