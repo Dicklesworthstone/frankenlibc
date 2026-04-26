@@ -6317,6 +6317,115 @@ fn cxa_throw_bad_array_length_aborts_child_process() {
 }
 
 #[test]
+fn cxa_guard_acquire_first_call_returns_one() {
+    use frankenlibc_abi::unistd_abi::__cxa_guard_acquire;
+    let mut g: u64 = 0;
+    let rc = unsafe { __cxa_guard_acquire(&mut g) };
+    assert_eq!(
+        rc, 1,
+        "first acquire on a fresh guard must elect this caller"
+    );
+    let bytes = g.to_ne_bytes();
+    assert_eq!(bytes[0], 0, "byte 0 (initialized) still zero");
+    assert_eq!(bytes[1], 1, "byte 1 (in-progress) now set");
+}
+
+#[test]
+fn cxa_guard_release_marks_initialized_and_subsequent_acquire_returns_zero() {
+    use frankenlibc_abi::unistd_abi::{__cxa_guard_acquire, __cxa_guard_release};
+    let mut g: u64 = 0;
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 1);
+    unsafe { __cxa_guard_release(&mut g) };
+    let bytes = g.to_ne_bytes();
+    assert_eq!(bytes[0], 1, "release sets byte 0 (initialized)");
+    assert_eq!(bytes[1], 0, "release clears byte 1 (in-progress)");
+
+    // Subsequent acquires on the same guard return 0 (already done).
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 0);
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 0);
+}
+
+#[test]
+fn cxa_guard_abort_clears_in_progress_so_next_acquire_re_races() {
+    use frankenlibc_abi::unistd_abi::{__cxa_guard_abort, __cxa_guard_acquire};
+    let mut g: u64 = 0;
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 1);
+    unsafe { __cxa_guard_abort(&mut g) };
+    let bytes = g.to_ne_bytes();
+    assert_eq!(bytes[0], 0, "abort leaves byte 0 (uninitialized)");
+    assert_eq!(bytes[1], 0, "abort clears byte 1 (in-progress)");
+
+    // The next acquire wins again because no one finished initialization.
+    assert_eq!(unsafe { __cxa_guard_acquire(&mut g) }, 1);
+}
+
+#[test]
+fn cxa_guard_acquire_concurrent_threads_only_one_winner() {
+    use frankenlibc_abi::unistd_abi::{__cxa_guard_acquire, __cxa_guard_release};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::thread;
+    use std::time::Duration;
+
+    // Allocate a guard on the heap so threads share its address.
+    let g_box: Box<u64> = Box::new(0);
+    let g_ptr = Box::into_raw(g_box);
+    // SAFETY: g_ptr lives until the end of this test.
+    let g_addr = g_ptr as usize;
+
+    let winners = Arc::new(AtomicI32::new(0));
+    let losers = Arc::new(AtomicI32::new(0));
+
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let winners = winners.clone();
+        let losers = losers.clone();
+        handles.push(thread::spawn(move || {
+            let g = g_addr as *mut u64;
+            let rc = unsafe { __cxa_guard_acquire(g) };
+            if rc == 1 {
+                // Simulate slow initialization so other threads block.
+                thread::sleep(Duration::from_millis(20));
+                winners.fetch_add(1, Ordering::SeqCst);
+                unsafe { __cxa_guard_release(g) };
+            } else {
+                losers.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    assert_eq!(
+        winners.load(Ordering::SeqCst),
+        1,
+        "exactly one thread should win the initialization race"
+    );
+    assert_eq!(
+        losers.load(Ordering::SeqCst),
+        7,
+        "the other seven threads should observe the completed init"
+    );
+
+    // Reclaim the heap allocation.
+    let _ = unsafe { Box::from_raw(g_ptr) };
+}
+
+#[test]
+fn cxa_guard_null_pointer_returns_zero_no_op() {
+    use frankenlibc_abi::unistd_abi::{
+        __cxa_guard_abort, __cxa_guard_acquire, __cxa_guard_release,
+    };
+    // NULL guard pointer must be defended-against (never dereference);
+    // acquire returns 0 (treat as already initialized) and the others
+    // are no-ops.
+    assert_eq!(unsafe { __cxa_guard_acquire(std::ptr::null_mut()) }, 0);
+    unsafe { __cxa_guard_release(std::ptr::null_mut()) };
+    unsafe { __cxa_guard_abort(std::ptr::null_mut()) };
+}
+
+#[test]
 fn cxa_get_globals_returns_stable_per_thread_pointer() {
     use frankenlibc_abi::unistd_abi::{__cxa_get_globals, __cxa_get_globals_fast};
 

@@ -11227,6 +11227,98 @@ pub unsafe extern "C" fn __cxa_throw_bad_array_length() -> ! {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Itanium C++ ABI guard variables (__cxa_guard_acquire/release/abort)
+// ---------------------------------------------------------------------------
+//
+// These are emitted by the compiler around every function-scope `static`
+// variable initializer in C++. Without them, every C++ binary linked
+// against frankenlibc fails at link time.
+//
+// Per the Itanium ABI, the guard is a 64-bit value whose lowest two
+// bytes encode initialization state:
+//   - byte 0: "fully initialized" flag (1 = initialized)
+//   - byte 1: "in-progress" flag (1 = some thread currently initializing)
+//
+// Concurrency model: a single global `Mutex<()>` + `Condvar` serializes
+// all guard-state transitions. Static initialization is not a hot path,
+// so the global serialization is fine and avoids the complexity of
+// per-guard futexes.
+
+static GUARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static GUARD_CONDVAR: std::sync::Condvar = std::sync::Condvar::new();
+
+#[inline]
+fn read_guard_byte(g: *mut u64, byte: usize) -> u8 {
+    // SAFETY: caller-supplied 8-byte guard storage.
+    let bytes = unsafe { (g as *const u8).add(byte) };
+    unsafe { core::ptr::read_volatile(bytes) }
+}
+
+#[inline]
+fn write_guard_byte(g: *mut u64, byte: usize, val: u8) {
+    // SAFETY: caller-supplied 8-byte guard storage.
+    let bytes = unsafe { (g as *mut u8).add(byte) };
+    unsafe { core::ptr::write_volatile(bytes, val) };
+}
+
+/// Itanium C++ ABI `__cxa_guard_acquire(g)` — race for the right
+/// to run a function-scope static variable initializer.
+///
+/// Returns 1 if the calling thread should run the initializer
+/// (and must follow up with [`__cxa_guard_release`] on success or
+/// [`__cxa_guard_abort`] on a thrown exception). Returns 0 if
+/// initialization is already complete.
+///
+/// Threads that arrive while another thread is initializing block
+/// until the initializer either completes (returns 0) or aborts
+/// (loop and re-race).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_guard_acquire(g: *mut u64) -> c_int {
+    if g.is_null() {
+        return 0;
+    }
+    let mut lock = GUARD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        if read_guard_byte(g, 0) == 1 {
+            return 0;
+        }
+        if read_guard_byte(g, 1) == 0 {
+            write_guard_byte(g, 1, 1);
+            return 1;
+        }
+        lock = GUARD_CONDVAR.wait(lock).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
+/// Itanium C++ ABI `__cxa_guard_release(g)` — mark initialization
+/// complete and wake any threads blocked in `__cxa_guard_acquire`
+/// for the same guard.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_guard_release(g: *mut u64) {
+    if g.is_null() {
+        return;
+    }
+    let _lock = GUARD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    write_guard_byte(g, 0, 1);
+    write_guard_byte(g, 1, 0);
+    GUARD_CONDVAR.notify_all();
+}
+
+/// Itanium C++ ABI `__cxa_guard_abort(g)` — release the
+/// in-progress flag without setting "initialized". Called when
+/// the initializer threw, so a future `__cxa_guard_acquire` on
+/// the same guard re-races.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_guard_abort(g: *mut u64) {
+    if g.is_null() {
+        return;
+    }
+    let _lock = GUARD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    write_guard_byte(g, 1, 0);
+    GUARD_CONDVAR.notify_all();
+}
+
 /// Itanium C++ ABI `__cxa_eh_globals` — per-thread exception
 /// state struct. We expose only the two fields callers can
 /// legally inspect (`caughtExceptions` head pointer and the
