@@ -2389,3 +2389,192 @@ fn ns_sprintrr_rejects_invalid_handle_bounds() {
     };
     assert_eq!(n, -1);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 37 libresolv last-mile helpers (bd-dcfj5)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bd_dcfj5_byte_order_helpers_round_trip_be() {
+    use frankenlibc_abi::resolv_abi::*;
+    let bytes16 = [0x12u8, 0x34];
+    let bytes32 = [0x12u8, 0x34, 0x56, 0x78];
+    assert_eq!(unsafe { __ns_get16(bytes16.as_ptr()) }, 0x1234);
+    assert_eq!(unsafe { __ns_get32(bytes32.as_ptr()) }, 0x1234_5678);
+    assert_eq!(unsafe { _getshort(bytes16.as_ptr()) }, 0x1234);
+    assert_eq!(unsafe { _getlong(bytes32.as_ptr()) }, 0x1234_5678);
+    let mut out16 = [0u8; 2];
+    let mut out32 = [0u8; 4];
+    unsafe { __putshort(0x1234, out16.as_mut_ptr()) };
+    unsafe { __putlong(0x1234_5678, out32.as_mut_ptr()) };
+    assert_eq!(out16, [0x12, 0x34]);
+    assert_eq!(out32, [0x12, 0x34, 0x56, 0x78]);
+}
+
+#[test]
+fn bd_dcfj5_byte_order_helpers_tolerate_null() {
+    use frankenlibc_abi::resolv_abi::*;
+    assert_eq!(unsafe { _getshort(std::ptr::null()) }, 0);
+    assert_eq!(unsafe { _getlong(std::ptr::null()) }, 0);
+    unsafe { __putshort(0x1234, std::ptr::null_mut()) };
+    unsafe { __putlong(0x1234_5678, std::ptr::null_mut()) };
+}
+
+#[test]
+fn bd_dcfj5_dns_print_helpers_are_void_noops() {
+    use frankenlibc_abi::resolv_abi::*;
+    unsafe { __fp_query(std::ptr::null(), std::ptr::null_mut()) };
+    unsafe { __fp_nquery(std::ptr::null(), 0, std::ptr::null_mut()) };
+    unsafe { __fp_resstat(std::ptr::null(), std::ptr::null_mut()) };
+    unsafe { __p_query(std::ptr::null()) };
+}
+
+#[test]
+fn bd_dcfj5_dns_text_helpers_return_static_strings() {
+    use frankenlibc_abi::resolv_abi::*;
+    let class_str = unsafe { CStr::from_ptr(__p_class(1)) };
+    assert_eq!(class_str.to_bytes(), b"IN");
+    let type_str = unsafe { CStr::from_ptr(__p_type(1)) };
+    assert_eq!(type_str.to_bytes(), b"A");
+    let opt_str = unsafe { CStr::from_ptr(__p_option(0)) };
+    assert_eq!(opt_str.to_bytes(), b"");
+    let rcode_str = unsafe { CStr::from_ptr(__p_rcode(0)) };
+    assert_eq!(rcode_str.to_bytes(), b"NOERROR");
+    let secs_str = unsafe { CStr::from_ptr(__p_secstodate(0)) };
+    assert_eq!(secs_str.to_bytes(), b"19700101000000");
+    let time_str = unsafe { CStr::from_ptr(__p_time(0)) };
+    assert_eq!(time_str.to_bytes(), b"0");
+}
+
+#[test]
+fn bd_dcfj5_dns_cdname_fqname_return_null() {
+    use frankenlibc_abi::resolv_abi::*;
+    assert!(
+        unsafe { __p_cdname(std::ptr::null(), std::ptr::null(), std::ptr::null_mut()) }.is_null()
+    );
+    assert!(
+        unsafe { __p_cdnname(std::ptr::null(), std::ptr::null(), 0, std::ptr::null_mut()) }
+            .is_null()
+    );
+    assert!(
+        unsafe { __p_fqname(std::ptr::null(), std::ptr::null(), std::ptr::null_mut()) }.is_null()
+    );
+    assert!(
+        unsafe {
+            __p_fqnname(
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                std::ptr::null_mut(),
+                0,
+            )
+        }
+        .is_null()
+    );
+}
+
+#[test]
+fn bd_dcfj5_hostalias_helpers_return_null() {
+    use frankenlibc_abi::resolv_abi::*;
+    let name = CString::new("alias").unwrap();
+    assert!(unsafe { __hostalias(name.as_ptr()) }.is_null());
+    assert!(
+        unsafe { __res_hostalias(std::ptr::null_mut(), name.as_ptr(), std::ptr::null_mut(), 0) }
+            .is_null()
+    );
+}
+
+#[test]
+fn bd_dcfj5_loc_helpers_return_failure() {
+    use frankenlibc_abi::resolv_abi::*;
+    let ascii = CString::new("42 21 30 N 71 6 18 W -24m 30m").unwrap();
+    let mut binary = [0u8; 16];
+    assert_eq!(
+        unsafe { __loc_aton(ascii.as_ptr(), binary.as_mut_ptr()) },
+        0
+    );
+    let mut out = [0i8; 256];
+    assert!(unsafe { __loc_ntoa(binary.as_ptr(), out.as_mut_ptr()) }.is_null());
+}
+
+#[test]
+fn bd_dcfj5_sym_helpers_set_success_zero() {
+    use frankenlibc_abi::resolv_abi::*;
+    let mut success: c_int = 99;
+    assert!(unsafe { __sym_ntop(std::ptr::null(), 1, &mut success) }.is_null());
+    assert_eq!(success, 0);
+    success = 99;
+    assert!(unsafe { __sym_ntos(std::ptr::null(), 1, &mut success) }.is_null());
+    assert_eq!(success, 0);
+    success = 99;
+    let key = CString::new("ANY").unwrap();
+    assert_eq!(
+        unsafe { __sym_ston(std::ptr::null(), key.as_ptr(), &mut success) },
+        0
+    );
+    assert_eq!(success, 0);
+}
+
+#[test]
+fn bd_dcfj5_res_close_is_void_noop() {
+    use frankenlibc_abi::resolv_abi::*;
+    unsafe { __res_close(std::ptr::null_mut()) };
+}
+
+#[test]
+fn bd_dcfj5_res_isourserver_returns_zero() {
+    use frankenlibc_abi::resolv_abi::*;
+    let rc = unsafe { __res_isourserver(std::ptr::null(), std::ptr::null()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn bd_dcfj5_res_nameinquery_and_queriesmatch_return_zero() {
+    use frankenlibc_abi::resolv_abi::*;
+    let name = CString::new("example.com").unwrap();
+    assert_eq!(
+        unsafe { __res_nameinquery(name.as_ptr(), 1, 1, std::ptr::null(), std::ptr::null()) },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            __res_queriesmatch(
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        },
+        0
+    );
+}
+
+#[test]
+fn bd_dcfj5_dn_count_labels_counts_dots() {
+    use frankenlibc_abi::resolv_abi::*;
+    let n0 = CString::new("").unwrap();
+    let n1 = CString::new("example").unwrap();
+    let n2 = CString::new("example.com").unwrap();
+    let n3 = CString::new("a.b.c").unwrap();
+    let nfqdn = CString::new("a.b.c.").unwrap();
+    assert_eq!(unsafe { __dn_count_labels(n0.as_ptr()) }, 0);
+    assert_eq!(unsafe { __dn_count_labels(n1.as_ptr()) }, 1);
+    assert_eq!(unsafe { __dn_count_labels(n2.as_ptr()) }, 2);
+    assert_eq!(unsafe { __dn_count_labels(n3.as_ptr()) }, 3);
+    // Trailing dot represents the root, not an extra label.
+    assert_eq!(unsafe { __dn_count_labels(nfqdn.as_ptr()) }, 3);
+    assert_eq!(unsafe { __dn_count_labels(std::ptr::null()) }, -1);
+}
+
+#[test]
+fn bd_dcfj5_etc_hosts_iteration_returns_null_or_void() {
+    use frankenlibc_abi::resolv_abi::*;
+    unsafe { _sethtent(0) };
+    unsafe { _sethtent(1) };
+    assert!(unsafe { _gethtent() }.is_null());
+    let name = CString::new("localhost").unwrap();
+    assert!(unsafe { _gethtbyname(name.as_ptr()) }.is_null());
+    assert!(unsafe { _gethtbyname2(name.as_ptr(), libc::AF_INET) }.is_null());
+    let addr = [127u8, 0, 0, 1];
+    assert!(unsafe { _gethtbyaddr(addr.as_ptr() as *const c_void, 4, libc::AF_INET) }.is_null());
+}

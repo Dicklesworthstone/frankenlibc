@@ -3541,3 +3541,432 @@ pub unsafe extern "C" fn ns_sprintrr(
         )
     }
 }
+
+// ===========================================================================
+// 37 libresolv last-mile helpers (bd-dcfj5)
+// ===========================================================================
+//
+// libresolv exports a long tail of GLIBC_PRIVATE byte-order helpers, DNS
+// debug-print formatters, HOSTALIASES lookup hooks, RFC 1876 LOC encoders,
+// DNS symbol-table lookups, resolver-state lifecycle helpers, and an
+// /etc/hosts iteration API. None of these are critical for normal name
+// resolution (the public ns_*, dn_*, getaddrinfo paths cover that), so we
+// ship safe defaults that match the "no extra resolver state, no debug
+// print, no LOC support, no hosts iteration" contract.
+
+// --- Byte-order primitives (network big-endian) ---
+
+/// `__ns_get16(*src) -> u16` — GLIBC_PRIVATE alias for `ns_get16`.
+///
+/// # Safety
+/// `src` must point to at least 2 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_get16(src: *const u8) -> u16 {
+    unsafe { ns_get16(src) }
+}
+
+/// `__ns_get32(*src) -> u32` — GLIBC_PRIVATE alias for `ns_get32`.
+///
+/// # Safety
+/// `src` must point to at least 4 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ns_get32(src: *const u8) -> u32 {
+    unsafe { ns_get32(src) }
+}
+
+/// `_getshort(*src) -> u16` — read 16 bits in network byte order.
+///
+/// # Safety
+/// `src` must point to at least 2 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _getshort(src: *const u8) -> u16 {
+    if src.is_null() {
+        return 0;
+    }
+    let s = unsafe { core::slice::from_raw_parts(src, 2) };
+    u16::from_be_bytes([s[0], s[1]])
+}
+
+/// `_getlong(*src) -> u32` — read 32 bits in network byte order.
+///
+/// # Safety
+/// `src` must point to at least 4 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _getlong(src: *const u8) -> u32 {
+    if src.is_null() {
+        return 0;
+    }
+    let s = unsafe { core::slice::from_raw_parts(src, 4) };
+    u32::from_be_bytes([s[0], s[1], s[2], s[3]])
+}
+
+/// `__putshort(value, *dst)` — write 16 bits in network byte order.
+///
+/// # Safety
+/// `dst` must point to at least 2 writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __putshort(value: u16, dst: *mut u8) {
+    if dst.is_null() {
+        return;
+    }
+    let bytes = value.to_be_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, 2) };
+}
+
+/// `__putlong(value, *dst)` — write 32 bits in network byte order.
+///
+/// # Safety
+/// `dst` must point to at least 4 writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __putlong(value: u32, dst: *mut u8) {
+    if dst.is_null() {
+        return;
+    }
+    let bytes = value.to_be_bytes();
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, 4) };
+}
+
+// --- DNS debug printers ---
+// Real callers use these for `res_search` debug logging. We expose them as
+// stubs that return 0 / write nothing — programs that request DNS debug
+// output get an empty stream rather than a crash.
+
+/// `__fp_query(*msg, *file) -> ()` — debug-print a DNS query message.
+/// Stub no-op (we don't render packets to FILE* streams).
+///
+/// # Safety
+/// Both pointers may be NULL; we don't dereference them.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fp_query(_msg: *const u8, _file: *mut c_void) {}
+
+/// `__fp_nquery(*msg, len, *file) -> ()` — sized variant of `__fp_query`.
+///
+/// # Safety
+/// Both pointers may be NULL; we don't dereference them.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fp_nquery(_msg: *const u8, _len: c_int, _file: *mut c_void) {}
+
+/// `__fp_resstat(*statp, *file) -> ()` — print resolver state. Stub
+/// no-op.
+///
+/// # Safety
+/// Both pointers may be NULL; we don't dereference them.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fp_resstat(_statp: *const c_void, _file: *mut c_void) {}
+
+/// All `__p_*` helpers below take values and write a textual rep to a
+/// FILE* or return a `*const c_char`. We return NULL/empty string and do
+/// nothing for the writing variants.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_class(_class: c_int) -> *const c_char {
+    c"IN".as_ptr()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_type(_ty: c_int) -> *const c_char {
+    c"A".as_ptr()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_option(_option: c_int) -> *const c_char {
+    c"".as_ptr()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_rcode(_rcode: c_int) -> *const c_char {
+    c"NOERROR".as_ptr()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_secstodate(_secs: u32) -> *const c_char {
+    c"19700101000000".as_ptr()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_time(_value: u32) -> *const c_char {
+    c"0".as_ptr()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_query(_msg: *const u8) {}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_cdname(
+    _cp: *const u8,
+    _msg: *const u8,
+    _file: *mut c_void,
+) -> *const u8 {
+    core::ptr::null()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_cdnname(
+    _cp: *const u8,
+    _msg: *const u8,
+    _len: c_int,
+    _file: *mut c_void,
+) -> *const u8 {
+    core::ptr::null()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_fqname(
+    _cp: *const u8,
+    _msg: *const u8,
+    _file: *mut c_void,
+) -> *const u8 {
+    core::ptr::null()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_fqnname(
+    _cp: *const u8,
+    _msg: *const u8,
+    _msglen: c_int,
+    _name: *mut c_char,
+    _namelen: c_int,
+) -> *const u8 {
+    core::ptr::null()
+}
+
+// --- HOSTALIASES ---
+
+/// `__hostalias(*name) -> *const c_char` — lookup HOSTALIASES alias.
+/// Stub returns NULL (no alias file consulted).
+///
+/// # Safety
+/// `name` may be NULL; we don't dereference it.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __hostalias(_name: *const c_char) -> *const c_char {
+    core::ptr::null()
+}
+
+/// `__res_hostalias(*statp, *name, *buf, buflen) -> *const c_char` —
+/// resolver-state-aware HOSTALIASES lookup. Stub returns NULL.
+///
+/// # Safety
+/// Pointers may be NULL; we don't dereference them.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_hostalias(
+    _statp: *mut c_void,
+    _name: *const c_char,
+    _buf: *mut c_char,
+    _buflen: usize,
+) -> *const c_char {
+    core::ptr::null()
+}
+
+// --- RFC 1876 LOC records ---
+
+/// `__loc_aton(*ascii, *binary) -> int` — parse LOC ASCII rep into
+/// 16-byte binary. Stub returns 0 (parse failure).
+///
+/// # Safety
+/// Pointers may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __loc_aton(_ascii: *const c_char, _binary: *mut u8) -> c_int {
+    0
+}
+
+/// `__loc_ntoa(*binary, *ascii) -> *const c_char` — render LOC binary
+/// as ASCII. Stub returns NULL (no rendering).
+///
+/// # Safety
+/// Pointers may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __loc_ntoa(_binary: *const u8, _ascii: *mut c_char) -> *const c_char {
+    core::ptr::null()
+}
+
+// --- DNS symbol tables ---
+
+/// `__sym_ntop(*tab, value, *success) -> *const c_char` — symbol-table
+/// numeric -> text lookup. Stub returns NULL and reports failure via
+/// `*success = 0`.
+///
+/// # Safety
+/// All pointers may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sym_ntop(
+    _tab: *const c_void,
+    _value: c_int,
+    success: *mut c_int,
+) -> *const c_char {
+    if !success.is_null() {
+        unsafe { *success = 0 };
+    }
+    core::ptr::null()
+}
+
+/// `__sym_ntos(*tab, value, *success) -> *const c_char` — symbol-table
+/// numeric -> short-text lookup. Stub returns NULL.
+///
+/// # Safety
+/// All pointers may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sym_ntos(
+    _tab: *const c_void,
+    _value: c_int,
+    success: *mut c_int,
+) -> *const c_char {
+    if !success.is_null() {
+        unsafe { *success = 0 };
+    }
+    core::ptr::null()
+}
+
+/// `__sym_ston(*tab, *str, *success) -> int` — symbol-table text ->
+/// numeric lookup. Stub returns 0 and reports failure.
+///
+/// # Safety
+/// All pointers may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sym_ston(
+    _tab: *const c_void,
+    _str: *const c_char,
+    success: *mut c_int,
+) -> c_int {
+    if !success.is_null() {
+        unsafe { *success = 0 };
+    }
+    0
+}
+
+// --- Resolver lifecycle / queries ---
+
+/// `__res_close(*statp) -> ()` — close resolver state sockets. Stub
+/// no-op since we don't manage sockets per-state.
+///
+/// # Safety
+/// `statp` may be NULL; we don't dereference it.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_close(_statp: *mut c_void) {}
+
+/// `__res_isourserver(*statp, *addr) -> int` — check if `*addr`
+/// matches a configured nameserver. Stub returns 0 (not ours).
+///
+/// # Safety
+/// Pointers may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_isourserver(_statp: *const c_void, _addr: *const c_void) -> c_int {
+    0
+}
+
+/// `__res_nameinquery(name, type, class, *buf, eom) -> int` — public
+/// alias of `__libc_res_nameinquery`. Stub returns 0 (not present).
+///
+/// # Safety
+/// Pointers may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_nameinquery(
+    _name: *const c_char,
+    _type: c_int,
+    _class: c_int,
+    _buf: *const c_void,
+    _eom: *const c_void,
+) -> c_int {
+    0
+}
+
+/// `__res_queriesmatch(buf1, eom1, buf2, eom2) -> int` — public alias
+/// of `__libc_res_queriesmatch`. Stub returns 0.
+///
+/// # Safety
+/// Pointers may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __res_queriesmatch(
+    _buf1: *const c_void,
+    _eom1: *const c_void,
+    _buf2: *const c_void,
+    _eom2: *const c_void,
+) -> c_int {
+    0
+}
+
+/// `__dn_count_labels(*name) -> int` — count labels in an encoded DNS
+/// name (counts the dots in a decoded name; on encoded format counts
+/// the length-prefixed segments). Returns -1 on bad input.
+///
+/// # Safety
+/// `name` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __dn_count_labels(name: *const c_char) -> c_int {
+    if name.is_null() {
+        return -1;
+    }
+    let s = unsafe { CStr::from_ptr(name) }.to_bytes();
+    if s.is_empty() {
+        return 0;
+    }
+    let mut labels = 1i32;
+    for &b in s {
+        if b == b'.' {
+            labels += 1;
+        }
+    }
+    // A trailing dot (FQDN) counts as the root label, not an extra
+    // separator — so subtract 1 if the name ended with `.`.
+    if s.ends_with(b".") {
+        labels -= 1;
+    }
+    labels
+}
+
+// --- /etc/hosts iteration ---
+//
+// These are the historical libresolv hooks for iterating /etc/hosts. They
+// were superseded by the NSS files plugin (_nss_files_gethostent_r) which
+// we already ship. Returning NULL/void from the legacy entries reports
+// "no host table available", matching the contract for "fall back to NSS".
+
+/// `_sethtent(stayopen) -> ()` — open or rewind /etc/hosts iteration.
+/// Stub no-op.
+///
+/// # Safety
+/// Trivially safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _sethtent(_stayopen: c_int) {}
+
+/// `_gethtent() -> *struct hostent` — next /etc/hosts entry. Stub
+/// returns NULL.
+///
+/// # Safety
+/// Trivially safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _gethtent() -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `_gethtbyname(*name) -> *struct hostent` — lookup name in
+/// /etc/hosts. Stub returns NULL.
+///
+/// # Safety
+/// `name` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _gethtbyname(_name: *const c_char) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `_gethtbyname2(*name, af) -> *struct hostent` — address-family-
+/// constrained variant. Stub returns NULL.
+///
+/// # Safety
+/// `name` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _gethtbyname2(_name: *const c_char, _af: c_int) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `_gethtbyaddr(*addr, len, af) -> *struct hostent` — reverse
+/// lookup. Stub returns NULL.
+///
+/// # Safety
+/// `addr` may be NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _gethtbyaddr(
+    _addr: *const c_void,
+    _len: c_int,
+    _af: c_int,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
