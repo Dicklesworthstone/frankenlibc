@@ -1325,3 +1325,60 @@ fn sched_yield_multiple() {
         assert_eq!(rc, 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// __ppoll / __pselect / __epoll_wait / __epoll_pwait (glibc reserved aliases)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_ppoll_zero_timeout_returns_zero_with_empty_set() {
+    use frankenlibc_abi::poll_abi::__ppoll;
+    let timeout = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let rc = unsafe { __ppoll(std::ptr::null_mut(), 0, &timeout, std::ptr::null()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_pselect_zero_timeout_returns_zero_with_empty_set() {
+    use frankenlibc_abi::poll_abi::__pselect;
+    let timeout = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let rc = unsafe {
+        __pselect(
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &timeout,
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_epoll_wait_zero_timeout_on_empty_set_returns_zero() {
+    use frankenlibc_abi::poll_abi::__epoll_wait;
+    let epfd = unsafe { libc::epoll_create1(0) };
+    assert!(epfd >= 0);
+    let mut events = [unsafe { std::mem::zeroed::<libc::epoll_event>() }; 1];
+    let rc = unsafe { __epoll_wait(epfd, events.as_mut_ptr(), 1, 0) };
+    assert_eq!(rc, 0);
+    unsafe { libc::close(epfd) };
+}
+
+#[test]
+fn under_epoll_pwait_zero_timeout_on_empty_set_returns_zero() {
+    use frankenlibc_abi::poll_abi::__epoll_pwait;
+    let epfd = unsafe { libc::epoll_create1(0) };
+    assert!(epfd >= 0);
+    let mut events = [unsafe { std::mem::zeroed::<libc::epoll_event>() }; 1];
+    let rc = unsafe { __epoll_pwait(epfd, events.as_mut_ptr(), 1, 0, std::ptr::null()) };
+    assert_eq!(rc, 0);
+    unsafe { libc::close(epfd) };
+}

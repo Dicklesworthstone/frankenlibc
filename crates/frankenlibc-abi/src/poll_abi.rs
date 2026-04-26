@@ -574,3 +574,71 @@ pub unsafe extern "C" fn prctl(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// glibc reserved-namespace aliases:
+// __ppoll / __pselect / __epoll_wait / __epoll_pwait
+// ---------------------------------------------------------------------------
+
+/// glibc reserved-namespace alias for [`ppoll`].
+///
+/// # Safety
+///
+/// Same as [`ppoll`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __ppoll(
+    fds: *mut libc::pollfd,
+    nfds: libc::nfds_t,
+    timeout_ts: *const libc::timespec,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
+    unsafe { ppoll(fds, nfds, timeout_ts, sigmask) }
+}
+
+/// glibc reserved-namespace alias for [`pselect`].
+///
+/// # Safety
+///
+/// Same as [`pselect`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pselect(
+    nfds: c_int,
+    readfds: *mut libc::fd_set,
+    writefds: *mut libc::fd_set,
+    exceptfds: *mut libc::fd_set,
+    timeout: *const libc::timespec,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
+    unsafe { pselect(nfds, readfds, writefds, exceptfds, timeout, sigmask) }
+}
+
+/// glibc reserved-namespace alias for [`epoll_wait`].
+///
+/// # Safety
+///
+/// Same as [`epoll_wait`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __epoll_wait(
+    epfd: c_int,
+    events: *mut libc::epoll_event,
+    maxevents: c_int,
+    timeout: c_int,
+) -> c_int {
+    unsafe { epoll_wait(epfd, events, maxevents, timeout) }
+}
+
+/// glibc reserved-namespace alias for [`epoll_pwait`].
+///
+/// # Safety
+///
+/// Same as [`epoll_pwait`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __epoll_pwait(
+    epfd: c_int,
+    events: *mut libc::epoll_event,
+    maxevents: c_int,
+    timeout: c_int,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
+    unsafe { epoll_pwait(epfd, events, maxevents, timeout, sigmask) }
+}
