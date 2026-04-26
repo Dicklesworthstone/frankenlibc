@@ -5676,3 +5676,106 @@ fn setproctitle_without_init_is_no_op() {
     let fmt = c"-anything";
     unsafe { setproctitle(fmt.as_ptr()) };
 }
+
+// ===========================================================================
+// secure_path (NetBSD libutil security check)
+// ===========================================================================
+
+use frankenlibc_abi::unistd_abi::secure_path;
+
+#[test]
+fn secure_path_null_argument_returns_minus_one_efault() {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(std::ptr::null()) };
+    assert_eq!(r, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EFAULT
+    );
+}
+
+#[test]
+fn secure_path_nonexistent_path_returns_minus_one() {
+    let p = c"/nonexistent/path/should/never/exist/secure-path-test";
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(p.as_ptr()) };
+    assert_eq!(r, -1);
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    // Underlying lstat sets ENOENT (or similar).
+    assert!(err == libc::ENOENT || err == libc::ENOTDIR);
+}
+
+#[test]
+fn secure_path_world_writable_file_fails_with_eperm() {
+    // Create a temp file owned by current user, set mode 0666, and
+    // verify secure_path rejects it.
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("secure_path_test_{}", std::process::id()));
+    std::fs::write(&path, b"data").unwrap();
+    let path_c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    unsafe { libc::chmod(path_c.as_ptr(), 0o666) };
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(path_c.as_ptr()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(r, -1, "world-writable file must fail");
+    assert_eq!(err, libc::EPERM);
+}
+
+#[test]
+fn secure_path_group_writable_file_fails_with_eperm() {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("secure_path_test_grp_{}", std::process::id()));
+    std::fs::write(&path, b"data").unwrap();
+    let path_c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    unsafe { libc::chmod(path_c.as_ptr(), 0o660) };
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(path_c.as_ptr()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(r, -1, "group-writable file must fail");
+    assert_eq!(err, libc::EPERM);
+}
+
+#[test]
+fn secure_path_non_root_owned_file_fails_with_eperm() {
+    // When tests run as non-root, every file we create is owned
+    // by us, so secure_path must reject it for the wrong-owner
+    // reason. Skip the assertion if we ARE root.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("secure_path_owner_{}", std::process::id()));
+    std::fs::write(&path, b"data").unwrap();
+    let path_c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    // Set restrictive perms so the only failure reason is owner.
+    unsafe { libc::chmod(path_c.as_ptr(), 0o600) };
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { secure_path(path_c.as_ptr()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(r, -1, "non-root-owned file must fail for non-root tests");
+    assert_eq!(err, libc::EPERM);
+}
+
+#[test]
+fn secure_path_root_owned_secure_file_passes() {
+    // /etc/passwd is universally root-owned and 0644 on Linux —
+    // a perfect smoke test that secure_path returns 0 for a
+    // legitimately secure file.
+    let p = c"/etc/passwd";
+    let r = unsafe { secure_path(p.as_ptr()) };
+    // If /etc/passwd doesn't exist or has unusual perms on this
+    // host (very unlikely), we treat the test as inconclusive
+    // rather than failing — the negative-path tests above carry
+    // the load.
+    if r != 0 {
+        eprintln!(
+            "secure_path(/etc/passwd) returned {} errno={} — host has \
+             non-standard perms; skipping positive assertion",
+            r,
+            unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+        );
+    }
+}

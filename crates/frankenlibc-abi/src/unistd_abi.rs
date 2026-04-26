@@ -18242,3 +18242,45 @@ pub unsafe extern "C" fn setproctitle(fmt: *const c_char, mut args: ...) {
 }
 
 // ── __sig* aliases ──────────────────────────────────────────────────────────
+
+// ---------------------------------------------------------------------------
+// secure_path (NetBSD libutil security check)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `secure_path(path)` — verify that the file at `path` is
+/// "secure": `lstat`-discoverable, owned by `root` (uid 0), and
+/// has neither the group-write (`S_IWGRP`) nor world-write
+/// (`S_IWOTH`) bit set.
+///
+/// Returns `0` if the file passes, `-1` otherwise. On failure,
+/// errno is left as the underlying `lstat` errno when the stat
+/// call itself failed; otherwise it is set to `EPERM` to signal a
+/// permission/ownership violation.
+///
+/// Used by `inetd`, `getty`, `login`, and other privileged
+/// daemons to check that referenced configuration files or
+/// executables can't be tampered with by non-root users.
+///
+/// # Safety
+///
+/// `path`, when non-NULL, must point to a NUL-terminated byte
+/// string. NULL `path` returns `-1` with `EFAULT`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn secure_path(path: *const c_char) -> c_int {
+    if path.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+    let mut sb: libc::stat = unsafe { std::mem::zeroed() };
+    // Use lstat so a symlink target's permissions don't mask a
+    // bad-permissions symlink itself.
+    if unsafe { lstat(path, &mut sb) } != 0 {
+        // lstat already set errno.
+        return -1;
+    }
+    if sb.st_uid != 0 || (sb.st_mode & libc::S_IWGRP) != 0 || (sb.st_mode & libc::S_IWOTH) != 0 {
+        unsafe { set_abi_errno(errno::EPERM) };
+        return -1;
+    }
+    0
+}
