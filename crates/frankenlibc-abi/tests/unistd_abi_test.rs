@@ -7917,3 +7917,115 @@ fn clone3_zero_size_returns_einval() {
         "unexpected clone3 errno: {errno}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// fchmodat2 / eventfd2 / rt_sigprocmask / rt_sigqueueinfo / rt_sigsuspend /
+// rt_tgsigqueueinfo
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fchmodat2_changes_mode_on_real_file() {
+    use frankenlibc_abi::unistd_abi::fchmodat2;
+    let path =
+        std::env::temp_dir().join(format!("frankenlibc_fchmodat2_{}.txt", std::process::id()));
+    std::fs::write(&path, b"x").unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    let rc = unsafe { fchmodat2(libc::AT_FDCWD, cpath.as_ptr(), 0o600, 0) };
+    if rc == 0 {
+        let meta = std::fs::metadata(&path).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(errno == libc::ENOSYS, "unexpected fchmodat2 errno: {errno}");
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn eventfd2_creates_fd_with_initval_and_round_trips() {
+    use frankenlibc_abi::unistd_abi::eventfd2;
+    let fd = unsafe { eventfd2(7, 0) };
+    assert!(
+        fd >= 0,
+        "eventfd2 failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mut buf = [0u8; 8];
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut c_void, buf.len()) };
+    assert_eq!(n, 8);
+    assert_eq!(u64::from_ne_bytes(buf), 7);
+
+    unsafe { libc::close(fd) };
+}
+
+#[test]
+fn rt_sigprocmask_round_trips_block_unblock() {
+    use frankenlibc_abi::unistd_abi::rt_sigprocmask;
+    let mut empty: u64 = 0;
+    let mut blocked: u64 = 1u64 << (libc::SIGUSR1 - 1);
+    let mut prev: u64 = 0;
+
+    // Block SIGUSR1.
+    let rc = unsafe {
+        rt_sigprocmask(
+            libc::SIG_BLOCK,
+            &mut blocked as *mut u64 as *const c_void,
+            &mut prev as *mut u64 as *mut c_void,
+            std::mem::size_of::<u64>(),
+        )
+    };
+    assert_eq!(
+        rc,
+        0,
+        "rt_sigprocmask block failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    // Restore prior mask.
+    let rc = unsafe {
+        rt_sigprocmask(
+            libc::SIG_SETMASK,
+            &mut empty as *mut u64 as *const c_void,
+            std::ptr::null_mut(),
+            std::mem::size_of::<u64>(),
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn rt_sigqueueinfo_null_uinfo_returns_efault() {
+    use frankenlibc_abi::unistd_abi::rt_sigqueueinfo;
+    let rc = unsafe { rt_sigqueueinfo(std::process::id() as libc::pid_t, 0, std::ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn rt_sigsuspend_null_mask_returns_efault() {
+    use frankenlibc_abi::unistd_abi::rt_sigsuspend;
+    let rc = unsafe { rt_sigsuspend(std::ptr::null(), 8) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn rt_tgsigqueueinfo_null_uinfo_returns_efault() {
+    use frankenlibc_abi::unistd_abi::rt_tgsigqueueinfo;
+    let rc = unsafe {
+        rt_tgsigqueueinfo(
+            std::process::id() as libc::pid_t,
+            std::process::id() as libc::pid_t,
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
