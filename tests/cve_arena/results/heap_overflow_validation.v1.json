@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1m5.1",
-  "generated_at": "2026-04-25T21:20:32Z",
+  "generated_at": "2026-04-26T00:05:48Z",
   "summary": {
     "total_heap_overflow_tests": 7,
     "manifests_valid": 7,
