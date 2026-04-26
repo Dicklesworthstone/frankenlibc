@@ -8046,3 +8046,75 @@ fn rt_tgsigqueueinfo_null_uinfo_returns_efault() {
     let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
     assert_eq!(errno, libc::EFAULT);
 }
+
+// ---------------------------------------------------------------------------
+// libcrypt aliases + DES no-ops + crypt_preferred_method + crypt_checksalt
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fcrypt_alias_matches_crypt_for_sha512() {
+    use frankenlibc_abi::unistd_abi::{crypt, fcrypt};
+    let key = CString::new("hunter2").unwrap();
+    let salt = CString::new("$6$abcdefgh").unwrap();
+    let a = unsafe { crypt(key.as_ptr(), salt.as_ptr()) };
+    let b = unsafe { fcrypt(key.as_ptr(), salt.as_ptr()) };
+    assert!(!a.is_null() && !b.is_null());
+    let sa = unsafe { CStr::from_ptr(a) };
+    let sb = unsafe { CStr::from_ptr(b) };
+    assert_eq!(sa, sb);
+}
+
+#[test]
+fn xcrypt_alias_matches_crypt_for_md5() {
+    use frankenlibc_abi::unistd_abi::{crypt, xcrypt};
+    let key = CString::new("password").unwrap();
+    let salt = CString::new("$1$saltyMc$").unwrap();
+    let a = unsafe { crypt(key.as_ptr(), salt.as_ptr()) };
+    let b = unsafe { xcrypt(key.as_ptr(), salt.as_ptr()) };
+    assert!(!a.is_null() && !b.is_null());
+    let sa = unsafe { CStr::from_ptr(a) };
+    let sb = unsafe { CStr::from_ptr(b) };
+    assert_eq!(sa, sb);
+}
+
+#[test]
+fn encrypt_setkey_des_stubs_are_noops() {
+    use frankenlibc_abi::unistd_abi::{encrypt, encrypt_r, setkey, setkey_r};
+    let mut block: [c_char; 64] = [0; 64];
+    let key: [c_char; 64] = [0; 64];
+    // Just verify the calls don't crash; there's nothing observable
+    // about them.
+    unsafe {
+        setkey(key.as_ptr());
+        encrypt(block.as_mut_ptr(), 0);
+        setkey_r(key.as_ptr(), std::ptr::null_mut());
+        encrypt_r(block.as_mut_ptr(), 0, std::ptr::null_mut());
+    }
+}
+
+#[test]
+fn crypt_preferred_method_returns_sha512_prefix() {
+    use frankenlibc_abi::unistd_abi::crypt_preferred_method;
+    let p = unsafe { crypt_preferred_method() };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert_eq!(s.to_bytes(), b"$6$");
+}
+
+#[test]
+fn crypt_checksalt_classifies_known_prefixes() {
+    use frankenlibc_abi::unistd_abi::crypt_checksalt;
+    let md5 = CString::new("$1$saltsalt$").unwrap();
+    let sha256 = CString::new("$5$rounds=5000$saltsalt$").unwrap();
+    let sha512 = CString::new("$6$saltsalt$").unwrap();
+    let bogus = CString::new("$plain$saltsalt$").unwrap();
+    let des2 = CString::new("ab").unwrap();
+
+    assert_eq!(unsafe { crypt_checksalt(md5.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(sha256.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(sha512.as_ptr()) }, 0);
+    assert_eq!(unsafe { crypt_checksalt(bogus.as_ptr()) }, 1);
+    assert_eq!(unsafe { crypt_checksalt(des2.as_ptr()) }, 1);
+    // NULL input must not crash; returns CRYPT_SALT_INVALID.
+    assert_eq!(unsafe { crypt_checksalt(std::ptr::null()) }, 1);
+}

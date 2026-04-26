@@ -6956,6 +6956,83 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
     }
 }
 
+// ---------------------------------------------------------------------------
+// libcrypt aliases + DES no-op stubs + crypt_preferred_method + crypt_checksalt
+// ---------------------------------------------------------------------------
+
+/// libcrypt `fcrypt(key, salt)` — historical alias of `crypt`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fcrypt(key: *const c_char, salt: *const c_char) -> *mut c_char {
+    unsafe { crypt(key, salt) }
+}
+
+/// libcrypt `xcrypt(key, salt)` — alternate-name alias of `crypt`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xcrypt(key: *const c_char, salt: *const c_char) -> *mut c_char {
+    unsafe { crypt(key, salt) }
+}
+
+/// libcrypt `encrypt(block, edflag)` — DES single-block encrypt /
+/// decrypt. DES is obsolete and unsupported; this is a no-op stub
+/// so binaries that link the symbol but never invoke it still work.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn encrypt(_block: *mut c_char, _edflag: c_int) {}
+
+/// libcrypt `encrypt_r(block, edflag, *data)` — reentrant `encrypt`.
+/// Same DES no-op rationale as [`encrypt`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn encrypt_r(_block: *mut c_char, _edflag: c_int, _data: *mut c_void) {}
+
+/// libcrypt `setkey(key)` — DES key schedule. No-op stub (see
+/// [`encrypt`]).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setkey(_key: *const c_char) {}
+
+/// libcrypt `setkey_r(key, *data)` — reentrant DES key schedule.
+/// No-op stub.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setkey_r(_key: *const c_char, _data: *mut c_void) {}
+
+// libxcrypt's preferred-method static string. Lives in BSS as a
+// NUL-terminated byte array so we can hand out a stable `*const
+// c_char` for as long as the process is running.
+static CRYPT_PREFERRED_METHOD_STATIC: [u8; 4] = *b"$6$\0";
+
+/// libcrypt `crypt_preferred_method() -> *const c_char` — return
+/// the static prefix string of the preferred crypto method
+/// supported on this system. We return `"$6$"` (SHA-512), which is
+/// the strongest method our `crypt()` honors.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt_preferred_method() -> *const c_char {
+    CRYPT_PREFERRED_METHOD_STATIC.as_ptr() as *const c_char
+}
+
+/// libcrypt `crypt_checksalt(setting) -> int` — validate that
+/// `setting` begins with a recognized crypt prefix. Returns
+/// `CRYPT_SALT_OK = 0` for `$1$` (MD5), `$5$` (SHA-256), and `$6$`
+/// (SHA-512); returns `CRYPT_SALT_INVALID = 1` for any other
+/// prefix or NULL input. (libxcrypt also defines
+/// `CRYPT_SALT_METHOD_LEGACY = 2` and `CRYPT_SALT_METHOD_DISABLED
+/// = 3` for older / disabled algorithms; we don't classify those
+/// separately.)
+///
+/// # Safety
+///
+/// `setting`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt_checksalt(setting: *const c_char) -> c_int {
+    if setting.is_null() {
+        return 1;
+    }
+    // SAFETY: caller-supplied NUL-terminated string.
+    let bytes = unsafe { CStr::from_ptr(setting) }.to_bytes();
+    if bytes.starts_with(b"$1$") || bytes.starts_with(b"$5$") || bytes.starts_with(b"$6$") {
+        0
+    } else {
+        1
+    }
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.
@@ -13988,17 +14065,17 @@ unsafe fn host_unistd_symbol(
 
 unsafe fn host_backtrace_fn() -> Option<HostBacktraceFn> {
     unsafe { host_unistd_symbol(&HOST_BACKTRACE_FN, "backtrace") }
-        .map(|addr| unsafe { std::mem::transmute(addr) })
+        .map(|addr| unsafe { std::mem::transmute(addr) }) // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
 }
 
 unsafe fn host_backtrace_symbols_fn() -> Option<HostBacktraceSymbolsFn> {
     unsafe { host_unistd_symbol(&HOST_BACKTRACE_SYMBOLS_FN, "backtrace_symbols") }
-        .map(|addr| unsafe { std::mem::transmute(addr) })
+        .map(|addr| unsafe { std::mem::transmute(addr) }) // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
 }
 
 unsafe fn host_backtrace_symbols_fd_fn() -> Option<HostBacktraceSymbolsFdFn> {
     unsafe { host_unistd_symbol(&HOST_BACKTRACE_SYMBOLS_FD_FN, "backtrace_symbols_fd") }
-        .map(|addr| unsafe { std::mem::transmute(addr) })
+        .map(|addr| unsafe { std::mem::transmute(addr) }) // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
 }
 
 /// `backtrace` — capture stack backtrace.
