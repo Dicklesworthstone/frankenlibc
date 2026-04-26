@@ -2560,3 +2560,50 @@ fn sys_signame_matches_sigabbrev_np_for_well_known_signals() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests for explicit_memset + consttime_bcmp (bd-jt6vm)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bd_jt6vm_explicit_memset_writes_byte_value_and_returns_buffer() {
+    use frankenlibc_abi::string_abi::explicit_memset;
+    let mut buf = [0u8; 32];
+    let p = unsafe { explicit_memset(buf.as_mut_ptr() as *mut std::ffi::c_void, 0xAB, buf.len()) };
+    assert_eq!(p, buf.as_mut_ptr() as *mut std::ffi::c_void);
+    assert!(buf.iter().all(|b| *b == 0xAB));
+}
+
+#[test]
+fn bd_jt6vm_explicit_memset_zero_length_is_noop() {
+    use frankenlibc_abi::string_abi::explicit_memset;
+    let mut buf = [0xCDu8; 8];
+    let snapshot = buf;
+    let _ = unsafe { explicit_memset(buf.as_mut_ptr() as *mut std::ffi::c_void, 0xFF, 0) };
+    assert_eq!(buf, snapshot);
+}
+
+#[test]
+fn bd_jt6vm_consttime_bcmp_returns_zero_for_equal_buffers() {
+    use frankenlibc_abi::string_abi::consttime_bcmp;
+    let a = b"FrankenLibC";
+    let b = b"FrankenLibC";
+    let r = unsafe { consttime_bcmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn bd_jt6vm_consttime_bcmp_returns_one_for_different_buffers() {
+    use frankenlibc_abi::string_abi::consttime_bcmp;
+    let a = b"FrankenLibc";
+    let b = b"FrankenLibC";
+    let r = unsafe { consttime_bcmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert_eq!(r, 1);
+}
+
+#[test]
+fn bd_jt6vm_consttime_bcmp_zero_len_returns_zero() {
+    use frankenlibc_abi::string_abi::consttime_bcmp;
+    let r = unsafe { consttime_bcmp(std::ptr::null(), std::ptr::null(), 0) };
+    assert_eq!(r, 0);
+}

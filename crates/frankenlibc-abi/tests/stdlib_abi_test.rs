@@ -7844,3 +7844,71 @@ fn bsearch_r_zero_size_or_count_returns_null() {
         .is_null()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Tests for reallocarr + pidfile_signal (bd-jt6vm)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bd_jt6vm_reallocarr_allocates_and_returns_zero() {
+    use frankenlibc_abi::stdlib_abi::reallocarr;
+    let mut p: *mut std::ffi::c_void = std::ptr::null_mut();
+    let rc = unsafe { reallocarr(&mut p, 8, 4) };
+    assert_eq!(rc, 0);
+    assert!(!p.is_null());
+    let rc = unsafe { reallocarr(&mut p, 0, 4) };
+    assert_eq!(rc, 0);
+    assert!(p.is_null());
+}
+
+#[test]
+fn bd_jt6vm_reallocarr_overflow_returns_eoverflow_without_modifying_ptr() {
+    use frankenlibc_abi::stdlib_abi::reallocarr;
+    let mut p: *mut std::ffi::c_void = std::ptr::null_mut();
+    let rc = unsafe { reallocarr(&mut p, usize::MAX / 2, usize::MAX / 2) };
+    assert_eq!(rc, libc::EOVERFLOW);
+    assert!(p.is_null());
+}
+
+#[test]
+fn bd_jt6vm_reallocarr_null_ptr_returns_einval() {
+    use frankenlibc_abi::stdlib_abi::reallocarr;
+    let rc = unsafe { reallocarr(std::ptr::null_mut(), 1, 4) };
+    assert_eq!(rc, libc::EINVAL);
+}
+
+#[test]
+fn bd_jt6vm_pidfile_signal_missing_path_returns_minus_one() {
+    use frankenlibc_abi::stdlib_abi::pidfile_signal;
+    use std::ffi::CString;
+    let path = CString::new("/no/such/pidfile_signal_test").unwrap();
+    let mut other: libc::pid_t = -1;
+    let rc = unsafe { pidfile_signal(path.as_ptr(), 0, &mut other) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn bd_jt6vm_pidfile_signal_self_with_signal_zero_succeeds() {
+    use frankenlibc_abi::stdlib_abi::pidfile_signal;
+    use std::ffi::CString;
+    use std::io::Write;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc_pidfile_signal_{}_{}.pid",
+        std::process::id(),
+        nonce
+    ));
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "{}", std::process::id()).unwrap();
+    }
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mut other: libc::pid_t = -1;
+    let rc = unsafe { pidfile_signal(cpath.as_ptr(), 0, &mut other) };
+    assert_eq!(rc, 0, "pidfile_signal(self, 0) should succeed");
+    assert_eq!(other, std::process::id() as libc::pid_t);
+    let _ = std::fs::remove_file(&path);
+}

@@ -4221,6 +4221,28 @@ pub unsafe extern "C" fn explicit_bzero(s: *mut c_void, n: usize) {
     }
 }
 
+/// NetBSD `explicit_memset(s, c, n) -> *s` — `memset` variant
+/// guaranteed not to be optimized away. Companion to `explicit_bzero`
+/// for non-zero fill values.
+///
+/// # Safety
+///
+/// `s` must be valid for `n` bytes; `c` is interpreted as `unsigned
+/// char` and replicated across the buffer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn explicit_memset(s: *mut c_void, c: c_int, n: usize) -> *mut c_void {
+    if n == 0 {
+        return s;
+    }
+    // SAFETY: caller-supplied writable region of length n.
+    unsafe { libc::memset(s, c, n) };
+    // Defeat dead-store elimination: ensure the compiler can't prove
+    // the write is unused. black_box pins the address through an
+    // optimization barrier.
+    std::hint::black_box(s);
+    s
+}
+
 // ---------------------------------------------------------------------------
 // bcmp
 // ---------------------------------------------------------------------------
@@ -7612,6 +7634,21 @@ pub unsafe extern "C" fn consttime_memequal(
     // consttime_memequal flips that to 1 for equal / 0 for not.
     let bcmp_res = unsafe { timingsafe_bcmp(b1, b2, len) };
     if bcmp_res == 0 { 1 } else { 0 }
+}
+
+/// NetBSD `consttime_bcmp(s1, s2, n) -> int` — constant-time byte
+/// comparison returning 0 if equal, 1 if not. Convention matches
+/// the shape of `bcmp` rather than the inverted-equality of
+/// `consttime_memequal`.
+///
+/// # Safety
+///
+/// `s1` and `s2` must be valid for `n` bytes each. `n == 0` is
+/// always safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn consttime_bcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    let bcmp_res = unsafe { timingsafe_bcmp(s1, s2, n) };
+    if bcmp_res == 0 { 0 } else { 1 }
 }
 
 // ---------------------------------------------------------------------------

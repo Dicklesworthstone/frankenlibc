@@ -2275,6 +2275,46 @@ pub unsafe extern "C" fn reallocarray(ptr: *mut c_void, nmemb: usize, size: usiz
     out
 }
 
+/// NetBSD `reallocarr(**ptr, num, size) -> int` — reallocarray-like
+/// with overflow check. On success writes the new pointer through
+/// `*ptr` and returns 0; on failure returns a positive errno value
+/// (EINVAL/ENOMEM) without setting the global errno or modifying
+/// `*ptr`. Distinct from POSIX `reallocarray` which returns the new
+/// pointer or NULL via the global errno.
+///
+/// # Safety
+///
+/// `ptr` must be a valid pointer to a writable `*mut c_void` slot.
+/// The slot's current value, if non-NULL, must be a `realloc`-able
+/// allocation.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn reallocarr(ptr: *mut *mut c_void, num: usize, size: usize) -> c_int {
+    if ptr.is_null() {
+        return libc::EINVAL;
+    }
+    let total = match num.checked_mul(size) {
+        Some(t) => t,
+        None => return libc::EOVERFLOW,
+    };
+    if total == 0 {
+        // NetBSD reallocarr(0,_) frees the existing allocation and
+        // sets *ptr to NULL.
+        let cur = unsafe { *ptr };
+        if !cur.is_null() {
+            unsafe { crate::malloc_abi::free(cur) };
+        }
+        unsafe { *ptr = ptr::null_mut() };
+        return 0;
+    }
+    let cur = unsafe { *ptr };
+    let new_ptr = unsafe { crate::malloc_abi::realloc(cur, total) };
+    if new_ptr.is_null() {
+        return libc::ENOMEM;
+    }
+    unsafe { *ptr = new_ptr };
+    0
+}
+
 /// OpenBSD `freezero` — zero `size` bytes at `ptr`, then free the allocation.
 ///
 /// Used for buffers that contained secrets (private keys, passwords,
@@ -5892,6 +5932,42 @@ pub unsafe extern "C" fn pidfile_fileno(pfh: *const PidFh) -> c_int {
     }
     // SAFETY: pfh came from pidfile_open.
     unsafe { (*pfh).fd }
+}
+
+/// FreeBSD `pidfile_signal(*path, sig, **otherpid) -> int` — open
+/// the pidfile at `path`, read the recorded pid, and send `sig` to
+/// it. On success returns 0; if `otherpid` is non-NULL also writes
+/// the pid through it. Returns -1 with errno on failure (file not
+/// readable, malformed contents, kill(2) failure).
+///
+/// # Safety
+///
+/// `path` must be a valid C string. `otherpid`, when non-NULL, must
+/// point to writable `pid_t` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn pidfile_signal(
+    path: *const c_char,
+    sig: c_int,
+    otherpid: *mut libc::pid_t,
+) -> c_int {
+    if path.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    let pid = unsafe { read_pid_from_path(path) };
+    if pid <= 0 {
+        unsafe { set_abi_errno(libc::ESRCH) };
+        return -1;
+    }
+    if !otherpid.is_null() {
+        unsafe { *otherpid = pid };
+    }
+    let rc = unsafe { libc::kill(pid, sig) };
+    if rc < 0 {
+        unsafe { set_abi_errno(*libc::__errno_location()) };
+        return -1;
+    }
+    0
 }
 
 unsafe fn read_pid_from_path(path: *const c_char) -> libc::pid_t {
