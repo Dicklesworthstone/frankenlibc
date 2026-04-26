@@ -1024,28 +1024,55 @@ impl PosixObligationMatrixReport {
 
         let matrix: ConformanceMatrixReport = serde_json::from_str(conformance_matrix_json)
             .map_err(|err| format!("invalid conformance matrix JSON: {err}"))?;
+        let mut c_fixture_obligations_by_symbol_mode: BTreeMap<
+            (String, String),
+            Vec<(String, String)>,
+        > = BTreeMap::new();
+        for (obligation_key, aggregate) in &obligations {
+            if !aggregate
+                .test_refs
+                .iter()
+                .all(|test_ref| test_ref.starts_with("c_fixture::"))
+            {
+                continue;
+            }
+
+            for mode in &aggregate.modes {
+                c_fixture_obligations_by_symbol_mode
+                    .entry((obligation_key.0.clone(), mode.clone()))
+                    .or_default()
+                    .push(obligation_key.clone());
+            }
+        }
         for case in &matrix.cases {
             let lookup_key = (
                 case.symbol.clone(),
                 case.case_name.clone(),
                 case.mode.to_ascii_lowercase(),
             );
-            let Some(obligation_key) = matrix_case_lookup.get(&lookup_key) else {
-                continue;
-            };
-            let Some(aggregate) = obligations.get_mut(obligation_key) else {
-                continue;
-            };
-            aggregate.execution.total = aggregate.execution.total.saturating_add(1);
-            match case.status.as_str() {
-                "pass" => aggregate.execution.pass = aggregate.execution.pass.saturating_add(1),
-                "fail" => aggregate.execution.fail = aggregate.execution.fail.saturating_add(1),
-                "error" => aggregate.execution.error = aggregate.execution.error.saturating_add(1),
-                "timeout" => {
-                    aggregate.execution.timeout = aggregate.execution.timeout.saturating_add(1)
+            if let Some(obligation_key) = matrix_case_lookup.get(&lookup_key) {
+                if let Some(aggregate) = obligations.get_mut(obligation_key) {
+                    record_posix_execution(&mut aggregate.execution, &case.status);
                 }
-                "crash" => aggregate.execution.crash = aggregate.execution.crash.saturating_add(1),
-                _ => {}
+                continue;
+            }
+
+            let fallback_key = (case.symbol.clone(), case.mode.to_ascii_lowercase());
+            let Some(obligation_keys) = c_fixture_obligations_by_symbol_mode.get(&fallback_key)
+            else {
+                continue;
+            };
+            for obligation_key in obligation_keys {
+                if let Some(aggregate) = obligations.get_mut(obligation_key) {
+                    record_posix_execution(&mut aggregate.execution, &case.status);
+                    aggregate.test_refs.insert(format!(
+                        "conformance_matrix::{}::{}::{}",
+                        case.symbol, case.case_name, case.mode
+                    ));
+                    aggregate
+                        .artifact_refs
+                        .insert(String::from("tests/conformance/conformance_matrix.v1.json"));
+                }
             }
         }
 
@@ -1546,6 +1573,18 @@ fn classify_obligation_coverage_state(execution: &PosixExecutionCounts) -> &'sta
         "execution_failures"
     } else {
         "covered"
+    }
+}
+
+fn record_posix_execution(execution: &mut PosixExecutionCounts, status: &str) {
+    execution.total = execution.total.saturating_add(1);
+    match status {
+        "pass" => execution.pass = execution.pass.saturating_add(1),
+        "fail" => execution.fail = execution.fail.saturating_add(1),
+        "error" => execution.error = execution.error.saturating_add(1),
+        "timeout" => execution.timeout = execution.timeout.saturating_add(1),
+        "crash" => execution.crash = execution.crash.saturating_add(1),
+        _ => {}
     }
 }
 
@@ -2353,6 +2392,98 @@ mod tests {
                 .gap_reasons
                 .contains(&"missing_execution_evidence".to_string())
         );
+    }
+
+    #[test]
+    fn posix_obligation_matrix_credits_symbol_execution_for_c_fixture_posix_rows() {
+        let support_matrix = r#"{
+  "generated_at_utc":"2026-02-26T00:00:00Z",
+  "total_exported":1,
+  "symbols":[
+    {"symbol":"cos","status":"Implemented","module":"math_abi"}
+  ]
+}"#;
+        let fixture_set = FixtureSet::from_json(
+            r#"{
+  "version":"v1",
+  "family":"math",
+  "captured_at":"2026-02-26T00:00:00Z",
+  "cases":[
+    {
+      "name":"cos_zero",
+      "function":"cos",
+      "spec_section":"C11 7.12.4.5 cos",
+      "inputs":{"x":0.0},
+      "expected_output":"1.0",
+      "expected_errno":0,
+      "mode":"both"
+    }
+  ]
+}"#,
+        )
+        .expect("fixture set should parse");
+        let conformance_matrix = r#"{
+  "schema_version":"v1",
+  "bead":"bd-l93x.2",
+  "generated_at_utc":"2026-02-26T00:00:00Z",
+  "campaign":"test",
+  "mode":"both",
+  "total_fixture_sets":1,
+  "summary":{"total_cases":2,"passed":2,"failed":0,"errors":0,"pass_rate_percent":100.0},
+  "symbol_matrix":[],
+  "cases":[
+    {"trace_id":"cos-strict","family":"math","symbol":"cos","mode":"strict","case_name":"cos_zero [strict]","spec_section":"C11 7.12.4.5 cos","input_hex":"","expected_output":"1.0","actual_output":"1.0","host_output":"1.0","host_parity":true,"note":null,"status":"pass","passed":true,"error":null,"diff_offset":null},
+    {"trace_id":"cos-hardened","family":"math","symbol":"cos","mode":"hardened","case_name":"cos_zero [hardened]","spec_section":"C11 7.12.4.5 cos","input_hex":"","expected_output":"1.0","actual_output":"1.0","host_output":"1.0","host_parity":true,"note":null,"status":"pass","passed":true,"error":null,"diff_offset":null}
+  ]
+}"#;
+        let c_fixture_spec = r#"{
+  "schema_version":1,
+  "fixtures":[
+    {
+      "id":"fixture_math",
+      "source":"tests/integration/fixture_math.c",
+      "description":"Floating-point math fixture",
+      "covered_symbols":["cos"],
+      "covered_modules":["math_abi"],
+      "spec_traceability":{
+        "posix":["POSIX.1-2017 <math.h>: cos contract"]
+      },
+      "mode_expectations":{
+        "strict":{"expected_exit":0},
+        "hardened":{"expected_exit":0}
+      }
+    }
+  ]
+}"#;
+
+        let report = PosixObligationMatrixReport::from_inputs(
+            support_matrix,
+            &[fixture_set],
+            conformance_matrix,
+            c_fixture_spec,
+        )
+        .expect("report should build");
+
+        let cos_row = report
+            .obligations
+            .iter()
+            .find(|row| row.symbol == "cos")
+            .expect("cos obligation row");
+        assert_eq!(cos_row.coverage_state, "covered");
+        assert_eq!(cos_row.execution.total, 2);
+        assert_eq!(cos_row.execution.pass, 2);
+        assert!(
+            cos_row
+                .test_refs
+                .iter()
+                .any(|test_ref| test_ref.starts_with("conformance_matrix::cos::"))
+        );
+        assert!(report.gaps.iter().all(|gap| {
+            gap.symbol != "cos"
+                || !gap
+                    .gap_reasons
+                    .contains(&"missing_execution_evidence".to_string())
+        }));
     }
 
     #[test]

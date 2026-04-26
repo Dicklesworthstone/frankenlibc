@@ -6,13 +6,13 @@
     "total_exported": 3996,
     "tracked_symbols": 3996,
     "total_obligations": 263,
-    "covered_obligations": 199,
-    "mapped_without_execution": 64,
+    "covered_obligations": 218,
+    "mapped_without_execution": 45,
     "obligations_with_execution_failures": 0,
     "error_condition_obligations": 62,
     "async_concurrency_obligations": 52,
     "symbols_missing_any_mapping": 3791,
-    "symbols_missing_execution_evidence": 31,
+    "symbols_missing_execution_evidence": 15,
     "symbols_missing_error_conditions": 152,
     "symbols_missing_async_concurrency": 0
   },
@@ -440,7 +440,7 @@
       "symbol_family": "math",
       "owner": "math_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -450,15 +450,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::ceil::ceil_negative_frac [hardened]::hardened",
+        "conformance_matrix::ceil::ceil_negative_frac [strict]::strict",
+        "conformance_matrix::ceil::ceil_positive_frac [hardened]::hardened",
+        "conformance_matrix::ceil::ceil_positive_frac [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_math.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -685,7 +690,7 @@
       "symbol_family": "math",
       "owner": "math_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -695,15 +700,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::cos::cos_pi [hardened]::hardened",
+        "conformance_matrix::cos::cos_pi [strict]::strict",
+        "conformance_matrix::cos::cos_zero [hardened]::hardened",
+        "conformance_matrix::cos::cos_zero [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_math.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1185,7 +1195,7 @@
       "symbol_family": "math",
       "owner": "math_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1195,15 +1205,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::exp::exp_one [hardened]::hardened",
+        "conformance_matrix::exp::exp_one [strict]::strict",
+        "conformance_matrix::exp::exp_zero [hardened]::hardened",
+        "conformance_matrix::exp::exp_zero [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_math.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1217,7 +1232,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1227,15 +1242,17 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fclose::fclose_valid_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1249,7 +1266,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1259,15 +1276,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fflush::fflush_devnull_hardened::hardened",
+        "conformance_matrix::fflush::fflush_devnull_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1281,7 +1301,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1291,15 +1311,19 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fgetc::fgetc_devnull_read_strict::strict",
+        "conformance_matrix::fgetc::fgetc_devzero_hardened::hardened",
+        "conformance_matrix::fgetc::fgetc_devzero_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 3,
+        "pass": 3,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1409,7 +1433,7 @@
       "symbol_family": "math",
       "owner": "math_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1419,15 +1443,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::floor::floor_negative_frac [hardened]::hardened",
+        "conformance_matrix::floor::floor_negative_frac [strict]::strict",
+        "conformance_matrix::floor::floor_positive_frac [hardened]::hardened",
+        "conformance_matrix::floor::floor_positive_frac [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_math.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1441,7 +1470,7 @@
       "symbol_family": "math",
       "owner": "math_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1451,15 +1480,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::fmod::fmod_basic [hardened]::hardened",
+        "conformance_matrix::fmod::fmod_basic [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_math.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1503,7 +1535,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1513,15 +1545,19 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fopen::fopen_invalid_path_strict::strict",
+        "conformance_matrix::fopen::fopen_valid_mode_hardened::hardened",
+        "conformance_matrix::fopen::fopen_valid_mode_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 3,
+        "pass": 3,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1567,7 +1603,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1577,15 +1613,17 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::fprintf::fprintf_devnull_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1599,7 +1637,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1609,15 +1647,19 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fputc::fputc_devnull_hardened::hardened",
+        "conformance_matrix::fputc::fputc_devnull_strict::strict",
+        "conformance_matrix::fputc::fputc_devnull_zero_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 3,
+        "pass": 3,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1663,7 +1705,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1673,15 +1715,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fread::fread_devzero_hardened::hardened",
+        "conformance_matrix::fread::fread_devzero_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1847,7 +1892,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1857,15 +1902,17 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fwrite::fwrite_devnull_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 1,
+        "pass": 1,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1910,7 +1957,7 @@
       "symbol_family": "resolv",
       "owner": "resolv_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1920,15 +1967,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getaddrinfo::getaddrinfo_hosts_file_subset::strict",
+        "conformance_matrix::getaddrinfo::getaddrinfo_hosts_file_subset_hardened::hardened"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_nss.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -3922,7 +3972,7 @@
       "symbol_family": "math",
       "owner": "math_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -3932,15 +3982,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::log::log_e [hardened]::hardened",
+        "conformance_matrix::log::log_e [strict]::strict",
+        "conformance_matrix::log::log_one [hardened]::hardened",
+        "conformance_matrix::log::log_one [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_math.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -4270,7 +4325,7 @@
       "symbol_family": "string",
       "owner": "string_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "async_concurrency",
         "functional"
@@ -4281,15 +4336,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
-        "c_fixture::fixture_malloc_stress::strict"
+        "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::memset::memset_basic_strict::strict",
+        "conformance_matrix::memset::memset_zero_len_hardened::hardened"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_malloc_stress.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6975,7 +7033,7 @@
       "symbol_family": "math",
       "owner": "math_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6985,15 +7043,20 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::sin::sin_pi_half [hardened]::hardened",
+        "conformance_matrix::sin::sin_pi_half [strict]::strict",
+        "conformance_matrix::sin::sin_zero [hardened]::hardened",
+        "conformance_matrix::sin::sin_zero [strict]::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_math.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 4,
+        "pass": 4,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7007,7 +7070,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -7017,15 +7080,28 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::snprintf::snprintf_basic_hardened::hardened",
+        "conformance_matrix::snprintf::snprintf_basic_strict::strict",
+        "conformance_matrix::snprintf::snprintf_exact_fit::strict",
+        "conformance_matrix::snprintf::snprintf_float_truncate::strict",
+        "conformance_matrix::snprintf::snprintf_just_null::strict",
+        "conformance_matrix::snprintf::snprintf_multi_conv_truncate::strict",
+        "conformance_matrix::snprintf::snprintf_null_buffer::strict",
+        "conformance_matrix::snprintf::snprintf_percent_truncate::strict",
+        "conformance_matrix::snprintf::snprintf_returns_would_write::strict",
+        "conformance_matrix::snprintf::snprintf_truncates_mid_conversion::strict",
+        "conformance_matrix::snprintf::snprintf_truncation_strict::strict",
+        "conformance_matrix::snprintf::snprintf_zero_size::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 12,
+        "pass": 12,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -7223,7 +7299,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -7233,15 +7309,189 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::sprintf::sprintf_A_basic::strict",
+        "conformance_matrix::sprintf::sprintf_E_basic::strict",
+        "conformance_matrix::sprintf::sprintf_F_inf::strict",
+        "conformance_matrix::sprintf::sprintf_F_nan::strict",
+        "conformance_matrix::sprintf::sprintf_G_basic::strict",
+        "conformance_matrix::sprintf::sprintf_Le_basic::strict",
+        "conformance_matrix::sprintf::sprintf_Lf_basic::strict",
+        "conformance_matrix::sprintf::sprintf_X_alt_form::strict",
+        "conformance_matrix::sprintf::sprintf_X_basic::strict",
+        "conformance_matrix::sprintf::sprintf_a_basic::strict",
+        "conformance_matrix::sprintf::sprintf_a_negative::strict",
+        "conformance_matrix::sprintf::sprintf_a_precision::strict",
+        "conformance_matrix::sprintf::sprintf_c_basic::strict",
+        "conformance_matrix::sprintf::sprintf_c_left_width::strict",
+        "conformance_matrix::sprintf::sprintf_c_nul::strict",
+        "conformance_matrix::sprintf::sprintf_c_width::strict",
+        "conformance_matrix::sprintf::sprintf_consecutive_args::strict",
+        "conformance_matrix::sprintf::sprintf_consecutive_percents::strict",
+        "conformance_matrix::sprintf::sprintf_d_asterisk_zero_width::strict",
+        "conformance_matrix::sprintf::sprintf_d_basic::strict",
+        "conformance_matrix::sprintf::sprintf_d_hash_ignored::strict",
+        "conformance_matrix::sprintf::sprintf_d_max_int::strict",
+        "conformance_matrix::sprintf::sprintf_d_min_int::strict",
+        "conformance_matrix::sprintf::sprintf_d_neg_zero_pad::strict",
+        "conformance_matrix::sprintf::sprintf_d_negative::strict",
+        "conformance_matrix::sprintf::sprintf_d_precision_exceeds_value::strict",
+        "conformance_matrix::sprintf::sprintf_d_sign_with_width::strict",
+        "conformance_matrix::sprintf::sprintf_d_sign_with_zero::strict",
+        "conformance_matrix::sprintf::sprintf_d_space_with_width::strict",
+        "conformance_matrix::sprintf::sprintf_d_zero::strict",
+        "conformance_matrix::sprintf::sprintf_d_zero_width::strict",
+        "conformance_matrix::sprintf::sprintf_e_basic::strict",
+        "conformance_matrix::sprintf::sprintf_e_neg_exp::strict",
+        "conformance_matrix::sprintf::sprintf_e_neg_zero::strict",
+        "conformance_matrix::sprintf::sprintf_e_plus_flag::strict",
+        "conformance_matrix::sprintf::sprintf_e_precision::strict",
+        "conformance_matrix::sprintf::sprintf_e_precision_one::strict",
+        "conformance_matrix::sprintf::sprintf_e_round_half_even::strict",
+        "conformance_matrix::sprintf::sprintf_e_round_half_even_3_5::strict",
+        "conformance_matrix::sprintf::sprintf_e_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_e_width_zero_pad::strict",
+        "conformance_matrix::sprintf::sprintf_e_zero::strict",
+        "conformance_matrix::sprintf::sprintf_empty_format::strict",
+        "conformance_matrix::sprintf::sprintf_f_alt_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_f_basic::strict",
+        "conformance_matrix::sprintf::sprintf_f_denormal::strict",
+        "conformance_matrix::sprintf::sprintf_f_inf::strict",
+        "conformance_matrix::sprintf::sprintf_f_integer_precision_large::strict",
+        "conformance_matrix::sprintf::sprintf_f_nan::strict",
+        "conformance_matrix::sprintf::sprintf_f_neg_inf::strict",
+        "conformance_matrix::sprintf::sprintf_f_negative::strict",
+        "conformance_matrix::sprintf::sprintf_f_negative_zero::strict",
+        "conformance_matrix::sprintf::sprintf_f_plus_inf::strict",
+        "conformance_matrix::sprintf::sprintf_f_plus_width::strict",
+        "conformance_matrix::sprintf::sprintf_f_precision::strict",
+        "conformance_matrix::sprintf::sprintf_f_precision_large::strict",
+        "conformance_matrix::sprintf::sprintf_f_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_4_5::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_5_5::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_neg_2_5::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_neg_3_5::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_odd::strict",
+        "conformance_matrix::sprintf::sprintf_f_rounding_down::strict",
+        "conformance_matrix::sprintf::sprintf_f_rounding_up::strict",
+        "conformance_matrix::sprintf::sprintf_f_space_nan::strict",
+        "conformance_matrix::sprintf::sprintf_f_subnanosecond_precision::strict",
+        "conformance_matrix::sprintf::sprintf_f_very_large::strict",
+        "conformance_matrix::sprintf::sprintf_f_very_small::strict",
+        "conformance_matrix::sprintf::sprintf_f_width_left_justify::strict",
+        "conformance_matrix::sprintf::sprintf_f_width_right_justify::strict",
+        "conformance_matrix::sprintf::sprintf_f_width_zero_pad::strict",
+        "conformance_matrix::sprintf::sprintf_g_alt_trailing::strict",
+        "conformance_matrix::sprintf::sprintf_g_basic::strict",
+        "conformance_matrix::sprintf::sprintf_g_large::strict",
+        "conformance_matrix::sprintf::sprintf_g_power_large::strict",
+        "conformance_matrix::sprintf::sprintf_g_precision::strict",
+        "conformance_matrix::sprintf::sprintf_g_precision_rounds::strict",
+        "conformance_matrix::sprintf::sprintf_g_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_g_small_fixed::strict",
+        "conformance_matrix::sprintf::sprintf_g_switch_to_e::strict",
+        "conformance_matrix::sprintf::sprintf_g_trailing_zeros::strict",
+        "conformance_matrix::sprintf::sprintf_g_zero::strict",
+        "conformance_matrix::sprintf::sprintf_h_d::strict",
+        "conformance_matrix::sprintf::sprintf_h_overflow::strict",
+        "conformance_matrix::sprintf::sprintf_hh_d::strict",
+        "conformance_matrix::sprintf::sprintf_hh_overflow::strict",
+        "conformance_matrix::sprintf::sprintf_hhu_max::strict",
+        "conformance_matrix::sprintf::sprintf_hhx_max::strict",
+        "conformance_matrix::sprintf::sprintf_hu_max::strict",
+        "conformance_matrix::sprintf::sprintf_hx_max::strict",
+        "conformance_matrix::sprintf::sprintf_i_basic::strict",
+        "conformance_matrix::sprintf::sprintf_j_d::strict",
+        "conformance_matrix::sprintf::sprintf_l_d::strict",
+        "conformance_matrix::sprintf::sprintf_left_overrides_zero::strict",
+        "conformance_matrix::sprintf::sprintf_literal_percent::strict",
+        "conformance_matrix::sprintf::sprintf_ll_d::strict",
+        "conformance_matrix::sprintf::sprintf_lld_negative::strict",
+        "conformance_matrix::sprintf::sprintf_llu_max::strict",
+        "conformance_matrix::sprintf::sprintf_llx_max::strict",
+        "conformance_matrix::sprintf::sprintf_lo_max::strict",
+        "conformance_matrix::sprintf::sprintf_mixed_text::strict",
+        "conformance_matrix::sprintf::sprintf_mixed_types::strict",
+        "conformance_matrix::sprintf::sprintf_multiple_conversions::strict",
+        "conformance_matrix::sprintf::sprintf_n_count_mid::hardened",
+        "conformance_matrix::sprintf::sprintf_n_count_zero::hardened",
+        "conformance_matrix::sprintf::sprintf_o_alt_form::strict",
+        "conformance_matrix::sprintf::sprintf_o_alt_precision::strict",
+        "conformance_matrix::sprintf::sprintf_o_alt_zero::strict",
+        "conformance_matrix::sprintf::sprintf_o_basic::strict",
+        "conformance_matrix::sprintf::sprintf_o_large_value::strict",
+        "conformance_matrix::sprintf::sprintf_o_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_o_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_o_zero::strict",
+        "conformance_matrix::sprintf::sprintf_only_literal::strict",
+        "conformance_matrix::sprintf::sprintf_p_basic::strict",
+        "conformance_matrix::sprintf::sprintf_p_null::strict",
+        "conformance_matrix::sprintf::sprintf_p_width::strict",
+        "conformance_matrix::sprintf::sprintf_plus_flag_neg::strict",
+        "conformance_matrix::sprintf::sprintf_plus_flag_pos::strict",
+        "conformance_matrix::sprintf::sprintf_plus_overrides_space::strict",
+        "conformance_matrix::sprintf::sprintf_plus_space_interaction::strict",
+        "conformance_matrix::sprintf::sprintf_plus_zero::strict",
+        "conformance_matrix::sprintf::sprintf_precision_d::strict",
+        "conformance_matrix::sprintf::sprintf_precision_d_neg::strict",
+        "conformance_matrix::sprintf::sprintf_precision_d_zero::strict",
+        "conformance_matrix::sprintf::sprintf_precision_greater_width::strict",
+        "conformance_matrix::sprintf::sprintf_precision_larger_than_digits::strict",
+        "conformance_matrix::sprintf::sprintf_s_basic::strict",
+        "conformance_matrix::sprintf::sprintf_s_empty::strict",
+        "conformance_matrix::sprintf::sprintf_s_null_precision::strict",
+        "conformance_matrix::sprintf::sprintf_s_null_ptr::strict",
+        "conformance_matrix::sprintf::sprintf_s_precision::strict",
+        "conformance_matrix::sprintf::sprintf_s_precision_exceeds_len::strict",
+        "conformance_matrix::sprintf::sprintf_s_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_s_width::strict",
+        "conformance_matrix::sprintf::sprintf_s_width_left::strict",
+        "conformance_matrix::sprintf::sprintf_s_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_s_width_zero::strict",
+        "conformance_matrix::sprintf::sprintf_space_flag_neg::strict",
+        "conformance_matrix::sprintf::sprintf_space_flag_pos::strict",
+        "conformance_matrix::sprintf::sprintf_star_both::strict",
+        "conformance_matrix::sprintf::sprintf_star_neg_precision::strict",
+        "conformance_matrix::sprintf::sprintf_star_neg_width::strict",
+        "conformance_matrix::sprintf::sprintf_star_precision::strict",
+        "conformance_matrix::sprintf::sprintf_star_width::strict",
+        "conformance_matrix::sprintf::sprintf_string_precision_longer::strict",
+        "conformance_matrix::sprintf::sprintf_string_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_t_d::strict",
+        "conformance_matrix::sprintf::sprintf_u_basic::strict",
+        "conformance_matrix::sprintf::sprintf_u_max::strict",
+        "conformance_matrix::sprintf::sprintf_u_zero::strict",
+        "conformance_matrix::sprintf::sprintf_width_d::strict",
+        "conformance_matrix::sprintf::sprintf_width_d_left::strict",
+        "conformance_matrix::sprintf::sprintf_width_d_zero_neg::strict",
+        "conformance_matrix::sprintf::sprintf_width_d_zero_pad::strict",
+        "conformance_matrix::sprintf::sprintf_width_larger_than_output::strict",
+        "conformance_matrix::sprintf::sprintf_width_precision_d::strict",
+        "conformance_matrix::sprintf::sprintf_width_precision_neg_d::strict",
+        "conformance_matrix::sprintf::sprintf_x_alt_form::strict",
+        "conformance_matrix::sprintf::sprintf_x_alt_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_x_alt_zero::strict",
+        "conformance_matrix::sprintf::sprintf_x_basic::strict",
+        "conformance_matrix::sprintf::sprintf_x_large_value::strict",
+        "conformance_matrix::sprintf::sprintf_x_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_x_uppercase_alt::strict",
+        "conformance_matrix::sprintf::sprintf_x_width_left_alt::strict",
+        "conformance_matrix::sprintf::sprintf_x_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_x_zero::strict",
+        "conformance_matrix::sprintf::sprintf_z_u::strict",
+        "conformance_matrix::sprintf::sprintf_zd_negative::strict",
+        "conformance_matrix::sprintf::sprintf_zero_flag_ignored_with_precision::strict",
+        "conformance_matrix::sprintf::sprintf_zu_basic::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 173,
+        "pass": 173,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -22563,10 +22813,13 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::ceil::ceil_negative_frac [hardened]::hardened",
+        "conformance_matrix::ceil::ceil_negative_frac [strict]::strict",
+        "conformance_matrix::ceil::ceil_positive_frac [hardened]::hardened",
+        "conformance_matrix::ceil::ceil_positive_frac [strict]::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -23987,10 +24240,13 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::cos::cos_pi [hardened]::hardened",
+        "conformance_matrix::cos::cos_pi [strict]::strict",
+        "conformance_matrix::cos::cos_zero [hardened]::hardened",
+        "conformance_matrix::cos::cos_zero [strict]::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -26620,10 +26876,13 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::exp::exp_one [hardened]::hardened",
+        "conformance_matrix::exp::exp_one [strict]::strict",
+        "conformance_matrix::exp::exp_zero [hardened]::hardened",
+        "conformance_matrix::exp::exp_zero [strict]::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -28197,10 +28456,10 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fclose::fclose_valid_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -28718,10 +28977,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fflush::fflush_devnull_hardened::hardened",
+        "conformance_matrix::fflush::fflush_devnull_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -28807,10 +29067,12 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fgetc::fgetc_devnull_read_strict::strict",
+        "conformance_matrix::fgetc::fgetc_devzero_hardened::hardened",
+        "conformance_matrix::fgetc::fgetc_devzero_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -29149,10 +29411,13 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::floor::floor_negative_frac [hardened]::hardened",
+        "conformance_matrix::floor::floor_negative_frac [strict]::strict",
+        "conformance_matrix::floor::floor_positive_frac [hardened]::hardened",
+        "conformance_matrix::floor::floor_positive_frac [strict]::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -30510,10 +30775,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::fmod::fmod_basic [hardened]::hardened",
+        "conformance_matrix::fmod::fmod_basic [strict]::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -30663,10 +30929,12 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fopen::fopen_invalid_path_strict::strict",
+        "conformance_matrix::fopen::fopen_valid_mode_hardened::hardened",
+        "conformance_matrix::fopen::fopen_valid_mode_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -30744,10 +31012,10 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::fprintf::fprintf_devnull_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -30761,10 +31029,12 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fputc::fputc_devnull_hardened::hardened",
+        "conformance_matrix::fputc::fputc_devnull_strict::strict",
+        "conformance_matrix::fputc::fputc_devnull_zero_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -30867,10 +31137,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fread::fread_devzero_hardened::hardened",
+        "conformance_matrix::fread::fread_devzero_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -31908,10 +32179,10 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fwrite::fwrite_devnull_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -32131,6 +32402,8 @@
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
         "c_fixture::fixture_nss::strict",
+        "conformance_matrix::getaddrinfo::getaddrinfo_hosts_file_subset::strict",
+        "conformance_matrix::getaddrinfo::getaddrinfo_hosts_file_subset_hardened::hardened",
         "fixture::resolv/dns::getaddrinfo_numeric_ipv4::strict",
         "fixture::resolv/dns::getaddrinfo_numeric_ipv6::strict",
         "fixture::resolv/dns::getaddrinfo_unknown_host::strict"
@@ -37733,10 +38006,13 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::log::log_e [hardened]::hardened",
+        "conformance_matrix::log::log_e [strict]::strict",
+        "conformance_matrix::log::log_one [hardened]::hardened",
+        "conformance_matrix::log::log_one [strict]::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -39402,6 +39678,8 @@
       "test_refs": [
         "c_fixture::fixture_malloc_stress::hardened",
         "c_fixture::fixture_malloc_stress::strict",
+        "conformance_matrix::memset::memset_basic_strict::strict",
+        "conformance_matrix::memset::memset_zero_len_hardened::hardened",
         "fixture::string/memory::memset_basic::strict",
         "fixture::string/narrow::strict_memset_basic::strict"
       ],
@@ -48505,10 +48783,13 @@
       ],
       "test_refs": [
         "c_fixture::fixture_math::hardened",
-        "c_fixture::fixture_math::strict"
+        "c_fixture::fixture_math::strict",
+        "conformance_matrix::sin::sin_pi_half [hardened]::hardened",
+        "conformance_matrix::sin::sin_pi_half [strict]::strict",
+        "conformance_matrix::sin::sin_zero [hardened]::hardened",
+        "conformance_matrix::sin::sin_zero [strict]::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -48906,10 +49187,21 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::snprintf::snprintf_basic_hardened::hardened",
+        "conformance_matrix::snprintf::snprintf_basic_strict::strict",
+        "conformance_matrix::snprintf::snprintf_exact_fit::strict",
+        "conformance_matrix::snprintf::snprintf_float_truncate::strict",
+        "conformance_matrix::snprintf::snprintf_just_null::strict",
+        "conformance_matrix::snprintf::snprintf_multi_conv_truncate::strict",
+        "conformance_matrix::snprintf::snprintf_null_buffer::strict",
+        "conformance_matrix::snprintf::snprintf_percent_truncate::strict",
+        "conformance_matrix::snprintf::snprintf_returns_would_write::strict",
+        "conformance_matrix::snprintf::snprintf_truncates_mid_conversion::strict",
+        "conformance_matrix::snprintf::snprintf_truncation_strict::strict",
+        "conformance_matrix::snprintf::snprintf_zero_size::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -48964,6 +49256,179 @@
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
         "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::sprintf::sprintf_A_basic::strict",
+        "conformance_matrix::sprintf::sprintf_E_basic::strict",
+        "conformance_matrix::sprintf::sprintf_F_inf::strict",
+        "conformance_matrix::sprintf::sprintf_F_nan::strict",
+        "conformance_matrix::sprintf::sprintf_G_basic::strict",
+        "conformance_matrix::sprintf::sprintf_Le_basic::strict",
+        "conformance_matrix::sprintf::sprintf_Lf_basic::strict",
+        "conformance_matrix::sprintf::sprintf_X_alt_form::strict",
+        "conformance_matrix::sprintf::sprintf_X_basic::strict",
+        "conformance_matrix::sprintf::sprintf_a_basic::strict",
+        "conformance_matrix::sprintf::sprintf_a_negative::strict",
+        "conformance_matrix::sprintf::sprintf_a_precision::strict",
+        "conformance_matrix::sprintf::sprintf_c_basic::strict",
+        "conformance_matrix::sprintf::sprintf_c_left_width::strict",
+        "conformance_matrix::sprintf::sprintf_c_nul::strict",
+        "conformance_matrix::sprintf::sprintf_c_width::strict",
+        "conformance_matrix::sprintf::sprintf_consecutive_args::strict",
+        "conformance_matrix::sprintf::sprintf_consecutive_percents::strict",
+        "conformance_matrix::sprintf::sprintf_d_asterisk_zero_width::strict",
+        "conformance_matrix::sprintf::sprintf_d_basic::strict",
+        "conformance_matrix::sprintf::sprintf_d_hash_ignored::strict",
+        "conformance_matrix::sprintf::sprintf_d_max_int::strict",
+        "conformance_matrix::sprintf::sprintf_d_min_int::strict",
+        "conformance_matrix::sprintf::sprintf_d_neg_zero_pad::strict",
+        "conformance_matrix::sprintf::sprintf_d_negative::strict",
+        "conformance_matrix::sprintf::sprintf_d_precision_exceeds_value::strict",
+        "conformance_matrix::sprintf::sprintf_d_sign_with_width::strict",
+        "conformance_matrix::sprintf::sprintf_d_sign_with_zero::strict",
+        "conformance_matrix::sprintf::sprintf_d_space_with_width::strict",
+        "conformance_matrix::sprintf::sprintf_d_zero::strict",
+        "conformance_matrix::sprintf::sprintf_d_zero_width::strict",
+        "conformance_matrix::sprintf::sprintf_e_basic::strict",
+        "conformance_matrix::sprintf::sprintf_e_neg_exp::strict",
+        "conformance_matrix::sprintf::sprintf_e_neg_zero::strict",
+        "conformance_matrix::sprintf::sprintf_e_plus_flag::strict",
+        "conformance_matrix::sprintf::sprintf_e_precision::strict",
+        "conformance_matrix::sprintf::sprintf_e_precision_one::strict",
+        "conformance_matrix::sprintf::sprintf_e_round_half_even::strict",
+        "conformance_matrix::sprintf::sprintf_e_round_half_even_3_5::strict",
+        "conformance_matrix::sprintf::sprintf_e_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_e_width_zero_pad::strict",
+        "conformance_matrix::sprintf::sprintf_e_zero::strict",
+        "conformance_matrix::sprintf::sprintf_empty_format::strict",
+        "conformance_matrix::sprintf::sprintf_f_alt_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_f_basic::strict",
+        "conformance_matrix::sprintf::sprintf_f_denormal::strict",
+        "conformance_matrix::sprintf::sprintf_f_inf::strict",
+        "conformance_matrix::sprintf::sprintf_f_integer_precision_large::strict",
+        "conformance_matrix::sprintf::sprintf_f_nan::strict",
+        "conformance_matrix::sprintf::sprintf_f_neg_inf::strict",
+        "conformance_matrix::sprintf::sprintf_f_negative::strict",
+        "conformance_matrix::sprintf::sprintf_f_negative_zero::strict",
+        "conformance_matrix::sprintf::sprintf_f_plus_inf::strict",
+        "conformance_matrix::sprintf::sprintf_f_plus_width::strict",
+        "conformance_matrix::sprintf::sprintf_f_precision::strict",
+        "conformance_matrix::sprintf::sprintf_f_precision_large::strict",
+        "conformance_matrix::sprintf::sprintf_f_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_4_5::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_5_5::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_neg_2_5::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_neg_3_5::strict",
+        "conformance_matrix::sprintf::sprintf_f_round_half_even_odd::strict",
+        "conformance_matrix::sprintf::sprintf_f_rounding_down::strict",
+        "conformance_matrix::sprintf::sprintf_f_rounding_up::strict",
+        "conformance_matrix::sprintf::sprintf_f_space_nan::strict",
+        "conformance_matrix::sprintf::sprintf_f_subnanosecond_precision::strict",
+        "conformance_matrix::sprintf::sprintf_f_very_large::strict",
+        "conformance_matrix::sprintf::sprintf_f_very_small::strict",
+        "conformance_matrix::sprintf::sprintf_f_width_left_justify::strict",
+        "conformance_matrix::sprintf::sprintf_f_width_right_justify::strict",
+        "conformance_matrix::sprintf::sprintf_f_width_zero_pad::strict",
+        "conformance_matrix::sprintf::sprintf_g_alt_trailing::strict",
+        "conformance_matrix::sprintf::sprintf_g_basic::strict",
+        "conformance_matrix::sprintf::sprintf_g_large::strict",
+        "conformance_matrix::sprintf::sprintf_g_power_large::strict",
+        "conformance_matrix::sprintf::sprintf_g_precision::strict",
+        "conformance_matrix::sprintf::sprintf_g_precision_rounds::strict",
+        "conformance_matrix::sprintf::sprintf_g_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_g_small_fixed::strict",
+        "conformance_matrix::sprintf::sprintf_g_switch_to_e::strict",
+        "conformance_matrix::sprintf::sprintf_g_trailing_zeros::strict",
+        "conformance_matrix::sprintf::sprintf_g_zero::strict",
+        "conformance_matrix::sprintf::sprintf_h_d::strict",
+        "conformance_matrix::sprintf::sprintf_h_overflow::strict",
+        "conformance_matrix::sprintf::sprintf_hh_d::strict",
+        "conformance_matrix::sprintf::sprintf_hh_overflow::strict",
+        "conformance_matrix::sprintf::sprintf_hhu_max::strict",
+        "conformance_matrix::sprintf::sprintf_hhx_max::strict",
+        "conformance_matrix::sprintf::sprintf_hu_max::strict",
+        "conformance_matrix::sprintf::sprintf_hx_max::strict",
+        "conformance_matrix::sprintf::sprintf_i_basic::strict",
+        "conformance_matrix::sprintf::sprintf_j_d::strict",
+        "conformance_matrix::sprintf::sprintf_l_d::strict",
+        "conformance_matrix::sprintf::sprintf_left_overrides_zero::strict",
+        "conformance_matrix::sprintf::sprintf_literal_percent::strict",
+        "conformance_matrix::sprintf::sprintf_ll_d::strict",
+        "conformance_matrix::sprintf::sprintf_lld_negative::strict",
+        "conformance_matrix::sprintf::sprintf_llu_max::strict",
+        "conformance_matrix::sprintf::sprintf_llx_max::strict",
+        "conformance_matrix::sprintf::sprintf_lo_max::strict",
+        "conformance_matrix::sprintf::sprintf_mixed_text::strict",
+        "conformance_matrix::sprintf::sprintf_mixed_types::strict",
+        "conformance_matrix::sprintf::sprintf_multiple_conversions::strict",
+        "conformance_matrix::sprintf::sprintf_n_count_mid::hardened",
+        "conformance_matrix::sprintf::sprintf_n_count_zero::hardened",
+        "conformance_matrix::sprintf::sprintf_o_alt_form::strict",
+        "conformance_matrix::sprintf::sprintf_o_alt_precision::strict",
+        "conformance_matrix::sprintf::sprintf_o_alt_zero::strict",
+        "conformance_matrix::sprintf::sprintf_o_basic::strict",
+        "conformance_matrix::sprintf::sprintf_o_large_value::strict",
+        "conformance_matrix::sprintf::sprintf_o_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_o_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_o_zero::strict",
+        "conformance_matrix::sprintf::sprintf_only_literal::strict",
+        "conformance_matrix::sprintf::sprintf_p_basic::strict",
+        "conformance_matrix::sprintf::sprintf_p_null::strict",
+        "conformance_matrix::sprintf::sprintf_p_width::strict",
+        "conformance_matrix::sprintf::sprintf_plus_flag_neg::strict",
+        "conformance_matrix::sprintf::sprintf_plus_flag_pos::strict",
+        "conformance_matrix::sprintf::sprintf_plus_overrides_space::strict",
+        "conformance_matrix::sprintf::sprintf_plus_space_interaction::strict",
+        "conformance_matrix::sprintf::sprintf_plus_zero::strict",
+        "conformance_matrix::sprintf::sprintf_precision_d::strict",
+        "conformance_matrix::sprintf::sprintf_precision_d_neg::strict",
+        "conformance_matrix::sprintf::sprintf_precision_d_zero::strict",
+        "conformance_matrix::sprintf::sprintf_precision_greater_width::strict",
+        "conformance_matrix::sprintf::sprintf_precision_larger_than_digits::strict",
+        "conformance_matrix::sprintf::sprintf_s_basic::strict",
+        "conformance_matrix::sprintf::sprintf_s_empty::strict",
+        "conformance_matrix::sprintf::sprintf_s_null_precision::strict",
+        "conformance_matrix::sprintf::sprintf_s_null_ptr::strict",
+        "conformance_matrix::sprintf::sprintf_s_precision::strict",
+        "conformance_matrix::sprintf::sprintf_s_precision_exceeds_len::strict",
+        "conformance_matrix::sprintf::sprintf_s_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_s_width::strict",
+        "conformance_matrix::sprintf::sprintf_s_width_left::strict",
+        "conformance_matrix::sprintf::sprintf_s_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_s_width_zero::strict",
+        "conformance_matrix::sprintf::sprintf_space_flag_neg::strict",
+        "conformance_matrix::sprintf::sprintf_space_flag_pos::strict",
+        "conformance_matrix::sprintf::sprintf_star_both::strict",
+        "conformance_matrix::sprintf::sprintf_star_neg_precision::strict",
+        "conformance_matrix::sprintf::sprintf_star_neg_width::strict",
+        "conformance_matrix::sprintf::sprintf_star_precision::strict",
+        "conformance_matrix::sprintf::sprintf_star_width::strict",
+        "conformance_matrix::sprintf::sprintf_string_precision_longer::strict",
+        "conformance_matrix::sprintf::sprintf_string_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_t_d::strict",
+        "conformance_matrix::sprintf::sprintf_u_basic::strict",
+        "conformance_matrix::sprintf::sprintf_u_max::strict",
+        "conformance_matrix::sprintf::sprintf_u_zero::strict",
+        "conformance_matrix::sprintf::sprintf_width_d::strict",
+        "conformance_matrix::sprintf::sprintf_width_d_left::strict",
+        "conformance_matrix::sprintf::sprintf_width_d_zero_neg::strict",
+        "conformance_matrix::sprintf::sprintf_width_d_zero_pad::strict",
+        "conformance_matrix::sprintf::sprintf_width_larger_than_output::strict",
+        "conformance_matrix::sprintf::sprintf_width_precision_d::strict",
+        "conformance_matrix::sprintf::sprintf_width_precision_neg_d::strict",
+        "conformance_matrix::sprintf::sprintf_x_alt_form::strict",
+        "conformance_matrix::sprintf::sprintf_x_alt_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_x_alt_zero::strict",
+        "conformance_matrix::sprintf::sprintf_x_basic::strict",
+        "conformance_matrix::sprintf::sprintf_x_large_value::strict",
+        "conformance_matrix::sprintf::sprintf_x_precision_zero::strict",
+        "conformance_matrix::sprintf::sprintf_x_uppercase_alt::strict",
+        "conformance_matrix::sprintf::sprintf_x_width_left_alt::strict",
+        "conformance_matrix::sprintf::sprintf_x_width_precision::strict",
+        "conformance_matrix::sprintf::sprintf_x_zero::strict",
+        "conformance_matrix::sprintf::sprintf_z_u::strict",
+        "conformance_matrix::sprintf::sprintf_zd_negative::strict",
+        "conformance_matrix::sprintf::sprintf_zero_flag_ignored_with_precision::strict",
+        "conformance_matrix::sprintf::sprintf_zu_basic::strict",
         "fixture::printf_conformance::sprintf_positional_basic::strict",
         "fixture::printf_conformance::sprintf_positional_reorder::strict",
         "fixture::printf_conformance::sprintf_positional_repeat::strict",
