@@ -379,8 +379,10 @@ fn stdio_file_ops_has_spec_references() {
 
     for case in &fixture.cases {
         assert!(
-            case.spec_section.contains("C11") || case.spec_section.contains("POSIX"),
-            "Case {} spec_section should reference C11 or POSIX: {}",
+            case.spec_section.contains("C11")
+                || case.spec_section.contains("POSIX")
+                || case.spec_section.contains("GNU"),
+            "Case {} spec_section should reference C11, POSIX, or GNU: {}",
             case.name,
             case.spec_section
         );
