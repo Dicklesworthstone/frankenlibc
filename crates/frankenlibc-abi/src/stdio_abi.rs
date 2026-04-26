@@ -6761,3 +6761,115 @@ mod _io_internal {
     // NativeFile-backed standard stream cells.
 } // mod _io_internal
 pub use _io_internal::*;
+
+// ---------------------------------------------------------------------------
+// fgetln / fpurge (BSD)
+// ---------------------------------------------------------------------------
+//
+// fgetln reads a logical line from `stream` and returns a pointer into a
+// thread-local Vec<u8> that stays alive until the next stdio call on the
+// same thread. We don't track per-stream lifetimes — the returned pointer
+// is valid as long as the caller doesn't trigger another fgetln (or any
+// other stdio call that might touch the buffer) on the *current* thread.
+//
+// fpurge is a thin wrapper over our existing __fpurge that returns int
+// (the BSD signature) instead of void (the GNU signature).
+
+use std::cell::RefCell;
+
+thread_local! {
+    static FGETLN_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+/// BSD `fgetln(stream, *len)` — read a line from `stream` (up to and
+/// including the trailing `\n`) and return a pointer into a
+/// thread-local buffer plus the line length via `*len`. Returns NULL
+/// on EOF (with `*len = 0`) or on read error.
+///
+/// The returned pointer remains valid until the next `fgetln` call on
+/// the same thread. Callers MUST NOT modify or `free()` it.
+///
+/// # Safety
+///
+/// `stream` must be a valid `FILE *`. `len`, when non-NULL, must
+/// point to writable `size_t` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetln(stream: *mut c_void, len: *mut usize) -> *mut c_char {
+    if stream.is_null() {
+        if !len.is_null() {
+            // SAFETY: caller-supplied writable slot.
+            unsafe { *len = 0 };
+        }
+        return std::ptr::null_mut();
+    }
+
+    let result = FGETLN_BUFFER.with(|cell| -> Option<(*mut c_char, usize)> {
+        let mut buf = cell.borrow_mut();
+        buf.clear();
+        loop {
+            // SAFETY: stream is a valid FILE* per caller.
+            let c = unsafe { fgetc(stream) };
+            if c == -1 {
+                // EOF or error. If we already have bytes, return them
+                // (last line without trailing newline). Otherwise
+                // signal end-of-input.
+                if buf.is_empty() {
+                    return None;
+                }
+                break;
+            }
+            buf.push(c as u8);
+            if c as u8 == b'\n' {
+                break;
+            }
+        }
+        // The buffer pointer is `buf.as_mut_ptr()`, but `buf` is
+        // borrowed inside this closure. Stash the pointer + length
+        // and return; Rust's borrow checker is satisfied because
+        // we don't outlive the closure body — the thread-local
+        // RefCell keeps the Vec alive between calls.
+        let ptr = buf.as_mut_ptr() as *mut c_char;
+        let n = buf.len();
+        Some((ptr, n))
+    });
+
+    match result {
+        Some((ptr, n)) => {
+            if !len.is_null() {
+                // SAFETY: caller-supplied writable slot.
+                unsafe { *len = n };
+            }
+            ptr
+        }
+        None => {
+            if !len.is_null() {
+                // SAFETY: caller-supplied writable slot.
+                unsafe { *len = 0 };
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// BSD `fpurge(stream)` — discard any pending input or unwritten
+/// output buffered on `stream`. Returns 0 on success, EOF on error.
+///
+/// Internally delegates to the GNU `__fpurge` no-op stub (we don't
+/// keep our own buffer). The return value is therefore always 0
+/// when `stream` is non-NULL, matching glibc's `__fpurge` (which
+/// signals failure only via `ferror`).
+///
+/// # Safety
+///
+/// `stream`, when non-NULL, must be a valid `FILE *`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fpurge(stream: *mut c_void) -> c_int {
+    if stream.is_null() {
+        // BSD spec: NULL stream is undefined; we choose to return EOF.
+        return -1;
+    }
+    // SAFETY: __fpurge delegates to the GNU stub which is itself a no-op
+    // for non-FILE buffers (we don't own the FILE buffer).
+    unsafe { crate::glibc_internal_abi::__fpurge(stream) };
+    0
+}

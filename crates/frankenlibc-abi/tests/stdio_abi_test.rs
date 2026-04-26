@@ -51,6 +51,7 @@ use frankenlibc_abi::stdio_abi::{
     fflush_unlocked,
     fgetc,
     fgetc_unlocked,
+    fgetln,
     fgetpos,
     fgetpos64,
     fgets,
@@ -63,6 +64,7 @@ use frankenlibc_abi::stdio_abi::{
     fopen64,
     fopencookie,
     fprintf,
+    fpurge,
     fputc,
     fputc_unlocked,
     fputs,
@@ -3589,3 +3591,132 @@ fn fopen_null_path_fails() {
 // Note: Double-close testing is skipped in this test file because the test
 // environment triggers glibc's vtable validation when using NativeFile.
 // Double-close detection is tested via the LD_PRELOAD integration tests.
+
+// ---------------------------------------------------------------------------
+// fgetln (BSD: read a logical line into a thread-local buffer)
+// ---------------------------------------------------------------------------
+
+fn temp_text_file(content: &[u8]) -> std::path::PathBuf {
+    let seq = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-fgetln-{}-{seq}.txt",
+        std::process::id()
+    ));
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+fn open_for_read(path: &std::path::Path) -> *mut c_void {
+    let cstr = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mode = c"r";
+    let fp = unsafe { fopen(cstr.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null(), "fopen({:?}) failed", path);
+    fp
+}
+
+#[test]
+fn fgetln_reads_line_with_newline() {
+    let path = temp_text_file(b"hello\nworld\n");
+    let fp = open_for_read(&path);
+    let mut len: usize = 0;
+    let p = unsafe { fgetln(fp, &mut len) };
+    assert!(!p.is_null());
+    assert_eq!(len, 6, "expected 'hello\\n' = 6 bytes");
+    let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, len) };
+    assert_eq!(bytes, b"hello\n");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fgetln_reads_two_consecutive_lines() {
+    let path = temp_text_file(b"alpha\nbeta\n");
+    let fp = open_for_read(&path);
+
+    let mut len: usize = 0;
+    let p1 = unsafe { fgetln(fp, &mut len) };
+    let bytes1 = unsafe { std::slice::from_raw_parts(p1 as *const u8, len).to_vec() };
+    assert_eq!(bytes1, b"alpha\n");
+
+    let p2 = unsafe { fgetln(fp, &mut len) };
+    assert!(!p2.is_null());
+    let bytes2 = unsafe { std::slice::from_raw_parts(p2 as *const u8, len) };
+    assert_eq!(bytes2, b"beta\n");
+
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fgetln_returns_last_line_without_trailing_newline() {
+    let path = temp_text_file(b"first\nlast-no-nl");
+    let fp = open_for_read(&path);
+
+    let mut len: usize = 0;
+    let _ = unsafe { fgetln(fp, &mut len) };
+    let p2 = unsafe { fgetln(fp, &mut len) };
+    assert!(
+        !p2.is_null(),
+        "last line without \\n should still return non-NULL"
+    );
+    let bytes = unsafe { std::slice::from_raw_parts(p2 as *const u8, len) };
+    assert_eq!(bytes, b"last-no-nl");
+
+    // Subsequent call returns NULL on EOF.
+    let p3 = unsafe { fgetln(fp, &mut len) };
+    assert!(p3.is_null());
+    assert_eq!(len, 0, "len must be zeroed on EOF");
+
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fgetln_eof_immediately_returns_null() {
+    let path = temp_text_file(b"");
+    let fp = open_for_read(&path);
+    let mut len: usize = 99;
+    let p = unsafe { fgetln(fp, &mut len) };
+    assert!(p.is_null());
+    assert_eq!(len, 0, "len must be zeroed on EOF");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fgetln_null_stream_returns_null() {
+    let mut len: usize = 99;
+    let p = unsafe { fgetln(std::ptr::null_mut(), &mut len) };
+    assert!(p.is_null());
+    assert_eq!(len, 0);
+}
+
+#[test]
+fn fgetln_null_len_pointer_is_safe() {
+    let path = temp_text_file(b"x\n");
+    let fp = open_for_read(&path);
+    let p = unsafe { fgetln(fp, std::ptr::null_mut()) };
+    assert!(!p.is_null());
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// fpurge (BSD wrapper around our existing __fpurge)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fpurge_returns_zero_on_valid_stream() {
+    let path = temp_text_file(b"data");
+    let fp = open_for_read(&path);
+    let rc = unsafe { fpurge(fp) };
+    assert_eq!(rc, 0);
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fpurge_returns_minus_one_for_null_stream() {
+    let rc = unsafe { fpurge(std::ptr::null_mut()) };
+    assert_eq!(rc, -1);
+}
