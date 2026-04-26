@@ -10,8 +10,6 @@
 //! `StdioStream` instances from frankenlibc-core. stdin/stdout/stderr are
 //! pre-registered at well-known sentinel addresses.
 
-#[cfg(not(debug_assertions))]
-use core::arch::global_asm;
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -931,15 +929,16 @@ pub static mut stdout: *mut c_void = STDOUT_SENTINEL as *mut c_void;
 #[allow(non_upper_case_globals)]
 pub static mut stderr: *mut c_void = STDERR_SENTINEL as *mut c_void;
 
-// glibc internal `_IO_2_1_{stdin,stdout,stderr}_` aliases.
+// glibc internal `_IO_2_1_{stdin,stdout,stderr}_` mirrors.
 //
-// Some binaries resolve these names directly instead of going through the
-// public `stdin/stdout/stderr` globals. Release builds export them as true
-// linker aliases to those globals, which keeps both names on the exact same
-// pointer cell and therefore the exact same NativeFile storage.
+// These names are not pointer cells in glibc; they are the actual `_IO_FILE_plus`
+// objects backing the public `stdin/stdout/stderr` pointer variables. Release
+// builds therefore must not export them as aliases to the 8-byte pointer cells:
+// that creates an ABI lie which makes preloaded processes treat a pointer value
+// as a FILE header during dynamic-loader/libc startup.
 //
 // Debug/test builds do not export the libc symbol surface, so they keep local
-// mirror statics with the same runtime values for unit-test coverage.
+// pointer mirrors with the same runtime values for unit-test coverage only.
 #[cfg(debug_assertions)]
 #[allow(non_upper_case_globals)]
 pub static mut IO_2_1_STDIN: *mut c_void = STDIN_SENTINEL as *mut c_void;
@@ -951,29 +950,6 @@ pub static mut IO_2_1_STDOUT: *mut c_void = STDOUT_SENTINEL as *mut c_void;
 #[cfg(debug_assertions)]
 #[allow(non_upper_case_globals)]
 pub static mut IO_2_1_STDERR: *mut c_void = STDERR_SENTINEL as *mut c_void;
-
-#[cfg(not(debug_assertions))]
-unsafe extern "C" {
-    #[link_name = "_IO_2_1_stdin_"]
-    pub static mut IO_2_1_STDIN: *mut c_void;
-    #[link_name = "_IO_2_1_stdout_"]
-    pub static mut IO_2_1_STDOUT: *mut c_void;
-    #[link_name = "_IO_2_1_stderr_"]
-    pub static mut IO_2_1_STDERR: *mut c_void;
-}
-
-#[cfg(not(debug_assertions))]
-global_asm!(
-    ".global _IO_2_1_stdin_",
-    ".type _IO_2_1_stdin_, @object",
-    ".set _IO_2_1_stdin_, stdin",
-    ".global _IO_2_1_stdout_",
-    ".type _IO_2_1_stdout_, @object",
-    ".set _IO_2_1_stdout_, stdout",
-    ".global _IO_2_1_stderr_",
-    ".type _IO_2_1_stderr_, @object",
-    ".set _IO_2_1_stderr_, stderr",
-);
 
 static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 static HOST_LIBIO_EXIT_PATCHED: AtomicBool = AtomicBool::new(false);
@@ -1062,21 +1038,6 @@ pub(crate) fn init_host_stdio_streams() {
                 );
                 sync_copy_relocated_stdio_symbol(
                     c"stderr",
-                    core::ptr::addr_of_mut!(stderr),
-                    stderr_ptr,
-                );
-                sync_copy_relocated_stdio_symbol(
-                    c"_IO_2_1_stdin_",
-                    core::ptr::addr_of_mut!(stdin),
-                    stdin_ptr,
-                );
-                sync_copy_relocated_stdio_symbol(
-                    c"_IO_2_1_stdout_",
-                    core::ptr::addr_of_mut!(stdout),
-                    stdout_ptr,
-                );
-                sync_copy_relocated_stdio_symbol(
-                    c"_IO_2_1_stderr_",
                     core::ptr::addr_of_mut!(stderr),
                     stderr_ptr,
                 );

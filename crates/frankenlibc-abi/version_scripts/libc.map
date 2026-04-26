@@ -469,9 +469,6 @@ GLIBC_2.2.5 {
         stdin;
         stdout;
         stderr;
-        _IO_2_1_stdin_;
-        _IO_2_1_stdout_;
-        _IO_2_1_stderr_;
         getc;
         putc;
         fgetpos;
