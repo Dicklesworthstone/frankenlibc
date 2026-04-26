@@ -4849,8 +4849,8 @@ pub unsafe extern "C" fn mq_clockreceive(
 /// kernel rejects calls whose `size` is wrong for its known
 /// versions, so callers must pass `size_of::<open_how>()`.
 ///
-/// Forwards to syscall 437 via `libc::syscall`. Returns the new
-/// fd on success or -1 with errno set.
+/// Forwards through the raw syscall veneer. Returns the new fd on
+/// success or -1 with errno set.
 ///
 /// # Safety
 ///
@@ -4868,23 +4868,14 @@ pub unsafe extern "C" fn openat2(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel via libc::syscall; the kernel
-    // enforces struct-size validation against its known versions.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_openat2,
-            dirfd as libc::c_long,
-            pathname as libc::c_long,
-            how as libc::c_long,
-            size as libc::c_long,
-        )
-    };
-    if rc < 0 {
-        let e = unsafe { *libc::__errno_location() };
-        unsafe { set_abi_errno(e) };
-        return -1;
+    // SAFETY: caller contract supplies a NUL-terminated pathname and readable `how`.
+    match unsafe { syscall::sys_openat2(dirfd, pathname as *const u8, how as *const u8, size) } {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as c_int
 }
 
 /// Linux `futex_waitv(*waiters, nr_futexes, flags, *timeout,
@@ -4916,6 +4907,7 @@ pub unsafe extern "C" fn futex_waitv(
     // Cast through the core syscall's typed `FutexWaitV` pointer; the
     // raw layout matches our wrapper's opaque c_void caller view.
     let waiters_typed = waiters as *const frankenlibc_core::syscall::FutexWaitV;
+    // SAFETY: caller contract supplies a valid waiter array and optional timeout.
     match unsafe {
         frankenlibc_core::syscall::sys_futex_waitv(
             waiters_typed,
@@ -4931,6 +4923,128 @@ pub unsafe extern "C" fn futex_waitv(
             -1
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// mseal / memfd_secret / rseq / cachestat (modern Linux syscall wrappers)
+// ---------------------------------------------------------------------------
+
+#[inline]
+unsafe fn raw_syscall_with_errno(rc: libc::c_long) -> c_int {
+    if rc < 0 {
+        let e = unsafe { *libc::__errno_location() };
+        unsafe { set_abi_errno(e) };
+        return -1;
+    }
+    rc as c_int
+}
+
+/// Linux `mseal(addr, len, flags) -> int` (Linux 6.10+, glibc 2.40,
+/// `SYS_mseal = 462`) — seal a memory region against future
+/// `mprotect`, `munmap`, `mremap`, etc. Returns 0 on success or -1
+/// with errno on failure.
+///
+/// # Safety
+///
+/// `addr` must point to a memory region of at least `len` bytes; the
+/// kernel rejects unaligned or non-VM-area addresses.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mseal(addr: *mut c_void, len: usize, flags: c_uint) -> c_int {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_mseal,
+            addr as libc::c_long,
+            len as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `memfd_secret(flags) -> int` (Linux 5.14+, `SYS_memfd_secret
+/// = 447`) — create an anonymous file backed by memory inaccessible
+/// from the rest of the system (no /proc/PID/mem, no ptrace).
+/// Returns the new fd or -1 with errno.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memfd_secret(flags: c_uint) -> c_int {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe { libc::syscall(libc::SYS_memfd_secret, flags as libc::c_long) };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `rseq(*rseq, rseq_len, flags, sig) -> int` (Linux 4.18+,
+/// `SYS_rseq = 334`) — register or unregister a per-thread
+/// `struct rseq` for restartable sequences (a per-CPU concurrency
+/// primitive). Returns 0 on success or -1 with errno.
+///
+/// # Safety
+///
+/// `rseq_ptr` must point to writable storage of at least `rseq_len`
+/// bytes describing a valid `struct rseq`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rseq(
+    rseq_ptr: *mut c_void,
+    rseq_len: u32,
+    flags: c_int,
+    sig: u32,
+) -> c_int {
+    if rseq_ptr.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_rseq,
+            rseq_ptr as libc::c_long,
+            rseq_len as libc::c_long,
+            flags as libc::c_long,
+            sig as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `cachestat(fd, *cstat_range, *cstat, flags) -> int`
+/// (Linux 6.5+, syscall 451) — query page cache statistics for a
+/// file range. The struct definitions live in the kernel's
+/// `<linux/cachestat.h>` and are exposed here as opaque pointers
+/// since their layout is kernel-version-specific.
+///
+/// Returns 0 on success or -1 with errno on failure.
+///
+/// # Safety
+///
+/// `cstat_range` must point to a valid `struct cachestat_range`
+/// (off + len). `cstat` must point to writable `struct cachestat`
+/// storage that the kernel will fill in.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn cachestat(
+    fd: c_uint,
+    cstat_range: *const c_void,
+    cstat: *mut c_void,
+    flags: c_uint,
+) -> c_int {
+    if cstat_range.is_null() || cstat.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SYS_cachestat = 451 on x86_64 (libc 0.2.185 doesn't expose
+    // SYS_cachestat yet; embed the literal so we work on every
+    // Linux x86_64 toolchain that has the kernel support).
+    const SYS_CACHESTAT: libc::c_long = 451;
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            SYS_CACHESTAT,
+            fd as libc::c_long,
+            cstat_range as libc::c_long,
+            cstat as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
 }
 
 // ---------------------------------------------------------------------------
@@ -19247,6 +19361,11 @@ static PROCTITLE_STATE: _ProcTitleMutex<Option<ProcTitleStorage>> = _ProcTitleMu
 
 const PR_SET_NAME_FOR_TITLE: c_int = 15;
 
+fn clear_proctitle_state() {
+    let mut guard = PROCTITLE_STATE.lock().unwrap_or_else(|p| p.into_inner());
+    *guard = None;
+}
+
 /// FreeBSD `setproctitle_init(argc, argv, envp)` — capture the
 /// argv+envp memory region so [`setproctitle`] can later overwrite
 /// it. Must be called BEFORE any setproctitle call. After this
@@ -19264,12 +19383,14 @@ pub unsafe extern "C" fn setproctitle_init(
     envp: *mut *mut c_char,
 ) {
     if argv.is_null() || argc <= 0 {
+        clear_proctitle_state();
         return;
     }
     // SAFETY: argv came from crt0; argv[0] points to the start of
     // the contiguous string region.
     let argv0 = unsafe { *argv };
     if argv0.is_null() {
+        clear_proctitle_state();
         return;
     }
     let mut end: *mut c_char = argv0;

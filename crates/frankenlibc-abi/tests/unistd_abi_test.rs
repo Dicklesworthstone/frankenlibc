@@ -5669,10 +5669,9 @@ fn setproctitle_null_argv_init_is_no_op() {
 fn setproctitle_without_init_is_no_op() {
     let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // Reset PROCTITLE_STATE by passing argc=0 via a real init with
-    // NULL argv — the init returns early without setting state. But
-    // a previous test may have set state. To make this test
-    // deterministic, just check that calling setproctitle when state
-    // is set still doesn't crash.
+    // NULL argv, then verify setproctitle has no stale captured
+    // argv region to mutate.
+    unsafe { setproctitle_init(0, std::ptr::null_mut(), std::ptr::null_mut()) };
     let fmt = c"-anything";
     unsafe { setproctitle(fmt.as_ptr()) };
 }
@@ -7293,4 +7292,122 @@ fn futex_waitv_immediate_timeout_returns_etimedout() {
         "expected ETIMEDOUT or EAGAIN, got {errno}"
     );
     let _ = value.load(Ordering::SeqCst); // silence unused warning
+}
+
+// ---------------------------------------------------------------------------
+// mseal / memfd_secret / rseq / cachestat
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mseal_either_seals_or_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::mseal;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let p = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            page_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert!(p != libc::MAP_FAILED);
+
+    let rc = unsafe { mseal(p, page_size, 0) };
+    if rc == 0 {
+        // Sealed; subsequent munmap should fail with EPERM. We accept
+        // the failure as confirmation; do not retry the unmap.
+        let unmap_rc = unsafe { libc::munmap(p, page_size) };
+        assert_eq!(unmap_rc, -1);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EINVAL || errno == libc::EPERM,
+            "unexpected mseal errno: {errno}"
+        );
+        unsafe { libc::munmap(p, page_size) };
+    }
+}
+
+#[test]
+fn memfd_secret_either_creates_fd_or_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::memfd_secret;
+    let fd = unsafe { memfd_secret(0) };
+    if fd >= 0 {
+        let _ = unsafe { libc::close(fd) };
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EOPNOTSUPP || errno == libc::EPERM,
+            "unexpected memfd_secret errno: {errno}"
+        );
+    }
+}
+
+#[test]
+fn rseq_null_pointer_returns_efault() {
+    use frankenlibc_abi::unistd_abi::rseq;
+    let rc = unsafe { rseq(std::ptr::null_mut(), 0, 0, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn cachestat_null_pointers_return_efault() {
+    use frankenlibc_abi::unistd_abi::cachestat;
+    let rc = unsafe { cachestat(0, std::ptr::null(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn cachestat_either_returns_data_or_enosys_on_real_file() {
+    use frankenlibc_abi::unistd_abi::cachestat;
+
+    #[repr(C)]
+    struct CachestatRange {
+        off: u64,
+        len: u64,
+    }
+    #[repr(C)]
+    #[derive(Default)]
+    struct Cachestat {
+        nr_cache: u64,
+        nr_dirty: u64,
+        nr_writeback: u64,
+        nr_evicted: u64,
+        nr_recently_evicted: u64,
+    }
+
+    let path =
+        std::env::temp_dir().join(format!("frankenlibc_cachestat_{}.bin", std::process::id()));
+    std::fs::write(&path, vec![0u8; 4096]).unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0);
+
+    let range = CachestatRange { off: 0, len: 4096 };
+    let mut cstat = Cachestat::default();
+    let rc = unsafe {
+        cachestat(
+            fd as c_uint,
+            &range as *const CachestatRange as *const c_void,
+            &mut cstat as *mut Cachestat as *mut c_void,
+            0,
+        )
+    };
+    if rc == 0 {
+        assert!(cstat.nr_cache <= 1);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EOPNOTSUPP,
+            "unexpected cachestat errno: {errno}"
+        );
+    }
+    unsafe { libc::close(fd) };
+    let _ = std::fs::remove_file(&path);
 }
