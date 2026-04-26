@@ -5,14 +5,14 @@
   "summary": {
     "total_exported": 3996,
     "tracked_symbols": 3996,
-    "total_obligations": 263,
-    "covered_obligations": 218,
-    "mapped_without_execution": 45,
+    "total_obligations": 266,
+    "covered_obligations": 226,
+    "mapped_without_execution": 40,
     "obligations_with_execution_failures": 0,
     "error_condition_obligations": 62,
     "async_concurrency_obligations": 52,
     "symbols_missing_any_mapping": 3791,
-    "symbols_missing_execution_evidence": 15,
+    "symbols_missing_execution_evidence": 7,
     "symbols_missing_error_conditions": 152,
     "symbols_missing_async_concurrency": 0
   },
@@ -1029,6 +1029,37 @@
       }
     },
     {
+      "obligation_id": "endgrent::posix_endgrent",
+      "posix_ref": "POSIX endgrent",
+      "symbol": "endgrent",
+      "symbol_family": "grp_ops",
+      "owner": "grp_abi",
+      "support_status": "Implemented",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::grp_ops::endgrent_void_hardened::hardened",
+        "fixture::grp_ops::endgrent_void_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/grp_ops.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
       "obligation_id": "endgrent::posix_1_2017_passwd_group_database_lookups_and_resolver_getaddrinfo_freeaddrinfo_semantics",
       "posix_ref": "POSIX.1-2017 passwd/group database lookups and resolver getaddrinfo/freeaddrinfo semantics",
       "symbol": "endgrent",
@@ -1054,6 +1085,37 @@
       "execution": {
         "total": 0,
         "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "endpwent::posix_endpwent",
+      "posix_ref": "POSIX endpwent",
+      "symbol": "endpwent",
+      "symbol_family": "pwd_ops",
+      "owner": "pwd_abi",
+      "support_status": "Implemented",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::pwd_ops::endpwent_void_hardened::hardened",
+        "fixture::pwd_ops::endpwent_void_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/pwd_ops.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1337,7 +1399,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1347,15 +1409,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fgets::fgets_devnull_eof_hardened::hardened",
+        "conformance_matrix::fgets::fgets_devnull_eof_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1673,7 +1738,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -1683,15 +1748,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fputs::fputs_devnull_hardened::hardened",
+        "conformance_matrix::fputs::fputs_devnull_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -1789,6 +1857,37 @@
       "execution": {
         "total": 0,
         "pass": 0,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "freeaddrinfo::posix_freeaddrinfo",
+      "posix_ref": "POSIX freeaddrinfo",
+      "symbol": "freeaddrinfo",
+      "symbol_family": "resolv/dns",
+      "owner": "resolv_abi",
+      "support_status": "Implemented",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::resolv/dns::freeaddrinfo_numeric_ipv4_hardened::hardened",
+        "fixture::resolv/dns::freeaddrinfo_numeric_ipv4_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/resolver.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6411,7 +6510,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6421,15 +6520,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::setbuf::setbuf_devnull_null_hardened::hardened",
+        "conformance_matrix::setbuf::setbuf_devnull_null_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -6600,7 +6702,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -6610,15 +6712,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::setvbuf::setvbuf_devnull_unbuffered_hardened::hardened",
+        "conformance_matrix::setvbuf::setvbuf_devnull_unbuffered_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -8432,7 +8537,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8442,15 +8547,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::ungetc::ungetc_devnull_read_hardened::hardened",
+        "conformance_matrix::ungetc::ungetc_devnull_read_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -25974,14 +26082,16 @@
       "owner": "grp_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [
+        "POSIX endgrent",
         "POSIX.1-2017 passwd/group database lookups and resolver getaddrinfo/freeaddrinfo semantics"
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "fixture::grp_ops::endgrent_void_hardened::hardened",
+        "fixture::grp_ops::endgrent_void_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -26051,14 +26161,16 @@
       "owner": "pwd_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [
+        "POSIX endpwent",
         "POSIX.1-2017 passwd/group database lookups and resolver getaddrinfo/freeaddrinfo semantics"
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "fixture::pwd_ops::endpwent_void_hardened::hardened",
+        "fixture::pwd_ops::endpwent_void_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -29170,10 +29282,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fgets::fgets_devnull_eof_hardened::hardened",
+        "conformance_matrix::fgets::fgets_devnull_eof_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -31060,10 +31173,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::fputs::fputs_devnull_hardened::hardened",
+        "conformance_matrix::fputs::fputs_devnull_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -31181,14 +31295,16 @@
       "owner": "resolv_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [
+        "POSIX freeaddrinfo",
         "POSIX.1-2017 passwd/group database lookups and resolver getaddrinfo/freeaddrinfo semantics"
       ],
       "test_refs": [
         "c_fixture::fixture_nss::hardened",
-        "c_fixture::fixture_nss::strict"
+        "c_fixture::fixture_nss::strict",
+        "fixture::resolv/dns::freeaddrinfo_numeric_ipv4_hardened::hardened",
+        "fixture::resolv/dns::freeaddrinfo_numeric_ipv4_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -47330,10 +47446,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::setbuf::setbuf_devnull_null_hardened::hardened",
+        "conformance_matrix::setbuf::setbuf_devnull_null_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -48181,10 +48298,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::setvbuf::setvbuf_devnull_unbuffered_hardened::hardened",
+        "conformance_matrix::setvbuf::setvbuf_devnull_unbuffered_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -54189,10 +54307,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio::hardened",
-        "c_fixture::fixture_stdio::strict"
+        "c_fixture::fixture_stdio::strict",
+        "conformance_matrix::ungetc::ungetc_devnull_read_hardened::hardened",
+        "conformance_matrix::ungetc::ungetc_devnull_read_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },

@@ -210,6 +210,14 @@
       "mode": "strict"
     },
     {
+      "name": "freeaddrinfo_numeric_ipv4_strict",
+      "function": "freeaddrinfo",
+      "spec_section": "POSIX freeaddrinfo",
+      "inputs": { "node": "127.0.0.1", "service": "80" },
+      "expected_output": "rc=0;freed=1",
+      "mode": "strict"
+    },
+    {
       "name": "getaddrinfo_numeric_ipv6",
       "function": "getaddrinfo",
       "spec_section": "POSIX getaddrinfo",
@@ -242,6 +250,14 @@
       "spec_section": "POSIX gethostbyname",
       "inputs": { "name": "127.0.0.1" },
       "expected_output": "HOSTENT_PTR",
+      "mode": "hardened"
+    },
+    {
+      "name": "freeaddrinfo_numeric_ipv4_hardened",
+      "function": "freeaddrinfo",
+      "spec_section": "POSIX freeaddrinfo",
+      "inputs": { "node": "127.0.0.1", "service": "80" },
+      "expected_output": "rc=0;freed=1",
       "mode": "hardened"
     }
   ],

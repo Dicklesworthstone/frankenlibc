@@ -54,6 +54,15 @@
       "note": "setgrent/endgrent cycle without error"
     },
     {
+      "name": "endgrent_void_strict",
+      "function": "endgrent",
+      "spec_section": "POSIX endgrent",
+      "inputs": {},
+      "expected_output": "VOID",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
       "name": "getgrnam_root_hardened",
       "function": "getgrnam",
       "spec_section": "POSIX getgrnam",
@@ -94,6 +103,15 @@
       "name": "setgrent_endgrent_hardened",
       "function": "setgrent",
       "spec_section": "POSIX setgrent/endgrent",
+      "inputs": {},
+      "expected_output": "VOID",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endgrent_void_hardened",
+      "function": "endgrent",
+      "spec_section": "POSIX endgrent",
       "inputs": {},
       "expected_output": "VOID",
       "expected_errno": 0,

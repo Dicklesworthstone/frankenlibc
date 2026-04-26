@@ -177,6 +177,51 @@
       "mode": "strict"
     },
     {
+      "name": "fgets_devnull_eof_strict",
+      "function": "fgets",
+      "spec_section": "C11 7.21.7.2 fgets",
+      "inputs": { "stream": "devnull_read", "size": 8 },
+      "expected_output": "NULL",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "fputs_devnull_strict",
+      "function": "fputs",
+      "spec_section": "C11 7.21.7.4 fputs",
+      "inputs": { "stream": "devnull", "payload": "fixture-line" },
+      "expected_output": "OK",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "ungetc_devnull_read_strict",
+      "function": "ungetc",
+      "spec_section": "C11 7.21.7.10 ungetc",
+      "inputs": { "stream": "devnull_read", "c": 65 },
+      "expected_output": "rc=65;next=65",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "setvbuf_devnull_unbuffered_strict",
+      "function": "setvbuf",
+      "spec_section": "C11 7.21.5.6 setvbuf",
+      "inputs": { "stream": "devnull", "buffer_mode": 2, "size": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "setbuf_devnull_null_strict",
+      "function": "setbuf",
+      "spec_section": "C11 7.21.5.5 setbuf",
+      "inputs": { "stream": "devnull" },
+      "expected_output": "VOID",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
       "name": "feof_devnull_read_no_read_strict",
       "function": "feof",
       "spec_section": "C11 7.21.10.2 feof",
@@ -236,6 +281,51 @@
       "spec_section": "C11 7.21.7.3 fputc",
       "inputs": { "stream": "devnull", "c": 88 },
       "expected_output": "88",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fgets_devnull_eof_hardened",
+      "function": "fgets",
+      "spec_section": "C11 7.21.7.2 fgets",
+      "inputs": { "stream": "devnull_read", "size": 8 },
+      "expected_output": "NULL",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "fputs_devnull_hardened",
+      "function": "fputs",
+      "spec_section": "C11 7.21.7.4 fputs",
+      "inputs": { "stream": "devnull", "payload": "fixture-line" },
+      "expected_output": "OK",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "ungetc_devnull_read_hardened",
+      "function": "ungetc",
+      "spec_section": "C11 7.21.7.10 ungetc",
+      "inputs": { "stream": "devnull_read", "c": 65 },
+      "expected_output": "rc=65;next=65",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "setvbuf_devnull_unbuffered_hardened",
+      "function": "setvbuf",
+      "spec_section": "C11 7.21.5.6 setvbuf",
+      "inputs": { "stream": "devnull", "buffer_mode": 2, "size": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "setbuf_devnull_null_hardened",
+      "function": "setbuf",
+      "spec_section": "C11 7.21.5.5 setbuf",
+      "inputs": { "stream": "devnull" },
+      "expected_output": "VOID",
       "expected_errno": 0,
       "mode": "hardened"
     },

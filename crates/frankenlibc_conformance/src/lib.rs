@@ -490,9 +490,12 @@ pub fn execute_fixture_case(
         "getpwnam" => execute_getpwnam_case(inputs, mode),
         "getpwuid" => execute_getpwuid_case(inputs, mode),
         "setpwent" => execute_setpwent_case(inputs, mode),
+        "endpwent" => execute_endpwent_case(inputs, mode),
         "getgrnam" => execute_getgrnam_case(inputs, mode),
         "getgrgid" => execute_getgrgid_case(inputs, mode),
         "setgrent" => execute_setgrent_case(inputs, mode),
+        "endgrent" => execute_endgrent_case(inputs, mode),
+        "freeaddrinfo" => execute_freeaddrinfo_case(inputs, mode),
         // stdio
         "fopen" => execute_fopen_case(inputs, mode),
         "fclose" => execute_fclose_case(inputs, mode),
@@ -501,11 +504,16 @@ pub fn execute_fixture_case(
         "sprintf" => execute_sprintf_case(inputs, mode),
         "fread" => execute_fread_case(inputs, mode),
         "fwrite" => execute_fwrite_case(inputs, mode),
+        "fgets" => execute_fgets_case(inputs, mode),
+        "fputs" => execute_fputs_case(inputs, mode),
         "fseek" => execute_fseek_case(inputs, mode),
         "ftell" => execute_ftell_case(inputs, mode),
         "fflush" => execute_fflush_case(inputs, mode),
         "fgetc" => execute_fgetc_case(inputs, mode),
         "fputc" => execute_fputc_case(inputs, mode),
+        "ungetc" => execute_ungetc_case(inputs, mode),
+        "setvbuf" => execute_setvbuf_case(inputs, mode),
+        "setbuf" => execute_setbuf_case(inputs, mode),
         "feof" => execute_feof_case(inputs, mode),
         "ferror" => execute_ferror_case(inputs, mode),
         "fileno" => execute_fileno_case(inputs, mode),
@@ -2017,6 +2025,70 @@ fn execute_getaddrinfo_case(
     Ok(non_host_execution(impl_output))
 }
 
+fn execute_freeaddrinfo_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let node = parse_optional_string(inputs, "node")?.unwrap_or_else(|| String::from("127.0.0.1"));
+    let service = parse_optional_string(inputs, "service")?.unwrap_or_else(|| String::from("80"));
+    let node_c = CString::new(node).map_err(|_| String::from("node contains interior NUL"))?;
+    let service_c =
+        CString::new(service).map_err(|_| String::from("service contains interior NUL"))?;
+
+    let mut impl_res: *mut libc::addrinfo = std::ptr::null_mut();
+    let impl_rc = unsafe {
+        frankenlibc_abi::resolv_abi::getaddrinfo(
+            node_c.as_ptr(),
+            service_c.as_ptr(),
+            std::ptr::null(),
+            &mut impl_res,
+        )
+    };
+    let impl_had_result = !impl_res.is_null();
+    if impl_had_result {
+        unsafe { frankenlibc_abi::resolv_abi::freeaddrinfo(impl_res) };
+    }
+    let impl_output = format!("rc={impl_rc};freed={}", u8::from(impl_had_result));
+
+    if strict {
+        let mut host_res: *mut libc::addrinfo = std::ptr::null_mut();
+        let host_rc = unsafe {
+            libc::getaddrinfo(
+                node_c.as_ptr(),
+                service_c.as_ptr(),
+                std::ptr::null(),
+                &mut host_res,
+            )
+        };
+        let host_had_result = !host_res.is_null();
+        if host_had_result {
+            unsafe { libc::freeaddrinfo(host_res) };
+        }
+        let host_output = format!("rc={host_rc};freed={}", u8::from(host_had_result));
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict freeaddrinfo host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
 fn execute_gethostbyname_case(
     inputs: &serde_json::Value,
     mode: &str,
@@ -2081,6 +2153,30 @@ fn execute_setpwent_case(
     Ok(non_host_execution(String::from("VOID")))
 }
 
+fn execute_endpwent_case(
+    _inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    unsafe { frankenlibc_abi::pwd_abi::endpwent() };
+    if strict {
+        unsafe { libc::endpwent() };
+        return Ok(DifferentialExecution {
+            host_output: String::from("VOID"),
+            impl_output: String::from("VOID"),
+            host_parity: true,
+            note: None,
+        });
+    }
+
+    Ok(non_host_execution(String::from("VOID")))
+}
+
 fn execute_getgrnam_case(
     inputs: &serde_json::Value,
     mode: &str,
@@ -2117,6 +2213,30 @@ fn execute_setgrent_case(
         frankenlibc_abi::grp_abi::setgrent();
         frankenlibc_abi::grp_abi::endgrent();
     }
+    Ok(non_host_execution(String::from("VOID")))
+}
+
+fn execute_endgrent_case(
+    _inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    unsafe { frankenlibc_abi::grp_abi::endgrent() };
+    if strict {
+        unsafe { libc::endgrent() };
+        return Ok(DifferentialExecution {
+            host_output: String::from("VOID"),
+            impl_output: String::from("VOID"),
+            host_parity: true,
+            note: None,
+        });
+    }
+
     Ok(non_host_execution(String::from("VOID")))
 }
 
@@ -4518,8 +4638,10 @@ fn execute_fgetc_case(
     let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
         return Err(format!("unsupported stream alias: {stream_alias}"));
     };
-    let path_c = CString::new(path).expect("static path");
-    let mode_c = CString::new(open_mode).expect("static mode");
+    let path_c =
+        CString::new(path).map_err(|_| String::from("stream path contains interior NUL"))?;
+    let mode_c =
+        CString::new(open_mode).map_err(|_| String::from("stream mode contains interior NUL"))?;
 
     let impl_stream =
         unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
@@ -4579,8 +4701,10 @@ fn execute_fputc_case(
     let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
         return Err(format!("unsupported stream alias: {stream_alias}"));
     };
-    let path_c = CString::new(path).expect("static path");
-    let mode_c = CString::new(open_mode).expect("static mode");
+    let path_c =
+        CString::new(path).map_err(|_| String::from("stream path contains interior NUL"))?;
+    let mode_c =
+        CString::new(open_mode).map_err(|_| String::from("stream mode contains interior NUL"))?;
 
     let impl_stream =
         unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
@@ -4622,6 +4746,348 @@ fn execute_fputc_case(
         host_parity: true,
         note: None,
     })
+}
+
+fn execute_fgets_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devnull_read"));
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+    let size = parse_i32(inputs, "size")?;
+    let buf_len = usize::try_from(size.max(1)).unwrap_or(1);
+    let path_c =
+        CString::new(path).map_err(|_| String::from("stream path contains interior NUL"))?;
+    let mode_c =
+        CString::new(open_mode).map_err(|_| String::from("stream mode contains interior NUL"))?;
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_output = if impl_stream.is_null() {
+        String::from("NULL")
+    } else {
+        let mut buf = vec![0 as c_char; buf_len];
+        let rc = unsafe { frankenlibc_abi::stdio_abi::fgets(buf.as_mut_ptr(), size, impl_stream) };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        if rc.is_null() {
+            String::from("NULL")
+        } else {
+            render_c_buffer(&buf, buf_len)
+        }
+    };
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_output = if host_stream.is_null() {
+            String::from("NULL")
+        } else {
+            let mut buf = vec![0 as c_char; buf_len];
+            let rc = unsafe { libc::fgets(buf.as_mut_ptr(), size, host_stream) };
+            let _ = unsafe { libc::fclose(host_stream) };
+            if rc.is_null() {
+                String::from("NULL")
+            } else {
+                render_c_buffer(&buf, buf_len)
+            }
+        };
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict fgets host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_fputs_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devnull"));
+    let payload = parse_string(inputs, "payload")?;
+    let payload_c =
+        CString::new(payload).map_err(|_| String::from("payload contains interior NUL"))?;
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+    let path_c =
+        CString::new(path).map_err(|_| String::from("stream path contains interior NUL"))?;
+    let mode_c =
+        CString::new(open_mode).map_err(|_| String::from("stream mode contains interior NUL"))?;
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_output = if impl_stream.is_null() {
+        String::from("EOF")
+    } else {
+        let rc = unsafe { frankenlibc_abi::stdio_abi::fputs(payload_c.as_ptr(), impl_stream) };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        if rc == libc::EOF {
+            String::from("EOF")
+        } else {
+            String::from("OK")
+        }
+    };
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_output = if host_stream.is_null() {
+            String::from("EOF")
+        } else {
+            let rc = unsafe { libc::fputs(payload_c.as_ptr(), host_stream) };
+            let _ = unsafe { libc::fclose(host_stream) };
+            if rc == libc::EOF {
+                String::from("EOF")
+            } else {
+                String::from("OK")
+            }
+        };
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict fputs host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_ungetc_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devnull_read"));
+    let ch = parse_i32(inputs, "c")?;
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+    let path_c =
+        CString::new(path).map_err(|_| String::from("stream path contains interior NUL"))?;
+    let mode_c =
+        CString::new(open_mode).map_err(|_| String::from("stream mode contains interior NUL"))?;
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_output = if impl_stream.is_null() {
+        String::from("rc=EOF;next=EOF")
+    } else {
+        let rc = unsafe { frankenlibc_abi::stdio_abi::ungetc(ch, impl_stream) };
+        let next = unsafe { frankenlibc_abi::stdio_abi::fgetc(impl_stream) };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        format!(
+            "rc={};next={}",
+            render_char_or_eof(rc),
+            render_char_or_eof(next)
+        )
+    };
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_output = if host_stream.is_null() {
+            String::from("rc=EOF;next=EOF")
+        } else {
+            let rc = unsafe { libc::ungetc(ch, host_stream) };
+            let next = unsafe { libc::fgetc(host_stream) };
+            let _ = unsafe { libc::fclose(host_stream) };
+            format!(
+                "rc={};next={}",
+                render_char_or_eof(rc),
+                render_char_or_eof(next)
+            )
+        };
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict ungetc host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_setvbuf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devnull"));
+    let buffer_mode = parse_i32(inputs, "buffer_mode")?;
+    let size = parse_usize(inputs, "size")?;
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+    let path_c =
+        CString::new(path).map_err(|_| String::from("stream path contains interior NUL"))?;
+    let mode_c =
+        CString::new(open_mode).map_err(|_| String::from("stream mode contains interior NUL"))?;
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    let impl_output = if impl_stream.is_null() {
+        String::from("-1")
+    } else {
+        let rc = unsafe {
+            frankenlibc_abi::stdio_abi::setvbuf(
+                impl_stream,
+                std::ptr::null_mut(),
+                buffer_mode,
+                size,
+            )
+        };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+        rc.to_string()
+    };
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        let host_output = if host_stream.is_null() {
+            String::from("-1")
+        } else {
+            let rc = unsafe { libc::setvbuf(host_stream, std::ptr::null_mut(), buffer_mode, size) };
+            let _ = unsafe { libc::fclose(host_stream) };
+            rc.to_string()
+        };
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict setvbuf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn execute_setbuf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let stream_alias =
+        parse_optional_string(inputs, "stream")?.unwrap_or_else(|| String::from("devnull"));
+    let Some((path, open_mode)) = stream_alias_to_target(&stream_alias) else {
+        return Err(format!("unsupported stream alias: {stream_alias}"));
+    };
+    let path_c =
+        CString::new(path).map_err(|_| String::from("stream path contains interior NUL"))?;
+    let mode_c =
+        CString::new(open_mode).map_err(|_| String::from("stream mode contains interior NUL"))?;
+
+    let impl_stream =
+        unsafe { frankenlibc_abi::stdio_abi::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+    if !impl_stream.is_null() {
+        unsafe { frankenlibc_abi::stdio_abi::setbuf(impl_stream, std::ptr::null_mut()) };
+        let _ = unsafe { frankenlibc_abi::stdio_abi::fclose(impl_stream) };
+    }
+    let impl_output = if impl_stream.is_null() {
+        "NO_STREAM"
+    } else {
+        "VOID"
+    }
+    .to_string();
+
+    if strict {
+        let host_stream = unsafe { libc::fopen(path_c.as_ptr(), mode_c.as_ptr()) };
+        if !host_stream.is_null() {
+            unsafe { libc::setbuf(host_stream, std::ptr::null_mut()) };
+            let _ = unsafe { libc::fclose(host_stream) };
+        }
+        let host_output = if host_stream.is_null() {
+            "NO_STREAM"
+        } else {
+            "VOID"
+        }
+        .to_string();
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict setbuf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(DifferentialExecution {
+        host_output: String::from("SKIP"),
+        impl_output,
+        host_parity: true,
+        note: None,
+    })
+}
+
+fn render_char_or_eof(value: c_int) -> String {
+    if value == libc::EOF {
+        String::from("EOF")
+    } else {
+        value.to_string()
+    }
 }
 
 fn execute_feof_case(

@@ -54,6 +54,15 @@
       "mode": "strict"
     },
     {
+      "name": "endpwent_void_strict",
+      "function": "endpwent",
+      "spec_section": "POSIX endpwent",
+      "inputs": {},
+      "expected_output": "VOID",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
       "name": "getpwnam_root_hardened",
       "function": "getpwnam",
       "spec_section": "POSIX getpwnam",
@@ -94,6 +103,15 @@
       "name": "setpwent_endpwent_hardened",
       "function": "setpwent",
       "spec_section": "POSIX setpwent/endpwent",
+      "inputs": {},
+      "expected_output": "VOID",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "endpwent_void_hardened",
+      "function": "endpwent",
+      "spec_section": "POSIX endpwent",
       "inputs": {},
       "expected_output": "VOID",
       "expected_errno": 0,
