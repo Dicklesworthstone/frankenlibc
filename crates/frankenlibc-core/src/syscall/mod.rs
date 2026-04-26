@@ -847,6 +847,8 @@ pub const SYS_MKDIRAT: usize = 258;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FCHMODAT: usize = 268;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_FCHMODAT2: usize = 452;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_FCHOWNAT: usize = 260;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_FCHMOD: usize = 91;
@@ -924,6 +926,8 @@ pub const SYS_FACCESSAT2: usize = 439;
 pub const SYS_MKDIRAT: usize = 34;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FCHMODAT: usize = 53;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FCHMODAT2: usize = 452;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_FCHOWNAT: usize = 54;
 #[cfg(target_arch = "aarch64")]
@@ -4056,6 +4060,31 @@ pub unsafe fn sys_fchmodat(
     let ret = unsafe {
         raw::syscall4(
             SYS_FCHMODAT,
+            dirfd as usize,
+            pathname as usize,
+            mode as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `fchmodat2(dirfd, pathname, mode, flags)` — change file mode relative to directory fd.
+///
+/// # Safety
+///
+/// `pathname` must be a valid NUL-terminated string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_fchmodat2(
+    dirfd: i32,
+    pathname: *const u8,
+    mode: u32,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_FCHMODAT2,
             dirfd as usize,
             pathname as usize,
             mode as usize,
