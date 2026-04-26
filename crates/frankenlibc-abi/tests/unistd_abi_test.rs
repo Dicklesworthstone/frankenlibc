@@ -36,21 +36,21 @@ use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
     FTSENT as AbiFtsEnt, access, aio_suspend, alarm, arc4random_buf, bsd_getopt, chdir, chmod,
     chown, close, creat, eaccess, endaliasent, ether_line, euidaccess, faccessat, fchmod, fchown,
-    fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, fstat, fsync, ftruncate,
-    fts_children as abi_fts_children, fts_close as abi_fts_close, fts_open as abi_fts_open,
-    fts_read as abi_fts_read, fts_set as abi_fts_set, gai_cancel, gai_error, gai_suspend,
-    getaddrinfo_a, getaliasbyname, getaliasbyname_r, getaliasent, getaliasent_r, getcwd, getdate,
-    getdate_r, getegid, geteuid, getfsent, getfsfile, getfsspec, getgid, gethostbyname2,
-    gethostbyname2_r, gethostent_r, gethostname, getnetbyaddr_r, getnetbyname_r, getnetent_r,
-    getnetgrent, getnetgrent_r, getpid, getppid, getprotobyname_r, getprotobynumber_r, getprotoent,
-    getprotoent_r, getservent, getservent_r, getttyent, getttynam, getuid, getutent_r, getutid,
-    getutid_r, getutline, getutline_r, glob64, globfree64, gsignal, isatty, link, logout, lseek,
-    lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd, open, pathconf, pidfd_getfd,
-    process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read, readlink, rename,
-    rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent, setns, setprotoent,
-    setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat,
-    strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, unshare, updwtmp,
-    updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
+    fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, flopen, flopenat, fstat,
+    fsync, ftruncate, fts_children as abi_fts_children, fts_close as abi_fts_close,
+    fts_open as abi_fts_open, fts_read as abi_fts_read, fts_set as abi_fts_set, gai_cancel,
+    gai_error, gai_suspend, getaddrinfo_a, getaliasbyname, getaliasbyname_r, getaliasent,
+    getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile, getfsspec,
+    getgid, gethostbyname2, gethostbyname2_r, gethostent_r, gethostname, getnetbyaddr_r,
+    getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid, getppid, getprotobyname_r,
+    getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r, getttyent, getttynam,
+    getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64, gsignal,
+    isatty, link, logout, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd, open,
+    pathconf, pidfd_getfd, process_madvise, process_mrelease, process_vm_readv, process_vm_writev,
+    read, readlink, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
+    setns, setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec,
+    ssignal, stat, strfmon, strfmon_l, symlink, sysconf, truncate, umask, uname, unlink, unshare,
+    updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -5170,13 +5170,7 @@ fn run_bsd_getopt_with_args(optstring: &core::ffi::CStr, args: &[&core::ffi::CSt
 
     let mut out = Vec::new();
     loop {
-        let rc = unsafe {
-            bsd_getopt(
-                args.len() as c_int,
-                argv.as_ptr(),
-                optstring.as_ptr(),
-            )
-        };
+        let rc = unsafe { bsd_getopt(args.len() as c_int, argv.as_ptr(), optstring.as_ptr()) };
         if rc == -1 {
             break;
         }
@@ -5231,4 +5225,148 @@ fn bsd_getopt_double_prefix_only_strips_one() {
     // Verify the strip happens exactly once.
     let chars = run_bsd_getopt_with_args(c"++a", &[c"prog", c"-a"]);
     assert_eq!(chars, vec![b'a' as c_int]);
+}
+
+// ---------------------------------------------------------------------------
+// flopen / flopenat (libbsd open-with-advisory-lock)
+// ---------------------------------------------------------------------------
+//
+// libbsd defines O_SHLOCK = 0x10, O_EXLOCK = 0x20 (BSD-historic bit
+// positions). We strip them before calling open() and use them to
+// pick the flock() kind.
+
+const LIBBSD_O_SHLOCK: c_int = 0x10;
+const LIBBSD_O_EXLOCK: c_int = 0x20;
+
+fn flopen_temp_path(tag: &str) -> std::path::PathBuf {
+    let seq = std::sync::atomic::AtomicU64::new(
+        std::process::id() as u64
+            ^ std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0),
+    );
+    let n = seq.load(std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "frankenlibc-flopen-{tag}-{n}-{}",
+        std::process::id()
+    ))
+}
+
+#[test]
+fn flopen_creates_file_with_default_lock() {
+    let path = flopen_temp_path("create");
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let fd = unsafe { flopen(cs.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o644) };
+    assert!(fd >= 0, "flopen failed; errno={}", unsafe {
+        *__errno_location()
+    });
+    unsafe { close(fd) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopen_strips_shlock_and_exlock_before_open() {
+    // O_EXLOCK alone (no O_CREAT) requires that the file already exists.
+    let path = flopen_temp_path("exlock");
+    std::fs::write(&path, b"hello").unwrap();
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let fd = unsafe { flopen(cs.as_ptr(), libc::O_RDONLY | LIBBSD_O_EXLOCK, 0) };
+    assert!(fd >= 0);
+    unsafe { close(fd) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopen_o_shlock_takes_shared_lock() {
+    let path = flopen_temp_path("shlock");
+    std::fs::write(&path, b"data").unwrap();
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // First fd gets a shared lock.
+    let fd1 = unsafe { flopen(cs.as_ptr(), libc::O_RDONLY | LIBBSD_O_SHLOCK, 0) };
+    assert!(fd1 >= 0);
+    // Second fd with shared lock must succeed (multiple shared locks
+    // are allowed simultaneously).
+    let fd2 = unsafe { flopen(cs.as_ptr(), libc::O_RDONLY | LIBBSD_O_SHLOCK, 0) };
+    assert!(fd2 >= 0, "second shared lock should succeed");
+    unsafe {
+        close(fd1);
+        close(fd2);
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopen_nonblock_with_existing_exclusive_lock_returns_minus_one() {
+    let path = flopen_temp_path("nonblock");
+    std::fs::write(&path, b"x").unwrap();
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    // Take a blocking exclusive lock first.
+    let fd1 = unsafe { flopen(cs.as_ptr(), libc::O_RDWR | LIBBSD_O_EXLOCK, 0) };
+    assert!(fd1 >= 0);
+
+    // Second flopen with O_NONBLOCK must fail without blocking, since
+    // the exclusive lock is already held by fd1.
+    unsafe { *__errno_location() = 0 };
+    let fd2 = unsafe {
+        flopen(
+            cs.as_ptr(),
+            libc::O_RDWR | LIBBSD_O_EXLOCK | libc::O_NONBLOCK,
+            0,
+        )
+    };
+    assert_eq!(fd2, -1, "non-blocking second exclusive lock must fail");
+    let err = unsafe { *__errno_location() };
+    assert!(
+        err == libc::EAGAIN || err == libc::EWOULDBLOCK,
+        "expected EAGAIN/EWOULDBLOCK, got {err}"
+    );
+
+    unsafe { close(fd1) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopen_nonexistent_path_returns_minus_one() {
+    let path = flopen_temp_path("absent");
+    // Deliberately do NOT create it.
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    unsafe { *__errno_location() = 0 };
+    let fd = unsafe { flopen(cs.as_ptr(), libc::O_RDONLY, 0) };
+    assert_eq!(fd, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+}
+
+#[test]
+fn flopen_null_path_returns_minus_one_with_efault() {
+    unsafe { *__errno_location() = 0 };
+    let fd = unsafe { flopen(std::ptr::null(), libc::O_RDONLY, 0) };
+    assert_eq!(fd, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+}
+
+#[test]
+fn flopenat_relative_to_at_fdcwd() {
+    let path = flopen_temp_path("at-cwd");
+    let cs = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let fd = unsafe {
+        flopenat(
+            libc::AT_FDCWD,
+            cs.as_ptr(),
+            libc::O_CREAT | libc::O_RDWR,
+            0o644,
+        )
+    };
+    assert!(fd >= 0);
+    unsafe { close(fd) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn flopenat_null_path_returns_minus_one_with_efault() {
+    unsafe { *__errno_location() = 0 };
+    let fd = unsafe { flopenat(libc::AT_FDCWD, std::ptr::null(), libc::O_RDONLY, 0) };
+    assert_eq!(fd, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
 }

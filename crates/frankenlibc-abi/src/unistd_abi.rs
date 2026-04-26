@@ -17823,4 +17823,111 @@ pub unsafe extern "C" fn __sched_rr_get_interval(
     }
 }
 
+// ---------------------------------------------------------------------------
+// flopen / flopenat (FreeBSD / libbsd: open with advisory lock)
+// ---------------------------------------------------------------------------
+//
+// libbsd defines O_SHLOCK and O_EXLOCK as 0x10 / 0x20 (BSD-historic bit
+// positions that don't collide with Linux O_* flags). Both are stripped
+// from the flags before calling open(), since Linux doesn't recognize them.
+//
+// Lock kind selection:
+//   * O_EXLOCK present  → LOCK_EX
+//   * O_SHLOCK present  → LOCK_SH
+//   * neither present   → LOCK_EX (default per libbsd flopen contract)
+//
+// O_NONBLOCK in `flags` is interpreted twice: once as the open flag (we
+// pass it through), and once as a hint to flock (we OR LOCK_NB so the
+// lock acquisition doesn't block).
+
+const LIBBSD_O_SHLOCK: c_int = 0x10;
+const LIBBSD_O_EXLOCK: c_int = 0x20;
+
+unsafe fn flopen_with_dirfd(
+    open_call: impl FnOnce(c_int, libc::mode_t) -> c_int,
+    flags: c_int,
+    mode: libc::mode_t,
+) -> c_int {
+    let want_shared = flags & LIBBSD_O_SHLOCK != 0;
+    let want_exclusive = flags & LIBBSD_O_EXLOCK != 0;
+    let nonblock = flags & libc::O_NONBLOCK != 0;
+    // Default to LOCK_EX when neither sentinel is set.
+    let lock_kind = if want_shared && !want_exclusive {
+        libc::LOCK_SH
+    } else {
+        libc::LOCK_EX
+    };
+    let lock_op = if nonblock {
+        lock_kind | libc::LOCK_NB
+    } else {
+        lock_kind
+    };
+
+    // Strip the BSD-only sentinel bits before delegating; the kernel
+    // would otherwise reject them with EINVAL or silently misbehave.
+    let cleaned = flags & !(LIBBSD_O_SHLOCK | LIBBSD_O_EXLOCK);
+
+    let fd = open_call(cleaned, mode);
+    if fd < 0 {
+        return -1;
+    }
+    // Acquire the requested lock; on failure, close the fd and
+    // propagate errno.
+    let lock_rc = unsafe { flock(fd, lock_op) };
+    if lock_rc != 0 {
+        let saved = unsafe { *crate::errno_abi::__errno_location() };
+        unsafe { close(fd) };
+        unsafe { *crate::errno_abi::__errno_location() = saved };
+        return -1;
+    }
+    fd
+}
+
+/// libbsd `flopen(path, flags, [mode])` — atomically `open()` `path`
+/// and acquire an advisory `flock` on the resulting fd. Mode defaults
+/// to 0 unless `O_CREAT` is in `flags` and the caller passes a
+/// `mode_t`. Returns the fd on success or -1 with errno on either
+/// open or lock failure (the fd is closed before -1 is returned in
+/// the lock-failure path).
+///
+/// # Safety
+///
+/// Caller must ensure `path` is a valid NUL-terminated C string.
+/// Same general open(2) caller obligations.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn flopen(path: *const c_char, flags: c_int, mode: libc::mode_t) -> c_int {
+    if path.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    unsafe { flopen_with_dirfd(|cleaned_flags, m| open(path, cleaned_flags, m), flags, mode) }
+}
+
+/// libbsd `flopenat(dirfd, path, flags, [mode])` — `openat()` +
+/// flock variant of [`flopen`].
+///
+/// # Safety
+///
+/// Same as [`flopen`]. `dirfd` may be `AT_FDCWD` for current-dir
+/// lookups.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn flopenat(
+    dirfd: c_int,
+    path: *const c_char,
+    flags: c_int,
+    mode: libc::mode_t,
+) -> c_int {
+    if path.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    unsafe {
+        flopen_with_dirfd(
+            |cleaned_flags, m| openat(dirfd, path, cleaned_flags, m),
+            flags,
+            mode,
+        )
+    }
+}
+
 // ── __sig* aliases ──────────────────────────────────────────────────────────
