@@ -1778,6 +1778,14 @@ GLIBC_2.2.5 {
 
         /* crypt */
         crypt;
+        crypt_checksalt;
+        crypt_preferred_method;
+        encrypt;
+        encrypt_r;
+        fcrypt;
+        setkey;
+        setkey_r;
+        xcrypt;
 
         /* SysV IPC */
         shmget;

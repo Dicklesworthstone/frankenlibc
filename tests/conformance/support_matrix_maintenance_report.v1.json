@@ -1,22 +1,22 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-26T17:48:33Z",
+  "generated_at": "2026-04-26T17:58:45Z",
   "summary": {
-    "total_symbols": 4002,
-    "status_validated": 4002,
+    "total_symbols": 4010,
+    "status_validated": 4010,
     "status_invalid": 0,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
     "fixture_linked": 366,
-    "fixture_unlinked": 3636,
+    "fixture_unlinked": 3644,
     "fixture_coverage_pct": 9.1,
     "total_warnings": 155
   },
   "coverage_dashboard": {
-    "total_symbols": 4002,
+    "total_symbols": 4010,
     "status_counts": {
-      "Implemented": 3592,
+      "Implemented": 3600,
       "RawSyscall": 410,
       "WrapsHostLibc": 0,
       "GlibcCallThrough": 0,
@@ -37,22 +37,24 @@
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 0,
-      "RawSyscall": 6,
+      "Implemented": 8,
+      "RawSyscall": 0,
       "Stub": 0,
       "WrapsHostLibc": 0
     },
     "native_coverage_pct_delta": 0.0,
     "reclassified_symbol_count": 0,
-    "new_symbol_count": 6,
+    "new_symbol_count": 8,
     "removed_symbol_count": 0,
     "new_symbols": [
-      "eventfd2",
-      "fchmodat2",
-      "rt_sigprocmask",
-      "rt_sigqueueinfo",
-      "rt_sigsuspend",
-      "rt_tgsigqueueinfo"
+      "crypt_checksalt",
+      "crypt_preferred_method",
+      "encrypt",
+      "encrypt_r",
+      "fcrypt",
+      "setkey",
+      "setkey_r",
+      "xcrypt"
     ],
     "removed_symbols": []
   },
@@ -72,7 +74,7 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 3592,
+      "count": 3600,
       "fixture_linked": 309
     },
     "RawSyscall": {
@@ -272,7 +274,7 @@
       "coverage_pct": 15.4
     },
     "unistd_abi": {
-      "total": 631,
+      "total": 639,
       "linked": 31,
       "coverage_pct": 4.9
     },
@@ -1626,6 +1628,8 @@
     "creat64": "Implemented",
     "create_module": "Implemented",
     "crypt": "Implemented",
+    "crypt_checksalt": "Implemented",
+    "crypt_preferred_method": "Implemented",
     "csin": "Implemented",
     "csinf": "Implemented",
     "csinf128": "Implemented",
@@ -1716,6 +1720,8 @@
     "ecb_crypt": "Implemented",
     "ecvt": "Implemented",
     "ecvt_r": "Implemented",
+    "encrypt": "Implemented",
+    "encrypt_r": "Implemented",
     "endaliasent": "Implemented",
     "endfsent": "Implemented",
     "endgrent": "Implemented",
@@ -1930,6 +1936,7 @@
     "fcloseall": "Implemented",
     "fcntl": "RawSyscall",
     "fcntl64": "Implemented",
+    "fcrypt": "Implemented",
     "fcvt": "Implemented",
     "fcvt_r": "Implemented",
     "fdatasync": "RawSyscall",
@@ -3512,6 +3519,8 @@
     "setipv4sourcefilter": "Implemented",
     "setitimer": "RawSyscall",
     "setjmp": "Implemented",
+    "setkey": "Implemented",
+    "setkey_r": "Implemented",
     "setlinebuf": "Implemented",
     "setlocale": "Implemented",
     "setlogin": "Implemented",
@@ -4188,6 +4197,7 @@
     "write": "RawSyscall",
     "writev": "RawSyscall",
     "wscanf": "Implemented",
+    "xcrypt": "Implemented",
     "xdecrypt": "Implemented",
     "xdr_accepted_reply": "Implemented",
     "xdr_array": "Implemented",
@@ -9891,6 +9901,14 @@
     "creat",
     "creat64",
     "crypt",
+    "crypt_checksalt",
+    "crypt_preferred_method",
+    "encrypt",
+    "encrypt_r",
+    "fcrypt",
+    "setkey",
+    "setkey_r",
+    "xcrypt",
     "ctermid",
     "ctime",
     "ctime_r",

@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 4002,
+  "total_exported": 4010,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -2458,8 +2458,80 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc crypt",
-      "hardened_semantics": "Passthrough to glibc crypt",
+      "strict_semantics": "Native Rust crypt implementation for $1$ MD5, $5$ SHA-256, and $6$ SHA-512 salts; invalid inputs return NULL with EINVAL",
+      "hardened_semantics": "Same native implementation with pointer null guards and deterministic invalid-salt rejection",
+      "default_stub": false
+    },
+    {
+      "symbol": "crypt_checksalt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "libxcrypt-compatible salt prefix classifier: returns CRYPT_SALT_OK for $1$/$5$/$6$ and CRYPT_SALT_INVALID for NULL or unsupported prefixes",
+      "hardened_semantics": "Same classifier with null pointer guard",
+      "default_stub": false
+    },
+    {
+      "symbol": "crypt_preferred_method",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Returns static preferred crypt method prefix $6$ for SHA-512",
+      "hardened_semantics": "Same static process-lifetime string",
+      "default_stub": false
+    },
+    {
+      "symbol": "encrypt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Obsolete DES helper compatibility entrypoint; deterministic no-op because DES is unsupported by native crypt",
+      "hardened_semantics": "Same deterministic no-op",
+      "default_stub": false
+    },
+    {
+      "symbol": "encrypt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant obsolete DES helper compatibility entrypoint; deterministic no-op because DES is unsupported by native crypt",
+      "hardened_semantics": "Same deterministic no-op",
+      "default_stub": false
+    },
+    {
+      "symbol": "fcrypt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Historical libcrypt alias of crypt using the native Rust crypt implementation",
+      "hardened_semantics": "Same alias behavior as crypt",
+      "default_stub": false
+    },
+    {
+      "symbol": "setkey",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Obsolete DES key schedule compatibility entrypoint; deterministic no-op because DES is unsupported by native crypt",
+      "hardened_semantics": "Same deterministic no-op",
+      "default_stub": false
+    },
+    {
+      "symbol": "setkey_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant obsolete DES key schedule compatibility entrypoint; deterministic no-op because DES is unsupported by native crypt",
+      "hardened_semantics": "Same deterministic no-op",
+      "default_stub": false
+    },
+    {
+      "symbol": "xcrypt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Historical libcrypt alias of crypt using the native Rust crypt implementation",
+      "hardened_semantics": "Same alias behavior as crypt",
       "default_stub": false
     },
     {
