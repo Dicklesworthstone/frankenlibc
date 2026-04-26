@@ -3604,6 +3604,30 @@ pub unsafe extern "C" fn __isnanf128(x: f64) -> c_int {
     x.is_nan() as c_int
 }
 
+/// glibc `__fpclassifyf128(x)` — classify _Float128. Rust lacks
+/// stable f128 so we widen-to-f64 and forward (matches the
+/// __isnanf128 convention in this file).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fpclassifyf128(x: f64) -> c_int {
+    frankenlibc_core::math::fpclassify(x)
+}
+
+/// glibc `__isinff128(x)` — _Float128 isinf. +1/-1/0.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __isinff128(x: f64) -> c_int {
+    if x.is_infinite() {
+        if x.is_sign_positive() { 1 } else { -1 }
+    } else {
+        0
+    }
+}
+
+/// glibc `__signbitf128(x)` — _Float128 signbit predicate.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __signbitf128(x: f64) -> c_int {
+    x.is_sign_negative() as c_int
+}
+
 // ==========================================================================
 // __fortify_chk extras not covered by fortify_abi.rs (8 symbols)
 // ==========================================================================

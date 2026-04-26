@@ -238,6 +238,21 @@ pub unsafe extern "C" fn _exit(status: c_int) -> ! {
     raw_syscall::sys_exit_group(clamped)
 }
 
+/// C99 `_Exit(status)` — capital-E spelling of POSIX `_exit`.
+/// Identical contract: terminate the calling process immediately
+/// without running atexit handlers, flushing stdio, or invoking
+/// signal handlers. Forwards to `_exit`.
+///
+/// # Safety
+///
+/// Same as `_exit`: terminates the process; the caller does not
+/// return.
+#[allow(non_snake_case)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _Exit(status: c_int) -> ! {
+    unsafe { _exit(status) }
+}
+
 // ---------------------------------------------------------------------------
 // execve
 // ---------------------------------------------------------------------------
