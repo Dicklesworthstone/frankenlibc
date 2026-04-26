@@ -6,9 +6,9 @@
 //! - deterministic test modes for commit/abort/unsupported simulation, and
 //! - site-local snapshots for verification.
 
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
-use std::time::Instant;
+
+use frankenlibc_core::syscall as raw_syscall;
 
 const SAMPLE_WINDOW: u64 = 64;
 const ABORT_DISABLE_PERCENT: u64 = 30;
@@ -62,7 +62,7 @@ pub struct HtmSiteSnapshot {
 static HTM_TEST_MODE: AtomicU8 = AtomicU8::new(HtmTestMode::Real as u8);
 static HTM_TEST_ABORT_CODE: AtomicU32 = AtomicU32::new(0xFFFF_FF01);
 static HTM_SUPPORT_CACHE: AtomicU8 = AtomicU8::new(HTM_SUPPORT_UNKNOWN);
-static HTM_EPOCH: OnceLock<Instant> = OnceLock::new();
+static HTM_EPOCH_NS: AtomicU64 = AtomicU64::new(0);
 
 /// Swap the deterministic HTM test mode.
 #[doc(hidden)]
@@ -102,11 +102,29 @@ pub fn htm_forced_mode_active_for_tests() -> bool {
 }
 
 fn now_ms() -> u64 {
-    HTM_EPOCH
-        .get_or_init(Instant::now)
-        .elapsed()
-        .as_millis()
-        .min(u128::from(u64::MAX)) as u64
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let now_ns = match unsafe {
+        raw_syscall::sys_clock_gettime(libc::CLOCK_MONOTONIC, (&raw mut ts).cast::<u8>())
+    } {
+        Ok(()) => {
+            let sec = u64::try_from(ts.tv_sec).unwrap_or(0);
+            let nsec = u64::try_from(ts.tv_nsec).unwrap_or(0).min(999_999_999);
+            sec.saturating_mul(1_000_000_000).saturating_add(nsec)
+        }
+        Err(_) => 0,
+    };
+    if now_ns == 0 {
+        return 0;
+    }
+
+    let base = match HTM_EPOCH_NS.compare_exchange(0, now_ns, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => now_ns,
+        Err(existing) => existing,
+    };
+    now_ns.saturating_sub(base) / 1_000_000
 }
 
 fn real_htm_supported() -> bool {

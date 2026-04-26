@@ -21,6 +21,8 @@
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::Mutex;
 
+use frankenlibc_core::syscall as raw_syscall;
+
 /// FFI type of the error callback. Variadic to match NetBSD's
 /// declaration; we never pass extras when invoking, but the type
 /// must match for callers casting their `void (*)(int, const char
@@ -32,13 +34,14 @@ static EFUN_CELL: Mutex<Option<EFunc>> = Mutex::new(None);
 /// Write `msg` to stderr followed by a newline, then exit with
 /// `eval`. This is the behavior callers see when no custom
 /// callback has been installed via [`esetfunc`].
-unsafe fn default_efun(eval: c_int, msg: &CStr) {
+unsafe fn default_efun(eval: c_int, msg: &CStr) -> ! {
     let bytes = msg.to_bytes();
-    unsafe {
-        libc::write(2, bytes.as_ptr() as *const c_void, bytes.len());
-        libc::write(2, b"\n".as_ptr() as *const c_void, 1);
-        libc::exit(eval);
-    }
+    // SAFETY: `msg` and the newline byte are immutable process-local buffers.
+    let _ = unsafe { raw_syscall::sys_write(2, bytes.as_ptr(), bytes.len()) };
+    // SAFETY: newline byte is immutable process-local storage.
+    let _ = unsafe { raw_syscall::sys_write(2, b"\n".as_ptr(), 1) };
+    // SAFETY: the default efun path intentionally terminates the process.
+    unsafe { crate::stdlib_abi::exit(eval) }
 }
 
 /// Format `msg` (already a CStr) into the registered callback or
