@@ -955,7 +955,16 @@ static HOST_STDIO_BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
 static HOST_LIBIO_EXIT_PATCHED: AtomicBool = AtomicBool::new(false);
 
 fn ensure_host_libio_exit_safe() {
-    if !HOST_LIBIO_EXIT_PATCHED.swap(true, Ordering::AcqRel) {
+    if HOST_LIBIO_EXIT_PATCHED.load(Ordering::Acquire) {
+        return;
+    }
+    if !runtime_policy::is_runtime_ready() {
+        return;
+    }
+    if HOST_LIBIO_EXIT_PATCHED
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
         unsafe { io_internal_abi::bootstrap_host_libio_exports() };
     }
 }
@@ -1010,6 +1019,8 @@ unsafe fn sync_copy_relocated_stdio_symbol(
 pub(crate) fn init_host_stdio_streams() {
     ensure_host_libio_exit_safe();
 
+    #[cfg(not(debug_assertions))]
+    let can_sync_copy_relocations = runtime_policy::is_runtime_ready();
     let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
     let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
     let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
@@ -1026,21 +1037,23 @@ pub(crate) fn init_host_stdio_streams() {
             }
             #[cfg(not(debug_assertions))]
             {
-                sync_copy_relocated_stdio_symbol(
-                    c"stdin",
-                    core::ptr::addr_of_mut!(stdin),
-                    stdin_ptr,
-                );
-                sync_copy_relocated_stdio_symbol(
-                    c"stdout",
-                    core::ptr::addr_of_mut!(stdout),
-                    stdout_ptr,
-                );
-                sync_copy_relocated_stdio_symbol(
-                    c"stderr",
-                    core::ptr::addr_of_mut!(stderr),
-                    stderr_ptr,
-                );
+                if can_sync_copy_relocations {
+                    sync_copy_relocated_stdio_symbol(
+                        c"stdin",
+                        core::ptr::addr_of_mut!(stdin),
+                        stdin_ptr,
+                    );
+                    sync_copy_relocated_stdio_symbol(
+                        c"stdout",
+                        core::ptr::addr_of_mut!(stdout),
+                        stdout_ptr,
+                    );
+                    sync_copy_relocated_stdio_symbol(
+                        c"stderr",
+                        core::ptr::addr_of_mut!(stderr),
+                        stderr_ptr,
+                    );
+                }
             }
         }
     }

@@ -279,31 +279,13 @@ unsafe fn bump_allocation_size(ptr: *mut c_void) -> Option<usize> {
 
 #[inline]
 unsafe fn resolve_host_allocator_symbol(name: &'static [u8]) -> *mut c_void {
-    let glibc_v225 = b"GLIBC_2.2.5\0";
-    let glibc_v234 = b"GLIBC_2.34\0";
-    // SAFETY: versioned lookup in the next object after this interposed library.
-    let mut ptr = unsafe {
-        crate::dlfcn_abi::dlvsym_next(
-            name.as_ptr().cast::<libc::c_char>(),
-            glibc_v225.as_ptr().cast::<libc::c_char>(),
-        )
+    let symbol = name.strip_suffix(b"\0").unwrap_or(name);
+    let Ok(symbol) = core::str::from_utf8(symbol) else {
+        return std::ptr::null_mut();
     };
-    if ptr.is_null() {
-        // SAFETY: modern glibc baseline fallback.
-        ptr = unsafe {
-            crate::dlfcn_abi::dlvsym_next(
-                name.as_ptr().cast::<libc::c_char>(),
-                glibc_v234.as_ptr().cast::<libc::c_char>(),
-            )
-        };
-    }
-    if ptr.is_null() {
-        // SAFETY: unversioned RTLD_NEXT fallback for environments without versioned exports.
-        ptr = unsafe {
-            crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, name.as_ptr().cast::<libc::c_char>())
-        };
-    }
-    ptr
+    crate::host_resolve::resolve_host_symbol_raw(symbol)
+        .map(|addr| addr as *mut c_void)
+        .unwrap_or(std::ptr::null_mut())
 }
 
 /// Safe accessor: returns cached host fn or None (bump fallback).
@@ -1310,7 +1292,7 @@ pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
     if runtime_policy::proof_carried_pointer_validation_active() {
         return Some(PointerAbstraction::unknown(addr));
     }
-    let pipeline = crate::membrane_state::try_global_pipeline()?;
+    let pipeline = crate::membrane_state::ready_pipeline()?;
     pipeline.validate(addr).abstraction()
 }
 
@@ -1322,7 +1304,7 @@ pub(crate) fn check_ownership(addr: usize) -> bool {
     if runtime_policy::proof_carried_pointer_validation_active() {
         return false;
     }
-    crate::membrane_state::try_global_pipeline()
+    crate::membrane_state::ready_pipeline()
         .map(|p| p.check_ownership(addr))
         .unwrap_or(false)
 }

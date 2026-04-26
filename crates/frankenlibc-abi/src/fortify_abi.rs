@@ -45,6 +45,10 @@ unsafe extern "C" {
         ps: *mut c_void,
     ) -> usize;
     fn wctomb(s: *mut c_char, wchar: WcharT) -> c_int;
+    #[cfg(any(
+        debug_assertions,
+        not(all(target_os = "linux", target_arch = "x86_64"))
+    ))]
     fn longjmp(env: *mut c_void, val: c_int) -> !;
     fn getlogin_r(buf: *mut c_char, buflen: usize) -> c_int;
     static stdin: *mut c_void;
@@ -999,6 +1003,20 @@ pub unsafe extern "C" fn __wctomb_chk(s: *mut c_char, wchar: WcharT, _buflen: us
 
 // ── longjmp ────────────────────────────────────────────────────────────────
 
+#[cfg(all(not(debug_assertions), target_os = "linux", target_arch = "x86_64"))]
+core::arch::global_asm!(
+    ".global __frankenlibc_longjmp_chk_impl",
+    ".type __frankenlibc_longjmp_chk_impl, @function",
+    "__frankenlibc_longjmp_chk_impl:",
+    "  jmp longjmp",
+    ".size __frankenlibc_longjmp_chk_impl, . - __frankenlibc_longjmp_chk_impl",
+    ".symver __frankenlibc_longjmp_chk_impl,__longjmp_chk@@GLIBC_2.11, remove",
+);
+
+#[cfg(any(
+    debug_assertions,
+    not(all(target_os = "linux", target_arch = "x86_64"))
+))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __longjmp_chk(env: *mut c_void, val: c_int) -> ! {
     unsafe { longjmp(env, val) }

@@ -1996,23 +1996,12 @@ pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
 /// binaries without COPY relocations for `_IO_list_all` crash during exit
 /// because glibc's list contains FILE structures with invalid vtables.
 ///
-/// This function uses `dlvsym(RTLD_NEXT)` to find glibc's `_IO_list_all` and
-/// sets it to NULL, preventing glibc from iterating invalid structures.
+/// This function uses the raw host-ELF resolver to find glibc's `_IO_list_all`
+/// and sets it to NULL, preventing glibc from iterating invalid structures.
 /// Our own `_IO_list_all` (exported via `#[no_mangle]`) handles all stdio
 /// stream tracking for binaries that do have COPY relocations.
 pub(crate) unsafe fn bootstrap_host_libio_exports() {
-    let symbol = b"_IO_list_all\0";
-    let version = b"GLIBC_2.2.5\0";
-
-    // SAFETY: dlvsym_next bypasses our interposed dlvsym to find glibc's symbol.
-    let ptr = unsafe {
-        crate::dlfcn_abi::dlvsym_next(
-            symbol.as_ptr().cast::<c_char>(),
-            version.as_ptr().cast::<c_char>(),
-        )
-    };
-
-    if !ptr.is_null() {
+    if let Some(ptr) = crate::host_resolve::resolve_host_symbol_raw("_IO_list_all") {
         // ptr is the address of glibc's _IO_list_all variable (a FILE*).
         // Set it to NULL to prevent glibc's exit handler from iterating.
         let glibc_list_ptr = ptr as *mut *mut c_void;

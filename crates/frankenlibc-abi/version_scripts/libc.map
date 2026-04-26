@@ -2416,7 +2416,6 @@ GLIBC_2.2.5 {
         __mbsnrtowcs_chk;
         __wcsnrtombs_chk;
         __wctomb_chk;
-        __longjmp_chk;
         __poll_chk;
         __ppoll_chk;
         __fdelt_chk;
@@ -3305,6 +3304,7 @@ GLIBC_2.2.5 {
         monstartup;
         netname2host;
         netname2user;
+        nis_addmember;
         nis_free_directory;
         nis_free_object;
         nis_free_request;
@@ -3315,9 +3315,13 @@ GLIBC_2.2.5 {
         nis_clone_directory;
         nis_clone_object;
         nis_clone_result;
+        nis_creategroup;
+        nis_destroy_object;
+        nis_destroygroup;
         nis_dir_cmp;
         nis_domain_of;
         nis_domain_of_r;
+        nis_ismember;
         nis_lerror;
         nis_leaf_of;
         nis_leaf_of_r;
@@ -3328,9 +3332,22 @@ GLIBC_2.2.5 {
         nis_name_of;
         nis_name_of_r;
         nis_perror;
+        nis_print_directory;
+        nis_print_entry;
+        nis_print_group;
+        nis_print_group_entry;
+        nis_print_link;
+        nis_print_object;
+        nis_print_result;
+        nis_print_rights;
+        nis_print_table;
+        nis_removemember;
         nis_sperrno;
         nis_sperror;
         nis_sperror_r;
+        nis_verifygroup;
+        readColdStartFile;
+        writeColdStartFile;
         ns_name_compress;
         ns_name_ntop;
         ns_name_pack;
@@ -3517,6 +3534,7 @@ GLIBC_2.2.5 {
         xdr_authunix_parms;
         xdr_bool;
         xdr_bytes;
+        xdr_cback_data;
         xdr_callhdr;
         xdr_callmsg;
         xdr_char;
@@ -3524,6 +3542,7 @@ GLIBC_2.2.5 {
         xdr_cryptkeyarg2;
         xdr_cryptkeyres;
         xdr_des_block;
+        xdr_domainname;
         xdr_double;
         xdr_enum;
         xdr_float;
@@ -3538,13 +3557,17 @@ GLIBC_2.2.5 {
         xdr_key_netstarg;
         xdr_key_netstres;
         xdr_keybuf;
+        xdr_keydat;
         xdr_keystatus;
         xdr_long;
         xdr_longlong_t;
+        xdr_mapname;
         xdr_netnamestr;
         xdr_netobj;
+        xdr_obj_p;
         xdr_opaque;
         xdr_opaque_auth;
+        xdr_peername;
         xdr_pmap;
         xdr_pmaplist;
         xdr_pointer;
@@ -3570,9 +3593,34 @@ GLIBC_2.2.5 {
         xdr_uint8_t;
         xdr_union;
         xdr_unixcred;
+        xdr_valdat;
         xdr_vector;
         xdr_void;
         xdr_wrapstring;
+        xdr_yp_buf;
+        xdr_ypall;
+        xdr_ypbind_binding;
+        xdr_ypbind_resp;
+        xdr_ypbind_resptype;
+        xdr_ypbind_setdom;
+        xdr_ypdelete_args;
+        xdr_ypmap_parms;
+        xdr_ypmaplist;
+        xdr_yppush_status;
+        xdr_yppushresp_xfr;
+        xdr_ypreq_key;
+        xdr_ypreq_nokey;
+        xdr_ypreq_xfr;
+        xdr_ypresp_all;
+        xdr_ypresp_key_val;
+        xdr_ypresp_maplist;
+        xdr_ypresp_master;
+        xdr_ypresp_order;
+        xdr_ypresp_val;
+        xdr_ypresp_xfr;
+        xdr_ypstat;
+        xdr_ypupdate_args;
+        xdr_ypxfrstat;
         xdrmem_create;
         xdrrec_create;
         xdrrec_endofrecord;
@@ -4601,3 +4649,8 @@ GLIBC_2.2.5 {
   local:
         *;
 };
+
+GLIBC_2.11 {
+    global:
+        __longjmp_chk;
+} GLIBC_2.2.5;

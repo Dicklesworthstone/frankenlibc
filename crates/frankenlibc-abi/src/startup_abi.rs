@@ -479,36 +479,11 @@ unsafe fn delegate_to_host_libc_start_main(
         }
     }
 
-    let symbol = b"__libc_start_main\0";
-    let glibc_v34 = b"GLIBC_2.34\0";
-    let glibc_v225 = b"GLIBC_2.2.5\0";
-    let glibc_v217 = b"GLIBC_2.17\0";
-    // SAFETY: versioned lookup via host dynamic loader, bypassing our interposed
-    // dlsym symbol to avoid recursive startup-resolution loops.
-    let mut ptr = unsafe {
-        crate::dlfcn_abi::dlvsym_next(
-            symbol.as_ptr().cast::<c_char>(),
-            glibc_v34.as_ptr().cast::<c_char>(),
-        )
-    };
-    if ptr.is_null() {
-        // SAFETY: fallback to older glibc symbol version when 2.34 alias is absent.
-        ptr = unsafe {
-            crate::dlfcn_abi::dlvsym_next(
-                symbol.as_ptr().cast::<c_char>(),
-                glibc_v225.as_ptr().cast::<c_char>(),
-            )
-        };
-    }
-    if ptr.is_null() {
-        // SAFETY: fallback to aarch64 baseline glibc symbol version.
-        ptr = unsafe {
-            crate::dlfcn_abi::dlvsym_next(
-                symbol.as_ptr().cast::<c_char>(),
-                glibc_v217.as_ptr().cast::<c_char>(),
-            )
-        };
-    }
+    // Use raw ELF lookup here. Calling host `dlvsym` before glibc has finished
+    // TLS/dlerror initialization can crash during loader startup.
+    let ptr = crate::host_resolve::resolve_host_symbol_raw("__libc_start_main")
+        .map(|addr| addr as *mut c_void)
+        .unwrap_or(std::ptr::null_mut());
     if ptr.is_null() {
         return None;
     }
@@ -980,8 +955,7 @@ unsafe fn host_cxa_thread_atexit_impl() -> Option<HostCxaThreadAtExitImplFn> {
     }
 
     let resolved =
-        unsafe { crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"__cxa_thread_atexit_impl".as_ptr()) }
-            as usize;
+        crate::host_resolve::resolve_host_symbol_raw("__cxa_thread_atexit_impl").unwrap_or(0);
 
     let _ = HOST_CXA_LOOKUP_REENTRY.try_with(|c| c.set(false));
 

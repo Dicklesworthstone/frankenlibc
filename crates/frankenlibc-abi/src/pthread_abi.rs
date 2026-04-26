@@ -3147,13 +3147,27 @@ fn attr_default_stack_size() -> usize {
     if cached != 0 {
         return cached;
     }
+
+    if !attr_stack_size_env_lookup_enabled() {
+        return ATTR_DEFAULT_STACK_SIZE;
+    }
+
     let size = std::env::var("FRANKENLIBC_THREAD_STACK_SIZE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&v| v >= ATTR_MIN_STACK_SIZE)
-        .unwrap_or(2 * 1024 * 1024);
+        .unwrap_or(ATTR_DEFAULT_STACK_SIZE);
     CACHED.store(size, Ordering::Relaxed);
     size
+}
+
+#[inline]
+fn attr_stack_size_env_lookup_enabled() -> bool {
+    runtime_policy::is_runtime_ready()
+        && !crate::membrane_state::pipeline_initialization_active()
+        && !crate::malloc_abi::in_allocator_reentry_context()
+        && !in_threading_policy_context()
+        && !frankenlibc_membrane::ptr_validator::in_validation_context()
 }
 
 /// POSIX `PTHREAD_SCOPE_SYSTEM` — system contention scope (1:1 threading model).
@@ -3161,6 +3175,8 @@ const PTHREAD_SCOPE_SYSTEM: c_int = 0;
 
 /// Minimum stack size: PTHREAD_STACK_MIN (typically 16 KiB on Linux x86_64).
 const ATTR_MIN_STACK_SIZE: usize = 16384;
+
+const ATTR_DEFAULT_STACK_SIZE: usize = 2 * 1024 * 1024;
 
 /// Magic tag to identify managed attr structs.
 const MANAGED_ATTR_MAGIC: u32 = 0x4741_5454; // "GATT"
