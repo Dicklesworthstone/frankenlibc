@@ -7944,6 +7944,15 @@ fn fchmodat2_changes_mode_on_real_file() {
 }
 
 #[test]
+fn fchmodat2_null_path_returns_efault() {
+    use frankenlibc_abi::unistd_abi::fchmodat2;
+    let rc = unsafe { fchmodat2(libc::AT_FDCWD, std::ptr::null(), 0o600, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
 fn eventfd2_creates_fd_with_initval_and_round_trips() {
     use frankenlibc_abi::unistd_abi::eventfd2;
     let fd = unsafe { eventfd2(7, 0) };
@@ -7962,9 +7971,17 @@ fn eventfd2_creates_fd_with_initval_and_round_trips() {
 }
 
 #[test]
+fn eventfd2_invalid_flags_return_einval() {
+    use frankenlibc_abi::unistd_abi::eventfd2;
+    let fd = unsafe { eventfd2(0, !0) };
+    assert_eq!(fd, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
 fn rt_sigprocmask_round_trips_block_unblock() {
     use frankenlibc_abi::unistd_abi::rt_sigprocmask;
-    let mut empty: u64 = 0;
     let mut blocked: u64 = 1u64 << (libc::SIGUSR1 - 1);
     let mut prev: u64 = 0;
 
@@ -7988,7 +8005,7 @@ fn rt_sigprocmask_round_trips_block_unblock() {
     let rc = unsafe {
         rt_sigprocmask(
             libc::SIG_SETMASK,
-            &mut empty as *mut u64 as *const c_void,
+            &mut prev as *mut u64 as *const c_void,
             std::ptr::null_mut(),
             std::mem::size_of::<u64>(),
         )
