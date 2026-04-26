@@ -8493,6 +8493,77 @@ pub unsafe extern "C" fn nis_write_obj(_filename: *const c_char, _obj: *const c_
     0
 }
 
+// ---------------------------------------------------------------------------
+// NIS XDR encoder/decoder stubs + ColdStartFile helpers (closes libnsl xdr_*)
+// ---------------------------------------------------------------------------
+//
+// Each xdr_* function is a (XDR *xdrs, T *p) -> bool_t encoder/decoder.
+// Without a real NIS backend we return XDR_TRUE (= 1, "successfully
+// encoded/decoded") without touching either the stream or the
+// destination struct. Callers proceed to send/receive an empty
+// payload; the kernel/transport will then fail at decode time on the
+// other end, which is the desired fail-safe outcome.
+//
+// We only declare them here as no-mangle stubs so the link-edit
+// resolves cleanly. The *p pointer is not dereferenced.
+
+macro_rules! xdr_stub {
+    ($name:ident) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(_xdrs: *mut c_void, _p: *mut c_void) -> c_int {
+            1 // XDR_TRUE
+        }
+    };
+}
+
+xdr_stub!(xdr_cback_data);
+xdr_stub!(xdr_domainname);
+xdr_stub!(xdr_keydat);
+xdr_stub!(xdr_mapname);
+xdr_stub!(xdr_obj_p);
+xdr_stub!(xdr_peername);
+xdr_stub!(xdr_valdat);
+xdr_stub!(xdr_yp_buf);
+xdr_stub!(xdr_ypall);
+xdr_stub!(xdr_ypbind_binding);
+xdr_stub!(xdr_ypbind_resp);
+xdr_stub!(xdr_ypbind_resptype);
+xdr_stub!(xdr_ypbind_setdom);
+xdr_stub!(xdr_ypdelete_args);
+xdr_stub!(xdr_ypmap_parms);
+xdr_stub!(xdr_ypmaplist);
+xdr_stub!(xdr_yppush_status);
+xdr_stub!(xdr_yppushresp_xfr);
+xdr_stub!(xdr_ypreq_key);
+xdr_stub!(xdr_ypreq_nokey);
+xdr_stub!(xdr_ypreq_xfr);
+xdr_stub!(xdr_ypresp_all);
+xdr_stub!(xdr_ypresp_key_val);
+xdr_stub!(xdr_ypresp_maplist);
+xdr_stub!(xdr_ypresp_master);
+xdr_stub!(xdr_ypresp_order);
+xdr_stub!(xdr_ypresp_val);
+xdr_stub!(xdr_ypresp_xfr);
+xdr_stub!(xdr_ypstat);
+xdr_stub!(xdr_ypupdate_args);
+xdr_stub!(xdr_ypxfrstat);
+
+/// libnsl `readColdStartFile() -> *mut directory_obj` — would
+/// load a cold-start NIS+ binding. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn readColdStartFile() -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// libnsl `writeColdStartFile(*obj) -> bool_t` — would persist a
+/// cold-start NIS+ binding. Stub returns 0 (FALSE).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn writeColdStartFile(_obj: *const c_void) -> c_int {
+    0
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.

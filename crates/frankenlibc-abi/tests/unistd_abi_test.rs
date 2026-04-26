@@ -9332,3 +9332,80 @@ fn nis_read_obj_returns_null_and_write_obj_returns_zero() {
     let dummy_obj = 0xDEAD as *const c_void;
     assert_eq!(unsafe { nis_write_obj(f.as_ptr(), dummy_obj) }, 0);
 }
+
+// ---------------------------------------------------------------------------
+// NIS xdr_* stubs + ColdStartFile helpers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_xdr_stubs_return_xdr_true_without_dereferencing() {
+    use frankenlibc_abi::unistd_abi::{
+        xdr_cback_data, xdr_domainname, xdr_keydat, xdr_mapname, xdr_obj_p, xdr_peername,
+        xdr_valdat, xdr_yp_buf, xdr_ypall, xdr_ypbind_binding, xdr_ypbind_resp,
+        xdr_ypbind_resptype, xdr_ypbind_setdom, xdr_ypdelete_args, xdr_ypmap_parms, xdr_ypmaplist,
+        xdr_yppush_status, xdr_yppushresp_xfr, xdr_ypreq_key, xdr_ypreq_nokey, xdr_ypreq_xfr,
+        xdr_ypresp_all, xdr_ypresp_key_val, xdr_ypresp_maplist, xdr_ypresp_master,
+        xdr_ypresp_order, xdr_ypresp_val, xdr_ypresp_xfr, xdr_ypstat, xdr_ypupdate_args,
+        xdr_ypxfrstat,
+    };
+
+    let bogus_xdrs = 0xDEAD_BEEF_usize as *mut c_void;
+    let bogus_p = 0xCAFE_BABE_usize as *mut c_void;
+
+    macro_rules! assert_xdr_true {
+        ($f:ident) => {{
+            assert_eq!(
+                unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut()) },
+                1,
+                concat!(stringify!($f), "(NULL,NULL) should return XDR_TRUE")
+            );
+            assert_eq!(
+                unsafe { $f(bogus_xdrs, bogus_p) },
+                1,
+                concat!(stringify!($f), "(bogus,bogus) should return XDR_TRUE")
+            );
+        }};
+    }
+
+    assert_xdr_true!(xdr_cback_data);
+    assert_xdr_true!(xdr_domainname);
+    assert_xdr_true!(xdr_keydat);
+    assert_xdr_true!(xdr_mapname);
+    assert_xdr_true!(xdr_obj_p);
+    assert_xdr_true!(xdr_peername);
+    assert_xdr_true!(xdr_valdat);
+    assert_xdr_true!(xdr_yp_buf);
+    assert_xdr_true!(xdr_ypall);
+    assert_xdr_true!(xdr_ypbind_binding);
+    assert_xdr_true!(xdr_ypbind_resp);
+    assert_xdr_true!(xdr_ypbind_resptype);
+    assert_xdr_true!(xdr_ypbind_setdom);
+    assert_xdr_true!(xdr_ypdelete_args);
+    assert_xdr_true!(xdr_ypmap_parms);
+    assert_xdr_true!(xdr_ypmaplist);
+    assert_xdr_true!(xdr_yppush_status);
+    assert_xdr_true!(xdr_yppushresp_xfr);
+    assert_xdr_true!(xdr_ypreq_key);
+    assert_xdr_true!(xdr_ypreq_nokey);
+    assert_xdr_true!(xdr_ypreq_xfr);
+    assert_xdr_true!(xdr_ypresp_all);
+    assert_xdr_true!(xdr_ypresp_key_val);
+    assert_xdr_true!(xdr_ypresp_maplist);
+    assert_xdr_true!(xdr_ypresp_master);
+    assert_xdr_true!(xdr_ypresp_order);
+    assert_xdr_true!(xdr_ypresp_val);
+    assert_xdr_true!(xdr_ypresp_xfr);
+    assert_xdr_true!(xdr_ypstat);
+    assert_xdr_true!(xdr_ypupdate_args);
+    assert_xdr_true!(xdr_ypxfrstat);
+}
+
+#[test]
+#[allow(non_snake_case)]
+fn readColdStartFile_returns_null_and_writeColdStartFile_returns_false() {
+    use frankenlibc_abi::unistd_abi::{readColdStartFile, writeColdStartFile};
+    assert!(unsafe { readColdStartFile() }.is_null());
+    let dummy = 0xDEAD as *const c_void;
+    assert_eq!(unsafe { writeColdStartFile(dummy) }, 0);
+    assert_eq!(unsafe { writeColdStartFile(std::ptr::null()) }, 0);
+}
