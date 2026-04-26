@@ -7,7 +7,7 @@
 
 #![allow(unsafe_code)]
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::io::AsRawFd;
@@ -6868,4 +6868,250 @@ fn dso_handle_address_works_as_cxa_atexit_dso_arg() {
     // re-fire (we drained the matching entries).
     unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
     assert_eq!(FIRED.load(Ordering::SeqCst), 1);
+}
+
+// ---------------------------------------------------------------------------
+// mq_clocksend / mq_clockreceive
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+struct MqAttr {
+    mq_flags: libc::c_long,
+    mq_maxmsg: libc::c_long,
+    mq_msgsize: libc::c_long,
+    mq_curmsgs: libc::c_long,
+    _pad: [libc::c_long; 4],
+}
+
+fn mq_unique_name(label: &str) -> CString {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    CString::new(format!("/fl_mq_clock_{label}_{pid}_{id}")).unwrap()
+}
+
+fn mq_open_for_test(name: &CStr) -> Option<c_int> {
+    use frankenlibc_abi::unistd_abi as fl;
+    let attr = MqAttr {
+        mq_maxmsg: 4,
+        mq_msgsize: 32,
+        ..Default::default()
+    };
+    let mqd = unsafe {
+        fl::mq_open(
+            name.as_ptr(),
+            libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+            0o600,
+            &attr as *const MqAttr as *const libc::mq_attr,
+        )
+    };
+    if mqd < 0 { None } else { Some(mqd) }
+}
+
+fn timespec_after_ms(clockid: libc::clockid_t, ms: i64) -> libc::timespec {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::clock_gettime(clockid, &mut ts) };
+    let total_ns = ts.tv_nsec + ms * 1_000_000;
+    ts.tv_sec += (total_ns / 1_000_000_000) as libc::time_t;
+    ts.tv_nsec = total_ns % 1_000_000_000;
+    ts
+}
+
+#[test]
+fn mq_clocksend_clockreceive_realtime_round_trip() {
+    use frankenlibc_abi::unistd_abi as fl;
+    let qn = mq_unique_name("rt");
+    let Some(mqd) = mq_open_for_test(&qn) else {
+        eprintln!("mq_open unavailable (sandbox?), skipping");
+        return;
+    };
+
+    let payload = b"hello-clock";
+    let abs = timespec_after_ms(libc::CLOCK_REALTIME, 1_000);
+    let rc = unsafe {
+        fl::mq_clocksend(
+            mqd,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            5,
+            libc::CLOCK_REALTIME,
+            &abs,
+        )
+    };
+    assert_eq!(
+        rc,
+        0,
+        "mq_clocksend failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mut buf = [0u8; 32];
+    let mut prio: c_uint = 0;
+    let abs2 = timespec_after_ms(libc::CLOCK_REALTIME, 1_000);
+    let n = unsafe {
+        fl::mq_clockreceive(
+            mqd,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut prio,
+            libc::CLOCK_REALTIME,
+            &abs2,
+        )
+    };
+    assert!(
+        n >= 0,
+        "mq_clockreceive failed: {}",
+        std::io::Error::last_os_error()
+    );
+    assert_eq!(&buf[..n as usize], payload);
+    assert_eq!(prio, 5);
+
+    let _ = unsafe { fl::mq_close(mqd) };
+    let _ = unsafe { fl::mq_unlink(qn.as_ptr()) };
+}
+
+#[test]
+fn mq_clocksend_clockreceive_monotonic_round_trip() {
+    use frankenlibc_abi::unistd_abi as fl;
+    let qn = mq_unique_name("mono");
+    let Some(mqd) = mq_open_for_test(&qn) else {
+        eprintln!("mq_open unavailable, skipping");
+        return;
+    };
+
+    let payload = b"mono-clock";
+    let abs = timespec_after_ms(libc::CLOCK_MONOTONIC, 1_000);
+    let rc = unsafe {
+        fl::mq_clocksend(
+            mqd,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            7,
+            libc::CLOCK_MONOTONIC,
+            &abs,
+        )
+    };
+    assert_eq!(
+        rc,
+        0,
+        "mq_clocksend(MONO) failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mut buf = [0u8; 32];
+    let mut prio: c_uint = 0;
+    let abs2 = timespec_after_ms(libc::CLOCK_MONOTONIC, 1_000);
+    let n = unsafe {
+        fl::mq_clockreceive(
+            mqd,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut prio,
+            libc::CLOCK_MONOTONIC,
+            &abs2,
+        )
+    };
+    assert!(n >= 0);
+    assert_eq!(&buf[..n as usize], payload);
+    assert_eq!(prio, 7);
+
+    let _ = unsafe { fl::mq_close(mqd) };
+    let _ = unsafe { fl::mq_unlink(qn.as_ptr()) };
+}
+
+#[test]
+fn mq_clocksend_invalid_clockid_returns_einval() {
+    use frankenlibc_abi::unistd_abi as fl;
+    let qn = mq_unique_name("badclock");
+    let Some(mqd) = mq_open_for_test(&qn) else {
+        eprintln!("mq_open unavailable, skipping");
+        return;
+    };
+
+    let abs = libc::timespec {
+        tv_sec: 1,
+        tv_nsec: 0,
+    };
+    let bad_clockid: libc::clockid_t = 99;
+    let payload = b"x";
+    let rc = unsafe {
+        fl::mq_clocksend(
+            mqd,
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            bad_clockid,
+            &abs,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+
+    let mut buf = [0u8; 32];
+    let n = unsafe {
+        fl::mq_clockreceive(
+            mqd,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            std::ptr::null_mut(),
+            bad_clockid,
+            &abs,
+        )
+    };
+    assert_eq!(n, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+
+    let _ = unsafe { fl::mq_close(mqd) };
+    let _ = unsafe { fl::mq_unlink(qn.as_ptr()) };
+}
+
+#[test]
+fn mq_clocksend_null_abstime_blocks_until_full_then_eagain() {
+    use frankenlibc_abi::unistd_abi as fl;
+    let qn = mq_unique_name("nullabs");
+    let Some(mqd) = mq_open_for_test(&qn) else {
+        eprintln!("mq_open unavailable, skipping");
+        return;
+    };
+
+    // mq_open above used max=4 messages; send 4 to fill the queue.
+    for _ in 0..4 {
+        let abs = timespec_after_ms(libc::CLOCK_REALTIME, 500);
+        let rc = unsafe {
+            fl::mq_clocksend(
+                mqd,
+                b"x".as_ptr() as *const c_char,
+                1,
+                0,
+                libc::CLOCK_REALTIME,
+                &abs,
+            )
+        };
+        assert_eq!(rc, 0);
+    }
+    // 5th send with a tight timeout should fail with ETIMEDOUT.
+    let abs = timespec_after_ms(libc::CLOCK_REALTIME, 50);
+    let rc = unsafe {
+        fl::mq_clocksend(
+            mqd,
+            b"x".as_ptr() as *const c_char,
+            1,
+            0,
+            libc::CLOCK_REALTIME,
+            &abs,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ETIMEDOUT);
+
+    let _ = unsafe { fl::mq_close(mqd) };
+    let _ = unsafe { fl::mq_unlink(qn.as_ptr()) };
 }

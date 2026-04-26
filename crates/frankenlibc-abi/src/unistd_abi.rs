@@ -4720,6 +4720,127 @@ pub unsafe extern "C" fn mq_notify(mqdes: c_int, sevp: *const libc::sigevent) ->
 }
 
 // ---------------------------------------------------------------------------
+// mq_clocksend / mq_clockreceive — clockid_t variants (glibc 2.34+)
+// ---------------------------------------------------------------------------
+//
+// The kernel's mq_timed{send,receive} syscalls use CLOCK_REALTIME for
+// the supplied abstime. For CLOCK_MONOTONIC we shift the abstime into
+// realtime by computing `realtime_now + (mono_abs - mono_now)` and
+// forwarding the converted value.
+
+/// Convert a CLOCK_MONOTONIC absolute timespec to the equivalent
+/// CLOCK_REALTIME absolute timespec by computing the delta to "now".
+/// Returns Some(converted) on success, None if either clock_gettime
+/// call fails.
+fn mq_convert_mono_to_real(mono_abs: libc::timespec) -> Option<libc::timespec> {
+    let mut mono_now: libc::timespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let mut real_now: libc::timespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut mono_now) } != 0 {
+        return None;
+    }
+    if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut real_now) } != 0 {
+        return None;
+    }
+    // delta = mono_abs - mono_now
+    let mut delta_sec = mono_abs.tv_sec - mono_now.tv_sec;
+    let mut delta_nsec = mono_abs.tv_nsec - mono_now.tv_nsec;
+    if delta_nsec < 0 {
+        delta_nsec += 1_000_000_000;
+        delta_sec -= 1;
+    }
+    // real_abs = real_now + delta
+    let mut sec = real_now.tv_sec.checked_add(delta_sec)?;
+    let mut nsec = real_now.tv_nsec + delta_nsec;
+    if nsec >= 1_000_000_000 {
+        nsec -= 1_000_000_000;
+        sec = sec.checked_add(1)?;
+    } else if nsec < 0 {
+        nsec += 1_000_000_000;
+        sec = sec.checked_sub(1)?;
+    }
+    Some(libc::timespec {
+        tv_sec: sec,
+        tv_nsec: nsec,
+    })
+}
+
+/// POSIX `mq_clocksend(mqdes, msg, len, prio, clockid, abstime)` —
+/// `mq_timedsend` with an explicit clockid. Supports
+/// `CLOCK_REALTIME` (direct forward) and `CLOCK_MONOTONIC`
+/// (abstime is rebased onto realtime then forwarded). Other
+/// clockids return -1 with errno=EINVAL. NULL abstime is forwarded
+/// verbatim (meaning "block forever").
+///
+/// # Safety
+///
+/// `msg_ptr` must point to at least `msg_len` readable bytes.
+/// `abs_timeout`, when non-NULL, must point to a valid timespec.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mq_clocksend(
+    mqdes: c_int,
+    msg_ptr: *const c_char,
+    msg_len: usize,
+    msg_prio: c_uint,
+    clockid: libc::clockid_t,
+    abs_timeout: *const libc::timespec,
+) -> c_int {
+    if abs_timeout.is_null() || clockid == libc::CLOCK_REALTIME {
+        return unsafe { mq_timedsend(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout) };
+    }
+    if clockid == libc::CLOCK_MONOTONIC {
+        // SAFETY: caller-supplied valid timespec.
+        let mono = unsafe { *abs_timeout };
+        let Some(real) = mq_convert_mono_to_real(mono) else {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
+        };
+        return unsafe { mq_timedsend(mqdes, msg_ptr, msg_len, msg_prio, &real) };
+    }
+    unsafe { set_abi_errno(libc::EINVAL) };
+    -1
+}
+
+/// POSIX `mq_clockreceive(mqdes, msg, len, *prio, clockid, abstime)` —
+/// `mq_timedreceive` with an explicit clockid. Same dispatch rules as
+/// [`mq_clocksend`].
+///
+/// # Safety
+///
+/// `msg_ptr` must point to at least `msg_len` writable bytes.
+/// `msg_prio`, when non-NULL, must point to writable `c_uint`.
+/// `abs_timeout`, when non-NULL, must point to a valid timespec.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mq_clockreceive(
+    mqdes: c_int,
+    msg_ptr: *mut c_char,
+    msg_len: usize,
+    msg_prio: *mut c_uint,
+    clockid: libc::clockid_t,
+    abs_timeout: *const libc::timespec,
+) -> isize {
+    if abs_timeout.is_null() || clockid == libc::CLOCK_REALTIME {
+        return unsafe { mq_timedreceive(mqdes, msg_ptr, msg_len, msg_prio, abs_timeout) };
+    }
+    if clockid == libc::CLOCK_MONOTONIC {
+        // SAFETY: caller-supplied valid timespec.
+        let mono = unsafe { *abs_timeout };
+        let Some(real) = mq_convert_mono_to_real(mono) else {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
+        };
+        return unsafe { mq_timedreceive(mqdes, msg_ptr, msg_len, msg_prio, &real) };
+    }
+    unsafe { set_abi_errno(libc::EINVAL) };
+    -1
+}
+
+// ---------------------------------------------------------------------------
 // Scheduler — RawSyscall
 // ---------------------------------------------------------------------------
 
