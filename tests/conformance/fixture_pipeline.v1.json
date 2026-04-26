@@ -1,16 +1,16 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-04-26T00:05:09Z",
+  "generated_at": "2026-04-26T01:08:16Z",
   "summary": {
     "total_fixture_files": 55,
-    "total_fixture_cases": 1069,
-    "unique_symbols_in_fixtures": 296,
+    "total_fixture_cases": 1074,
+    "unique_symbols_in_fixtures": 299,
     "implemented_symbols": 3996,
-    "symbols_with_fixtures": 278,
+    "symbols_with_fixtures": 281,
     "symbols_at_threshold": 8,
     "symbols_below_threshold": 3988,
-    "symbols_with_zero_fixtures": 3718,
+    "symbols_with_zero_fixtures": 3715,
     "coverage_pct": 7.0,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
@@ -291,10 +291,10 @@
     {
       "module": "socket_abi",
       "total_symbols": 18,
-      "covered_symbols": 5,
+      "covered_symbols": 8,
       "at_threshold": 0,
-      "total_cases": 9,
-      "coverage_pct": 27.8,
+      "total_cases": 14,
+      "coverage_pct": 44.4,
       "threshold_pct": 0.0
     },
     {
@@ -17128,9 +17128,9 @@
       "symbol": "getsockopt",
       "module": "socket_abi",
       "status": "RawSyscall",
-      "fixture_cases": 0,
+      "fixture_cases": 1,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 9
     },
     {
       "symbol": "getsourcefilter",
@@ -24624,9 +24624,9 @@
       "symbol": "recv",
       "module": "socket_abi",
       "status": "RawSyscall",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "recvfrom",
@@ -25960,9 +25960,9 @@
       "symbol": "send",
       "module": "socket_abi",
       "status": "RawSyscall",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "sendfile",
@@ -32883,12 +32883,15 @@
     },
     {
       "file": "socket_ops.json",
-      "total_cases": 9,
-      "symbols_covered": 5,
+      "total_cases": 14,
+      "symbols_covered": 8,
       "symbols": {
         "socket": 5,
         "bind": 1,
         "listen": 1,
+        "getsockopt": 1,
+        "send": 2,
+        "recv": 2,
         "shutdown": 1,
         "getsockname": 1
       },

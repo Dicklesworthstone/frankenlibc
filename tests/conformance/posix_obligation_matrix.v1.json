@@ -5,14 +5,14 @@
   "summary": {
     "total_exported": 3996,
     "tracked_symbols": 3996,
-    "total_obligations": 258,
-    "covered_obligations": 194,
+    "total_obligations": 263,
+    "covered_obligations": 199,
     "mapped_without_execution": 64,
     "obligations_with_execution_failures": 0,
-    "error_condition_obligations": 60,
+    "error_condition_obligations": 62,
     "async_concurrency_obligations": 52,
     "symbols_missing_any_mapping": 3791,
-    "symbols_missing_execution_evidence": 34,
+    "symbols_missing_execution_evidence": 31,
     "symbols_missing_error_conditions": 152,
     "symbols_missing_async_concurrency": 0
   },
@@ -2626,6 +2626,37 @@
       "execution": {
         "total": 1,
         "pass": 1,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "getsockopt::posix_getsockopt_so_type",
+      "posix_ref": "POSIX getsockopt SO_TYPE",
+      "symbol": "getsockopt",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::socket_ops::getsockopt_so_type_stream::hardened",
+        "fixture::socket_ops::getsockopt_so_type_stream::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -5882,6 +5913,69 @@
       }
     },
     {
+      "obligation_id": "recv::posix_recv",
+      "posix_ref": "POSIX recv",
+      "symbol": "recv",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::socket_ops::recv_socketpair_payload::hardened",
+        "fixture::socket_ops::recv_socketpair_payload::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "recv::posix_recv_ebadf",
+      "posix_ref": "POSIX recv EBADF",
+      "symbol": "recv",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::socket_ops::recv_invalid_fd::hardened",
+        "fixture::socket_ops::recv_invalid_fd::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
       "obligation_id": "recv::posix_1_2017_sockets_socket_bind_send_recv_shutdown_and_getsockopt_so_type_behavior",
       "posix_ref": "POSIX.1-2017 sockets: socket/bind/send/recv/shutdown and getsockopt(SO_TYPE) behavior",
       "symbol": "recv",
@@ -6150,6 +6244,69 @@
       "execution": {
         "total": 1,
         "pass": 1,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "send::posix_send",
+      "posix_ref": "POSIX send",
+      "symbol": "send",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::socket_ops::send_socketpair_payload::hardened",
+        "fixture::socket_ops::send_socketpair_payload::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "send::posix_send_ebadf",
+      "posix_ref": "POSIX send EBADF",
+      "symbol": "send",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "error_condition",
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::socket_ops::send_invalid_fd::hardened",
+        "fixture::socket_ops::send_invalid_fd::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -33610,22 +33767,6 @@
       ]
     },
     {
-      "symbol": "getsockopt",
-      "symbol_family": "socket",
-      "owner": "socket_abi",
-      "support_status": "RawSyscall",
-      "mapped_posix_refs": [
-        "POSIX.1-2017 sockets: socket/bind/send/recv/shutdown and getsockopt(SO_TYPE) behavior"
-      ],
-      "test_refs": [
-        "c_fixture::fixture_socket::hardened",
-        "c_fixture::fixture_socket::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
-      ]
-    },
-    {
       "symbol": "getsourcefilter",
       "symbol_family": "glibc_internal",
       "owner": "glibc_internal_abi",
@@ -44825,22 +44966,6 @@
       ]
     },
     {
-      "symbol": "recv",
-      "symbol_family": "socket",
-      "owner": "socket_abi",
-      "support_status": "RawSyscall",
-      "mapped_posix_refs": [
-        "POSIX.1-2017 sockets: socket/bind/send/recv/shutdown and getsockopt(SO_TYPE) behavior"
-      ],
-      "test_refs": [
-        "c_fixture::fixture_socket::hardened",
-        "c_fixture::fixture_socket::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
-      ]
-    },
-    {
       "symbol": "recvfrom",
       "symbol_family": "socket",
       "owner": "socket_abi",
@@ -46843,22 +46968,6 @@
       "gap_reasons": [
         "missing_test_mapping",
         "missing_posix_traceability"
-      ]
-    },
-    {
-      "symbol": "send",
-      "symbol_family": "socket",
-      "owner": "socket_abi",
-      "support_status": "RawSyscall",
-      "mapped_posix_refs": [
-        "POSIX.1-2017 sockets: socket/bind/send/recv/shutdown and getsockopt(SO_TYPE) behavior"
-      ],
-      "test_refs": [
-        "c_fixture::fixture_socket::hardened",
-        "c_fixture::fixture_socket::strict"
-      ],
-      "gap_reasons": [
-        "missing_execution_evidence"
       ]
     },
     {

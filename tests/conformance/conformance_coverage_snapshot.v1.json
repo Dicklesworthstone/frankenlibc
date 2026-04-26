@@ -1,13 +1,13 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-04-26T00:05:09Z",
+  "generated_at": "2026-04-26T01:08:16Z",
   "summary": {
     "total_symbols": 3996,
-    "symbols_with_fixtures": 278,
+    "symbols_with_fixtures": 281,
     "coverage_pct": 7,
     "total_fixture_files": 55,
-    "total_fixture_cases": 1065,
+    "total_fixture_cases": 1070,
     "total_families": 45
   },
   "module_coverage": {
@@ -163,8 +163,8 @@
     },
     "socket_abi": {
       "total": 18,
-      "covered": 5,
-      "pct": 28
+      "covered": 8,
+      "pct": 44
     },
     "startup_abi": {
       "total": 4,
@@ -581,11 +581,14 @@
       ]
     },
     "socket": {
-      "function_count": 5,
+      "function_count": 8,
       "functions": [
         "bind",
         "getsockname",
+        "getsockopt",
         "listen",
+        "recv",
+        "send",
         "shutdown",
         "socket"
       ]
@@ -1316,12 +1319,15 @@
     },
     "socket_ops": {
       "file": "socket_ops.json",
-      "sha256": "d99b01d103d1806ed674d7a2074eed44ecbd2d60425fd656995ec645ce08567c",
-      "case_count": 9,
+      "sha256": "04eb7387e1f25f2961fe0945b55e1c3670f985c2c733c8014d9a4bb8060ba0d1",
+      "case_count": 14,
       "functions": [
         "bind",
         "getsockname",
+        "getsockopt",
         "listen",
+        "recv",
+        "send",
         "shutdown",
         "socket"
       ],

@@ -612,7 +612,10 @@ pub fn execute_fixture_case(
         "socket" => execute_socket_case(inputs, mode),
         "bind" => execute_bind_case(inputs, mode),
         "listen" => execute_listen_case(inputs, mode),
+        "send" => execute_send_case(inputs, mode),
+        "recv" => execute_recv_case(inputs, mode),
         "shutdown" => execute_shutdown_case(inputs, mode),
+        "getsockopt" => execute_getsockopt_case(inputs, mode),
         "getsockname" => execute_getsockname_case(inputs, mode),
         // termios ops
         "tcgetattr" => execute_tcgetattr_case(inputs, mode),
@@ -12018,6 +12021,188 @@ fn execute_getsockname_case(
         )
     };
     Ok(non_host_execution(format!("{result}")))
+}
+
+fn close_socket_fd(fd: c_int) {
+    if fd >= 0 {
+        unsafe { frankenlibc_abi::unistd_abi::close(fd) };
+    }
+}
+
+fn socketpair_stream() -> Result<[c_int; 2], String> {
+    let mut sv = [-1, -1];
+    let result = unsafe {
+        frankenlibc_abi::socket_abi::socketpair(
+            libc::AF_UNIX,
+            libc::SOCK_STREAM,
+            0,
+            sv.as_mut_ptr(),
+        )
+    };
+    if result == 0 {
+        Ok(sv)
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        Err(format!(
+            "socketpair(AF_UNIX, SOCK_STREAM) failed errno={errno}"
+        ))
+    }
+}
+
+fn payload_bytes(inputs: &serde_json::Value) -> Vec<u8> {
+    inputs
+        .get("payload")
+        .and_then(|v| v.as_str())
+        .unwrap_or("franken")
+        .as_bytes()
+        .to_vec()
+}
+
+fn execute_send_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    let payload = payload_bytes(inputs);
+
+    if inputs.get("sockfd").is_some() {
+        let sockfd = parse_i32(inputs, "sockfd")?;
+        let result = unsafe {
+            frankenlibc_abi::socket_abi::send(
+                sockfd,
+                payload.as_ptr() as *const c_void,
+                payload.len(),
+                flags,
+            )
+        };
+        return Ok(non_host_execution(format!("{result}")));
+    }
+
+    let sv = socketpair_stream()?;
+    let result = unsafe {
+        frankenlibc_abi::socket_abi::send(
+            sv[0],
+            payload.as_ptr() as *const c_void,
+            payload.len(),
+            flags,
+        )
+    };
+    close_socket_fd(sv[0]);
+    close_socket_fd(sv[1]);
+
+    if result < 0 {
+        Ok(non_host_execution("-1".to_string()))
+    } else {
+        Ok(non_host_execution(format!("SENT={result}")))
+    }
+}
+
+fn execute_recv_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let flags = parse_i32(inputs, "flags").unwrap_or(0);
+    let seed_flags = parse_i32(inputs, "seed_flags").unwrap_or(0);
+    let payload = payload_bytes(inputs);
+
+    if inputs.get("sockfd").is_some() {
+        let sockfd = parse_i32(inputs, "sockfd")?;
+        let mut buf = vec![0u8; payload.len().max(1)];
+        let result = unsafe {
+            frankenlibc_abi::socket_abi::recv(
+                sockfd,
+                buf.as_mut_ptr() as *mut c_void,
+                buf.len(),
+                flags,
+            )
+        };
+        return Ok(non_host_execution(format!("{result}")));
+    }
+
+    let sv = socketpair_stream()?;
+    let sent = unsafe {
+        frankenlibc_abi::socket_abi::send(
+            sv[0],
+            payload.as_ptr() as *const c_void,
+            payload.len(),
+            seed_flags,
+        )
+    };
+    if sent < 0 {
+        close_socket_fd(sv[0]);
+        close_socket_fd(sv[1]);
+        return Ok(non_host_execution("SEND_FAILED".to_string()));
+    }
+
+    let mut buf = vec![0u8; payload.len()];
+    let result = unsafe {
+        frankenlibc_abi::socket_abi::recv(sv[1], buf.as_mut_ptr() as *mut c_void, buf.len(), flags)
+    };
+    close_socket_fd(sv[0]);
+    close_socket_fd(sv[1]);
+
+    if result < 0 {
+        Ok(non_host_execution("-1".to_string()))
+    } else {
+        let received = String::from_utf8_lossy(&buf[..result as usize]);
+        Ok(non_host_execution(format!("RECV={result}:{received}")))
+    }
+}
+
+fn execute_getsockopt_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let level = parse_i32(inputs, "level").unwrap_or(libc::SOL_SOCKET);
+    let optname = parse_i32(inputs, "optname").unwrap_or(libc::SO_TYPE);
+
+    if inputs.get("sockfd").is_some() {
+        let sockfd = parse_i32(inputs, "sockfd")?;
+        let mut so_type: c_int = -1;
+        let mut optlen = core::mem::size_of::<c_int>() as u32;
+        let result = unsafe {
+            frankenlibc_abi::socket_abi::getsockopt(
+                sockfd,
+                level,
+                optname,
+                &mut so_type as *mut _ as *mut c_void,
+                &mut optlen,
+            )
+        };
+        return Ok(non_host_execution(format!("{result}")));
+    }
+
+    let domain = parse_i32(inputs, "domain").unwrap_or(libc::AF_INET);
+    let sock_type = parse_i32(inputs, "type").unwrap_or(libc::SOCK_STREAM);
+    let protocol = parse_i32(inputs, "protocol").unwrap_or(0);
+    let fd = unsafe { frankenlibc_abi::socket_abi::socket(domain, sock_type, protocol) };
+    if fd < 0 {
+        return Ok(non_host_execution("-1".to_string()));
+    }
+
+    let mut so_type: c_int = -1;
+    let mut optlen = core::mem::size_of::<c_int>() as u32;
+    let result = unsafe {
+        frankenlibc_abi::socket_abi::getsockopt(
+            fd,
+            level,
+            optname,
+            &mut so_type as *mut _ as *mut c_void,
+            &mut optlen,
+        )
+    };
+    close_socket_fd(fd);
+
+    if result == 0 {
+        Ok(non_host_execution(format!(
+            "SO_TYPE={so_type};LEN={optlen}"
+        )))
+    } else {
+        Ok(non_host_execution("-1".to_string()))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

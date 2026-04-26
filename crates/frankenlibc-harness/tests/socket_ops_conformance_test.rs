@@ -141,6 +141,23 @@ fn socket_ops_covers_shutdown() {
     );
 }
 
+#[test]
+fn socket_ops_covers_send_recv_getsockopt() {
+    let fixture = load_fixture("socket_ops");
+    let functions: Vec<&str> = fixture
+        .cases
+        .iter()
+        .map(|case| case.function.as_str())
+        .collect();
+
+    for function in ["send", "recv", "getsockopt"] {
+        assert!(
+            functions.contains(&function),
+            "Missing fixture execution coverage for {function}"
+        );
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Error code validation
 // ─────────────────────────────────────────────────────────────────────────────
@@ -195,7 +212,7 @@ fn socket_ops_modes_valid() {
 fn socket_ops_case_count_stable() {
     let fixture = load_fixture("socket_ops");
 
-    const EXPECTED_MIN_CASES: usize = 8;
+    const EXPECTED_MIN_CASES: usize = 14;
 
     assert!(
         fixture.cases.len() >= EXPECTED_MIN_CASES,

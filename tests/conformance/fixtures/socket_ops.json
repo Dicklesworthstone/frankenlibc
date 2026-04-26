@@ -54,6 +54,54 @@
       "mode": "strict"
     },
     {
+      "name": "getsockopt_so_type_stream",
+      "function": "getsockopt",
+      "spec_section": "POSIX getsockopt SO_TYPE",
+      "inputs": { "domain": 2, "type": 1, "protocol": 0, "level": 1, "optname": 3 },
+      "expected_output": "SO_TYPE=1;LEN=4",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "AF_INET SOCK_STREAM reports SO_TYPE=SOCK_STREAM"
+    },
+    {
+      "name": "send_socketpair_payload",
+      "function": "send",
+      "spec_section": "POSIX send",
+      "inputs": { "payload": "franken", "flags": 0 },
+      "expected_output": "SENT=7",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "AF_UNIX socketpair avoids network and listen/connect nondeterminism"
+    },
+    {
+      "name": "recv_socketpair_payload",
+      "function": "recv",
+      "spec_section": "POSIX recv",
+      "inputs": { "payload": "franken", "flags": 0 },
+      "expected_output": "RECV=7:franken",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "Seeded by a local socketpair send before recv"
+    },
+    {
+      "name": "send_invalid_fd",
+      "function": "send",
+      "spec_section": "POSIX send EBADF",
+      "inputs": { "sockfd": -1, "payload": "x", "flags": 0 },
+      "expected_output": "-1",
+      "expected_errno": 9,
+      "mode": "both"
+    },
+    {
+      "name": "recv_invalid_fd",
+      "function": "recv",
+      "spec_section": "POSIX recv EBADF",
+      "inputs": { "sockfd": -1, "payload": "x", "flags": 0 },
+      "expected_output": "-1",
+      "expected_errno": 9,
+      "mode": "both"
+    },
+    {
       "name": "shutdown_invalid_fd_strict",
       "function": "shutdown",
       "spec_section": "POSIX shutdown",

@@ -4783,9 +4783,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1064,
+    "fixture_json_cases": 1069,
     "fixture_json_files": 55,
-    "fixture_json_unique_functions": 295,
+    "fixture_json_unique_functions": 298,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -48078,17 +48078,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 1,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "socket_ops"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "socket_ops.json"
+      ],
       "fixture_ids": [
         "fixture_socket"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "socket_abi",
       "perf_class": "coldpath",
@@ -48120,17 +48126,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 2,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "socket_ops"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "socket_ops.json"
+      ],
       "fixture_ids": [
         "fixture_socket"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "socket_abi",
       "perf_class": "coldpath",
@@ -48168,17 +48180,23 @@
     {
       "c_fixture_mentions": 1,
       "covered": true,
-      "fixture_case_count": 0,
+      "fixture_case_count": 2,
       "fixture_families": [
-        "c_fixture_suite"
+        "c_fixture_suite",
+        "socket_ops"
       ],
-      "fixture_files": [],
+      "fixture_files": [
+        "socket_ops.json"
+      ],
       "fixture_ids": [
         "fixture_socket"
       ],
-      "fixture_modes": [],
+      "fixture_modes": [
+        "both"
+      ],
       "fixture_sources": [
-        "c_fixture_spec"
+        "c_fixture_spec",
+        "fixture_json"
       ],
       "module": "socket_abi",
       "perf_class": "coldpath",

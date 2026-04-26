@@ -4,9 +4,9 @@
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "summary": {
     "tracked_symbols": 3996,
-    "total_edge_cases": 1313,
-    "errno_cases": 173,
-    "covered_edge_cases": 1313,
+    "total_edge_cases": 1323,
+    "errno_cases": 177,
+    "covered_edge_cases": 1323,
     "failing_edge_cases": 0,
     "execution_error_cases": 0,
     "missing_execution_cases": 0,
@@ -501,6 +501,60 @@
     },
     {
       "priority_score": 40,
+      "trace_id": "franken_shadow::socket_ops::recv::hardened::recv_invalid_fd",
+      "symbol": "recv",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "hardened",
+      "case_id": "recv_invalid_fd [hardened]",
+      "spec_section": "POSIX recv EBADF",
+      "edge_class": "error_condition",
+      "expected_output": "-1",
+      "actual_output": "-1",
+      "host_output": "SKIP",
+      "expected_errno": 9,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::recv::hardened::recv_invalid_fd",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'recv_invalid_fd' for 'recv' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::recv::hardened::recv_invalid_fd."
+      ]
+    },
+    {
+      "priority_score": 40,
+      "trace_id": "franken_shadow::socket_ops::recv::strict::recv_invalid_fd",
+      "symbol": "recv",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "strict",
+      "case_id": "recv_invalid_fd [strict]",
+      "spec_section": "POSIX recv EBADF",
+      "edge_class": "error_condition",
+      "expected_output": "-1",
+      "actual_output": "-1",
+      "host_output": "SKIP",
+      "expected_errno": 9,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::recv::strict::recv_invalid_fd",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'recv_invalid_fd' for 'recv' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::recv::strict::recv_invalid_fd."
+      ]
+    },
+    {
+      "priority_score": 40,
       "trace_id": "franken_shadow::sysv_ipc_ops::semop::strict::semop_wait_strict",
       "symbol": "semop",
       "symbol_family": "sysv_ipc_ops",
@@ -524,6 +578,60 @@
       ],
       "triage_steps": [
         "Inspect fixture 'semop_wait_strict' for 'semop' and compare it against conformance_matrix::trace_id::franken_shadow::sysv_ipc_ops::semop::strict::semop_wait_strict."
+      ]
+    },
+    {
+      "priority_score": 40,
+      "trace_id": "franken_shadow::socket_ops::send::hardened::send_invalid_fd",
+      "symbol": "send",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "hardened",
+      "case_id": "send_invalid_fd [hardened]",
+      "spec_section": "POSIX send EBADF",
+      "edge_class": "error_condition",
+      "expected_output": "-1",
+      "actual_output": "-1",
+      "host_output": "SKIP",
+      "expected_errno": 9,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::send::hardened::send_invalid_fd",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'send_invalid_fd' for 'send' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::send::hardened::send_invalid_fd."
+      ]
+    },
+    {
+      "priority_score": 40,
+      "trace_id": "franken_shadow::socket_ops::send::strict::send_invalid_fd",
+      "symbol": "send",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "strict",
+      "case_id": "send_invalid_fd [strict]",
+      "spec_section": "POSIX send EBADF",
+      "edge_class": "error_condition",
+      "expected_output": "-1",
+      "actual_output": "-1",
+      "host_output": "SKIP",
+      "expected_errno": 9,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::send::strict::send_invalid_fd",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'send_invalid_fd' for 'send' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::send::strict::send_invalid_fd."
       ]
     },
     {
@@ -6468,6 +6576,60 @@
     },
     {
       "priority_score": 10,
+      "trace_id": "franken_shadow::socket_ops::getsockopt::hardened::getsockopt_so_type_stream",
+      "symbol": "getsockopt",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "hardened",
+      "case_id": "getsockopt_so_type_stream [hardened]",
+      "spec_section": "POSIX getsockopt SO_TYPE",
+      "edge_class": "other_edge",
+      "expected_output": "SO_TYPE=1;LEN=4",
+      "actual_output": "SO_TYPE=1;LEN=4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::getsockopt::hardened::getsockopt_so_type_stream",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'getsockopt_so_type_stream' for 'getsockopt' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::getsockopt::hardened::getsockopt_so_type_stream."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::socket_ops::getsockopt::strict::getsockopt_so_type_stream",
+      "symbol": "getsockopt",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "strict",
+      "case_id": "getsockopt_so_type_stream [strict]",
+      "spec_section": "POSIX getsockopt SO_TYPE",
+      "edge_class": "other_edge",
+      "expected_output": "SO_TYPE=1;LEN=4",
+      "actual_output": "SO_TYPE=1;LEN=4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::getsockopt::strict::getsockopt_so_type_stream",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'getsockopt_so_type_stream' for 'getsockopt' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::getsockopt::strict::getsockopt_so_type_stream."
+      ]
+    },
+    {
+      "priority_score": 10,
       "trace_id": "franken_shadow::unistd::getuid::hardened::getuid_nonneg",
       "symbol": "getuid",
       "symbol_family": "unistd",
@@ -7170,6 +7332,60 @@
     },
     {
       "priority_score": 10,
+      "trace_id": "franken_shadow::socket_ops::recv::hardened::recv_socketpair_payload",
+      "symbol": "recv",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "hardened",
+      "case_id": "recv_socketpair_payload [hardened]",
+      "spec_section": "POSIX recv",
+      "edge_class": "other_edge",
+      "expected_output": "RECV=7:franken",
+      "actual_output": "RECV=7:franken",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::recv::hardened::recv_socketpair_payload",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'recv_socketpair_payload' for 'recv' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::recv::hardened::recv_socketpair_payload."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::socket_ops::recv::strict::recv_socketpair_payload",
+      "symbol": "recv",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "strict",
+      "case_id": "recv_socketpair_payload [strict]",
+      "spec_section": "POSIX recv",
+      "edge_class": "other_edge",
+      "expected_output": "RECV=7:franken",
+      "actual_output": "RECV=7:franken",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::recv::strict::recv_socketpair_payload",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'recv_socketpair_payload' for 'recv' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::recv::strict::recv_socketpair_payload."
+      ]
+    },
+    {
+      "priority_score": 10,
       "trace_id": "franken_shadow::sysv_ipc_ops::semctl::strict::semctl_setval_strict",
       "symbol": "semctl",
       "symbol_family": "sysv_ipc_ops",
@@ -7247,6 +7463,60 @@
       ],
       "triage_steps": [
         "Inspect fixture 'semget_create_strict' for 'semget' and compare it against conformance_matrix::trace_id::franken_shadow::sysv_ipc_ops::semget::strict::semget_create_strict."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::socket_ops::send::hardened::send_socketpair_payload",
+      "symbol": "send",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "hardened",
+      "case_id": "send_socketpair_payload [hardened]",
+      "spec_section": "POSIX send",
+      "edge_class": "other_edge",
+      "expected_output": "SENT=7",
+      "actual_output": "SENT=7",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::send::hardened::send_socketpair_payload",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'send_socketpair_payload' for 'send' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::send::hardened::send_socketpair_payload."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::socket_ops::send::strict::send_socketpair_payload",
+      "symbol": "send",
+      "symbol_family": "socket_ops",
+      "owner": "socket_abi",
+      "support_status": "RawSyscall",
+      "runtime_mode": "strict",
+      "case_id": "send_socketpair_payload [strict]",
+      "spec_section": "POSIX send",
+      "edge_class": "other_edge",
+      "expected_output": "SENT=7",
+      "actual_output": "SENT=7",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::socket_ops::send::strict::send_socketpair_payload",
+      "artifact_refs": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'send_socketpair_payload' for 'send' and compare it against conformance_matrix::trace_id::franken_shadow::socket_ops::send::strict::send_socketpair_payload."
       ]
     },
     {
@@ -28645,8 +28915,8 @@
       "spec_section": "C11 7.21.6.1 %p width",
       "edge_class": "other_edge",
       "expected_output": "^\\s*0x[0-9a-f]+$",
-      "actual_output": "      0x55c803c08180",
-      "host_output": "      0x55c803c08180",
+      "actual_output": "      0x57e6d8391180",
+      "host_output": "      0x57e6d8391180",
       "expected_errno": 0,
       "actual_errno": null,
       "status": "pass",

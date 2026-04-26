@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-04-25T22:45:19Z",
-  "report_hash": "a6b920502d80e20a",
+  "generated_at": "2026-04-26T01:09:55Z",
+  "report_hash": "dc5ee972d2abf1f4",
   "summary": {
     "total_symbols": 3996,
-    "symbols_with_fixtures": 278,
-    "symbols_without_fixtures": 3718,
+    "symbols_with_fixtures": 281,
+    "symbols_without_fixtures": 3715,
     "fixture_coverage_pct": 7.0,
     "implemented_coverage_pct": 6.2,
     "total_fixture_files": 55,
-    "total_cases": 1064,
+    "total_cases": 1069,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 203,
-    "symbols_with_errno_checks": 276,
-    "total_quality_issues": 3603,
-    "uncovered_action_count": 3718
+    "symbols_with_edge_cases": 206,
+    "symbols_with_errno_checks": 279,
+    "total_quality_issues": 3604,
+    "uncovered_action_count": 3715
   },
   "fixture_file_analyses": [
     {
@@ -310,8 +310,8 @@
       "file": "socket_ops.json",
       "family": "socket_ops",
       "valid": true,
-      "total_cases": 9,
-      "unique_symbols": 5,
+      "total_cases": 14,
+      "unique_symbols": 8,
       "issues": []
     },
     {
@@ -32259,13 +32259,21 @@
       "status": "RawSyscall",
       "module": "socket_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "socket_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": [
+        "fewer than 2 test cases"
+      ]
     },
     {
       "symbol": "getsourcefilter",
@@ -46529,12 +46537,19 @@
       "status": "RawSyscall",
       "module": "socket_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "socket_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -49027,12 +49042,19 @@
       "status": "RawSyscall",
       "module": "socket_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "socket_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -75161,13 +75183,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "getsockopt",
-      "status": "RawSyscall",
-      "module": "socket_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "getsourcefilter",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -81104,13 +81119,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "recv",
-      "status": "RawSyscall",
-      "module": "socket_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "recvfrom",
       "status": "RawSyscall",
       "module": "socket_abi",
@@ -82199,13 +82207,6 @@
       "symbol": "semtimedop",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "send",
-      "status": "RawSyscall",
-      "module": "socket_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

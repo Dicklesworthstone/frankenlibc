@@ -1,15 +1,15 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-25T20:21:56Z",
+  "generated_at": "2026-04-26T01:04:03Z",
   "summary": {
     "total_symbols": 3996,
     "status_validated": 3996,
     "status_invalid": 0,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
-    "fixture_linked": 278,
-    "fixture_unlinked": 3718,
+    "fixture_linked": 281,
+    "fixture_unlinked": 3715,
     "fixture_coverage_pct": 7.0,
     "total_warnings": 155
   },
@@ -70,7 +70,7 @@
     },
     "RawSyscall": {
       "count": 404,
-      "fixture_linked": 54
+      "fixture_linked": 57
     }
   },
   "module_coverage": {
@@ -226,8 +226,8 @@
     },
     "socket_abi": {
       "total": 18,
-      "linked": 5,
-      "coverage_pct": 27.8
+      "linked": 8,
+      "coverage_pct": 44.4
     },
     "startup_abi": {
       "total": 4,
@@ -10205,7 +10205,6 @@
     "getsgent_r",
     "getsgnam",
     "getsgnam_r",
-    "getsockopt",
     "getspent",
     "getspent_r",
     "getspnam",
@@ -10707,7 +10706,6 @@
     "recallocarray",
     "realpath",
     "reboot",
-    "recv",
     "recvfrom",
     "recvmmsg",
     "recvmsg",
@@ -10771,7 +10769,6 @@
     "sem_unlink",
     "sem_wait",
     "semtimedop",
-    "send",
     "sendfile",
     "sendfile64",
     "sendmmsg",
