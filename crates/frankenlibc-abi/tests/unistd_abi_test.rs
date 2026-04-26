@@ -7813,3 +7813,107 @@ fn lsm_list_modules_query_size_returns_data_or_known_errno() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// faccessat2 / io_pgetevents / clone3
+// ---------------------------------------------------------------------------
+
+#[test]
+fn faccessat2_existing_file_returns_zero() {
+    use frankenlibc_abi::unistd_abi::faccessat2;
+    let path =
+        std::env::temp_dir().join(format!("frankenlibc_faccessat2_{}.txt", std::process::id()));
+    std::fs::write(&path, b"x").unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    let rc = unsafe { faccessat2(libc::AT_FDCWD, cpath.as_ptr(), libc::F_OK, 0) };
+    if rc == 0 {
+        // OK on any modern kernel.
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        // Older kernels: ENOSYS.
+        assert!(
+            errno == libc::ENOSYS,
+            "unexpected faccessat2 errno: {errno}"
+        );
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn faccessat2_missing_file_returns_enoent() {
+    use frankenlibc_abi::unistd_abi::faccessat2;
+    let cpath = CString::new("/nonexistent/path/for/faccessat2_test").unwrap();
+    let rc = unsafe { faccessat2(libc::AT_FDCWD, cpath.as_ptr(), libc::F_OK, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::ENOENT || errno == libc::ENOSYS,
+        "unexpected faccessat2 errno: {errno}"
+    );
+}
+
+#[test]
+fn io_pgetevents_invalid_ctx_returns_einval() {
+    use frankenlibc_abi::unistd_abi::io_pgetevents;
+    // Bogus ctx_id (0 is never a valid io_setup() id).
+    let mut events = [0u8; 32 * 4];
+    let rc = unsafe {
+        io_pgetevents(
+            0,
+            0,
+            1,
+            events.as_mut_ptr() as *mut c_void,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EINVAL || errno == libc::ENOSYS,
+        "unexpected io_pgetevents errno: {errno}"
+    );
+}
+
+#[test]
+fn io_pgetevents_null_events_with_positive_nr_returns_efault() {
+    use frankenlibc_abi::unistd_abi::io_pgetevents;
+    let rc = unsafe {
+        io_pgetevents(
+            0,
+            0,
+            1,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn clone3_null_args_returns_efault() {
+    use frankenlibc_abi::unistd_abi::clone3;
+    let rc = unsafe { clone3(std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn clone3_zero_size_returns_einval() {
+    use frankenlibc_abi::unistd_abi::clone3;
+    // Pass non-NULL pointer but size=0 — kernel rejects with EINVAL
+    // because the smallest known struct clone_args is much bigger.
+    let mut dummy = [0u8; 8];
+    let rc = unsafe { clone3(dummy.as_mut_ptr() as *mut c_void, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EINVAL || errno == libc::ENOSYS,
+        "unexpected clone3 errno: {errno}"
+    );
+}
