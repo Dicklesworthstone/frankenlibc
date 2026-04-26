@@ -285,6 +285,49 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// radixsort / sradixsort (NetBSD libutil radix sort family)
+// ---------------------------------------------------------------------------
+
+/// Sort `items` by translated-byte order and return the permutation
+/// that would produce sorted output: `out[i]` is the index in
+/// `items` of the i-th sorted element.
+///
+/// `table`, when supplied, maps each input byte to a sort key. When
+/// `None`, byte values are compared directly. The comparison reads
+/// items position by position; the shorter slice sorts before a
+/// longer slice that agrees on every byte of the shorter prefix.
+///
+/// `stable` controls whether equal-key items retain their input
+/// order. Set this to `true` to mirror NetBSD `sradixsort` and
+/// `false` for `radixsort` (which makes no stability promise — but
+/// since stable is a strict superset of unstable behavior, callers
+/// of `radixsort` cannot observe any regression from a stable
+/// implementation).
+pub fn radix_sort(items: &[&[u8]], table: Option<&[u8; 256]>, stable: bool) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    if stable {
+        order.sort_by(|&a, &b| compare_translated(items[a], items[b], table));
+    } else {
+        order.sort_unstable_by(|&a, &b| compare_translated(items[a], items[b], table));
+    }
+    order
+}
+
+fn compare_translated(a: &[u8], b: &[u8], table: Option<&[u8; 256]>) -> core::cmp::Ordering {
+    use core::cmp::Ordering;
+    let n = a.len().min(b.len());
+    for i in 0..n {
+        let ak = table.map_or(a[i], |t| t[a[i] as usize]);
+        let bk = table.map_or(b[i], |t| t[b[i] as usize]);
+        match ak.cmp(&bk) {
+            Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
 #[cfg(test)]
 mod sort_variant_tests {
     use super::*;
@@ -431,5 +474,70 @@ mod sort_variant_tests {
         heapsort(&mut buf, 4, cmp_u32_le);
         values.sort();
         assert_eq!(unflatten_u32(&buf), values);
+    }
+
+    #[test]
+    fn radix_sort_default_table_is_byte_order() {
+        let items: Vec<&[u8]> = vec![b"banana", b"apple", b"cherry"];
+        let order = radix_sort(&items, None, true);
+        assert_eq!(order, vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn radix_sort_shorter_string_sorts_first() {
+        // Both prefixes match; the shorter slice ("ab") wins.
+        let items: Vec<&[u8]> = vec![b"abc", b"ab", b"abcd"];
+        let order = radix_sort(&items, None, true);
+        assert_eq!(order, vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn radix_sort_table_can_invert_order() {
+        // Inverse table: each byte maps to 255 - byte.
+        let mut table = [0u8; 256];
+        for (i, slot) in table.iter_mut().enumerate() {
+            *slot = 255 - i as u8;
+        }
+        let items: Vec<&[u8]> = vec![b"a", b"c", b"b"];
+        let order = radix_sort(&items, Some(&table), true);
+        // 'c' (0x63) translates to 0x9c, smallest under inverse → first.
+        assert_eq!(order, vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn radix_sort_collapses_keys_via_table() {
+        // Map all letters to the same key — every comparison ties on
+        // every position, so output ordering is decided by length.
+        // Stable sort then preserves input order among equal-length
+        // items.
+        let table = [0u8; 256];
+        let items: Vec<&[u8]> = vec![b"abc", b"x", b"yz", b"d"];
+        let order = radix_sort(&items, Some(&table), true);
+        // Lengths: 3, 1, 2, 1 → sorted by length then input order:
+        // (idx 1, len 1), (idx 3, len 1), (idx 2, len 2), (idx 0, len 3).
+        assert_eq!(order, vec![1, 3, 2, 0]);
+    }
+
+    #[test]
+    fn radix_sort_stable_preserves_input_order_for_equal_keys() {
+        // Three identical strings — stable sort keeps them in the
+        // input order 0, 1, 2.
+        let items: Vec<&[u8]> = vec![b"x", b"x", b"x"];
+        let order = radix_sort(&items, None, true);
+        assert_eq!(order, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn radix_sort_empty_input_returns_empty() {
+        let items: Vec<&[u8]> = vec![];
+        let order = radix_sort(&items, None, true);
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn radix_sort_single_element() {
+        let items: Vec<&[u8]> = vec![b"only"];
+        let order = radix_sort(&items, None, true);
+        assert_eq!(order, vec![0]);
     }
 }

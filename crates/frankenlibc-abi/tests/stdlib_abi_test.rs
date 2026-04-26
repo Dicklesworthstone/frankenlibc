@@ -2,7 +2,7 @@
 
 //! Integration tests for `<stdlib.h>` ABI entrypoints.
 
-use std::ffi::{c_char, c_int};
+use std::ffi::{c_char, c_int, c_uchar, c_uint};
 use std::os::unix::ffi::OsStrExt;
 
 use frankenlibc_abi::errno_abi::__errno_location;
@@ -6450,7 +6450,7 @@ fn fmtcheck_pointer_distinct_from_string() {
 
 use frankenlibc_abi::stdlib_abi::{
     getmode, heapsort, mergesort, pidfile_close, pidfile_fileno, pidfile_open, pidfile_remove,
-    pidfile_write, setmode, sl_add, sl_find, sl_free, sl_init,
+    pidfile_write, radixsort, setmode, sl_add, sl_find, sl_free, sl_init, sradixsort,
 };
 
 #[test]
@@ -7011,6 +7011,212 @@ fn mergesort_is_stable_via_abi() {
             Pair { key: 5, idx: 0 },
             Pair { key: 5, idx: 2 },
             Pair { key: 5, idx: 5 },
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// radixsort / sradixsort (NetBSD libutil radix sort family)
+// ---------------------------------------------------------------------------
+
+/// Build a NUL-terminated copy of each input string and a parallel
+/// `Vec<*const u8>` of pointers into them. Returns owned storage so
+/// the C-side pointers remain live for the test's duration.
+fn radix_fixture(strings: &[&[u8]]) -> (Vec<Vec<u8>>, Vec<*const c_uchar>) {
+    let owned: Vec<Vec<u8>> = strings
+        .iter()
+        .map(|s| {
+            let mut v = s.to_vec();
+            v.push(0);
+            v
+        })
+        .collect();
+    let ptrs: Vec<*const c_uchar> = owned.iter().map(|v| v.as_ptr() as *const c_uchar).collect();
+    (owned, ptrs)
+}
+
+/// Reconstruct the visible byte strings (terminator stripped) in
+/// the order they currently appear in the pointer array.
+unsafe fn radix_collect(ptrs: &[*const c_uchar]) -> Vec<Vec<u8>> {
+    ptrs.iter()
+        .map(|&p| {
+            let mut v = Vec::new();
+            let mut i = 0;
+            loop {
+                let b = unsafe { *p.add(i) };
+                if b == 0 {
+                    break;
+                }
+                v.push(b);
+                i += 1;
+            }
+            v
+        })
+        .collect()
+}
+
+#[test]
+fn radixsort_default_table_sorts_byte_order() {
+    let inputs: &[&[u8]] = &[b"banana", b"apple", b"cherry"];
+    let (_owned, mut ptrs) = radix_fixture(inputs);
+    let rc = unsafe { radixsort(ptrs.as_mut_ptr(), ptrs.len() as c_int, std::ptr::null(), 0) };
+    assert_eq!(rc, 0);
+    let got = unsafe { radix_collect(&ptrs) };
+    assert_eq!(
+        got,
+        vec![b"apple".to_vec(), b"banana".to_vec(), b"cherry".to_vec()]
+    );
+}
+
+#[test]
+fn sradixsort_is_stable_for_equal_keys() {
+    let inputs: &[&[u8]] = &[b"x", b"x", b"x", b"x"];
+    let (owned, mut ptrs) = radix_fixture(inputs);
+    let original_addrs: Vec<*const c_uchar> = owned.iter().map(|v| v.as_ptr() as _).collect();
+    let rc = unsafe { sradixsort(ptrs.as_mut_ptr(), ptrs.len() as c_int, std::ptr::null(), 0) };
+    assert_eq!(rc, 0);
+    // Stable sort keeps the original addresses in input order.
+    assert_eq!(ptrs, original_addrs);
+}
+
+#[test]
+fn radixsort_with_inverse_table_reverses_order() {
+    let inputs: &[&[u8]] = &[b"a", b"c", b"b"];
+    let (_owned, mut ptrs) = radix_fixture(inputs);
+    let mut table = [0u8; 256];
+    for (i, slot) in table.iter_mut().enumerate() {
+        *slot = 255 - i as u8;
+    }
+    let rc = unsafe {
+        radixsort(
+            ptrs.as_mut_ptr(),
+            ptrs.len() as c_int,
+            table.as_ptr() as *const c_uchar,
+            0,
+        )
+    };
+    assert_eq!(rc, 0);
+    let got = unsafe { radix_collect(&ptrs) };
+    assert_eq!(got, vec![b"c".to_vec(), b"b".to_vec(), b"a".to_vec()]);
+}
+
+#[test]
+fn radixsort_endbyte_other_than_zero_is_respected() {
+    // Use '#' (0x23) as the string terminator — the bytes after the
+    // first '#' should be ignored by the sort.
+    let owned: Vec<Vec<u8>> = vec![
+        b"banana#XYZ".to_vec(),
+        b"apple#PPP".to_vec(),
+        b"cherry#QQQ".to_vec(),
+    ];
+    let mut ptrs: Vec<*const c_uchar> = owned.iter().map(|v| v.as_ptr() as _).collect();
+    let rc = unsafe {
+        radixsort(
+            ptrs.as_mut_ptr(),
+            ptrs.len() as c_int,
+            std::ptr::null(),
+            b'#' as c_uint,
+        )
+    };
+    assert_eq!(rc, 0);
+    // Order should be apple, banana, cherry (the suffixes after '#' don't matter).
+    // Reconstruct using '#' as terminator.
+    let got: Vec<Vec<u8>> = ptrs
+        .iter()
+        .map(|&p| {
+            let mut v = Vec::new();
+            let mut i = 0;
+            loop {
+                let b = unsafe { *p.add(i) };
+                if b == b'#' {
+                    break;
+                }
+                v.push(b);
+                i += 1;
+            }
+            v
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![b"apple".to_vec(), b"banana".to_vec(), b"cherry".to_vec()]
+    );
+}
+
+#[test]
+fn radixsort_zero_nmemb_returns_zero() {
+    let mut ptrs: Vec<*const c_uchar> = Vec::new();
+    let rc = unsafe { radixsort(ptrs.as_mut_ptr(), 0, std::ptr::null(), 0) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn radixsort_single_element_returns_zero_unchanged() {
+    let inputs: &[&[u8]] = &[b"only"];
+    let (_owned, mut ptrs) = radix_fixture(inputs);
+    let saved = ptrs[0];
+    let rc = unsafe { radixsort(ptrs.as_mut_ptr(), 1, std::ptr::null(), 0) };
+    assert_eq!(rc, 0);
+    assert_eq!(ptrs[0], saved);
+}
+
+#[test]
+fn radixsort_negative_nmemb_returns_minus_one() {
+    let mut ptrs: Vec<*const c_uchar> = vec![std::ptr::null()];
+    let rc = unsafe { radixsort(ptrs.as_mut_ptr(), -1, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn radixsort_null_base_returns_minus_one() {
+    let rc = unsafe { radixsort(std::ptr::null_mut(), 3, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn radixsort_null_entry_returns_minus_one() {
+    let owned: Vec<Vec<u8>> = vec![b"good\0".to_vec()];
+    let mut ptrs: Vec<*const c_uchar> = vec![owned[0].as_ptr() as _, std::ptr::null()];
+    let rc = unsafe { radixsort(ptrs.as_mut_ptr(), ptrs.len() as c_int, std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn radixsort_shorter_string_sorts_first() {
+    let inputs: &[&[u8]] = &[b"abc", b"ab", b"abcd"];
+    let (_owned, mut ptrs) = radix_fixture(inputs);
+    let rc = unsafe { radixsort(ptrs.as_mut_ptr(), ptrs.len() as c_int, std::ptr::null(), 0) };
+    assert_eq!(rc, 0);
+    let got = unsafe { radix_collect(&ptrs) };
+    assert_eq!(got, vec![b"ab".to_vec(), b"abc".to_vec(), b"abcd".to_vec()]);
+}
+
+#[test]
+fn sradixsort_preserves_input_order_among_collisions() {
+    // Map every byte to the same sort key so all comparisons tie on
+    // every position. With stable sort, output should equal input.
+    let inputs: &[&[u8]] = &[b"alpha", b"beta", b"gamma", b"delta"];
+    let (owned, mut ptrs) = radix_fixture(inputs);
+    let saved_addrs: Vec<*const c_uchar> = owned.iter().map(|v| v.as_ptr() as _).collect();
+    let table = [0u8; 256];
+    let rc = unsafe {
+        sradixsort(
+            ptrs.as_mut_ptr(),
+            ptrs.len() as c_int,
+            table.as_ptr() as *const c_uchar,
+            0,
+        )
+    };
+    assert_eq!(rc, 0);
+    // Lengths: 5, 4, 5, 5. Sort by length ascending then input order:
+    // beta (idx 1, len 4), alpha (0), gamma (2), delta (3).
+    assert_eq!(
+        ptrs,
+        vec![
+            saved_addrs[1],
+            saved_addrs[0],
+            saved_addrs[2],
+            saved_addrs[3]
         ]
     );
 }

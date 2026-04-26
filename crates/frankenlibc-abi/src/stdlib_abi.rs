@@ -7,7 +7,8 @@
 
 use std::cell::Cell;
 use std::ffi::{
-    CStr, c_char, c_double, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void,
+    CStr, c_char, c_double, c_int, c_long, c_longlong, c_uchar, c_uint, c_ulong, c_ulonglong,
+    c_void,
 };
 use std::ptr;
 
@@ -1049,6 +1050,110 @@ pub unsafe extern "C" fn heapsort(
     let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total_bytes) };
     frankenlibc_core::stdlib::sort::heapsort(slice, size, wrapper);
     0
+}
+
+// ---------------------------------------------------------------------------
+// radixsort / sradixsort (NetBSD libutil radix sort family)
+// ---------------------------------------------------------------------------
+
+/// Per-string scan cap: caller must terminate each entry within this
+/// many bytes (well above any realistic identifier or path length).
+const RADIXSORT_MAX_SCAN: usize = 1 << 20;
+
+/// Shared body for [`radixsort`] and [`sradixsort`]. Walks each
+/// pointer in `base`, finds the first occurrence of the `endbyte`
+/// terminator, sorts indices via the core comparator, then rewrites
+/// the pointer array in place.
+unsafe fn radixsort_impl(
+    base: *mut *const c_uchar,
+    nmemb: c_int,
+    table: *const c_uchar,
+    endbyte: c_uint,
+    stable: bool,
+) -> c_int {
+    if base.is_null() || nmemb < 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let n = nmemb as usize;
+    if n < 2 {
+        return 0;
+    }
+    let endbyte_u8 = (endbyte & 0xff) as u8;
+    let ptrs: &mut [*const c_uchar] = unsafe { std::slice::from_raw_parts_mut(base, n) };
+
+    let mut slices: Vec<&[u8]> = Vec::with_capacity(n);
+    for &p in ptrs.iter() {
+        if p.is_null() {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
+        }
+        let mut len = 0usize;
+        while len < RADIXSORT_MAX_SCAN {
+            if unsafe { *p.add(len) } == endbyte_u8 {
+                break;
+            }
+            len += 1;
+        }
+        if len == RADIXSORT_MAX_SCAN {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
+        }
+        slices.push(unsafe { std::slice::from_raw_parts(p, len) });
+    }
+
+    let table_arr: Option<&[u8; 256]> = if table.is_null() {
+        None
+    } else {
+        Some(unsafe { &*(table as *const [u8; 256]) })
+    };
+
+    let order = frankenlibc_core::stdlib::sort::radix_sort(&slices, table_arr, stable);
+    let saved: Vec<*const c_uchar> = ptrs.to_vec();
+    for (dst, src) in order.iter().enumerate() {
+        ptrs[dst] = saved[*src];
+    }
+    0
+}
+
+/// NetBSD `radixsort(base, nmemb, table, endbyte)` — sort an array
+/// of byte-string pointers in place. Each entry is read up to (but
+/// not including) the first occurrence of `endbyte` (typically NUL).
+/// `table`, when non-NULL, must point to 256 bytes mapping each
+/// input byte to a sort key. Returns 0 on success, -1 with errno
+/// set on invalid input or when an entry exceeds the internal
+/// `RADIXSORT_MAX_SCAN` length cap.
+///
+/// # Safety
+///
+/// `base` must point to `nmemb` writable pointer cells. Each
+/// pointer in `base` must reference a NUL-terminated (or
+/// `endbyte`-terminated) readable byte string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn radixsort(
+    base: *mut *const c_uchar,
+    nmemb: c_int,
+    table: *const c_uchar,
+    endbyte: c_uint,
+) -> c_int {
+    unsafe { radixsort_impl(base, nmemb, table, endbyte, false) }
+}
+
+/// NetBSD `sradixsort(base, nmemb, table, endbyte)` — stable sibling
+/// of [`radixsort`]: equal keys retain their input order. See
+/// [`radixsort`] for argument and safety details.
+///
+/// # Safety
+///
+/// Same as [`radixsort`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sradixsort(
+    base: *mut *const c_uchar,
+    nmemb: c_int,
+    table: *const c_uchar,
+    endbyte: c_uint,
+) -> c_int {
+    unsafe { radixsort_impl(base, nmemb, table, endbyte, true) }
 }
 
 // ---------------------------------------------------------------------------
