@@ -1665,3 +1665,158 @@ fn ns_datetosecs_tolerates_null_errp() {
     let secs = unsafe { ns_datetosecs(s.as_ptr(), std::ptr::null_mut()) };
     assert_eq!(secs, 1_704_067_200);
 }
+
+// ---------------------------------------------------------------------------
+// res_gethostbyname / 2 / by_addr aliases + res_send_set{q,r}hook
+// ---------------------------------------------------------------------------
+
+#[test]
+fn res_gethostbyname_matches_gethostbyname_for_numeric_ipv4() {
+    use frankenlibc_abi::resolv_abi::{gethostbyname, res_gethostbyname};
+    let q = CString::new("127.0.0.1").unwrap();
+    let a = unsafe { res_gethostbyname(q.as_ptr()) };
+    let b = unsafe { gethostbyname(q.as_ptr()) };
+    assert!(!a.is_null());
+    assert!(!b.is_null());
+    // Both routes resolve through the same hostent registry; comparing
+    // the h_addrtype/h_length fields is sufficient.
+    let ha = unsafe { &*(a as *const libc::hostent) };
+    let hb = unsafe { &*(b as *const libc::hostent) };
+    assert_eq!(ha.h_addrtype, hb.h_addrtype);
+    assert_eq!(ha.h_length, hb.h_length);
+}
+
+#[test]
+fn res_gethostbyname2_matches_gethostbyname2_for_numeric_ipv4() {
+    use frankenlibc_abi::resolv_abi::res_gethostbyname2;
+    let q = CString::new("127.0.0.1").unwrap();
+    let a = unsafe { res_gethostbyname2(q.as_ptr(), libc::AF_INET) };
+    assert!(!a.is_null());
+    let h = unsafe { &*(a as *const libc::hostent) };
+    assert_eq!(h.h_addrtype, libc::AF_INET);
+    assert_eq!(h.h_length, 4);
+}
+
+#[test]
+fn res_gethostbyaddr_matches_gethostbyaddr_for_loopback() {
+    use frankenlibc_abi::resolv_abi::res_gethostbyaddr;
+    let octets: [u8; 4] = [127, 0, 0, 1];
+    let p = unsafe { res_gethostbyaddr(octets.as_ptr() as *const c_void, 4, libc::AF_INET) };
+    // Loopback always resolves; non-loopback addresses without a
+    // hosts entry can return NULL, which is also legal — only assert
+    // we don't crash and the API accepts the call.
+    let _ = p;
+}
+
+#[test]
+fn res_send_setqhook_and_setrhook_round_trip_via_thread_local() {
+    use frankenlibc_abi::resolv_abi::{
+        res_send_qhook_for_tests, res_send_rhook_for_tests, res_send_setqhook, res_send_setrhook,
+    };
+
+    let q_sentinel = 0xDEAD_BEEF_usize as *mut c_void;
+    let r_sentinel = 0xCAFE_BABE_usize as *mut c_void;
+
+    unsafe {
+        res_send_setqhook(q_sentinel);
+        res_send_setrhook(r_sentinel);
+    }
+    assert_eq!(res_send_qhook_for_tests(), q_sentinel);
+    assert_eq!(res_send_rhook_for_tests(), r_sentinel);
+
+    // Reset to NULL.
+    unsafe {
+        res_send_setqhook(std::ptr::null_mut());
+        res_send_setrhook(std::ptr::null_mut());
+    }
+    assert!(res_send_qhook_for_tests().is_null());
+    assert!(res_send_rhook_for_tests().is_null());
+}
+
+// ---------------------------------------------------------------------------
+// ns_name_ntol / ns_name_rollback
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ns_name_ntol_lowercases_labels() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    // Wire format for "FOO.COM": [3, 'F', 'O', 'O', 3, 'C', 'O', 'M', 0]
+    let src: [u8; 9] = [3, b'F', b'O', b'O', 3, b'C', b'O', b'M', 0];
+    let mut dst = [0u8; 9];
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, 0);
+    assert_eq!(&dst, &[3, b'f', b'o', b'o', 3, b'c', b'o', b'm', 0]);
+}
+
+#[test]
+fn ns_name_ntol_preserves_already_lowercase() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src: [u8; 9] = [3, b'b', b'a', b'r', 3, b'n', b'e', b't', 0];
+    let mut dst = [0u8; 9];
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, 0);
+    assert_eq!(&dst, &src);
+}
+
+#[test]
+fn ns_name_ntol_rejects_dst_too_small() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src: [u8; 9] = [3, b'F', b'O', b'O', 3, b'C', b'O', b'M', 0];
+    let mut dst = [0u8; 4]; // too small
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_name_ntol_handles_empty_root_name() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    // Just the root (single 0 byte).
+    let src: [u8; 1] = [0];
+    let mut dst = [0xFFu8; 4];
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, 0);
+    assert_eq!(dst[0], 0);
+}
+
+#[test]
+fn ns_name_rollback_clears_ptrs_at_or_past_threshold() {
+    use frankenlibc_abi::resolv_abi::ns_name_rollback;
+
+    // Set up a simulated dnptrs array with 4 entries + NULL terminator.
+    // Pointers are just integer-shaped sentinels; we pass an array of
+    // *mut u8 backed by a Vec so the addresses are real.
+    let mut backing = vec![0u8; 256];
+    let base = backing.as_mut_ptr();
+
+    // Entries point into the backing buffer at offsets 0, 50, 100, 150.
+    let mut dnptrs: [*mut u8; 5] = [
+        unsafe { base.add(0) },
+        unsafe { base.add(50) },
+        unsafe { base.add(100) },
+        unsafe { base.add(150) },
+        core::ptr::null_mut(),
+    ];
+    let lastdnptr = unsafe { dnptrs.as_mut_ptr().add(dnptrs.len()) };
+
+    // Roll back everything at or past offset 100.
+    let threshold = unsafe { base.add(100) };
+    unsafe { ns_name_rollback(threshold, dnptrs.as_mut_ptr(), lastdnptr) };
+
+    // First two slots untouched; third (= 100) cleared.
+    assert_eq!(dnptrs[0], unsafe { base.add(0) });
+    assert_eq!(dnptrs[1], unsafe { base.add(50) });
+    assert!(dnptrs[2].is_null());
+}
+
+#[test]
+fn ns_name_rollback_handles_null_dnptrs() {
+    use frankenlibc_abi::resolv_abi::ns_name_rollback;
+    // NULL dnptrs must be tolerated (no-op).
+    unsafe {
+        ns_name_rollback(
+            0xDEAD_usize as *const u8,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+}

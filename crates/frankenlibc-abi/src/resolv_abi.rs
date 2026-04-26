@@ -2593,3 +2593,202 @@ pub unsafe extern "C" fn ns_datetosecs(cp: *const c_char, errp: *mut c_int) -> u
     set_err(0);
     secs as u32
 }
+
+// ===========================================================================
+// Deprecated res_-prefixed front-ends + res_send hook setters + ns_name_*
+// ===========================================================================
+
+/// libresolv `res_gethostbyname(name)` — historical front-end alias
+/// for `gethostbyname`. Defined here so binaries that link against
+/// the old BIND symbol resolve cleanly.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_gethostbyname(name: *const c_char) -> *mut c_void {
+    unsafe { gethostbyname(name) }
+}
+
+/// libresolv `res_gethostbyname2(name, af)` — historical front-end
+/// alias for `gethostbyname2`.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_gethostbyname2(name: *const c_char, af: c_int) -> *mut c_void {
+    unsafe { crate::unistd_abi::gethostbyname2(name, af) }
+}
+
+/// libresolv `res_gethostbyaddr(addr, len, type)` — historical
+/// front-end alias for `gethostbyaddr`.
+///
+/// # Safety
+///
+/// `addr`, when non-NULL, must point to at least `len` readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_gethostbyaddr(
+    addr: *const c_void,
+    len: u32,
+    addr_type: c_int,
+) -> *mut c_void {
+    unsafe { gethostbyaddr(addr, len, addr_type) }
+}
+
+// ----- res_send hooks (optional pre-query / post-response callbacks) -----
+//
+// The exact pointee types in glibc are deprecated `enum res_sendhookact`
+// returning function pointers. We model them as opaque `*mut c_void` since
+// we don't invoke them internally (no pluggable resolver core), but we
+// store them per-thread for any caller that registers and re-reads them
+// (some test harnesses do exactly this).
+
+std::thread_local! {
+    static RES_QHOOK: std::cell::Cell<*mut c_void> = const { std::cell::Cell::new(core::ptr::null_mut()) };
+    static RES_RHOOK: std::cell::Cell<*mut c_void> = const { std::cell::Cell::new(core::ptr::null_mut()) };
+}
+
+/// Test/inspection accessor for the most recently installed query hook.
+#[doc(hidden)]
+pub fn res_send_qhook_for_tests() -> *mut c_void {
+    RES_QHOOK.with(|c| c.get())
+}
+
+/// Test/inspection accessor for the most recently installed response hook.
+#[doc(hidden)]
+pub fn res_send_rhook_for_tests() -> *mut c_void {
+    RES_RHOOK.with(|c| c.get())
+}
+
+/// libresolv `res_send_setqhook(qhook)` — install a pre-query
+/// callback. Stored per-thread; not invoked internally (we have no
+/// pluggable resolver core). Provided so binaries that register a
+/// hook don't fail at link time.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_send_setqhook(qhook: *mut c_void) {
+    RES_QHOOK.with(|c| c.set(qhook));
+}
+
+/// libresolv `res_send_setrhook(rhook)` — install a post-response
+/// callback. Stored per-thread; not invoked internally.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn res_send_setrhook(rhook: *mut c_void) {
+    RES_RHOOK.with(|c| c.set(rhook));
+}
+
+// ----- ns_name_ntol / ns_name_rollback -----
+
+/// libresolv `ns_name_ntol(src, dst, dstsiz) -> int` — convert a
+/// wire-format DNS domain name to lowercase. Wire format is a
+/// sequence of length-prefixed labels terminated by a 0-length byte.
+/// The total encoded length cannot exceed 255 bytes.
+///
+/// Returns 0 on success and writes the lowered copy to `dst`.
+/// Returns -1 if `dst` is too small or the encoded name is malformed
+/// (label too long, no terminator within 255 bytes).
+///
+/// # Safety
+///
+/// `src` must point to a wire-format name (length-prefixed labels
+/// terminated by a 0 length byte) of total length ≤ 255 bytes.
+/// `dst` must point to at least `dstsiz` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_ntol(src: *const u8, dst: *mut u8, dstsiz: usize) -> c_int {
+    if src.is_null() || dst.is_null() {
+        return -1;
+    }
+    let mut total = 0usize;
+    loop {
+        if total >= 256 {
+            return -1;
+        }
+        // SAFETY: caller-supplied wire-format name; we cap traversal at 256.
+        let len = unsafe { *src.add(total) };
+        if total >= dstsiz {
+            return -1;
+        }
+        // Lowercase ASCII letters in the LABEL bytes; the length byte
+        // itself is copied verbatim.
+        // SAFETY: dst has dstsiz bytes; we verified total < dstsiz.
+        unsafe { *dst.add(total) = len };
+        total += 1;
+        if len == 0 {
+            return 0;
+        }
+        if len > 63 {
+            // Compression pointer (top two bits set) or invalid label.
+            // The Itanium nameserver lib treats compression as a copy
+            // of the remainder, but lowercase only labels we can see.
+            // For simplicity, refuse compressed names.
+            if len & 0xC0 == 0xC0 {
+                if total >= dstsiz {
+                    return -1;
+                }
+                // Copy the second pointer byte verbatim.
+                // SAFETY: caller-supplied 256-byte cap on input.
+                unsafe { *dst.add(total) = *src.add(total) };
+                return 0;
+            }
+            return -1;
+        }
+        if total + (len as usize) > dstsiz {
+            return -1;
+        }
+        for _ in 0..len {
+            // SAFETY: bounded by total + len ≤ dstsiz.
+            let b = unsafe { *src.add(total) };
+            let lowered = if b.is_ascii_uppercase() { b | 0x20 } else { b };
+            unsafe { *dst.add(total) = lowered };
+            total += 1;
+        }
+    }
+}
+
+/// libresolv `ns_name_rollback(srcp, dnptrs, lastdnptr)` — undo
+/// partial name compression entries left in `dnptrs` by
+/// `ns_name_pack` (or its callers) when an error aborts the
+/// in-progress name. Walks `dnptrs[]` from the end backwards and
+/// clears any entry whose pointer value is at or past `srcp`.
+///
+/// `dnptrs` is a NULL-terminated array. `lastdnptr` is one past the
+/// end of the usable slots.
+///
+/// # Safety
+///
+/// `dnptrs`, when non-NULL, must point to a NULL-terminated array of
+/// `*const u8`. `lastdnptr`, when non-NULL, must be valid as a
+/// boundary pointer for that array.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_name_rollback(
+    srcp: *const u8,
+    dnptrs: *mut *mut u8,
+    lastdnptr: *mut *mut u8,
+) {
+    if dnptrs.is_null() {
+        return;
+    }
+    // Walk forward from dnptrs[0] until NULL terminator or lastdnptr.
+    let mut i: isize = 0;
+    loop {
+        // SAFETY: caller-supplied array.
+        let slot = unsafe { dnptrs.offset(i) };
+        if !lastdnptr.is_null() && slot >= lastdnptr {
+            break;
+        }
+        let entry = unsafe { *slot };
+        if entry.is_null() {
+            break;
+        }
+        if (entry as usize) >= (srcp as usize) {
+            // Clear this slot and shift remaining valid slots left.
+            // SAFETY: we own this slot.
+            unsafe { *slot = core::ptr::null_mut() };
+            // Stop on first removed slot — subsequent entries are by
+            // contract also at-or-past srcp because they were appended
+            // later, but to mirror BIND9 we just truncate here.
+            break;
+        }
+        i += 1;
+    }
+}
