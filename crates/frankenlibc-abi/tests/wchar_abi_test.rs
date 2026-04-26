@@ -1491,3 +1491,106 @@ fn open_wmemstream_flushes_wide_buffer_and_reports_orientation() {
 
     unsafe { frankenlibc_abi::malloc_abi::free(buf.cast::<c_void>()) };
 }
+
+// ---------------------------------------------------------------------------
+// fgetwln (NetBSD libutil wide-char line reader)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fgetwln_reads_two_lines_then_eof() {
+    let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+    assert!(!stream.is_null());
+
+    let src: [libc::wchar_t; 14] = [
+        b'h' as libc::wchar_t,
+        b'i' as libc::wchar_t,
+        b'\n' as libc::wchar_t,
+        b'b' as libc::wchar_t,
+        b'y' as libc::wchar_t,
+        b'e' as libc::wchar_t,
+        b'\n' as libc::wchar_t,
+        b'l' as libc::wchar_t,
+        b'a' as libc::wchar_t,
+        b's' as libc::wchar_t,
+        b't' as libc::wchar_t,
+        0,
+        0,
+        0,
+    ];
+    assert_eq!(unsafe { fputws(src.as_ptr(), stream) }, 0);
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) },
+        0
+    );
+
+    // Line 1: "hi\n"
+    let mut len: usize = 0;
+    let p = unsafe { fgetwln(stream, &mut len) };
+    assert!(!p.is_null());
+    assert_eq!(len, 3);
+    let l1 = unsafe { std::slice::from_raw_parts(p, len) };
+    assert_eq!(l1[0], b'h' as libc::wchar_t);
+    assert_eq!(l1[1], b'i' as libc::wchar_t);
+    assert_eq!(l1[2], b'\n' as libc::wchar_t);
+
+    // Line 2: "bye\n"
+    let p2 = unsafe { fgetwln(stream, &mut len) };
+    assert!(!p2.is_null());
+    assert_eq!(len, 4);
+    let l2 = unsafe { std::slice::from_raw_parts(p2, len) };
+    assert_eq!(l2[0], b'b' as libc::wchar_t);
+    assert_eq!(l2[3], b'\n' as libc::wchar_t);
+
+    // Line 3: "last" (no trailing newline)
+    let p3 = unsafe { fgetwln(stream, &mut len) };
+    assert!(!p3.is_null());
+    assert_eq!(len, 4);
+    let l3 = unsafe { std::slice::from_raw_parts(p3, len) };
+    assert_eq!(l3[0], b'l' as libc::wchar_t);
+    assert_eq!(l3[3], b't' as libc::wchar_t);
+
+    // EOF: NULL + len cleared.
+    len = 999;
+    let p4 = unsafe { fgetwln(stream, &mut len) };
+    assert!(p4.is_null());
+    assert_eq!(len, 0);
+
+    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(stream) }, 0);
+}
+
+#[test]
+fn fgetwln_handles_null_stream() {
+    let mut len: usize = 999;
+    let p = unsafe { fgetwln(std::ptr::null_mut(), &mut len) };
+    assert!(p.is_null());
+    assert_eq!(len, 0);
+}
+
+#[test]
+fn fgetwln_accepts_null_lenp() {
+    let stream = unsafe { frankenlibc_abi::stdio_abi::tmpfile() };
+    assert!(!stream.is_null());
+
+    let src: [libc::wchar_t; 5] = [
+        b'h' as libc::wchar_t,
+        b'i' as libc::wchar_t,
+        b'\n' as libc::wchar_t,
+        0,
+        0,
+    ];
+    assert_eq!(unsafe { fputws(src.as_ptr(), stream) }, 0);
+    assert_eq!(
+        unsafe { frankenlibc_abi::stdio_abi::fseek(stream, 0, libc::SEEK_SET) },
+        0
+    );
+
+    let p = unsafe { fgetwln(stream, std::ptr::null_mut()) };
+    assert!(!p.is_null());
+    // We can still read the bytes; we just need to know the line ends with \n
+    // at index 2 (length = 3, but we can't observe length without lenp).
+    let s = unsafe { std::slice::from_raw_parts(p, 3) };
+    assert_eq!(s[0], b'h' as libc::wchar_t);
+    assert_eq!(s[2], b'\n' as libc::wchar_t);
+
+    assert_eq!(unsafe { frankenlibc_abi::stdio_abi::fclose(stream) }, 0);
+}

@@ -4727,3 +4727,89 @@ pub unsafe extern "C" fn __wcsftime_l(
     unsafe { *s.add(i) = 0 };
     i
 }
+
+// ===========================================================================
+// NetBSD libutil — fgetwln (wide-char counterpart of fgetln)
+// ===========================================================================
+//
+// `wchar_t * fgetwln(FILE * restrict stream, size_t * restrict lenp);`
+//
+// Reads the next line from `stream` (up to and including the trailing
+// L'\n', or to EOF) and returns a pointer into a thread-local buffer
+// plus the line length, in wide characters, via `*lenp`. Returns NULL
+// (with `*lenp = 0`) on EOF before any character is read or on error.
+//
+// The returned pointer remains valid until the next `fgetwln` call on
+// the same thread. The buffer is NOT NUL-terminated and callers MUST
+// NOT modify or `free()` it.
+//
+// Built atop our own `fgetwc`, which already handles UTF-8 decoding and
+// pushback of incomplete sequences.
+
+thread_local! {
+    static FGETWLN_BUFFER: std::cell::RefCell<Vec<libc::wchar_t>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// NetBSD libutil `fgetwln(stream, *lenp)` — wide-character line
+/// reader. See module-level comment for semantics.
+///
+/// # Safety
+///
+/// `stream` must be a valid `FILE *`. `lenp`, when non-NULL, must
+/// point to writable `size_t` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fgetwln(
+    stream: *mut std::ffi::c_void,
+    lenp: *mut usize,
+) -> *mut libc::wchar_t {
+    if stream.is_null() {
+        if !lenp.is_null() {
+            // SAFETY: caller-supplied writable slot.
+            unsafe { *lenp = 0 };
+        }
+        return std::ptr::null_mut();
+    }
+
+    let result = FGETWLN_BUFFER.with(|cell| -> Option<(*mut libc::wchar_t, usize)> {
+        let mut buf = cell.borrow_mut();
+        buf.clear();
+        loop {
+            // SAFETY: stream is a valid FILE* per caller; fgetwc handles
+            // UTF-8 decode and pushback of incomplete sequences.
+            let wc = unsafe { fgetwc(stream) };
+            if wc == WEOF_VALUE {
+                // EOF or decode error. If we already have characters,
+                // return them (last line without trailing newline).
+                if buf.is_empty() {
+                    return None;
+                }
+                break;
+            }
+            buf.push(wc as libc::wchar_t);
+            if wc == 0x0A {
+                break;
+            }
+        }
+        let ptr = buf.as_mut_ptr();
+        let n = buf.len();
+        Some((ptr, n))
+    });
+
+    match result {
+        Some((ptr, n)) => {
+            if !lenp.is_null() {
+                // SAFETY: caller-supplied writable slot.
+                unsafe { *lenp = n };
+            }
+            ptr
+        }
+        None => {
+            if !lenp.is_null() {
+                // SAFETY: caller-supplied writable slot.
+                unsafe { *lenp = 0 };
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
