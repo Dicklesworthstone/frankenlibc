@@ -7619,3 +7619,84 @@ pub unsafe extern "C" fn strsnvisx(
     }
     encoded.len() as c_int
 }
+
+// ---------------------------------------------------------------------------
+// stravis (NetBSD allocating strvis)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `stravis(outp, src, flags)` — allocate an output buffer
+/// large enough to hold the encoded form of `src`, fill it via
+/// [`strvis`], and store the pointer in `*outp`. Returns the encoded
+/// length (excluding the trailing NUL) on success, or -1 on NULL
+/// inputs / allocation failure. The caller is responsible for
+/// `free()`ing `*outp`.
+///
+/// # Safety
+///
+/// `outp`, when non-NULL, must point to a writable `*mut c_char`
+/// cell. `src` must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn stravis(
+    outp: *mut *mut c_char,
+    src: *const c_char,
+    flags: c_int,
+) -> c_int {
+    if outp.is_null() || src.is_null() {
+        return -1;
+    }
+    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    let needed = encoded.len() + 1;
+    let buf = unsafe { crate::malloc_abi::malloc(needed) } as *mut c_char;
+    if buf.is_null() {
+        unsafe { *outp = std::ptr::null_mut() };
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), buf as *mut u8, encoded.len());
+        *buf.add(encoded.len()) = 0;
+        *outp = buf;
+    }
+    encoded.len() as c_int
+}
+
+// ---------------------------------------------------------------------------
+// strnvis_netbsd / strnunvis_netbsd
+//
+// libbsd ships these as namespaced aliases for callers that want to
+// disambiguate against the FreeBSD/glibc `strnvis(dst, src, dlen,
+// flags)` argument order. Our existing `strnvis` and `strnunvis`
+// already use the NetBSD `(dst, dlen, src, ...)` order, so the
+// `_netbsd` aliases delegate directly.
+// ---------------------------------------------------------------------------
+
+/// libbsd `strnvis_netbsd(dst, dlen, src, flags)` — direct alias of
+/// our NetBSD-order [`strnvis`].
+///
+/// # Safety
+///
+/// Same as [`strnvis`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnvis_netbsd(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    flags: c_int,
+) -> c_int {
+    unsafe { strnvis(dst, dlen, src, flags) }
+}
+
+/// libbsd `strnunvis_netbsd(dst, dlen, src)` — direct alias of our
+/// NetBSD-order [`strnunvis`].
+///
+/// # Safety
+///
+/// Same as [`strnunvis`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnunvis_netbsd(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+) -> c_int {
+    unsafe { strnunvis(dst, dlen, src) }
+}

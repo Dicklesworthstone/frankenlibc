@@ -121,9 +121,12 @@ use frankenlibc_abi::stdio_abi::{
     stderr,
     stdin,
     stdout,
+    stravis,
     strnunvis,
+    strnunvis_netbsd,
     strnunvisx,
     strnvis,
+    strnvis_netbsd,
     strnvisx,
     strsnvis,
     strsnvisx,
@@ -4678,4 +4681,117 @@ fn strsvisx_null_args_return_minus_one() {
         unsafe { strsvisx(dst.as_mut_ptr(), std::ptr::null(), 2, 0, std::ptr::null()) },
         -1
     );
+}
+
+// ---------------------------------------------------------------------------
+// stravis (NetBSD allocating strvis)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stravis_allocates_buffer_matching_strvis_output() {
+    let src = c"hello\nworld\t!";
+    let mut outp: *mut c_char = std::ptr::null_mut();
+    let n = unsafe { stravis(&mut outp, src.as_ptr(), 0) };
+    assert!(n >= 0);
+    assert!(!outp.is_null());
+
+    // Compare against strvis output for the same input.
+    let mut ref_buf = [0 as c_char; 64];
+    let n_ref = unsafe { strvis(ref_buf.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(n, n_ref);
+    let alloc_bytes: Vec<u8> = (0..n as usize)
+        .map(|i| unsafe { *outp.add(i) } as u8)
+        .collect();
+    let ref_bytes: Vec<u8> = (0..n_ref as usize).map(|i| ref_buf[i] as u8).collect();
+    assert_eq!(alloc_bytes, ref_bytes);
+
+    // Trailing NUL.
+    assert_eq!(unsafe { *outp.add(n as usize) } as u8, 0);
+
+    // Free the allocated buffer via our matching free shim.
+    unsafe { frankenlibc_abi::malloc_abi::free(outp as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn stravis_handles_high_bit_bytes() {
+    // 0xff round-trips through encode/decode; verify the malloc'd
+    // buffer is sized correctly for the worst-case encoding.
+    let src = c"\xff\xff\xff";
+    let mut outp: *mut c_char = std::ptr::null_mut();
+    let n = unsafe { stravis(&mut outp, src.as_ptr(), 0) };
+    assert!(n >= 0);
+    assert!(!outp.is_null());
+    // Round-trip via strunvis.
+    let mut decoded = [0 as c_char; 16];
+    let m = unsafe { strunvis(decoded.as_mut_ptr(), outp) };
+    assert_eq!(m, 3);
+    let dec_bytes: Vec<u8> = (0..3).map(|i| decoded[i] as u8).collect();
+    assert_eq!(dec_bytes, vec![0xff, 0xff, 0xff]);
+    unsafe { frankenlibc_abi::malloc_abi::free(outp as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn stravis_empty_string_succeeds() {
+    let src = c"";
+    let mut outp: *mut c_char = std::ptr::null_mut();
+    let n = unsafe { stravis(&mut outp, src.as_ptr(), 0) };
+    assert_eq!(n, 0);
+    assert!(!outp.is_null());
+    // Just the NUL terminator.
+    assert_eq!(unsafe { *outp } as u8, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(outp as *mut std::ffi::c_void) };
+}
+
+#[test]
+fn stravis_null_outp_returns_minus_one() {
+    let src = c"x";
+    let n = unsafe { stravis(std::ptr::null_mut(), src.as_ptr(), 0) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn stravis_null_src_returns_minus_one() {
+    let mut outp: *mut c_char = std::ptr::null_mut();
+    let n = unsafe { stravis(&mut outp, std::ptr::null(), 0) };
+    assert_eq!(n, -1);
+}
+
+// ---------------------------------------------------------------------------
+// strnvis_netbsd / strnunvis_netbsd (libbsd disambiguation aliases)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn strnvis_netbsd_matches_strnvis() {
+    let src = c"control\t\n\x01char";
+    let mut a = [0 as c_char; 64];
+    let mut b = [0 as c_char; 64];
+    let na = unsafe { strnvis(a.as_mut_ptr(), a.len(), src.as_ptr(), 0) };
+    let nb = unsafe { strnvis_netbsd(b.as_mut_ptr(), b.len(), src.as_ptr(), 0) };
+    assert_eq!(na, nb);
+    assert!(na > 0);
+    let abytes: Vec<u8> = (0..na as usize).map(|i| a[i] as u8).collect();
+    let bbytes: Vec<u8> = (0..nb as usize).map(|i| b[i] as u8).collect();
+    assert_eq!(abytes, bbytes);
+}
+
+#[test]
+fn strnunvis_netbsd_matches_strnunvis() {
+    let src = c"\\^A\\042";
+    let mut a = [0 as c_char; 32];
+    let mut b = [0 as c_char; 32];
+    let na = unsafe { strnunvis(a.as_mut_ptr(), a.len(), src.as_ptr()) };
+    let nb = unsafe { strnunvis_netbsd(b.as_mut_ptr(), b.len(), src.as_ptr()) };
+    assert_eq!(na, nb);
+    assert!(na > 0);
+    let abytes: Vec<u8> = (0..na as usize).map(|i| a[i] as u8).collect();
+    let bbytes: Vec<u8> = (0..nb as usize).map(|i| b[i] as u8).collect();
+    assert_eq!(abytes, bbytes);
+}
+
+#[test]
+fn strnvis_netbsd_overflow_returns_minus_one() {
+    let src = c"hello, world";
+    let mut buf = [0 as c_char; 4];
+    let n = unsafe { strnvis_netbsd(buf.as_mut_ptr(), buf.len(), src.as_ptr(), 0) };
+    assert_eq!(n, -1);
 }
