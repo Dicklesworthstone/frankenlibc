@@ -3631,84 +3631,70 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 14,
+      "covered_symbols": 28,
       "milestone_beads": [],
       "module": "stdbit_abi",
       "recommended_bead": null,
       "severity": "high",
-      "severity_score": 5602,
+      "severity_score": 4202,
       "status_breakdown": {
         "Implemented": 70
       },
-      "target_coverage_pct": 20.0,
-      "target_covered": 14,
+      "target_coverage_pct": 40.0,
+      "target_covered": 28,
       "target_statuses": [
         "Implemented",
         "RawSyscall"
       ],
       "target_total": 70,
-      "target_uncovered": 56,
+      "target_uncovered": 42,
       "target_uncovered_symbols": [
         "stdc_bit_ceil_uc",
         "stdc_bit_ceil_ul",
-        "stdc_bit_ceil_ull",
         "stdc_bit_ceil_us",
         "stdc_bit_floor_uc",
         "stdc_bit_floor_ul",
-        "stdc_bit_floor_ull",
         "stdc_bit_floor_us",
         "stdc_bit_width_uc",
         "stdc_bit_width_ul",
-        "stdc_bit_width_ull",
         "stdc_bit_width_us",
         "stdc_count_ones_uc",
         "stdc_count_ones_ul",
-        "stdc_count_ones_ull",
         "stdc_count_ones_us",
         "stdc_count_zeros_uc",
         "stdc_count_zeros_ul",
-        "stdc_count_zeros_ull",
         "stdc_count_zeros_us",
         "stdc_first_leading_one_uc",
         "stdc_first_leading_one_ul",
-        "stdc_first_leading_one_ull",
         "stdc_first_leading_one_us",
         "stdc_first_leading_zero_uc",
         "stdc_first_leading_zero_ul",
-        "stdc_first_leading_zero_ull",
         "stdc_first_leading_zero_us",
         "stdc_first_trailing_one_uc",
         "stdc_first_trailing_one_ul",
-        "stdc_first_trailing_one_ull",
         "stdc_first_trailing_one_us",
         "stdc_first_trailing_zero_uc",
         "stdc_first_trailing_zero_ul",
-        "stdc_first_trailing_zero_ull",
         "stdc_first_trailing_zero_us",
         "stdc_has_single_bit_uc",
         "stdc_has_single_bit_ul",
-        "stdc_has_single_bit_ull",
         "stdc_has_single_bit_us",
         "stdc_leading_ones_uc",
         "stdc_leading_ones_ul",
-        "stdc_leading_ones_ull",
         "stdc_leading_ones_us",
         "stdc_leading_zeros_uc",
         "stdc_leading_zeros_ul",
-        "stdc_leading_zeros_ull",
         "stdc_leading_zeros_us",
         "stdc_trailing_ones_uc",
         "stdc_trailing_ones_ul",
-        "stdc_trailing_ones_ull",
         "stdc_trailing_ones_us",
         "stdc_trailing_zeros_uc",
         "stdc_trailing_zeros_ul",
-        "stdc_trailing_zeros_ull",
         "stdc_trailing_zeros_us"
       ],
       "total_symbols": 70,
       "track": "stdbit",
-      "uncovered_symbols": 56,
+      "uncovered_symbols": 42,
       "workload_blocked_count": 0,
       "workload_ids": []
     },
@@ -4769,9 +4755,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1127,
+    "fixture_json_cases": 1155,
     "fixture_json_files": 56,
-    "fixture_json_unique_functions": 327,
+    "fixture_json_unique_functions": 341,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4792,7 +4778,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 329
+    "unique_fixture_functions_total": 343
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -8278,63 +8264,49 @@
       "module": "stdbit_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_uncovered_count": 56,
+      "target_uncovered_count": 42,
       "target_uncovered_symbols": [
         "stdc_bit_ceil_uc",
         "stdc_bit_ceil_ul",
-        "stdc_bit_ceil_ull",
         "stdc_bit_ceil_us",
         "stdc_bit_floor_uc",
         "stdc_bit_floor_ul",
-        "stdc_bit_floor_ull",
         "stdc_bit_floor_us",
         "stdc_bit_width_uc",
         "stdc_bit_width_ul",
-        "stdc_bit_width_ull",
         "stdc_bit_width_us",
         "stdc_count_ones_uc",
         "stdc_count_ones_ul",
-        "stdc_count_ones_ull",
         "stdc_count_ones_us",
         "stdc_count_zeros_uc",
         "stdc_count_zeros_ul",
-        "stdc_count_zeros_ull",
         "stdc_count_zeros_us",
         "stdc_first_leading_one_uc",
         "stdc_first_leading_one_ul",
-        "stdc_first_leading_one_ull",
         "stdc_first_leading_one_us",
         "stdc_first_leading_zero_uc",
         "stdc_first_leading_zero_ul",
-        "stdc_first_leading_zero_ull",
         "stdc_first_leading_zero_us",
         "stdc_first_trailing_one_uc",
         "stdc_first_trailing_one_ul",
-        "stdc_first_trailing_one_ull",
         "stdc_first_trailing_one_us",
         "stdc_first_trailing_zero_uc",
         "stdc_first_trailing_zero_ul",
-        "stdc_first_trailing_zero_ull",
         "stdc_first_trailing_zero_us",
         "stdc_has_single_bit_uc",
         "stdc_has_single_bit_ul",
-        "stdc_has_single_bit_ull",
         "stdc_has_single_bit_us",
         "stdc_leading_ones_uc",
         "stdc_leading_ones_ul",
-        "stdc_leading_ones_ull",
         "stdc_leading_ones_us",
         "stdc_leading_zeros_uc",
         "stdc_leading_zeros_ul",
-        "stdc_leading_zeros_ull",
         "stdc_leading_zeros_us",
         "stdc_trailing_ones_uc",
         "stdc_trailing_ones_ul",
-        "stdc_trailing_ones_ull",
         "stdc_trailing_ones_us",
         "stdc_trailing_zeros_uc",
         "stdc_trailing_zeros_ul",
-        "stdc_trailing_zeros_ull",
         "stdc_trailing_zeros_us"
       ],
       "track": "stdbit",
@@ -8967,10 +8939,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 7.04,
-      "covered": 253,
+      "coverage_pct": 7.43,
+      "covered": 267,
       "total": 3592,
-      "uncovered": 3339
+      "uncovered": 3325
     },
     "RawSyscall": {
       "coverage_pct": 14.6,
@@ -8980,18 +8952,18 @@
     }
   },
   "summary": {
-    "coverage_pct": 7.81,
-    "covered_exported_symbols": 312,
-    "target_coverage_pct": 7.81,
-    "target_covered_symbols": 312,
+    "coverage_pct": 8.16,
+    "covered_exported_symbols": 326,
+    "target_coverage_pct": 8.16,
+    "target_covered_symbols": 326,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 3996,
-    "target_uncovered_symbols": 3684,
+    "target_uncovered_symbols": 3670,
     "total_exported_symbols": 3996,
-    "uncovered_exported_symbols": 3684,
+    "uncovered_exported_symbols": 3670,
     "uncovered_target_families": 7,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 30
@@ -48443,13 +48415,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -48521,13 +48501,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -48599,13 +48587,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -48677,13 +48673,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -48755,13 +48759,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -48833,13 +48845,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -48911,13 +48931,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -48989,13 +49017,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -49067,13 +49103,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -49145,13 +49189,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -49223,13 +49275,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -49301,13 +49361,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -49379,13 +49447,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -49457,13 +49533,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 2,
+      "fixture_families": [
+        "stdbit/ops"
+      ],
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "stdbit_abi",
       "perf_class": "unknown",
       "status": "Implemented",
@@ -70853,64 +70937,50 @@
       "module": "stdbit_abi",
       "recommended_bead": null,
       "severity": "high",
-      "target_coverage_pct": 20.0,
-      "target_uncovered_count": 56,
+      "target_coverage_pct": 40.0,
+      "target_uncovered_count": 42,
       "target_uncovered_symbols": [
         "stdc_bit_ceil_uc",
         "stdc_bit_ceil_ul",
-        "stdc_bit_ceil_ull",
         "stdc_bit_ceil_us",
         "stdc_bit_floor_uc",
         "stdc_bit_floor_ul",
-        "stdc_bit_floor_ull",
         "stdc_bit_floor_us",
         "stdc_bit_width_uc",
         "stdc_bit_width_ul",
-        "stdc_bit_width_ull",
         "stdc_bit_width_us",
         "stdc_count_ones_uc",
         "stdc_count_ones_ul",
-        "stdc_count_ones_ull",
         "stdc_count_ones_us",
         "stdc_count_zeros_uc",
         "stdc_count_zeros_ul",
-        "stdc_count_zeros_ull",
         "stdc_count_zeros_us",
         "stdc_first_leading_one_uc",
         "stdc_first_leading_one_ul",
-        "stdc_first_leading_one_ull",
         "stdc_first_leading_one_us",
         "stdc_first_leading_zero_uc",
         "stdc_first_leading_zero_ul",
-        "stdc_first_leading_zero_ull",
         "stdc_first_leading_zero_us",
         "stdc_first_trailing_one_uc",
         "stdc_first_trailing_one_ul",
-        "stdc_first_trailing_one_ull",
         "stdc_first_trailing_one_us",
         "stdc_first_trailing_zero_uc",
         "stdc_first_trailing_zero_ul",
-        "stdc_first_trailing_zero_ull",
         "stdc_first_trailing_zero_us",
         "stdc_has_single_bit_uc",
         "stdc_has_single_bit_ul",
-        "stdc_has_single_bit_ull",
         "stdc_has_single_bit_us",
         "stdc_leading_ones_uc",
         "stdc_leading_ones_ul",
-        "stdc_leading_ones_ull",
         "stdc_leading_ones_us",
         "stdc_leading_zeros_uc",
         "stdc_leading_zeros_ul",
-        "stdc_leading_zeros_ull",
         "stdc_leading_zeros_us",
         "stdc_trailing_ones_uc",
         "stdc_trailing_ones_ul",
-        "stdc_trailing_ones_ull",
         "stdc_trailing_ones_us",
         "stdc_trailing_zeros_uc",
         "stdc_trailing_zeros_ul",
-        "stdc_trailing_zeros_ull",
         "stdc_trailing_zeros_us"
       ],
       "track": "stdbit",

@@ -1,6 +1,6 @@
 //! C23 stdbit.h operation conformance test suite.
 //!
-//! Validates executable fixture coverage for representative unsigned-int bit operations.
+//! Validates executable fixture coverage for representative unsigned integer bit operations.
 //! Run: cargo test -p frankenlibc-harness --test stdbit_ops_conformance_test
 
 use frankenlibc_fixture_exec::execute_fixture_case;
@@ -99,35 +99,39 @@ fn stdbit_ops_fixture_valid_schema() -> Result<(), String> {
 }
 
 #[test]
-fn stdbit_ops_covers_unsigned_int_operations() -> Result<(), String> {
+fn stdbit_ops_covers_unsigned_integer_operations() -> Result<(), String> {
     let fixture = load_fixture()?;
     let functions: BTreeSet<&str> = fixture
         .cases
         .iter()
         .map(|case| case.function.as_str())
         .collect();
-    let required = [
-        "stdc_leading_zeros_ui",
-        "stdc_leading_ones_ui",
-        "stdc_trailing_zeros_ui",
-        "stdc_trailing_ones_ui",
-        "stdc_first_leading_zero_ui",
-        "stdc_first_leading_one_ui",
-        "stdc_first_trailing_zero_ui",
-        "stdc_first_trailing_one_ui",
-        "stdc_count_ones_ui",
-        "stdc_count_zeros_ui",
-        "stdc_has_single_bit_ui",
-        "stdc_bit_width_ui",
-        "stdc_bit_floor_ui",
-        "stdc_bit_ceil_ui",
+    let operations = [
+        "leading_zeros",
+        "leading_ones",
+        "trailing_zeros",
+        "trailing_ones",
+        "first_leading_zero",
+        "first_leading_one",
+        "first_trailing_zero",
+        "first_trailing_one",
+        "count_ones",
+        "count_zeros",
+        "has_single_bit",
+        "bit_width",
+        "bit_floor",
+        "bit_ceil",
     ];
+    let suffixes = ["ui", "ull"];
 
-    for function in required {
-        assert!(
-            functions.contains(function),
-            "missing stdbit unsigned-int fixture coverage for {function}"
-        );
+    for suffix in suffixes {
+        for operation in operations {
+            let function = format!("stdc_{operation}_{suffix}");
+            assert!(
+                functions.contains(function.as_str()),
+                "missing stdbit fixture coverage for {function}"
+            );
+        }
     }
 
     Ok(())
