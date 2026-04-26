@@ -2,7 +2,7 @@
 //!
 //! Covers: socket, bind, listen, connect, send, recv, shutdown,
 //! socketpair, getsockname, setsockopt, getsockopt, getpeername,
-//! sendto, recvfrom, sendmsg, recvmsg, accept, accept4.
+//! sendto, recvfrom, sendmsg, recvmsg, accept, accept4, getpeereid.
 
 #![allow(unsafe_code)]
 
@@ -1148,21 +1148,23 @@ fn getpeereid_returns_self_credentials_on_socketpair() {
 }
 
 #[test]
-fn getpeereid_null_outputs_silently_skip() {
+fn getpeereid_null_outputs_return_efault() {
     let mut sv = [0i32; 2];
     let rc =
         unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
     assert_eq!(rc, 0);
 
-    // NULL euid + NULL egid: must not segfault, must still return 0.
+    unsafe { *__errno_location() = 0 };
     let rc = unsafe { socket_abi::getpeereid(sv[0], std::ptr::null_mut(), std::ptr::null_mut()) };
-    assert_eq!(rc, 0);
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
 
-    // Mixed: NULL egid only.
-    let mut peer_uid: libc::uid_t = 0;
+    unsafe { *__errno_location() = 0 };
+    let mut peer_uid: libc::uid_t = u32::MAX;
     let rc = unsafe { socket_abi::getpeereid(sv[0], &mut peer_uid, std::ptr::null_mut()) };
-    assert_eq!(rc, 0);
-    assert_eq!(peer_uid, unsafe { libc::getuid() });
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+    assert_eq!(peer_uid, u32::MAX);
 
     unsafe {
         close_fd(sv[0]);

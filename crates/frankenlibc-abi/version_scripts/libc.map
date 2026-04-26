@@ -19,6 +19,8 @@ GLIBC_2.2.5 {
         program_invocation_name;
         program_invocation_short_name;
         __progname;
+        getprogname;
+        setprogname;
 
         /* string/memory operations */
         memcpy;
@@ -228,6 +230,7 @@ GLIBC_2.2.5 {
         free;
         calloc;
         realloc;
+        reallocf;
         aligned_alloc;
         memalign;
         posix_memalign;
@@ -1029,6 +1032,7 @@ GLIBC_2.2.5 {
         setsockopt;
         getsockopt;
         getpeername;
+        getpeereid;
         getsockname;
         socketpair;
 
@@ -1639,6 +1643,8 @@ GLIBC_2.2.5 {
         arc4random;
         arc4random_buf;
         arc4random_uniform;
+        arc4random_addrandom;
+        arc4random_stir;
 
         /* POSIX shared memory */
         shm_open;

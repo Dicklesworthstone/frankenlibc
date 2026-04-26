@@ -1273,6 +1273,93 @@ pub unsafe extern "C" fn ulckpwdf() -> c_int {
     0
 }
 
+// ---------------------------------------------------------------------------
+// uid_from_user / user_from_uid (BSD libutil pwcache)
+// ---------------------------------------------------------------------------
+//
+// BSD libutil "lookup or report" interface used by find(1), ls(1), du(1).
+// Thin wrappers over getpwnam/getpwuid; user_from_uid uses process-static
+// storage so callers can pass the returned pointer through printf without
+// copying.
+
+/// BSD `uid_from_user(name, uid)` — look up the uid for `name` and
+/// store it through `*uid`. Returns 0 on success, -1 if `name` is
+/// NULL or no matching user exists.
+///
+/// # Safety
+///
+/// `name` must be a valid NUL-terminated C string or NULL. `uid`,
+/// when non-NULL, must point to writable `uid_t` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn uid_from_user(name: *const c_char, uid: *mut libc::uid_t) -> c_int {
+    if name.is_null() {
+        return -1;
+    }
+    // SAFETY: caller-supplied C string.
+    let pw = unsafe { getpwnam(name) };
+    if pw.is_null() {
+        return -1;
+    }
+    if !uid.is_null() {
+        // SAFETY: pw is a valid passwd struct returned by our getpwnam,
+        // which uses process-static storage.
+        unsafe { *uid = (*pw).pw_uid };
+    }
+    0
+}
+
+/// BSD `user_from_uid(uid, nouser)` — return a pointer to a static
+/// C string with the username matching `uid`. If no user matches:
+/// * with `nouser == 0`, returns NULL;
+/// * with `nouser != 0`, formats `uid` as decimal ASCII into a
+///   process-static buffer and returns its pointer.
+///
+/// The returned pointer is owned by the runtime and remains valid
+/// until the next call to `user_from_uid` from any thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn user_from_uid(uid: libc::uid_t, nouser: c_int) -> *const c_char {
+    use std::sync::Mutex;
+    static FALLBACK: Mutex<[u8; 24]> = Mutex::new([0; 24]);
+
+    // SAFETY: getpwuid returns either NULL or a passwd in process-
+    // static storage owned by our pwd_abi machinery.
+    let pw = unsafe { getpwuid(uid) };
+    if !pw.is_null() {
+        // SAFETY: pw_name is a valid C string in the same static storage.
+        let name = unsafe { (*pw).pw_name };
+        if !name.is_null() {
+            return name as *const c_char;
+        }
+    }
+    if nouser == 0 {
+        return std::ptr::null();
+    }
+
+    // Render `uid` into the fallback buffer as decimal ASCII + NUL.
+    let mut guard = FALLBACK.lock().unwrap_or_else(|p| p.into_inner());
+    let buf: &mut [u8; 24] = &mut guard;
+    let mut tmp = [0u8; 23];
+    let mut len = 0usize;
+    let mut v = uid as u64;
+    if v == 0 {
+        tmp[0] = b'0';
+        len = 1;
+    } else {
+        while v > 0 {
+            tmp[len] = b'0' + (v % 10) as u8;
+            len += 1;
+            v /= 10;
+        }
+    }
+    for i in 0..len {
+        buf[i] = tmp[len - 1 - i];
+    }
+    buf[len] = 0;
+    let ptr = buf.as_ptr() as *const c_char;
+    drop(guard);
+    ptr
+}
+
 // Unit tests for this module are in tests/pwd_abi_test.rs.
 // This module is compiled with #[cfg(not(test))] in lib.rs, so internal
 // tests here would never run. The integration tests cover the public API.

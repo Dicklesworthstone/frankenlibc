@@ -805,3 +805,97 @@ fn hardened_mode_pwent_iteration_works() {
         assert_eq!(count, 3, "hardened mode: fixture has 3 entries");
     });
 }
+
+// ---------------------------------------------------------------------------
+// uid_from_user / user_from_uid (BSD libutil pwcache)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn uid_from_user_resolves_known_name() {
+    use frankenlibc_abi::pwd_abi::uid_from_user;
+    with_passwd_file(FIXTURE, || {
+        let name = CString::new("alice").unwrap();
+        let mut uid: libc::uid_t = u32::MAX;
+        let rc = unsafe { uid_from_user(name.as_ptr(), &mut uid) };
+        assert_eq!(rc, 0);
+        assert_eq!(uid, 1000);
+    });
+}
+
+#[test]
+fn uid_from_user_returns_minus_one_for_unknown() {
+    use frankenlibc_abi::pwd_abi::uid_from_user;
+    with_passwd_file(FIXTURE, || {
+        let name = CString::new("nosuchuser").unwrap();
+        let mut uid: libc::uid_t = 999;
+        let rc = unsafe { uid_from_user(name.as_ptr(), &mut uid) };
+        assert_eq!(rc, -1);
+        assert_eq!(uid, 999, "uid output must be untouched on failure");
+    });
+}
+
+#[test]
+fn uid_from_user_null_name_is_error() {
+    use frankenlibc_abi::pwd_abi::uid_from_user;
+    let mut uid: libc::uid_t = 0;
+    let rc = unsafe { uid_from_user(ptr::null(), &mut uid) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn uid_from_user_null_uid_pointer_skips_write() {
+    use frankenlibc_abi::pwd_abi::uid_from_user;
+    with_passwd_file(FIXTURE, || {
+        let name = CString::new("bob").unwrap();
+        let rc = unsafe { uid_from_user(name.as_ptr(), ptr::null_mut()) };
+        assert_eq!(rc, 0, "lookup must still succeed with NULL uid pointer");
+    });
+}
+
+#[test]
+fn user_from_uid_resolves_known_uid() {
+    use frankenlibc_abi::pwd_abi::user_from_uid;
+    with_passwd_file(FIXTURE, || {
+        let p = unsafe { user_from_uid(1000, 0) };
+        assert!(!p.is_null());
+        let bytes = unsafe { CStr::from_ptr(p).to_bytes() };
+        assert_eq!(bytes, b"alice");
+    });
+}
+
+#[test]
+fn user_from_uid_unknown_returns_null_when_nouser_zero() {
+    use frankenlibc_abi::pwd_abi::user_from_uid;
+    with_passwd_file(FIXTURE, || {
+        let p = unsafe { user_from_uid(99999, 0) };
+        assert!(p.is_null(), "missing uid + nouser=0 must return NULL");
+    });
+}
+
+#[test]
+fn user_from_uid_unknown_with_nouser_returns_decimal_string() {
+    use frankenlibc_abi::pwd_abi::user_from_uid;
+    with_passwd_file(FIXTURE, || {
+        let p = unsafe { user_from_uid(424242, 1) };
+        assert!(
+            !p.is_null(),
+            "nouser=1 must always return a non-NULL pointer"
+        );
+        let bytes = unsafe { CStr::from_ptr(p).to_bytes() };
+        assert_eq!(bytes, b"424242");
+    });
+}
+
+#[test]
+fn user_from_uid_zero_with_nouser_renders_zero() {
+    use frankenlibc_abi::pwd_abi::user_from_uid;
+    // Use a fixture that does NOT have uid=0 so the fallback path triggers.
+    let no_root: &[u8] =
+        b"alice:x:1000:1000:Alice:/home/alice:/bin/sh\nbob:x:1001:1001:Bob:/home/bob:/bin/zsh\n";
+    with_passwd_file(no_root, || {
+        let p = unsafe { user_from_uid(0, 1) };
+        assert!(!p.is_null());
+        let bytes = unsafe { CStr::from_ptr(p).to_bytes() };
+        assert_eq!(bytes, b"0");
+    });
+}

@@ -613,6 +613,90 @@ pub unsafe extern "C" fn getgrent_r(
     })
 }
 
+// ---------------------------------------------------------------------------
+// gid_from_group / group_from_gid (BSD libutil pwcache)
+// ---------------------------------------------------------------------------
+//
+// Mirrors of uid_from_user / user_from_uid (pwd_abi), wrapping
+// getgrnam/getgrgid with the same "lookup or report" interface used
+// by ls -l, find -group, etc.
+
+/// BSD `gid_from_group(name, gid)` — look up the gid for `name` and
+/// store it through `*gid`. Returns 0 on success, -1 if `name` is
+/// NULL or no matching group exists.
+///
+/// # Safety
+///
+/// `name` must be a valid NUL-terminated C string or NULL. `gid`,
+/// when non-NULL, must point to writable `gid_t` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn gid_from_group(name: *const c_char, gid: *mut libc::gid_t) -> c_int {
+    if name.is_null() {
+        return -1;
+    }
+    // SAFETY: caller-supplied C string.
+    let g = unsafe { getgrnam(name) };
+    if g.is_null() {
+        return -1;
+    }
+    if !gid.is_null() {
+        // SAFETY: g is a valid group struct returned by our getgrnam.
+        unsafe { *gid = (*g).gr_gid };
+    }
+    0
+}
+
+/// BSD `group_from_gid(gid, nogroup)` — return a pointer to a static
+/// C string with the group name matching `gid`. If no group matches:
+/// * with `nogroup == 0`, returns NULL;
+/// * with `nogroup != 0`, formats `gid` as decimal ASCII into a
+///   process-static buffer and returns its pointer.
+///
+/// The returned pointer is owned by the runtime and remains valid
+/// until the next call to `group_from_gid` from any thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn group_from_gid(gid: libc::gid_t, nogroup: c_int) -> *const c_char {
+    use std::sync::Mutex;
+    static FALLBACK: Mutex<[u8; 24]> = Mutex::new([0; 24]);
+
+    // SAFETY: getgrgid returns either NULL or a group in process-
+    // static storage owned by our grp_abi machinery.
+    let g = unsafe { getgrgid(gid) };
+    if !g.is_null() {
+        // SAFETY: gr_name is a valid C string in the same static storage.
+        let name = unsafe { (*g).gr_name };
+        if !name.is_null() {
+            return name as *const c_char;
+        }
+    }
+    if nogroup == 0 {
+        return std::ptr::null();
+    }
+
+    let mut guard = FALLBACK.lock().unwrap_or_else(|p| p.into_inner());
+    let buf: &mut [u8; 24] = &mut guard;
+    let mut tmp = [0u8; 23];
+    let mut len = 0usize;
+    let mut v = gid as u64;
+    if v == 0 {
+        tmp[0] = b'0';
+        len = 1;
+    } else {
+        while v > 0 {
+            tmp[len] = b'0' + (v % 10) as u8;
+            len += 1;
+            v /= 10;
+        }
+    }
+    for i in 0..len {
+        buf[i] = tmp[len - 1 - i];
+    }
+    buf[len] = 0;
+    let ptr = buf.as_ptr() as *const c_char;
+    drop(guard);
+    ptr
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

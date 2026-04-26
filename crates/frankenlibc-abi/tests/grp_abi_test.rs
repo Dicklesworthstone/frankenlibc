@@ -804,3 +804,87 @@ fn hardened_mode_grent_iteration_works() {
         assert_eq!(count, 3, "hardened mode: fixture has 3 entries");
     });
 }
+
+// ---------------------------------------------------------------------------
+// gid_from_group / group_from_gid (BSD libutil pwcache)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gid_from_group_resolves_known_name() {
+    with_mode_and_group("strict", GROUP_FIXTURE, || {
+        let name = CString::new("users").unwrap();
+        let mut gid: libc::gid_t = u32::MAX;
+        let rc = unsafe { gid_from_group(name.as_ptr(), &mut gid) };
+        assert_eq!(rc, 0);
+        assert_eq!(gid, 100);
+    });
+}
+
+#[test]
+fn gid_from_group_returns_minus_one_for_unknown() {
+    with_mode_and_group("strict", GROUP_FIXTURE, || {
+        let name = CString::new("nosuchgroup").unwrap();
+        let mut gid: libc::gid_t = 999;
+        let rc = unsafe { gid_from_group(name.as_ptr(), &mut gid) };
+        assert_eq!(rc, -1);
+        assert_eq!(gid, 999, "gid output must be untouched on failure");
+    });
+}
+
+#[test]
+fn gid_from_group_null_name_is_error() {
+    let mut gid: libc::gid_t = 0;
+    let rc = unsafe { gid_from_group(std::ptr::null(), &mut gid) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn gid_from_group_null_gid_pointer_skips_write() {
+    with_mode_and_group("strict", GROUP_FIXTURE, || {
+        let name = CString::new("admins").unwrap();
+        let rc = unsafe { gid_from_group(name.as_ptr(), std::ptr::null_mut()) };
+        assert_eq!(rc, 0, "lookup must still succeed with NULL gid pointer");
+    });
+}
+
+#[test]
+fn group_from_gid_resolves_known_gid() {
+    with_mode_and_group("strict", GROUP_FIXTURE, || {
+        let p = unsafe { group_from_gid(100, 0) };
+        assert!(!p.is_null());
+        let bytes = unsafe { CStr::from_ptr(p).to_bytes() };
+        assert_eq!(bytes, b"users");
+    });
+}
+
+#[test]
+fn group_from_gid_unknown_returns_null_when_nogroup_zero() {
+    with_mode_and_group("strict", GROUP_FIXTURE, || {
+        let p = unsafe { group_from_gid(99999, 0) };
+        assert!(p.is_null(), "missing gid + nogroup=0 must return NULL");
+    });
+}
+
+#[test]
+fn group_from_gid_unknown_with_nogroup_returns_decimal_string() {
+    with_mode_and_group("strict", GROUP_FIXTURE, || {
+        let p = unsafe { group_from_gid(424242, 1) };
+        assert!(
+            !p.is_null(),
+            "nogroup=1 must always return a non-NULL pointer"
+        );
+        let bytes = unsafe { CStr::from_ptr(p).to_bytes() };
+        assert_eq!(bytes, b"424242");
+    });
+}
+
+#[test]
+fn group_from_gid_zero_with_nogroup_renders_zero() {
+    let no_root: &[u8] = b"users:x:100:alice,bob\nadmins:x:999:alice\n";
+    with_mode_and_group("strict", no_root, || {
+        let p = unsafe { group_from_gid(0, 1) };
+        assert!(!p.is_null());
+        let bytes = unsafe { CStr::from_ptr(p).to_bytes() };
+        assert_eq!(bytes, b"0");
+    });
+}

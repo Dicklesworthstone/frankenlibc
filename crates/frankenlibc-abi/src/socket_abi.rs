@@ -746,8 +746,7 @@ pub unsafe extern "C" fn accept4(
 /// into `*euid` / `*egid` and returns 0 on success; on failure
 /// returns -1 and sets errno per `getsockopt(SO_PEERCRED)`.
 ///
-/// `euid` and `egid` may be NULL — the corresponding field is then
-/// silently skipped (matches NetBSD/FreeBSD `getpeereid(3)`).
+/// `euid` and `egid` must both be non-NULL writable output pointers.
 ///
 /// # Safety
 ///
@@ -760,36 +759,57 @@ pub unsafe extern "C" fn getpeereid(
     euid: *mut libc::uid_t,
     egid: *mut libc::gid_t,
 ) -> c_int {
-    // libc::ucred layout matches the kernel's `struct ucred`. We can't
-    // construct it via raw_syscall::sys_getsockopt because that one
-    // takes a *mut u8; instead route through the abi getsockopt shim
-    // which we already export and validate.
+    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, s as usize, 0, true, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
     let mut cred: libc::ucred = libc::ucred {
         pid: 0,
         uid: 0,
         gid: 0,
     };
     let mut len: u32 = std::mem::size_of::<libc::ucred>() as u32;
-    let rc = unsafe {
-        getsockopt(
+    let (rc, adverse) = match unsafe {
+        raw_syscall::sys_getsockopt(
             s,
             libc::SOL_SOCKET,
             libc::SO_PEERCRED,
-            (&mut cred as *mut libc::ucred).cast::<c_void>(),
+            (&mut cred as *mut libc::ucred).cast::<u8>(),
             &mut len,
         )
+    } {
+        Ok(()) => (0, false),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            (-1, true)
+        }
     };
     if rc != 0 {
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 10, adverse);
         return rc;
     }
 
-    if !euid.is_null() {
-        // SAFETY: caller-supplied writable slot.
-        unsafe { *euid = cred.uid };
+    if len < std::mem::size_of::<libc::ucred>() as u32 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 10, true);
+        return -1;
     }
-    if !egid.is_null() {
-        // SAFETY: caller-supplied writable slot.
-        unsafe { *egid = cred.gid };
+
+    if euid.is_null() || egid.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
     }
+
+    // SAFETY: both output pointers were checked for NULL above; the C caller
+    // contract requires writable uid_t/gid_t storage.
+    unsafe {
+        *euid = cred.uid;
+        *egid = cred.gid;
+    }
+    runtime_policy::observe(ApiFamily::Socket, decision.profile, 10, false);
     0
 }
