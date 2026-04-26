@@ -3191,17 +3191,6 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
     libc::EOF
 }
-// __pipe: native syscall
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pipe(pipefd: *mut c_int) -> c_int {
-    match unsafe { raw_syscall::sys_pipe2(pipefd, 0) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
-}
 // __poll: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __poll(fds: *mut c_void, nfds: c_ulong, timeout: c_int) -> c_int {
@@ -3984,8 +3973,6 @@ pub static mut _sys_errlist: *const *const c_char = std::ptr::null();
 pub static mut sys_errlist: *const *const c_char = std::ptr::null();
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut _sys_siglist: *const *const c_char = std::ptr::null();
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut sys_siglist: *const *const c_char = std::ptr::null();
 // h_errlist is defined below as a populated array
 
 // ==========================================================================

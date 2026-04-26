@@ -269,6 +269,10 @@ GLIBC_2.2.5 {
         strtold;
         qsort;
         bsearch;
+        mergesort;
+        heapsort;
+        radixsort;
+        sradixsort;
         getenv;
         setenv;
         unsetenv;
@@ -316,6 +320,17 @@ GLIBC_2.2.5 {
         gnu_get_libc_release;
         confstr;
         getbsize;
+        strtonum;
+        dehumanize_number;
+        expand_number;
+        humanize_number;
+        setmode;
+        getmode;
+        pidfile_open;
+        pidfile_write;
+        pidfile_close;
+        pidfile_remove;
+        pidfile_fileno;
 
         /* ctype internal */
         __ctype_b_loc;
@@ -385,6 +400,8 @@ GLIBC_2.2.5 {
         fmemopen;
         open_memstream;
         fopencookie;
+        fgetln;
+        fparseln;
 
         /* stdio */
         printf;
@@ -1099,6 +1116,8 @@ GLIBC_2.2.5 {
         truncate;
         ftruncate;
         flock;
+        flopen;
+        flopenat;
         stat;
         lstat;
         fstat;
