@@ -4541,3 +4541,162 @@ fn under_pthread_create_null_args_return_einval() {
     };
     assert_eq!(rc, libc::EINVAL);
 }
+
+// ---------------------------------------------------------------------------
+// Glibc reserved-namespace aliases:
+// __pthread_cond_wait / __pthread_cond_signal / __pthread_cond_broadcast
+// __pthread_kill / __pthread_key_delete
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_pthread_cond_signal_wakes_waiter() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static AWAKE: AtomicBool = AtomicBool::new(false);
+    static READY: AtomicBool = AtomicBool::new(false);
+
+    let cond = Box::leak(Box::new(unsafe {
+        std::mem::zeroed::<libc::pthread_cond_t>()
+    }));
+    let mutex = Box::leak(Box::new(unsafe {
+        std::mem::zeroed::<libc::pthread_mutex_t>()
+    }));
+
+    unsafe {
+        assert_eq!(pthread_cond_init(cond, std::ptr::null()), 0);
+        assert_eq!(pthread_mutex_init(mutex, std::ptr::null()), 0);
+    }
+
+    AWAKE.store(false, Ordering::SeqCst);
+    READY.store(false, Ordering::SeqCst);
+
+    let cond_addr = cond as *mut _ as usize;
+    let mutex_addr = mutex as *mut _ as usize;
+
+    let waiter = std::thread::spawn(move || {
+        let cond = cond_addr as *mut libc::pthread_cond_t;
+        let mutex = mutex_addr as *mut libc::pthread_mutex_t;
+        unsafe {
+            assert_eq!(pthread_mutex_lock(mutex), 0);
+            READY.store(true, Ordering::SeqCst);
+            // Use the alias on the wait side to exercise it.
+            assert_eq!(__pthread_cond_wait(cond, mutex), 0);
+            AWAKE.store(true, Ordering::SeqCst);
+            assert_eq!(pthread_mutex_unlock(mutex), 0);
+        }
+    });
+
+    // Wait for waiter to enter the cond_wait.
+    while !READY.load(Ordering::SeqCst) {
+        std::thread::yield_now();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    // Signal via the alias.
+    unsafe {
+        assert_eq!(pthread_mutex_lock(mutex), 0);
+        assert_eq!(__pthread_cond_signal(cond), 0);
+        assert_eq!(pthread_mutex_unlock(mutex), 0);
+    }
+
+    waiter.join().expect("waiter thread should join");
+    assert!(AWAKE.load(Ordering::SeqCst), "waiter must have been woken");
+
+    unsafe {
+        pthread_cond_destroy(cond);
+        pthread_mutex_destroy(mutex);
+    }
+}
+
+#[test]
+fn under_pthread_cond_broadcast_wakes_all_waiters() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static AWAKE: AtomicUsize = AtomicUsize::new(0);
+    static READY: AtomicUsize = AtomicUsize::new(0);
+
+    let cond = Box::leak(Box::new(unsafe {
+        std::mem::zeroed::<libc::pthread_cond_t>()
+    }));
+    let mutex = Box::leak(Box::new(unsafe {
+        std::mem::zeroed::<libc::pthread_mutex_t>()
+    }));
+
+    unsafe {
+        assert_eq!(pthread_cond_init(cond, std::ptr::null()), 0);
+        assert_eq!(pthread_mutex_init(mutex, std::ptr::null()), 0);
+    }
+
+    AWAKE.store(0, Ordering::SeqCst);
+    READY.store(0, Ordering::SeqCst);
+
+    let cond_addr = cond as *mut _ as usize;
+    let mutex_addr = mutex as *mut _ as usize;
+    const N: usize = 3;
+
+    let waiters: Vec<_> = (0..N)
+        .map(|_| {
+            std::thread::spawn(move || {
+                let cond = cond_addr as *mut libc::pthread_cond_t;
+                let mutex = mutex_addr as *mut libc::pthread_mutex_t;
+                unsafe {
+                    assert_eq!(pthread_mutex_lock(mutex), 0);
+                    READY.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(pthread_cond_wait(cond, mutex), 0);
+                    AWAKE.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(pthread_mutex_unlock(mutex), 0);
+                }
+            })
+        })
+        .collect();
+
+    while READY.load(Ordering::SeqCst) < N {
+        std::thread::yield_now();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    unsafe {
+        assert_eq!(pthread_mutex_lock(mutex), 0);
+        assert_eq!(__pthread_cond_broadcast(cond), 0);
+        assert_eq!(pthread_mutex_unlock(mutex), 0);
+    }
+
+    for w in waiters {
+        w.join().expect("waiter thread should join");
+    }
+    assert_eq!(
+        AWAKE.load(Ordering::SeqCst),
+        N,
+        "broadcast should wake all N waiters"
+    );
+
+    unsafe {
+        pthread_cond_destroy(cond);
+        pthread_mutex_destroy(mutex);
+    }
+}
+
+#[test]
+fn under_pthread_kill_signal_zero_returns_zero_for_self() {
+    // Signal 0 is the existence/permission probe — must return 0
+    // when the target thread exists.
+    let me = unsafe { pthread_self() };
+    let rc = unsafe { __pthread_kill(me, 0) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_pthread_kill_invalid_signum_returns_einval() {
+    let me = unsafe { pthread_self() };
+    let rc = unsafe { __pthread_kill(me, 65) };
+    assert_eq!(rc, libc::EINVAL);
+}
+
+#[test]
+fn under_pthread_key_delete_freshly_created_key_returns_zero() {
+    let mut key: libc::pthread_key_t = 0;
+    let rc = unsafe { pthread_key_create(&mut key, None) };
+    assert_eq!(rc, 0);
+    let rc = unsafe { __pthread_key_delete(key) };
+    assert_eq!(rc, 0);
+}

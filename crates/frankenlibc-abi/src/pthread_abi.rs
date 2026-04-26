@@ -2643,6 +2643,40 @@ pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut libc::pthread_cond_t)
     unsafe { core_condvar_broadcast(cond_ptr) }
 }
 
+/// glibc reserved-namespace alias for [`pthread_cond_wait`]. libstdc++
+/// std::condition_variable links against this name.
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_wait`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_wait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+) -> c_int {
+    unsafe { pthread_cond_wait(cond, mutex) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_signal`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_signal`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_signal(cond: *mut libc::pthread_cond_t) -> c_int {
+    unsafe { pthread_cond_signal(cond) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_broadcast`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_broadcast`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_broadcast(cond: *mut libc::pthread_cond_t) -> c_int {
+    unsafe { pthread_cond_broadcast(cond) }
+}
+
 // ===========================================================================
 // Reader-writer lock operations
 // ===========================================================================
@@ -2922,6 +2956,17 @@ pub unsafe extern "C" fn pthread_key_delete(key: libc::pthread_key_t) -> c_int {
         },
         || core_pthread_key_delete(PthreadKey { id: key }),
     )
+}
+
+/// glibc reserved-namespace alias for [`pthread_key_delete`]. TSD
+/// destructor cleanup paths in libstdc++ link against this name.
+///
+/// # Safety
+///
+/// Same as [`pthread_key_delete`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_key_delete(key: libc::pthread_key_t) -> c_int {
+    unsafe { pthread_key_delete(key) }
 }
 
 /// POSIX `pthread_getspecific`.
@@ -5659,6 +5704,16 @@ pub unsafe extern "C" fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_
         }
         None => libc::ESRCH,
     }
+}
+
+/// glibc reserved-namespace alias for [`pthread_kill`].
+///
+/// # Safety
+///
+/// Same as [`pthread_kill`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_int {
+    unsafe { pthread_kill(thread, sig) }
 }
 
 /// GNU `pthread_sigqueue` — queue signal with value to thread.
