@@ -94,6 +94,7 @@ use frankenlibc_abi::stdio_abi::{
     getw,
     init_host_stdio_streams_for_tests,
     mktemp,
+    nvis,
     // Newly tested:
     open_memstream,
     pclose,
@@ -129,6 +130,7 @@ use frankenlibc_abi::stdio_abi::{
     tmpnam,
     ungetc,
     vasprintf,
+    vis,
 };
 
 const IOFBF: i32 = 0;
@@ -4004,4 +4006,101 @@ fn strunvis_null_args_return_minus_one() {
     let mut buf = vis_buf::<8>();
     assert_eq!(unsafe { strunvis(std::ptr::null_mut(), src.as_ptr()) }, -1);
     assert_eq!(unsafe { strunvis(buf.as_mut_ptr(), std::ptr::null()) }, -1);
+}
+
+// ---------------------------------------------------------------------------
+// vis / nvis (NetBSD vis(3) single-byte encoders)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn vis_encodes_printable_byte() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), b'A' as c_int, 0, 0) };
+    assert!(!end.is_null());
+    let written = unsafe { end.offset_from(buf.as_ptr()) };
+    assert_eq!(written, 1);
+    assert_eq!(buf[0], b'A' as c_char);
+    assert_eq!(buf[1], 0);
+}
+
+#[test]
+fn vis_encodes_control_as_caret_escape() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0x01, 0, 0) };
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\^A");
+}
+
+#[test]
+fn vis_encodes_with_octal_flag() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0xff, 0x01, 0) }; // VIS_OCTAL
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\377");
+}
+
+#[test]
+fn vis_returns_pointer_to_trailing_nul() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0xff, 0x01, 0) };
+    assert!(!end.is_null());
+    // The byte at `end` must be the NUL terminator.
+    assert_eq!(unsafe { *end }, 0);
+}
+
+#[test]
+fn vis_null_dst_returns_null() {
+    let p = unsafe { vis(std::ptr::null_mut(), b'A' as c_int, 0, 0) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn nvis_writes_when_dlen_sufficient() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { nvis(buf.as_mut_ptr(), buf.len(), b'A' as c_int, 0, 0) };
+    assert!(!end.is_null());
+    assert_eq!(buf[0], b'A' as c_char);
+}
+
+#[test]
+fn nvis_returns_null_when_dlen_too_small() {
+    let mut buf = [0 as c_char; 2]; // octal needs 4 bytes + NUL
+    let end = unsafe { nvis(buf.as_mut_ptr(), buf.len(), 0xff, 0x01, 0) };
+    assert!(end.is_null());
+}
+
+#[test]
+fn nvis_returns_null_for_zero_dlen() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { nvis(buf.as_mut_ptr(), 0, b'A' as c_int, 0, 0) };
+    assert!(end.is_null());
+}
+
+#[test]
+fn nvis_null_dst_returns_null() {
+    let p = unsafe { nvis(std::ptr::null_mut(), 16, b'A' as c_int, 0, 0) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn vis_handles_high_bit_via_meta_prefix() {
+    let mut buf = [0 as c_char; 8];
+    let end = unsafe { vis(buf.as_mut_ptr(), 0xc1, 0, 0) }; // \M-A
+    assert!(!end.is_null());
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(bytes, b"\\M-A");
 }
