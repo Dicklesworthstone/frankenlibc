@@ -5906,6 +5906,62 @@ fn cxa_throw_bad_array_new_length_aborts_child_process() {
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
 }
 
+#[test]
+fn cxa_call_unexpected_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_call_unexpected;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_call_unexpected(std::ptr::null_mut()) };
+        // Unreachable.
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_get_globals_returns_stable_per_thread_pointer() {
+    use frankenlibc_abi::unistd_abi::{__cxa_get_globals, __cxa_get_globals_fast};
+
+    // Same thread → same pointer across calls.
+    let a = unsafe { __cxa_get_globals() };
+    let b = unsafe { __cxa_get_globals() };
+    assert!(!a.is_null());
+    assert_eq!(a, b);
+
+    // _fast variant returns the same pointer as the regular form.
+    let c = unsafe { __cxa_get_globals_fast() };
+    assert_eq!(a, c);
+
+    // Counter is initially 0 (uncaughtExceptions starts at 0).
+    let g = unsafe { &*a };
+    assert_eq!(g.uncaught_exceptions, 0);
+    assert!(g.caught_exceptions.is_null());
+}
+
+#[test]
+fn cxa_get_globals_returns_distinct_pointers_per_thread() {
+    use frankenlibc_abi::unistd_abi::__cxa_get_globals;
+
+    let main_ptr = unsafe { __cxa_get_globals() };
+    assert!(!main_ptr.is_null());
+
+    let main_addr = main_ptr as usize;
+    let other_addr = std::thread::spawn(|| unsafe { __cxa_get_globals() } as usize)
+        .join()
+        .unwrap();
+    assert_ne!(
+        main_addr, other_addr,
+        "different threads must observe distinct __cxa_eh_globals storage"
+    );
+}
+
 // ===========================================================================
 // __dso_handle (Itanium C++ ABI per-DSO handle)
 // ===========================================================================

@@ -10822,6 +10822,74 @@ pub unsafe extern "C" fn __cxa_throw_bad_array_new_length() -> ! {
     }
 }
 
+/// Itanium C++ ABI `__cxa_call_unexpected(exception_obj)` — entry
+/// point invoked when a thrown exception does not match the
+/// dynamic exception specification of the function it would
+/// propagate through. Per ABI it should call `std::unexpected`
+/// (which by default calls `std::terminate`). With no real
+/// exception runtime we mirror [`__cxa_pure_virtual`]'s
+/// fail-stop convention: write a diagnostic to stderr and abort.
+///
+/// The `_exception_obj` argument (a pointer to the in-flight
+/// exception's runtime info) is consumed and ignored.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_call_unexpected(_exception_obj: *mut c_void) -> ! {
+    let msg: &[u8] =
+        b"terminate called after throwing an instance violating exception specification\n";
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+        libc::abort();
+    }
+}
+
+/// Itanium C++ ABI `__cxa_eh_globals` — per-thread exception
+/// state struct. We expose only the two fields callers can
+/// legally inspect (`caughtExceptions` head pointer and the
+/// `uncaughtExceptions` counter). Both are zero-initialized; with
+/// no exception runtime in play, callers that read the counter
+/// (e.g. `std::uncaught_exceptions()`) get a coherent answer of 0.
+#[repr(C)]
+#[derive(Default)]
+pub struct CxaEhGlobals {
+    pub caught_exceptions: *mut c_void,
+    pub uncaught_exceptions: u32,
+}
+
+std::thread_local! {
+    /// Per-thread storage for `__cxa_get_globals` / `__cxa_get_globals_fast`.
+    /// `UnsafeCell` is not needed because callers receive a `*mut`
+    /// pointer to the thread-local — they own all writes.
+    static CXA_EH_GLOBALS: std::cell::UnsafeCell<CxaEhGlobals> = const {
+        std::cell::UnsafeCell::new(CxaEhGlobals {
+            caught_exceptions: core::ptr::null_mut(),
+            uncaught_exceptions: 0,
+        })
+    };
+}
+
+fn cxa_eh_globals_ptr() -> *mut CxaEhGlobals {
+    CXA_EH_GLOBALS.with(|cell| cell.get())
+}
+
+/// Itanium C++ ABI `__cxa_get_globals()` — return the calling
+/// thread's `__cxa_eh_globals` pointer, allocating it on first
+/// call. We back this with a `thread_local!` cell so the pointer
+/// is stable for the thread's lifetime.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_get_globals() -> *mut CxaEhGlobals {
+    cxa_eh_globals_ptr()
+}
+
+/// Itanium C++ ABI `__cxa_get_globals_fast()` — same as
+/// [`__cxa_get_globals`] but the spec allows it to assume the
+/// per-thread storage has already been allocated. Our
+/// `thread_local!` initialization is unconditional, so the two
+/// entry points are functionally identical.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_get_globals_fast() -> *mut CxaEhGlobals {
+    cxa_eh_globals_ptr()
+}
+
 /// Stack canary value, initialized from AT_RANDOM for proper randomization.
 ///
 /// The low byte is forced to 0x00 (NUL terminator) to prevent string-based
