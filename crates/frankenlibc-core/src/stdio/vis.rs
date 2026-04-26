@@ -46,6 +46,56 @@ pub const VIS_NL: u32 = 0x10;
 /// ignored in v1.
 pub const VIS_CSTYLE: u32 = 0x20;
 
+/// Parse a NetBSD `VIS_OPTIONS`-style flag string and return the
+/// OR of the recognized `VIS_*` flag bits.
+///
+/// Tokens are comma-separated and case-sensitive. Recognized
+/// tokens map to the corresponding `VIS_*` constants in this
+/// module; tokens that name other NetBSD vis(3) flags this port
+/// does not (yet) implement (e.g. `VIS_HTTPSTYLE`, `VIS_SAFE`)
+/// are silently ignored, matching NetBSD's "best-effort" parse.
+/// Unknown tokens are also ignored.
+///
+/// Whitespace inside tokens is trimmed; empty tokens (e.g. from
+/// trailing commas) are skipped.
+pub fn parse_vis_options(s: &[u8]) -> u32 {
+    let mut flags: u32 = 0;
+    for chunk in s.split(|&b| b == b',') {
+        let trimmed = trim_ascii(chunk);
+        if trimmed.is_empty() {
+            continue;
+        }
+        match trimmed {
+            b"VIS_OCTAL" => flags |= VIS_OCTAL,
+            b"VIS_SP" => flags |= VIS_SP,
+            b"VIS_TAB" => flags |= VIS_TAB,
+            b"VIS_NL" => flags |= VIS_NL,
+            b"VIS_CSTYLE" => flags |= VIS_CSTYLE,
+            // NetBSD-specific tokens that we accept (and silently
+            // discard, since the bits aren't part of our v1 byte
+            // encoder's behavior).
+            b"VIS_HTTPSTYLE" | b"VIS_SAFE" | b"VIS_NOSLASH" | b"VIS_GLOB" | b"VIS_HTTP1808"
+            | b"VIS_MIMESTYLE" | b"VIS_NOLOCALE" | b"VIS_DQ" | b"VIS_SHELL" | b"VIS_META"
+            | b"VIS_WHITE" => {}
+            _ => {} // Unknown token — silently ignore.
+        }
+    }
+    flags
+}
+
+fn trim_ascii(s: &[u8]) -> &[u8] {
+    let start = s
+        .iter()
+        .position(|&b| !b.is_ascii_whitespace())
+        .unwrap_or(s.len());
+    let end = s
+        .iter()
+        .rposition(|&b| !b.is_ascii_whitespace())
+        .map(|i| i + 1)
+        .unwrap_or(start);
+    &s[start..end]
+}
+
 /// Encode a single byte `c` into `out`, appending the result.
 /// `flags` is the OR of `VIS_*` constants.
 pub fn encode_byte(c: u8, flags: u32, out: &mut Vec<u8>) {
@@ -889,5 +939,45 @@ mod unvis_tests {
             let _ = dec.feed_end();
             assert_eq!(out, vec![b], "streamed round-trip failed for byte {b:#x}");
         }
+    }
+
+    #[test]
+    fn parse_vis_options_recognizes_implemented_flags() {
+        let s = b"VIS_OCTAL,VIS_TAB,VIS_NL,VIS_CSTYLE,VIS_SP";
+        let flags = parse_vis_options(s);
+        assert_eq!(flags, VIS_OCTAL | VIS_TAB | VIS_NL | VIS_CSTYLE | VIS_SP);
+    }
+
+    #[test]
+    fn parse_vis_options_ignores_whitespace_and_empty_tokens() {
+        let s = b" VIS_OCTAL ,, VIS_TAB ,";
+        let flags = parse_vis_options(s);
+        assert_eq!(flags, VIS_OCTAL | VIS_TAB);
+    }
+
+    #[test]
+    fn parse_vis_options_silently_discards_unknown_tokens() {
+        // Unknown tokens (typos, future flags) don't fail; they
+        // just don't contribute bits.
+        let s = b"VIS_OCTAL,VIS_FOO_BAR,VIS_TAB";
+        let flags = parse_vis_options(s);
+        assert_eq!(flags, VIS_OCTAL | VIS_TAB);
+    }
+
+    #[test]
+    fn parse_vis_options_silently_accepts_unimplemented_netbsd_flags() {
+        // NetBSD-specific tokens we accept but don't yet honor —
+        // they must NOT contribute random bits that would break
+        // the encoder.
+        let s = b"VIS_HTTPSTYLE,VIS_SAFE,VIS_NOSLASH,VIS_GLOB,VIS_OCTAL";
+        let flags = parse_vis_options(s);
+        assert_eq!(flags, VIS_OCTAL);
+    }
+
+    #[test]
+    fn parse_vis_options_empty_returns_zero() {
+        assert_eq!(parse_vis_options(b""), 0);
+        assert_eq!(parse_vis_options(b"   "), 0);
+        assert_eq!(parse_vis_options(b",,,"), 0);
     }
 }

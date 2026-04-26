@@ -7700,3 +7700,97 @@ pub unsafe extern "C" fn strnunvis_netbsd(
 ) -> c_int {
     unsafe { strnunvis(dst, dlen, src) }
 }
+
+// ---------------------------------------------------------------------------
+// strenvisx / strsenvisx (NetBSD env-aware vis(3) variants)
+// ---------------------------------------------------------------------------
+
+/// Read the `VIS_OPTIONS` env var (if set) and return the OR of the
+/// flag bits it names. Empty / unset env returns 0.
+fn vis_options_from_env() -> u32 {
+    let key = c"VIS_OPTIONS";
+    let val_ptr = unsafe { libc::getenv(key.as_ptr()) };
+    if val_ptr.is_null() {
+        return 0;
+    }
+    let bytes = unsafe { CStr::from_ptr(val_ptr) }.to_bytes();
+    frankenlibc_core::stdio::vis::parse_vis_options(bytes)
+}
+
+/// NetBSD `strenvisx(dst, src, srclen, flags, cerr_ptr)` — extended
+/// strvisx that ORs in any `VIS_*` bits parsed from the
+/// `VIS_OPTIONS` environment variable, then encodes `srclen` bytes
+/// of `src` into `dst`. Writes 0 to `*cerr_ptr` (always — our
+/// byte-stream encoder never raises a character-set error).
+/// Returns the encoded length excluding NUL, or -1 on NULL inputs.
+///
+/// # Safety
+///
+/// `dst` must hold at least `4 * srclen + 1` writable bytes. `src`
+/// must be valid for `srclen` readable bytes. `cerr_ptr`, when
+/// non-NULL, must be writable.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strenvisx(
+    dst: *mut c_char,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+    cerr_ptr: *mut c_int,
+) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let merged_flags = (flags as u32) | vis_options_from_env();
+    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(src_slice, merged_flags);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    if !cerr_ptr.is_null() {
+        unsafe { *cerr_ptr = 0 };
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strsenvisx(dst, dlen, src, srclen, flags, extra,
+/// cerr_ptr)` — bounded extended strsvisx that combines the
+/// extras-bytes contract of [`strsvisx`] with the env-var flag
+/// merge of [`strenvisx`]. Writes 0 to `*cerr_ptr`. Returns the
+/// encoded length on success or -1 on overflow / NULL input. On
+/// overflow no bytes are written.
+///
+/// # Safety
+///
+/// Same as [`strenvisx`] but `dst` need only have `dlen` bytes.
+/// `extra`, when non-NULL, must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strsenvisx(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    srclen: usize,
+    flags: c_int,
+    extra: *const c_char,
+    cerr_ptr: *mut c_int,
+) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let merged_flags = (flags as u32) | vis_options_from_env();
+    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
+    let extras = unsafe { extras_slice(extra) };
+    let encoded =
+        frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, merged_flags, extras);
+    if encoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    if !cerr_ptr.is_null() {
+        unsafe { *cerr_ptr = 0 };
+    }
+    encoded.len() as c_int
+}

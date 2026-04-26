@@ -122,12 +122,14 @@ use frankenlibc_abi::stdio_abi::{
     stdin,
     stdout,
     stravis,
+    strenvisx,
     strnunvis,
     strnunvis_netbsd,
     strnunvisx,
     strnvis,
     strnvis_netbsd,
     strnvisx,
+    strsenvisx,
     strsnvis,
     strsnvisx,
     strsvis,
@@ -4794,4 +4796,250 @@ fn strnvis_netbsd_overflow_returns_minus_one() {
     let mut buf = [0 as c_char; 4];
     let n = unsafe { strnvis_netbsd(buf.as_mut_ptr(), buf.len(), src.as_ptr(), 0) };
     assert_eq!(n, -1);
+}
+
+// ---------------------------------------------------------------------------
+// strenvisx / strsenvisx (NetBSD env-aware vis(3) variants)
+// ---------------------------------------------------------------------------
+
+/// Serialize tests that touch the VIS_OPTIONS env var so they can't
+/// race against each other.
+static VIS_OPTIONS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct VisOptionsGuard {
+    prior: Option<std::ffi::CString>,
+}
+
+impl VisOptionsGuard {
+    fn set(value: Option<&std::ffi::CStr>) -> Self {
+        let key = c"VIS_OPTIONS";
+        let prior = unsafe {
+            let p = libc::getenv(key.as_ptr());
+            if p.is_null() {
+                None
+            } else {
+                Some(CStr::from_ptr(p).to_owned())
+            }
+        };
+        match value {
+            Some(v) => unsafe {
+                libc::setenv(key.as_ptr(), v.as_ptr(), 1);
+            },
+            None => unsafe {
+                libc::unsetenv(key.as_ptr());
+            },
+        }
+        VisOptionsGuard { prior }
+    }
+}
+
+impl Drop for VisOptionsGuard {
+    fn drop(&mut self) {
+        let key = c"VIS_OPTIONS";
+        unsafe {
+            match &self.prior {
+                Some(v) => {
+                    libc::setenv(key.as_ptr(), v.as_ptr(), 1);
+                }
+                None => {
+                    libc::unsetenv(key.as_ptr());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn strenvisx_without_env_matches_strvisx() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(None);
+    let payload: &[u8] = b"hello\nworld";
+    let mut a = [0 as c_char; 64];
+    let mut b = [0 as c_char; 64];
+    let mut cerr: c_int = 99;
+    let na = unsafe {
+        strenvisx(
+            a.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    let nb = unsafe {
+        strvisx(
+            b.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+        )
+    };
+    assert_eq!(na, nb);
+    assert_eq!(cerr, 0);
+    let abytes: Vec<u8> = (0..na as usize).map(|i| a[i] as u8).collect();
+    let bbytes: Vec<u8> = (0..nb as usize).map(|i| b[i] as u8).collect();
+    assert_eq!(abytes, bbytes);
+}
+
+#[test]
+fn strenvisx_honors_vis_octal_from_env() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(Some(c"VIS_OCTAL"));
+    // Encode \n with no flags from caller — env should force octal.
+    let payload: &[u8] = b"\n";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    assert_eq!(n, 4);
+    assert_eq!(cerr, 0);
+    // 0x0a in octal = "\012".
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"\\012".to_vec());
+}
+
+#[test]
+fn strenvisx_unknown_env_tokens_are_ignored() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(Some(c"VIS_FOO,VIS_BAR,VIS_OCTAL"));
+    let payload: &[u8] = b"\n";
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 0;
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        )
+    };
+    // Only VIS_OCTAL is recognized; bytes match the octal-mode form.
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"\\012".to_vec());
+}
+
+#[test]
+fn strenvisx_null_cerr_does_not_crash() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(None);
+    let payload: &[u8] = b"x";
+    let mut buf = [0 as c_char; 8];
+    let n = unsafe {
+        strenvisx(
+            buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn strenvisx_null_args_return_minus_one() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(None);
+    let mut buf = [0 as c_char; 8];
+    let mut cerr: c_int = 0;
+    assert_eq!(
+        unsafe { strenvisx(std::ptr::null_mut(), c"x".as_ptr(), 1, 0, &mut cerr,) },
+        -1
+    );
+    assert_eq!(
+        unsafe { strenvisx(buf.as_mut_ptr(), std::ptr::null(), 1, 0, &mut cerr) },
+        -1
+    );
+}
+
+#[test]
+fn strsenvisx_combines_env_flags_with_extras() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(Some(c"VIS_OCTAL"));
+    let payload: &[u8] = b"a#b";
+    let extra = c"#";
+    let mut buf = [0 as c_char; 32];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strsenvisx(
+            buf.as_mut_ptr(),
+            buf.len(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+            &mut cerr,
+        )
+    };
+    assert!(n > 0);
+    assert_eq!(cerr, 0);
+    // 'a' passthrough; '#' (0x23 = 0o43) octal-extra → "\\043"; 'b' passthrough.
+    let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
+    assert_eq!(bytes, b"a\\043b".to_vec());
+}
+
+#[test]
+fn strsenvisx_overflow_returns_minus_one() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(None);
+    let payload: &[u8] = b"###";
+    let extra = c"#";
+    let mut buf = [0 as c_char; 4];
+    let mut cerr: c_int = 0;
+    let n = unsafe {
+        strsenvisx(
+            buf.as_mut_ptr(),
+            buf.len(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            extra.as_ptr(),
+            &mut cerr,
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strsenvisx_null_args_return_minus_one() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(None);
+    let mut buf = [0 as c_char; 8];
+    let mut cerr: c_int = 0;
+    assert_eq!(
+        unsafe {
+            strsenvisx(
+                std::ptr::null_mut(),
+                8,
+                c"x".as_ptr(),
+                1,
+                0,
+                std::ptr::null(),
+                &mut cerr,
+            )
+        },
+        -1
+    );
+    assert_eq!(
+        unsafe {
+            strsenvisx(
+                buf.as_mut_ptr(),
+                8,
+                std::ptr::null(),
+                1,
+                0,
+                std::ptr::null(),
+                &mut cerr,
+            )
+        },
+        -1
+    );
 }
