@@ -60,6 +60,69 @@
       "mode": "strict"
     },
     {
+      "name": "printf_literal_strict",
+      "function": "printf",
+      "spec_section": "C11 7.21.6.3 printf",
+      "inputs": { "format": "printf-ok" },
+      "expected_output": "9",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "dprintf_literal_strict",
+      "function": "dprintf",
+      "spec_section": "POSIX dprintf",
+      "inputs": { "format": "dprintf-ok" },
+      "expected_output": "10",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "asprintf_literal_strict",
+      "function": "asprintf",
+      "spec_section": "GNU asprintf",
+      "inputs": { "format": "asprintf-ok" },
+      "expected_output": "asprintf rc=11;out=asprintf-ok",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "vsnprintf_literal_strict",
+      "function": "vsnprintf",
+      "spec_section": "C11 7.21.6.12 vsnprintf",
+      "inputs": { "size": 32, "format": "vsnprintf-ok" },
+      "expected_output": "vsnprintf-ok",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "vsprintf_literal_strict",
+      "function": "vsprintf",
+      "spec_section": "C11 7.21.6.9 vsprintf",
+      "inputs": { "format": "vsprintf-ok" },
+      "expected_output": "vsprintf-ok",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "vdprintf_literal_strict",
+      "function": "vdprintf",
+      "spec_section": "POSIX vdprintf",
+      "inputs": { "format": "vdprintf-ok" },
+      "expected_output": "11",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "vasprintf_literal_strict",
+      "function": "vasprintf",
+      "spec_section": "GNU vasprintf",
+      "inputs": { "format": "vasprintf-ok" },
+      "expected_output": "vasprintf rc=12;out=vasprintf-ok",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
       "name": "fwrite_devnull_strict",
       "function": "fwrite",
       "spec_section": "C11 7.21.8.2 fwrite",
@@ -119,6 +182,69 @@
       "spec_section": "C11 7.21.6.5 snprintf",
       "inputs": { "size": 32, "format": "val=%d", "args": [99] },
       "expected_output": "val=99",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "printf_literal_hardened",
+      "function": "printf",
+      "spec_section": "C11 7.21.6.3 printf",
+      "inputs": { "format": "printf-ok" },
+      "expected_output": "9",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "dprintf_literal_hardened",
+      "function": "dprintf",
+      "spec_section": "POSIX dprintf",
+      "inputs": { "format": "dprintf-ok" },
+      "expected_output": "10",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "asprintf_literal_hardened",
+      "function": "asprintf",
+      "spec_section": "GNU asprintf",
+      "inputs": { "format": "asprintf-ok" },
+      "expected_output": "asprintf rc=11;out=asprintf-ok",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "vsnprintf_literal_hardened",
+      "function": "vsnprintf",
+      "spec_section": "C11 7.21.6.12 vsnprintf",
+      "inputs": { "size": 32, "format": "vsnprintf-ok" },
+      "expected_output": "vsnprintf-ok",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "vsprintf_literal_hardened",
+      "function": "vsprintf",
+      "spec_section": "C11 7.21.6.9 vsprintf",
+      "inputs": { "format": "vsprintf-ok" },
+      "expected_output": "vsprintf-ok",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "vdprintf_literal_hardened",
+      "function": "vdprintf",
+      "spec_section": "POSIX vdprintf",
+      "inputs": { "format": "vdprintf-ok" },
+      "expected_output": "11",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "vasprintf_literal_hardened",
+      "function": "vasprintf",
+      "spec_section": "GNU vasprintf",
+      "inputs": { "format": "vasprintf-ok" },
+      "expected_output": "vasprintf rc=12;out=vasprintf-ok",
       "expected_errno": 0,
       "mode": "hardened"
     },

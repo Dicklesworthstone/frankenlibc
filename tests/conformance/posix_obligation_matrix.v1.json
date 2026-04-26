@@ -5,14 +5,14 @@
   "summary": {
     "total_exported": 3996,
     "tracked_symbols": 3996,
-    "total_obligations": 266,
-    "covered_obligations": 226,
-    "mapped_without_execution": 40,
+    "total_obligations": 268,
+    "covered_obligations": 233,
+    "mapped_without_execution": 35,
     "obligations_with_execution_failures": 0,
     "error_condition_obligations": 62,
     "async_concurrency_obligations": 52,
     "symbols_missing_any_mapping": 3791,
-    "symbols_missing_execution_evidence": 7,
+    "symbols_missing_execution_evidence": 0,
     "symbols_missing_error_conditions": 152,
     "symbols_missing_async_concurrency": 0
   },
@@ -217,7 +217,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -227,15 +227,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::asprintf::asprintf_literal_hardened::hardened",
+        "conformance_matrix::asprintf::asprintf_literal_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -932,6 +935,37 @@
       "execution": {
         "total": 1,
         "pass": 1,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "dprintf::posix_dprintf",
+      "posix_ref": "POSIX dprintf",
+      "symbol": "dprintf",
+      "symbol_family": "stdio_file_ops",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::stdio_file_ops::dprintf_literal_hardened::hardened",
+        "fixture::stdio_file_ops::dprintf_literal_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdio_file_ops.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -5019,7 +5053,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -5029,15 +5063,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::printf::printf_literal_hardened::hardened",
+        "conformance_matrix::printf::printf_literal_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -8630,7 +8667,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8640,15 +8677,49 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::vasprintf::vasprintf_literal_hardened::hardened",
+        "conformance_matrix::vasprintf::vasprintf_literal_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
+        "fail": 0,
+        "error": 0,
+        "timeout": 0,
+        "crash": 0
+      }
+    },
+    {
+      "obligation_id": "vdprintf::posix_vdprintf",
+      "posix_ref": "POSIX vdprintf",
+      "symbol": "vdprintf",
+      "symbol_family": "stdio_file_ops",
+      "owner": "stdio_abi",
+      "support_status": "Implemented",
+      "coverage_state": "covered",
+      "obligation_kinds": [
+        "functional"
+      ],
+      "modes": [
+        "hardened",
+        "strict"
+      ],
+      "test_refs": [
+        "fixture::stdio_file_ops::vdprintf_literal_hardened::hardened",
+        "fixture::stdio_file_ops::vdprintf_literal_strict::strict"
+      ],
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdio_file_ops.json"
+      ],
+      "execution": {
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -8694,7 +8765,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8704,15 +8775,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::vsnprintf::vsnprintf_literal_hardened::hardened",
+        "conformance_matrix::vsnprintf::vsnprintf_literal_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -8726,7 +8800,7 @@
       "symbol_family": "stdio",
       "owner": "stdio_abi",
       "support_status": "Implemented",
-      "coverage_state": "mapped_without_execution",
+      "coverage_state": "covered",
       "obligation_kinds": [
         "functional"
       ],
@@ -8736,15 +8810,18 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::vsprintf::vsprintf_literal_hardened::hardened",
+        "conformance_matrix::vsprintf::vsprintf_literal_strict::strict"
       ],
       "artifact_refs": [
         "tests/conformance/c_fixture_spec.json",
+        "tests/conformance/conformance_matrix.v1.json",
         "tests/integration/fixture_stdio_printf.c"
       ],
       "execution": {
-        "total": 0,
-        "pass": 0,
+        "total": 2,
+        "pass": 2,
         "fail": 0,
         "error": 0,
         "timeout": 0,
@@ -20749,10 +20826,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::asprintf::asprintf_literal_hardened::hardened",
+        "conformance_matrix::asprintf::asprintf_literal_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -25844,14 +25922,16 @@
       "owner": "stdio_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [
+        "POSIX dprintf",
         "POSIX.1-2017 stdio formatted I/O contracts for snprintf/sprintf/fprintf/printf/dprintf and va_list variants vsnprintf/vsprintf/vdprintf with return-length semantics"
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "fixture::stdio_file_ops::dprintf_literal_hardened::hardened",
+        "fixture::stdio_file_ops::dprintf_literal_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -42858,10 +42938,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::printf::printf_literal_hardened::hardened",
+        "conformance_matrix::printf::printf_literal_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -54570,10 +54651,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::vasprintf::vasprintf_literal_hardened::hardened",
+        "conformance_matrix::vasprintf::vasprintf_literal_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -54583,14 +54665,16 @@
       "owner": "stdio_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [
+        "POSIX vdprintf",
         "POSIX.1-2017 stdio formatted I/O contracts for snprintf/sprintf/fprintf/printf/dprintf and va_list variants vsnprintf/vsprintf/vdprintf with return-length semantics"
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "fixture::stdio_file_ops::vdprintf_literal_hardened::hardened",
+        "fixture::stdio_file_ops::vdprintf_literal_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -54784,10 +54868,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::vsnprintf::vsnprintf_literal_hardened::hardened",
+        "conformance_matrix::vsnprintf::vsnprintf_literal_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },
@@ -54801,10 +54886,11 @@
       ],
       "test_refs": [
         "c_fixture::fixture_stdio_printf::hardened",
-        "c_fixture::fixture_stdio_printf::strict"
+        "c_fixture::fixture_stdio_printf::strict",
+        "conformance_matrix::vsprintf::vsprintf_literal_hardened::hardened",
+        "conformance_matrix::vsprintf::vsprintf_literal_strict::strict"
       ],
       "gap_reasons": [
-        "missing_execution_evidence",
         "missing_error_condition_obligation"
       ]
     },

@@ -7,7 +7,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use frankenlibc_core::stdio::printf::LengthMod;
+use frankenlibc_core::stdio::printf::{LengthMod, count_printf_args, parse_format_string};
 
 unsafe extern "C" {
     // math.h
@@ -123,6 +123,25 @@ unsafe extern "C" {
     fn host_insque(elem: *mut c_void, pred: *mut c_void);
     #[link_name = "remque"]
     fn host_remque(elem: *mut c_void);
+    #[link_name = "printf"]
+    fn host_printf(format: *const c_char, ...) -> c_int;
+    #[link_name = "dprintf"]
+    fn host_dprintf(fd: c_int, format: *const c_char, ...) -> c_int;
+    #[link_name = "asprintf"]
+    fn host_asprintf(strp: *mut *mut c_char, format: *const c_char, ...) -> c_int;
+    #[link_name = "vsnprintf"]
+    fn host_vsnprintf(
+        str_buf: *mut c_char,
+        size: usize,
+        format: *const c_char,
+        ap: *mut c_void,
+    ) -> c_int;
+    #[link_name = "vsprintf"]
+    fn host_vsprintf(str_buf: *mut c_char, format: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vdprintf"]
+    fn host_vdprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vasprintf"]
+    fn host_vasprintf(strp: *mut *mut c_char, format: *const c_char, ap: *mut c_void) -> c_int;
 }
 
 type SearchCompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
@@ -502,6 +521,13 @@ pub fn execute_fixture_case(
         "fprintf" => execute_fprintf_case(inputs, mode),
         "snprintf" => execute_snprintf_case(inputs, mode),
         "sprintf" => execute_sprintf_case(inputs, mode),
+        "printf" => execute_printf_case(inputs, mode),
+        "dprintf" => execute_dprintf_case(inputs, mode),
+        "asprintf" => execute_asprintf_case(inputs, mode),
+        "vsnprintf" => execute_vsnprintf_case(inputs, mode),
+        "vsprintf" => execute_vsprintf_case(inputs, mode),
+        "vdprintf" => execute_vdprintf_case(inputs, mode),
+        "vasprintf" => execute_vasprintf_case(inputs, mode),
         "fread" => execute_fread_case(inputs, mode),
         "fwrite" => execute_fwrite_case(inputs, mode),
         "fgets" => execute_fgets_case(inputs, mode),
@@ -2640,6 +2666,14 @@ enum PrintfArg {
     NullPtr,
 }
 
+#[repr(C)]
+struct X86_64VaListTag {
+    gp_offset: u32,
+    fp_offset: u32,
+    overflow_arg_area: *mut c_void,
+    reg_save_area: *mut c_void,
+}
+
 /// Compile-time guardrail for the `PrintfArg::Long`/`Ulong` unification.
 ///
 /// On any ABI where `c_long`, `size_t`, `ptrdiff_t`, or `intmax_t` is
@@ -2662,6 +2696,35 @@ const _: () = {
         "PrintfArg::Long assumes ptrdiff_t == long long; refactor bd-1tvbi before building for non-LP64 targets",
     );
 };
+
+fn printf_arg_overflow_slots(args: &[PrintfArg]) -> Vec<u64> {
+    args.iter()
+        .map(|arg| match arg {
+            PrintfArg::Int(value) => (*value as i64) as u64,
+            PrintfArg::Long(value) => *value as u64,
+            PrintfArg::Ulong(value) => *value,
+            PrintfArg::Double(value) => value.to_bits(),
+            PrintfArg::Str(value) => value.as_ptr() as u64,
+            PrintfArg::NullPtr => 0,
+        })
+        .collect()
+}
+
+fn with_printf_va_list<T>(args: &[PrintfArg], f: impl FnOnce(*mut c_void) -> T) -> T {
+    let mut slots = printf_arg_overflow_slots(args);
+    let overflow_arg_area = if slots.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        slots.as_mut_ptr().cast::<c_void>()
+    };
+    let mut tag = X86_64VaListTag {
+        gp_offset: 48,
+        fp_offset: 176,
+        overflow_arg_area,
+        reg_save_area: std::ptr::null_mut(),
+    };
+    f((&mut tag as *mut X86_64VaListTag).cast::<c_void>())
+}
 
 /// Promote PrintfArg values in-place to match the widths demanded by
 /// length modifiers in `fmt`. On 64-bit Linux a `%ld/%lld/%jd/%zd/%td`
@@ -3192,6 +3255,114 @@ fn run_host_fprintf(
     Ok(rc)
 }
 
+fn printf_format_arg_count(format: &str) -> usize {
+    count_printf_args(&parse_format_string(format.as_bytes()))
+}
+
+fn ensure_literal_printf_format(
+    function: &str,
+    format: &str,
+    args: &[PrintfArg],
+) -> Result<(), String> {
+    if args.is_empty() && printf_format_arg_count(format) == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "{function} JSON executor currently supports literal-format evidence only; formatted arguments stay covered by fixture_stdio_printf.c"
+        ))
+    }
+}
+
+fn ensure_printf_arg_count(function: &str, format: &str, args: &[PrintfArg]) -> Result<(), String> {
+    let expected = printf_format_arg_count(format);
+    if args.len() == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "{function} JSON executor expected {expected} printf argument(s), got {}",
+            args.len()
+        ))
+    }
+}
+
+fn stdio_stdout_redirect_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    match LOCK.get_or_init(|| Mutex::new(())).lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn run_with_stdout_redirected_to_devnull(f: impl FnOnce() -> c_int) -> Result<c_int, String> {
+    let _guard = stdio_stdout_redirect_lock();
+    let devnull = CString::new("/dev/null").map_err(|_| String::from("invalid /dev/null path"))?;
+    let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+    if saved_stdout < 0 {
+        return Err(String::from("failed to dup stdout"));
+    }
+
+    let devnull_fd = unsafe { libc::open(devnull.as_ptr(), libc::O_WRONLY) };
+    if devnull_fd < 0 {
+        unsafe { libc::close(saved_stdout) };
+        return Err(String::from(
+            "failed to open /dev/null for stdout redirection",
+        ));
+    }
+
+    unsafe { libc::fflush(std::ptr::null_mut()) };
+    if unsafe { libc::dup2(devnull_fd, libc::STDOUT_FILENO) } < 0 {
+        unsafe {
+            libc::close(devnull_fd);
+            libc::close(saved_stdout);
+        }
+        return Err(String::from("failed to redirect stdout to /dev/null"));
+    }
+    unsafe { libc::close(devnull_fd) };
+
+    let rc = f();
+    unsafe { libc::fflush(std::ptr::null_mut()) };
+    let restore_rc = unsafe { libc::dup2(saved_stdout, libc::STDOUT_FILENO) };
+    unsafe { libc::close(saved_stdout) };
+    if restore_rc < 0 {
+        return Err(String::from("failed to restore stdout"));
+    }
+
+    Ok(rc)
+}
+
+fn run_with_devnull_fd(f: impl FnOnce(c_int) -> c_int) -> Result<c_int, String> {
+    let devnull = CString::new("/dev/null").map_err(|_| String::from("invalid /dev/null path"))?;
+    let fd = unsafe { libc::open(devnull.as_ptr(), libc::O_WRONLY) };
+    if fd < 0 {
+        return Err(String::from("failed to open /dev/null"));
+    }
+
+    let rc = f(fd);
+    if unsafe { libc::close(fd) } != 0 {
+        return Err(String::from("failed to close /dev/null"));
+    }
+    Ok(rc)
+}
+
+fn run_asprintf_output(
+    function: &str,
+    f: impl FnOnce(*mut *mut c_char) -> c_int,
+    free_fn: impl FnOnce(*mut c_void),
+) -> String {
+    let mut out: *mut c_char = std::ptr::null_mut();
+    let rc = f(&mut out);
+    let rendered = if out.is_null() {
+        String::from("NULL")
+    } else {
+        let text = unsafe { std::ffi::CStr::from_ptr(out) }
+            .to_string_lossy()
+            .into_owned();
+        free_fn(out.cast::<c_void>());
+        text
+    };
+    format!("{function} rc={rc};out={rendered}")
+}
+
 fn execute_fopen_case(
     inputs: &serde_json::Value,
     mode: &str,
@@ -3450,6 +3621,301 @@ fn execute_sprintf_case(
         host_parity: true,
         note: None,
     })
+}
+
+fn execute_printf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
+    ensure_literal_printf_format("printf", &format, &args)?;
+
+    let impl_output = run_with_stdout_redirected_to_devnull(|| unsafe {
+        frankenlibc_abi::stdio_abi::printf(format_c.as_ptr())
+    })?
+    .to_string();
+
+    if strict {
+        let host_output =
+            run_with_stdout_redirected_to_devnull(|| unsafe { host_printf(format_c.as_ptr()) })?
+                .to_string();
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict printf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_dprintf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
+    ensure_literal_printf_format("dprintf", &format, &args)?;
+
+    let impl_output = run_with_devnull_fd(|fd| unsafe {
+        frankenlibc_abi::stdio_abi::dprintf(fd, format_c.as_ptr())
+    })?
+    .to_string();
+
+    if strict {
+        let host_output =
+            run_with_devnull_fd(|fd| unsafe { host_dprintf(fd, format_c.as_ptr()) })?.to_string();
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict dprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_asprintf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
+    ensure_literal_printf_format("asprintf", &format, &args)?;
+
+    let impl_output = run_asprintf_output(
+        "asprintf",
+        |out| unsafe { frankenlibc_abi::stdio_abi::asprintf(out, format_c.as_ptr()) },
+        |ptr| unsafe { frankenlibc_abi::malloc_abi::free(ptr) },
+    );
+
+    if strict {
+        let host_output = run_asprintf_output(
+            "asprintf",
+            |out| unsafe { host_asprintf(out, format_c.as_ptr()) },
+            |ptr| unsafe { libc::free(ptr) },
+        );
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict asprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_vsnprintf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let size = parse_usize(inputs, "size")?;
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
+    ensure_printf_arg_count("vsnprintf", &format, &args)?;
+
+    let mut impl_buf = vec![0 as c_char; size.max(1)];
+    let impl_rc = with_printf_va_list(&args, |ap| unsafe {
+        frankenlibc_abi::stdio_abi::vsnprintf(impl_buf.as_mut_ptr(), size, format_c.as_ptr(), ap)
+    });
+    let impl_output = render_printf_buffer(&impl_buf, size, impl_rc);
+
+    if strict {
+        let mut host_buf = vec![0 as c_char; size.max(1)];
+        let host_rc = with_printf_va_list(&args, |ap| unsafe {
+            host_vsnprintf(host_buf.as_mut_ptr(), size, format_c.as_ptr(), ap)
+        });
+        let host_output = render_printf_buffer(&host_buf, size, host_rc);
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict vsnprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_vsprintf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
+    ensure_printf_arg_count("vsprintf", &format, &args)?;
+
+    const VSPRINTF_BUF_SIZE: usize = 4096;
+    let mut impl_buf = vec![0 as c_char; VSPRINTF_BUF_SIZE];
+    let impl_rc = with_printf_va_list(&args, |ap| unsafe {
+        frankenlibc_abi::stdio_abi::vsprintf(impl_buf.as_mut_ptr(), format_c.as_ptr(), ap)
+    });
+    let impl_output = render_printf_buffer(&impl_buf, VSPRINTF_BUF_SIZE, impl_rc);
+
+    if strict {
+        let mut host_buf = vec![0 as c_char; VSPRINTF_BUF_SIZE];
+        let host_rc = with_printf_va_list(&args, |ap| unsafe {
+            host_vsprintf(host_buf.as_mut_ptr(), format_c.as_ptr(), ap)
+        });
+        let host_output = render_printf_buffer(&host_buf, VSPRINTF_BUF_SIZE, host_rc);
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict vsprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_vdprintf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
+    ensure_printf_arg_count("vdprintf", &format, &args)?;
+
+    let impl_output = run_with_devnull_fd(|fd| {
+        with_printf_va_list(&args, |ap| unsafe {
+            frankenlibc_abi::stdio_abi::vdprintf(fd, format_c.as_ptr(), ap)
+        })
+    })?
+    .to_string();
+
+    if strict {
+        let host_output = run_with_devnull_fd(|fd| {
+            with_printf_va_list(&args, |ap| unsafe {
+                host_vdprintf(fd, format_c.as_ptr(), ap)
+            })
+        })?
+        .to_string();
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict vdprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_vasprintf_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let format = parse_string(inputs, "format")?;
+    let format_c =
+        CString::new(format.clone()).map_err(|_| String::from("format contains interior NUL"))?;
+    let mut args = parse_printf_args(inputs)?;
+    promote_args_by_format(&format, &mut args);
+    ensure_printf_arg_count("vasprintf", &format, &args)?;
+
+    let impl_output = with_printf_va_list(&args, |ap| {
+        run_asprintf_output(
+            "vasprintf",
+            |out| unsafe { frankenlibc_abi::stdio_abi::vasprintf(out, format_c.as_ptr(), ap) },
+            |ptr| unsafe { frankenlibc_abi::malloc_abi::free(ptr) },
+        )
+    });
+
+    if strict {
+        let host_output = with_printf_va_list(&args, |ap| {
+            run_asprintf_output(
+                "vasprintf",
+                |out| unsafe { host_vasprintf(out, format_c.as_ptr(), ap) },
+                |ptr| unsafe { libc::free(ptr) },
+            )
+        });
+        let host_parity = host_output == impl_output;
+        let note = (!host_parity).then(|| String::from("strict vasprintf host parity mismatch"));
+        return Ok(DifferentialExecution {
+            host_output,
+            impl_output,
+            host_parity,
+            note,
+        });
+    }
+
+    Ok(non_host_execution(impl_output))
 }
 
 fn execute_sscanf_case(
