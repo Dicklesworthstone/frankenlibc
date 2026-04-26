@@ -1,13 +1,13 @@
 {
   "schema_version": "v1",
   "bead": "bd-l93x.2",
-  "generated_at_utc": "deterministic:2026-02-08T00:00:00Z..2026-04-18T00:00:00Z",
+  "generated_at_utc": "deterministic:2026-02-08T00:00:00Z..2026-04-25T00:00:00Z",
   "campaign": "franken_shadow",
   "mode": "both",
-  "total_fixture_sets": 55,
+  "total_fixture_sets": 56,
   "summary": {
-    "total_cases": 1453,
-    "passed": 1453,
+    "total_cases": 1509,
+    "passed": 1509,
     "failed": 0,
     "errors": 0,
     "pass_rate_percent": 100.0
@@ -4037,6 +4037,258 @@
       "pass_rate_percent": 100.0
     },
     {
+      "symbol": "stdc_bit_ceil_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_bit_ceil_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_bit_floor_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_bit_floor_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_bit_width_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_bit_width_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_count_ones_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_count_ones_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_count_zeros_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_count_zeros_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_first_leading_one_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_first_leading_one_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_first_leading_zero_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_first_leading_zero_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_first_trailing_one_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_first_trailing_one_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_first_trailing_zero_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_first_trailing_zero_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_has_single_bit_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_has_single_bit_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_leading_ones_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_leading_ones_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_leading_zeros_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_leading_zeros_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_trailing_ones_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_trailing_ones_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_trailing_zeros_ui",
+      "mode": "hardened",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
+      "symbol": "stdc_trailing_zeros_ui",
+      "mode": "strict",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "errors": 0,
+      "pass_rate_percent": 100.0
+    },
+    {
       "symbol": "strcat",
       "mode": "hardened",
       "total": 1,
@@ -5029,7 +5281,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::allocator::malloc::strict::malloc_zero",
@@ -5048,7 +5300,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::allocator::realloc::strict::realloc_null_is_malloc",
@@ -5067,7 +5319,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::backtrace_ops::backtrace::hardened::backtrace_captures_frames_hardened",
@@ -5105,7 +5357,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::backtrace_ops::backtrace::strict::backtrace_captures_frames_strict",
@@ -5238,7 +5490,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isalnum::strict::isalnum_letter_M",
@@ -5276,7 +5528,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isalpha::hardened::isalpha_digit_0",
@@ -5295,7 +5547,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isalpha::hardened::isalpha_lowercase_z",
@@ -5352,7 +5604,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::ctype::isalpha::strict::isalpha_digit_0",
@@ -5371,7 +5623,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::ctype::isalpha::strict::isalpha_lowercase_z",
@@ -5428,7 +5680,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isdigit::hardened::isdigit_0",
@@ -5466,7 +5718,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::ctype::isdigit::hardened::isdigit_A",
@@ -5542,7 +5794,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::islower::hardened::islower_A",
@@ -5561,7 +5813,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::ctype::islower::hardened::islower_a",
@@ -5580,7 +5832,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::ctype::islower::strict::islower_A",
@@ -5599,7 +5851,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 17
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::islower::strict::islower_a",
@@ -5618,7 +5870,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::ctype::isprint::hardened::isprint_del",
@@ -5732,7 +5984,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isprint::strict::isprint_space",
@@ -5751,7 +6003,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isprint::strict::isprint_tilde",
@@ -5770,7 +6022,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::ispunct::hardened::ispunct_at",
@@ -5808,7 +6060,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::ispunct::hardened::ispunct_letter",
@@ -5903,7 +6155,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 17
     },
     {
       "trace_id": "franken_shadow::ctype::isspace::hardened::isspace_newline",
@@ -5998,7 +6250,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::ctype::isspace::strict::isspace_space",
@@ -6017,7 +6269,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isspace::strict::isspace_tab",
@@ -6112,7 +6364,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::ctype::isxdigit::hardened::isxdigit_9",
@@ -6169,7 +6421,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isxdigit::hardened::isxdigit_g",
@@ -6207,7 +6459,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isxdigit::strict::isxdigit_A",
@@ -6245,7 +6497,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::isxdigit::strict::isxdigit_g",
@@ -6264,7 +6516,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::tolower::hardened::tolower_A",
@@ -6321,7 +6573,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::tolower::hardened::tolower_digit",
@@ -6359,7 +6611,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::tolower::strict::tolower_Z",
@@ -6378,7 +6630,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::tolower::strict::tolower_already_lower",
@@ -6492,7 +6744,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::toupper::strict::toupper_a",
@@ -6511,7 +6763,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::ctype::toupper::strict::toupper_already_upper",
@@ -6530,7 +6782,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 11
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::ctype::toupper::strict::toupper_digit",
@@ -6587,7 +6839,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::dirent_ops::dirfd::hardened::dirfd_valid_hardened",
@@ -6644,7 +6896,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::dirent_ops::opendir::hardened::opendir_root_hardened",
@@ -6720,7 +6972,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::dirent_ops::rewinddir::hardened::rewinddir_valid_hardened",
@@ -6739,7 +6991,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::dirent_ops::rewinddir::strict::rewinddir_valid_strict",
@@ -6910,7 +7162,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::dlfcn_ops::dlsym::strict::dlsym_nonexistent_strict",
@@ -6948,7 +7200,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::elf/loader::Elf64Header::parse::strict::invalid_elf_magic",
@@ -7043,7 +7295,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::elf/loader::SymbolBinding::from::strict::symbol_binding_local",
@@ -7062,7 +7314,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::elf/loader::SymbolBinding::from::strict::symbol_binding_weak",
@@ -7138,7 +7390,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::elf/loader::compute_relocation::strict::reloc_r_x86_64_glob_dat",
@@ -7176,7 +7428,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::elf/loader::compute_relocation::strict::reloc_r_x86_64_none",
@@ -7252,7 +7504,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::elf/loader::gnu_hash::strict::gnu_hash_malloc",
@@ -7271,7 +7523,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::errno_ops::__errno_location::hardened::errno_location_nonnull_hardened",
@@ -7423,7 +7675,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::errno_ops::errno_constants::strict::errno_macro_all_standard_values",
@@ -7556,7 +7808,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::errno_ops::perror::strict::perror_null_prefix",
@@ -7746,7 +7998,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::errno_ops::strerror::hardened::strerror_zero",
@@ -7822,7 +8074,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::errno_ops::strerror::strict::strerror_enoent",
@@ -7860,7 +8112,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::errno_ops::strerror::strict::strerror_etimedout",
@@ -7879,7 +8131,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::errno_ops::strerror::strict::strerror_negative",
@@ -7974,7 +8226,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::errno_ops::strerror_r::hardened::strerror_r_buffer_too_small",
@@ -7993,7 +8245,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::errno_ops::strerror_r::hardened::strerror_r_null_buffer",
@@ -8031,7 +8283,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::errno_ops::strerror_r::strict::strerror_r_buffer_too_small",
@@ -8107,7 +8359,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::grp_ops::endgrent::strict::endgrent_void_strict",
@@ -8145,7 +8397,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::grp_ops::getgrgid::hardened::getgrgid_zero_hardened",
@@ -8335,7 +8587,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::iconv/phase1::iconv::hardened::hardened_utf16le_to_utf8",
@@ -8430,7 +8682,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::iconv/phase1::iconv::strict::strict_utf8_to_utf16le_basic",
@@ -8449,7 +8701,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::iconv/phase1::iconv::strict::strict_utf8_to_utf32_with_bom",
@@ -8487,7 +8739,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::iconv/phase1::iconv_close::strict::iconv_close_valid",
@@ -8506,7 +8758,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::iconv/phase1::iconv_open::hardened::iconv_open_hardened_utf8_to_utf16le",
@@ -8525,7 +8777,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::iconv/phase1::iconv_open::strict::iconv_open_unsupported",
@@ -8563,7 +8815,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::inet::htonl::hardened::htonl_loopback",
@@ -8582,7 +8834,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::inet::htonl::hardened::htonl_one",
@@ -8601,7 +8853,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::inet::htonl::strict::htonl_loopback",
@@ -8639,7 +8891,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::htons::hardened::htons_443",
@@ -8658,7 +8910,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::htons::hardened::htons_80",
@@ -8715,7 +8967,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::htons::strict::htons_80",
@@ -8734,7 +8986,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::htons::strict::htons_zero",
@@ -8772,7 +9024,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::inet_addr::hardened::inet_addr_invalid",
@@ -8810,7 +9062,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::inet::inet_addr::strict::inet_addr_broadcast",
@@ -8829,7 +9081,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::inet::inet_addr::strict::inet_addr_invalid",
@@ -8924,7 +9176,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 11
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::inet_ntop::strict::inet_ntop_v4_zeros",
@@ -8943,7 +9195,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::inet_pton::hardened::inet_pton_v4_invalid",
@@ -8962,7 +9214,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::inet_pton::hardened::inet_pton_v4_loopback",
@@ -9019,7 +9271,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::inet_pton::strict::inet_pton_v4_loopback",
@@ -9038,7 +9290,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::inet::inet_pton::strict::inet_pton_v6_loopback",
@@ -9114,7 +9366,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::inet::ntohs::strict::ntohs_80_net",
@@ -9209,7 +9461,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_adjust_column::strict::IO_adjust_column_null_line_returns_col",
@@ -9247,7 +9499,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_adjust_wcolumn::hardened::IO_adjust_wcolumn_newline_resets",
@@ -9380,7 +9632,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 11
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_doallocbuf::strict::IO_doallocbuf_is_noop",
@@ -9513,7 +9765,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_init::hardened::IO_init_is_noop",
@@ -9703,7 +9955,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_list_lock::hardened::IO_list_lock_is_noop",
@@ -9798,7 +10050,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_list_unlock::strict::IO_list_unlock_is_noop",
@@ -9817,7 +10069,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_marker_delta::hardened::IO_marker_delta_returns_zero",
@@ -9969,7 +10221,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_str_underflow::hardened::IO_str_underflow_returns_eof",
@@ -9988,7 +10240,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_str_underflow::strict::IO_str_underflow_returns_eof",
@@ -10007,7 +10259,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_sungetc::hardened::IO_sungetc_returns_eof",
@@ -10121,7 +10373,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_un_link::hardened::IO_un_link_is_noop",
@@ -10140,7 +10392,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_un_link::strict::IO_un_link_is_noop",
@@ -10197,7 +10449,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_wdefault_uflow::hardened::IO_wdefault_uflow_returns_weof",
@@ -10235,7 +10487,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::_IO_wfile_sync::hardened::IO_wfile_sync_delegates_to_fflush",
@@ -10273,7 +10525,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::io_internal::dlinfo::hardened::dlinfo_returns_enosys",
@@ -10330,7 +10582,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::loader_edges::dlclose::hardened::dlclose_double_close_hardened",
@@ -10406,7 +10658,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::loader_edges::dlopen::strict::dlopen_nonexistent_strict",
@@ -10444,7 +10696,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::locale_ops::duplocale::hardened::duplocale_handle_hardened",
@@ -10501,7 +10753,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::locale_ops::freelocale::strict::freelocale_void_strict",
@@ -10710,7 +10962,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::locale_ops::setlocale::hardened::setlocale_unsupported_hardened",
@@ -10729,7 +10981,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::locale_ops::setlocale::strict::setlocale_c_locale_strict",
@@ -10805,7 +11057,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::locale_ops::uselocale::strict::uselocale_query_strict",
@@ -11033,7 +11285,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::math::atan2::hardened::atan2_zero_one",
@@ -11128,7 +11380,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::ceil::strict::ceil_negative_frac",
@@ -11185,7 +11437,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::math::cos::hardened::cos_zero",
@@ -11280,7 +11532,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::math::exp::hardened::exp_one",
@@ -11299,7 +11551,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::exp::hardened::exp_zero",
@@ -11356,7 +11608,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::math::fabs::hardened::fabs_negative",
@@ -11413,7 +11665,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::fabs::strict::fabs_positive",
@@ -11508,7 +11760,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::math::fmod::hardened::fmod_basic",
@@ -11527,7 +11779,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::fmod::strict::fmod_basic",
@@ -11565,7 +11817,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::math::lgamma::strict::lgamma_one",
@@ -11622,7 +11874,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::math::log::strict::log_e",
@@ -11641,7 +11893,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::math::log::strict::log_one",
@@ -11698,7 +11950,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::log10::strict::log10_one",
@@ -11736,7 +11988,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::math::pow::hardened::pow_two_ten",
@@ -11774,7 +12026,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::pow::strict::pow_two_ten",
@@ -11831,7 +12083,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::round::hardened::round_half_up",
@@ -11869,7 +12121,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::round::strict::round_half_up",
@@ -11888,7 +12140,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::sin::hardened::sin_pi_half",
@@ -11907,7 +12159,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::math::sin::hardened::sin_zero",
@@ -11945,7 +12197,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::math::sin::strict::sin_zero",
@@ -12040,7 +12292,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::math::tgamma::strict::tgamma_five",
@@ -12116,7 +12368,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::membrane/mode-split::strlen::hardened::hardened_strlen_unterminated_truncated",
@@ -12154,7 +12406,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::memory_ops::memchr::strict::memchr_found_strict",
@@ -12173,7 +12425,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::memory_ops::memchr::strict::memchr_not_found_strict",
@@ -12249,7 +12501,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::memory_ops::memcpy::hardened::memcpy_basic_hardened",
@@ -12344,7 +12596,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::memory_ops::memset::strict::memset_basic_strict",
@@ -12363,7 +12615,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::poll_ops::poll::hardened::poll_oversized_nfds_hardened",
@@ -12458,7 +12710,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::poll_ops::select::strict::select_zero_timeout_strict",
@@ -12515,7 +12767,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::pressure_sensing::PressureSensor::observe::strict::deterministic_replay_strict",
@@ -12667,7 +12919,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::snprintf::strict::snprintf_float_truncate",
@@ -12686,7 +12938,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::printf_conformance::snprintf::strict::snprintf_just_null",
@@ -12705,7 +12957,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::snprintf::strict::snprintf_multi_conv_truncate",
@@ -12724,7 +12976,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::snprintf::strict::snprintf_null_buffer",
@@ -12743,7 +12995,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::snprintf::strict::snprintf_percent_truncate",
@@ -12762,7 +13014,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::snprintf::strict::snprintf_returns_would_write",
@@ -12800,7 +13052,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::snprintf::strict::snprintf_zero_size",
@@ -12857,7 +13109,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_A_basic",
@@ -12952,7 +13204,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_Le_basic",
@@ -13009,7 +13261,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_X_basic",
@@ -13047,7 +13299,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_a_negative",
@@ -13161,7 +13413,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_consecutive_args",
@@ -13237,7 +13489,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_d_hash_ignored",
@@ -13275,7 +13527,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_d_min_int",
@@ -13294,7 +13546,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_d_neg_zero_pad",
@@ -13313,7 +13565,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_d_negative",
@@ -13332,7 +13584,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_d_precision_exceeds_value",
@@ -13351,7 +13603,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_d_sign_with_width",
@@ -13370,7 +13622,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 21
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_d_sign_with_zero",
@@ -13389,7 +13641,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_d_space_with_width",
@@ -13427,7 +13679,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_d_zero_width",
@@ -13465,7 +13717,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_e_neg_exp",
@@ -13560,7 +13812,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_e_round_half_even",
@@ -13579,7 +13831,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 22
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_e_round_half_even_3_5",
@@ -13750,7 +14002,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_integer_precision_large",
@@ -13788,7 +14040,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_neg_inf",
@@ -13826,7 +14078,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_negative_zero",
@@ -13864,7 +14116,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_plus_width",
@@ -13883,7 +14135,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_precision",
@@ -13902,7 +14154,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_precision_large",
@@ -13978,7 +14230,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_round_half_even_5_5",
@@ -14016,7 +14268,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_round_half_even_neg_3_5",
@@ -14035,7 +14287,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_round_half_even_odd",
@@ -14054,7 +14306,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_rounding_down",
@@ -14092,7 +14344,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_space_nan",
@@ -14111,7 +14363,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_subnanosecond_precision",
@@ -14130,7 +14382,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_very_large",
@@ -14149,7 +14401,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_very_small",
@@ -14168,7 +14420,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 21
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_width_left_justify",
@@ -14187,7 +14439,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_width_right_justify",
@@ -14206,7 +14458,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_f_width_zero_pad",
@@ -14225,7 +14477,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_g_alt_trailing",
@@ -14244,7 +14496,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_g_basic",
@@ -14263,7 +14515,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_g_large",
@@ -14339,7 +14591,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_g_precision_zero",
@@ -14358,7 +14610,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_g_small_fixed",
@@ -14434,7 +14686,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_h_d",
@@ -14453,7 +14705,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_h_overflow",
@@ -14491,7 +14743,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_hh_overflow",
@@ -14510,7 +14762,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 17
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_hhu_max",
@@ -14567,7 +14819,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_hx_max",
@@ -14586,7 +14838,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 21
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_i_basic",
@@ -14624,7 +14876,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_l_d",
@@ -14643,7 +14895,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_left_overrides_zero",
@@ -14681,7 +14933,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_ll_d",
@@ -14700,7 +14952,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_lld_negative",
@@ -14719,7 +14971,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_llu_max",
@@ -14757,7 +15009,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_lo_max",
@@ -14776,7 +15028,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 21
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_mixed_text",
@@ -14814,7 +15066,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 21
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_multiple_conversions",
@@ -14890,7 +15142,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_o_basic",
@@ -14909,7 +15161,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_o_large_value",
@@ -14928,7 +15180,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_o_precision_zero",
@@ -14966,7 +15218,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_o_zero",
@@ -14985,7 +15237,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_only_literal",
@@ -15004,7 +15256,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_p_basic",
@@ -15015,8 +15267,8 @@
       "spec_section": "C11 7.21.6.1 %p specifier",
       "input_hex": "7b2261726773223a5b2230783132333435363738225d2c22666f726d6174223a222570227d",
       "expected_output": "^0x[0-9a-f]+$",
-      "actual_output": "0x646ce1f2e180",
-      "host_output": "0x646ce1f2e180",
+      "actual_output": "0x5f085eeeb180",
+      "host_output": "0x5f085eeeb180",
       "host_parity": true,
       "note": "expected_output_pattern_match",
       "status": "pass",
@@ -15042,7 +15294,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_p_width",
@@ -15053,15 +15305,15 @@
       "spec_section": "C11 7.21.6.1 %p width",
       "input_hex": "7b2261726773223a5b22307831323334225d2c22666f726d6174223a2225323070227d",
       "expected_output": "^\\s*0x[0-9a-f]+$",
-      "actual_output": "      0x639e746b5180",
-      "host_output": "      0x639e746b5180",
+      "actual_output": "      0x609ec9b5b180",
+      "host_output": "      0x609ec9b5b180",
       "host_parity": true,
       "note": "expected_output_pattern_match",
       "status": "pass",
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_plus_flag_neg",
@@ -15080,7 +15332,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_plus_flag_pos",
@@ -15099,7 +15351,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_plus_overrides_space",
@@ -15194,7 +15446,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_positional_repeat",
@@ -15213,7 +15465,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_positional_width",
@@ -15232,7 +15484,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_precision_d",
@@ -15308,7 +15560,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_precision_larger_than_digits",
@@ -15365,7 +15617,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_s_null_precision",
@@ -15460,7 +15712,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_s_width",
@@ -15479,7 +15731,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 25
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_s_width_left",
@@ -15517,7 +15769,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 21
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_s_width_zero",
@@ -15555,7 +15807,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 21
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_space_flag_pos",
@@ -15574,7 +15826,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_star_both",
@@ -15593,7 +15845,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_star_neg_precision",
@@ -15631,7 +15883,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_star_precision",
@@ -15726,7 +15978,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_u_basic",
@@ -15745,7 +15997,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 21
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_u_max",
@@ -15783,7 +16035,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_width_d",
@@ -15802,7 +16054,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 21
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_width_d_left",
@@ -15821,7 +16073,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_width_d_zero_neg",
@@ -15840,7 +16092,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_width_d_zero_pad",
@@ -15878,7 +16130,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_width_precision_d",
@@ -15897,7 +16149,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_width_precision_neg_d",
@@ -15916,7 +16168,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_x_alt_form",
@@ -15935,7 +16187,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_x_alt_width_precision",
@@ -15954,7 +16206,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_x_alt_zero",
@@ -16030,7 +16282,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_x_uppercase_alt",
@@ -16049,7 +16301,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_x_width_left_alt",
@@ -16068,7 +16320,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_x_width_precision",
@@ -16087,7 +16339,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_x_zero",
@@ -16125,7 +16377,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_zd_negative",
@@ -16144,7 +16396,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 21
     },
     {
       "trace_id": "franken_shadow::printf_conformance::sprintf::strict::sprintf_zero_flag_ignored_with_precision",
@@ -16220,7 +16472,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::process_ops::getpid::hardened::getpid_positive_hardened",
@@ -16239,7 +16491,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::process_ops::getpid::strict::getpid_positive_strict",
@@ -16353,7 +16605,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_broadcast::hardened::broadcast_null_pointer",
@@ -16391,7 +16643,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 40
+      "duration_ms": 41
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_broadcast::strict::broadcast_no_waiters",
@@ -16410,7 +16662,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_broadcast::strict::broadcast_null_pointer",
@@ -16429,7 +16681,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_destroy::hardened::destroy_idle",
@@ -16505,7 +16757,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_destroy::strict::destroy_null_pointer",
@@ -16562,7 +16814,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_init::hardened::init_default_attr",
@@ -16733,7 +16985,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_signal::hardened::signal_one_waiter",
@@ -16866,7 +17118,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_timedwait::hardened::timedwait_invalid_nsec_negative",
@@ -16904,7 +17156,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 36
+      "duration_ms": 35
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_timedwait::strict::timedwait_before_deadline",
@@ -17037,7 +17289,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 35
+      "duration_ms": 30
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_wait::hardened::wait_mutex_mismatch",
@@ -17113,7 +17365,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 35
+      "duration_ms": 36
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_wait::strict::spurious_wakeup_predicate_loop",
@@ -17189,7 +17441,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::pthread/cond::pthread_cond_wait::strict::wait_null_mutex",
@@ -17284,7 +17536,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 41
+      "duration_ms": 40
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_clockjoin_np::hardened::clockjoin_realtime_success",
@@ -17360,7 +17612,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 167
+      "duration_ms": 163
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_clockjoin_np::strict::clockjoin_monotonic_success",
@@ -17417,7 +17669,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 40
+      "duration_ms": 41
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_clockjoin_np::strict::clockjoin_self",
@@ -17455,7 +17707,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 263
+      "duration_ms": 264
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_cond_clockwait::hardened::clockwait_invalid_clock",
@@ -17531,7 +17783,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_cond_clockwait::hardened::clockwait_null_condvar",
@@ -17569,7 +17821,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_cond_clockwait::hardened::clockwait_realtime",
@@ -17626,7 +17878,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 35
+      "duration_ms": 36
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_cond_clockwait::strict::clockwait_invalid_nsec",
@@ -17645,7 +17897,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_cond_clockwait::strict::clockwait_monotonic",
@@ -17664,7 +17916,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 35
+      "duration_ms": 30
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_cond_clockwait::strict::clockwait_null_abstime",
@@ -17778,7 +18030,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 218
+      "duration_ms": 213
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_getattr_np::hardened::getattr_np_null_attr",
@@ -17873,7 +18125,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 218
+      "duration_ms": 219
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_getattr_np::strict::getattr_np_null_attr",
@@ -17968,7 +18220,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 41
+      "duration_ms": 40
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_timedjoin_np::hardened::timedjoin_detached_thread",
@@ -17987,7 +18239,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 167
+      "duration_ms": 168
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_timedjoin_np::hardened::timedjoin_invalid_nsec",
@@ -18044,7 +18296,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 40
+      "duration_ms": 41
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_timedjoin_np::hardened::timedjoin_self",
@@ -18082,7 +18334,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 268
+      "duration_ms": 263
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_timedjoin_np::strict::timedjoin_before_exit",
@@ -18101,7 +18353,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 41
+      "duration_ms": 40
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_timedjoin_np::strict::timedjoin_detached_thread",
@@ -18139,7 +18391,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 40
+      "duration_ms": 41
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_timedjoin_np::strict::timedjoin_invalid_thread",
@@ -18215,7 +18467,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 263
+      "duration_ms": 264
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_tryjoin_np::hardened::tryjoin_detached",
@@ -18386,7 +18638,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 218
+      "duration_ms": 213
     },
     {
       "trace_id": "franken_shadow::pthread/gnu_extensions::pthread_tryjoin_np::strict::tryjoin_self",
@@ -18405,7 +18657,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::__pthread_mutex_trylock::hardened::alias_mutex_trylock_unlocked",
@@ -18424,7 +18676,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::__pthread_mutex_trylock::strict::alias_mutex_trylock_unlocked",
@@ -18500,7 +18752,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::pthread_mutex_destroy::strict::mutex_destroy",
@@ -18519,7 +18771,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::pthread_mutex_init::hardened::mutex_init_default",
@@ -18538,7 +18790,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::pthread_mutex_init::hardened::mutex_init_null_attr_default_type",
@@ -18595,7 +18847,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::pthread_mutex_lock::hardened::mutex_lock_unlock",
@@ -18633,7 +18885,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::pthread_mutex_lock::strict::mutex_lock_unlock",
@@ -18652,7 +18904,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::pthread_mutex_trylock::hardened::mutex_trylock_locked_ebusy",
@@ -18671,7 +18923,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::pthread_mutex_trylock::hardened::mutex_trylock_unlocked",
@@ -18690,7 +18942,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::pthread_mutex_trylock::strict::mutex_trylock_locked_ebusy",
@@ -18747,7 +18999,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/mutex::pthread_mutex_unlock::strict::mutex_unlock",
@@ -18842,7 +19094,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 35
+      "duration_ms": 36
     },
     {
       "trace_id": "franken_shadow::pthread/thread::pthread_detach::strict::pthread_detach_null_einval",
@@ -18899,7 +19151,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::pthread/thread::pthread_equal::hardened::pthread_equal_same_thread",
@@ -19051,7 +19303,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 11
     },
     {
       "trace_id": "franken_shadow::pthread/thread::pthread_self::hardened::pthread_self_returns_positive",
@@ -19070,7 +19322,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/thread::pthread_self::strict::pthread_self_returns_positive",
@@ -19108,7 +19360,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::pthread_getspecific::hardened::getspecific_invalid_key",
@@ -19127,7 +19379,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::pthread_getspecific::strict::getspecific_default_zero",
@@ -19184,7 +19436,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 41
+      "duration_ms": 40
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::pthread_key_create::hardened::key_create_success",
@@ -19241,7 +19493,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 41
+      "duration_ms": 35
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::pthread_key_create::strict::key_create_success",
@@ -19298,7 +19550,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::pthread_key_delete::hardened::key_delete_does_not_call_destructors",
@@ -19355,7 +19607,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::pthread_key_delete::strict::key_delete_already_deleted",
@@ -19393,7 +19645,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::pthread_key_delete::strict::key_delete_invalid_key",
@@ -19450,7 +19702,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::pthread_setspecific::hardened::setspecific_out_of_bounds_key",
@@ -19507,7 +19759,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::pthread_setspecific::strict::setspecific_out_of_bounds_key",
@@ -19678,7 +19930,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pthread/tls_keys::teardown_thread_tls::strict::destructor_not_called_for_null_value",
@@ -19773,7 +20025,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pwd_ops::getpwnam::strict::getpwnam_nonexistent_strict",
@@ -19792,7 +20044,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::pwd_ops::getpwnam::strict::getpwnam_root_strict",
@@ -19849,7 +20101,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::pwd_ops::getpwuid::strict::getpwuid_nonexistent_strict",
@@ -19963,7 +20215,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::regex_glob_ops::glob::hardened::glob_star_hardened",
@@ -19982,7 +20234,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 50
+      "duration_ms": 51
     },
     {
       "trace_id": "franken_shadow::regex_glob_ops::glob::strict::glob_star_strict",
@@ -20001,7 +20253,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 51
+      "duration_ms": 45
     },
     {
       "trace_id": "franken_shadow::regex_glob_ops::regcomp::hardened::regcomp_basic_hardened",
@@ -20020,7 +20272,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::regex_glob_ops::regcomp::strict::regcomp_basic_strict",
@@ -20058,7 +20310,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::regex_glob_ops::regexec::strict::regexec_nomatch_strict",
@@ -20096,7 +20348,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::regex_glob_ops::wordexp::hardened::wordexp_quoted_semicolon_both",
@@ -20153,7 +20405,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::regex_glob_ops::wordexp::strict::wordexp_quoted_semicolon_both",
@@ -20229,7 +20481,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::resolv/dns::ResolverConfig::parse::strict::resolv_conf_max_nameservers",
@@ -20267,7 +20519,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::resolv/dns::ResolverConfig::parse::strict::resolv_conf_options_ndots",
@@ -20324,7 +20576,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::resolv/dns::ResolverConfig::parse::strict::resolv_conf_single_nameserver",
@@ -20400,7 +20652,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 25
+      "duration_ms": 30
     },
     {
       "trace_id": "franken_shadow::resolv/dns::freeaddrinfo::strict::freeaddrinfo_numeric_ipv4_strict",
@@ -20533,7 +20785,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::resolv/dns::gethostbyname::strict::gethostbyname_numeric_ipv4",
@@ -20590,7 +20842,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::resolv/dns::lookup_hosts::hardened::hosts_lookup_inline_comments_and_aliases_hardened",
@@ -20685,7 +20937,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::resource_ops::getrlimit::hardened::getrlimit_invalid_hardened",
@@ -20704,7 +20956,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::resource_ops::getrlimit::hardened::getrlimit_nofile_hardened",
@@ -20742,7 +20994,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::resource_ops::getrlimit::strict::getrlimit_core_strict",
@@ -20761,7 +21013,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::resource_ops::getrlimit::strict::getrlimit_cpu_strict",
@@ -20780,7 +21032,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::resource_ops::getrlimit::strict::getrlimit_data_strict",
@@ -20837,7 +21089,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::resource_ops::getrlimit::strict::getrlimit_nofile_strict",
@@ -20856,7 +21108,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::resource_ops::getrlimit::strict::getrlimit_stack_strict",
@@ -20875,7 +21127,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_A_hex_upper",
@@ -20913,7 +21165,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_X_basic",
@@ -21027,7 +21279,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_a_hex_negative",
@@ -21084,7 +21336,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_c_no_skip_ws",
@@ -21103,7 +21355,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_c_width",
@@ -21198,7 +21450,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_d_overflow",
@@ -21312,7 +21564,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_eof_empty",
@@ -21331,7 +21583,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_eof_ws_only",
@@ -21350,7 +21602,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_f_E_exponent",
@@ -21540,7 +21792,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_f_neg_zero",
@@ -21692,7 +21944,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_h_d",
@@ -21749,7 +22001,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 11
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_hh_d",
@@ -21787,7 +22039,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 11
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_hhd_underflow",
@@ -21863,7 +22115,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_i_auto_hex",
@@ -21939,7 +22191,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_i_negative",
@@ -21958,7 +22210,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_i_octal",
@@ -22053,7 +22305,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_literal_match",
@@ -22091,7 +22343,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_literal_percent",
@@ -22110,7 +22362,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_ll_d",
@@ -22129,7 +22381,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_lld_no_wrap",
@@ -22167,7 +22419,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_llx_large",
@@ -22281,7 +22533,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_o_basic",
@@ -22357,7 +22609,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_partial_conversion",
@@ -22414,7 +22666,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_s_stops_ws",
@@ -22471,7 +22723,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_scanset_basic",
@@ -22566,7 +22818,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_scanset_hyphen_literal",
@@ -22680,7 +22932,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_suppress_s",
@@ -22718,7 +22970,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_u_basic",
@@ -22775,7 +23027,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 11
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_ws_in_format",
@@ -22851,7 +23103,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::scanf_conformance::sscanf::strict::sscanf_x_width",
@@ -23003,7 +23255,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 25
+      "duration_ms": 31
     },
     {
       "trace_id": "franken_shadow::search/ops::insque::hardened::insque_builds_chain",
@@ -23041,7 +23293,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::search/ops::lfind::hardened::lfind_existing_index",
@@ -23060,7 +23312,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::search/ops::lfind::strict::lfind_existing_index",
@@ -23117,7 +23369,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::search/ops::remque::hardened::remque_middle_detaches_node",
@@ -23288,7 +23540,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::search/ops::twalk::strict::twalk_visit_sequence",
@@ -23345,7 +23597,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::session_ops::getlogin_r::strict::getlogin_r_returns_user_strict",
@@ -23402,7 +23654,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::session_ops::setsid::strict::setsid_creates_session_strict",
@@ -23535,7 +23787,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::cross_thread_longjmp",
@@ -23592,7 +23844,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::siglongjmp_without_sigsetjmp",
@@ -23611,7 +23863,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::setjmp_ops::_setjmp::strict::sigsetjmp_returns_zero_strict",
@@ -23706,7 +23958,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::setjmp_ops::setjmp::hardened::setjmp_returns_zero_hardened",
@@ -23744,7 +23996,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::gsignal::hardened::gsignal_above_max_both",
@@ -23858,7 +24110,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::gsignal::hardened::gsignal_sigusr1_delivery_both",
@@ -23877,7 +24129,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::gsignal::hardened::gsignal_sigusr2_delivery_both",
@@ -23991,7 +24243,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::gsignal::strict::gsignal_sigterm_delivery_both",
@@ -24067,7 +24319,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::signal_ops::kill::strict::kill_invalid_signal_strict",
@@ -24124,7 +24376,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::signal_ops::raise::strict::raise_zero_strict",
@@ -24143,7 +24395,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::sigaction::strict::sigaction_query_strict",
@@ -24162,7 +24414,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::signal_ops::sigaddset::hardened::sigaddset_sigusr1_hardened",
@@ -24181,7 +24433,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 11
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::sigaddset::strict::sigaddset_invalid_strict",
@@ -24219,7 +24471,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::sigaddset::strict::sigaddset_sigterm_strict",
@@ -24295,7 +24547,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::signal_ops::sigemptyset::strict::sigemptyset_basic_strict",
@@ -24333,7 +24585,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::sigfillset::strict::sigfillset_basic_strict",
@@ -24352,7 +24604,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::sigismember::hardened::sigismember_full_hardened",
@@ -24447,7 +24699,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::hardened::signal_install_negative_both",
@@ -24485,7 +24737,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::hardened::signal_install_sigkill_both",
@@ -24504,7 +24756,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::hardened::signal_install_sigrtmax_both",
@@ -24523,7 +24775,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::hardened::signal_install_sigstop_both",
@@ -24599,7 +24851,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::hardened::signal_install_zero_both",
@@ -24637,7 +24889,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::strict::signal_install_above_max_both",
@@ -24656,7 +24908,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::strict::signal_install_negative_both",
@@ -24675,7 +24927,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::strict::signal_install_sighup_both",
@@ -24694,7 +24946,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::strict::signal_install_sigkill_both",
@@ -24713,7 +24965,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::strict::signal_install_sigrtmax_both",
@@ -24732,7 +24984,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::strict::signal_install_sigstop_both",
@@ -24751,7 +25003,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::strict::signal_install_sigterm_both",
@@ -24789,7 +25041,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::strict::signal_install_sigusr2_both",
@@ -24808,7 +25060,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 21
     },
     {
       "trace_id": "franken_shadow::signal_ops::signal::strict::signal_install_zero_both",
@@ -24846,7 +25098,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::ssignal::hardened::ssignal_install_above_max_both",
@@ -24903,7 +25155,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::ssignal::hardened::ssignal_install_sigrtmax_both",
@@ -24960,7 +25212,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::ssignal::hardened::ssignal_install_sigusr1_both",
@@ -24979,7 +25231,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::ssignal::hardened::ssignal_install_zero_both",
@@ -24998,7 +25250,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::ssignal::hardened::ssignal_invalid_signal_both",
@@ -25017,7 +25269,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::signal_ops::ssignal::strict::ssignal_install_above_max_both",
@@ -25055,7 +25307,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::ssignal::strict::ssignal_install_sigkill_both",
@@ -25150,7 +25402,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::ssignal::strict::ssignal_install_zero_both",
@@ -25169,7 +25421,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::signal_ops::ssignal::strict::ssignal_invalid_signal_both",
@@ -25188,7 +25440,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::socket_ops::bind::strict::bind_invalid_fd_strict",
@@ -25207,7 +25459,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::socket_ops::getsockname::strict::getsockname_invalid_fd_strict",
@@ -25264,7 +25516,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::socket_ops::listen::strict::listen_invalid_fd_strict",
@@ -25359,7 +25611,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::socket_ops::send::hardened::send_invalid_fd",
@@ -25378,7 +25630,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::socket_ops::send::hardened::send_socketpair_payload",
@@ -25473,7 +25725,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::socket_ops::socket::hardened::socket_tcp_hardened",
@@ -25492,7 +25744,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::socket_ops::socket::strict::socket_invalid_domain_strict",
@@ -25511,7 +25763,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::socket_ops::socket::strict::socket_tcp_strict",
@@ -25606,7 +25858,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::spawn_exec_ops::posix_spawn::strict::posix_spawn_echo_strict",
@@ -25682,7 +25934,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::startup_ops::__frankenlibc_startup_phase0::hardened::startup_phase0_rejects_unterminated_argv_hardened",
@@ -25739,7 +25991,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::startup_ops::__frankenlibc_startup_phase0::hardened::startup_phase0_returns_hardened",
@@ -25777,7 +26029,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::startup_ops::__frankenlibc_startup_phase0::strict::startup_phase0_rejects_unterminated_auxv_strict",
@@ -25796,7 +26048,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::startup_ops::__frankenlibc_startup_phase0::strict::startup_phase0_rejects_unterminated_envp_strict",
@@ -25948,7 +26200,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::startup_ops::__libc_start_main::strict::libc_start_main_phase0_missing_main_no_fallback_strict",
@@ -25979,6 +26231,1070 @@
       "input_hex": "7b2261726763223a312c2261726776223a2276616c69645f707472222c22656e7670223a22756e7465726d696e617465645f707472735f6d61785f7363616e222c226d61696e223a2276616c69645f666e5f707472222c227068617365305f656e76223a2231227d",
       "expected_output": "PHASE0_DENY_THEN_FALLBACK_HOST",
       "actual_output": "PHASE0_DENY_THEN_FALLBACK_HOST",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 16
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_ui::hardened::stdc_bit_ceil_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_ceil_ui",
+      "mode": "hardened",
+      "case_name": "stdc_bit_ceil_ui_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.14",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "16777216",
+      "actual_output": "16777216",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_ui::hardened::stdc_bit_ceil_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_ceil_ui",
+      "mode": "hardened",
+      "case_name": "stdc_bit_ceil_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.14",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_ui::strict::stdc_bit_ceil_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_ceil_ui",
+      "mode": "strict",
+      "case_name": "stdc_bit_ceil_ui_sparse [strict]",
+      "spec_section": "C23 7.18a.4.14",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "16777216",
+      "actual_output": "16777216",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_ui::strict::stdc_bit_ceil_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_ceil_ui",
+      "mode": "strict",
+      "case_name": "stdc_bit_ceil_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.14",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 10
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_ui::hardened::stdc_bit_floor_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_floor_ui",
+      "mode": "hardened",
+      "case_name": "stdc_bit_floor_ui_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.13",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "8388608",
+      "actual_output": "8388608",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 11
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_ui::hardened::stdc_bit_floor_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_floor_ui",
+      "mode": "hardened",
+      "case_name": "stdc_bit_floor_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.13",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_ui::strict::stdc_bit_floor_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_floor_ui",
+      "mode": "strict",
+      "case_name": "stdc_bit_floor_ui_sparse [strict]",
+      "spec_section": "C23 7.18a.4.13",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "8388608",
+      "actual_output": "8388608",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_ui::strict::stdc_bit_floor_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_floor_ui",
+      "mode": "strict",
+      "case_name": "stdc_bit_floor_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.13",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 10
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_ui::hardened::stdc_bit_width_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_width_ui",
+      "mode": "hardened",
+      "case_name": "stdc_bit_width_ui_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.12",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "24",
+      "actual_output": "24",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_ui::hardened::stdc_bit_width_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_width_ui",
+      "mode": "hardened",
+      "case_name": "stdc_bit_width_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.12",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_ui::strict::stdc_bit_width_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_width_ui",
+      "mode": "strict",
+      "case_name": "stdc_bit_width_ui_sparse [strict]",
+      "spec_section": "C23 7.18a.4.12",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "24",
+      "actual_output": "24",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_ui::strict::stdc_bit_width_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_bit_width_ui",
+      "mode": "strict",
+      "case_name": "stdc_bit_width_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.12",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_ui::hardened::stdc_count_ones_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_count_ones_ui",
+      "mode": "hardened",
+      "case_name": "stdc_count_ones_ui_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.9",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_ui::hardened::stdc_count_ones_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_count_ones_ui",
+      "mode": "hardened",
+      "case_name": "stdc_count_ones_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.9",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_ui::strict::stdc_count_ones_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_count_ones_ui",
+      "mode": "strict",
+      "case_name": "stdc_count_ones_ui_sparse [strict]",
+      "spec_section": "C23 7.18a.4.9",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_ui::strict::stdc_count_ones_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_count_ones_ui",
+      "mode": "strict",
+      "case_name": "stdc_count_ones_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.9",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_ui::hardened::stdc_count_zeros_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_count_zeros_ui",
+      "mode": "hardened",
+      "case_name": "stdc_count_zeros_ui_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.10",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "27",
+      "actual_output": "27",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_ui::hardened::stdc_count_zeros_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_count_zeros_ui",
+      "mode": "hardened",
+      "case_name": "stdc_count_zeros_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.10",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "32",
+      "actual_output": "32",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_ui::strict::stdc_count_zeros_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_count_zeros_ui",
+      "mode": "strict",
+      "case_name": "stdc_count_zeros_ui_sparse [strict]",
+      "spec_section": "C23 7.18a.4.10",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "27",
+      "actual_output": "27",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_ui::strict::stdc_count_zeros_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_count_zeros_ui",
+      "mode": "strict",
+      "case_name": "stdc_count_zeros_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.10",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "32",
+      "actual_output": "32",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_ui::hardened::stdc_first_leading_one_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_leading_one_ui",
+      "mode": "hardened",
+      "case_name": "stdc_first_leading_one_ui_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.6",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "9",
+      "actual_output": "9",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 16
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_ui::hardened::stdc_first_leading_one_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_leading_one_ui",
+      "mode": "hardened",
+      "case_name": "stdc_first_leading_one_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.6",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_ui::strict::stdc_first_leading_one_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_leading_one_ui",
+      "mode": "strict",
+      "case_name": "stdc_first_leading_one_ui_sparse [strict]",
+      "spec_section": "C23 7.18a.4.6",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "9",
+      "actual_output": "9",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_ui::strict::stdc_first_leading_one_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_leading_one_ui",
+      "mode": "strict",
+      "case_name": "stdc_first_leading_one_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.6",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 10
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_ui::hardened::stdc_first_leading_zero_ui_top_nibble",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_leading_zero_ui",
+      "mode": "hardened",
+      "case_name": "stdc_first_leading_zero_ui_top_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.5",
+      "input_hex": "7b2276616c7565223a343032363533313834307d",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_ui::hardened::stdc_first_leading_zero_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_leading_zero_ui",
+      "mode": "hardened",
+      "case_name": "stdc_first_leading_zero_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.5",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 10
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_ui::strict::stdc_first_leading_zero_ui_top_nibble",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_leading_zero_ui",
+      "mode": "strict",
+      "case_name": "stdc_first_leading_zero_ui_top_nibble [strict]",
+      "spec_section": "C23 7.18a.4.5",
+      "input_hex": "7b2276616c7565223a343032363533313834307d",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_ui::strict::stdc_first_leading_zero_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_leading_zero_ui",
+      "mode": "strict",
+      "case_name": "stdc_first_leading_zero_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.5",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 10
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_ui::hardened::stdc_first_trailing_one_ui_shifted",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_trailing_one_ui",
+      "mode": "hardened",
+      "case_name": "stdc_first_trailing_one_ui_shifted [hardened]",
+      "spec_section": "C23 7.18a.4.8",
+      "input_hex": "7b2276616c7565223a34387d",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_ui::hardened::stdc_first_trailing_one_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_trailing_one_ui",
+      "mode": "hardened",
+      "case_name": "stdc_first_trailing_one_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.8",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_ui::strict::stdc_first_trailing_one_ui_shifted",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_trailing_one_ui",
+      "mode": "strict",
+      "case_name": "stdc_first_trailing_one_ui_shifted [strict]",
+      "spec_section": "C23 7.18a.4.8",
+      "input_hex": "7b2276616c7565223a34387d",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_ui::strict::stdc_first_trailing_one_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_trailing_one_ui",
+      "mode": "strict",
+      "case_name": "stdc_first_trailing_one_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.8",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_ui::hardened::stdc_first_trailing_zero_ui_low_nibble",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_trailing_zero_ui",
+      "mode": "hardened",
+      "case_name": "stdc_first_trailing_zero_ui_low_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.7",
+      "input_hex": "7b2276616c7565223a31357d",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_ui::hardened::stdc_first_trailing_zero_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_trailing_zero_ui",
+      "mode": "hardened",
+      "case_name": "stdc_first_trailing_zero_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.7",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_ui::strict::stdc_first_trailing_zero_ui_low_nibble",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_trailing_zero_ui",
+      "mode": "strict",
+      "case_name": "stdc_first_trailing_zero_ui_low_nibble [strict]",
+      "spec_section": "C23 7.18a.4.7",
+      "input_hex": "7b2276616c7565223a31357d",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 10
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_ui::strict::stdc_first_trailing_zero_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_first_trailing_zero_ui",
+      "mode": "strict",
+      "case_name": "stdc_first_trailing_zero_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.7",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_ui::hardened::stdc_has_single_bit_ui_power",
+      "family": "stdbit/ops",
+      "symbol": "stdc_has_single_bit_ui",
+      "mode": "hardened",
+      "case_name": "stdc_has_single_bit_ui_power [hardened]",
+      "spec_section": "C23 7.18a.4.11",
+      "input_hex": "7b2276616c7565223a36353533367d",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_ui::hardened::stdc_has_single_bit_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_has_single_bit_ui",
+      "mode": "hardened",
+      "case_name": "stdc_has_single_bit_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.11",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_ui::strict::stdc_has_single_bit_ui_power",
+      "family": "stdbit/ops",
+      "symbol": "stdc_has_single_bit_ui",
+      "mode": "strict",
+      "case_name": "stdc_has_single_bit_ui_power [strict]",
+      "spec_section": "C23 7.18a.4.11",
+      "input_hex": "7b2276616c7565223a36353533367d",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_ui::strict::stdc_has_single_bit_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_has_single_bit_ui",
+      "mode": "strict",
+      "case_name": "stdc_has_single_bit_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.11",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_ui::hardened::stdc_leading_ones_ui_top_nibble",
+      "family": "stdbit/ops",
+      "symbol": "stdc_leading_ones_ui",
+      "mode": "hardened",
+      "case_name": "stdc_leading_ones_ui_top_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.2",
+      "input_hex": "7b2276616c7565223a343032363533313834307d",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_ui::hardened::stdc_leading_ones_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_leading_ones_ui",
+      "mode": "hardened",
+      "case_name": "stdc_leading_ones_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.2",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_ui::strict::stdc_leading_ones_ui_top_nibble",
+      "family": "stdbit/ops",
+      "symbol": "stdc_leading_ones_ui",
+      "mode": "strict",
+      "case_name": "stdc_leading_ones_ui_top_nibble [strict]",
+      "spec_section": "C23 7.18a.4.2",
+      "input_hex": "7b2276616c7565223a343032363533313834307d",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_ui::strict::stdc_leading_ones_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_leading_ones_ui",
+      "mode": "strict",
+      "case_name": "stdc_leading_ones_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.2",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 10
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_ui::hardened::stdc_leading_zeros_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_leading_zeros_ui",
+      "mode": "hardened",
+      "case_name": "stdc_leading_zeros_ui_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.1",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "8",
+      "actual_output": "8",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_ui::hardened::stdc_leading_zeros_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_leading_zeros_ui",
+      "mode": "hardened",
+      "case_name": "stdc_leading_zeros_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.1",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "32",
+      "actual_output": "32",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_ui::strict::stdc_leading_zeros_ui_sparse",
+      "family": "stdbit/ops",
+      "symbol": "stdc_leading_zeros_ui",
+      "mode": "strict",
+      "case_name": "stdc_leading_zeros_ui_sparse [strict]",
+      "spec_section": "C23 7.18a.4.1",
+      "input_hex": "7b2276616c7565223a31353732383635367d",
+      "expected_output": "8",
+      "actual_output": "8",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 10
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_ui::strict::stdc_leading_zeros_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_leading_zeros_ui",
+      "mode": "strict",
+      "case_name": "stdc_leading_zeros_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.1",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "32",
+      "actual_output": "32",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 10
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_ui::hardened::stdc_trailing_ones_ui_low_nibble",
+      "family": "stdbit/ops",
+      "symbol": "stdc_trailing_ones_ui",
+      "mode": "hardened",
+      "case_name": "stdc_trailing_ones_ui_low_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.4",
+      "input_hex": "7b2276616c7565223a31357d",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_ui::hardened::stdc_trailing_ones_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_trailing_ones_ui",
+      "mode": "hardened",
+      "case_name": "stdc_trailing_ones_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.4",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_ui::strict::stdc_trailing_ones_ui_low_nibble",
+      "family": "stdbit/ops",
+      "symbol": "stdc_trailing_ones_ui",
+      "mode": "strict",
+      "case_name": "stdc_trailing_ones_ui_low_nibble [strict]",
+      "spec_section": "C23 7.18a.4.4",
+      "input_hex": "7b2276616c7565223a31357d",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_ui::strict::stdc_trailing_ones_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_trailing_ones_ui",
+      "mode": "strict",
+      "case_name": "stdc_trailing_ones_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.4",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_ui::hardened::stdc_trailing_zeros_ui_shifted",
+      "family": "stdbit/ops",
+      "symbol": "stdc_trailing_zeros_ui",
+      "mode": "hardened",
+      "case_name": "stdc_trailing_zeros_ui_shifted [hardened]",
+      "spec_section": "C23 7.18a.4.3",
+      "input_hex": "7b2276616c7565223a34387d",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_ui::hardened::stdc_trailing_zeros_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_trailing_zeros_ui",
+      "mode": "hardened",
+      "case_name": "stdc_trailing_zeros_ui_zero [hardened]",
+      "spec_section": "C23 7.18a.4.3",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "32",
+      "actual_output": "32",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_ui::strict::stdc_trailing_zeros_ui_shifted",
+      "family": "stdbit/ops",
+      "symbol": "stdc_trailing_zeros_ui",
+      "mode": "strict",
+      "case_name": "stdc_trailing_zeros_ui_shifted [strict]",
+      "spec_section": "C23 7.18a.4.3",
+      "input_hex": "7b2276616c7565223a34387d",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "host_parity": true,
+      "note": null,
+      "status": "pass",
+      "passed": true,
+      "error": null,
+      "diff_offset": null,
+      "duration_ms": 15
+    },
+    {
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_ui::strict::stdc_trailing_zeros_ui_zero",
+      "family": "stdbit/ops",
+      "symbol": "stdc_trailing_zeros_ui",
+      "mode": "strict",
+      "case_name": "stdc_trailing_zeros_ui_zero [strict]",
+      "spec_section": "C23 7.18a.4.3",
+      "input_hex": "7b2276616c7565223a307d",
+      "expected_output": "32",
+      "actual_output": "32",
       "host_output": "SKIP",
       "host_parity": true,
       "note": null,
@@ -26062,7 +27378,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fclose::strict::fclose_valid_strict",
@@ -26081,7 +27397,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 22
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::feof::strict::feof_devnull_read_after_eof_strict",
@@ -26100,7 +27416,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 25
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::feof::strict::feof_devnull_read_no_read_strict",
@@ -26119,7 +27435,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::ferror::hardened::ferror_devzero_hardened",
@@ -26214,7 +27530,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fgetc::strict::fgetc_devnull_read_strict",
@@ -26271,7 +27587,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fgets::strict::fgets_devnull_eof_strict",
@@ -26328,7 +27644,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 21
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fileno::strict::fileno_devzero_strict",
@@ -26347,7 +27663,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fopen::hardened::fopen_valid_mode_hardened",
@@ -26366,7 +27682,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fopen::strict::fopen_invalid_path_strict",
@@ -26404,7 +27720,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 25
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fprintf::strict::fprintf_devnull_strict",
@@ -26442,7 +27758,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fputc::strict::fputc_devnull_strict",
@@ -26480,7 +27796,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 21
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fputs::hardened::fputs_devnull_hardened",
@@ -26499,7 +27815,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 21
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fputs::strict::fputs_devnull_strict",
@@ -26518,7 +27834,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 25
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fread::hardened::fread_devzero_hardened",
@@ -26594,7 +27910,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::fwrite::strict::fwrite_devnull_strict",
@@ -26632,7 +27948,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::printf::strict::printf_literal_strict",
@@ -26651,7 +27967,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::setbuf::hardened::setbuf_devnull_null_hardened",
@@ -26746,7 +28062,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::snprintf::strict::snprintf_basic_strict",
@@ -26822,7 +28138,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 21
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::vasprintf::hardened::vasprintf_literal_hardened",
@@ -26898,7 +28214,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::vsnprintf::hardened::vsnprintf_literal_hardened",
@@ -26917,7 +28233,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::vsnprintf::strict::vsnprintf_literal_strict",
@@ -26936,7 +28252,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::vsprintf::hardened::vsprintf_literal_hardened",
@@ -26955,7 +28271,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdio_file_ops::vsprintf::strict::vsprintf_literal_strict",
@@ -26974,7 +28290,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::stdlib/conversion::atoi::strict::atoi_basic",
@@ -27088,7 +28404,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdlib/conversion::strtol::strict::strtol_overflow_max",
@@ -27145,7 +28461,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::atoi::strict::atoi_whitespace",
@@ -27202,7 +28518,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::atol::strict::atol_negative",
@@ -27278,7 +28594,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 27
+      "duration_ms": 25
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::hardened::getbsize_garbage_falls_back_to_default",
@@ -27297,7 +28613,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 46
+      "duration_ms": 36
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::hardened::getbsize_huge_g_value_clamps_to_ceiling",
@@ -27316,7 +28632,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 30
+      "duration_ms": 25
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::hardened::getbsize_implicit_one_unit_suffix",
@@ -27392,7 +28708,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 30
+      "duration_ms": 25
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::hardened::getbsize_one_k_preserves_suffix_header",
@@ -27411,7 +28727,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 30
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::hardened::getbsize_plus_prefixed_mega_suffix",
@@ -27430,7 +28746,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 31
+      "duration_ms": 30
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::hardened::getbsize_tiny_value_clamps_to_floor",
@@ -27468,7 +28784,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 31
+      "duration_ms": 25
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::strict::getbsize_default_unset",
@@ -27506,7 +28822,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 31
+      "duration_ms": 25
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::strict::getbsize_garbage_falls_back_to_default",
@@ -27525,7 +28841,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 40
+      "duration_ms": 35
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::strict::getbsize_huge_g_value_clamps_to_ceiling",
@@ -27639,7 +28955,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 25
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::getbsize::strict::getbsize_plus_prefixed_mega_suffix",
@@ -27677,7 +28993,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 30
+      "duration_ms": 35
     },
     {
       "trace_id": "franken_shadow::stdlib/numeric::strtol::strict::strtol_base10",
@@ -27772,7 +29088,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdlib/sort::bsearch::strict::bsearch_empty_strict",
@@ -27886,7 +29202,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdlib/sort::qsort::strict::qsort_duplicates_strict",
@@ -27943,7 +29259,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::stdlib/sort::qsort::strict::qsort_reversed_strict",
@@ -28133,7 +29449,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/memcpy::memcpy::strict::copy_zero",
@@ -28342,7 +29658,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/memory::strncat::strict::strncat_basic",
@@ -28361,7 +29677,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/memory::strncpy::strict::strncpy_basic",
@@ -28380,7 +29696,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/memory::strrchr::strict::strrchr_found",
@@ -28399,7 +29715,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/memory::strstr::strict::strstr_found",
@@ -28494,7 +29810,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::string/narrow::memrchr::strict::strict_memrchr_found",
@@ -28532,7 +29848,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/narrow::strcat::hardened::hardened_strcat_overflow",
@@ -28570,7 +29886,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/narrow::strchr::strict::strict_strchr_found",
@@ -28798,7 +30114,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/strlen::strlen::hardened::hello_hardened",
@@ -28836,7 +30152,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/strlen::strlen::strict::embedded_high_byte_strict",
@@ -28855,7 +30171,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 11
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/strlen::strlen::strict::empty_string",
@@ -28874,7 +30190,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/strlen::strlen::strict::hello",
@@ -28950,7 +30266,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/strtok::strtok::strict::strtok_all_delims",
@@ -28969,7 +30285,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/strtok::strtok::strict::strtok_basic_first",
@@ -29102,7 +30418,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcscat::hardened::wcscat_basic",
@@ -29235,7 +30551,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcschr::hardened::wcschr_found",
@@ -29273,7 +30589,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcschr::hardened::wcschr_null_char",
@@ -29292,7 +30608,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcschr::strict::strict_wcschr_found",
@@ -29368,7 +30684,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcschr::strict::wcschr_null_char",
@@ -29425,7 +30741,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wcscmp::hardened::wcscmp_less",
@@ -29577,7 +30893,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcscpy::hardened::hardened_wcscpy_overflow",
@@ -29634,7 +30950,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wcscpy::strict::strict_wcscpy_basic",
@@ -29691,7 +31007,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wcscspn::hardened::wcscspn_found",
@@ -29710,7 +31026,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wcscspn::hardened::wcscspn_none",
@@ -29862,7 +31178,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 11
     },
     {
       "trace_id": "franken_shadow::string/wide::wcslen::strict::wcslen_basic",
@@ -29938,7 +31254,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncat::hardened::wcsncat_zero_n",
@@ -29976,7 +31292,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 11
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncat::strict::wcsncat_zero_n",
@@ -30052,7 +31368,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncmp::strict::strict_wcsncmp_equal",
@@ -30071,7 +31387,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncmp::strict::strict_wcsncmp_less",
@@ -30090,7 +31406,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncmp::strict::wcsncmp_diff_at_n",
@@ -30109,7 +31425,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncmp::strict::wcsncmp_equal_n",
@@ -30128,7 +31444,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncmp::strict::wcsncmp_zero_n",
@@ -30147,7 +31463,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncpy::hardened::wcsncpy_basic",
@@ -30166,7 +31482,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncpy::hardened::wcsncpy_pad",
@@ -30204,7 +31520,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsncpy::strict::strict_wcsncpy_basic",
@@ -30356,7 +31672,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wcspbrk::strict::wcspbrk_not_found",
@@ -30394,7 +31710,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsrchr::hardened::wcsrchr_not_found",
@@ -30413,7 +31729,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsrchr::strict::strict_wcsrchr_found",
@@ -30470,7 +31786,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsrchr::strict::wcsrchr_not_found",
@@ -30489,7 +31805,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsspn::hardened::wcsspn_all_match",
@@ -30527,7 +31843,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsspn::hardened::wcsspn_partial",
@@ -30660,7 +31976,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsstr::strict::strict_wcsstr_found",
@@ -30698,7 +32014,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsstr::strict::wcsstr_found",
@@ -30717,7 +32033,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wcsstr::strict::wcsstr_not_found",
@@ -30888,7 +32204,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wmemcmp::hardened::wmemcmp_less",
@@ -30907,7 +32223,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::string/wide::wmemcmp::hardened::wmemcmp_zero_n",
@@ -31002,7 +32318,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wmemcpy::hardened::wmemcpy_basic",
@@ -31021,7 +32337,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wmemcpy::hardened::wmemcpy_partial",
@@ -31040,7 +32356,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wmemcpy::hardened::wmemcpy_zero",
@@ -31059,7 +32375,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wmemcpy::strict::wmemcpy_basic",
@@ -31116,7 +32432,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wmemmove::hardened::wmemmove_basic",
@@ -31154,7 +32470,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::string/wide::wmemset::hardened::wmemset_basic",
@@ -31173,7 +32489,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide::wmemset::hardened::wmemset_zero",
@@ -31268,7 +32584,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::string/wide_memory::wmemcmp::strict::wmemcmp_less",
@@ -31344,7 +32660,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::sysv_ipc_ops::msgget::strict::msgget_create_strict",
@@ -31382,7 +32698,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::sysv_ipc_ops::semget::hardened::semget_create_hardened",
@@ -31420,7 +32736,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::sysv_ipc_ops::semop::strict::semop_wait_strict",
@@ -31439,7 +32755,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::sysv_ipc_ops::shmat::strict::shmat_attach_strict",
@@ -31458,7 +32774,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::sysv_ipc_ops::shmdt::strict::shmdt_detach_strict",
@@ -31553,7 +32869,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::termios_ops::cfsetispeed::strict::cfsetispeed_b115200_strict",
@@ -31572,7 +32888,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::termios_ops::cfsetospeed::strict::cfsetospeed_b115200_strict",
@@ -31686,7 +33002,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 12
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::time_ops::clock_gettime::hardened::clock_gettime_realtime_hardened",
@@ -31705,7 +33021,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 30
+      "duration_ms": 27
     },
     {
       "trace_id": "franken_shadow::time_ops::clock_gettime::strict::clock_gettime_invalid_strict",
@@ -31743,7 +33059,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 25
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::time_ops::clock_gettime::strict::clock_gettime_realtime_strict",
@@ -31800,7 +33116,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 25
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::time_ops::time::strict::time_returns_positive_strict",
@@ -31857,7 +33173,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::unistd::access::strict::access_nonexistent_enoent",
@@ -31876,7 +33192,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::unistd::access::strict::access_root_exists",
@@ -31895,7 +33211,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::unistd::close::hardened::close_invalid_fd_ebadf",
@@ -31914,7 +33230,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::unistd::close::hardened::close_valid_fd",
@@ -31952,7 +33268,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 20
     },
     {
       "trace_id": "franken_shadow::unistd::close::strict::close_valid_fd",
@@ -31990,7 +33306,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::unistd::getcwd::strict::getcwd_nonempty",
@@ -32047,7 +33363,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::unistd::geteuid::hardened::geteuid_nonneg",
@@ -32085,7 +33401,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::unistd::getgid::hardened::getgid_nonneg",
@@ -32142,7 +33458,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::unistd::getpid::strict::getpid_positive",
@@ -32161,7 +33477,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 16
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::unistd::getppid::hardened::getppid_positive",
@@ -32180,7 +33496,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 16
     },
     {
       "trace_id": "franken_shadow::unistd::getppid::strict::getppid_positive",
@@ -32294,7 +33610,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 20
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::unistd::isatty::strict::isatty_stdin",
@@ -32408,7 +33724,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::unistd::write::strict::read_write_pipe",
@@ -32465,7 +33781,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 11
+      "duration_ms": 15
     },
     {
       "trace_id": "franken_shadow::virtual_memory_ops::mmap::hardened::mmap_invalid_prot_hardened",
@@ -32503,7 +33819,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 15
+      "duration_ms": 10
     },
     {
       "trace_id": "franken_shadow::virtual_memory_ops::mmap::strict::mmap_anon_rw_strict",
@@ -32522,7 +33838,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 11
     },
     {
       "trace_id": "franken_shadow::virtual_memory_ops::mmap::strict::mmap_zero_length_strict",
@@ -32579,7 +33895,7 @@
       "passed": true,
       "error": null,
       "diff_offset": null,
-      "duration_ms": 10
+      "duration_ms": 15
     }
   ]
 }

@@ -1,0 +1,345 @@
+{
+  "version": "v1",
+  "family": "stdbit/ops",
+  "captured_at": "2026-04-25T00:00:00Z",
+  "description": "Executable C23 stdbit.h unsigned-int operation fixtures covering zero and representative non-zero inputs.",
+  "spec_reference": "ISO C23 7.18a <stdbit.h>",
+  "cases": [
+    {
+      "name": "stdc_leading_zeros_ui_zero",
+      "function": "stdc_leading_zeros_ui",
+      "spec_section": "C23 7.18a.4.1",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "32",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "unsigned int zero has no leading one bits"
+    },
+    {
+      "name": "stdc_leading_zeros_ui_sparse",
+      "function": "stdc_leading_zeros_ui",
+      "spec_section": "C23 7.18a.4.1",
+      "inputs": {
+        "value": 15728656
+      },
+      "expected_output": "8",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "0x00f00010 has its most significant one at bit position 23"
+    },
+    {
+      "name": "stdc_leading_ones_ui_zero",
+      "function": "stdc_leading_ones_ui",
+      "spec_section": "C23 7.18a.4.2",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero starts with a zero bit"
+    },
+    {
+      "name": "stdc_leading_ones_ui_top_nibble",
+      "function": "stdc_leading_ones_ui",
+      "spec_section": "C23 7.18a.4.2",
+      "inputs": {
+        "value": 4026531840
+      },
+      "expected_output": "4",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "0xf0000000 begins with four one bits"
+    },
+    {
+      "name": "stdc_trailing_zeros_ui_zero",
+      "function": "stdc_trailing_zeros_ui",
+      "spec_section": "C23 7.18a.4.3",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "32",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero reports the unsigned int width"
+    },
+    {
+      "name": "stdc_trailing_zeros_ui_shifted",
+      "function": "stdc_trailing_zeros_ui",
+      "spec_section": "C23 7.18a.4.3",
+      "inputs": {
+        "value": 48
+      },
+      "expected_output": "4",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "0x30 is divisible by 16 but not 32"
+    },
+    {
+      "name": "stdc_trailing_ones_ui_zero",
+      "function": "stdc_trailing_ones_ui",
+      "spec_section": "C23 7.18a.4.4",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero has no trailing one bits"
+    },
+    {
+      "name": "stdc_trailing_ones_ui_low_nibble",
+      "function": "stdc_trailing_ones_ui",
+      "spec_section": "C23 7.18a.4.4",
+      "inputs": {
+        "value": 15
+      },
+      "expected_output": "4",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "0x0f ends with four one bits"
+    },
+    {
+      "name": "stdc_first_leading_zero_ui_zero",
+      "function": "stdc_first_leading_zero_ui",
+      "spec_section": "C23 7.18a.4.5",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "positions are one-indexed from the most significant bit"
+    },
+    {
+      "name": "stdc_first_leading_zero_ui_top_nibble",
+      "function": "stdc_first_leading_zero_ui",
+      "spec_section": "C23 7.18a.4.5",
+      "inputs": {
+        "value": 4026531840
+      },
+      "expected_output": "5",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "first zero follows the four leading one bits"
+    },
+    {
+      "name": "stdc_first_leading_one_ui_zero",
+      "function": "stdc_first_leading_one_ui",
+      "spec_section": "C23 7.18a.4.6",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero has no one bit"
+    },
+    {
+      "name": "stdc_first_leading_one_ui_sparse",
+      "function": "stdc_first_leading_one_ui",
+      "spec_section": "C23 7.18a.4.6",
+      "inputs": {
+        "value": 15728656
+      },
+      "expected_output": "9",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "first one follows eight leading zeros"
+    },
+    {
+      "name": "stdc_first_trailing_zero_ui_zero",
+      "function": "stdc_first_trailing_zero_ui",
+      "spec_section": "C23 7.18a.4.7",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "positions are one-indexed from the least significant bit"
+    },
+    {
+      "name": "stdc_first_trailing_zero_ui_low_nibble",
+      "function": "stdc_first_trailing_zero_ui",
+      "spec_section": "C23 7.18a.4.7",
+      "inputs": {
+        "value": 15
+      },
+      "expected_output": "5",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "first zero follows the four trailing one bits"
+    },
+    {
+      "name": "stdc_first_trailing_one_ui_zero",
+      "function": "stdc_first_trailing_one_ui",
+      "spec_section": "C23 7.18a.4.8",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero has no trailing one bit"
+    },
+    {
+      "name": "stdc_first_trailing_one_ui_shifted",
+      "function": "stdc_first_trailing_one_ui",
+      "spec_section": "C23 7.18a.4.8",
+      "inputs": {
+        "value": 48
+      },
+      "expected_output": "5",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "0x30 has its least significant one at bit position 5"
+    },
+    {
+      "name": "stdc_count_ones_ui_zero",
+      "function": "stdc_count_ones_ui",
+      "spec_section": "C23 7.18a.4.9",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero has no set bits"
+    },
+    {
+      "name": "stdc_count_ones_ui_sparse",
+      "function": "stdc_count_ones_ui",
+      "spec_section": "C23 7.18a.4.9",
+      "inputs": {
+        "value": 15728656
+      },
+      "expected_output": "5",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "0x00f00010 contains five one bits"
+    },
+    {
+      "name": "stdc_count_zeros_ui_zero",
+      "function": "stdc_count_zeros_ui",
+      "spec_section": "C23 7.18a.4.10",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "32",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero contains all zero bits"
+    },
+    {
+      "name": "stdc_count_zeros_ui_sparse",
+      "function": "stdc_count_zeros_ui",
+      "spec_section": "C23 7.18a.4.10",
+      "inputs": {
+        "value": 15728656
+      },
+      "expected_output": "27",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "unsigned int width minus five one bits"
+    },
+    {
+      "name": "stdc_has_single_bit_ui_zero",
+      "function": "stdc_has_single_bit_ui",
+      "spec_section": "C23 7.18a.4.11",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero is not a power of two"
+    },
+    {
+      "name": "stdc_has_single_bit_ui_power",
+      "function": "stdc_has_single_bit_ui",
+      "spec_section": "C23 7.18a.4.11",
+      "inputs": {
+        "value": 65536
+      },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "2^16 has exactly one set bit"
+    },
+    {
+      "name": "stdc_bit_width_ui_zero",
+      "function": "stdc_bit_width_ui",
+      "spec_section": "C23 7.18a.4.12",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero has bit width zero"
+    },
+    {
+      "name": "stdc_bit_width_ui_sparse",
+      "function": "stdc_bit_width_ui",
+      "spec_section": "C23 7.18a.4.12",
+      "inputs": {
+        "value": 15728656
+      },
+      "expected_output": "24",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "highest one bit is zero-indexed bit 23"
+    },
+    {
+      "name": "stdc_bit_floor_ui_zero",
+      "function": "stdc_bit_floor_ui",
+      "spec_section": "C23 7.18a.4.13",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero floors to zero"
+    },
+    {
+      "name": "stdc_bit_floor_ui_sparse",
+      "function": "stdc_bit_floor_ui",
+      "spec_section": "C23 7.18a.4.13",
+      "inputs": {
+        "value": 15728656
+      },
+      "expected_output": "8388608",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "largest representable power of two not greater than 0x00f00010"
+    },
+    {
+      "name": "stdc_bit_ceil_ui_zero",
+      "function": "stdc_bit_ceil_ui",
+      "spec_section": "C23 7.18a.4.14",
+      "inputs": {
+        "value": 0
+      },
+      "expected_output": "1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "C23 bit_ceil reports one for zero"
+    },
+    {
+      "name": "stdc_bit_ceil_ui_sparse",
+      "function": "stdc_bit_ceil_ui",
+      "spec_section": "C23 7.18a.4.14",
+      "inputs": {
+        "value": 15728656
+      },
+      "expected_output": "16777216",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "smallest representable power of two not less than 0x00f00010"
+    }
+  ]
+}

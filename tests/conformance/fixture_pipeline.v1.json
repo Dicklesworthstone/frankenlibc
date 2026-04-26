@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-04-26T01:08:16Z",
+  "generated_at": "2026-04-26T02:27:54Z",
   "summary": {
-    "total_fixture_files": 55,
-    "total_fixture_cases": 1074,
-    "unique_symbols_in_fixtures": 299,
+    "total_fixture_files": 56,
+    "total_fixture_cases": 1132,
+    "unique_symbols_in_fixtures": 328,
     "implemented_symbols": 3996,
-    "symbols_with_fixtures": 281,
+    "symbols_with_fixtures": 310,
     "symbols_at_threshold": 8,
     "symbols_below_threshold": 3988,
-    "symbols_with_zero_fixtures": 3715,
-    "coverage_pct": 7.0,
+    "symbols_with_zero_fixtures": 3686,
+    "coverage_pct": 7.8,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
     "min_cases_threshold": 10,
@@ -102,10 +102,10 @@
     {
       "module": "grp_abi",
       "total_symbols": 8,
-      "covered_symbols": 3,
+      "covered_symbols": 4,
       "at_threshold": 0,
-      "total_cases": 10,
-      "coverage_pct": 37.5,
+      "total_cases": 12,
+      "coverage_pct": 50.0,
       "threshold_pct": 0.0
     },
     {
@@ -219,19 +219,19 @@
     {
       "module": "pwd_abi",
       "total_symbols": 27,
-      "covered_symbols": 3,
+      "covered_symbols": 4,
       "at_threshold": 0,
-      "total_cases": 10,
-      "coverage_pct": 11.1,
+      "total_cases": 12,
+      "coverage_pct": 14.8,
       "threshold_pct": 0.0
     },
     {
       "module": "resolv_abi",
       "total_symbols": 11,
-      "covered_symbols": 2,
+      "covered_symbols": 3,
       "at_threshold": 0,
-      "total_cases": 7,
-      "coverage_pct": 18.2,
+      "total_cases": 9,
+      "coverage_pct": 27.3,
       "threshold_pct": 0.0
     },
     {
@@ -309,19 +309,19 @@
     {
       "module": "stdbit_abi",
       "total_symbols": 70,
-      "covered_symbols": 0,
+      "covered_symbols": 14,
       "at_threshold": 0,
-      "total_cases": 0,
-      "coverage_pct": 0.0,
+      "total_cases": 28,
+      "coverage_pct": 20.0,
       "threshold_pct": 0.0
     },
     {
       "module": "stdio_abi",
       "total_symbols": 126,
-      "covered_symbols": 17,
+      "covered_symbols": 29,
       "at_threshold": 3,
-      "total_cases": 323,
-      "coverage_pct": 13.5,
+      "total_cases": 347,
+      "coverage_pct": 23.0,
       "threshold_pct": 2.4
     },
     {
@@ -8320,9 +8320,9 @@
       "symbol": "asprintf",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "at_quick_exit",
@@ -11712,9 +11712,9 @@
       "symbol": "dprintf",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "drand48",
@@ -11864,9 +11864,9 @@
       "symbol": "endgrent",
       "module": "grp_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "endhostent",
@@ -11912,9 +11912,9 @@
       "symbol": "endpwent",
       "module": "pwd_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "endrpcent",
@@ -13976,9 +13976,9 @@
       "symbol": "fgets",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "fgets_unlocked",
@@ -15200,9 +15200,9 @@
       "symbol": "fputs",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "fputs_unlocked",
@@ -15272,9 +15272,9 @@
       "symbol": "freeaddrinfo",
       "module": "resolv_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "freeifaddrs",
@@ -22872,9 +22872,9 @@
       "symbol": "printf",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "printf_size",
@@ -26016,9 +26016,9 @@
       "symbol": "setbuf",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "setbuffer",
@@ -26568,9 +26568,9 @@
       "symbol": "setvbuf",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "setxattr",
@@ -27504,9 +27504,9 @@
       "symbol": "stdc_bit_ceil_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_bit_ceil_ul",
@@ -27544,9 +27544,9 @@
       "symbol": "stdc_bit_floor_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_bit_floor_ul",
@@ -27584,9 +27584,9 @@
       "symbol": "stdc_bit_width_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_bit_width_ul",
@@ -27624,9 +27624,9 @@
       "symbol": "stdc_count_ones_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_count_ones_ul",
@@ -27664,9 +27664,9 @@
       "symbol": "stdc_count_zeros_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_count_zeros_ul",
@@ -27704,9 +27704,9 @@
       "symbol": "stdc_first_leading_one_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_first_leading_one_ul",
@@ -27744,9 +27744,9 @@
       "symbol": "stdc_first_leading_zero_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_first_leading_zero_ul",
@@ -27784,9 +27784,9 @@
       "symbol": "stdc_first_trailing_one_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_first_trailing_one_ul",
@@ -27824,9 +27824,9 @@
       "symbol": "stdc_first_trailing_zero_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_first_trailing_zero_ul",
@@ -27864,9 +27864,9 @@
       "symbol": "stdc_has_single_bit_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_has_single_bit_ul",
@@ -27904,9 +27904,9 @@
       "symbol": "stdc_leading_ones_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_leading_ones_ul",
@@ -27944,9 +27944,9 @@
       "symbol": "stdc_leading_zeros_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_leading_zeros_ul",
@@ -27984,9 +27984,9 @@
       "symbol": "stdc_trailing_ones_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_trailing_ones_ul",
@@ -28024,9 +28024,9 @@
       "symbol": "stdc_trailing_zeros_ui",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_trailing_zeros_ul",
@@ -30432,9 +30432,9 @@
       "symbol": "ungetc",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "ungetwc",
@@ -30600,17 +30600,17 @@
       "symbol": "vasprintf",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "vdprintf",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "verr",
@@ -30736,17 +30736,17 @@
       "symbol": "vsnprintf",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "vsprintf",
       "module": "stdio_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "vsscanf",
@@ -32457,12 +32457,13 @@
     },
     {
       "file": "grp_ops.json",
-      "total_cases": 10,
-      "symbols_covered": 3,
+      "total_cases": 12,
+      "symbols_covered": 4,
       "symbols": {
         "getgrnam": 4,
         "getgrgid": 4,
-        "setgrent": 2
+        "setgrent": 2,
+        "endgrent": 2
       },
       "valid": true,
       "issues": []
@@ -32747,12 +32748,13 @@
     },
     {
       "file": "pwd_ops.json",
-      "total_cases": 10,
-      "symbols_covered": 3,
+      "total_cases": 12,
+      "symbols_covered": 4,
       "symbols": {
         "getpwnam": 4,
         "getpwuid": 4,
-        "setpwent": 2
+        "setpwent": 2,
+        "endpwent": 2
       },
       "valid": true,
       "issues": []
@@ -32773,8 +32775,8 @@
     },
     {
       "file": "resolver.json",
-      "total_cases": 23,
-      "symbols_covered": 7,
+      "total_cases": 25,
+      "symbols_covered": 8,
       "symbols": {
         "ResolverConfig::default": 1,
         "ResolverConfig::parse": 6,
@@ -32782,6 +32784,7 @@
         "encode_domain_name": 2,
         "lookup_hosts": 6,
         "getaddrinfo": 5,
+        "freeaddrinfo": 2,
         "gethostbyname": 2
       },
       "valid": true,
@@ -32923,14 +32926,44 @@
       "issues": []
     },
     {
-      "file": "stdio_file_ops.json",
+      "file": "stdbit_ops.json",
       "total_cases": 28,
       "symbols_covered": 14,
+      "symbols": {
+        "stdc_leading_zeros_ui": 2,
+        "stdc_leading_ones_ui": 2,
+        "stdc_trailing_zeros_ui": 2,
+        "stdc_trailing_ones_ui": 2,
+        "stdc_first_leading_zero_ui": 2,
+        "stdc_first_leading_one_ui": 2,
+        "stdc_first_trailing_zero_ui": 2,
+        "stdc_first_trailing_one_ui": 2,
+        "stdc_count_ones_ui": 2,
+        "stdc_count_zeros_ui": 2,
+        "stdc_has_single_bit_ui": 2,
+        "stdc_bit_width_ui": 2,
+        "stdc_bit_floor_ui": 2,
+        "stdc_bit_ceil_ui": 2
+      },
+      "valid": true,
+      "issues": []
+    },
+    {
+      "file": "stdio_file_ops.json",
+      "total_cases": 52,
+      "symbols_covered": 26,
       "symbols": {
         "fopen": 3,
         "fclose": 1,
         "fprintf": 1,
         "snprintf": 3,
+        "printf": 2,
+        "dprintf": 2,
+        "asprintf": 2,
+        "vsnprintf": 2,
+        "vsprintf": 2,
+        "vdprintf": 2,
+        "vasprintf": 2,
         "fwrite": 1,
         "fread": 2,
         "fseek": 1,
@@ -32938,6 +32971,11 @@
         "fflush": 2,
         "fgetc": 3,
         "fputc": 3,
+        "fgets": 2,
+        "fputs": 2,
+        "ungetc": 2,
+        "setvbuf": 2,
+        "setbuf": 2,
         "feof": 2,
         "ferror": 2,
         "fileno": 3

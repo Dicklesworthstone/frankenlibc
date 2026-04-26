@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-04-26T01:09:55Z",
-  "report_hash": "dc5ee972d2abf1f4",
+  "generated_at": "2026-04-26T02:27:54Z",
+  "report_hash": "506973e115b0a19f",
   "summary": {
     "total_symbols": 3996,
-    "symbols_with_fixtures": 281,
-    "symbols_without_fixtures": 3715,
-    "fixture_coverage_pct": 7.0,
-    "implemented_coverage_pct": 6.2,
-    "total_fixture_files": 55,
-    "total_cases": 1069,
+    "symbols_with_fixtures": 310,
+    "symbols_without_fixtures": 3686,
+    "fixture_coverage_pct": 7.8,
+    "implemented_coverage_pct": 7.0,
+    "total_fixture_files": 56,
+    "total_cases": 1127,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 206,
-    "symbols_with_errno_checks": 279,
-    "total_quality_issues": 3604,
-    "uncovered_action_count": 3715
+    "symbols_with_edge_cases": 226,
+    "symbols_with_errno_checks": 307,
+    "total_quality_issues": 3584,
+    "uncovered_action_count": 3686
   },
   "fixture_file_analyses": [
     {
@@ -78,8 +78,8 @@
       "file": "grp_ops.json",
       "family": "grp_ops",
       "valid": true,
-      "total_cases": 10,
-      "unique_symbols": 3,
+      "total_cases": 12,
+      "unique_symbols": 4,
       "issues": []
     },
     {
@@ -230,8 +230,8 @@
       "file": "pwd_ops.json",
       "family": "pwd_ops",
       "valid": true,
-      "total_cases": 10,
-      "unique_symbols": 3,
+      "total_cases": 12,
+      "unique_symbols": 4,
       "issues": []
     },
     {
@@ -246,8 +246,8 @@
       "file": "resolver.json",
       "family": "resolv/dns",
       "valid": true,
-      "total_cases": 23,
-      "unique_symbols": 7,
+      "total_cases": 25,
+      "unique_symbols": 8,
       "issues": []
     },
     {
@@ -331,11 +331,19 @@
       "issues": []
     },
     {
-      "file": "stdio_file_ops.json",
-      "family": "stdio_file_ops",
+      "file": "stdbit_ops.json",
+      "family": "stdbit/ops",
       "valid": true,
       "total_cases": 28,
       "unique_symbols": 14,
+      "issues": []
+    },
+    {
+      "file": "stdio_file_ops.json",
+      "family": "stdio_file_ops",
+      "valid": true,
+      "total_cases": 52,
+      "unique_symbols": 26,
       "issues": []
     },
     {
@@ -15494,14 +15502,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -21976,14 +21989,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -22258,14 +22276,19 @@
       "status": "Implemented",
       "module": "grp_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "grp_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -22348,14 +22371,19 @@
       "status": "Implemented",
       "module": "pwd_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "pwd_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -26224,15 +26252,20 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "fgets_unlocked",
@@ -28557,15 +28590,20 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "fputs_unlocked",
@@ -28705,15 +28743,21 @@
       "status": "Implemented",
       "module": "resolv_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "resolver.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "freeifaddrs",
@@ -43150,14 +43194,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -49144,15 +49193,20 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "setbuffer",
@@ -50169,15 +50223,21 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "setxattr",
@@ -51977,15 +52037,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_bit_ceil_ul",
@@ -52052,15 +52116,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_bit_floor_ul",
@@ -52127,15 +52195,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_bit_width_ul",
@@ -52202,15 +52274,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_count_ones_ul",
@@ -52277,15 +52353,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_count_zeros_ul",
@@ -52352,15 +52432,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_first_leading_one_ul",
@@ -52427,15 +52511,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_first_leading_zero_ul",
@@ -52502,15 +52590,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_first_trailing_one_ul",
@@ -52577,15 +52669,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_first_trailing_zero_ul",
@@ -52652,15 +52748,20 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_has_single_bit_ul",
@@ -52727,15 +52828,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_leading_ones_ul",
@@ -52802,15 +52907,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_leading_zeros_ul",
@@ -52877,15 +52986,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_trailing_ones_ul",
@@ -52952,15 +53065,19 @@
       "status": "Implemented",
       "module": "stdbit_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdbit_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "stdc_trailing_zeros_ul",
@@ -57577,15 +57694,20 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
+      "quality_issues": []
     },
     {
       "symbol": "ungetwc",
@@ -57885,14 +58007,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -57900,14 +58027,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -58136,14 +58268,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -58151,14 +58288,19 @@
       "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "stdio_file_ops.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "no edge cases detected"
       ]
     },
     {
@@ -67959,13 +68101,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "asprintf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "at_quick_exit",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -70738,13 +70873,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "dprintf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "drand48",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -70864,13 +70992,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "endgrent",
-      "status": "Implemented",
-      "module": "grp_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "endhostent",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -70902,13 +71023,6 @@
       "symbol": "endprotoent",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "endpwent",
-      "status": "Implemented",
-      "module": "pwd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -72649,13 +72763,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "fgets",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fgets_unlocked",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -73664,13 +73771,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "fputs",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fputs_unlocked",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -73711,13 +73811,6 @@
       "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "high"
-    },
-    {
-      "symbol": "freeaddrinfo",
-      "status": "Implemented",
-      "module": "resolv_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
     },
     {
       "symbol": "freeifaddrs",
@@ -79796,13 +79889,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "printf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "printf_size",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -82253,13 +82339,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "setbuf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "setbuffer",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -82697,13 +82776,6 @@
       "symbol": "setutxent",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "setvbuf",
-      "status": "Implemented",
-      "module": "stdio_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -83401,13 +83473,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "stdc_bit_ceil_ui",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "stdc_bit_ceil_ul",
       "status": "Implemented",
       "module": "stdbit_abi",
@@ -83430,13 +83495,6 @@
     },
     {
       "symbol": "stdc_bit_floor_uc",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "stdc_bit_floor_ui",
       "status": "Implemented",
       "module": "stdbit_abi",
       "action": "create fixture cases",
@@ -83471,13 +83529,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "stdc_bit_width_ui",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "stdc_bit_width_ul",
       "status": "Implemented",
       "module": "stdbit_abi",
@@ -83500,13 +83551,6 @@
     },
     {
       "symbol": "stdc_count_ones_uc",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "stdc_count_ones_ui",
       "status": "Implemented",
       "module": "stdbit_abi",
       "action": "create fixture cases",
@@ -83541,13 +83585,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "stdc_count_zeros_ui",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "stdc_count_zeros_ul",
       "status": "Implemented",
       "module": "stdbit_abi",
@@ -83570,13 +83607,6 @@
     },
     {
       "symbol": "stdc_first_leading_one_uc",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "stdc_first_leading_one_ui",
       "status": "Implemented",
       "module": "stdbit_abi",
       "action": "create fixture cases",
@@ -83611,13 +83641,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "stdc_first_leading_zero_ui",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "stdc_first_leading_zero_ul",
       "status": "Implemented",
       "module": "stdbit_abi",
@@ -83640,13 +83663,6 @@
     },
     {
       "symbol": "stdc_first_trailing_one_uc",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "stdc_first_trailing_one_ui",
       "status": "Implemented",
       "module": "stdbit_abi",
       "action": "create fixture cases",
@@ -83681,13 +83697,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "stdc_first_trailing_zero_ui",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "stdc_first_trailing_zero_ul",
       "status": "Implemented",
       "module": "stdbit_abi",
@@ -83710,13 +83719,6 @@
     },
     {
       "symbol": "stdc_has_single_bit_uc",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "stdc_has_single_bit_ui",
       "status": "Implemented",
       "module": "stdbit_abi",
       "action": "create fixture cases",
@@ -83751,13 +83753,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "stdc_leading_ones_ui",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "stdc_leading_ones_ul",
       "status": "Implemented",
       "module": "stdbit_abi",
@@ -83780,13 +83775,6 @@
     },
     {
       "symbol": "stdc_leading_zeros_uc",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "stdc_leading_zeros_ui",
       "status": "Implemented",
       "module": "stdbit_abi",
       "action": "create fixture cases",
@@ -83821,13 +83809,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "stdc_trailing_ones_ui",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "stdc_trailing_ones_ul",
       "status": "Implemented",
       "module": "stdbit_abi",
@@ -83850,13 +83831,6 @@
     },
     {
       "symbol": "stdc_trailing_zeros_uc",
-      "status": "Implemented",
-      "module": "stdbit_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "stdc_trailing_zeros_ui",
       "status": "Implemented",
       "module": "stdbit_abi",
       "action": "create fixture cases",
@@ -85753,13 +85727,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "ungetc",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "ungetwc",
       "status": "Implemented",
       "module": "wchar_abi",
@@ -85893,20 +85860,6 @@
       "priority": "high"
     },
     {
-      "symbol": "vasprintf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "vdprintf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "verr",
       "status": "Implemented",
       "module": "err_abi",
@@ -86006,20 +85959,6 @@
     },
     {
       "symbol": "vscanf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "vsnprintf",
-      "status": "Implemented",
-      "module": "stdio_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "vsprintf",
       "status": "Implemented",
       "module": "stdio_abi",
       "action": "create fixture cases",

@@ -465,6 +465,7 @@ pub fn execute_fixture_case(
         "strtol" => execute_strtol_case(inputs, mode),
         "strtoul" => execute_strtoul_case(inputs, mode),
         "getbsize" => execute_getbsize_case(inputs, mode),
+        name if name.starts_with("stdc_") => execute_stdbit_case(name, inputs, mode),
         "dlopen" => execute_dlopen_case(inputs, mode),
         "dlsym" => execute_dlsym_case(inputs, mode),
         "dlclose" => execute_dlclose_case(inputs, mode),
@@ -934,6 +935,140 @@ fn parity_execution(host_output: String, impl_output: String) -> DifferentialExe
         host_parity,
         note,
     }
+}
+
+fn execute_stdbit_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    use frankenlibc_abi::stdbit_abi;
+
+    ensure_supported_mode(mode)?;
+    let value = parse_u64(inputs, "value")?;
+    let impl_output = match function {
+        "stdc_leading_zeros_uc" => u64::from(stdbit_abi::stdc_leading_zeros_uc(to_u8(value)?)),
+        "stdc_leading_zeros_us" => u64::from(stdbit_abi::stdc_leading_zeros_us(to_u16(value)?)),
+        "stdc_leading_zeros_ui" => u64::from(stdbit_abi::stdc_leading_zeros_ui(to_u32(value)?)),
+        "stdc_leading_zeros_ul" => u64::from(stdbit_abi::stdc_leading_zeros_ul(value)),
+        "stdc_leading_zeros_ull" => u64::from(stdbit_abi::stdc_leading_zeros_ull(value)),
+        "stdc_leading_ones_uc" => u64::from(stdbit_abi::stdc_leading_ones_uc(to_u8(value)?)),
+        "stdc_leading_ones_us" => u64::from(stdbit_abi::stdc_leading_ones_us(to_u16(value)?)),
+        "stdc_leading_ones_ui" => u64::from(stdbit_abi::stdc_leading_ones_ui(to_u32(value)?)),
+        "stdc_leading_ones_ul" => u64::from(stdbit_abi::stdc_leading_ones_ul(value)),
+        "stdc_leading_ones_ull" => u64::from(stdbit_abi::stdc_leading_ones_ull(value)),
+        "stdc_trailing_zeros_uc" => u64::from(stdbit_abi::stdc_trailing_zeros_uc(to_u8(value)?)),
+        "stdc_trailing_zeros_us" => u64::from(stdbit_abi::stdc_trailing_zeros_us(to_u16(value)?)),
+        "stdc_trailing_zeros_ui" => u64::from(stdbit_abi::stdc_trailing_zeros_ui(to_u32(value)?)),
+        "stdc_trailing_zeros_ul" => u64::from(stdbit_abi::stdc_trailing_zeros_ul(value)),
+        "stdc_trailing_zeros_ull" => u64::from(stdbit_abi::stdc_trailing_zeros_ull(value)),
+        "stdc_trailing_ones_uc" => u64::from(stdbit_abi::stdc_trailing_ones_uc(to_u8(value)?)),
+        "stdc_trailing_ones_us" => u64::from(stdbit_abi::stdc_trailing_ones_us(to_u16(value)?)),
+        "stdc_trailing_ones_ui" => u64::from(stdbit_abi::stdc_trailing_ones_ui(to_u32(value)?)),
+        "stdc_trailing_ones_ul" => u64::from(stdbit_abi::stdc_trailing_ones_ul(value)),
+        "stdc_trailing_ones_ull" => u64::from(stdbit_abi::stdc_trailing_ones_ull(value)),
+        "stdc_first_leading_zero_uc" => {
+            u64::from(stdbit_abi::stdc_first_leading_zero_uc(to_u8(value)?))
+        }
+        "stdc_first_leading_zero_us" => {
+            u64::from(stdbit_abi::stdc_first_leading_zero_us(to_u16(value)?))
+        }
+        "stdc_first_leading_zero_ui" => {
+            u64::from(stdbit_abi::stdc_first_leading_zero_ui(to_u32(value)?))
+        }
+        "stdc_first_leading_zero_ul" => u64::from(stdbit_abi::stdc_first_leading_zero_ul(value)),
+        "stdc_first_leading_zero_ull" => u64::from(stdbit_abi::stdc_first_leading_zero_ull(value)),
+        "stdc_first_leading_one_uc" => {
+            u64::from(stdbit_abi::stdc_first_leading_one_uc(to_u8(value)?))
+        }
+        "stdc_first_leading_one_us" => {
+            u64::from(stdbit_abi::stdc_first_leading_one_us(to_u16(value)?))
+        }
+        "stdc_first_leading_one_ui" => {
+            u64::from(stdbit_abi::stdc_first_leading_one_ui(to_u32(value)?))
+        }
+        "stdc_first_leading_one_ul" => u64::from(stdbit_abi::stdc_first_leading_one_ul(value)),
+        "stdc_first_leading_one_ull" => u64::from(stdbit_abi::stdc_first_leading_one_ull(value)),
+        "stdc_first_trailing_zero_uc" => {
+            u64::from(stdbit_abi::stdc_first_trailing_zero_uc(to_u8(value)?))
+        }
+        "stdc_first_trailing_zero_us" => {
+            u64::from(stdbit_abi::stdc_first_trailing_zero_us(to_u16(value)?))
+        }
+        "stdc_first_trailing_zero_ui" => {
+            u64::from(stdbit_abi::stdc_first_trailing_zero_ui(to_u32(value)?))
+        }
+        "stdc_first_trailing_zero_ul" => u64::from(stdbit_abi::stdc_first_trailing_zero_ul(value)),
+        "stdc_first_trailing_zero_ull" => {
+            u64::from(stdbit_abi::stdc_first_trailing_zero_ull(value))
+        }
+        "stdc_first_trailing_one_uc" => {
+            u64::from(stdbit_abi::stdc_first_trailing_one_uc(to_u8(value)?))
+        }
+        "stdc_first_trailing_one_us" => {
+            u64::from(stdbit_abi::stdc_first_trailing_one_us(to_u16(value)?))
+        }
+        "stdc_first_trailing_one_ui" => {
+            u64::from(stdbit_abi::stdc_first_trailing_one_ui(to_u32(value)?))
+        }
+        "stdc_first_trailing_one_ul" => u64::from(stdbit_abi::stdc_first_trailing_one_ul(value)),
+        "stdc_first_trailing_one_ull" => u64::from(stdbit_abi::stdc_first_trailing_one_ull(value)),
+        "stdc_count_ones_uc" => u64::from(stdbit_abi::stdc_count_ones_uc(to_u8(value)?)),
+        "stdc_count_ones_us" => u64::from(stdbit_abi::stdc_count_ones_us(to_u16(value)?)),
+        "stdc_count_ones_ui" => u64::from(stdbit_abi::stdc_count_ones_ui(to_u32(value)?)),
+        "stdc_count_ones_ul" => u64::from(stdbit_abi::stdc_count_ones_ul(value)),
+        "stdc_count_ones_ull" => u64::from(stdbit_abi::stdc_count_ones_ull(value)),
+        "stdc_count_zeros_uc" => u64::from(stdbit_abi::stdc_count_zeros_uc(to_u8(value)?)),
+        "stdc_count_zeros_us" => u64::from(stdbit_abi::stdc_count_zeros_us(to_u16(value)?)),
+        "stdc_count_zeros_ui" => u64::from(stdbit_abi::stdc_count_zeros_ui(to_u32(value)?)),
+        "stdc_count_zeros_ul" => u64::from(stdbit_abi::stdc_count_zeros_ul(value)),
+        "stdc_count_zeros_ull" => u64::from(stdbit_abi::stdc_count_zeros_ull(value)),
+        "stdc_has_single_bit_uc" => bool_to_u64(stdbit_abi::stdc_has_single_bit_uc(to_u8(value)?)),
+        "stdc_has_single_bit_us" => bool_to_u64(stdbit_abi::stdc_has_single_bit_us(to_u16(value)?)),
+        "stdc_has_single_bit_ui" => bool_to_u64(stdbit_abi::stdc_has_single_bit_ui(to_u32(value)?)),
+        "stdc_has_single_bit_ul" => bool_to_u64(stdbit_abi::stdc_has_single_bit_ul(value)),
+        "stdc_has_single_bit_ull" => bool_to_u64(stdbit_abi::stdc_has_single_bit_ull(value)),
+        "stdc_bit_width_uc" => u64::from(stdbit_abi::stdc_bit_width_uc(to_u8(value)?)),
+        "stdc_bit_width_us" => u64::from(stdbit_abi::stdc_bit_width_us(to_u16(value)?)),
+        "stdc_bit_width_ui" => u64::from(stdbit_abi::stdc_bit_width_ui(to_u32(value)?)),
+        "stdc_bit_width_ul" => u64::from(stdbit_abi::stdc_bit_width_ul(value)),
+        "stdc_bit_width_ull" => u64::from(stdbit_abi::stdc_bit_width_ull(value)),
+        "stdc_bit_floor_uc" => u64::from(stdbit_abi::stdc_bit_floor_uc(to_u8(value)?)),
+        "stdc_bit_floor_us" => u64::from(stdbit_abi::stdc_bit_floor_us(to_u16(value)?)),
+        "stdc_bit_floor_ui" => u64::from(stdbit_abi::stdc_bit_floor_ui(to_u32(value)?)),
+        "stdc_bit_floor_ul" => stdbit_abi::stdc_bit_floor_ul(value),
+        "stdc_bit_floor_ull" => stdbit_abi::stdc_bit_floor_ull(value),
+        "stdc_bit_ceil_uc" => u64::from(stdbit_abi::stdc_bit_ceil_uc(to_u8(value)?)),
+        "stdc_bit_ceil_us" => u64::from(stdbit_abi::stdc_bit_ceil_us(to_u16(value)?)),
+        "stdc_bit_ceil_ui" => u64::from(stdbit_abi::stdc_bit_ceil_ui(to_u32(value)?)),
+        "stdc_bit_ceil_ul" => stdbit_abi::stdc_bit_ceil_ul(value),
+        "stdc_bit_ceil_ull" => stdbit_abi::stdc_bit_ceil_ull(value),
+        other => return Err(format!("unsupported stdbit function: {other}")),
+    };
+
+    Ok(non_host_execution(impl_output.to_string()))
+}
+
+fn bool_to_u64(value: bool) -> u64 {
+    u64::from(u8::from(value))
+}
+
+fn to_u8(value: u64) -> Result<u8, String> {
+    value
+        .try_into()
+        .map_err(|_| format!("value {value} does not fit in unsigned char"))
+}
+
+fn to_u16(value: u64) -> Result<u16, String> {
+    value
+        .try_into()
+        .map_err(|_| format!("value {value} does not fit in unsigned short"))
+}
+
+fn to_u32(value: u64) -> Result<u32, String> {
+    value
+        .try_into()
+        .map_err(|_| format!("value {value} does not fit in unsigned int"))
 }
 
 fn impl_hsearch_filled(htab: &frankenlibc_abi::search_abi::HsearchData) -> usize {
