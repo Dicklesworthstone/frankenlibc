@@ -5678,6 +5678,78 @@ fn setproctitle_without_init_is_no_op() {
 }
 
 // ===========================================================================
+// makedev / major / minor (glibc dev_t packing)
+// ===========================================================================
+
+use frankenlibc_abi::unistd_abi::{
+    gnu_dev_major, gnu_dev_makedev, gnu_dev_minor, major, makedev, minor,
+};
+
+#[test]
+fn makedev_round_trip_small_values() {
+    let dev = unsafe { makedev(8, 1) };
+    assert_eq!(unsafe { major(dev) }, 8);
+    assert_eq!(unsafe { minor(dev) }, 1);
+}
+
+#[test]
+fn makedev_round_trip_high_minor() {
+    // Minor 0x1234 exercises both the low-byte field and the
+    // shifted-into-high field.
+    let dev = unsafe { makedev(259, 0x1234) };
+    assert_eq!(unsafe { major(dev) }, 259);
+    assert_eq!(unsafe { minor(dev) }, 0x1234);
+}
+
+#[test]
+fn makedev_round_trip_high_major() {
+    // Major above 0xfff exercises the upper-32-bits field.
+    let dev = unsafe { makedev(0x12345, 7) };
+    assert_eq!(unsafe { major(dev) }, 0x12345);
+    assert_eq!(unsafe { minor(dev) }, 7);
+}
+
+#[test]
+fn makedev_round_trip_arbitrary_pairs() {
+    // Spot-check several distinct (major, minor) combinations at
+    // boundary positions of the bit layout.
+    for (mj, mn) in [
+        (0u32, 0u32),
+        (1, 0xff),
+        (0xfff, 0xff),
+        (0x1000, 0x100),
+        (0xffffu32, 0xffff),
+        (0x12345, 0x6789a),
+    ] {
+        let dev = unsafe { makedev(mj, mn) };
+        assert_eq!(unsafe { major(dev) }, mj, "major mismatch for ({mj},{mn})");
+        assert_eq!(unsafe { minor(dev) }, mn, "minor mismatch for ({mj},{mn})");
+    }
+}
+
+#[test]
+fn makedev_matches_gnu_dev_makedev() {
+    // The bare-name aliases must produce the same dev_t as the
+    // gnu_dev_* primitives.
+    let cases = [(8, 1), (0xfff, 0xff), (0x12345, 0x6789a)];
+    for (mj, mn) in cases {
+        let a = unsafe { makedev(mj, mn) };
+        let b = unsafe { gnu_dev_makedev(mj, mn) };
+        assert_eq!(a, b, "makedev/gnu_dev_makedev divergence for ({mj},{mn})");
+    }
+}
+
+#[test]
+fn major_minor_match_gnu_dev_versions() {
+    let cases: [u64; 4] = [0, 0x12345678, 0xdead_beef_cafe_babe, u64::MAX];
+    for raw in cases {
+        let dev = raw as libc::dev_t;
+        assert_eq!(unsafe { major(dev) }, unsafe { gnu_dev_major(dev) });
+        assert_eq!(unsafe { minor(dev) }, unsafe { gnu_dev_minor(dev) });
+    }
+}
+
+// ===========================================================================
 // secure_path (NetBSD libutil security check)
 // ===========================================================================
 

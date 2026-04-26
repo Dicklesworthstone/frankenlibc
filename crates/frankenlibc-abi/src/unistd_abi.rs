@@ -18284,3 +18284,36 @@ pub unsafe extern "C" fn secure_path(path: *const c_char) -> c_int {
     }
     0
 }
+
+// ---------------------------------------------------------------------------
+// makedev / major / minor — bare-name aliases of gnu_dev_*
+// ---------------------------------------------------------------------------
+//
+// glibc exposes the dev_t packing/unpacking primitives under both
+// the bare names (`makedev`, `major`, `minor` — usually as
+// `<sys/sysmacros.h>` macros, but also as ELF symbols for older
+// callers) and the `gnu_dev_*` namespace. The bare-name symbols
+// are what most third-party code links against; the gnu_dev_*
+// versions already exist above. These wrappers delegate so the
+// two surfaces stay in lockstep.
+
+/// glibc `makedev(major, minor)` — pack a (major, minor) pair into
+/// a `dev_t`. Bare-name alias for [`gnu_dev_makedev`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn makedev(major_v: c_uint, minor_v: c_uint) -> libc::dev_t {
+    unsafe { gnu_dev_makedev(major_v, minor_v) }
+}
+
+/// glibc `major(dev)` — extract the major device number from a
+/// packed `dev_t`. Bare-name alias for [`gnu_dev_major`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn major(dev: libc::dev_t) -> c_uint {
+    unsafe { gnu_dev_major(dev) }
+}
+
+/// glibc `minor(dev)` — extract the minor device number from a
+/// packed `dev_t`. Bare-name alias for [`gnu_dev_minor`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn minor(dev: libc::dev_t) -> c_uint {
+    unsafe { gnu_dev_minor(dev) }
+}
