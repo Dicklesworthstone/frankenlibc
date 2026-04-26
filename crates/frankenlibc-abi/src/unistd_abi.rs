@@ -23665,3 +23665,51 @@ pub extern "C" fn _time64_to_time(t64: i64) -> libc::time_t {
 pub extern "C" fn _time_to_time64(t: libc::time_t) -> i64 {
     t as i64
 }
+
+// ---------------------------------------------------------------------------
+// 15 _nss_compat_* NSS plugin entrypoints (bd-ubjtz)
+// ---------------------------------------------------------------------------
+//
+// libnss_compat.so.2 layers `+`/`-`/`+@netgroup` extensions on top of the
+// files-plugin's passwd/group/shadow lookups. When no compat directives are
+// present the plugin behaves identically to _nss_files_*. We mirror the
+// _nss_files_* stub conventions: NSS_STATUS_NOTFOUND + errnop=ENOENT for
+// every getXXent_r / getXXbynam_r / getXXbyid_r and NSS_STATUS_SUCCESS for
+// setXXent / endXXent and a 0-result initgroups_dyn.
+
+nss_files_end_stub!(_nss_compat_endgrent);
+nss_files_end_stub!(_nss_compat_endpwent);
+nss_files_end_stub!(_nss_compat_endspent);
+
+nss_files_set_stayopen_stub!(_nss_compat_setgrent);
+nss_files_set_stayopen_stub!(_nss_compat_setpwent);
+nss_files_set_stayopen_stub!(_nss_compat_setspent);
+
+nss_files_get_ent_stub!(_nss_compat_getgrent_r);
+nss_files_get_ent_stub!(_nss_compat_getpwent_r);
+nss_files_get_ent_stub!(_nss_compat_getspent_r);
+
+nss_files_get_by_str_stub!(_nss_compat_getgrnam_r);
+nss_files_get_by_str_stub!(_nss_compat_getpwnam_r);
+nss_files_get_by_str_stub!(_nss_compat_getspnam_r);
+
+nss_files_get_by_int_stub!(_nss_compat_getgrgid_r, libc::gid_t);
+nss_files_get_by_int_stub!(_nss_compat_getpwuid_r, libc::uid_t);
+
+/// `_nss_compat_initgroups_dyn(user, gid, *start, *size, **groupsp,
+/// limit, *errnop) -> nss_status` — supplementary group lookup.
+/// Stub returns NSS_STATUS_NOTFOUND with errnop=ENOENT.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_compat_initgroups_dyn(
+    _user: *const c_char,
+    _gid: libc::gid_t,
+    _start: *mut c_long,
+    _size: *mut c_long,
+    _groupsp: *mut *mut libc::gid_t,
+    _limit: c_long,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    NSS_STATUS_NOTFOUND
+}

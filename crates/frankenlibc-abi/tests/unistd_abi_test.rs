@@ -10910,3 +10910,126 @@ fn time_converters_are_identity_on_lp64() {
     assert_eq!(_time_to_int(i32::MAX as libc::time_t), i32::MAX);
     assert_eq!(_time32_to_time(i32::MIN), i32::MIN as libc::time_t);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 15 _nss_compat_* NSS plugin entrypoints (bd-ubjtz)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_compat_end_stubs_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_compat_endgrent, _nss_compat_endpwent, _nss_compat_endspent,
+    };
+    assert_eq!(unsafe { _nss_compat_endgrent() }, 1);
+    assert_eq!(unsafe { _nss_compat_endpwent() }, 1);
+    assert_eq!(unsafe { _nss_compat_endspent() }, 1);
+}
+
+#[test]
+fn nss_compat_set_stubs_accept_stayopen_and_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_compat_setgrent, _nss_compat_setpwent, _nss_compat_setspent,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            assert_eq!(unsafe { $f(0) }, 1);
+            assert_eq!(unsafe { $f(1) }, 1);
+        }};
+    }
+    check!(_nss_compat_setgrent);
+    check!(_nss_compat_setpwent);
+    check!(_nss_compat_setspent);
+}
+
+#[test]
+fn nss_compat_get_ent_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_compat_getgrent_r, _nss_compat_getpwent_r, _nss_compat_getspent_r,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err) },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_compat_getgrent_r);
+    check!(_nss_compat_getpwent_r);
+    check!(_nss_compat_getspent_r);
+}
+
+#[test]
+fn nss_compat_get_by_str_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_compat_getgrnam_r, _nss_compat_getpwnam_r, _nss_compat_getspnam_r,
+    };
+    let key = CString::new("nobody").unwrap();
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        key.as_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                    )
+                },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_compat_getgrnam_r);
+    check!(_nss_compat_getpwnam_r);
+    check!(_nss_compat_getspnam_r);
+}
+
+#[test]
+fn nss_compat_get_by_int_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{_nss_compat_getgrgid_r, _nss_compat_getpwuid_r};
+    let mut err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_compat_getgrgid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_compat_getpwuid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_compat_initgroups_dyn_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_compat_initgroups_dyn;
+    let user = CString::new("alice").unwrap();
+    let mut err: c_int = 0;
+    let mut start: std::ffi::c_long = 0;
+    let mut size: std::ffi::c_long = 0;
+    let mut groups: *mut libc::gid_t = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_compat_initgroups_dyn(
+            user.as_ptr(),
+            0,
+            &mut start,
+            &mut size,
+            &mut groups,
+            8,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}
