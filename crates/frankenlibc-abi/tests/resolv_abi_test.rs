@@ -2014,3 +2014,90 @@ fn ns_skiprr_rejects_overrun() {
     let rc = unsafe { ns_skiprr(qd_start, eom, 0, 100) };
     assert_eq!(rc, -1);
 }
+
+// ---------------------------------------------------------------------------
+// inet_neta — network number to text
+// ---------------------------------------------------------------------------
+
+fn neta_to_str(src: u32, capacity: usize) -> Option<String> {
+    use frankenlibc_abi::resolv_abi::inet_neta;
+    let mut buf = vec![0u8; capacity];
+    let p = unsafe { inet_neta(src, buf.as_mut_ptr() as *mut c_char, capacity) };
+    if p.is_null() {
+        return None;
+    }
+    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
+    Some(s)
+}
+
+/// Helper: convert dotted-quad to in_addr_t in NETWORK byte order
+/// (= bytes laid out lowest-to-highest in memory == low byte = first
+/// octet on a little-endian host).
+fn na(a: u8, b: u8, c: u8, d: u8) -> u32 {
+    u32::from_le_bytes([a, b, c, d])
+}
+
+#[test]
+fn inet_neta_strips_trailing_zero_octets() {
+    assert_eq!(neta_to_str(na(127, 0, 0, 0), 32).as_deref(), Some("127"));
+    assert_eq!(
+        neta_to_str(na(192, 168, 1, 0), 32).as_deref(),
+        Some("192.168.1")
+    );
+    assert_eq!(
+        neta_to_str(na(192, 168, 1, 5), 32).as_deref(),
+        Some("192.168.1.5")
+    );
+    assert_eq!(neta_to_str(na(10, 0, 0, 0), 32).as_deref(), Some("10"));
+}
+
+#[test]
+fn inet_neta_strips_internal_zeros_too() {
+    // The libresolv inet_neta algorithm skips a byte whenever it is
+    // zero AND there are more non-zero bytes remaining — so internal
+    // zeros are also stripped, not just trailing ones.
+    //   10.0.5.0  → "10.5"
+    //   192.0.0.5 → "192.5"
+    assert_eq!(neta_to_str(na(10, 0, 5, 0), 32).as_deref(), Some("10.5"));
+    assert_eq!(neta_to_str(na(192, 0, 0, 5), 32).as_deref(), Some("192.5"));
+}
+
+#[test]
+fn inet_neta_emits_zero_address_as_quad_zero() {
+    assert_eq!(neta_to_str(0, 32).as_deref(), Some("0.0.0.0"));
+}
+
+#[test]
+fn inet_neta_returns_null_emsgsize_when_too_small() {
+    use frankenlibc_abi::resolv_abi::inet_neta;
+    // 192.168.1.5 + NUL = 12 bytes; buffer of 8 is insufficient.
+    let mut buf = [0u8; 8];
+    let p = unsafe {
+        inet_neta(
+            na(192, 168, 1, 5),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+
+    // NULL dst also EMSGSIZE.
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let p = unsafe { inet_neta(0, std::ptr::null_mut(), 0) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+}
+
+#[test]
+fn inet_neta_zero_address_too_small_buffer_fails() {
+    use frankenlibc_abi::resolv_abi::inet_neta;
+    // "0.0.0.0\0" needs 8 bytes; buffer of 4 is too small.
+    let mut buf = [0u8; 4];
+    let p = unsafe { inet_neta(0, buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+}

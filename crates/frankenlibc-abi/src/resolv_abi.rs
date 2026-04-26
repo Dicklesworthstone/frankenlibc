@@ -3143,3 +3143,84 @@ pub unsafe extern "C" fn ns_msg_getflag(handle: *mut CNsMsg, flag: c_int) -> c_i
         _ => 0,
     }
 }
+
+// ===========================================================================
+// libresolv inet_neta — network number to text
+// ===========================================================================
+
+/// libresolv `inet_neta(src, dst, size) -> *mut c_char` — format an
+/// `in_addr_t` as a CIDR-style network number string. The integer is
+/// in network byte order (so its low byte is the first dotted-quad
+/// octet on a little-endian host).
+///
+/// Algorithm: walk bytes from low to high; emit a byte unless it is
+/// zero AND there are more non-zero bytes remaining. Trailing zero
+/// bytes are stripped. If the address is 0 we emit `"0.0.0.0"`.
+///
+/// Examples:
+///   - 127.0.0.0 -> "127"
+///   - 192.168.1.0 -> "192.168.1"
+///   - 192.168.1.5 -> "192.168.1.5"
+///
+/// Sets `errno = EMSGSIZE` and returns NULL if `dst` is too small.
+///
+/// # Safety
+///
+/// `dst`, when non-NULL, must point to at least `size` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) -> *mut c_char {
+    if dst.is_null() {
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        return core::ptr::null_mut();
+    }
+    let odst = dst;
+    let mut cursor = 0usize;
+    while src != 0 {
+        let b = (src & 0xff) as u8;
+        src >>= 8;
+        if b != 0 || src == 0 {
+            // "255." + NUL = 5 bytes worst case from cursor.
+            if cursor + 5 > size {
+                unsafe { set_abi_errno(libc::EMSGSIZE) };
+                return core::ptr::null_mut();
+            }
+            // Format b as decimal (1-3 ASCII digits) into dst[cursor..].
+            let mut digits = [0u8; 3];
+            let mut n = b;
+            let mut len = 0usize;
+            if n == 0 {
+                digits[0] = b'0';
+                len = 1;
+            } else {
+                while n > 0 {
+                    digits[len] = b'0' + (n % 10);
+                    n /= 10;
+                    len += 1;
+                }
+            }
+            for i in 0..len {
+                // SAFETY: cursor + len < size enforced above.
+                unsafe { *dst.add(cursor + i) = digits[len - 1 - i] as c_char };
+            }
+            cursor += len;
+            if src != 0 {
+                // SAFETY: cursor still within size by the +5 check.
+                unsafe { *dst.add(cursor) = b'.' as c_char };
+                cursor += 1;
+            }
+            // SAFETY: cursor < size by the +5 check.
+            unsafe { *dst.add(cursor) = 0 };
+        }
+    }
+    if cursor == 0 {
+        // Address is 0: emit "0.0.0.0".
+        const ZERO: &[u8; 8] = b"0.0.0.0\0";
+        if size < ZERO.len() {
+            unsafe { set_abi_errno(libc::EMSGSIZE) };
+            return core::ptr::null_mut();
+        }
+        // SAFETY: dst has size >= ZERO.len() bytes.
+        unsafe { core::ptr::copy_nonoverlapping(ZERO.as_ptr() as *const c_char, dst, ZERO.len()) };
+    }
+    odst
+}
