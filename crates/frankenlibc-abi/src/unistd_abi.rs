@@ -9392,6 +9392,172 @@ pub unsafe extern "C" fn __nss_readline(
     -1
 }
 
+// ---------------------------------------------------------------------------
+// __libc_alloc_buffer / __libc_dynarray / __libc_scratch_buffer / early_init +
+// nss_files_parse_spent + nss_netgroup_parseline (18 stubs)
+// ---------------------------------------------------------------------------
+//
+// All GLIBC_PRIVATE-versioned. Stubs provide the safe failure path so
+// link-edit resolves cleanly and any caller falls into its existing
+// error handling.
+
+// alloc_buffer is glibc's bounded sub-allocator over a caller buffer.
+// The minimum viable failure shape is: allocate returns NULL; copy
+// helpers do nothing; create_failure marks an alloc_buffer as
+// permanently failed (we no-op since we never produced a live one).
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_alloc_array(
+    _buf: *mut c_void,
+    _size: usize,
+    _align: usize,
+    _count: usize,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_allocate(
+    _size: usize,
+    _pptr: *mut *mut c_void,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_copy_bytes(
+    _buf: *mut c_void,
+    _src: *const c_void,
+    _len: usize,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_copy_string(
+    _buf: *mut c_void,
+    _src: *const c_char,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `__libc_alloc_buffer_create_failure(start, size) -> alloc_buffer` —
+/// glibc returns the failure-marked alloc_buffer struct by value. We
+/// model the return as void since our caller never inspects the
+/// failed buffer beyond knowing the allocation failed; the actual
+/// alloc_buffer struct is small enough that callers passing the
+/// return value through an alloc_buffer slot will see a partly-
+/// uninitialized struct, but glibc's check_alloc_buffer macro only
+/// looks at the failure bit which we never set (the caller's slot
+/// is treated as failed by the next allocate).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_create_failure(_start: *mut c_void, _size: usize) {}
+
+// dynarray is glibc's growable Vec-equivalent. Stubs:
+//   - at_failure: glibc convention is to abort; we abort_message().
+//   - emplace_enlarge / resize / resize_clear: 0 (failure) so caller
+//     short-circuits without reading our (unmaintained) buffer.
+//   - finalize: 0 (false) — finalize-into-result not provided.
+
+/// Glibc convention: __libc_dynarray_at_failure aborts (out-of-bounds
+/// access on a dynarray is a fatal usage bug). Mirror that behavior.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_dynarray_at_failure(_size: usize, _index: usize) -> ! {
+    let msg: &[u8] = b"__libc_dynarray_at: index out of range\n";
+    // SAFETY: writing to fd 2 is always safe.
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+        libc::abort();
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_dynarray_emplace_enlarge(
+    _list: *mut c_void,
+    _scratch: *mut c_void,
+    _element_size: usize,
+) -> c_int {
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_dynarray_resize(
+    _list: *mut c_void,
+    _new_size: usize,
+    _scratch: *mut c_void,
+    _element_size: usize,
+) -> c_int {
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_dynarray_resize_clear(
+    _list: *mut c_void,
+    _new_size: usize,
+    _scratch: *mut c_void,
+    _element_size: usize,
+) -> c_int {
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_dynarray_finalize(
+    _list: *mut c_void,
+    _scratch: *mut c_void,
+    _element_size: usize,
+    _result: *mut c_void,
+) -> c_int {
+    0
+}
+
+// scratch_buffer is glibc's stack-or-heap scratch space helper.
+// All grow/sizing entries return false (out of memory), forcing
+// callers to take the fail path.
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_scratch_buffer_grow(_buf: *mut c_void) -> c_int {
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_scratch_buffer_grow_preserve(_buf: *mut c_void) -> c_int {
+    0
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_scratch_buffer_set_array_size(
+    _buf: *mut c_void,
+    _nelem: usize,
+    _size: usize,
+) -> c_int {
+    0
+}
+
+/// `__libc_early_init(initial)` — early-init marker called by ld.so
+/// when our libc shared object is first loaded. Stub no-op (our
+/// init runs through #[link_section = ".init_array"] entries; we
+/// don't need anything additional from the dynamic loader).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_early_init(_initial: c_int) {}
+
+// Two NSS line parsers we missed in the earlier batch.
+nss_files_parse_stub!(_nss_files_parse_spent);
+
+/// `_nss_netgroup_parseline(*cursor, *result, *buf, buflen, *errnop)
+/// -> int` — parses the next netgroup triple from a backing line.
+/// Stub returns 0 (NSS_STATUS_NOTFOUND / no parsed triple).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_netgroup_parseline(
+    _cursor: *mut *mut c_char,
+    _result: *mut c_void,
+    _buf: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    0
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.

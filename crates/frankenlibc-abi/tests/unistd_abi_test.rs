@@ -10319,3 +10319,148 @@ fn nss_parse_line_result_returns_zero_and_readline_returns_minus_one() {
         -1
     );
 }
+
+// ---------------------------------------------------------------------------
+// __libc_alloc_buffer_* / __libc_dynarray_* / __libc_scratch_buffer_* /
+// __libc_early_init / nss_files_parse_spent / nss_netgroup_parseline
+// ---------------------------------------------------------------------------
+
+#[test]
+fn libc_alloc_buffer_helpers_return_null_or_noop_safely() {
+    use frankenlibc_abi::unistd_abi::{
+        __libc_alloc_buffer_alloc_array, __libc_alloc_buffer_allocate,
+        __libc_alloc_buffer_copy_bytes, __libc_alloc_buffer_copy_string,
+        __libc_alloc_buffer_create_failure,
+    };
+    let mut sink: *mut c_void = std::ptr::null_mut();
+    assert!(unsafe { __libc_alloc_buffer_alloc_array(std::ptr::null_mut(), 8, 8, 4) }.is_null());
+    assert!(unsafe { __libc_alloc_buffer_allocate(64, &mut sink) }.is_null());
+    let src = b"hello";
+    assert!(
+        unsafe {
+            __libc_alloc_buffer_copy_bytes(
+                std::ptr::null_mut(),
+                src.as_ptr() as *const c_void,
+                src.len(),
+            )
+        }
+        .is_null()
+    );
+    let cs = CString::new("hello").unwrap();
+    assert!(
+        unsafe { __libc_alloc_buffer_copy_string(std::ptr::null_mut(), cs.as_ptr()) }.is_null()
+    );
+    unsafe { __libc_alloc_buffer_create_failure(std::ptr::null_mut(), 0) };
+}
+
+#[test]
+fn libc_dynarray_helpers_return_zero() {
+    use frankenlibc_abi::unistd_abi::{
+        __libc_dynarray_emplace_enlarge, __libc_dynarray_finalize, __libc_dynarray_resize,
+        __libc_dynarray_resize_clear,
+    };
+    assert_eq!(
+        unsafe { __libc_dynarray_emplace_enlarge(std::ptr::null_mut(), std::ptr::null_mut(), 8) },
+        0
+    );
+    assert_eq!(
+        unsafe { __libc_dynarray_resize(std::ptr::null_mut(), 4, std::ptr::null_mut(), 8) },
+        0
+    );
+    assert_eq!(
+        unsafe { __libc_dynarray_resize_clear(std::ptr::null_mut(), 4, std::ptr::null_mut(), 8) },
+        0
+    );
+    assert_eq!(
+        unsafe {
+            __libc_dynarray_finalize(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                8,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+}
+
+#[test]
+fn libc_dynarray_at_failure_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__libc_dynarray_at_failure;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __libc_dynarray_at_failure(8, 0) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn libc_scratch_buffer_helpers_return_zero() {
+    use frankenlibc_abi::unistd_abi::{
+        __libc_scratch_buffer_grow, __libc_scratch_buffer_grow_preserve,
+        __libc_scratch_buffer_set_array_size,
+    };
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_grow(std::ptr::null_mut()) },
+        0
+    );
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_grow_preserve(std::ptr::null_mut()) },
+        0
+    );
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(std::ptr::null_mut(), 4, 8) },
+        0
+    );
+}
+
+#[test]
+fn libc_early_init_is_a_no_op() {
+    use frankenlibc_abi::unistd_abi::__libc_early_init;
+    unsafe { __libc_early_init(0) };
+    unsafe { __libc_early_init(1) };
+}
+
+#[test]
+fn nss_files_parse_spent_returns_zero_skip() {
+    use frankenlibc_abi::unistd_abi::_nss_files_parse_spent;
+    let mut line = *b"alice:!:18000:0:99999:7:::\0";
+    let mut errnop: c_int = 0;
+    let rc = unsafe {
+        _nss_files_parse_spent(
+            line.as_mut_ptr() as *mut c_char,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            line.len(),
+            &mut errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn nss_netgroup_parseline_returns_zero_skip_and_sets_errnop() {
+    use frankenlibc_abi::unistd_abi::_nss_netgroup_parseline;
+    let mut cursor: *mut c_char = std::ptr::null_mut();
+    let mut buf = [0u8; 64];
+    let mut errnop: c_int = 0;
+    let rc = unsafe {
+        _nss_netgroup_parseline(
+            &mut cursor,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+}
