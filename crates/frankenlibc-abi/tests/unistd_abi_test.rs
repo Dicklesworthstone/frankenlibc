@@ -9237,9 +9237,98 @@ fn nis_ismember_returns_false() {
 }
 
 #[test]
-fn nis_destroy_object_returns_success_and_does_nothing() {
+fn nis_destroy_object_is_noop_for_null_and_arbitrary_inputs() {
     use frankenlibc_abi::unistd_abi::nis_destroy_object;
-    assert_eq!(unsafe { nis_destroy_object(std::ptr::null_mut()) }, 0);
+    unsafe { nis_destroy_object(std::ptr::null_mut()) };
     let bogus = 0xDEAD_BEEF_usize as *mut c_void;
-    assert_eq!(unsafe { nis_destroy_object(bogus) }, 0);
+    unsafe { nis_destroy_object(bogus) };
+}
+
+// ---------------------------------------------------------------------------
+// nis_* CRUD + directory + misc stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_lookup_and_list_return_null() {
+    use frankenlibc_abi::unistd_abi::{nis_list, nis_lookup};
+    let n = CString::new("foo.bar.").unwrap();
+    assert!(unsafe { nis_lookup(n.as_ptr(), 0) }.is_null());
+    assert!(
+        unsafe { nis_list(n.as_ptr(), 0, std::ptr::null_mut(), std::ptr::null_mut()) }.is_null()
+    );
+    // NULL inputs also safe.
+    assert!(unsafe { nis_lookup(std::ptr::null(), 0) }.is_null());
+}
+
+#[test]
+fn nis_add_modify_remove_and_entry_variants_return_null() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_add, nis_add_entry, nis_modify, nis_modify_entry, nis_remove, nis_remove_entry,
+    };
+    let n = CString::new("foo.bar.").unwrap();
+    let dummy_obj = 0xDEAD_BEEF_usize as *const c_void;
+    assert!(unsafe { nis_add(n.as_ptr(), dummy_obj) }.is_null());
+    assert!(unsafe { nis_add_entry(n.as_ptr(), dummy_obj, 0) }.is_null());
+    assert!(unsafe { nis_modify(n.as_ptr(), dummy_obj) }.is_null());
+    assert!(unsafe { nis_modify_entry(n.as_ptr(), dummy_obj, 0) }.is_null());
+    assert!(unsafe { nis_remove(n.as_ptr(), dummy_obj) }.is_null());
+    assert!(unsafe { nis_remove_entry(n.as_ptr(), dummy_obj, 0) }.is_null());
+}
+
+#[test]
+fn nis_first_next_entry_and_checkpoint_return_null() {
+    use frankenlibc_abi::unistd_abi::{nis_checkpoint, nis_first_entry, nis_next_entry};
+    let n = CString::new("table.dom.").unwrap();
+    assert!(unsafe { nis_first_entry(n.as_ptr()) }.is_null());
+    let cookie = 0xCAFE_BABE_usize as *const c_void;
+    assert!(unsafe { nis_next_entry(n.as_ptr(), cookie) }.is_null());
+    assert!(unsafe { nis_checkpoint(n.as_ptr()) }.is_null());
+}
+
+#[test]
+fn nis_mkdir_rmdir_return_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::{nis_mkdir, nis_rmdir};
+    let n = CString::new("dir.dom.").unwrap();
+    let server = 0xDEAD as *const c_void;
+    assert_eq!(unsafe { nis_mkdir(n.as_ptr(), server) }, 5);
+    assert_eq!(unsafe { nis_rmdir(n.as_ptr(), server) }, 5);
+}
+
+#[test]
+fn nis_ping_is_a_no_op() {
+    use frankenlibc_abi::unistd_abi::nis_ping;
+    let n = CString::new("dir.dom.").unwrap();
+    unsafe { nis_ping(n.as_ptr(), 0, std::ptr::null()) };
+    unsafe { nis_ping(std::ptr::null(), 12345, std::ptr::null()) };
+}
+
+#[test]
+fn nis_servstate_and_stats_return_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::{nis_servstate, nis_stats};
+    let server = 0xDEAD as *const c_void;
+    assert_eq!(
+        unsafe { nis_servstate(server, std::ptr::null_mut(), 0, std::ptr::null_mut()) },
+        5
+    );
+    assert_eq!(
+        unsafe { nis_stats(server, std::ptr::null_mut(), 0, std::ptr::null_mut()) },
+        5
+    );
+}
+
+#[test]
+fn nis_getnames_and_getservlist_return_null() {
+    use frankenlibc_abi::unistd_abi::{nis_getnames, nis_getservlist};
+    let n = CString::new("foo").unwrap();
+    assert!(unsafe { nis_getnames(n.as_ptr()) }.is_null());
+    assert!(unsafe { nis_getservlist(n.as_ptr()) }.is_null());
+}
+
+#[test]
+fn nis_read_obj_returns_null_and_write_obj_returns_zero() {
+    use frankenlibc_abi::unistd_abi::{nis_read_obj, nis_write_obj};
+    let f = CString::new("/tmp/no_such_nis_obj").unwrap();
+    assert!(unsafe { nis_read_obj(f.as_ptr()) }.is_null());
+    let dummy_obj = 0xDEAD as *const c_void;
+    assert_eq!(unsafe { nis_write_obj(f.as_ptr(), dummy_obj) }, 0);
 }

@@ -8243,8 +8243,7 @@ pub unsafe extern "C" fn nis_clone_result(_src: *const c_void, _dest: *mut c_voi
 #[inline]
 fn nis_print_unsupported() {
     const MSG: &[u8] = b"(NIS+ unsupported)\n";
-    // SAFETY: write to fd 1 with a static byte slice.
-    unsafe { libc::write(1, MSG.as_ptr() as *const c_void, MSG.len()) };
+    let _ = super::stdio_abi::write_all_fd(libc::STDOUT_FILENO, MSG);
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8258,12 +8257,12 @@ pub unsafe extern "C" fn nis_print_entry(_entry: *const c_void) {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nis_print_group(_name: *const c_char) {
+pub unsafe extern "C" fn nis_print_group(_group: *const c_void) {
     nis_print_unsupported();
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nis_print_group_entry(_ge: *const c_void) {
+pub unsafe extern "C" fn nis_print_group_entry(_group: *const c_char) {
     nis_print_unsupported();
 }
 
@@ -8343,11 +8342,154 @@ pub unsafe extern "C" fn nis_ismember(_name: *const c_char, _group: *const c_cha
     0
 }
 
-/// libnsl `nis_destroy_object(*obj) -> int` — would free a NIS+
-/// object. Stub returns 0 (NIS_SUCCESS) and does nothing because
+/// libnsl `nis_destroy_object(*obj)` — would free a NIS+
+/// object. Stub does nothing because
 /// our query layer never allocates real NIS+ objects.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nis_destroy_object(_obj: *mut c_void) -> c_int {
+pub unsafe extern "C" fn nis_destroy_object(_obj: *mut c_void) {}
+
+// ---------------------------------------------------------------------------
+// NIS+ CRUD + directory + misc stubs (closes libnsl nis_* parity)
+// ---------------------------------------------------------------------------
+//
+// All `*mut nis_result`, `*mut nis_object`, and `**directory_obj` /
+// `**char` returns are NULL — the documented out-of-memory path that
+// well-behaved NIS+ callers already handle. Without a real NIS+
+// runtime there is nothing meaningful to allocate. Functions
+// returning `nis_error` collapse to `NIS_NAMEUNREACHABLE`.
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_lookup(_name: *const c_char, _flags: c_uint) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_list(
+    _name: *const c_char,
+    _flags: c_uint,
+    _callback: *mut c_void,
+    _userdata: *mut c_void,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_add(_name: *const c_char, _obj: *const c_void) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_add_entry(
+    _name: *const c_char,
+    _obj: *const c_void,
+    _flags: c_uint,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_modify(_name: *const c_char, _obj: *const c_void) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_modify_entry(
+    _name: *const c_char,
+    _obj: *const c_void,
+    _flags: c_uint,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_remove(_name: *const c_char, _obj: *const c_void) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_remove_entry(
+    _name: *const c_char,
+    _obj: *const c_void,
+    _flags: c_uint,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_first_entry(_name: *const c_char) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_next_entry(
+    _name: *const c_char,
+    _cookie: *const c_void,
+) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_checkpoint(_name: *const c_char) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_mkdir(_name: *const c_char, _server: *const c_void) -> c_int {
+    NIS_NAMEUNREACHABLE
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_rmdir(_name: *const c_char, _server: *const c_void) -> c_int {
+    NIS_NAMEUNREACHABLE
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_ping(_name: *const c_char, _utime: c_uint, _dirobj: *const c_void) {}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_servstate(
+    _server: *const c_void,
+    _state: *mut c_void,
+    _num: c_int,
+    _result: *mut *mut c_void,
+) -> c_int {
+    NIS_NAMEUNREACHABLE
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_stats(
+    _server: *const c_void,
+    _info: *mut c_void,
+    _num: c_int,
+    _result: *mut *mut c_void,
+) -> c_int {
+    NIS_NAMEUNREACHABLE
+}
+
+/// libnsl `nis_getnames(name) -> **char` — would expand a partially-
+/// qualified NIS+ name into a NULL-terminated array of fully-qualified
+/// candidates. Stub returns NULL (out-of-memory failure path).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_getnames(_name: *const c_char) -> *mut *mut c_char {
+    core::ptr::null_mut()
+}
+
+/// libnsl `nis_getservlist(dir) -> **directory_obj` — would
+/// enumerate the servers backing a directory. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_getservlist(_dir: *const c_char) -> *mut *mut c_void {
+    core::ptr::null_mut()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_read_obj(_filename: *const c_char) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// libnsl `nis_write_obj(filename, *obj) -> bool_t` — return 0
+/// (FALSE) since we have no NIS+ object to serialize.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_write_obj(_filename: *const c_char, _obj: *const c_void) -> c_int {
     0
 }
 
