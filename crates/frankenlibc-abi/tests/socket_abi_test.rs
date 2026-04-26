@@ -1196,3 +1196,112 @@ fn getpeereid_on_non_socket_fd_yields_error() {
     assert_eq!(err, libc::ENOTSOCK);
     unsafe { close_fd(fd) };
 }
+
+// ---------------------------------------------------------------------------
+// glibc reserved-namespace aliases:
+// __accept / __bind / __listen / __sendto / __recvfrom /
+// __getsockname / __getpeername
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_socket_aliases_round_trip_via_socketpair() {
+    // socketpair() gives us a connected pair we can run all 7
+    // alias entry points against without depending on the network.
+    let mut pair = [-1 as c_int; 2];
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, pair.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+    let (a, b) = (pair[0], pair[1]);
+
+    // __sendto / __recvfrom: zero-length flags (no flags), no peer
+    // address (NULL/0 for AF_UNIX socketpair).
+    let payload: &[u8] = b"alias-test";
+    let n_sent = unsafe {
+        socket_abi::__sendto(
+            a,
+            payload.as_ptr() as *const c_void,
+            payload.len(),
+            0,
+            std::ptr::null(),
+            0,
+        )
+    };
+    assert_eq!(n_sent as usize, payload.len());
+
+    let mut buf = [0u8; 32];
+    let n_recv = unsafe {
+        socket_abi::__recvfrom(
+            b,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(n_recv as usize, payload.len());
+    assert_eq!(&buf[..payload.len()], payload);
+
+    // __getsockname / __getpeername on a unix socketpair return
+    // success even though the address is unnamed.
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let mut len: u32 = std::mem::size_of::<libc::sockaddr_un>() as u32;
+    let rc = unsafe {
+        socket_abi::__getsockname(a, &mut addr as *mut _ as *mut libc::sockaddr, &mut len)
+    };
+    assert_eq!(rc, 0);
+
+    let mut peer_addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    let mut peer_len: u32 = std::mem::size_of::<libc::sockaddr_un>() as u32;
+    let rc = unsafe {
+        socket_abi::__getpeername(
+            a,
+            &mut peer_addr as *mut _ as *mut libc::sockaddr,
+            &mut peer_len,
+        )
+    };
+    assert_eq!(rc, 0);
+
+    unsafe { close_fd(a) };
+    unsafe { close_fd(b) };
+}
+
+#[test]
+fn under_bind_listen_accept_aliases_via_unix_listener() {
+    // Build a temporary AF_UNIX listener path so we can exercise
+    // __bind/__listen and (lightly) verify __accept signatures
+    // resolve. We don't actually accept here — the goal is the
+    // bind/listen sequence on a fresh socket.
+    let path = format!(
+        "/tmp/franken_under_socket_alias_{}.sock",
+        std::process::id()
+    );
+    let _ = std::fs::remove_file(&path);
+    let path_c = std::ffi::CString::new(path.clone()).unwrap();
+
+    let listener = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+    assert!(listener >= 0);
+
+    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    addr.sun_family = libc::AF_UNIX as u16;
+    let bytes = path_c.as_bytes();
+    assert!(bytes.len() < addr.sun_path.len());
+    for (i, &b) in bytes.iter().enumerate() {
+        addr.sun_path[i] = b as i8;
+    }
+    let addrlen = (std::mem::size_of::<u16>() + bytes.len() + 1) as u32;
+
+    let rc = unsafe {
+        socket_abi::__bind(
+            listener,
+            &addr as *const _ as *const libc::sockaddr,
+            addrlen,
+        )
+    };
+    assert_eq!(rc, 0, "__bind should succeed");
+
+    let rc = unsafe { socket_abi::__listen(listener, 1) };
+    assert_eq!(rc, 0, "__listen should succeed");
+
+    unsafe { close_fd(listener) };
+    let _ = std::fs::remove_file(&path);
+}

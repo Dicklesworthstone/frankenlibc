@@ -813,3 +813,105 @@ pub unsafe extern "C" fn getpeereid(
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 10, false);
     0
 }
+
+// ---------------------------------------------------------------------------
+// glibc reserved-namespace aliases:
+// __accept / __bind / __listen / __sendto / __recvfrom /
+// __getsockname / __getpeername
+// ---------------------------------------------------------------------------
+
+/// glibc reserved-namespace alias for [`accept`].
+///
+/// # Safety
+///
+/// Same as [`accept`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __accept(
+    sockfd: c_int,
+    addr: *mut libc::sockaddr,
+    addrlen: *mut u32,
+) -> c_int {
+    unsafe { accept(sockfd, addr, addrlen) }
+}
+
+/// glibc reserved-namespace alias for [`bind`].
+///
+/// # Safety
+///
+/// Same as [`bind`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __bind(sockfd: c_int, addr: *const libc::sockaddr, addrlen: u32) -> c_int {
+    unsafe { bind(sockfd, addr, addrlen) }
+}
+
+/// glibc reserved-namespace alias for [`listen`].
+///
+/// # Safety
+///
+/// Same as [`listen`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __listen(sockfd: c_int, backlog: c_int) -> c_int {
+    unsafe { listen(sockfd, backlog) }
+}
+
+/// glibc reserved-namespace alias for [`sendto`].
+///
+/// # Safety
+///
+/// Same as [`sendto`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sendto(
+    sockfd: c_int,
+    buf: *const c_void,
+    len: usize,
+    flags: c_int,
+    dest_addr: *const libc::sockaddr,
+    addrlen: u32,
+) -> isize {
+    unsafe { sendto(sockfd, buf, len, flags, dest_addr, addrlen) }
+}
+
+/// glibc reserved-namespace alias for [`recvfrom`].
+///
+/// # Safety
+///
+/// Same as [`recvfrom`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __recvfrom(
+    sockfd: c_int,
+    buf: *mut c_void,
+    len: usize,
+    flags: c_int,
+    src_addr: *mut libc::sockaddr,
+    addrlen: *mut u32,
+) -> isize {
+    unsafe { recvfrom(sockfd, buf, len, flags, src_addr, addrlen) }
+}
+
+/// glibc reserved-namespace alias for [`getsockname`].
+///
+/// # Safety
+///
+/// Same as [`getsockname`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getsockname(
+    sockfd: c_int,
+    addr: *mut libc::sockaddr,
+    addrlen: *mut u32,
+) -> c_int {
+    unsafe { getsockname(sockfd, addr, addrlen) }
+}
+
+/// glibc reserved-namespace alias for [`getpeername`].
+///
+/// # Safety
+///
+/// Same as [`getpeername`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getpeername(
+    sockfd: c_int,
+    addr: *mut libc::sockaddr,
+    addrlen: *mut u32,
+) -> c_int {
+    unsafe { getpeername(sockfd, addr, addrlen) }
+}
