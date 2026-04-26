@@ -4149,6 +4149,10 @@ fn call_sscanf_multi(
     }
 
     let ret = match target {
+        // SAFETY: `input` and `format` are live NUL-terminated C strings owned by
+        // the fixture executor, and each variadic destination points to a
+        // distinct, aligned scratch slot large enough for all supported scanf
+        // destination types used by these fixtures.
         SscanfTarget::Impl => unsafe {
             match spec_count {
                 0 => frankenlibc_abi::stdio_abi::sscanf(input, format),
@@ -4174,6 +4178,9 @@ fn call_sscanf_multi(
                 _ => unreachable!(),
             }
         },
+        // SAFETY: same argument lifetime, NUL-termination, and scratch-slot
+        // invariants as the FrankenLibC call above; this path invokes host libc
+        // with the same bounded arity solely to build an oracle comparison.
         SscanfTarget::Host => unsafe {
             match spec_count {
                 0 => libc::sscanf(input, format),

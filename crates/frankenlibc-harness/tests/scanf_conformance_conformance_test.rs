@@ -270,65 +270,6 @@ struct DifferentialExecution {
     host_parity: bool,
 }
 
-/// Current scanf fixture cases with single output and single conversion should
-/// execute directly; multi-output/spec cases are filtered by shape below.
-const KNOWN_EXECUTION_GAPS: &[&str] = &[];
-
-fn case_is_known_execution_gap(name: &str) -> bool {
-    KNOWN_EXECUTION_GAPS.contains(&name)
-}
-
-fn case_needs_multi_value_support(case: &FixtureCase) -> bool {
-    case.expected_values
-        .as_ref()
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|values| values.len() > 1)
-}
-
-fn count_scanf_specs(format: &str) -> usize {
-    let mut count = 0usize;
-    let mut chars = format.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '%' {
-            continue;
-        }
-        if chars.peek() == Some(&'%') {
-            chars.next();
-            continue;
-        }
-        if chars.peek() == Some(&'*') {
-            while let Some(spec) = chars.next() {
-                if spec == '[' {
-                    while chars.next().is_some_and(|c| c != ']') {}
-                    break;
-                }
-                if spec.is_alphabetic() {
-                    break;
-                }
-            }
-            continue;
-        }
-        while chars
-            .peek()
-            .is_some_and(|&c| !c.is_alphabetic() && c != '[' && c != 'n')
-        {
-            chars.next();
-        }
-        if chars.peek().is_some_and(|&c| c.is_alphabetic() || c == '[') {
-            count += 1;
-            chars.next();
-        }
-    }
-    count
-}
-
-fn case_needs_multi_spec_support(case: &FixtureCase) -> bool {
-    case.inputs
-        .get("format")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|format| count_scanf_specs(format) > 1)
-}
-
 fn execute_case_via_harness(
     function: &str,
     inputs: &serde_json::Value,
@@ -474,20 +415,9 @@ fn format_expected_scanf_result(
 fn scanf_conformance_fixture_cases_match_execute_fixture_case() {
     let fixture = load_fixture("scanf_conformance");
     let mut executed = 0usize;
-    let mut skipped = 0usize;
+    let skipped = 0usize;
 
     for case in &fixture.cases {
-        if case_is_known_execution_gap(&case.name)
-            || case_needs_multi_value_support(case)
-            || case_needs_multi_spec_support(case)
-        {
-            eprintln!(
-                "skip {} — tracked sscanf execution gap or multi-output/spec case",
-                case.name
-            );
-            skipped += 1;
-            continue;
-        }
         let expected_return = case
             .expected_return
             .unwrap_or_else(|| panic!("case {} missing expected_return", case.name));
@@ -536,20 +466,9 @@ fn scanf_conformance_fixture_cases_match_execute_fixture_case() {
 fn scanf_conformance_fixture_executes_with_host_parity_via_harness_matrix() {
     let fixture = load_fixture("scanf_conformance");
     let mut executed = 0usize;
-    let mut skipped = 0usize;
+    let skipped = 0usize;
 
     for case in &fixture.cases {
-        if case_is_known_execution_gap(&case.name)
-            || case_needs_multi_value_support(case)
-            || case_needs_multi_spec_support(case)
-        {
-            eprintln!(
-                "skip {} — tracked sscanf execution gap or multi-output/spec case",
-                case.name
-            );
-            skipped += 1;
-            continue;
-        }
         let expected_return = case
             .expected_return
             .unwrap_or_else(|| panic!("case {} missing expected_return", case.name));

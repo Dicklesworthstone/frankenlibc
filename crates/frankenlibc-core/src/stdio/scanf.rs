@@ -6,8 +6,9 @@
 //! Reference: POSIX.1-2024 fscanf, ISO C11 7.21.6.2
 //!
 //! The engine returns a `Vec<ScanValue>` for each successfully scanned
-//! non-suppressed conversion. The ABI layer writes these values through
-//! the caller's va_list pointers.
+//! non-suppressed destination, including `%n`. The ABI layer writes these
+//! values through the caller's va_list pointers; the scanf return count still
+//! excludes `%n`, matching POSIX/glibc.
 
 use super::printf::LengthMod;
 
@@ -517,8 +518,11 @@ pub fn scan_input(input: &[u8], directives: &[ScanDirective]) -> ScanResult {
                         if !spec.suppress
                             && let Some(v) = val
                         {
+                            let counts_as_assignment = !matches!(v, ScanValue::CharsConsumed(_));
                             values.push(v);
-                            count += 1;
+                            if counts_as_assignment {
+                                count += 1;
+                            }
                         }
                     }
                 }
@@ -1649,7 +1653,7 @@ mod tests {
     fn test_scan_n() {
         let dirs = parse_scanf_format(b"%d%n");
         let result = scan_input(b"42", &dirs);
-        assert_eq!(result.count, 2);
+        assert_eq!(result.count, 1);
         assert!(matches!(result.values[0], ScanValue::SignedInt(42)));
         assert!(matches!(result.values[1], ScanValue::CharsConsumed(2)));
     }
