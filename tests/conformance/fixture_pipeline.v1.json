@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-04-26T02:40:47Z",
+  "generated_at": "2026-04-26T02:49:17Z",
   "summary": {
     "total_fixture_files": 56,
-    "total_fixture_cases": 1160,
-    "unique_symbols_in_fixtures": 342,
+    "total_fixture_cases": 1188,
+    "unique_symbols_in_fixtures": 356,
     "implemented_symbols": 3996,
-    "symbols_with_fixtures": 324,
+    "symbols_with_fixtures": 338,
     "symbols_at_threshold": 8,
     "symbols_below_threshold": 3988,
-    "symbols_with_zero_fixtures": 3672,
-    "coverage_pct": 8.1,
+    "symbols_with_zero_fixtures": 3658,
+    "coverage_pct": 8.5,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
     "min_cases_threshold": 10,
@@ -309,10 +309,10 @@
     {
       "module": "stdbit_abi",
       "total_symbols": 70,
-      "covered_symbols": 28,
+      "covered_symbols": 42,
       "at_threshold": 0,
-      "total_cases": 56,
-      "coverage_pct": 40.0,
+      "total_cases": 84,
+      "coverage_pct": 60.0,
       "threshold_pct": 0.0
     },
     {
@@ -27512,9 +27512,9 @@
       "symbol": "stdc_bit_ceil_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_bit_ceil_ull",
@@ -27552,9 +27552,9 @@
       "symbol": "stdc_bit_floor_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_bit_floor_ull",
@@ -27592,9 +27592,9 @@
       "symbol": "stdc_bit_width_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_bit_width_ull",
@@ -27632,9 +27632,9 @@
       "symbol": "stdc_count_ones_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_count_ones_ull",
@@ -27672,9 +27672,9 @@
       "symbol": "stdc_count_zeros_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_count_zeros_ull",
@@ -27712,9 +27712,9 @@
       "symbol": "stdc_first_leading_one_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_first_leading_one_ull",
@@ -27752,9 +27752,9 @@
       "symbol": "stdc_first_leading_zero_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_first_leading_zero_ull",
@@ -27792,9 +27792,9 @@
       "symbol": "stdc_first_trailing_one_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_first_trailing_one_ull",
@@ -27832,9 +27832,9 @@
       "symbol": "stdc_first_trailing_zero_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_first_trailing_zero_ull",
@@ -27872,9 +27872,9 @@
       "symbol": "stdc_has_single_bit_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_has_single_bit_ull",
@@ -27912,9 +27912,9 @@
       "symbol": "stdc_leading_ones_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_leading_ones_ull",
@@ -27952,9 +27952,9 @@
       "symbol": "stdc_leading_zeros_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_leading_zeros_ull",
@@ -27992,9 +27992,9 @@
       "symbol": "stdc_trailing_ones_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_trailing_ones_ull",
@@ -28032,9 +28032,9 @@
       "symbol": "stdc_trailing_zeros_ul",
       "module": "stdbit_abi",
       "status": "Implemented",
-      "fixture_cases": 0,
+      "fixture_cases": 2,
       "meets_threshold": false,
-      "gap": 10
+      "gap": 8
     },
     {
       "symbol": "stdc_trailing_zeros_ull",
@@ -32927,8 +32927,8 @@
     },
     {
       "file": "stdbit_ops.json",
-      "total_cases": 56,
-      "symbols_covered": 28,
+      "total_cases": 84,
+      "symbols_covered": 42,
       "symbols": {
         "stdc_leading_zeros_ui": 2,
         "stdc_leading_ones_ui": 2,
@@ -32957,7 +32957,21 @@
         "stdc_has_single_bit_ull": 2,
         "stdc_bit_width_ull": 2,
         "stdc_bit_floor_ull": 2,
-        "stdc_bit_ceil_ull": 2
+        "stdc_bit_ceil_ull": 2,
+        "stdc_leading_zeros_ul": 2,
+        "stdc_leading_ones_ul": 2,
+        "stdc_trailing_zeros_ul": 2,
+        "stdc_trailing_ones_ul": 2,
+        "stdc_first_leading_zero_ul": 2,
+        "stdc_first_leading_one_ul": 2,
+        "stdc_first_trailing_zero_ul": 2,
+        "stdc_first_trailing_one_ul": 2,
+        "stdc_count_ones_ul": 2,
+        "stdc_count_zeros_ul": 2,
+        "stdc_has_single_bit_ul": 2,
+        "stdc_bit_width_ul": 2,
+        "stdc_bit_floor_ul": 2,
+        "stdc_bit_ceil_ul": 2
       },
       "valid": true,
       "issues": []

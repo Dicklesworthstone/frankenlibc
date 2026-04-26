@@ -122,7 +122,7 @@ fn stdbit_ops_covers_unsigned_integer_operations() -> Result<(), String> {
         "bit_floor",
         "bit_ceil",
     ];
-    let suffixes = ["ui", "ull"];
+    let suffixes = ["ui", "ul", "ull"];
 
     for suffix in suffixes {
         for operation in operations {
