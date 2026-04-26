@@ -8651,6 +8651,263 @@ pub unsafe extern "C" fn _nss_files_setnetgrent(
     NSS_STATUS_SUCCESS
 }
 
+// ---------------------------------------------------------------------------
+// _nss_files_getXX_r NSS plugin lookup stubs
+// ---------------------------------------------------------------------------
+//
+// Each pairs with the set/end stubs from prior beads. Returns
+// NSS_STATUS_NOTFOUND (= 0, "I checked, no record") and sets
+// *errnop = ENOENT when non-NULL, so the NSS dispatch layer falls
+// through to the next module. Signatures match the canonical glibc
+// NSS files-module convention so register placement of the errnop
+// pointer matches what callers actually pass.
+
+const NSS_STATUS_NOTFOUND: c_int = 0;
+const NSS_HOST_NOT_FOUND: c_int = 1;
+
+#[inline]
+unsafe fn nss_set_errnop_enoent(errnop: *mut c_int) {
+    if !errnop.is_null() {
+        // SAFETY: caller-supplied writable slot per NSS contract.
+        unsafe { *errnop = libc::ENOENT };
+    }
+}
+
+#[inline]
+unsafe fn nss_set_herr_host_not_found(h_errnop: *mut c_int) {
+    if !h_errnop.is_null() {
+        // SAFETY: caller-supplied writable slot per NSS contract.
+        unsafe { *h_errnop = NSS_HOST_NOT_FOUND };
+    }
+}
+
+/// Plain `getXXent_r(*result, *buf, buflen, *errnop)` shape.
+macro_rules! nss_files_get_ent_stub {
+    ($name:ident) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(
+            _result: *mut c_void,
+            _buffer: *mut c_char,
+            _buflen: usize,
+            errnop: *mut c_int,
+        ) -> c_int {
+            unsafe { nss_set_errnop_enoent(errnop) };
+            NSS_STATUS_NOTFOUND
+        }
+    };
+}
+
+/// Single-string-key `getXXbyYY_r(name, *result, *buf, buflen,
+/// *errnop)` shape.
+macro_rules! nss_files_get_by_str_stub {
+    ($name:ident) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(
+            _key: *const c_char,
+            _result: *mut c_void,
+            _buffer: *mut c_char,
+            _buflen: usize,
+            errnop: *mut c_int,
+        ) -> c_int {
+            unsafe { nss_set_errnop_enoent(errnop) };
+            NSS_STATUS_NOTFOUND
+        }
+    };
+}
+
+/// Single-int-key `getXXbyYY_r(id, *result, *buf, buflen, *errnop)`
+/// shape (gid_t / uid_t / int).
+macro_rules! nss_files_get_by_int_stub {
+    ($name:ident, $key:ty) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(
+            _key: $key,
+            _result: *mut c_void,
+            _buffer: *mut c_char,
+            _buflen: usize,
+            errnop: *mut c_int,
+        ) -> c_int {
+            unsafe { nss_set_errnop_enoent(errnop) };
+            NSS_STATUS_NOTFOUND
+        }
+    };
+}
+
+// 12 plain getent_r stubs.
+nss_files_get_ent_stub!(_nss_files_getaliasent_r);
+nss_files_get_ent_stub!(_nss_files_getetherent_r);
+nss_files_get_ent_stub!(_nss_files_getgrent_r);
+nss_files_get_ent_stub!(_nss_files_gethostent_r);
+nss_files_get_ent_stub!(_nss_files_getnetent_r);
+nss_files_get_ent_stub!(_nss_files_getprotoent_r);
+nss_files_get_ent_stub!(_nss_files_getpwent_r);
+nss_files_get_ent_stub!(_nss_files_getrpcent_r);
+nss_files_get_ent_stub!(_nss_files_getservent_r);
+nss_files_get_ent_stub!(_nss_files_getsgent_r);
+nss_files_get_ent_stub!(_nss_files_getspent_r);
+
+// `_nss_files_getnetgrent_r(*result, *buf, buflen, *errnop)` —
+// special variant returning the next netgroup triple. Signature is
+// the same as the plain getent_r form (the `*result` is a struct
+// `__netgrent` rather than a pubkey type, but our stub doesn't
+// dereference it).
+nss_files_get_ent_stub!(_nss_files_getnetgrent_r);
+
+// 12 single-key string lookup stubs.
+nss_files_get_by_str_stub!(_nss_files_getaliasbyname_r);
+nss_files_get_by_str_stub!(_nss_files_getgrnam_r);
+nss_files_get_by_str_stub!(_nss_files_getnetbyname_r);
+nss_files_get_by_str_stub!(_nss_files_getprotobyname_r);
+nss_files_get_by_str_stub!(_nss_files_getpwnam_r);
+nss_files_get_by_str_stub!(_nss_files_getrpcbyname_r);
+nss_files_get_by_str_stub!(_nss_files_getsgnam_r);
+nss_files_get_by_str_stub!(_nss_files_getspnam_r);
+// gethostton/getntohost have the *_by_str shape under the hood.
+nss_files_get_by_str_stub!(_nss_files_gethostton_r);
+nss_files_get_by_str_stub!(_nss_files_getntohost_r);
+
+// 4 single-int lookup stubs (gid_t / uid_t / int).
+nss_files_get_by_int_stub!(_nss_files_getgrgid_r, libc::gid_t);
+nss_files_get_by_int_stub!(_nss_files_getpwuid_r, libc::uid_t);
+nss_files_get_by_int_stub!(_nss_files_getprotobynumber_r, c_int);
+nss_files_get_by_int_stub!(_nss_files_getrpcbynumber_r, c_int);
+
+/// `_nss_files_gethostbyname_r(name, *result, *buf, buflen,
+/// *errnop, *h_errnop)` — extra `*h_errnop` slot for h_errno.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_gethostbyname_r(
+    _name: *const c_char,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_gethostbyname2_r(name, af, *result, *buf, buflen,
+/// *errnop, *h_errnop)` — like gethostbyname_r with an extra address
+/// family parameter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_gethostbyname2_r(
+    _name: *const c_char,
+    _af: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_gethostbyname3_r(name, af, *result, *buf, buflen,
+/// *errnop, *h_errnop, *ttlp, **canonp)` — adds TTL/canonical-name
+/// out-parameters.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_files_gethostbyname3_r(
+    _name: *const c_char,
+    _af: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+    _ttlp: *mut i32,
+    _canonp: *mut *mut c_char,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_gethostbyname4_r(name, *gaih_addrtuple_pp, *buf,
+/// buflen, *errnop, *h_errnop, *ttlp)` — newer gaih_addrtuple shape.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_gethostbyname4_r(
+    _name: *const c_char,
+    _pat: *mut *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+    _ttlp: *mut i32,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_gethostbyaddr_r(addr, len, type, *result, *buf,
+/// buflen, *errnop, *h_errnop)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_files_gethostbyaddr_r(
+    _addr: *const c_void,
+    _len: usize,
+    _af: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_getnetbyaddr_r(net, type, *result, *buf, buflen,
+/// *errnop)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getnetbyaddr_r(
+    _net: u32,
+    _type: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_getservbyname_r(name, proto, *result, *buf, buflen,
+/// *errnop)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getservbyname_r(
+    _name: *const c_char,
+    _proto: *const c_char,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_getservbyport_r(port, proto, *result, *buf, buflen,
+/// *errnop)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getservbyport_r(
+    _port: c_int,
+    _proto: *const c_char,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.
