@@ -1389,6 +1389,50 @@ pub unsafe extern "C" fn __nss_passwd_lookup(
     -1
 }
 
+// __nss_lookup_function: resolve a per-service function pointer in
+// the NSS module loader. We have no NSS module loading (all our
+// passwd/group/hosts lookups go through dedicated abi modules), so
+// any caller asking for a function pointer gets NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_lookup_function(
+    _ni: *mut c_void,
+    _fct_name: *const c_char,
+) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+// __nss_hosts_lookup2: newer "v2" hosts lookup variant taking an
+// explicit address-family `type` and returning extended status via
+// `errnop`/`h_errnop`. Stubbed UNAVAIL for the same reason as
+// __nss_hosts_lookup.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_hosts_lookup2(
+    _nip: *mut *mut c_void,
+    _name: *const c_char,
+    _type: c_int,
+    _result: *mut c_void,
+    _errnop: *mut c_int,
+    _h_errnop: *mut c_int,
+) -> c_int {
+    -1
+}
+
+// __nss_next2: advance to next NSS service. Same UNAVAIL stub as
+// __nss_next, but with the additional `fct2_name` selector glibc
+// added for fallback-name resolution. We have no module chain so
+// the answer is always "no more services".
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nss_next2(
+    _ni: *mut *mut c_void,
+    _fct_name: *const c_char,
+    _fct2_name: *const c_char,
+    _fctp: *mut *mut c_void,
+    _status: *mut c_int,
+    _all_values: c_int,
+) -> c_int {
+    -1
+}
+
 // ==========================================================================
 // __nl_langinfo_l and locale internals (4 symbols)
 // ==========================================================================

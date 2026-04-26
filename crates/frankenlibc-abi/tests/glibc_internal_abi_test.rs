@@ -3561,3 +3561,57 @@ fn libc_csu_init_with_argv_envp_is_a_no_op() {
 fn libc_csu_fini_is_a_no_op() {
     unsafe { __libc_csu_fini() };
 }
+
+// ---------------------------------------------------------------------------
+// __nss_lookup_function / __nss_hosts_lookup2 / __nss_next2
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::glibc_internal_abi::{
+    __nss_hosts_lookup2, __nss_lookup_function, __nss_next2,
+};
+
+#[test]
+fn nss_lookup_function_returns_null() {
+    let name = std::ffi::CString::new("getpwnam_r").unwrap();
+    let p = unsafe { __nss_lookup_function(std::ptr::null_mut(), name.as_ptr()) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn nss_hosts_lookup2_returns_unavail() {
+    let name = std::ffi::CString::new("localhost").unwrap();
+    let mut nip: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mut errnop: c_int = 0;
+    let mut h_errnop: c_int = 0;
+    let rc = unsafe {
+        __nss_hosts_lookup2(
+            &mut nip,
+            name.as_ptr(),
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn nss_next2_returns_unavail() {
+    let fct = std::ffi::CString::new("getpwnam_r").unwrap();
+    let fct2 = std::ffi::CString::new("_nss_compat_getpwnam_r").unwrap();
+    let mut ni: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mut fctp: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mut status: c_int = 0;
+    let rc = unsafe {
+        __nss_next2(
+            &mut ni,
+            fct.as_ptr(),
+            fct2.as_ptr(),
+            &mut fctp,
+            &mut status,
+            0,
+        )
+    };
+    assert_eq!(rc, -1);
+}
