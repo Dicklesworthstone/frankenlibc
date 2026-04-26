@@ -5632,6 +5632,117 @@ pub unsafe extern "C" fn lsm_list_modules(ids: *mut u64, size: *mut u32, flags: 
 }
 
 // ---------------------------------------------------------------------------
+// faccessat2 / io_pgetevents / clone3
+// ---------------------------------------------------------------------------
+
+/// Linux `faccessat2(dirfd, pathname, mode, flags) -> int`
+/// (Linux 5.8+, `SYS_faccessat2 = 439`) — like `faccessat` but
+/// accepts a `flags` argument for `AT_SYMLINK_NOFOLLOW`,
+/// `AT_EACCESS`, and `AT_EMPTY_PATH`.
+///
+/// # Safety
+///
+/// `pathname`, when `flags & AT_EMPTY_PATH == 0`, must be a
+/// NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn faccessat2(
+    dirfd: c_int,
+    pathname: *const c_char,
+    mode: c_int,
+    flags: c_int,
+) -> c_int {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_faccessat2,
+            dirfd as libc::c_long,
+            pathname as libc::c_long,
+            mode as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `io_pgetevents(ctx_id, min_nr, nr, *events, *timeout, *sig)
+/// -> int` (Linux 4.18+, syscall 333) — like `io_getevents` but
+/// accepts a `struct __aio_sigset` for atomically blocking signals
+/// during the wait. Use `sig == NULL` to behave like
+/// `io_getevents`.
+///
+/// # Safety
+///
+/// `events`, when `nr > 0`, must point to writable storage for
+/// `nr` `struct io_event` entries. `timeout`, when non-NULL, must
+/// point to a valid `timespec`. `sig`, when non-NULL, must point
+/// to a valid `struct __aio_sigset`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn io_pgetevents(
+    ctx_id: c_ulong,
+    min_nr: c_long,
+    nr: c_long,
+    events: *mut c_void,
+    timeout: *const libc::timespec,
+    sig: *const c_void,
+) -> c_int {
+    if nr > 0 && events.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    const SYS_IO_PGETEVENTS: libc::c_long = 333;
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            SYS_IO_PGETEVENTS,
+            ctx_id as libc::c_long,
+            min_nr,
+            nr,
+            events as libc::c_long,
+            timeout as libc::c_long,
+            sig as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `clone3(*cl_args, size) -> pid_t` (Linux 5.3+,
+/// `SYS_clone3 = 435`) — extended `clone` with a versioned
+/// `struct clone_args`. Returns the new pid in the parent or 0 in
+/// the child; -1 + errno on failure.
+///
+/// # Safety
+///
+/// `cl_args` must point to a valid `struct clone_args` of `size`
+/// bytes. The kernel rejects calls with the wrong size for any of
+/// its known struct versions.
+///
+/// Callers in Rust must be extremely careful: in the child branch,
+/// stack/TLS state may be unsafe to use until the kernel completes
+/// thread setup. Most usage should go through pthread_create or the
+/// portable libc clone wrapper instead.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clone3(cl_args: *mut c_void, size: usize) -> libc::pid_t {
+    if cl_args.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_clone3,
+            cl_args as libc::c_long,
+            size as libc::c_long,
+        )
+    };
+    if rc < 0 {
+        let e = unsafe { *libc::__errno_location() };
+        unsafe { set_abi_errno(e) };
+        return -1;
+    }
+    rc as libc::pid_t
+}
+
+// ---------------------------------------------------------------------------
 // Scheduler — RawSyscall
 // ---------------------------------------------------------------------------
 
