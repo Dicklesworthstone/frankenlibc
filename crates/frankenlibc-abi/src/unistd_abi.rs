@@ -8233,6 +8233,124 @@ pub unsafe extern "C" fn nis_clone_result(_src: *const c_void, _dest: *mut c_voi
     core::ptr::null_mut()
 }
 
+// ---------------------------------------------------------------------------
+// NIS+ print helpers + group ops + nis_destroy_object
+// ---------------------------------------------------------------------------
+
+/// Shared body for the nis_print_* family: write a constant
+/// "(NIS+ unsupported)\n" line to stdout. Argument values are
+/// ignored.
+#[inline]
+fn nis_print_unsupported() {
+    const MSG: &[u8] = b"(NIS+ unsupported)\n";
+    // SAFETY: write to fd 1 with a static byte slice.
+    unsafe { libc::write(1, MSG.as_ptr() as *const c_void, MSG.len()) };
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_print_directory(_dir: *const c_void) {
+    nis_print_unsupported();
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_print_entry(_entry: *const c_void) {
+    nis_print_unsupported();
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_print_group(_name: *const c_char) {
+    nis_print_unsupported();
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_print_group_entry(_ge: *const c_void) {
+    nis_print_unsupported();
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_print_link(_link: *const c_void) {
+    nis_print_unsupported();
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_print_object(_obj: *const c_void) {
+    nis_print_unsupported();
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_print_result(_res: *const c_void) {
+    nis_print_unsupported();
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_print_rights(_rights: c_uint) {
+    nis_print_unsupported();
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_print_table(_table: *const c_void) {
+    nis_print_unsupported();
+}
+
+/// libnsl `nis_creategroup(name, flags) -> nis_error` — would
+/// create a NIS+ group. Stub returns NIS_NAMEUNREACHABLE.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_creategroup(_name: *const c_char, _flags: c_uint) -> c_int {
+    NIS_NAMEUNREACHABLE
+}
+
+/// libnsl `nis_destroygroup(name) -> nis_error` — would delete a
+/// NIS+ group. Stub returns NIS_NAMEUNREACHABLE.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_destroygroup(_name: *const c_char) -> c_int {
+    NIS_NAMEUNREACHABLE
+}
+
+/// libnsl `nis_addmember(name, group) -> nis_error` — would add a
+/// member to a group. Stub returns NIS_NAMEUNREACHABLE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_addmember(_name: *const c_char, _group: *const c_char) -> c_int {
+    NIS_NAMEUNREACHABLE
+}
+
+/// libnsl `nis_removemember(name, group) -> nis_error` — would
+/// remove a member. Stub returns NIS_NAMEUNREACHABLE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_removemember(_name: *const c_char, _group: *const c_char) -> c_int {
+    NIS_NAMEUNREACHABLE
+}
+
+/// libnsl `nis_verifygroup(group) -> nis_error` — would verify a
+/// group exists. Stub returns NIS_NAMEUNREACHABLE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_verifygroup(_group: *const c_char) -> c_int {
+    NIS_NAMEUNREACHABLE
+}
+
+/// libnsl `nis_ismember(name, group) -> bool_t` — would test group
+/// membership. Stub returns 0 (FALSE) — without a real NIS+ runtime
+/// no membership claim can be verified.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_ismember(_name: *const c_char, _group: *const c_char) -> c_int {
+    0
+}
+
+/// libnsl `nis_destroy_object(*obj) -> int` — would free a NIS+
+/// object. Stub returns 0 (NIS_SUCCESS) and does nothing because
+/// our query layer never allocates real NIS+ objects.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_destroy_object(_obj: *mut c_void) -> c_int {
+    0
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.

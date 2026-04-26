@@ -9164,3 +9164,82 @@ fn nis_clone_helpers_return_null() {
     assert!(unsafe { nis_clone_object(std::ptr::null(), std::ptr::null_mut()) }.is_null());
     assert!(unsafe { nis_clone_result(std::ptr::null(), std::ptr::null_mut()) }.is_null());
 }
+
+// ---------------------------------------------------------------------------
+// nis_print_* helpers + group ops + nis_destroy_object
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_print_helpers_do_not_crash_on_null_or_arbitrary_inputs() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_print_directory, nis_print_entry, nis_print_group, nis_print_group_entry,
+        nis_print_link, nis_print_object, nis_print_result, nis_print_rights, nis_print_table,
+    };
+    unsafe {
+        nis_print_directory(std::ptr::null());
+        nis_print_entry(std::ptr::null());
+        nis_print_group(std::ptr::null());
+        nis_print_group_entry(std::ptr::null());
+        nis_print_link(std::ptr::null());
+        nis_print_object(std::ptr::null());
+        nis_print_result(std::ptr::null());
+        nis_print_rights(0);
+        nis_print_table(std::ptr::null());
+    }
+    let bogus = 0xDEAD_BEEF_usize as *const c_void;
+    unsafe {
+        nis_print_directory(bogus);
+        nis_print_object(bogus);
+        nis_print_table(bogus);
+        nis_print_rights(0xFFFF_FFFF);
+    }
+}
+
+#[test]
+fn nis_creategroup_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::nis_creategroup;
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_creategroup(g.as_ptr(), 0) }, 5);
+    assert_eq!(unsafe { nis_creategroup(std::ptr::null(), 0) }, 5);
+}
+
+#[test]
+fn nis_destroygroup_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::nis_destroygroup;
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_destroygroup(g.as_ptr()) }, 5);
+}
+
+#[test]
+fn nis_addmember_and_removemember_return_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::{nis_addmember, nis_removemember};
+    let m = CString::new("alice.users.dom.").unwrap();
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_addmember(m.as_ptr(), g.as_ptr()) }, 5);
+    assert_eq!(unsafe { nis_removemember(m.as_ptr(), g.as_ptr()) }, 5);
+}
+
+#[test]
+fn nis_verifygroup_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::nis_verifygroup;
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_verifygroup(g.as_ptr()) }, 5);
+}
+
+#[test]
+fn nis_ismember_returns_false() {
+    use frankenlibc_abi::unistd_abi::nis_ismember;
+    let m = CString::new("alice.users.dom.").unwrap();
+    let g = CString::new("admins.dom.").unwrap();
+    assert_eq!(unsafe { nis_ismember(m.as_ptr(), g.as_ptr()) }, 0);
+    assert_eq!(unsafe { nis_ismember(std::ptr::null(), g.as_ptr()) }, 0);
+    assert_eq!(unsafe { nis_ismember(m.as_ptr(), std::ptr::null()) }, 0);
+}
+
+#[test]
+fn nis_destroy_object_returns_success_and_does_nothing() {
+    use frankenlibc_abi::unistd_abi::nis_destroy_object;
+    assert_eq!(unsafe { nis_destroy_object(std::ptr::null_mut()) }, 0);
+    let bogus = 0xDEAD_BEEF_usize as *mut c_void;
+    assert_eq!(unsafe { nis_destroy_object(bogus) }, 0);
+}
