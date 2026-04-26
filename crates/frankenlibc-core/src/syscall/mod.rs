@@ -487,6 +487,8 @@ pub const SYS_EXIT_GROUP: usize = 231;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_OPENAT: usize = 257;
 #[cfg(target_arch = "x86_64")]
+pub const SYS_OPENAT2: usize = 437;
+#[cfg(target_arch = "x86_64")]
 pub const SYS_UTIMENSAT: usize = 280;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_PIPE2: usize = 293;
@@ -642,6 +644,8 @@ pub const SYS_GETDENTS64: usize = 61;
 pub const SYS_EXIT_GROUP: usize = 94;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_OPENAT: usize = 56;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_OPENAT2: usize = 437;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_UTIMENSAT: usize = 88;
 #[cfg(target_arch = "aarch64")]
@@ -1831,6 +1835,33 @@ pub unsafe fn sys_openat(
             pathname as usize,
             flags as usize,
             mode as usize,
+        )
+    };
+    syscall_result(ret).map(|v| v as i32)
+}
+
+/// `openat2(dirfd, pathname, how, size)` — extended openat with a versioned `open_how`.
+///
+/// # Safety
+///
+/// `pathname` must be a valid null-terminated C string. `how` must point to at
+/// least `size` readable bytes containing a kernel-compatible `open_how` block.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_openat2(
+    dirfd: i32,
+    pathname: *const u8,
+    how: *const u8,
+    size: usize,
+) -> Result<i32, i32> {
+    // SAFETY: caller guarantees pathname/how pointer validity and size bounds.
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_OPENAT2,
+            dirfd as usize,
+            pathname as usize,
+            how as usize,
+            size,
         )
     };
     syscall_result(ret).map(|v| v as i32)
