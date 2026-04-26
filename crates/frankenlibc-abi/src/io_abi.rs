@@ -379,6 +379,64 @@ pub unsafe extern "C" fn writev(
     }
 }
 
+/// glibc reserved-namespace alias for [`pread`].
+///
+/// # Safety
+///
+/// Same as [`pread`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pread(
+    fd: c_int,
+    buf: *mut c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { pread(fd, buf, count, offset) }
+}
+
+/// glibc reserved-namespace alias for [`pwrite`].
+///
+/// # Safety
+///
+/// Same as [`pwrite`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pwrite(
+    fd: c_int,
+    buf: *const c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { pwrite(fd, buf, count, offset) }
+}
+
+/// glibc reserved-namespace alias for [`readv`].
+///
+/// # Safety
+///
+/// Same as [`readv`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __readv(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+) -> libc::ssize_t {
+    unsafe { readv(fd, iov, iovcnt) }
+}
+
+/// glibc reserved-namespace alias for [`writev`].
+///
+/// # Safety
+///
+/// Same as [`writev`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __writev(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+) -> libc::ssize_t {
+    unsafe { writev(fd, iov, iovcnt) }
+}
+
 // ---------------------------------------------------------------------------
 // sendfile
 // ---------------------------------------------------------------------------

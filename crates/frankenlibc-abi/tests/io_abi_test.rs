@@ -5,8 +5,8 @@
 use std::ffi::{c_int, c_uint};
 
 use frankenlibc_abi::io_abi::{
-    __dup3, __pipe2, copy_file_range, dup, dup2, dup3, fcntl, memfd_create, pipe, pipe2, pread,
-    pwrite, readv, sendfile, splice, writev,
+    __dup3, __pipe2, __pread, __pwrite, __readv, __writev, copy_file_range, dup, dup2, dup3, fcntl,
+    memfd_create, pipe, pipe2, pread, pwrite, readv, sendfile, splice, writev,
 };
 use frankenlibc_abi::unistd_abi::close;
 
@@ -727,4 +727,90 @@ fn under_dup3_works_like_dup3() {
     unsafe { close(fds[0]) };
     unsafe { close(fds[1]) };
     unsafe { close(target) };
+}
+
+// ---------------------------------------------------------------------------
+// __pread / __pwrite / __readv / __writev (glibc reserved aliases)
+// ---------------------------------------------------------------------------
+
+fn make_temp_file_fd() -> c_int {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::env::temp_dir().join(format!(
+        "franken_io_alias_{}_{:p}",
+        std::process::id(),
+        &0u8 as *const u8
+    ));
+    let path_c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+            0o600,
+        )
+    };
+    assert!(fd >= 0);
+    // Unlink immediately so the file goes away on close.
+    unsafe { libc::unlink(path_c.as_ptr()) };
+    fd
+}
+
+#[test]
+fn under_pwrite_pread_round_trip_at_offset() {
+    let fd = make_temp_file_fd();
+    let payload = b"hello, alias!";
+    let n = unsafe {
+        __pwrite(
+            fd,
+            payload.as_ptr() as *const std::ffi::c_void,
+            payload.len(),
+            0,
+        )
+    };
+    assert_eq!(n as usize, payload.len());
+
+    let mut buf = [0u8; 32];
+    let n = unsafe { __pread(fd, buf.as_mut_ptr() as *mut std::ffi::c_void, buf.len(), 0) };
+    assert_eq!(n as usize, payload.len());
+    assert_eq!(&buf[..payload.len()], payload);
+    unsafe { close(fd) };
+}
+
+#[test]
+fn under_writev_readv_round_trip() {
+    let fd = make_temp_file_fd();
+    let part1 = b"alias-";
+    let part2 = b"writev";
+    let iov = [
+        libc::iovec {
+            iov_base: part1.as_ptr() as *mut std::ffi::c_void,
+            iov_len: part1.len(),
+        },
+        libc::iovec {
+            iov_base: part2.as_ptr() as *mut std::ffi::c_void,
+            iov_len: part2.len(),
+        },
+    ];
+    let n = unsafe { __writev(fd, iov.as_ptr(), 2) };
+    assert_eq!(n as usize, part1.len() + part2.len());
+
+    // Rewind via lseek then __readv.
+    let pos = unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+    assert_eq!(pos, 0);
+    let mut buf1 = [0u8; 6];
+    let mut buf2 = [0u8; 6];
+    let r_iov = [
+        libc::iovec {
+            iov_base: buf1.as_mut_ptr() as *mut std::ffi::c_void,
+            iov_len: buf1.len(),
+        },
+        libc::iovec {
+            iov_base: buf2.as_mut_ptr() as *mut std::ffi::c_void,
+            iov_len: buf2.len(),
+        },
+    ];
+    let n = unsafe { __readv(fd, r_iov.as_ptr(), 2) };
+    assert_eq!(n as usize, part1.len() + part2.len());
+    assert_eq!(&buf1, part1);
+    assert_eq!(&buf2, part2);
+    unsafe { close(fd) };
 }
