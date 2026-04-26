@@ -300,6 +300,7 @@ pub unsafe extern "C" fn err(eval: c_int, fmt: *const c_char, mut args: ...) -> 
         extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
         write_err_message(fmt_bytes, &arg_buf, extract_count, true);
     }
+    invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
 }
 
@@ -311,6 +312,7 @@ pub unsafe extern "C" fn verr(eval: c_int, fmt: *const c_char, ap: *mut c_void) 
     } else {
         vformat_and_write(fmt, ap, true);
     }
+    invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
 }
 
@@ -332,6 +334,7 @@ pub unsafe extern "C" fn errx(eval: c_int, fmt: *const c_char, mut args: ...) ->
         extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
         write_err_message(fmt_bytes, &arg_buf, extract_count, false);
     }
+    invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
 }
 
@@ -343,6 +346,7 @@ pub unsafe extern "C" fn verrx(eval: c_int, fmt: *const c_char, ap: *mut c_void)
     } else {
         vformat_and_write(fmt, ap, false);
     }
+    invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
 }
 
@@ -399,6 +403,7 @@ pub unsafe extern "C" fn errc(eval: c_int, code: c_int, fmt: *const c_char, mut 
         extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
         write_err_message_with_code(fmt_bytes, &arg_buf, extract_count, code);
     }
+    invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
 }
 
@@ -410,5 +415,56 @@ pub unsafe extern "C" fn verrc(eval: c_int, code: c_int, fmt: *const c_char, ap:
     } else {
         vformat_and_write_with_code(fmt, ap, code);
     }
+    invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
+}
+
+// ---------------------------------------------------------------------------
+// err_set_exit (BSD libutil pre-exit hook)
+// ---------------------------------------------------------------------------
+
+/// FFI type of the err(3) pre-exit hook.
+pub type ErrExitHook = unsafe extern "C" fn(c_int);
+
+static ERR_EXIT_HOOK: std::sync::Mutex<Option<ErrExitHook>> = std::sync::Mutex::new(None);
+
+/// Internal: invoke the registered err-exit hook (if any) with the
+/// exit code that err()/errx()/errc() is about to use. Called by
+/// each fatal exit path immediately before `sys_exit_group`. The
+/// hook may legally `_exit()` itself (skipping the rest of the
+/// fatal path) — we don't impose any constraint on its return
+/// behavior.
+fn invoke_exit_hook(eval: c_int) {
+    let hook = { *ERR_EXIT_HOOK.lock().unwrap() };
+    if let Some(f) = hook {
+        unsafe { f(eval) };
+    }
+}
+
+/// BSD `err_set_exit(func)` — register a global hook that
+/// err()/errx()/errc()/verr()/verrx()/verrc() invoke immediately
+/// before they call `exit()`. The hook receives the exit code
+/// that the fatal path is about to use.
+///
+/// Pass `NULL` (i.e. `None` from Rust) to clear the hook and
+/// restore default behavior. Returns the previously-installed
+/// hook (or `None` if no custom hook was installed).
+///
+/// Used by daemons and utilities to release locks, flush logs, or
+/// remove pidfiles when a fatal error path is taken.
+///
+/// # Safety
+///
+/// `func`, when non-NULL, must be a callable `extern "C"` function
+/// pointer. The hook will be invoked from inside fatal-error
+/// paths; it must be async-signal-safe to whatever extent the
+/// caller's runtime requires (the err family already constrains
+/// itself to write(2) for output, so the hook inherits the same
+/// constraints).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn err_set_exit(func: Option<ErrExitHook>) -> Option<ErrExitHook> {
+    let mut cell = ERR_EXIT_HOOK.lock().unwrap();
+    let prev = *cell;
+    *cell = func;
+    prev
 }

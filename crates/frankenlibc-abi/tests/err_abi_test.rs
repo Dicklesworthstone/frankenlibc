@@ -3,8 +3,10 @@
 //! Integration tests for err.h ABI entrypoints (warn/warnx only;
 //! err/errx call _exit and cannot be tested in-process).
 
-use frankenlibc_abi::err_abi::{vwarn, vwarnc, vwarnx, warn, warnc, warnx};
-use std::ffi::c_char;
+use frankenlibc_abi::err_abi::{
+    err_set_exit, vwarn, vwarnc, vwarnx, warn, warnc, warnx,
+};
+use std::ffi::{c_char, c_int};
 
 // ---------------------------------------------------------------------------
 // warn / warnx — these write to stderr but don't exit
@@ -366,4 +368,109 @@ fn test_warnc_concurrent() {
     for h in handles {
         h.join().unwrap();
     }
+}
+
+// ---------------------------------------------------------------------------
+// err_set_exit (BSD libutil pre-exit hook)
+// ---------------------------------------------------------------------------
+
+/// Serialize tests that touch the global err-exit hook so they
+/// can't observe each other's mutations.
+static ERR_SET_EXIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+unsafe extern "C" fn dummy_hook_a(_eval: c_int) {}
+unsafe extern "C" fn dummy_hook_b(_eval: c_int) {}
+
+#[test]
+fn err_set_exit_returns_previous_hook() {
+    let _guard = ERR_SET_EXIT_LOCK.lock().unwrap();
+    // Start from a known clean state.
+    let saved = unsafe { err_set_exit(None) };
+
+    // Install A → previous is None.
+    let prev = unsafe { err_set_exit(Some(dummy_hook_a)) };
+    assert!(prev.is_none(), "first install should report no prior hook");
+
+    // Install B → previous is A.
+    let prev = unsafe { err_set_exit(Some(dummy_hook_b)) };
+    assert!(prev.is_some());
+    assert_eq!(
+        prev.unwrap() as *const () as usize,
+        dummy_hook_a as *const () as usize,
+        "swap should report the prior hook"
+    );
+
+    // Clear → previous is B.
+    let prev = unsafe { err_set_exit(None) };
+    assert!(prev.is_some());
+    assert_eq!(
+        prev.unwrap() as *const () as usize,
+        dummy_hook_b as *const () as usize
+    );
+
+    // Final clear should yield None.
+    let after = unsafe { err_set_exit(None) };
+    assert!(after.is_none());
+
+    // Restore whatever was installed before the test.
+    unsafe { err_set_exit(saved) };
+}
+
+#[test]
+fn err_set_exit_hook_runs_before_errx_in_child() {
+    // Fork a child, install a hook that writes a marker byte to
+    // a pipe, then call errx. The parent reads the pipe to
+    // confirm the hook fired before _exit.
+    let _guard = ERR_SET_EXIT_LOCK.lock().unwrap();
+    use frankenlibc_abi::err_abi::errx;
+
+    let mut pipefds = [0 as c_int; 2];
+    let rc = unsafe { libc::pipe(pipefds.as_mut_ptr()) };
+    assert_eq!(rc, 0, "pipe failed");
+    let read_fd = pipefds[0];
+    let write_fd = pipefds[1];
+
+    // Stash write_fd in a global the child-side hook can see.
+    HOOK_PIPE_WRITE.store(write_fd, std::sync::atomic::Ordering::SeqCst);
+
+    let child = unsafe { libc::fork() };
+    assert!(child >= 0, "fork failed");
+
+    if child == 0 {
+        // Child: install hook, call errx with a known eval, never returns.
+        unsafe { libc::close(read_fd) };
+        unsafe { err_set_exit(Some(child_hook)) };
+        let fmt = c"err_set_exit child";
+        unsafe { errx(7, fmt.as_ptr()) }; // -> ! (exits with eval=7)
+        // Unreachable.
+    }
+
+    // Parent: close write end, read the marker byte, wait for child.
+    unsafe { libc::close(write_fd) };
+    let mut byte = [0u8; 8];
+    let n = unsafe {
+        libc::read(
+            read_fd,
+            byte.as_mut_ptr() as *mut std::ffi::c_void,
+            byte.len(),
+        )
+    };
+    let mut status: c_int = 0;
+    let _ = unsafe { libc::waitpid(child, &mut status, 0) };
+    unsafe { libc::close(read_fd) };
+
+    assert!(n >= 1, "hook did not write to pipe (n={n})");
+    // First byte is the eval the hook saw.
+    assert_eq!(byte[0], 7, "hook received wrong eval");
+    // Child exit status should match the eval errx used.
+    assert!(libc::WIFEXITED(status), "child must have exited normally");
+    assert_eq!(libc::WEXITSTATUS(status), 7, "child exit code should be 7");
+}
+
+static HOOK_PIPE_WRITE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+unsafe extern "C" fn child_hook(eval: c_int) {
+    let fd = HOOK_PIPE_WRITE.load(std::sync::atomic::Ordering::SeqCst);
+    let bytes = [eval as u8];
+    let _ = unsafe { libc::write(fd, bytes.as_ptr() as *const std::ffi::c_void, 1) };
 }
