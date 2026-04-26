@@ -11193,3 +11193,161 @@ fn nss_hesiod_initgroups_dyn_returns_notfound_and_sets_errno() {
     assert_eq!(rc, 0);
     assert_eq!(err, libc::ENOENT);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 21 _nss_systemd_* NSS plugin entrypoints (bd-rzecx)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_systemd_end_stubs_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_systemd_endgrent, _nss_systemd_endpwent, _nss_systemd_endsgent, _nss_systemd_endspent,
+    };
+    assert_eq!(unsafe { _nss_systemd_endgrent() }, 1);
+    assert_eq!(unsafe { _nss_systemd_endpwent() }, 1);
+    assert_eq!(unsafe { _nss_systemd_endsgent() }, 1);
+    assert_eq!(unsafe { _nss_systemd_endspent() }, 1);
+}
+
+#[test]
+fn nss_systemd_set_stubs_accept_stayopen_and_return_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_systemd_setgrent, _nss_systemd_setpwent, _nss_systemd_setsgent, _nss_systemd_setspent,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            assert_eq!(unsafe { $f(0) }, 1);
+            assert_eq!(unsafe { $f(1) }, 1);
+        }};
+    }
+    check!(_nss_systemd_setgrent);
+    check!(_nss_systemd_setpwent);
+    check!(_nss_systemd_setsgent);
+    check!(_nss_systemd_setspent);
+}
+
+#[test]
+fn nss_systemd_get_ent_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_systemd_getgrent_r, _nss_systemd_getpwent_r, _nss_systemd_getsgent_r,
+        _nss_systemd_getspent_r,
+    };
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err) },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_systemd_getgrent_r);
+    check!(_nss_systemd_getpwent_r);
+    check!(_nss_systemd_getsgent_r);
+    check!(_nss_systemd_getspent_r);
+}
+
+#[test]
+fn nss_systemd_get_by_str_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_systemd_getgrnam_r, _nss_systemd_getpwnam_r, _nss_systemd_getsgnam_r,
+        _nss_systemd_getspnam_r,
+    };
+    let key = CString::new("nobody").unwrap();
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        key.as_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                    )
+                },
+                0
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+    check!(_nss_systemd_getgrnam_r);
+    check!(_nss_systemd_getpwnam_r);
+    check!(_nss_systemd_getsgnam_r);
+    check!(_nss_systemd_getspnam_r);
+}
+
+#[test]
+fn nss_systemd_get_by_int_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{_nss_systemd_getgrgid_r, _nss_systemd_getpwuid_r};
+    let mut err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_systemd_getgrgid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_systemd_getpwuid_r(0, std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err)
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_systemd_initgroups_dyn_returns_notfound_and_sets_errno() {
+    use frankenlibc_abi::unistd_abi::_nss_systemd_initgroups_dyn;
+    let user = CString::new("alice").unwrap();
+    let mut err: c_int = 0;
+    let mut start: std::ffi::c_long = 0;
+    let mut size: std::ffi::c_long = 0;
+    let mut groups: *mut libc::gid_t = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_systemd_initgroups_dyn(
+            user.as_ptr(),
+            0,
+            &mut start,
+            &mut size,
+            &mut groups,
+            8,
+            &mut err,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(err, libc::ENOENT);
+}
+
+#[test]
+fn nss_systemd_block_returns_previous_flag_and_is_blocked_reflects_state() {
+    use frankenlibc_abi::unistd_abi::{_nss_systemd_block, _nss_systemd_is_blocked};
+    // Initial state: unblocked.
+    assert_eq!(_nss_systemd_is_blocked(), 0);
+    // Block: previous was 0.
+    assert_eq!(_nss_systemd_block(1), 0);
+    assert_eq!(_nss_systemd_is_blocked(), 1);
+    // Block again with a different non-zero value: previous was 1.
+    assert_eq!(_nss_systemd_block(7), 1);
+    assert_eq!(_nss_systemd_is_blocked(), 7);
+    // Unblock: previous was 7.
+    assert_eq!(_nss_systemd_block(0), 7);
+    assert_eq!(_nss_systemd_is_blocked(), 0);
+}
+
+#[test]
+fn nss_systemd_block_is_per_thread() {
+    use frankenlibc_abi::unistd_abi::{_nss_systemd_block, _nss_systemd_is_blocked};
+    _nss_systemd_block(0);
+    _nss_systemd_block(1);
+    let other_seen = std::thread::spawn(|| _nss_systemd_is_blocked())
+        .join()
+        .unwrap();
+    assert_eq!(other_seen, 0);
+    assert_eq!(_nss_systemd_is_blocked(), 1);
+    _nss_systemd_block(0);
+}

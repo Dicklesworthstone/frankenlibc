@@ -23790,3 +23790,78 @@ pub unsafe extern "C" fn _nss_hesiod_initgroups_dyn(
     unsafe { nss_set_errnop_enoent(errnop) };
     NSS_STATUS_NOTFOUND
 }
+
+// ---------------------------------------------------------------------------
+// 21 _nss_systemd_* NSS plugin entrypoints (bd-rzecx)
+// ---------------------------------------------------------------------------
+//
+// libnss_systemd.so.2 injects synthetic users/groups from systemd-homed and
+// systemd-machined via NSS. When systemd-userdb is not running the plugin
+// must return NSS_STATUS_NOTFOUND with errnop=ENOENT. The plugin also
+// exposes a thread-local reentrancy guard (block / is_blocked) used by
+// systemd internals to break recursion when nss_systemd code itself calls
+// back into NSS.
+
+nss_files_end_stub!(_nss_systemd_endgrent);
+nss_files_end_stub!(_nss_systemd_endpwent);
+nss_files_end_stub!(_nss_systemd_endsgent);
+nss_files_end_stub!(_nss_systemd_endspent);
+
+nss_files_set_stayopen_stub!(_nss_systemd_setgrent);
+nss_files_set_stayopen_stub!(_nss_systemd_setpwent);
+nss_files_set_stayopen_stub!(_nss_systemd_setsgent);
+nss_files_set_stayopen_stub!(_nss_systemd_setspent);
+
+nss_files_get_ent_stub!(_nss_systemd_getgrent_r);
+nss_files_get_ent_stub!(_nss_systemd_getpwent_r);
+nss_files_get_ent_stub!(_nss_systemd_getsgent_r);
+nss_files_get_ent_stub!(_nss_systemd_getspent_r);
+
+nss_files_get_by_str_stub!(_nss_systemd_getgrnam_r);
+nss_files_get_by_str_stub!(_nss_systemd_getpwnam_r);
+nss_files_get_by_str_stub!(_nss_systemd_getsgnam_r);
+nss_files_get_by_str_stub!(_nss_systemd_getspnam_r);
+
+nss_files_get_by_int_stub!(_nss_systemd_getgrgid_r, libc::gid_t);
+nss_files_get_by_int_stub!(_nss_systemd_getpwuid_r, libc::uid_t);
+
+/// `_nss_systemd_initgroups_dyn(user, gid, *start, *size, **groupsp,
+/// limit, *errnop) -> nss_status` — supplementary group lookup.
+/// Stub returns NSS_STATUS_NOTFOUND with errnop=ENOENT.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_systemd_initgroups_dyn(
+    _user: *const c_char,
+    _gid: libc::gid_t,
+    _start: *mut c_long,
+    _size: *mut c_long,
+    _groupsp: *mut *mut libc::gid_t,
+    _limit: c_long,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+thread_local! {
+    static NSS_SYSTEMD_BLOCK_FLAG: std::cell::Cell<c_int> = const { std::cell::Cell::new(0) };
+}
+
+/// `_nss_systemd_block(b) -> int` — set the per-thread reentrancy
+/// guard. Returns the previous flag value. systemd uses this to
+/// break recursion when nss_systemd itself calls into NSS.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn _nss_systemd_block(b: c_int) -> c_int {
+    NSS_SYSTEMD_BLOCK_FLAG.with(|f| {
+        let prev = f.get();
+        f.set(b);
+        prev
+    })
+}
+
+/// `_nss_systemd_is_blocked() -> int` — return the current per-thread
+/// reentrancy guard flag (non-zero ⇒ blocked).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn _nss_systemd_is_blocked() -> c_int {
+    NSS_SYSTEMD_BLOCK_FLAG.with(|f| f.get())
+}
