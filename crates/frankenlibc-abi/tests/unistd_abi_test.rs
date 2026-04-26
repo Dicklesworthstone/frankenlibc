@@ -6227,6 +6227,96 @@ fn cxa_call_unexpected_aborts_child_process() {
 }
 
 #[test]
+fn cxa_call_terminate_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_call_terminate;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_call_terminate(std::ptr::null_mut()) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_deleted_virtual_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_deleted_virtual;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_deleted_virtual() };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_bad_cast_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_bad_cast;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_bad_cast() };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_bad_typeid_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_bad_typeid;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_bad_typeid() };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn cxa_throw_bad_array_length_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_throw_bad_array_length;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_throw_bad_array_length() };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
 fn cxa_get_globals_returns_stable_per_thread_pointer() {
     use frankenlibc_abi::unistd_abi::{__cxa_get_globals, __cxa_get_globals_fast};
 

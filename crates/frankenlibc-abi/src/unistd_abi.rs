@@ -11152,6 +11152,81 @@ pub unsafe extern "C" fn __cxa_call_unexpected(_exception_obj: *mut c_void) -> !
     }
 }
 
+/// Itanium C++ ABI `__cxa_call_terminate(exc_obj)` — entry point
+/// the personality routine invokes when an exception escapes a
+/// `noexcept`/`throw()` boundary. Per ABI it should call
+/// `std::terminate` (which by default calls `abort`). With no
+/// exception runtime in play we collapse the call directly into
+/// the same fail-stop convention as [`__cxa_pure_virtual`].
+///
+/// The `_exc_obj` argument (the in-flight exception's runtime
+/// info) is consumed and ignored.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_call_terminate(_exc_obj: *mut c_void) -> ! {
+    let msg: &[u8] = b"terminate called via __cxa_call_terminate\n";
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+        libc::abort();
+    }
+}
+
+/// Itanium C++ ABI `__cxa_deleted_virtual` — vtable slot
+/// installed by the compiler for member functions marked
+/// `= delete` that are dispatched through a base-class pointer.
+/// If the program ever calls one, control reaches here. We mirror
+/// [`__cxa_pure_virtual`]'s fail-stop convention.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_deleted_virtual() -> ! {
+    let msg: &[u8] = b"deleted virtual method called\n";
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+        libc::abort();
+    }
+}
+
+/// Itanium C++ ABI `__cxa_bad_cast` — entry point the runtime
+/// invokes when `dynamic_cast<T&>` fails (the reference form, in
+/// contrast to the pointer form which returns NULL). Per ABI it
+/// should throw `std::bad_cast`. With no exception runtime we
+/// mirror [`__cxa_pure_virtual`]'s fail-stop convention.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_bad_cast() -> ! {
+    let msg: &[u8] = b"std::bad_cast (via __cxa_bad_cast)\n";
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+        libc::abort();
+    }
+}
+
+/// Itanium C++ ABI `__cxa_bad_typeid` — entry point the runtime
+/// invokes when `typeid(*p)` is evaluated with `p == nullptr`.
+/// Per ABI it should throw `std::bad_typeid`. With no exception
+/// runtime we mirror [`__cxa_pure_virtual`]'s fail-stop
+/// convention.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_bad_typeid() -> ! {
+    let msg: &[u8] = b"std::bad_typeid (via __cxa_bad_typeid)\n";
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+        libc::abort();
+    }
+}
+
+/// Itanium C++ ABI `__cxa_throw_bad_array_length` — entry point
+/// the compiler emits for `new T[n]` when `n` is signed and
+/// negative. Per ABI it should throw `std::bad_array_length`
+/// (a removed C++14-era exception type that some pre-existing
+/// binaries still link against). With no exception runtime we
+/// mirror [`__cxa_pure_virtual`]'s fail-stop convention.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_throw_bad_array_length() -> ! {
+    let msg: &[u8] = b"bad_array_length\n";
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+        libc::abort();
+    }
+}
+
 /// Itanium C++ ABI `__cxa_eh_globals` — per-thread exception
 /// state struct. We expose only the two fields callers can
 /// legally inspect (`caughtExceptions` head pointer and the
