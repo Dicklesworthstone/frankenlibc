@@ -5444,6 +5444,144 @@ pub unsafe extern "C" fn strsignal(sig: c_int) -> *mut c_char {
     })
 }
 
+/// Number of signal slots in `sys_siglist`. Matches Linux `NSIG`
+/// on x86_64 (signals 0..64 inclusive). Indices 0 and 32..63 are
+/// reserved or realtime-signal slots and point to a dedicated
+/// placeholder string.
+const SYS_SIGLIST_LEN: usize = 65;
+
+// Per-signal description bytes, NUL-terminated so they can be
+// served as `*const c_char` directly. The textual content matches
+// the existing `signal_name()` table to avoid divergence between
+// `strsignal(sig)` and `sys_siglist[sig]`.
+const SIG_DESC_EMPTY: &[u8] = b"\0";
+const SIG_DESC_HUP: &[u8] = b"Hangup\0";
+const SIG_DESC_INT: &[u8] = b"Interrupt\0";
+const SIG_DESC_QUIT: &[u8] = b"Quit\0";
+const SIG_DESC_ILL: &[u8] = b"Illegal instruction\0";
+const SIG_DESC_TRAP: &[u8] = b"Trace/breakpoint trap\0";
+const SIG_DESC_ABRT: &[u8] = b"Aborted\0";
+const SIG_DESC_BUS: &[u8] = b"Bus error\0";
+const SIG_DESC_FPE: &[u8] = b"Floating point exception\0";
+const SIG_DESC_KILL: &[u8] = b"Killed\0";
+const SIG_DESC_USR1: &[u8] = b"User defined signal 1\0";
+const SIG_DESC_SEGV: &[u8] = b"Segmentation fault\0";
+const SIG_DESC_USR2: &[u8] = b"User defined signal 2\0";
+const SIG_DESC_PIPE: &[u8] = b"Broken pipe\0";
+const SIG_DESC_ALRM: &[u8] = b"Alarm clock\0";
+const SIG_DESC_TERM: &[u8] = b"Terminated\0";
+const SIG_DESC_STKFLT: &[u8] = b"Stack fault\0";
+const SIG_DESC_CHLD: &[u8] = b"Child exited\0";
+const SIG_DESC_CONT: &[u8] = b"Continued\0";
+const SIG_DESC_STOP: &[u8] = b"Stopped (signal)\0";
+const SIG_DESC_TSTP: &[u8] = b"Stopped\0";
+const SIG_DESC_TTIN: &[u8] = b"Stopped (tty input)\0";
+const SIG_DESC_TTOU: &[u8] = b"Stopped (tty output)\0";
+const SIG_DESC_URG: &[u8] = b"Urgent I/O condition\0";
+const SIG_DESC_XCPU: &[u8] = b"CPU time limit exceeded\0";
+const SIG_DESC_XFSZ: &[u8] = b"File size limit exceeded\0";
+const SIG_DESC_VTALRM: &[u8] = b"Virtual timer expired\0";
+const SIG_DESC_PROF: &[u8] = b"Profiling timer expired\0";
+const SIG_DESC_WINCH: &[u8] = b"Window changed\0";
+const SIG_DESC_IO: &[u8] = b"I/O possible\0";
+const SIG_DESC_PWR: &[u8] = b"Power failure\0";
+const SIG_DESC_SYS: &[u8] = b"Bad system call\0";
+const SIG_DESC_RT: &[u8] = b"Real-time signal\0";
+
+/// `repr(transparent)` wrapper that lets us declare a `static`
+/// holding raw pointers (which are not `Sync` on their own).
+/// The Sync impl is sound because the wrapped array is initialized
+/// once at program load and the contents — pointers to immutable
+/// `&'static [u8]` literals — are never mutated.
+#[repr(transparent)]
+pub struct SysSigList(pub [*const c_char; SYS_SIGLIST_LEN]);
+// SAFETY: see SysSigList docs above.
+unsafe impl Sync for SysSigList {}
+
+/// glibc `sys_siglist[NSIG]` — array of human-readable signal
+/// descriptions indexed by signal number. Deprecated in favor of
+/// [`strsignal`] / `sigdescr_np`, but many older programs still
+/// reference this symbol directly. Each entry is a NUL-terminated
+/// C string with the same wording as [`strsignal(n)`].
+///
+/// `sys_siglist[0]` is empty (no signal 0 description). Indices
+/// 32..=64 cover the realtime-signal range and share a generic
+/// placeholder description.
+///
+/// The wrapper around the inner `[*const c_char; 65]` is
+/// `repr(transparent)`, so the symbol's ABI is identical to a
+/// bare C `const char *sys_siglist[NSIG]`.
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static sys_siglist: SysSigList = SysSigList([
+    SIG_DESC_EMPTY.as_ptr() as *const c_char,  // 0
+    SIG_DESC_HUP.as_ptr() as *const c_char,    // 1 SIGHUP
+    SIG_DESC_INT.as_ptr() as *const c_char,    // 2 SIGINT
+    SIG_DESC_QUIT.as_ptr() as *const c_char,   // 3 SIGQUIT
+    SIG_DESC_ILL.as_ptr() as *const c_char,    // 4 SIGILL
+    SIG_DESC_TRAP.as_ptr() as *const c_char,   // 5 SIGTRAP
+    SIG_DESC_ABRT.as_ptr() as *const c_char,   // 6 SIGABRT
+    SIG_DESC_BUS.as_ptr() as *const c_char,    // 7 SIGBUS
+    SIG_DESC_FPE.as_ptr() as *const c_char,    // 8 SIGFPE
+    SIG_DESC_KILL.as_ptr() as *const c_char,   // 9 SIGKILL
+    SIG_DESC_USR1.as_ptr() as *const c_char,   // 10 SIGUSR1
+    SIG_DESC_SEGV.as_ptr() as *const c_char,   // 11 SIGSEGV
+    SIG_DESC_USR2.as_ptr() as *const c_char,   // 12 SIGUSR2
+    SIG_DESC_PIPE.as_ptr() as *const c_char,   // 13 SIGPIPE
+    SIG_DESC_ALRM.as_ptr() as *const c_char,   // 14 SIGALRM
+    SIG_DESC_TERM.as_ptr() as *const c_char,   // 15 SIGTERM
+    SIG_DESC_STKFLT.as_ptr() as *const c_char, // 16 SIGSTKFLT
+    SIG_DESC_CHLD.as_ptr() as *const c_char,   // 17 SIGCHLD
+    SIG_DESC_CONT.as_ptr() as *const c_char,   // 18 SIGCONT
+    SIG_DESC_STOP.as_ptr() as *const c_char,   // 19 SIGSTOP
+    SIG_DESC_TSTP.as_ptr() as *const c_char,   // 20 SIGTSTP
+    SIG_DESC_TTIN.as_ptr() as *const c_char,   // 21 SIGTTIN
+    SIG_DESC_TTOU.as_ptr() as *const c_char,   // 22 SIGTTOU
+    SIG_DESC_URG.as_ptr() as *const c_char,    // 23 SIGURG
+    SIG_DESC_XCPU.as_ptr() as *const c_char,   // 24 SIGXCPU
+    SIG_DESC_XFSZ.as_ptr() as *const c_char,   // 25 SIGXFSZ
+    SIG_DESC_VTALRM.as_ptr() as *const c_char, // 26 SIGVTALRM
+    SIG_DESC_PROF.as_ptr() as *const c_char,   // 27 SIGPROF
+    SIG_DESC_WINCH.as_ptr() as *const c_char,  // 28 SIGWINCH
+    SIG_DESC_IO.as_ptr() as *const c_char,     // 29 SIGIO
+    SIG_DESC_PWR.as_ptr() as *const c_char,    // 30 SIGPWR
+    SIG_DESC_SYS.as_ptr() as *const c_char,    // 31 SIGSYS
+    // 32..=64: realtime signals — share a placeholder description.
+    SIG_DESC_RT.as_ptr() as *const c_char, // 32
+    SIG_DESC_RT.as_ptr() as *const c_char, // 33
+    SIG_DESC_RT.as_ptr() as *const c_char, // 34
+    SIG_DESC_RT.as_ptr() as *const c_char, // 35
+    SIG_DESC_RT.as_ptr() as *const c_char, // 36
+    SIG_DESC_RT.as_ptr() as *const c_char, // 37
+    SIG_DESC_RT.as_ptr() as *const c_char, // 38
+    SIG_DESC_RT.as_ptr() as *const c_char, // 39
+    SIG_DESC_RT.as_ptr() as *const c_char, // 40
+    SIG_DESC_RT.as_ptr() as *const c_char, // 41
+    SIG_DESC_RT.as_ptr() as *const c_char, // 42
+    SIG_DESC_RT.as_ptr() as *const c_char, // 43
+    SIG_DESC_RT.as_ptr() as *const c_char, // 44
+    SIG_DESC_RT.as_ptr() as *const c_char, // 45
+    SIG_DESC_RT.as_ptr() as *const c_char, // 46
+    SIG_DESC_RT.as_ptr() as *const c_char, // 47
+    SIG_DESC_RT.as_ptr() as *const c_char, // 48
+    SIG_DESC_RT.as_ptr() as *const c_char, // 49
+    SIG_DESC_RT.as_ptr() as *const c_char, // 50
+    SIG_DESC_RT.as_ptr() as *const c_char, // 51
+    SIG_DESC_RT.as_ptr() as *const c_char, // 52
+    SIG_DESC_RT.as_ptr() as *const c_char, // 53
+    SIG_DESC_RT.as_ptr() as *const c_char, // 54
+    SIG_DESC_RT.as_ptr() as *const c_char, // 55
+    SIG_DESC_RT.as_ptr() as *const c_char, // 56
+    SIG_DESC_RT.as_ptr() as *const c_char, // 57
+    SIG_DESC_RT.as_ptr() as *const c_char, // 58
+    SIG_DESC_RT.as_ptr() as *const c_char, // 59
+    SIG_DESC_RT.as_ptr() as *const c_char, // 60
+    SIG_DESC_RT.as_ptr() as *const c_char, // 61
+    SIG_DESC_RT.as_ptr() as *const c_char, // 62
+    SIG_DESC_RT.as_ptr() as *const c_char, // 63
+    SIG_DESC_RT.as_ptr() as *const c_char, // 64
+]);
+
 /// POSIX `psignal` — print a signal description to stderr.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {

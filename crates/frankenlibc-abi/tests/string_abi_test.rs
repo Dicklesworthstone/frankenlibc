@@ -2423,3 +2423,62 @@ fn under_memrchr_zero_length_returns_null() {
     let r = unsafe { __memrchr(s.as_ptr().cast(), b'a' as c_int, 0) };
     assert!(r.is_null());
 }
+
+// ---------------------------------------------------------------------------
+// sys_siglist (deprecated glibc signal-description array)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::string_abi::sys_siglist;
+
+fn read_sys_siglist_str(idx: usize) -> &'static [u8] {
+    let p = sys_siglist.0[idx];
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    s.to_bytes()
+}
+
+#[test]
+fn sys_siglist_has_65_entries() {
+    // NSIG on Linux x86_64 = 65 (signals 0..64).
+    assert_eq!(sys_siglist.0.len(), 65);
+}
+
+#[test]
+fn sys_siglist_index_zero_is_empty_string() {
+    assert_eq!(read_sys_siglist_str(0), b"");
+}
+
+#[test]
+fn sys_siglist_well_known_descriptions() {
+    assert_eq!(read_sys_siglist_str(1), b"Hangup"); // SIGHUP
+    assert_eq!(read_sys_siglist_str(2), b"Interrupt"); // SIGINT
+    assert_eq!(read_sys_siglist_str(9), b"Killed"); // SIGKILL
+    assert_eq!(read_sys_siglist_str(11), b"Segmentation fault"); // SIGSEGV
+    assert_eq!(read_sys_siglist_str(15), b"Terminated"); // SIGTERM
+}
+
+#[test]
+fn sys_siglist_realtime_signals_share_placeholder() {
+    // Indices 32..=64 use a generic "Real-time signal" string.
+    for i in 32..=64usize {
+        assert_eq!(
+            read_sys_siglist_str(i),
+            b"Real-time signal",
+            "rt slot {i} should be the placeholder",
+        );
+    }
+}
+
+#[test]
+fn sys_siglist_matches_strsignal_for_well_known_signals() {
+    // For non-realtime entries the wording must match strsignal.
+    use frankenlibc_abi::string_abi::strsignal;
+    for sig in [1, 2, 9, 11, 15] {
+        let from_array = read_sys_siglist_str(sig as usize);
+        let from_strsignal = unsafe { CStr::from_ptr(strsignal(sig)) }.to_bytes();
+        assert_eq!(
+            from_array, from_strsignal,
+            "sys_siglist[{sig}] differs from strsignal({sig})",
+        );
+    }
+}
