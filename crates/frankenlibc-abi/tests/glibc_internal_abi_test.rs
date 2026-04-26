@@ -3536,3 +3536,28 @@ fn libc_fatal_null_message_still_aborts_with_fallback() {
     assert!(libc::WIFSIGNALED(status));
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
 }
+
+// ---------------------------------------------------------------------------
+// __libc_csu_init / __libc_csu_fini (glibc startup stub no-ops)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::glibc_internal_abi::{__libc_csu_fini, __libc_csu_init};
+
+#[test]
+fn libc_csu_init_is_a_no_op() {
+    // Just verify the symbol resolves and the call returns.
+    unsafe { __libc_csu_init(0, std::ptr::null_mut(), std::ptr::null_mut()) };
+}
+
+#[test]
+fn libc_csu_init_with_argv_envp_is_a_no_op() {
+    let arg0 = std::ffi::CString::new("test").unwrap();
+    let mut argv: [*mut std::ffi::c_char; 2] = [arg0.as_ptr() as *mut _, std::ptr::null_mut()];
+    let mut envp: [*mut std::ffi::c_char; 1] = [std::ptr::null_mut()];
+    unsafe { __libc_csu_init(1, argv.as_mut_ptr(), envp.as_mut_ptr()) };
+}
+
+#[test]
+fn libc_csu_fini_is_a_no_op() {
+    unsafe { __libc_csu_fini() };
+}

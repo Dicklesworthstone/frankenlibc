@@ -8953,6 +8953,37 @@ pub unsafe extern "C" fn __libc_use_alloca(size: usize) -> c_int {
 /// paths, and the malloc heap-corruption detector when something
 /// is unrecoverable. Marked `-> !` because we never return.
 ///
+/// glibc `__libc_csu_init(argc, argv, envp)` — startup-stub
+/// no-op. Older glibc versions (<2.34) emitted this as the
+/// program-entry helper that drives `.init_array` constructors
+/// before main runs. Modern glibc inlines it into `_start`; we
+/// have no need for it because constructors are driven through
+/// our own startup machinery + the C++ `__cxa_atexit` path.
+/// We accept the symbol as a no-op so statically-linked binaries
+/// built with older toolchains still link.
+///
+/// # Safety
+///
+/// All arguments are accepted and ignored.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_csu_init(
+    _argc: c_int,
+    _argv: *mut *mut c_char,
+    _envp: *mut *mut c_char,
+) {
+    // Intentionally empty.
+}
+
+/// glibc `__libc_csu_fini()` — startup-stub no-op. Companion of
+/// [`__libc_csu_init`] that older glibc (<2.34) called via
+/// `_start` to run `.fini_array` destructors after exit. Our
+/// runtime handles destructors via `__cxa_finalize`; this shell
+/// has nothing to do.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_csu_fini() {
+    // Intentionally empty.
+}
+
 /// NULL `message` falls back to a generic "fatal: unknown error"
 /// diagnostic to avoid faulting on the diagnostic itself.
 ///
