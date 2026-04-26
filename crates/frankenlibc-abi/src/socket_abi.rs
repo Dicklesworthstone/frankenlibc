@@ -726,3 +726,70 @@ pub unsafe extern "C" fn accept4(
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 15, adverse);
     rc
 }
+
+// ---------------------------------------------------------------------------
+// getpeereid (BSD: peer credentials of a Unix-domain socket)
+// ---------------------------------------------------------------------------
+//
+// On Linux this is a thin wrapper over `getsockopt(s, SOL_SOCKET,
+// SO_PEERCRED, ...)`: the kernel returns a `struct ucred { pid, uid,
+// gid }` describing the peer of a connected Unix-domain socket and we
+// split out the uid/gid fields. Used by sshd, postfix, sudo, and
+// other privilege-separating daemons.
+//
+// Errors propagate from getsockopt — typical failures are ENOTSOCK
+// (`s` isn't a socket), ENOTCONN (Unix socket not connected), or
+// EBADF/EINVAL.
+
+/// BSD `getpeereid(s, euid, egid)` — fetch the effective uid+gid of
+/// the peer connected to Unix-domain socket `s`. Writes the values
+/// into `*euid` / `*egid` and returns 0 on success; on failure
+/// returns -1 and sets errno per `getsockopt(SO_PEERCRED)`.
+///
+/// `euid` and `egid` may be NULL — the corresponding field is then
+/// silently skipped (matches NetBSD/FreeBSD `getpeereid(3)`).
+///
+/// # Safety
+///
+/// Caller must ensure `euid` and `egid`, when non-NULL, point to
+/// writable `uid_t` / `gid_t` storage. `s` must be a valid file
+/// descriptor (the kernel validates this and returns EBADF if not).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getpeereid(
+    s: c_int,
+    euid: *mut libc::uid_t,
+    egid: *mut libc::gid_t,
+) -> c_int {
+    // libc::ucred layout matches the kernel's `struct ucred`. We can't
+    // construct it via raw_syscall::sys_getsockopt because that one
+    // takes a *mut u8; instead route through the abi getsockopt shim
+    // which we already export and validate.
+    let mut cred: libc::ucred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len: u32 = std::mem::size_of::<libc::ucred>() as u32;
+    let rc = unsafe {
+        getsockopt(
+            s,
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast::<c_void>(),
+            &mut len,
+        )
+    };
+    if rc != 0 {
+        return rc;
+    }
+
+    if !euid.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *euid = cred.uid };
+    }
+    if !egid.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *egid = cred.gid };
+    }
+    0
+}

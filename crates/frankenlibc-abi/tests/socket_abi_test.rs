@@ -1111,3 +1111,86 @@ fn socketpair_nonblock() {
         close_fd(sv[1]);
     }
 }
+
+// ---------------------------------------------------------------------------
+// getpeereid (BSD: peer credentials of a Unix-domain socket)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn getpeereid_returns_self_credentials_on_socketpair() {
+    let mut sv = [0i32; 2];
+    let rc =
+        unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+    assert_eq!(rc, 0, "socketpair failed");
+
+    let my_uid = unsafe { libc::getuid() };
+    let my_gid = unsafe { libc::getgid() };
+
+    let mut peer_uid: libc::uid_t = u32::MAX;
+    let mut peer_gid: libc::gid_t = u32::MAX;
+    let rc = unsafe { socket_abi::getpeereid(sv[0], &mut peer_uid, &mut peer_gid) };
+    assert_eq!(rc, 0, "getpeereid failed; errno={}", unsafe {
+        *__errno_location()
+    });
+    assert_eq!(
+        peer_uid, my_uid,
+        "peer uid must match our own on socketpair"
+    );
+    assert_eq!(
+        peer_gid, my_gid,
+        "peer gid must match our own on socketpair"
+    );
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+    }
+}
+
+#[test]
+fn getpeereid_null_outputs_silently_skip() {
+    let mut sv = [0i32; 2];
+    let rc =
+        unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+
+    // NULL euid + NULL egid: must not segfault, must still return 0.
+    let rc = unsafe { socket_abi::getpeereid(sv[0], std::ptr::null_mut(), std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+
+    // Mixed: NULL egid only.
+    let mut peer_uid: libc::uid_t = 0;
+    let rc = unsafe { socket_abi::getpeereid(sv[0], &mut peer_uid, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(peer_uid, unsafe { libc::getuid() });
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+    }
+}
+
+#[test]
+fn getpeereid_returns_minus_one_for_bad_fd() {
+    unsafe { *__errno_location() = 0 };
+    let mut peer_uid: libc::uid_t = 0;
+    let mut peer_gid: libc::gid_t = 0;
+    let rc = unsafe { socket_abi::getpeereid(-1, &mut peer_uid, &mut peer_gid) };
+    assert_eq!(rc, -1, "bad fd must yield -1");
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, libc::EBADF, "errno must be EBADF for fd = -1");
+}
+
+#[test]
+fn getpeereid_on_non_socket_fd_yields_error() {
+    let fd = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+    assert!(fd >= 0);
+    unsafe { *__errno_location() = 0 };
+    let mut peer_uid: libc::uid_t = 0;
+    let mut peer_gid: libc::gid_t = 0;
+    let rc = unsafe { socket_abi::getpeereid(fd, &mut peer_uid, &mut peer_gid) };
+    assert_eq!(rc, -1);
+    let err = unsafe { *__errno_location() };
+    assert_eq!(err, libc::ENOTSOCK);
+    unsafe { close_fd(fd) };
+}
