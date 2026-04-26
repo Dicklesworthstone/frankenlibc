@@ -658,6 +658,36 @@ pub unsafe extern "C" fn getegid() -> libc::gid_t {
     syscall::sys_getegid()
 }
 
+/// glibc reserved-namespace alias for [`getppid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getppid() -> libc::pid_t {
+    unsafe { getppid() }
+}
+
+/// glibc reserved-namespace alias for [`getuid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getuid() -> libc::uid_t {
+    unsafe { getuid() }
+}
+
+/// glibc reserved-namespace alias for [`geteuid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __geteuid() -> libc::uid_t {
+    unsafe { geteuid() }
+}
+
+/// glibc reserved-namespace alias for [`getgid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getgid() -> libc::gid_t {
+    unsafe { getgid() }
+}
+
+/// glibc reserved-namespace alias for [`getegid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getegid() -> libc::gid_t {
+    unsafe { getegid() }
+}
+
 // ---------------------------------------------------------------------------
 // Process group / session: getpgid, setpgid, getsid, setsid
 // ---------------------------------------------------------------------------
@@ -765,6 +795,52 @@ pub unsafe extern "C" fn setegid(egid: libc::gid_t) -> c_int {
             -1
         }
     }
+}
+
+/// glibc reserved-namespace alias for [`setuid`].
+///
+/// # Safety
+///
+/// Same as [`setuid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setuid(uid: libc::uid_t) -> c_int {
+    unsafe { setuid(uid) }
+}
+
+/// glibc reserved-namespace alias for [`seteuid`].
+///
+/// # Safety
+///
+/// Same as [`seteuid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __seteuid(euid: libc::uid_t) -> c_int {
+    unsafe { seteuid(euid) }
+}
+
+/// glibc reserved-namespace alias for [`setgid`].
+///
+/// # Safety
+///
+/// Same as [`setgid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setgid(gid: libc::gid_t) -> c_int {
+    unsafe { setgid(gid) }
+}
+
+/// glibc reserved-namespace alias for [`setegid`].
+///
+/// # Safety
+///
+/// Same as [`setegid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setegid(egid: libc::gid_t) -> c_int {
+    unsafe { setegid(egid) }
+}
+
+/// glibc reserved-namespace alias for [`setsid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setsid() -> libc::pid_t {
+    unsafe { setsid() }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9437,6 +9513,12 @@ pub unsafe extern "C" fn setpgrp() -> c_int {
             -1
         }
     }
+}
+
+/// glibc reserved-namespace alias for [`setpgrp`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setpgrp() -> c_int {
+    unsafe { setpgrp() }
 }
 
 // ---------------------------------------------------------------------------

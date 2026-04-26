@@ -5853,6 +5853,68 @@ fn secure_path_root_owned_secure_file_passes() {
 }
 
 // ===========================================================================
+// __getppid + __getuid/euid/gid/egid + __setuid/gid/euid/egid + __setsid +
+// __setpgrp (glibc reserved aliases)
+// ===========================================================================
+
+#[test]
+fn under_getppid_matches_getppid() {
+    use frankenlibc_abi::unistd_abi::{__getppid, getppid};
+    assert_eq!(unsafe { __getppid() }, unsafe { getppid() });
+}
+
+#[test]
+fn under_getuid_geteuid_getgid_getegid_match_public() {
+    use frankenlibc_abi::unistd_abi::{
+        __getegid, __geteuid, __getgid, __getuid, getegid, geteuid, getgid, getuid,
+    };
+    assert_eq!(unsafe { __getuid() }, unsafe { getuid() });
+    assert_eq!(unsafe { __geteuid() }, unsafe { geteuid() });
+    assert_eq!(unsafe { __getgid() }, unsafe { getgid() });
+    assert_eq!(unsafe { __getegid() }, unsafe { getegid() });
+}
+
+#[test]
+fn under_setuid_setgid_seteuid_setegid_to_self_succeed() {
+    use frankenlibc_abi::unistd_abi::{
+        __setegid, __seteuid, __setgid, __setuid, getegid, geteuid, getgid, getuid,
+    };
+    let uid = unsafe { getuid() };
+    let euid = unsafe { geteuid() };
+    let gid = unsafe { getgid() };
+    let egid = unsafe { getegid() };
+    // Setting to current values is always permitted.
+    assert_eq!(unsafe { __setuid(uid) }, 0);
+    assert_eq!(unsafe { __seteuid(euid) }, 0);
+    assert_eq!(unsafe { __setgid(gid) }, 0);
+    assert_eq!(unsafe { __setegid(egid) }, 0);
+}
+
+#[test]
+fn under_setpgrp_resolves() {
+    // setpgrp() uses setpgid(0, 0) which may EPERM in some sandboxes
+    // — we just verify the alias resolves and returns 0 or -1
+    // without panicking.
+    use frankenlibc_abi::unistd_abi::__setpgrp;
+    let _ = unsafe { __setpgrp() };
+}
+
+#[test]
+fn under_setsid_resolves() {
+    // setsid() fails with EPERM if the caller is already a process
+    // group leader, which is the typical case in test runners. We
+    // just verify the alias resolves.
+    use frankenlibc_abi::unistd_abi::__setsid;
+    let _ = unsafe { __setsid() };
+}
+
+#[test]
+fn under_gettid_matches_gettid() {
+    use frankenlibc_abi::glibc_internal_abi::{__gettid, gettid};
+    assert_eq!(unsafe { __gettid() }, unsafe { gettid() });
+}
+
+// ===========================================================================
 // __getcwd / __getlogin / __getlogin_r (glibc reserved aliases)
 // ===========================================================================
 

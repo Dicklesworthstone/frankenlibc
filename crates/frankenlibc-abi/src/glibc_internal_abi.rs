@@ -4869,6 +4869,12 @@ pub unsafe extern "C" fn getpw(uid: c_uint, buf: *mut c_char) -> c_int {
 pub unsafe extern "C" fn gettid() -> c_int {
     raw_syscall::sys_gettid()
 }
+
+/// glibc reserved-namespace alias for [`gettid`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gettid() -> c_int {
+    unsafe { gettid() }
+}
 // getwd: deprecated — forward to getcwd syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getwd(buf: *mut c_char) -> *mut c_char {
