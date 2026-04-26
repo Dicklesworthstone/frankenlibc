@@ -7794,3 +7794,74 @@ pub unsafe extern "C" fn strsenvisx(
     }
     encoded.len() as c_int
 }
+
+// ---------------------------------------------------------------------------
+// snprintb / snprintb_m (BSD libutil bit-name formatter)
+// ---------------------------------------------------------------------------
+
+/// Internal helper: copy the rendered bytes into the caller-supplied
+/// bounded buffer per snprintf(3) semantics. Returns the full
+/// rendered length (excluding the NUL) regardless of truncation.
+unsafe fn snprintb_write_bounded(buf: *mut c_char, bufsize: usize, rendered: &[u8]) -> c_int {
+    if buf.is_null() || bufsize == 0 {
+        return rendered.len() as c_int;
+    }
+    let cap = bufsize.saturating_sub(1);
+    let n = rendered.len().min(cap);
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), buf as *mut u8, n);
+        *buf.add(n) = 0;
+    }
+    rendered.len() as c_int
+}
+
+/// BSD `snprintb(buf, bufsize, fmt, val)` — render `val` according
+/// to the BSD bit-name format string `fmt` into `buf`. Output looks
+/// like `"0x3<FOO,BAR>"` for a hex base with named bits set.
+/// Returns the full rendered length (excluding NUL); truncates to
+/// `bufsize` if necessary, just like `snprintf(3)`.
+///
+/// # Safety
+///
+/// `buf`, when non-NULL, must be valid for `bufsize` writable
+/// bytes. `fmt` must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn snprintb(
+    buf: *mut c_char,
+    bufsize: usize,
+    fmt: *const c_char,
+    val: u64,
+) -> c_int {
+    if fmt.is_null() {
+        return -1;
+    }
+    let fmt_bytes = unsafe { CStr::from_ptr(fmt) }.to_bytes();
+    let rendered = frankenlibc_core::stdio::snprintb::format_snprintb(fmt_bytes, val);
+    unsafe { snprintb_write_bounded(buf, bufsize, &rendered) }
+}
+
+/// BSD `snprintb_m(buf, bufsize, fmt, val, max_per_line)` — like
+/// [`snprintb`] but inserts newline-separated continuation lines
+/// (re-emitting the base+value prefix) so no rendered line exceeds
+/// `max_per_line` bytes. `max_per_line == 0` falls back to
+/// single-line behavior.
+///
+/// # Safety
+///
+/// Same as [`snprintb`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn snprintb_m(
+    buf: *mut c_char,
+    bufsize: usize,
+    fmt: *const c_char,
+    val: u64,
+    max_per_line: usize,
+) -> c_int {
+    if fmt.is_null() {
+        return -1;
+    }
+    let fmt_bytes = unsafe { CStr::from_ptr(fmt) }.to_bytes();
+    let rendered =
+        frankenlibc_core::stdio::snprintb::format_snprintb_m(fmt_bytes, val, max_per_line);
+    unsafe { snprintb_write_bounded(buf, bufsize, &rendered) }
+}

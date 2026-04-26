@@ -114,6 +114,8 @@ use frankenlibc_abi::stdio_abi::{
     setlinebuf,
     setvbuf,
     signal_runtime_ready_for_tests,
+    snprintb,
+    snprintb_m,
     snprintf,
     snvis,
     sprintf,
@@ -5042,4 +5044,115 @@ fn strsenvisx_null_args_return_minus_one() {
         },
         -1
     );
+}
+
+// ---------------------------------------------------------------------------
+// snprintb / snprintb_m (BSD libutil bit-name formatter)
+// ---------------------------------------------------------------------------
+
+fn snprintb_collect(buf: &[c_char], n: c_int) -> Vec<u8> {
+    let len = (n as usize).min(buf.len());
+    (0..len).map(|i| buf[i] as u8).collect()
+}
+
+#[test]
+fn snprintb_renders_hex_with_named_bits() {
+    let mut buf = [0 as c_char; 64];
+    // \020 base = hex; bit1=FOO, bit2=BAR, bit3=BAZ
+    let fmt = c"\x10\x01FOO\x02BAR\x03BAZ";
+    // bits 0 + 2 set -> val=5, expect "0x5<FOO,BAZ>"
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 5) };
+    assert!(n > 0);
+    assert_eq!(snprintb_collect(&buf, n), b"0x5<FOO,BAZ>".to_vec());
+    // Trailing NUL.
+    assert_eq!(buf[n as usize] as u8, 0);
+}
+
+#[test]
+fn snprintb_renders_octal_with_named_bits() {
+    let mut buf = [0 as c_char; 64];
+    let fmt = c"\x08\x01READ\x02WRITE\x03EXEC";
+    // val=3 (READ + WRITE) -> "03<READ,WRITE>"
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 3) };
+    assert!(n > 0);
+    assert_eq!(snprintb_collect(&buf, n), b"03<READ,WRITE>".to_vec());
+}
+
+#[test]
+fn snprintb_omits_brackets_when_no_bits_set() {
+    let mut buf = [0 as c_char; 32];
+    let fmt = c"\x10\x01A\x02B";
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 0) };
+    assert_eq!(n, 3);
+    assert_eq!(snprintb_collect(&buf, n), b"0x0".to_vec());
+}
+
+#[test]
+fn snprintb_truncates_to_bufsize_returns_full_length() {
+    let mut buf = [0 as c_char; 6];
+    let fmt = c"\x10\x01FOO\x02BAR";
+    // val=3 -> "0x3<FOO,BAR>" (12 chars)
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 3) };
+    assert_eq!(n, 12);
+    // Buffer holds 5 chars + NUL.
+    let truncated: Vec<u8> = (0..5).map(|i| buf[i] as u8).collect();
+    assert_eq!(truncated, b"0x3<F".to_vec());
+    assert_eq!(buf[5] as u8, 0);
+}
+
+#[test]
+fn snprintb_zero_bufsize_returns_required_length() {
+    let fmt = c"\x10\x01FOO";
+    let n = unsafe { snprintb(std::ptr::null_mut(), 0, fmt.as_ptr(), 1) };
+    // "0x1<FOO>" = 8 chars.
+    assert_eq!(n, 8);
+}
+
+#[test]
+fn snprintb_null_fmt_returns_minus_one() {
+    let mut buf = [0 as c_char; 16];
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), std::ptr::null(), 0) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn snprintb_unknown_base_returns_zero_length() {
+    let mut buf = [0xeeu8 as c_char; 8];
+    // First byte 0x01 is neither octal nor hex base.
+    let fmt = c"\x01\x01FOO";
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 1) };
+    assert_eq!(n, 0);
+    // Buffer should have a NUL at position 0.
+    assert_eq!(buf[0] as u8, 0);
+}
+
+#[test]
+fn snprintb_m_zero_max_falls_back_to_single_line() {
+    let mut buf = [0 as c_char; 64];
+    let fmt = c"\x10\x01A\x02B";
+    let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 3, 0) };
+    assert_eq!(snprintb_collect(&buf, n), b"0x3<A,B>".to_vec());
+}
+
+#[test]
+fn snprintb_m_splits_long_lines() {
+    let mut buf = [0 as c_char; 128];
+    // val=7 -> all three names; force splits with a small max.
+    let fmt = c"\x10\x01ABC\x02DEF\x03GHI";
+    let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), 7, 10) };
+    assert!(n > 0);
+    let bytes = snprintb_collect(&buf, n);
+    // Output must contain a newline and every line begins with "0x7<".
+    assert!(bytes.contains(&b'\n'));
+    for line in bytes.split(|&b| b == b'\n') {
+        assert!(line.starts_with(b"0x7<"), "bad line: {:?}", line);
+        assert!(line.ends_with(b">"));
+    }
+}
+
+#[test]
+fn snprintb_m_null_fmt_returns_minus_one() {
+    let mut buf = [0 as c_char; 16];
+    let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), std::ptr::null(), 0, 8) };
+    assert_eq!(n, -1);
 }
