@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 4060,
+  "total_exported": 4109,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -19816,6 +19816,15 @@
       "module": "rpc_abi"
     },
     {
+      "symbol": "nis_addmember",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ group member add helper is a fail-safe NIS_NAMEUNREACHABLE-returning stub because no NIS+ group service is configured",
+      "hardened_semantics": "Same deterministic NIS_NAMEUNREACHABLE group-member-add contract",
+      "default_stub": false
+    },
+    {
       "symbol": "nis_clone_directory",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -19843,6 +19852,33 @@
       "default_stub": false
     },
     {
+      "symbol": "nis_creategroup",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ group creation helper is a fail-safe NIS_NAMEUNREACHABLE-returning stub because no NIS+ group service is configured",
+      "hardened_semantics": "Same deterministic NIS_NAMEUNREACHABLE group-creation contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_destroy_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ object destroy helper is a no-op because FrankenLibC NIS+ query stubs never allocate real NIS+ objects",
+      "hardened_semantics": "Same no-op object-destroy contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_destroygroup",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ group destroy helper is a fail-safe NIS_NAMEUNREACHABLE-returning stub because no NIS+ group service is configured",
+      "hardened_semantics": "Same deterministic NIS_NAMEUNREACHABLE group-destroy contract",
+      "default_stub": false
+    },
+    {
       "symbol": "nis_dir_cmp",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -19867,6 +19903,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "Caller-buffer NIS+ helper returning the input name after its first unescaped label or EINVAL/ERANGE",
       "hardened_semantics": "Same caller-buffer label-stripping contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_ismember",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ group membership query returns FALSE because no NIS+ group service can verify membership",
+      "hardened_semantics": "Same deterministic FALSE membership contract",
       "default_stub": false
     },
     {
@@ -20023,6 +20068,96 @@
       "default_stub": false
     },
     {
+      "symbol": "nis_print_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ directory print helper writes a single unsupported marker line to stdout and ignores its opaque directory object argument",
+      "hardened_semantics": "Same deterministic stdout marker contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_print_entry",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ entry print helper writes a single unsupported marker line to stdout and ignores its opaque entry object argument",
+      "hardened_semantics": "Same deterministic stdout marker contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_print_group",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ group print helper writes a single unsupported marker line to stdout and ignores its opaque group object argument",
+      "hardened_semantics": "Same deterministic stdout marker contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_print_group_entry",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ group-entry print helper writes a single unsupported marker line to stdout and ignores its group-name argument",
+      "hardened_semantics": "Same deterministic stdout marker contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_print_link",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ link print helper writes a single unsupported marker line to stdout and ignores its opaque link object argument",
+      "hardened_semantics": "Same deterministic stdout marker contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_print_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ object print helper writes a single unsupported marker line to stdout and ignores its opaque object argument",
+      "hardened_semantics": "Same deterministic stdout marker contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_print_result",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ result print helper writes a single unsupported marker line to stdout and ignores its opaque result argument",
+      "hardened_semantics": "Same deterministic stdout marker contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_print_rights",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ rights print helper writes a single unsupported marker line to stdout and ignores the rights mask",
+      "hardened_semantics": "Same deterministic stdout marker contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_print_table",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ table print helper writes a single unsupported marker line to stdout and ignores its opaque table object argument",
+      "hardened_semantics": "Same deterministic stdout marker contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_removemember",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ group member removal helper is a fail-safe NIS_NAMEUNREACHABLE-returning stub because no NIS+ group service is configured",
+      "hardened_semantics": "Same deterministic NIS_NAMEUNREACHABLE group-member-removal contract",
+      "default_stub": false
+    },
+    {
       "symbol": "nis_sperrno",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -20047,6 +20182,15 @@
       "perf_class": "coldpath",
       "strict_semantics": "NIS+ caller-buffer status formatter writes label plus status text or fails with EINVAL/ERANGE",
       "hardened_semantics": "Same caller-buffer formatter contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_verifygroup",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ group verification helper is a fail-safe NIS_NAMEUNREACHABLE-returning stub because no NIS+ group service is configured",
+      "hardened_semantics": "Same deterministic NIS_NAMEUNREACHABLE group-verification contract",
       "default_stub": false
     },
     {
@@ -20323,6 +20467,15 @@
       "symbol": "registerrpc",
       "status": "Implemented",
       "module": "rpc_abi"
+    },
+    {
+      "symbol": "readColdStartFile",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ cold-start binding reader returns NULL because no local NIS+ cold-start file is consumed by FrankenLibC",
+      "hardened_semantics": "Same deterministic NULL cold-start reader contract",
+      "default_stub": false
     },
     {
       "symbol": "res_dnok",
@@ -20954,6 +21107,15 @@
       "module": "glibc_internal_abi"
     },
     {
+      "symbol": "writeColdStartFile",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ cold-start binding writer returns FALSE because no local NIS+ cold-start file is persisted by FrankenLibC",
+      "hardened_semantics": "Same deterministic FALSE cold-start writer contract",
+      "default_stub": false
+    },
+    {
       "symbol": "xdecrypt",
       "status": "Implemented",
       "module": "rpc_abi"
@@ -20992,6 +21154,285 @@
       "symbol": "xdr_bytes",
       "status": "Implemented",
       "module": "rpc_abi"
+    },
+    {
+      "symbol": "xdr_cback_data",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ callback-data XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_domainname",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS domain-name XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_keydat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS key-data XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_mapname",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS map-name XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_obj_p",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ object-pointer XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_peername",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS peer-name XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_valdat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS value-data XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_yp_buf",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS yp buffer XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypall",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS yp_all callback XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypbind_binding",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS ypbind binding XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypbind_resp",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS ypbind response XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypbind_resptype",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS ypbind response-type XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypbind_setdom",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS ypbind set-domain XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypdelete_args",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS update delete-args XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypmap_parms",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS map-params XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypmaplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS map-list XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_yppush_status",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS yppush status XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_yppushresp_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS yppush transfer response XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypreq_key",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS key-request XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypreq_nokey",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS no-key request XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypreq_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS transfer-request XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypresp_all",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS all-record response XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypresp_key_val",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS key-value response XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypresp_maplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS map-list response XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypresp_master",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS master response XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypresp_order",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS order response XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypresp_val",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS value response XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypresp_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS transfer response XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypstat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS status XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypupdate_args",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS update-args XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "xdr_ypxfrstat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS transfer-status XDR helper fails closed with XDR_FALSE and does not dereference stream or object pointers",
+      "hardened_semantics": "Same fail-closed XDR_FALSE no-dereference contract",
+      "default_stub": false
     },
     {
       "symbol": "xdr_callhdr",
@@ -32472,19 +32913,19 @@
     }
   ],
   "summary": {
-    "total": 4060,
-    "implemented": 3650,
+    "total": 4109,
+    "implemented": 3699,
     "raw_syscall": 410,
     "wraps_host_libc": 0,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 3650,
+  "implemented": 3699,
   "raw_syscall": 410,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 3650,
+    "implemented": 3699,
     "raw_syscall": 410,
     "glibc_call_through": 0,
     "stub": 0

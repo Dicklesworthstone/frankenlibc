@@ -5,7 +5,7 @@
   "description": "Unified stub/TODO debt census combining exported taxonomy status with critical non-exported source debt and deterministic risk ranking.",
   "source": {
     "support_matrix_path": "support_matrix.json",
-    "support_matrix_sha256": "9cec31fd68f0dee107918b38c72b6123e31bea8b9399927af652d166d093c453",
+    "support_matrix_sha256": "898a4d4535c7f9f6359747030437936cf1d2c585040440a3b3d6f18ea942959b",
     "replacement_profile_path": "tests/conformance/replacement_profile.json",
     "replacement_profile_sha256": "0906bdf60021a01756305161d24f500ad5aa04718131056031db0dd153cfbfb8",
     "scan_roots": [
@@ -20,16 +20,16 @@
   },
   "exported_taxonomy_view": {
     "declared_summary": {
-      "total": 3996,
-      "implemented": 3592,
-      "raw_syscall": 404,
+      "total": 4109,
+      "implemented": 3699,
+      "raw_syscall": 410,
       "wraps_host_libc": 0,
       "glibc_call_through": 0,
       "stub": 0
     },
     "derived_summary": {
-      "Implemented": 3592,
-      "RawSyscall": 404,
+      "Implemented": 3699,
+      "RawSyscall": 410,
       "WrapsHostLibc": 0,
       "GlibcCallThrough": 0,
       "Stub": 0,
@@ -39,14 +39,14 @@
       {
         "status": "Implemented",
         "declared": 0,
-        "derived": 3592,
-        "delta_derived_minus_declared": 3592
+        "derived": 3699,
+        "delta_derived_minus_declared": 3699
       },
       {
         "status": "RawSyscall",
         "declared": 0,
-        "derived": 404,
-        "delta_derived_minus_declared": 404
+        "derived": 410,
+        "delta_derived_minus_declared": 410
       },
       {
         "status": "WrapsHostLibc",
@@ -73,8 +73,8 @@
         "delta_derived_minus_declared": 0
       }
     ],
-    "total_exported_declared": 3996,
-    "total_exported_derived": 3996,
+    "total_exported_declared": 4109,
+    "total_exported_derived": 4109,
     "stub_symbols": [],
     "non_implemented_exported_symbols": []
   },
@@ -193,14 +193,14 @@
       {
         "status": "Implemented",
         "declared": 0,
-        "derived": 3592,
-        "delta_derived_minus_declared": 3592
+        "derived": 3699,
+        "delta_derived_minus_declared": 3699
       },
       {
         "status": "RawSyscall",
         "declared": 0,
-        "derived": 404,
-        "delta_derived_minus_declared": 404
+        "derived": 410,
+        "delta_derived_minus_declared": 410
       }
     ],
     "ambiguity_resolved": true,

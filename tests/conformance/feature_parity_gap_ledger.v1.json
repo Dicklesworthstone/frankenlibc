@@ -5,7 +5,7 @@
       "actual": {
         "sum_counts_equals_total": false,
         "support_count_sum": 0,
-        "support_total_exported": 3996,
+        "support_total_exported": 4109,
         "symbols_count_equals_total": true
       },
       "delta_id": "machine.support_classification_complete",
@@ -25,11 +25,11 @@
       "actual": {
         "reality_counts": {
           "glibc_call_through": 0,
-          "implemented": 3592,
-          "raw_syscall": 404,
+          "implemented": 3699,
+          "raw_syscall": 410,
           "stub": 0
         },
-        "reality_total": 3996
+        "reality_total": 4109
       },
       "delta_id": "machine.support_vs_reality",
       "expected": {
@@ -39,7 +39,7 @@
           "raw_syscall": 0,
           "stub": 0
         },
-        "support_total": 3996
+        "support_total": 4109
       },
       "message": "support_matrix and reality_report should agree",
       "provenance": [
@@ -56,21 +56,21 @@
       "actual": {
         "replacement_counts": {
           "glibc_call_through": 0,
-          "implemented": 3592,
-          "raw_syscall": 404,
+          "implemented": 3699,
+          "raw_syscall": 410,
           "stub": 0
         },
-        "replacement_total": 3996
+        "replacement_total": 4109
       },
       "delta_id": "machine.replacement_vs_reality",
       "expected": {
         "reality_counts": {
           "glibc_call_through": 0,
-          "implemented": 3592,
-          "raw_syscall": 404,
+          "implemented": 3699,
+          "raw_syscall": 410,
           "stub": 0
         },
-        "reality_total": 3996
+        "reality_total": 4109
       },
       "message": "replacement_levels current_assessment should match reality_report",
       "provenance": [

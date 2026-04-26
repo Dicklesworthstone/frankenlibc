@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-1oz.7",
-  "generated_at": "2026-04-26T17:30:21Z",
+  "generated_at": "2026-04-26T20:31:49Z",
   "summary": {
     "phase": 2,
     "total_targets": 4,
@@ -415,5 +415,5 @@
       "runtime-math"
     ]
   },
-  "validation_hash": "cee5704244aad29f"
+  "validation_hash": "f7fbdab1e0706998"
 }

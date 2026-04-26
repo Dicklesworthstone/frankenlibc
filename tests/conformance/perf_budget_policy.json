@@ -64,10 +64,10 @@
     }
   ],
   "current_assessment": {
-    "total_symbols": 3996,
+    "total_symbols": 4109,
     "strict_hotpath_count": 148,
     "hardened_hotpath_count": 0,
-    "coldpath_count": 2047,
+    "coldpath_count": 2154,
     "strict_hotpath_by_module": {
       "c11threads_abi": 6,
       "ctype_abi": 14,

@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-26T17:32:01Z",
+  "generated_at": "2026-04-26T20:33:22Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -27,8 +27,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "9cec31fd68f0dee107918b38c72b6123e31bea8b9399927af652d166d093c453",
-      "size_bytes": 947625,
+      "sha256": "898a4d4535c7f9f6359747030437936cf1d2c585040440a3b3d6f18ea942959b",
+      "size_bytes": 989941,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -39,7 +39,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "51ed9a1f5badb6ca8b06c6acd9655e8bfc2f94165ff4bc602eec519a042dc073",
+      "sha256": "93f4f689f07f04d2bf682273ee2b4b7f08f6cc65249140487604e466bcced298",
       "size_bytes": 252,
       "status": "VALID",
       "schema_valid": true,
@@ -63,7 +63,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "137efee8e987f1912b82ecef812b00bc03fd27a573556773e10b6d47f33a919c",
+      "sha256": "d20cc7eeb873579096895896d9ba7fc7427ce3a7b553a7b302664d9ea1a27610",
       "size_bytes": 819,
       "status": "VALID",
       "schema_valid": true,
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "e8cc500dca05fb1e43c422374bb1d65d6e52db1f2fcd15978cdca5770e4c28b8",
+      "sha256": "827896efe8a7758f9b356275fb8a1c14bdcbfc4353699f88bd6794c19277fd8d",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -87,7 +87,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "9256da992dc49ca4533be789c468ff83bacffa16bae290bbff3530dbb378593c",
+      "sha256": "fd1eb169dfe1c82b3146e21936d02722b4bb7539a1b8fcb9105ad34d73d13cf5",
       "size_bytes": 11583,
       "status": "VALID",
       "schema_valid": true,
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "c30f0b2b808e06abefb9435c4f9f5c9b6e8d4f0e6a7e72f90e4c71407e7f3c0d",
+      "sha256": "938cf843052dd88c380efbafc2105b4d3b884a6cb7ad4f671bf8e7defafc60e0",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "7be13c62d560c6cfcf88e4e5b5c576c9a463393baa35fcd758bf60b55ca7fd4a",
+      "sha256": "6418836f936800fa5703873875519e2480fca6ba52b0c31d841fcef9e20966fc",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -171,8 +171,8 @@
       "kind": "report",
       "required": true,
       "critical": false,
-      "sha256": "6b4e74f776d6c4cb874a1afd978998b86c2cccf80dbe0814b66413c518397c66",
-      "size_bytes": 1789823,
+      "sha256": "be36174e8931afaf0d81ae8e0d208d40ce9a5bddb85ae3c0b13822180039df59",
+      "size_bytes": 1839360,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -210,12 +210,12 @@
   "integrity_index": {
     "support_matrix": {
       "path": "support_matrix.json",
-      "sha256": "9cec31fd68f0dee107918b38c72b6123e31bea8b9399927af652d166d093c453",
-      "size_bytes": 947625
+      "sha256": "898a4d4535c7f9f6359747030437936cf1d2c585040440a3b3d6f18ea942959b",
+      "size_bytes": 989941
     },
     "reality_report": {
       "path": "tests/conformance/reality_report.v1.json",
-      "sha256": "51ed9a1f5badb6ca8b06c6acd9655e8bfc2f94165ff4bc602eec519a042dc073",
+      "sha256": "93f4f689f07f04d2bf682273ee2b4b7f08f6cc65249140487604e466bcced298",
       "size_bytes": 252
     },
     "conformance_coverage": {
@@ -225,17 +225,17 @@
     },
     "claim_reconciliation": {
       "path": "tests/conformance/claim_reconciliation_report.v1.json",
-      "sha256": "137efee8e987f1912b82ecef812b00bc03fd27a573556773e10b6d47f33a919c",
+      "sha256": "d20cc7eeb873579096895896d9ba7fc7427ce3a7b553a7b302664d9ea1a27610",
       "size_bytes": 819
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "e8cc500dca05fb1e43c422374bb1d65d6e52db1f2fcd15978cdca5770e4c28b8",
+      "sha256": "827896efe8a7758f9b356275fb8a1c14bdcbfc4353699f88bd6794c19277fd8d",
       "size_bytes": 5609
     },
     "replacement_levels": {
       "path": "tests/conformance/replacement_levels.json",
-      "sha256": "9256da992dc49ca4533be789c468ff83bacffa16bae290bbff3530dbb378593c",
+      "sha256": "fd1eb169dfe1c82b3146e21936d02722b4bb7539a1b8fcb9105ad34d73d13cf5",
       "size_bytes": 11583
     },
     "opportunity_matrix": {
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "c30f0b2b808e06abefb9435c4f9f5c9b6e8d4f0e6a7e72f90e4c71407e7f3c0d",
+      "sha256": "938cf843052dd88c380efbafc2105b4d3b884a6cb7ad4f671bf8e7defafc60e0",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "7be13c62d560c6cfcf88e4e5b5c576c9a463393baa35fcd758bf60b55ca7fd4a",
+      "sha256": "6418836f936800fa5703873875519e2480fca6ba52b0c31d841fcef9e20966fc",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -270,8 +270,8 @@
     },
     "symbol_fixture_coverage": {
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "6b4e74f776d6c4cb874a1afd978998b86c2cccf80dbe0814b66413c518397c66",
-      "size_bytes": 1789823
+      "sha256": "be36174e8931afaf0d81ae8e0d208d40ce9a5bddb85ae3c0b13822180039df59",
+      "size_bytes": 1839360
     },
     "closure_contract": {
       "path": "tests/conformance/closure_contract.v1.json",
@@ -288,89 +288,89 @@
     },
     "entries": [
       {
-        "id": "bd-92dkc",
-        "title": "PORT: set_robust_list / get_robust_list + lsm_get_self_attr / set_self_attr / list_modules",
+        "id": "bd-jb7p1",
+        "title": "PORT: 18 GLIBC_PRIVATE __libc_/__res_/__open_catalog stubs",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T17:26:18.912541046Z",
+        "closed_at": "2026-04-26T20:24:11.271990741Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 5 syscall wrappers (set_robust_list, get_robust_list, lsm_get_self_attr, lsm_set_self_attr, lsm_list_modules) + 8 abi tests with thread-runner robust-list round-trip preserved via save/resto\u2026"
+        "close_reason": "shipped: 18 GLIBC_PRIVATE __libc_/__res_/__open_catalog stubs + 18 abi tests"
       },
       {
-        "id": "bd-dyh3u",
-        "title": "PORT: statmount/listmount + finit_module + quotactl_fd + map_shadow_stack + bpf + kexec_load + kexec_file_load (8 modern Linux syscalls)",
+        "id": "bd-cz5v6",
+        "title": "PORT: 16 GLIBC_PRIVATE __libc_alloc_buffer/dynarray/scratch_buffer/early_init + 2 NSS parsers",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T17:18:28.136792663Z",
+        "closed_at": "2026-04-26T20:12:56.831632686Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 8 modern Linux syscall wrappers (statmount, listmount, finit_module, quotactl_fd, map_shadow_stack, bpf, kexec_load, kexec_file_load) + 10 abi tests covering NULL guards + privilege/kernel f\u2026"
+        "close_reason": "shipped: 5 alloc_buffer + 5 dynarray (incl SIGABRT-verified at_failure) + 3 scratch_buffer + early_init + 2 NSS parsers + 7 abi tests"
       },
       {
-        "id": "bd-i8ind",
-        "title": "PORT: NUMA memory-policy family (set/get_mempolicy + mbind + migrate_pages + move_pages + set_mempolicy_home_node)",
+        "id": "bd-p3eqw",
+        "title": "PORT: 17 GLIBC_PRIVATE __nss_* + __internal_*netgrent stubs",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T17:09:37.640743114Z",
+        "closed_at": "2026-04-26T20:03:45.475155856Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 6 NUMA memory-policy syscall wrappers + raw_syscall_with_errno_long helper + 6 abi tests including round-trip MPOL_DEFAULT and live page query via move_pages"
+        "close_reason": "shipped: 17 GLIBC_PRIVATE __nss_* + __internal_*netgrent stubs (3 netgrent + 4 dispatcher + 5 data helpers + 3 typed lookup2 + 2 line readers) + 7 abi tests"
       },
       {
-        "id": "bd-4ny4d",
-        "title": "PORT: mseal + memfd_secret + rseq + cachestat (modern Linux syscall wrappers)",
+        "id": "bd-2poiz",
+        "title": "PORT: 9 _nss_dns_* NSS plugin lookup stubs",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T17:00:22.922862800Z",
+        "closed_at": "2026-04-26T19:53:34.537992736Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 4 modern Linux syscall wrappers (mseal, memfd_secret, rseq, cachestat) + raw_syscall_with_errno helper + 5 abi tests including verified post-seal munmap rejection and 4KiB cachestat round-tr\u2026"
+        "close_reason": "shipped: 9 _nss_dns_* lookup stubs (getcanonname + 4 gethostbyname* + 2 gethostbyaddr* + 2 getnetby*) returning NSS_STATUS_NOTFOUND + ENOENT + HOST_NOT_FOUND via shared helper + 4 abi tests"
       },
       {
-        "id": "bd-25xxp",
-        "title": "PORT: openat2 + futex_waitv (modern Linux libc syscall wrappers)",
+        "id": "bd-2vvx3",
+        "title": "PORT: 10 _nss_files_* tail entries (init + initgroups_dyn + 8 parse_*)",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T16:51:40.509316267Z",
+        "closed_at": "2026-04-26T19:46:00.566812724Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: openat2 (SYS_openat2 syscall + errno bridge) + futex_waitv (forwards to core sys_futex_waitv); 6 abi tests including happy-path open+read, struct-size validation, NULL guards, and ETIMEDOUT\u2026"
+        "close_reason": "shipped: 10 _nss_files_* tail stubs (init=SUCCESS; initgroups_dyn=NOTFOUND+ENOENT; 8 parse_*=0/skip) + 3 abi tests; nss_files_* parity now fully closed"
       },
       {
-        "id": "bd-rcrw7",
-        "title": "PORT: mq_clocksend + mq_clockreceive (clockid_t variants of POSIX mq_timed*)",
+        "id": "bd-bxgwb",
+        "title": "PORT: 36 _nss_files_getXX_r NSS plugin lookup stubs",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T16:42:15.742594619Z",
+        "closed_at": "2026-04-26T19:37:17.428005257Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: mq_clocksend + mq_clockreceive with CLOCK_REALTIME passthrough + CLOCK_MONOTONIC abstime rebasing + EINVAL guard for unknown clockids; 4 abi tests including round-trip on both clocks and ETI\u2026"
+        "close_reason": "shipped: 36 _nss_files_getXX_r stubs with nss.h-compatible signatures, ENOENT/HOST_NOT_FOUND slots, and focused ABI tests covering every implemented lookup shape"
       },
       {
-        "id": "bd-cmimx",
-        "title": "PORT: ns_sprintrr + ns_sprintrrf (libresolv RR formatter, common types + RFC3597 fallback)",
+        "id": "bd-ukuxr",
+        "title": "PORT: 12 _nss_files_setXX NSS plugin stubs",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T16:33:05.163322872Z",
+        "closed_at": "2026-04-26T19:25:42.477650471Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: ns_sprintrr + ns_sprintrrf with per-type rdata formatters for A/AAAA/NS/CNAME/PTR/MX/TXT and RFC 3597 generic fallback for unknown types + 8 abi tests including end-to-end through ns_initpar\u2026"
+        "close_reason": "shipped: 12 _nss_files_setXX stubs (1 no-arg + 10 stayopen + 1 setnetgrent) returning NSS_STATUS_SUCCESS via focused wrappers and ABI tests"
       },
       {
-        "id": "bd-qvo19",
-        "title": "PORT: libresolv inet_neta (network number to text)",
+        "id": "bd-fsknj",
+        "title": "PORT: 12 _nss_files_endXX NSS plugin stubs",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T16:18:57.498236320Z",
+        "closed_at": "2026-04-26T19:17:46.725874295Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: peer landed inet_neta + tests in fa4643e0 right before my commit; my local edits duplicated theirs and merged cleanly. impl + 5 abi tests covering trailing/internal/special-zero cases + EMSG\u2026"
+        "close_reason": "shipped: 12 _nss_files_endXX NSS plugin stubs returning NSS_STATUS_SUCCESS, including the nss.h-compatible _nss_files_endnetgrent(state) signature and ABI tests"
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-92dkc` PORT: set_robust_list / get_robust_list + lsm_get_self_attr / set_self_attr / list_modules (feature, closed 2026-04-26T17:26:18.912541046Z)\n  shipped: 5 syscall wrappers (set_robust_list, get_robust_list, lsm_get_self_attr, lsm_set_self_attr, lsm_list_modules) + 8 abi tests with thread-runner robust-list round-trip preserved via save/resto\u2026\n- `bd-dyh3u` PORT: statmount/listmount + finit_module + quotactl_fd + map_shadow_stack + bpf + kexec_load + kexec_file_load (8 modern Linux syscalls) (feature, closed 2026-04-26T17:18:28.136792663Z)\n  shipped: 8 modern Linux syscall wrappers (statmount, listmount, finit_module, quotactl_fd, map_shadow_stack, bpf, kexec_load, kexec_file_load) + 10 abi tests covering NULL guards + privilege/kernel f\u2026\n- `bd-i8ind` PORT: NUMA memory-policy family (set/get_mempolicy + mbind + migrate_pages + move_pages + set_mempolicy_home_node) (feature, closed 2026-04-26T17:09:37.640743114Z)\n  shipped: 6 NUMA memory-policy syscall wrappers + raw_syscall_with_errno_long helper + 6 abi tests including round-trip MPOL_DEFAULT and live page query via move_pages\n- `bd-4ny4d` PORT: mseal + memfd_secret + rseq + cachestat (modern Linux syscall wrappers) (feature, closed 2026-04-26T17:00:22.922862800Z)\n  shipped: 4 modern Linux syscall wrappers (mseal, memfd_secret, rseq, cachestat) + raw_syscall_with_errno helper + 5 abi tests including verified post-seal munmap rejection and 4KiB cachestat round-tr\u2026\n- `bd-25xxp` PORT: openat2 + futex_waitv (modern Linux libc syscall wrappers) (feature, closed 2026-04-26T16:51:40.509316267Z)\n  shipped: openat2 (SYS_openat2 syscall + errno bridge) + futex_waitv (forwards to core sys_futex_waitv); 6 abi tests including happy-path open+read, struct-size validation, NULL guards, and ETIMEDOUT\u2026\n- `bd-rcrw7` PORT: mq_clocksend + mq_clockreceive (clockid_t variants of POSIX mq_timed*) (feature, closed 2026-04-26T16:42:15.742594619Z)\n  shipped: mq_clocksend + mq_clockreceive with CLOCK_REALTIME passthrough + CLOCK_MONOTONIC abstime rebasing + EINVAL guard for unknown clockids; 4 abi tests including round-trip on both clocks and ETI\u2026\n- `bd-cmimx` PORT: ns_sprintrr + ns_sprintrrf (libresolv RR formatter, common types + RFC3597 fallback) (feature, closed 2026-04-26T16:33:05.163322872Z)\n  shipped: ns_sprintrr + ns_sprintrrf with per-type rdata formatters for A/AAAA/NS/CNAME/PTR/MX/TXT and RFC 3597 generic fallback for unknown types + 8 abi tests including end-to-end through ns_initpar\u2026\n- `bd-qvo19` PORT: libresolv inet_neta (network number to text) (feature, closed 2026-04-26T16:18:57.498236320Z)\n  shipped: peer landed inet_neta + tests in fa4643e0 right before my commit; my local edits duplicated theirs and merged cleanly. impl + 5 abi tests covering trailing/internal/special-zero cases + EMSG\u2026",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-jb7p1` PORT: 18 GLIBC_PRIVATE __libc_/__res_/__open_catalog stubs (feature, closed 2026-04-26T20:24:11.271990741Z)\n  shipped: 18 GLIBC_PRIVATE __libc_/__res_/__open_catalog stubs + 18 abi tests\n- `bd-cz5v6` PORT: 16 GLIBC_PRIVATE __libc_alloc_buffer/dynarray/scratch_buffer/early_init + 2 NSS parsers (feature, closed 2026-04-26T20:12:56.831632686Z)\n  shipped: 5 alloc_buffer + 5 dynarray (incl SIGABRT-verified at_failure) + 3 scratch_buffer + early_init + 2 NSS parsers + 7 abi tests\n- `bd-p3eqw` PORT: 17 GLIBC_PRIVATE __nss_* + __internal_*netgrent stubs (feature, closed 2026-04-26T20:03:45.475155856Z)\n  shipped: 17 GLIBC_PRIVATE __nss_* + __internal_*netgrent stubs (3 netgrent + 4 dispatcher + 5 data helpers + 3 typed lookup2 + 2 line readers) + 7 abi tests\n- `bd-2poiz` PORT: 9 _nss_dns_* NSS plugin lookup stubs (feature, closed 2026-04-26T19:53:34.537992736Z)\n  shipped: 9 _nss_dns_* lookup stubs (getcanonname + 4 gethostbyname* + 2 gethostbyaddr* + 2 getnetby*) returning NSS_STATUS_NOTFOUND + ENOENT + HOST_NOT_FOUND via shared helper + 4 abi tests\n- `bd-2vvx3` PORT: 10 _nss_files_* tail entries (init + initgroups_dyn + 8 parse_*) (feature, closed 2026-04-26T19:46:00.566812724Z)\n  shipped: 10 _nss_files_* tail stubs (init=SUCCESS; initgroups_dyn=NOTFOUND+ENOENT; 8 parse_*=0/skip) + 3 abi tests; nss_files_* parity now fully closed\n- `bd-bxgwb` PORT: 36 _nss_files_getXX_r NSS plugin lookup stubs (feature, closed 2026-04-26T19:37:17.428005257Z)\n  shipped: 36 _nss_files_getXX_r stubs with nss.h-compatible signatures, ENOENT/HOST_NOT_FOUND slots, and focused ABI tests covering every implemented lookup shape\n- `bd-ukuxr` PORT: 12 _nss_files_setXX NSS plugin stubs (feature, closed 2026-04-26T19:25:42.477650471Z)\n  shipped: 12 _nss_files_setXX stubs (1 no-arg + 10 stayopen + 1 setnetgrent) returning NSS_STATUS_SUCCESS via focused wrappers and ABI tests\n- `bd-fsknj` PORT: 12 _nss_files_endXX NSS plugin stubs (feature, closed 2026-04-26T19:17:46.725874295Z)\n  shipped: 12 _nss_files_endXX NSS plugin stubs returning NSS_STATUS_SUCCESS, including the nss.h-compatible _nss_files_endnetgrent(state) signature and ABI tests",
     "summary": {
-      "closed_total": 1366,
+      "closed_total": 1384,
       "selected": 8,
       "invalid_rows": 0
     }

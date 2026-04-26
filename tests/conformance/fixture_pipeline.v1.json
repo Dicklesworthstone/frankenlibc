@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-04-26T17:29:13Z",
+  "generated_at": "2026-04-26T21:17:37Z",
   "summary": {
     "total_fixture_files": 56,
     "total_fixture_cases": 1244,
     "unique_symbols_in_fixtures": 384,
-    "implemented_symbols": 3996,
+    "implemented_symbols": 4109,
     "symbols_with_fixtures": 366,
     "symbols_at_threshold": 8,
-    "symbols_below_threshold": 3988,
-    "symbols_with_zero_fixtures": 3630,
-    "coverage_pct": 9.2,
+    "symbols_below_threshold": 4101,
+    "symbols_with_zero_fixtures": 3743,
+    "coverage_pct": 8.9,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
     "min_cases_threshold": 10,
@@ -362,11 +362,11 @@
     },
     {
       "module": "unistd_abi",
-      "total_symbols": 625,
+      "total_symbols": 738,
       "covered_symbols": 31,
       "at_threshold": 0,
       "total_cases": 60,
-      "coverage_pct": 5.0,
+      "coverage_pct": 4.2,
       "threshold_pct": 0.0
     },
     {
@@ -11125,6 +11125,78 @@
       "gap": 10
     },
     {
+      "symbol": "crypt_checksalt",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "crypt_gensalt",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "crypt_gensalt_r",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "crypt_gensalt_ra",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "crypt_gensalt_rn",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "crypt_preferred_method",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "crypt_r",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "crypt_ra",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "crypt_rn",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "csin",
       "module": "math_abi",
       "status": "Implemented",
@@ -11845,6 +11917,22 @@
       "gap": 10
     },
     {
+      "symbol": "encrypt",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "encrypt_r",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "endaliasent",
       "module": "unistd_abi",
       "status": "Implemented",
@@ -12367,6 +12455,14 @@
     {
       "symbol": "eventfd",
       "module": "poll_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "eventfd2",
+      "module": "unistd_abi",
       "status": "RawSyscall",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -13493,6 +13589,14 @@
       "gap": 10
     },
     {
+      "symbol": "fchmodat2",
+      "module": "unistd_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "fchown",
       "module": "unistd_abi",
       "status": "RawSyscall",
@@ -13534,6 +13638,14 @@
     },
     {
       "symbol": "fcntl64",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "fcrypt",
       "module": "unistd_abi",
       "status": "Implemented",
       "fixture_cases": 0,
@@ -21781,6 +21893,342 @@
       "gap": 10
     },
     {
+      "symbol": "nis_addmember",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_clone_directory",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_clone_object",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_clone_result",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_creategroup",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_destroy_object",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_destroygroup",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_dir_cmp",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_domain_of",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_domain_of_r",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_free_directory",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_free_object",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_free_request",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_freenames",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_freeresult",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_freeservlist",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_freetags",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_ismember",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_leaf_of",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_leaf_of_r",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_lerror",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_local_directory",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_local_group",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_local_host",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_local_principal",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_name_of",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_name_of_r",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_perror",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_print_directory",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_print_entry",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_print_group",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_print_group_entry",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_print_link",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_print_object",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_print_result",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_print_rights",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_print_table",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_removemember",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_sperrno",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_sperror",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_sperror_r",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "nis_verifygroup",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "nl_langinfo",
       "module": "locale_abi",
       "status": "Implemented",
@@ -24517,6 +24965,14 @@
       "gap": 9
     },
     {
+      "symbol": "readColdStartFile",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "readahead",
       "module": "unistd_abi",
       "status": "RawSyscall",
@@ -25453,6 +25909,38 @@
       "gap": 10
     },
     {
+      "symbol": "rt_sigprocmask",
+      "module": "unistd_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "rt_sigqueueinfo",
+      "module": "unistd_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "rt_sigsuspend",
+      "module": "unistd_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "rt_tgsigqueueinfo",
+      "module": "unistd_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "rtime",
       "module": "rpc_abi",
       "status": "Implemented",
@@ -26163,6 +26651,22 @@
       "fixture_cases": 2,
       "meets_threshold": false,
       "gap": 8
+    },
+    {
+      "symbol": "setkey",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "setkey_r",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
     },
     {
       "symbol": "setlinebuf",
@@ -31557,6 +32061,14 @@
       "gap": 9
     },
     {
+      "symbol": "writeColdStartFile",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "writev",
       "module": "io_abi",
       "status": "RawSyscall",
@@ -31567,6 +32079,38 @@
     {
       "symbol": "wscanf",
       "module": "wchar_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xcrypt",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xcrypt_gensalt",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xcrypt_gensalt_r",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xcrypt_r",
+      "module": "unistd_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -31653,6 +32197,14 @@
       "gap": 10
     },
     {
+      "symbol": "xdr_cback_data",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "xdr_char",
       "module": "rpc_abi",
       "status": "Implemented",
@@ -31687,6 +32239,14 @@
     {
       "symbol": "xdr_des_block",
       "module": "rpc_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_domainname",
+      "module": "unistd_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -31805,6 +32365,14 @@
       "gap": 10
     },
     {
+      "symbol": "xdr_keydat",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "xdr_keystatus",
       "module": "rpc_abi",
       "status": "Implemented",
@@ -31829,6 +32397,14 @@
       "gap": 10
     },
     {
+      "symbol": "xdr_mapname",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "xdr_netnamestr",
       "module": "rpc_abi",
       "status": "Implemented",
@@ -31845,6 +32421,14 @@
       "gap": 10
     },
     {
+      "symbol": "xdr_obj_p",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "xdr_opaque",
       "module": "rpc_abi",
       "status": "Implemented",
@@ -31855,6 +32439,14 @@
     {
       "symbol": "xdr_opaque_auth",
       "module": "rpc_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_peername",
+      "module": "unistd_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -32061,6 +32653,14 @@
       "gap": 10
     },
     {
+      "symbol": "xdr_valdat",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "xdr_vector",
       "module": "rpc_abi",
       "status": "Implemented",
@@ -32079,6 +32679,198 @@
     {
       "symbol": "xdr_wrapstring",
       "module": "rpc_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_yp_buf",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypall",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypbind_binding",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypbind_resp",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypbind_resptype",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypbind_setdom",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypdelete_args",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypmap_parms",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypmaplist",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_yppush_status",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_yppushresp_xfr",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypreq_key",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypreq_nokey",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypreq_xfr",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypresp_all",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypresp_key_val",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypresp_maplist",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypresp_master",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypresp_order",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypresp_val",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypresp_xfr",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypstat",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypupdate_args",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "xdr_ypxfrstat",
+      "module": "unistd_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -32343,6 +33135,118 @@
     {
       "symbol": "ynl",
       "module": "math_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_all",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_bind",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_first",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_get_default_domain",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_maplist",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_master",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_match",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_next",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_order",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_unbind",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yp_update",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "ypbinderr_string",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "yperr_string",
+      "module": "unistd_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "ypprot_err",
+      "module": "unistd_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,

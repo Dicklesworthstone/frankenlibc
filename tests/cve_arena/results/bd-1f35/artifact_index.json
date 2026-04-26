@@ -2,7 +2,7 @@
   "index_version": 1,
   "run_id": "bd1f35-thread-stress-v1",
   "bead_id": "bd-1f35",
-  "generated_utc": "2026-04-26T17:28:39.735Z",
+  "generated_utc": "2026-04-26T21:17:02.932Z",
   "artifacts": [
     {
       "path": "tests/conformance/pthread_thread_stress_scenarios.v1.json",
@@ -63,7 +63,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/hardened/mixed_detach_join/stderr.txt",
       "kind": "report",
-      "sha256": "26333ca250cd962a46697674aa40333363ee5f649a2e3ef7da73e7cac0a6b79f",
+      "sha256": "7298195fa481f33786f560c7addab276a73cdec4683d6c8a45e182ff31c71a5d",
       "size_bytes": 804,
       "description": "bd-1f35 pthread stress artifact"
     },
@@ -77,7 +77,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/report.json",
       "kind": "report",
-      "sha256": "ee0a654ce237df2ca73a497ea851604761ec3b7951b88453575e018398511515",
+      "sha256": "d9c3d0ba0bd279e328082122b12f85e8fdf2c29c55465057c32429192c592bc1",
       "size_bytes": 3721,
       "description": "bd-1f35 pthread stress artifact"
     },
@@ -112,7 +112,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/strict/fanout_fanin_single/stderr.txt",
       "kind": "report",
-      "sha256": "46f8bfb44e4da268654bc1a47e5270202e9cb76fd93903608e27b7f964e4de8b",
+      "sha256": "3612808547e0224b9b2a7decd91d4b40eaa4cc0013fcb44609620a87925f3ee8",
       "size_bytes": 402,
       "description": "bd-1f35 pthread stress artifact"
     },
@@ -126,7 +126,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/strict/mixed_detach_join/stderr.txt",
       "kind": "report",
-      "sha256": "859becc570b1ae21a3e40f84c8e8e4bf64ae9872211483272a49ee4f03f654da",
+      "sha256": "7298195fa481f33786f560c7addab276a73cdec4683d6c8a45e182ff31c71a5d",
       "size_bytes": 804,
       "description": "bd-1f35 pthread stress artifact"
     },
@@ -140,7 +140,7 @@
     {
       "path": "tests/cve_arena/results/bd-1f35/trace.jsonl",
       "kind": "log",
-      "sha256": "de96098acab7f9837722dab43499664dc4370dd06e6d51d0f46b51cc78acbca3",
+      "sha256": "5591669c73a896eaec63403032c4a5d917c61f944541ef58616a6a1b78229822",
       "size_bytes": 13348,
       "description": "bd-1f35 pthread stress artifact"
     }

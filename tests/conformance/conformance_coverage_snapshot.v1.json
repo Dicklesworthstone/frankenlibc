@@ -1,9 +1,9 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-04-26T17:29:13Z",
+  "generated_at": "2026-04-26T21:17:37Z",
   "summary": {
-    "total_symbols": 3996,
+    "total_symbols": 4109,
     "symbols_with_fixtures": 366,
     "coverage_pct": 9,
     "total_fixture_files": 56,
@@ -202,9 +202,9 @@
       "pct": 15
     },
     "unistd_abi": {
-      "total": 625,
+      "total": 738,
       "covered": 31,
-      "pct": 5
+      "pct": 4
     },
     "wchar_abi": {
       "total": 146,

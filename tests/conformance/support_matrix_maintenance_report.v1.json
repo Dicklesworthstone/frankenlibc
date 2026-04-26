@@ -1,30 +1,30 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-26T18:35:46Z",
+  "generated_at": "2026-04-26T19:09:27Z",
   "summary": {
-    "total_symbols": 4060,
-    "status_validated": 4060,
+    "total_symbols": 4109,
+    "status_validated": 4109,
     "status_invalid": 0,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
     "fixture_linked": 366,
-    "fixture_unlinked": 3694,
-    "fixture_coverage_pct": 9.0,
+    "fixture_unlinked": 3743,
+    "fixture_coverage_pct": 8.9,
     "total_warnings": 155
   },
   "coverage_dashboard": {
-    "total_symbols": 4060,
+    "total_symbols": 4109,
     "status_counts": {
-      "Implemented": 3650,
+      "Implemented": 3699,
       "RawSyscall": 410,
       "WrapsHostLibc": 0,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 89.9,
-      "RawSyscall": 10.1,
+      "Implemented": 90.0,
+      "RawSyscall": 10.0,
       "WrapsHostLibc": 0.0,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
@@ -37,26 +37,49 @@
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 10,
+      "Implemented": 33,
       "RawSyscall": 0,
       "Stub": 0,
       "WrapsHostLibc": 0
     },
     "native_coverage_pct_delta": 0.0,
     "reclassified_symbol_count": 0,
-    "new_symbol_count": 10,
+    "new_symbol_count": 33,
     "removed_symbol_count": 0,
     "new_symbols": [
-      "nis_clone_directory",
-      "nis_clone_object",
-      "nis_clone_result",
-      "nis_dir_cmp",
-      "nis_domain_of",
-      "nis_domain_of_r",
-      "nis_leaf_of",
-      "nis_leaf_of_r",
-      "nis_name_of",
-      "nis_name_of_r"
+      "readColdStartFile",
+      "writeColdStartFile",
+      "xdr_cback_data",
+      "xdr_domainname",
+      "xdr_keydat",
+      "xdr_mapname",
+      "xdr_obj_p",
+      "xdr_peername",
+      "xdr_valdat",
+      "xdr_yp_buf",
+      "xdr_ypall",
+      "xdr_ypbind_binding",
+      "xdr_ypbind_resp",
+      "xdr_ypbind_resptype",
+      "xdr_ypbind_setdom",
+      "xdr_ypdelete_args",
+      "xdr_ypmap_parms",
+      "xdr_ypmaplist",
+      "xdr_yppush_status",
+      "xdr_yppushresp_xfr",
+      "xdr_ypreq_key",
+      "xdr_ypreq_nokey",
+      "xdr_ypreq_xfr",
+      "xdr_ypresp_all",
+      "xdr_ypresp_key_val",
+      "xdr_ypresp_maplist",
+      "xdr_ypresp_master",
+      "xdr_ypresp_order",
+      "xdr_ypresp_val",
+      "xdr_ypresp_xfr",
+      "xdr_ypstat",
+      "xdr_ypupdate_args",
+      "xdr_ypxfrstat"
     ],
     "removed_symbols": []
   },
@@ -76,7 +99,7 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 3650,
+      "count": 3699,
       "fixture_linked": 309
     },
     "RawSyscall": {
@@ -276,9 +299,9 @@
       "coverage_pct": 15.4
     },
     "unistd_abi": {
-      "total": 689,
+      "total": 738,
       "linked": 31,
-      "coverage_pct": 4.5
+      "coverage_pct": 4.2
     },
     "wchar_abi": {
       "total": 146,
@@ -2976,9 +2999,13 @@
     "nftw64": "Implemented",
     "ngettext": "Implemented",
     "nice": "RawSyscall",
+    "nis_addmember": "Implemented",
     "nis_clone_directory": "Implemented",
     "nis_clone_object": "Implemented",
     "nis_clone_result": "Implemented",
+    "nis_creategroup": "Implemented",
+    "nis_destroy_object": "Implemented",
+    "nis_destroygroup": "Implemented",
     "nis_dir_cmp": "Implemented",
     "nis_domain_of": "Implemented",
     "nis_domain_of_r": "Implemented",
@@ -2989,6 +3016,7 @@
     "nis_freeresult": "Implemented",
     "nis_freeservlist": "Implemented",
     "nis_freetags": "Implemented",
+    "nis_ismember": "Implemented",
     "nis_leaf_of": "Implemented",
     "nis_leaf_of_r": "Implemented",
     "nis_lerror": "Implemented",
@@ -2999,9 +3027,20 @@
     "nis_name_of": "Implemented",
     "nis_name_of_r": "Implemented",
     "nis_perror": "Implemented",
+    "nis_print_directory": "Implemented",
+    "nis_print_entry": "Implemented",
+    "nis_print_group": "Implemented",
+    "nis_print_group_entry": "Implemented",
+    "nis_print_link": "Implemented",
+    "nis_print_object": "Implemented",
+    "nis_print_result": "Implemented",
+    "nis_print_rights": "Implemented",
+    "nis_print_table": "Implemented",
+    "nis_removemember": "Implemented",
     "nis_sperrno": "Implemented",
     "nis_sperror": "Implemented",
     "nis_sperror_r": "Implemented",
+    "nis_verifygroup": "Implemented",
     "nl_langinfo": "Implemented",
     "nl_langinfo_l": "Implemented",
     "nrand48": "Implemented",
@@ -3344,6 +3383,7 @@
     "re_set_syntax": "Implemented",
     "re_syntax_options": "Implemented",
     "read": "RawSyscall",
+    "readColdStartFile": "Implemented",
     "readahead": "RawSyscall",
     "readdir": "RawSyscall",
     "readdir64": "Implemented",
@@ -4230,6 +4270,7 @@
     "wordfree": "Implemented",
     "wprintf": "Implemented",
     "write": "RawSyscall",
+    "writeColdStartFile": "Implemented",
     "writev": "RawSyscall",
     "wscanf": "Implemented",
     "xcrypt": "Implemented",
@@ -4246,11 +4287,13 @@
     "xdr_bytes": "Implemented",
     "xdr_callhdr": "Implemented",
     "xdr_callmsg": "Implemented",
+    "xdr_cback_data": "Implemented",
     "xdr_char": "Implemented",
     "xdr_cryptkeyarg": "Implemented",
     "xdr_cryptkeyarg2": "Implemented",
     "xdr_cryptkeyres": "Implemented",
     "xdr_des_block": "Implemented",
+    "xdr_domainname": "Implemented",
     "xdr_double": "Implemented",
     "xdr_enum": "Implemented",
     "xdr_float": "Implemented",
@@ -4265,13 +4308,17 @@
     "xdr_key_netstarg": "Implemented",
     "xdr_key_netstres": "Implemented",
     "xdr_keybuf": "Implemented",
+    "xdr_keydat": "Implemented",
     "xdr_keystatus": "Implemented",
     "xdr_long": "Implemented",
     "xdr_longlong_t": "Implemented",
+    "xdr_mapname": "Implemented",
     "xdr_netnamestr": "Implemented",
     "xdr_netobj": "Implemented",
+    "xdr_obj_p": "Implemented",
     "xdr_opaque": "Implemented",
     "xdr_opaque_auth": "Implemented",
+    "xdr_peername": "Implemented",
     "xdr_pmap": "Implemented",
     "xdr_pmaplist": "Implemented",
     "xdr_pointer": "Implemented",
@@ -4297,9 +4344,34 @@
     "xdr_uint8_t": "Implemented",
     "xdr_union": "Implemented",
     "xdr_unixcred": "Implemented",
+    "xdr_valdat": "Implemented",
     "xdr_vector": "Implemented",
     "xdr_void": "Implemented",
     "xdr_wrapstring": "Implemented",
+    "xdr_yp_buf": "Implemented",
+    "xdr_ypall": "Implemented",
+    "xdr_ypbind_binding": "Implemented",
+    "xdr_ypbind_resp": "Implemented",
+    "xdr_ypbind_resptype": "Implemented",
+    "xdr_ypbind_setdom": "Implemented",
+    "xdr_ypdelete_args": "Implemented",
+    "xdr_ypmap_parms": "Implemented",
+    "xdr_ypmaplist": "Implemented",
+    "xdr_yppush_status": "Implemented",
+    "xdr_yppushresp_xfr": "Implemented",
+    "xdr_ypreq_key": "Implemented",
+    "xdr_ypreq_nokey": "Implemented",
+    "xdr_ypreq_xfr": "Implemented",
+    "xdr_ypresp_all": "Implemented",
+    "xdr_ypresp_key_val": "Implemented",
+    "xdr_ypresp_maplist": "Implemented",
+    "xdr_ypresp_master": "Implemented",
+    "xdr_ypresp_order": "Implemented",
+    "xdr_ypresp_val": "Implemented",
+    "xdr_ypresp_xfr": "Implemented",
+    "xdr_ypstat": "Implemented",
+    "xdr_ypupdate_args": "Implemented",
+    "xdr_ypxfrstat": "Implemented",
     "xdrmem_create": "Implemented",
     "xdrrec_create": "Implemented",
     "xdrrec_endofrecord": "Implemented",
@@ -8251,6 +8323,316 @@
       ]
     },
     {
+      "symbol": "xdr_cback_data",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_domainname",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_keydat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_mapname",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_obj_p",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_peername",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_valdat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_yp_buf",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypall",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypbind_binding",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypbind_resp",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypbind_resptype",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypbind_setdom",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypdelete_args",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypmap_parms",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypmaplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_yppush_status",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_yppushresp_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypreq_key",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypreq_nokey",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypreq_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypresp_all",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypresp_key_val",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypresp_maplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypresp_master",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypresp_order",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypresp_val",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypresp_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypstat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypupdate_args",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
+      "symbol": "xdr_ypxfrstat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "valid": true,
+      "findings": [
+        "function body not found (may use alternate pattern)"
+      ],
+      "warnings": []
+    },
+    {
       "symbol": "xdr_callmsg",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -11873,12 +12255,17 @@
     "monstartup",
     "netname2host",
     "netname2user",
+    "nis_addmember",
     "nis_clone_directory",
     "nis_clone_object",
     "nis_clone_result",
+    "nis_creategroup",
+    "nis_destroy_object",
+    "nis_destroygroup",
     "nis_dir_cmp",
     "nis_domain_of",
     "nis_domain_of_r",
+    "nis_ismember",
     "nis_leaf_of",
     "nis_leaf_of_r",
     "nis_name_of",
@@ -11896,9 +12283,20 @@
     "nis_local_host",
     "nis_local_principal",
     "nis_perror",
+    "nis_print_directory",
+    "nis_print_entry",
+    "nis_print_group",
+    "nis_print_group_entry",
+    "nis_print_link",
+    "nis_print_object",
+    "nis_print_result",
+    "nis_print_rights",
+    "nis_print_table",
+    "nis_removemember",
     "nis_sperrno",
     "nis_sperror",
     "nis_sperror_r",
+    "nis_verifygroup",
     "ns_name_compress",
     "ns_name_ntop",
     "ns_name_pack",
@@ -11954,6 +12352,7 @@
     "register_printf_specifier",
     "register_printf_type",
     "registerrpc",
+    "readColdStartFile",
     "res_dnok",
     "res_hnok",
     "res_mailok",
@@ -12079,6 +12478,7 @@
     "wcswcs",
     "wctrans_l",
     "wmempcpy",
+    "writeColdStartFile",
     "xdecrypt",
     "xdr_accepted_reply",
     "xdr_array",
@@ -12087,6 +12487,37 @@
     "xdr_authunix_parms",
     "xdr_bool",
     "xdr_bytes",
+    "xdr_cback_data",
+    "xdr_domainname",
+    "xdr_keydat",
+    "xdr_mapname",
+    "xdr_obj_p",
+    "xdr_peername",
+    "xdr_valdat",
+    "xdr_yp_buf",
+    "xdr_ypall",
+    "xdr_ypbind_binding",
+    "xdr_ypbind_resp",
+    "xdr_ypbind_resptype",
+    "xdr_ypbind_setdom",
+    "xdr_ypdelete_args",
+    "xdr_ypmap_parms",
+    "xdr_ypmaplist",
+    "xdr_yppush_status",
+    "xdr_yppushresp_xfr",
+    "xdr_ypreq_key",
+    "xdr_ypreq_nokey",
+    "xdr_ypreq_xfr",
+    "xdr_ypresp_all",
+    "xdr_ypresp_key_val",
+    "xdr_ypresp_maplist",
+    "xdr_ypresp_master",
+    "xdr_ypresp_order",
+    "xdr_ypresp_val",
+    "xdr_ypresp_xfr",
+    "xdr_ypstat",
+    "xdr_ypupdate_args",
+    "xdr_ypxfrstat",
     "xdr_callhdr",
     "xdr_callmsg",
     "xdr_char",

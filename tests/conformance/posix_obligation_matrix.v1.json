@@ -3,15 +3,15 @@
   "bead": "bd-2tq.4",
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "summary": {
-    "total_exported": 3996,
-    "tracked_symbols": 3996,
+    "total_exported": 4109,
+    "tracked_symbols": 4109,
     "total_obligations": 268,
     "covered_obligations": 268,
     "mapped_without_execution": 0,
     "obligations_with_execution_failures": 0,
     "error_condition_obligations": 62,
     "async_concurrency_obligations": 52,
-    "symbols_missing_any_mapping": 3791,
+    "symbols_missing_any_mapping": 3904,
     "symbols_missing_execution_evidence": 0,
     "symbols_missing_error_conditions": 152,
     "symbols_missing_async_concurrency": 0
@@ -25230,6 +25230,114 @@
       ]
     },
     {
+      "symbol": "crypt_checksalt",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "crypt_gensalt",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "crypt_gensalt_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "crypt_gensalt_ra",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "crypt_gensalt_rn",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "crypt_preferred_method",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "crypt_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "crypt_ra",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "crypt_rn",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "csin",
       "symbol_family": "math",
       "owner": "math_abi",
@@ -26316,6 +26424,30 @@
       ]
     },
     {
+      "symbol": "encrypt",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "encrypt_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "endaliasent",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
@@ -27117,6 +27249,18 @@
       "symbol": "eventfd",
       "symbol_family": "poll",
       "owner": "poll_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "eventfd2",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
       "support_status": "RawSyscall",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -28802,6 +28946,18 @@
       ]
     },
     {
+      "symbol": "fchmodat2",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "fchown",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
@@ -28868,6 +29024,18 @@
     },
     {
       "symbol": "fcntl64",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "fcrypt",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "Implemented",
@@ -41595,6 +41763,510 @@
       ]
     },
     {
+      "symbol": "nis_addmember",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_clone_directory",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_clone_object",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_clone_result",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_creategroup",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_destroy_object",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_destroygroup",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_dir_cmp",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_domain_of",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_domain_of_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_free_directory",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_free_object",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_free_request",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_freenames",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_freeresult",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_freeservlist",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_freetags",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_ismember",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_leaf_of",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_leaf_of_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_lerror",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_local_directory",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_local_group",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_local_host",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_local_principal",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_name_of",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_name_of_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_perror",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_print_directory",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_print_entry",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_print_group",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_print_group_entry",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_print_link",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_print_object",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_print_result",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_print_rights",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_print_table",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_removemember",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_sperrno",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_sperror",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_sperror_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "nis_verifygroup",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "nl_langinfo",
       "symbol_family": "locale",
       "owner": "locale_abi",
@@ -45552,6 +46224,18 @@
       ]
     },
     {
+      "symbol": "readColdStartFile",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "readahead",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
@@ -46966,6 +47650,54 @@
       ]
     },
     {
+      "symbol": "rt_sigprocmask",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "rt_sigqueueinfo",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "rt_sigsuspend",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "rt_tgsigqueueinfo",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "rtime",
       "symbol_family": "rpc",
       "owner": "rpc_abi",
@@ -48029,6 +48761,30 @@
       "symbol": "setjmp",
       "symbol_family": "setjmp",
       "owner": "setjmp_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "setkey",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "setkey_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -56409,6 +57165,18 @@
       ]
     },
     {
+      "symbol": "writeColdStartFile",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "writev",
       "symbol_family": "io",
       "owner": "io_abi",
@@ -56424,6 +57192,54 @@
       "symbol": "wscanf",
       "symbol_family": "wchar",
       "owner": "wchar_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xcrypt",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xcrypt_gensalt",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xcrypt_gensalt_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xcrypt_r",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -56553,6 +57369,18 @@
       ]
     },
     {
+      "symbol": "xdr_cback_data",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "xdr_char",
       "symbol_family": "rpc",
       "owner": "rpc_abi",
@@ -56604,6 +57432,18 @@
       "symbol": "xdr_des_block",
       "symbol_family": "rpc",
       "owner": "rpc_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_domainname",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -56781,6 +57621,18 @@
       ]
     },
     {
+      "symbol": "xdr_keydat",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "xdr_keystatus",
       "symbol_family": "rpc",
       "owner": "rpc_abi",
@@ -56817,6 +57669,18 @@
       ]
     },
     {
+      "symbol": "xdr_mapname",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "xdr_netnamestr",
       "symbol_family": "rpc",
       "owner": "rpc_abi",
@@ -56841,6 +57705,18 @@
       ]
     },
     {
+      "symbol": "xdr_obj_p",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "xdr_opaque",
       "symbol_family": "rpc",
       "owner": "rpc_abi",
@@ -56856,6 +57732,18 @@
       "symbol": "xdr_opaque_auth",
       "symbol_family": "rpc",
       "owner": "rpc_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_peername",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -57165,6 +58053,18 @@
       ]
     },
     {
+      "symbol": "xdr_valdat",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "xdr_vector",
       "symbol_family": "rpc",
       "owner": "rpc_abi",
@@ -57192,6 +58092,294 @@
       "symbol": "xdr_wrapstring",
       "symbol_family": "rpc",
       "owner": "rpc_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_yp_buf",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypall",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypbind_binding",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypbind_resp",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypbind_resptype",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypbind_setdom",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypdelete_args",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypmap_parms",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypmaplist",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_yppush_status",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_yppushresp_xfr",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypreq_key",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypreq_nokey",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypreq_xfr",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_all",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_key_val",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_maplist",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_master",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_order",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_val",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_xfr",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypstat",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypupdate_args",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "xdr_ypxfrstat",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -57588,6 +58776,174 @@
       "symbol": "ynl",
       "symbol_family": "math",
       "owner": "math_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_all",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_bind",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_first",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_get_default_domain",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_maplist",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_master",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_match",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_next",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_order",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_unbind",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yp_update",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "ypbinderr_string",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "yperr_string",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "ypprot_err",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],

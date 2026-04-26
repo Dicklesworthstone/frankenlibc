@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-04-26T17:30:56Z",
-  "report_hash": "c586c4c499d93f3e",
+  "generated_at": "2026-04-26T20:08:26Z",
+  "report_hash": "7f8efde2812fe70b",
   "summary": {
-    "total_symbols": 3996,
+    "total_symbols": 4109,
     "symbols_with_fixtures": 366,
-    "symbols_without_fixtures": 3630,
-    "fixture_coverage_pct": 9.2,
-    "implemented_coverage_pct": 8.6,
+    "symbols_without_fixtures": 3743,
+    "fixture_coverage_pct": 8.9,
+    "implemented_coverage_pct": 8.4,
     "total_fixture_files": 56,
     "total_cases": 1239,
     "total_format_issues": 0,
     "symbols_with_edge_cases": 282,
     "symbols_with_errno_checks": 363,
-    "total_quality_issues": 3528,
-    "uncovered_action_count": 3630
+    "total_quality_issues": 3635,
+    "uncovered_action_count": 3743
   },
   "fixture_file_analyses": [
     {
@@ -20851,6 +20851,141 @@
       ]
     },
     {
+      "symbol": "crypt_checksalt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "crypt_gensalt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "crypt_gensalt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "crypt_gensalt_ra",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "crypt_gensalt_rn",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "crypt_preferred_method",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "crypt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "crypt_ra",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "crypt_rn",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "csin",
       "status": "Implemented",
       "module": "math_abi",
@@ -22242,6 +22377,36 @@
       ]
     },
     {
+      "symbol": "encrypt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "encrypt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "endaliasent",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -23222,6 +23387,19 @@
       "symbol": "eventfd",
       "status": "RawSyscall",
       "module": "poll_abi",
+      "perf_class": "syscall_veneer",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "eventfd2",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
       "perf_class": "syscall_veneer",
       "has_fixtures": false,
       "case_count": 0,
@@ -25328,6 +25506,19 @@
       "quality_issues": []
     },
     {
+      "symbol": "fchmodat2",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall_veneer",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
       "symbol": "fchown",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -25405,6 +25596,21 @@
     },
     {
       "symbol": "fcntl64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "fcrypt",
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -41155,6 +41361,636 @@
       "quality_issues": []
     },
     {
+      "symbol": "nis_addmember",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_clone_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_clone_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_clone_result",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_creategroup",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_destroy_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_destroygroup",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_dir_cmp",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_domain_of",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_domain_of_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_free_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_free_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_free_request",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_freenames",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_freeresult",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_freeservlist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_freetags",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_ismember",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_leaf_of",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_leaf_of_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_lerror",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_local_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_local_group",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_local_host",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_local_principal",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_name_of",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_name_of_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_perror",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_print_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_print_entry",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_print_group",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_print_group_entry",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_print_link",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_print_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_print_result",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_print_rights",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_print_table",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_removemember",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_sperrno",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_sperror",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_sperror_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "nis_verifygroup",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "nl_langinfo",
       "status": "Implemented",
       "module": "locale_abi",
@@ -46383,6 +47219,21 @@
       ]
     },
     {
+      "symbol": "readColdStartFile",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "readahead",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -48154,6 +49005,58 @@
       ]
     },
     {
+      "symbol": "rt_sigprocmask",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "rt_sigqueueinfo",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "rt_sigsuspend",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "rt_tgsigqueueinfo",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "syscall",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
       "symbol": "rtime",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -49472,6 +50375,36 @@
       "has_errno_check": true,
       "quality_issues": [
         "no edge cases detected"
+      ]
+    },
+    {
+      "symbol": "setkey",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "setkey_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
       ]
     },
     {
@@ -60159,6 +61092,21 @@
       ]
     },
     {
+      "symbol": "writeColdStartFile",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "writev",
       "status": "RawSyscall",
       "module": "io_abi",
@@ -60175,6 +61123,66 @@
       "symbol": "wscanf",
       "status": "Implemented",
       "module": "wchar_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xcrypt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xcrypt_gensalt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xcrypt_gensalt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xcrypt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
@@ -60337,6 +61345,21 @@
       ]
     },
     {
+      "symbol": "xdr_cback_data",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "xdr_char",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -60401,6 +61424,21 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_domainname",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
       "fixture_files": [],
@@ -60622,6 +61660,21 @@
       ]
     },
     {
+      "symbol": "xdr_keydat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "xdr_keystatus",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -60667,6 +61720,21 @@
       ]
     },
     {
+      "symbol": "xdr_mapname",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "xdr_netnamestr",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -60697,6 +61765,21 @@
       ]
     },
     {
+      "symbol": "xdr_obj_p",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "xdr_opaque",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -60716,6 +61799,21 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_peername",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
       "fixture_files": [],
@@ -61102,6 +62200,21 @@
       ]
     },
     {
+      "symbol": "xdr_valdat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "xdr_vector",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -61136,6 +62249,366 @@
       "status": "Implemented",
       "module": "rpc_abi",
       "perf_class": "",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_yp_buf",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypall",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypbind_binding",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypbind_resp",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypbind_resptype",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypbind_setdom",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypdelete_args",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypmap_parms",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypmaplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_yppush_status",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_yppushresp_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypreq_key",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypreq_nokey",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypreq_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_all",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_key_val",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_maplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_master",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_order",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_val",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypresp_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypstat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypupdate_args",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "xdr_ypxfrstat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
       "fixture_files": [],
@@ -61631,6 +63104,216 @@
       "status": "Implemented",
       "module": "math_abi",
       "perf_class": "zero_cost",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_all",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_bind",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_first",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_get_default_domain",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_maplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_master",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_match",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_next",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_order",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_unbind",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yp_update",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "ypbinderr_string",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "yperr_string",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "ypprot_err",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
       "fixture_files": [],
@@ -70639,6 +72322,69 @@
       "priority": "normal"
     },
     {
+      "symbol": "crypt_checksalt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "crypt_gensalt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "crypt_gensalt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "crypt_gensalt_ra",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "crypt_gensalt_rn",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "crypt_preferred_method",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "crypt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "crypt_ra",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "crypt_rn",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "csin",
       "status": "Implemented",
       "module": "math_abi",
@@ -71206,6 +72952,20 @@
       "priority": "normal"
     },
     {
+      "symbol": "encrypt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "encrypt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "endaliasent",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -71643,6 +73403,13 @@
       "symbol": "eventfd",
       "status": "RawSyscall",
       "module": "poll_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "eventfd2",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -72606,6 +74373,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "fchmodat2",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "fchown",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -72635,6 +74409,13 @@
     },
     {
       "symbol": "fcntl64",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "fcrypt",
       "status": "Implemented",
       "module": "unistd_abi",
       "action": "create fixture cases",
@@ -79235,6 +81016,300 @@
       "priority": "normal"
     },
     {
+      "symbol": "nis_addmember",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_clone_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_clone_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_clone_result",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_creategroup",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_destroy_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_destroygroup",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_dir_cmp",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_domain_of",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_domain_of_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_free_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_free_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_free_request",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_freenames",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_freeresult",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_freeservlist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_freetags",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_ismember",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_leaf_of",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_leaf_of_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_lerror",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_local_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_local_group",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_local_host",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_local_principal",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_name_of",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_name_of_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_perror",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_print_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_print_entry",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_print_group",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_print_group_entry",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_print_link",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_print_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_print_result",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_print_rights",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_print_table",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_removemember",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_sperrno",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_sperror",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_sperror_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "nis_verifygroup",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "nrand48",
       "status": "Implemented",
       "module": "stdlib_abi",
@@ -81356,6 +83431,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "readColdStartFile",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "readahead",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -82119,6 +84201,34 @@
       "priority": "normal"
     },
     {
+      "symbol": "rt_sigprocmask",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "rt_sigqueueinfo",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "rt_sigsuspend",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "rt_tgsigqueueinfo",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "rtime",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -82674,6 +84784,20 @@
     {
       "symbol": "setitimer",
       "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "setkey",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "setkey_r",
+      "status": "Implemented",
       "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
@@ -86361,6 +88485,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "writeColdStartFile",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "writev",
       "status": "RawSyscall",
       "module": "io_abi",
@@ -86371,6 +88502,34 @@
       "symbol": "wscanf",
       "status": "Implemented",
       "module": "wchar_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xcrypt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xcrypt_gensalt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xcrypt_gensalt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xcrypt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -86445,6 +88604,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "xdr_cback_data",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "xdr_char",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -86476,6 +88642,13 @@
       "symbol": "xdr_des_block",
       "status": "Implemented",
       "module": "rpc_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_domainname",
+      "status": "Implemented",
+      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -86578,6 +88751,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "xdr_keydat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "xdr_keystatus",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -86599,6 +88779,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "xdr_mapname",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "xdr_netnamestr",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -86613,6 +88800,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "xdr_obj_p",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "xdr_opaque",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -86623,6 +88817,13 @@
       "symbol": "xdr_opaque_auth",
       "status": "Implemented",
       "module": "rpc_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_peername",
+      "status": "Implemented",
+      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -86802,6 +89003,13 @@
       "priority": "normal"
     },
     {
+      "symbol": "xdr_valdat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
       "symbol": "xdr_vector",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -86819,6 +89027,174 @@
       "symbol": "xdr_wrapstring",
       "status": "Implemented",
       "module": "rpc_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_yp_buf",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypall",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypbind_binding",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypbind_resp",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypbind_resptype",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypbind_setdom",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypdelete_args",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypmap_parms",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypmaplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_yppush_status",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_yppushresp_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypreq_key",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypreq_nokey",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypreq_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypresp_all",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypresp_key_val",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypresp_maplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypresp_master",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypresp_order",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypresp_val",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypresp_xfr",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypstat",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypupdate_args",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "xdr_ypxfrstat",
+      "status": "Implemented",
+      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -87050,6 +89426,104 @@
       "symbol": "ynl",
       "status": "Implemented",
       "module": "math_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_all",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_bind",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_first",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_get_default_domain",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_maplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_master",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_match",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_next",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_order",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_unbind",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yp_update",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "ypbinderr_string",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "yperr_string",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "ypprot_err",
+      "status": "Implemented",
+      "module": "unistd_abi",
       "action": "create fixture cases",
       "priority": "normal"
     }
