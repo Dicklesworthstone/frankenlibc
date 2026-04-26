@@ -5582,6 +5582,128 @@ pub static sys_siglist: SysSigList = SysSigList([
     SIG_DESC_RT.as_ptr() as *const c_char, // 64
 ]);
 
+// Per-signal short name bytes used by `sys_signame` — uppercase
+// without the "SIG" prefix, matching the BSD convention used by
+// killall(1), kill(1), and other signal-name tools.
+const SIG_NAME_EMPTY: &[u8] = b"\0";
+const SIG_NAME_HUP: &[u8] = b"HUP\0";
+const SIG_NAME_INT: &[u8] = b"INT\0";
+const SIG_NAME_QUIT: &[u8] = b"QUIT\0";
+const SIG_NAME_ILL: &[u8] = b"ILL\0";
+const SIG_NAME_TRAP: &[u8] = b"TRAP\0";
+const SIG_NAME_ABRT: &[u8] = b"ABRT\0";
+const SIG_NAME_BUS: &[u8] = b"BUS\0";
+const SIG_NAME_FPE: &[u8] = b"FPE\0";
+const SIG_NAME_KILL: &[u8] = b"KILL\0";
+const SIG_NAME_USR1: &[u8] = b"USR1\0";
+const SIG_NAME_SEGV: &[u8] = b"SEGV\0";
+const SIG_NAME_USR2: &[u8] = b"USR2\0";
+const SIG_NAME_PIPE: &[u8] = b"PIPE\0";
+const SIG_NAME_ALRM: &[u8] = b"ALRM\0";
+const SIG_NAME_TERM: &[u8] = b"TERM\0";
+const SIG_NAME_STKFLT: &[u8] = b"STKFLT\0";
+const SIG_NAME_CHLD: &[u8] = b"CHLD\0";
+const SIG_NAME_CONT: &[u8] = b"CONT\0";
+const SIG_NAME_STOP: &[u8] = b"STOP\0";
+const SIG_NAME_TSTP: &[u8] = b"TSTP\0";
+const SIG_NAME_TTIN: &[u8] = b"TTIN\0";
+const SIG_NAME_TTOU: &[u8] = b"TTOU\0";
+const SIG_NAME_URG: &[u8] = b"URG\0";
+const SIG_NAME_XCPU: &[u8] = b"XCPU\0";
+const SIG_NAME_XFSZ: &[u8] = b"XFSZ\0";
+const SIG_NAME_VTALRM: &[u8] = b"VTALRM\0";
+const SIG_NAME_PROF: &[u8] = b"PROF\0";
+const SIG_NAME_WINCH: &[u8] = b"WINCH\0";
+const SIG_NAME_IO: &[u8] = b"IO\0";
+const SIG_NAME_PWR: &[u8] = b"PWR\0";
+const SIG_NAME_SYS: &[u8] = b"SYS\0";
+const SIG_NAME_RT: &[u8] = b"RT\0";
+
+/// BSD `sys_signame[NSIG]` — array of short uppercase signal
+/// names (no `"SIG"` prefix), indexed by signal number. Used by
+/// killall(1), kill(1), and other signal-name tools that prefer
+/// the abbreviated form ("HUP" rather than "Hangup"). Some BSD-
+/// derived ports of Linux libraries (libbsd) provide this for
+/// compatibility.
+///
+/// `sys_signame[0]` is empty. Indices 32..=64 share a generic
+/// `"RT"` placeholder; callers wanting the full short form (e.g.
+/// `"RTMIN+3"`) should call `sigabbrev_np` instead.
+///
+/// The wrapper around the inner `[*const c_char; 65]` is
+/// `repr(transparent)`, so the symbol's ABI is identical to a
+/// bare C `const char *sys_signame[NSIG]`.
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static sys_signame: SysSigList = SysSigList([
+    SIG_NAME_EMPTY.as_ptr() as *const c_char,  // 0
+    SIG_NAME_HUP.as_ptr() as *const c_char,    // 1 SIGHUP
+    SIG_NAME_INT.as_ptr() as *const c_char,    // 2 SIGINT
+    SIG_NAME_QUIT.as_ptr() as *const c_char,   // 3 SIGQUIT
+    SIG_NAME_ILL.as_ptr() as *const c_char,    // 4 SIGILL
+    SIG_NAME_TRAP.as_ptr() as *const c_char,   // 5 SIGTRAP
+    SIG_NAME_ABRT.as_ptr() as *const c_char,   // 6 SIGABRT
+    SIG_NAME_BUS.as_ptr() as *const c_char,    // 7 SIGBUS
+    SIG_NAME_FPE.as_ptr() as *const c_char,    // 8 SIGFPE
+    SIG_NAME_KILL.as_ptr() as *const c_char,   // 9 SIGKILL
+    SIG_NAME_USR1.as_ptr() as *const c_char,   // 10 SIGUSR1
+    SIG_NAME_SEGV.as_ptr() as *const c_char,   // 11 SIGSEGV
+    SIG_NAME_USR2.as_ptr() as *const c_char,   // 12 SIGUSR2
+    SIG_NAME_PIPE.as_ptr() as *const c_char,   // 13 SIGPIPE
+    SIG_NAME_ALRM.as_ptr() as *const c_char,   // 14 SIGALRM
+    SIG_NAME_TERM.as_ptr() as *const c_char,   // 15 SIGTERM
+    SIG_NAME_STKFLT.as_ptr() as *const c_char, // 16 SIGSTKFLT
+    SIG_NAME_CHLD.as_ptr() as *const c_char,   // 17 SIGCHLD
+    SIG_NAME_CONT.as_ptr() as *const c_char,   // 18 SIGCONT
+    SIG_NAME_STOP.as_ptr() as *const c_char,   // 19 SIGSTOP
+    SIG_NAME_TSTP.as_ptr() as *const c_char,   // 20 SIGTSTP
+    SIG_NAME_TTIN.as_ptr() as *const c_char,   // 21 SIGTTIN
+    SIG_NAME_TTOU.as_ptr() as *const c_char,   // 22 SIGTTOU
+    SIG_NAME_URG.as_ptr() as *const c_char,    // 23 SIGURG
+    SIG_NAME_XCPU.as_ptr() as *const c_char,   // 24 SIGXCPU
+    SIG_NAME_XFSZ.as_ptr() as *const c_char,   // 25 SIGXFSZ
+    SIG_NAME_VTALRM.as_ptr() as *const c_char, // 26 SIGVTALRM
+    SIG_NAME_PROF.as_ptr() as *const c_char,   // 27 SIGPROF
+    SIG_NAME_WINCH.as_ptr() as *const c_char,  // 28 SIGWINCH
+    SIG_NAME_IO.as_ptr() as *const c_char,     // 29 SIGIO
+    SIG_NAME_PWR.as_ptr() as *const c_char,    // 30 SIGPWR
+    SIG_NAME_SYS.as_ptr() as *const c_char,    // 31 SIGSYS
+    // 32..=64: realtime signals — share a placeholder name.
+    SIG_NAME_RT.as_ptr() as *const c_char, // 32
+    SIG_NAME_RT.as_ptr() as *const c_char, // 33
+    SIG_NAME_RT.as_ptr() as *const c_char, // 34
+    SIG_NAME_RT.as_ptr() as *const c_char, // 35
+    SIG_NAME_RT.as_ptr() as *const c_char, // 36
+    SIG_NAME_RT.as_ptr() as *const c_char, // 37
+    SIG_NAME_RT.as_ptr() as *const c_char, // 38
+    SIG_NAME_RT.as_ptr() as *const c_char, // 39
+    SIG_NAME_RT.as_ptr() as *const c_char, // 40
+    SIG_NAME_RT.as_ptr() as *const c_char, // 41
+    SIG_NAME_RT.as_ptr() as *const c_char, // 42
+    SIG_NAME_RT.as_ptr() as *const c_char, // 43
+    SIG_NAME_RT.as_ptr() as *const c_char, // 44
+    SIG_NAME_RT.as_ptr() as *const c_char, // 45
+    SIG_NAME_RT.as_ptr() as *const c_char, // 46
+    SIG_NAME_RT.as_ptr() as *const c_char, // 47
+    SIG_NAME_RT.as_ptr() as *const c_char, // 48
+    SIG_NAME_RT.as_ptr() as *const c_char, // 49
+    SIG_NAME_RT.as_ptr() as *const c_char, // 50
+    SIG_NAME_RT.as_ptr() as *const c_char, // 51
+    SIG_NAME_RT.as_ptr() as *const c_char, // 52
+    SIG_NAME_RT.as_ptr() as *const c_char, // 53
+    SIG_NAME_RT.as_ptr() as *const c_char, // 54
+    SIG_NAME_RT.as_ptr() as *const c_char, // 55
+    SIG_NAME_RT.as_ptr() as *const c_char, // 56
+    SIG_NAME_RT.as_ptr() as *const c_char, // 57
+    SIG_NAME_RT.as_ptr() as *const c_char, // 58
+    SIG_NAME_RT.as_ptr() as *const c_char, // 59
+    SIG_NAME_RT.as_ptr() as *const c_char, // 60
+    SIG_NAME_RT.as_ptr() as *const c_char, // 61
+    SIG_NAME_RT.as_ptr() as *const c_char, // 62
+    SIG_NAME_RT.as_ptr() as *const c_char, // 63
+    SIG_NAME_RT.as_ptr() as *const c_char, // 64
+]);
+
 /// POSIX `psignal` — print a signal description to stderr.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {

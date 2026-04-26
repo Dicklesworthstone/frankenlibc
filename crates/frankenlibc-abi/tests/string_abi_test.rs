@@ -2482,3 +2482,66 @@ fn sys_siglist_matches_strsignal_for_well_known_signals() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// sys_signame (BSD short signal-name array)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::string_abi::sys_signame;
+
+fn read_sys_signame_str(idx: usize) -> &'static [u8] {
+    let p = sys_signame.0[idx];
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    s.to_bytes()
+}
+
+#[test]
+fn sys_signame_has_65_entries() {
+    assert_eq!(sys_signame.0.len(), 65);
+}
+
+#[test]
+fn sys_signame_index_zero_is_empty_string() {
+    assert_eq!(read_sys_signame_str(0), b"");
+}
+
+#[test]
+fn sys_signame_well_known_short_names() {
+    assert_eq!(read_sys_signame_str(1), b"HUP"); // SIGHUP
+    assert_eq!(read_sys_signame_str(2), b"INT"); // SIGINT
+    assert_eq!(read_sys_signame_str(9), b"KILL"); // SIGKILL
+    assert_eq!(read_sys_signame_str(11), b"SEGV"); // SIGSEGV
+    assert_eq!(read_sys_signame_str(15), b"TERM"); // SIGTERM
+    assert_eq!(read_sys_signame_str(17), b"CHLD"); // SIGCHLD
+    assert_eq!(read_sys_signame_str(28), b"WINCH"); // SIGWINCH
+    assert_eq!(read_sys_signame_str(31), b"SYS"); // SIGSYS
+}
+
+#[test]
+fn sys_signame_realtime_signals_share_placeholder() {
+    for i in 32..=64usize {
+        assert_eq!(
+            read_sys_signame_str(i),
+            b"RT",
+            "rt slot {i} should be the placeholder",
+        );
+    }
+}
+
+#[test]
+fn sys_signame_matches_sigabbrev_np_for_well_known_signals() {
+    // For non-realtime entries the short name must match
+    // sigabbrev_np (which is the modern POSIX-2024 entry point).
+    use frankenlibc_abi::signal_abi::sigabbrev_np;
+    for sig in [1, 2, 9, 11, 13, 15, 17, 28] {
+        let from_array = read_sys_signame_str(sig as usize);
+        let p = unsafe { sigabbrev_np(sig) };
+        assert!(!p.is_null());
+        let from_sigabbrev = unsafe { CStr::from_ptr(p) }.to_bytes();
+        assert_eq!(
+            from_array, from_sigabbrev,
+            "sys_signame[{sig}] differs from sigabbrev_np({sig})",
+        );
+    }
+}
