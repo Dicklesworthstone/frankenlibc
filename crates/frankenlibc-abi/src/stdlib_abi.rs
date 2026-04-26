@@ -4651,3 +4651,39 @@ pub unsafe extern "C" fn strtonum(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// reallocf (BSD: realloc + free-on-failure)
+// ---------------------------------------------------------------------------
+
+/// BSD `reallocf(ptr, size)` — call `realloc(ptr, size)`. If realloc
+/// fails (returns NULL with `size > 0`), free the original `ptr` to
+/// defeat the classic "realloc loses your buffer on ENOMEM" leak that
+/// requires every caller to either save the original pointer or
+/// branch on NULL before reassigning.
+///
+/// Special cases match BSD libc + libbsd:
+/// * `ptr == NULL` → equivalent to `realloc(NULL, size)` (i.e. `malloc(size)`).
+///   No free is attempted because there is nothing to free.
+/// * `size == 0`   → behaves like `realloc(ptr, 0)` from the host
+///   allocator (which on glibc returns NULL after freeing). We must
+///   NOT call `free(ptr)` again in that case — realloc already did.
+///
+/// # Safety
+///
+/// Caller must ensure `ptr` was returned by a previous call to a
+/// libc allocator (malloc / calloc / realloc family) or is NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn reallocf(ptr: *mut c_void, size: usize) -> *mut c_void {
+    // SAFETY: ABI contract matches realloc.
+    let out = unsafe { crate::malloc_abi::realloc(ptr, size) };
+    if out.is_null() && size != 0 && !ptr.is_null() {
+        // realloc failed and the original allocation is still live —
+        // free it on the caller's behalf. (realloc(ptr, 0) frees ptr
+        // and returns NULL on glibc; we must NOT double-free in that
+        // path, hence the `size != 0` guard.)
+        // SAFETY: same caller contract as for `ptr`.
+        unsafe { crate::malloc_abi::free(ptr) };
+    }
+    out
+}

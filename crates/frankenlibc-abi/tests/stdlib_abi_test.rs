@@ -10,9 +10,9 @@ use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atoll, clearenv, confstr, drand48, ecvt, erand48, fcvt, freezero, gcvt,
     get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv, getsubopt,
     initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48,
-    on_exit, qsort_r, random, reallocarray, recallocarray, seed48, setenv, setstate, srand48,
-    srandom, strtod, strtof, strtold, strtoll, strtonum, strtoq, strtoull, strtouq, system,
-    unsetenv,
+    on_exit, qsort_r, random, reallocarray, reallocf, recallocarray, seed48, setenv, setstate,
+    srand48, srandom, strtod, strtof, strtold, strtoll, strtonum, strtoq, strtoull, strtouq,
+    system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -30,6 +30,7 @@ use frankenlibc_abi::unistd_abi::{
     timer_delete, timer_getoverrun, timer_gettime, timer_settime, truncate64, ttyname, ttyname_r,
     unlockpt,
 };
+use frankenlibc_abi::unistd_abi::{arc4random_addrandom, arc4random_stir};
 use frankenlibc_core::syscall as raw_syscall;
 use std::ffi::CString;
 use std::os::fd::AsRawFd;
@@ -5803,4 +5804,77 @@ fn strtonum_leading_whitespace_then_value() {
     let v = unsafe { strtonum(s.as_ptr(), 0, 100, &mut errstr) };
     assert_eq!(v, 42);
     assert!(errstr.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// reallocf (BSD: realloc + free-on-failure)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reallocf_null_acts_like_malloc() {
+    // reallocf(NULL, n) == malloc(n).
+    let p = unsafe { reallocf(ptr::null_mut(), 32) };
+    assert!(!p.is_null());
+    unsafe { libc::free(p) };
+}
+
+#[test]
+fn reallocf_grow_preserves_prefix() {
+    let p = unsafe { reallocf(ptr::null_mut(), 16) } as *mut u8;
+    assert!(!p.is_null());
+    unsafe {
+        for i in 0..16u8 {
+            *p.add(i as usize) = i;
+        }
+    }
+    let grown = unsafe { reallocf(p.cast(), 64) } as *mut u8;
+    assert!(!grown.is_null());
+    unsafe {
+        for i in 0..16u8 {
+            assert_eq!(*grown.add(i as usize), i, "grow must preserve prefix");
+        }
+        libc::free(grown.cast());
+    }
+}
+
+#[test]
+fn reallocf_zero_size_returns_null_and_does_not_double_free() {
+    // glibc's realloc(p, 0) frees p and returns NULL. reallocf must
+    // not call free(p) again — the size==0 guard prevents the
+    // double-free.
+    let p = unsafe { reallocf(ptr::null_mut(), 16) };
+    assert!(!p.is_null());
+    let out = unsafe { reallocf(p, 0) };
+    assert!(out.is_null());
+    // If we got here without aborting from a double-free, the
+    // guard is doing its job.
+}
+
+#[test]
+fn reallocf_returns_realloc_pointer_on_success() {
+    let p = unsafe { reallocf(ptr::null_mut(), 8) };
+    assert!(!p.is_null());
+    let q = unsafe { reallocf(p, 64) };
+    assert!(!q.is_null());
+    unsafe { libc::free(q) };
+}
+
+// ---------------------------------------------------------------------------
+// arc4random_addrandom / arc4random_stir (deprecated no-op stubs)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn arc4random_addrandom_is_no_op() {
+    // No state to inspect; we're just verifying the symbol is callable
+    // and doesn't crash on NULL or arbitrary input.
+    unsafe { arc4random_addrandom(std::ptr::null_mut(), 0) };
+    let mut buf = [0u8; 32];
+    unsafe { arc4random_addrandom(buf.as_mut_ptr(), buf.len() as i32) };
+}
+
+#[test]
+fn arc4random_stir_is_no_op() {
+    unsafe { arc4random_stir() };
+    // Multiple calls don't accumulate state.
+    unsafe { arc4random_stir() };
 }

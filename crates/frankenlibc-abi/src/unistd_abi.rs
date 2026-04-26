@@ -4,7 +4,7 @@
 //! directory navigation (getcwd/chdir), process identity (getpid/getppid/getuid/...),
 //! link operations (link/symlink/readlink/unlink/rmdir), and sync (fsync/fdatasync).
 
-use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uint, c_ulong, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
@@ -3599,6 +3599,32 @@ pub unsafe extern "C" fn arc4random_uniform(upper_bound: u32) -> u32 {
             return r % upper_bound;
         }
     }
+}
+
+/// OpenBSD `arc4random_addrandom(dat, datlen)` — historical entropy-
+/// mixing primitive. Modern arc4random implementations (including
+/// ours) auto-reseed from getrandom(2)/getentropy(2) on demand, so
+/// the documented behavior is to make this a no-op while still
+/// exporting the symbol for libbsd-linked binaries.
+///
+/// # Safety
+///
+/// `dat` may be NULL or point to `datlen` bytes; the bytes are
+/// inspected solely to honour the historical contract — no
+/// internal state is mutated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn arc4random_addrandom(_dat: *mut c_uchar, _datlen: c_int) {
+    // Deprecated in OpenBSD 5.5 / glibc 2.41 compat: deliberate no-op.
+    // Kept as an exported symbol for binaries linked against libbsd.
+}
+
+/// OpenBSD `arc4random_stir()` — historical reseed trigger. Same
+/// deprecated-no-op rationale as `arc4random_addrandom`: our CSPRNG
+/// reseeds from kernel entropy on its own schedule and exposing this
+/// hook would only reintroduce attack surface.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn arc4random_stir() {
+    // Deprecated in OpenBSD 5.5 / glibc 2.41 compat: deliberate no-op.
 }
 
 // ---------------------------------------------------------------------------
@@ -14856,24 +14882,58 @@ pub unsafe extern "C" fn fts64_set(ftsp: *mut c_void, f_entry: *mut c_void, inst
 // Catgets (message catalog)
 // ===========================================================================
 // ===========================================================================
-// Argp (argument parsing framework) — native ENOSYS stubs
+// Argp (argument parsing framework)
 // ===========================================================================
-// The argp library is a complex GNU argument parsing framework with deep
-// internal state. Programs needing full argp should link against glibc directly.
-// We provide deterministic ENOSYS/EINVAL stubs so programs that merely export
-// the symbols (but may not actively use them) still work.
+
+#[repr(C)]
+struct ArgpHeader {
+    options: *const c_void,
+    parser: *const c_void,
+    args_doc: *const c_char,
+    doc: *const c_char,
+    children: *const c_void,
+    help_filter: *const c_void,
+    argp_domain: *const c_char,
+}
+
+impl ArgpHeader {
+    fn is_empty(&self) -> bool {
+        self.options.is_null()
+            && self.parser.is_null()
+            && self.args_doc.is_null()
+            && self.doc.is_null()
+            && self.children.is_null()
+            && self.help_filter.is_null()
+            && self.argp_domain.is_null()
+    }
+}
 
 /// `argp_parse` — parse arguments using argp framework.
-/// Returns EINVAL (argp framework not natively supported).
+///
+/// Native phase-1 support handles the common zeroed `struct argp` case as a
+/// successful no-op parse, matching glibc's behavior for empty parsers.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_parse(
-    _argp: *const c_void,
-    _argc: c_int,
-    _argv: *mut *mut c_char,
+    argp: *const c_void,
+    argc: c_int,
+    argv: *mut *mut c_char,
     _flags: libc::c_uint,
-    _arg_index: *mut c_int,
+    arg_index: *mut c_int,
     _input: *mut c_void,
 ) -> c_int {
+    if argp.is_null() || argc < 0 || (argc > 0 && argv.is_null()) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return libc::EINVAL;
+    }
+
+    let header = unsafe { &*(argp as *const ArgpHeader) };
+    if header.is_empty() {
+        if !arg_index.is_null() {
+            unsafe { *arg_index = argc.min(1) };
+        }
+        return 0;
+    }
+
     unsafe { set_abi_errno(libc::EINVAL) };
     libc::EINVAL
 }
