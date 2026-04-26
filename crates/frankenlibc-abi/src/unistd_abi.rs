@@ -8498,11 +8498,10 @@ pub unsafe extern "C" fn nis_write_obj(_filename: *const c_char, _obj: *const c_
 // ---------------------------------------------------------------------------
 //
 // Each xdr_* function is a (XDR *xdrs, T *p) -> bool_t encoder/decoder.
-// Without a real NIS backend we return XDR_TRUE (= 1, "successfully
-// encoded/decoded") without touching either the stream or the
-// destination struct. Callers proceed to send/receive an empty
-// payload; the kernel/transport will then fail at decode time on the
-// other end, which is the desired fail-safe outcome.
+// Without a real NIS backend we fail closed with XDR_FALSE (= 0)
+// without touching either the stream or the destination struct.
+// Returning success while decoding nothing would invite callers to
+// trust stale or uninitialized output.
 //
 // We only declare them here as no-mangle stubs so the link-edit
 // resolves cleanly. The *p pointer is not dereferenced.
@@ -8511,7 +8510,7 @@ macro_rules! xdr_stub {
     ($name:ident) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name(_xdrs: *mut c_void, _p: *mut c_void) -> c_int {
-            1 // XDR_TRUE
+            0 // XDR_FALSE
         }
     };
 }
@@ -8563,6 +8562,41 @@ pub unsafe extern "C" fn readColdStartFile() -> *mut c_void {
 pub unsafe extern "C" fn writeColdStartFile(_obj: *const c_void) -> c_int {
     0
 }
+
+// ---------------------------------------------------------------------------
+// _nss_files_endXX NSS plugin "end iteration" stubs
+// ---------------------------------------------------------------------------
+//
+// These are the GLIBC_PRIVATE-versioned NSS plugin entries for the
+// `files` source (i.e. /etc/passwd, /etc/group, /etc/hosts, ...)
+// when nsswitch.conf chooses it. Each takes no arguments and returns
+// `enum nss_status`. Returning NSS_STATUS_SUCCESS (= 1, "I
+// successfully ended the iteration") is the safe stub since we never
+// started one — the NSS dispatch layer accepts it and moves on.
+
+const NSS_STATUS_SUCCESS: c_int = 1;
+
+macro_rules! nss_files_end_stub {
+    ($name:ident) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name() -> c_int {
+            NSS_STATUS_SUCCESS
+        }
+    };
+}
+
+nss_files_end_stub!(_nss_files_endaliasent);
+nss_files_end_stub!(_nss_files_endetherent);
+nss_files_end_stub!(_nss_files_endgrent);
+nss_files_end_stub!(_nss_files_endhostent);
+nss_files_end_stub!(_nss_files_endnetent);
+nss_files_end_stub!(_nss_files_endnetgrent);
+nss_files_end_stub!(_nss_files_endprotoent);
+nss_files_end_stub!(_nss_files_endpwent);
+nss_files_end_stub!(_nss_files_endrpcent);
+nss_files_end_stub!(_nss_files_endservent);
+nss_files_end_stub!(_nss_files_endsgent);
+nss_files_end_stub!(_nss_files_endspent);
 
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches

@@ -9338,7 +9338,7 @@ fn nis_read_obj_returns_null_and_write_obj_returns_zero() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn nis_xdr_stubs_return_xdr_true_without_dereferencing() {
+fn nis_xdr_stubs_return_xdr_false_without_dereferencing() {
     use frankenlibc_abi::unistd_abi::{
         xdr_cback_data, xdr_domainname, xdr_keydat, xdr_mapname, xdr_obj_p, xdr_peername,
         xdr_valdat, xdr_yp_buf, xdr_ypall, xdr_ypbind_binding, xdr_ypbind_resp,
@@ -9352,52 +9352,52 @@ fn nis_xdr_stubs_return_xdr_true_without_dereferencing() {
     let bogus_xdrs = 0xDEAD_BEEF_usize as *mut c_void;
     let bogus_p = 0xCAFE_BABE_usize as *mut c_void;
 
-    macro_rules! assert_xdr_true {
+    macro_rules! assert_xdr_false {
         ($f:ident) => {{
             assert_eq!(
                 unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut()) },
-                1,
-                concat!(stringify!($f), "(NULL,NULL) should return XDR_TRUE")
+                0,
+                concat!(stringify!($f), "(NULL,NULL) should return XDR_FALSE")
             );
             assert_eq!(
                 unsafe { $f(bogus_xdrs, bogus_p) },
-                1,
-                concat!(stringify!($f), "(bogus,bogus) should return XDR_TRUE")
+                0,
+                concat!(stringify!($f), "(bogus,bogus) should return XDR_FALSE")
             );
         }};
     }
 
-    assert_xdr_true!(xdr_cback_data);
-    assert_xdr_true!(xdr_domainname);
-    assert_xdr_true!(xdr_keydat);
-    assert_xdr_true!(xdr_mapname);
-    assert_xdr_true!(xdr_obj_p);
-    assert_xdr_true!(xdr_peername);
-    assert_xdr_true!(xdr_valdat);
-    assert_xdr_true!(xdr_yp_buf);
-    assert_xdr_true!(xdr_ypall);
-    assert_xdr_true!(xdr_ypbind_binding);
-    assert_xdr_true!(xdr_ypbind_resp);
-    assert_xdr_true!(xdr_ypbind_resptype);
-    assert_xdr_true!(xdr_ypbind_setdom);
-    assert_xdr_true!(xdr_ypdelete_args);
-    assert_xdr_true!(xdr_ypmap_parms);
-    assert_xdr_true!(xdr_ypmaplist);
-    assert_xdr_true!(xdr_yppush_status);
-    assert_xdr_true!(xdr_yppushresp_xfr);
-    assert_xdr_true!(xdr_ypreq_key);
-    assert_xdr_true!(xdr_ypreq_nokey);
-    assert_xdr_true!(xdr_ypreq_xfr);
-    assert_xdr_true!(xdr_ypresp_all);
-    assert_xdr_true!(xdr_ypresp_key_val);
-    assert_xdr_true!(xdr_ypresp_maplist);
-    assert_xdr_true!(xdr_ypresp_master);
-    assert_xdr_true!(xdr_ypresp_order);
-    assert_xdr_true!(xdr_ypresp_val);
-    assert_xdr_true!(xdr_ypresp_xfr);
-    assert_xdr_true!(xdr_ypstat);
-    assert_xdr_true!(xdr_ypupdate_args);
-    assert_xdr_true!(xdr_ypxfrstat);
+    assert_xdr_false!(xdr_cback_data);
+    assert_xdr_false!(xdr_domainname);
+    assert_xdr_false!(xdr_keydat);
+    assert_xdr_false!(xdr_mapname);
+    assert_xdr_false!(xdr_obj_p);
+    assert_xdr_false!(xdr_peername);
+    assert_xdr_false!(xdr_valdat);
+    assert_xdr_false!(xdr_yp_buf);
+    assert_xdr_false!(xdr_ypall);
+    assert_xdr_false!(xdr_ypbind_binding);
+    assert_xdr_false!(xdr_ypbind_resp);
+    assert_xdr_false!(xdr_ypbind_resptype);
+    assert_xdr_false!(xdr_ypbind_setdom);
+    assert_xdr_false!(xdr_ypdelete_args);
+    assert_xdr_false!(xdr_ypmap_parms);
+    assert_xdr_false!(xdr_ypmaplist);
+    assert_xdr_false!(xdr_yppush_status);
+    assert_xdr_false!(xdr_yppushresp_xfr);
+    assert_xdr_false!(xdr_ypreq_key);
+    assert_xdr_false!(xdr_ypreq_nokey);
+    assert_xdr_false!(xdr_ypreq_xfr);
+    assert_xdr_false!(xdr_ypresp_all);
+    assert_xdr_false!(xdr_ypresp_key_val);
+    assert_xdr_false!(xdr_ypresp_maplist);
+    assert_xdr_false!(xdr_ypresp_master);
+    assert_xdr_false!(xdr_ypresp_order);
+    assert_xdr_false!(xdr_ypresp_val);
+    assert_xdr_false!(xdr_ypresp_xfr);
+    assert_xdr_false!(xdr_ypstat);
+    assert_xdr_false!(xdr_ypupdate_args);
+    assert_xdr_false!(xdr_ypxfrstat);
 }
 
 #[test]
@@ -9408,4 +9408,40 @@ fn readColdStartFile_returns_null_and_writeColdStartFile_returns_false() {
     let dummy = 0xDEAD as *const c_void;
     assert_eq!(unsafe { writeColdStartFile(dummy) }, 0);
     assert_eq!(unsafe { writeColdStartFile(std::ptr::null()) }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// _nss_files_endXX NSS plugin stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_files_end_stubs_return_nss_status_success() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_endaliasent, _nss_files_endetherent, _nss_files_endgrent, _nss_files_endhostent,
+        _nss_files_endnetent, _nss_files_endnetgrent, _nss_files_endprotoent, _nss_files_endpwent,
+        _nss_files_endrpcent, _nss_files_endservent, _nss_files_endsgent, _nss_files_endspent,
+    };
+
+    macro_rules! assert_nss_success {
+        ($f:ident) => {{
+            assert_eq!(
+                unsafe { $f() },
+                1,
+                concat!(stringify!($f), " should return NSS_STATUS_SUCCESS")
+            );
+        }};
+    }
+
+    assert_nss_success!(_nss_files_endaliasent);
+    assert_nss_success!(_nss_files_endetherent);
+    assert_nss_success!(_nss_files_endgrent);
+    assert_nss_success!(_nss_files_endhostent);
+    assert_nss_success!(_nss_files_endnetent);
+    assert_nss_success!(_nss_files_endnetgrent);
+    assert_nss_success!(_nss_files_endprotoent);
+    assert_nss_success!(_nss_files_endpwent);
+    assert_nss_success!(_nss_files_endrpcent);
+    assert_nss_success!(_nss_files_endservent);
+    assert_nss_success!(_nss_files_endsgent);
+    assert_nss_success!(_nss_files_endspent);
 }
