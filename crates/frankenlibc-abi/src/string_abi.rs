@@ -7294,6 +7294,32 @@ pub unsafe extern "C" fn timingsafe_memcmp(
     }
 }
 
+/// NetBSD `consttime_memequal(b1, b2, len)` — constant-time byte
+/// equality test. Returns `1` if the first `len` bytes of `b1` and
+/// `b2` are byte-equal, `0` otherwise. Always touches every byte
+/// regardless of where the inputs differ; used by crypto code (TLS
+/// / SSH MAC verification) to compare hashes without timing leaks.
+///
+/// `len == 0` always returns `1` (NetBSD convention: empty buffers
+/// trivially equal).
+///
+/// # Safety
+///
+/// Caller must ensure `b1` and `b2` are valid for `len` bytes
+/// each. `len == 0` is always safe.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn consttime_memequal(
+    b1: *const c_void,
+    b2: *const c_void,
+    len: usize,
+) -> c_int {
+    // Delegate to the established constant-time bcmp helper and
+    // invert: bcmp returns 0 for equal / non-zero for not-equal;
+    // consttime_memequal flips that to 1 for equal / 0 for not.
+    let bcmp_res = unsafe { timingsafe_bcmp(b1, b2, len) };
+    if bcmp_res == 0 { 1 } else { 0 }
+}
+
 // ---------------------------------------------------------------------------
 // strmode (BSD mode-bit-to-`ls -l`-style-string)
 // ---------------------------------------------------------------------------

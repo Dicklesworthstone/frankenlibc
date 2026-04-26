@@ -2114,6 +2114,75 @@ fn timingsafe_memcmp_pins_first_difference() {
 }
 
 // ---------------------------------------------------------------------------
+// consttime_memequal (NetBSD constant-time byte equality)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::string_abi::consttime_memequal;
+
+#[test]
+fn consttime_memequal_equal_returns_one() {
+    let a = b"hello, world";
+    let b = b"hello, world";
+    let r = unsafe { consttime_memequal(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert_eq!(r, 1);
+}
+
+#[test]
+fn consttime_memequal_different_returns_zero() {
+    let a = b"hello, world";
+    let b = b"hello, World";
+    let r = unsafe { consttime_memequal(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn consttime_memequal_zero_len_returns_one() {
+    let r = unsafe { consttime_memequal(std::ptr::null(), std::ptr::null(), 0) };
+    assert_eq!(r, 1);
+}
+
+#[test]
+fn consttime_memequal_single_byte_difference_at_end() {
+    // Differs only at the last byte — verify it's still detected.
+    let a = b"AAAAAAAA";
+    let b = b"AAAAAAAB";
+    let r = unsafe { consttime_memequal(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn consttime_memequal_single_byte_difference_at_start() {
+    let a = b"BAAAAAAA";
+    let b = b"AAAAAAAA";
+    let r = unsafe { consttime_memequal(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn consttime_memequal_null_pointers_treated_as_equal_only_if_same() {
+    // Inherits timingsafe_bcmp's NULL convention: same pointer → equal.
+    let r = unsafe { consttime_memequal(std::ptr::null(), std::ptr::null(), 4) };
+    assert_eq!(r, 1);
+    // One NULL one non-NULL → not equal.
+    let nonnull = b"abcd";
+    let r = unsafe { consttime_memequal(std::ptr::null(), nonnull.as_ptr().cast(), 4) };
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn consttime_memequal_examines_all_bytes_for_full_buffer_equality() {
+    // Build two 1024-byte buffers identical except for byte 800.
+    let mut a = vec![0xa5u8; 1024];
+    let mut b = vec![0xa5u8; 1024];
+    b[800] = 0x5a;
+    let r = unsafe { consttime_memequal(a.as_ptr().cast(), b.as_ptr().cast(), 1024) };
+    assert_eq!(r, 0);
+    a[800] = 0x5a;
+    let r = unsafe { consttime_memequal(a.as_ptr().cast(), b.as_ptr().cast(), 1024) };
+    assert_eq!(r, 1);
+}
+
+// ---------------------------------------------------------------------------
 // strmode (BSD mode-bit-to-`ls -l`-style-string)
 // ---------------------------------------------------------------------------
 
