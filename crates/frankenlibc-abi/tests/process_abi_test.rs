@@ -1418,6 +1418,9 @@ fn capital_exit_terminates_child_with_status_in_fork() {
     let mut status: c_int = 0;
     let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
     assert_eq!(waited, pid);
-    assert!(libc::WIFEXITED(status), "child should exit normally via _Exit");
+    assert!(
+        libc::WIFEXITED(status),
+        "child should exit normally via _Exit"
+    );
     assert_eq!(libc::WEXITSTATUS(status), 73);
 }
