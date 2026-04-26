@@ -6449,8 +6449,8 @@ fn fmtcheck_pointer_distinct_from_string() {
 // ---------------------------------------------------------------------------
 
 use frankenlibc_abi::stdlib_abi::{
-    getmode, pidfile_close, pidfile_fileno, pidfile_open, pidfile_remove, pidfile_write, setmode,
-    sl_add, sl_find, sl_free, sl_init,
+    getmode, heapsort, mergesort, pidfile_close, pidfile_fileno, pidfile_open, pidfile_remove,
+    pidfile_write, setmode, sl_add, sl_find, sl_free, sl_init,
 };
 
 #[test]
@@ -6844,4 +6844,173 @@ fn pidfile_write_overwrites_previous_content() {
     // No leftover trailing junk.
     assert!(contents.len() < 16, "got {contents:?}");
     let _ = unsafe { pidfile_remove(pfh) };
+}
+
+// ---------------------------------------------------------------------------
+// mergesort / heapsort (BSD libc sort variants)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn cmp_i32(a: *const std::ffi::c_void, b: *const std::ffi::c_void) -> c_int {
+    let av = unsafe { *(a as *const i32) };
+    let bv = unsafe { *(b as *const i32) };
+    av.cmp(&bv) as c_int
+}
+
+#[test]
+fn mergesort_sorts_random_input() {
+    let mut data = [3i32, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
+    let rc = unsafe {
+        mergesort(
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            data.len(),
+            std::mem::size_of::<i32>(),
+            Some(cmp_i32),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(data, [1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 9]);
+}
+
+#[test]
+fn mergesort_returns_zero_for_single_element() {
+    let mut data = [42i32];
+    let rc = unsafe {
+        mergesort(
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            1,
+            4,
+            Some(cmp_i32),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(data[0], 42);
+}
+
+#[test]
+fn mergesort_returns_zero_for_empty() {
+    let rc = unsafe { mergesort(ptr::null_mut(), 0, 4, Some(cmp_i32)) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn mergesort_null_compar_returns_einval() {
+    let mut data = [3i32, 1, 2];
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        mergesort(
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            data.len(),
+            4,
+            None,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn mergesort_zero_size_returns_einval() {
+    let mut data = [1i32, 2, 3];
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        mergesort(
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            data.len(),
+            0,
+            Some(cmp_i32),
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn heapsort_sorts_random_input() {
+    let mut data = [3i32, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
+    let rc = unsafe {
+        heapsort(
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            data.len(),
+            std::mem::size_of::<i32>(),
+            Some(cmp_i32),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(data, [1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 9]);
+}
+
+#[test]
+fn heapsort_returns_zero_for_single_element() {
+    let mut data = [42i32];
+    let rc = unsafe {
+        heapsort(
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            1,
+            4,
+            Some(cmp_i32),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(data[0], 42);
+}
+
+#[test]
+fn heapsort_null_compar_returns_einval() {
+    let mut data = [3i32, 1, 2];
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        heapsort(
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            data.len(),
+            4,
+            None,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn mergesort_is_stable_via_abi() {
+    // (key, original_index) pairs as 8-byte records; compare on key only.
+    #[repr(C)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug)]
+    struct Pair {
+        key: i32,
+        idx: i32,
+    }
+    unsafe extern "C" fn cmp_pair(a: *const std::ffi::c_void, b: *const std::ffi::c_void) -> c_int {
+        let av = unsafe { *(a as *const Pair) };
+        let bv = unsafe { *(b as *const Pair) };
+        av.key.cmp(&bv.key) as c_int
+    }
+    let mut data = [
+        Pair { key: 5, idx: 0 },
+        Pair { key: 3, idx: 1 },
+        Pair { key: 5, idx: 2 },
+        Pair { key: 1, idx: 3 },
+        Pair { key: 3, idx: 4 },
+        Pair { key: 5, idx: 5 },
+    ];
+    let rc = unsafe {
+        mergesort(
+            data.as_mut_ptr() as *mut std::ffi::c_void,
+            data.len(),
+            std::mem::size_of::<Pair>(),
+            Some(cmp_pair),
+        )
+    };
+    assert_eq!(rc, 0);
+    // Stable: equal keys preserve original index order.
+    assert_eq!(
+        data,
+        [
+            Pair { key: 1, idx: 3 },
+            Pair { key: 3, idx: 1 },
+            Pair { key: 3, idx: 4 },
+            Pair { key: 5, idx: 0 },
+            Pair { key: 5, idx: 2 },
+            Pair { key: 5, idx: 5 },
+        ]
+    );
 }

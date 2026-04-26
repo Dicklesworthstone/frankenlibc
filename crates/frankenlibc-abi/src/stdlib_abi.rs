@@ -955,6 +955,103 @@ pub unsafe extern "C" fn qsort(
 }
 
 // ---------------------------------------------------------------------------
+// mergesort / heapsort (BSD libc sort variants)
+// ---------------------------------------------------------------------------
+
+/// BSD `mergesort(base, nmemb, size, compar)` — STABLE sort with
+/// the same shape as qsort but returning int (0 on success, -1 with
+/// errno on failure). NULL `compar` or zero-size element is rejected
+/// with EINVAL; nmemb=0 / nmemb=1 is a no-op success.
+///
+/// # Safety
+///
+/// Caller must ensure `base` is valid for `nmemb * size` writable
+/// bytes and `compar` (if non-NULL) is a valid C function pointer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mergesort(
+    base: *mut c_void,
+    nmemb: usize,
+    size: usize,
+    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>,
+) -> c_int {
+    if size == 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let Some(compar_fn) = compar else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    if nmemb < 2 {
+        return 0;
+    }
+    let total_bytes = match nmemb.checked_mul(size) {
+        Some(t) => t,
+        None => {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return -1;
+        }
+    };
+    if base.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let wrapper = |a: &[u8], b: &[u8]| -> i32 {
+        unsafe { compar_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void) }
+    };
+    // SAFETY: caller contract for mergesort.
+    let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total_bytes) };
+    frankenlibc_core::stdlib::sort::mergesort(slice, size, wrapper);
+    0
+}
+
+/// BSD `heapsort(base, nmemb, size, compar)` — IN-PLACE non-stable
+/// heap sort with the same shape as mergesort. Returns 0 on
+/// success, -1 with errno on failure (NULL compar / zero-size /
+/// NULL base / overflow).
+///
+/// # Safety
+///
+/// Same as [`mergesort`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn heapsort(
+    base: *mut c_void,
+    nmemb: usize,
+    size: usize,
+    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>,
+) -> c_int {
+    if size == 0 {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let Some(compar_fn) = compar else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    if nmemb < 2 {
+        return 0;
+    }
+    let total_bytes = match nmemb.checked_mul(size) {
+        Some(t) => t,
+        None => {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return -1;
+        }
+    };
+    if base.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let wrapper = |a: &[u8], b: &[u8]| -> i32 {
+        unsafe { compar_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void) }
+    };
+    // SAFETY: caller contract for heapsort.
+    let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total_bytes) };
+    frankenlibc_core::stdlib::sort::heapsort(slice, size, wrapper);
+    0
+}
+
+// ---------------------------------------------------------------------------
 // bsearch
 // ---------------------------------------------------------------------------
 

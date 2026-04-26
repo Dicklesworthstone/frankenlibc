@@ -171,3 +171,265 @@ where
     }
     None
 }
+
+// ---------------------------------------------------------------------------
+// mergesort / heapsort — BSD libc sort variants
+// ---------------------------------------------------------------------------
+
+/// Stable BSD `mergesort`: same signature as `qsort` but preserves
+/// input order for elements that compare equal. Uses Rust's
+/// `Vec::sort_by` (timsort) on a copied-out element table, then
+/// writes the sorted elements back. This matches libbsd's contract
+/// of allocating temporary storage proportional to the input.
+pub fn mergesort<F>(base: &mut [u8], width: usize, compare: F)
+where
+    F: Fn(&[u8], &[u8]) -> i32 + Copy,
+{
+    if width == 0 || base.len() < width {
+        return;
+    }
+    let num = base.len() / width;
+    if num < 2 {
+        return;
+    }
+
+    // Copy the elements out so Rust's stable timsort can reorder
+    // them by value (instead of permuting an index array, which
+    // becomes hairy for non-trivial widths).
+    let mut elems: Vec<Vec<u8>> = (0..num)
+        .map(|i| base[i * width..(i + 1) * width].to_vec())
+        .collect();
+    elems.sort_by(|a, b| match compare(a, b).cmp(&0) {
+        core::cmp::Ordering::Less => core::cmp::Ordering::Less,
+        core::cmp::Ordering::Equal => core::cmp::Ordering::Equal,
+        core::cmp::Ordering::Greater => core::cmp::Ordering::Greater,
+    });
+    for (i, e) in elems.iter().enumerate() {
+        base[i * width..(i + 1) * width].copy_from_slice(e);
+    }
+}
+
+/// In-place BSD `heapsort`: builds a max-heap on the byte buffer
+/// itself (via index manipulation + element swaps) then repeatedly
+/// extracts the maximum. NOT stable. Uses no auxiliary storage
+/// proportional to `nmemb`.
+pub fn heapsort<F>(base: &mut [u8], width: usize, compare: F)
+where
+    F: Fn(&[u8], &[u8]) -> i32 + Copy,
+{
+    if width == 0 || base.len() < width {
+        return;
+    }
+    let num = base.len() / width;
+    if num < 2 {
+        return;
+    }
+
+    // Build heap (heapify — sift down from the last non-leaf).
+    let mut start = num / 2;
+    while start > 0 {
+        start -= 1;
+        sift_down(base, width, &compare, start, num);
+    }
+
+    // Repeatedly swap the root (max) with the last element of the
+    // active region, then sift down from 0 in the shrunk region.
+    let mut end = num;
+    while end > 1 {
+        end -= 1;
+        swap_elements(base, width, 0, end);
+        sift_down(base, width, &compare, 0, end);
+    }
+}
+
+fn swap_elements(base: &mut [u8], width: usize, a: usize, b: usize) {
+    if a == b {
+        return;
+    }
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    let (left, right) = base.split_at_mut(hi * width);
+    let lo_slice = &mut left[lo * width..(lo + 1) * width];
+    let hi_slice = &mut right[..width];
+    for i in 0..width {
+        core::mem::swap(&mut lo_slice[i], &mut hi_slice[i]);
+    }
+}
+
+fn sift_down<F>(base: &mut [u8], width: usize, compare: &F, mut root: usize, end: usize)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    loop {
+        let left = 2 * root + 1;
+        if left >= end {
+            return;
+        }
+        let right = left + 1;
+        // Pick the larger child.
+        let mut largest = left;
+        if right < end {
+            let l_slice = &base[left * width..(left + 1) * width];
+            let r_slice = &base[right * width..(right + 1) * width];
+            if compare(l_slice, r_slice) < 0 {
+                largest = right;
+            }
+        }
+        // Compare against root.
+        let root_slice = &base[root * width..(root + 1) * width];
+        let largest_slice = &base[largest * width..(largest + 1) * width];
+        if compare(root_slice, largest_slice) >= 0 {
+            return;
+        }
+        swap_elements(base, width, root, largest);
+        root = largest;
+    }
+}
+
+#[cfg(test)]
+mod sort_variant_tests {
+    use super::*;
+
+    fn cmp_u32_le(a: &[u8], b: &[u8]) -> i32 {
+        let av = u32::from_le_bytes(a[..4].try_into().unwrap());
+        let bv = u32::from_le_bytes(b[..4].try_into().unwrap());
+        av.cmp(&bv) as i32
+    }
+
+    fn flatten_u32(values: &[u32]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(values.len() * 4);
+        for &v in values {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
+
+    fn unflatten_u32(bytes: &[u8]) -> Vec<u32> {
+        bytes
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .collect()
+    }
+
+    // ---- mergesort (stable) ----
+
+    #[test]
+    fn mergesort_handles_sorted_input() {
+        let mut buf = flatten_u32(&[1, 2, 3, 4, 5]);
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn mergesort_handles_reverse_input() {
+        let mut buf = flatten_u32(&[5, 4, 3, 2, 1]);
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn mergesort_handles_random_input() {
+        let mut buf = flatten_u32(&[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]);
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 9]);
+    }
+
+    #[test]
+    fn mergesort_is_stable() {
+        // Encode (key, original_index) as 8 bytes: low 4 = key, high 4 = idx.
+        // Compare on key only; verify that equal-key elements preserve
+        // their original index ordering.
+        let pairs = [(5u32, 0u32), (3, 1), (5, 2), (1, 3), (3, 4), (5, 5), (1, 6)];
+        let mut buf = Vec::with_capacity(pairs.len() * 8);
+        for &(k, i) in &pairs {
+            buf.extend_from_slice(&k.to_le_bytes());
+            buf.extend_from_slice(&i.to_le_bytes());
+        }
+        mergesort(&mut buf, 8, |a, b| cmp_u32_le(&a[..4], &b[..4]));
+        let sorted: Vec<(u32, u32)> = buf
+            .chunks_exact(8)
+            .map(|c| {
+                (
+                    u32::from_le_bytes(c[0..4].try_into().unwrap()),
+                    u32::from_le_bytes(c[4..8].try_into().unwrap()),
+                )
+            })
+            .collect();
+        // For each key group, the indices must be in their original
+        // ascending order — that's the stability guarantee.
+        let mut expected = pairs.to_vec();
+        expected.sort_by_key(|a| a.0);
+        assert_eq!(sorted, expected);
+    }
+
+    #[test]
+    fn mergesort_single_element_no_op() {
+        let mut buf = flatten_u32(&[42]);
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![42]);
+    }
+
+    #[test]
+    fn mergesort_empty_no_op() {
+        let mut buf: Vec<u8> = Vec::new();
+        mergesort(&mut buf, 4, cmp_u32_le);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn mergesort_zero_width_no_op() {
+        let mut buf = flatten_u32(&[3, 1, 2]);
+        mergesort(&mut buf, 0, cmp_u32_le);
+        // Untouched.
+        assert_eq!(unflatten_u32(&buf), vec![3, 1, 2]);
+    }
+
+    // ---- heapsort (in-place, not stable) ----
+
+    #[test]
+    fn heapsort_handles_sorted_input() {
+        let mut buf = flatten_u32(&[1, 2, 3, 4, 5]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn heapsort_handles_reverse_input() {
+        let mut buf = flatten_u32(&[5, 4, 3, 2, 1]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn heapsort_handles_random_input() {
+        let mut buf = flatten_u32(&[3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 9]);
+    }
+
+    #[test]
+    fn heapsort_handles_all_equal() {
+        let mut buf = flatten_u32(&[7, 7, 7, 7, 7]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![7, 7, 7, 7, 7]);
+    }
+
+    #[test]
+    fn heapsort_single_element_no_op() {
+        let mut buf = flatten_u32(&[42]);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        assert_eq!(unflatten_u32(&buf), vec![42]);
+    }
+
+    #[test]
+    fn heapsort_large_random() {
+        // 100 elements pseudorandom to exercise heap depth. Use u64
+        // arithmetic to avoid overflow, then narrow.
+        let mut values: Vec<u32> = (0..100u64)
+            .map(|i| ((i.wrapping_mul(1103515245).wrapping_add(12345)) % 256) as u32)
+            .collect();
+        let mut buf = flatten_u32(&values);
+        heapsort(&mut buf, 4, cmp_u32_le);
+        values.sort();
+        assert_eq!(unflatten_u32(&buf), values);
+    }
+}
