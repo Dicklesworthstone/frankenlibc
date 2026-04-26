@@ -5743,6 +5743,172 @@ pub unsafe extern "C" fn clone3(cl_args: *mut c_void, size: usize) -> libc::pid_
 }
 
 // ---------------------------------------------------------------------------
+// fchmodat2 / eventfd2 / rt_sig* (procmask, queueinfo, suspend, tgsigqueueinfo)
+// ---------------------------------------------------------------------------
+
+/// Linux `fchmodat2(dirfd, pathname, mode, flags) -> int` (Linux
+/// 6.6+, `SYS_fchmodat2 = 452`) — like `fchmodat` but also accepts
+/// `AT_SYMLINK_NOFOLLOW` and `AT_EMPTY_PATH` flags.
+///
+/// # Safety
+///
+/// `pathname` must be a NUL-terminated C string (or, with
+/// `AT_EMPTY_PATH`, may be empty when `dirfd` already names the
+/// target).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fchmodat2(
+    dirfd: c_int,
+    pathname: *const c_char,
+    mode: libc::mode_t,
+    flags: c_int,
+) -> c_int {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_fchmodat2,
+            dirfd as libc::c_long,
+            pathname as libc::c_long,
+            mode as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `eventfd2(initval, flags) -> int` (`SYS_eventfd2 = 290`)
+/// — kernel-name variant of `eventfd` that accepts `flags`
+/// directly. Some sandbox/seccomp policies trace this name
+/// explicitly so we expose it alongside our higher-level
+/// `eventfd`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn eventfd2(initval: c_uint, flags: c_int) -> c_int {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_eventfd2,
+            initval as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `rt_sigprocmask(how, *set, *oldset, sigsetsize) -> int`
+/// (`SYS_rt_sigprocmask = 14`) — kernel-level `sigprocmask` with an
+/// explicit `sigsetsize` parameter.
+///
+/// # Safety
+///
+/// `set` and `oldset`, when non-NULL, must each point to at least
+/// `sigsetsize` bytes describing a `sigset_t`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rt_sigprocmask(
+    how: c_int,
+    set: *const c_void,
+    oldset: *mut c_void,
+    sigsetsize: usize,
+) -> c_int {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_rt_sigprocmask,
+            how as libc::c_long,
+            set as libc::c_long,
+            oldset as libc::c_long,
+            sigsetsize as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `rt_sigqueueinfo(tgid, sig, *uinfo) -> int`
+/// (`SYS_rt_sigqueueinfo = 129`) — send a `siginfo_t` to a thread
+/// group.
+///
+/// # Safety
+///
+/// `uinfo`, when non-NULL, must point to a valid `siginfo_t`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rt_sigqueueinfo(
+    tgid: libc::pid_t,
+    sig: c_int,
+    uinfo: *mut c_void,
+) -> c_int {
+    if uinfo.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_rt_sigqueueinfo,
+            tgid as libc::c_long,
+            sig as libc::c_long,
+            uinfo as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `rt_sigsuspend(*mask, sigsetsize) -> int`
+/// (`SYS_rt_sigsuspend = 130`) — temporarily replace the calling
+/// thread's signal mask with `*mask` and sleep until a non-masked
+/// signal arrives. Always returns -1 with errno set (typically
+/// `EINTR`).
+///
+/// # Safety
+///
+/// `mask` must point to at least `sigsetsize` bytes describing a
+/// `sigset_t`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rt_sigsuspend(mask: *const c_void, sigsetsize: usize) -> c_int {
+    if mask.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_rt_sigsuspend,
+            mask as libc::c_long,
+            sigsetsize as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `rt_tgsigqueueinfo(tgid, tid, sig, *uinfo) -> int`
+/// (`SYS_rt_tgsigqueueinfo = 297`) — send a `siginfo_t` to a
+/// specific thread (vs. the whole thread group).
+///
+/// # Safety
+///
+/// `uinfo`, when non-NULL, must point to a valid `siginfo_t`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn rt_tgsigqueueinfo(
+    tgid: libc::pid_t,
+    tid: libc::pid_t,
+    sig: c_int,
+    uinfo: *mut c_void,
+) -> c_int {
+    if uinfo.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_rt_tgsigqueueinfo,
+            tgid as libc::c_long,
+            tid as libc::c_long,
+            sig as libc::c_long,
+            uinfo as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+// ---------------------------------------------------------------------------
 // Scheduler — RawSyscall
 // ---------------------------------------------------------------------------
 
