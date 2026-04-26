@@ -8409,9 +8409,157 @@ fn xcrypt_aliases_match_crypt_counterparts() {
     assert_eq!(unsafe { CStr::from_ptr(pc) }, unsafe { CStr::from_ptr(pd) });
 
     // Sanity: the gensalt result is a valid input for crypt().
-    let salt_str = CString::new(pa_bytes).unwrap();
-    let hashed = unsafe { crypt(key.as_ptr(), salt_str.as_ptr()) };
+    let mut salt_str = pa_bytes;
+    salt_str.push(0);
+    let hashed = unsafe { crypt(key.as_ptr(), salt_str.as_ptr() as *const c_char) };
     assert!(!hashed.is_null());
+}
+
+#[test]
+fn yp_fail_safe_stubs_zero_outputs_and_return_stable_errors() {
+    use frankenlibc_abi::unistd_abi::{
+        yp_all, yp_bind, yp_first, yp_get_default_domain, yp_maplist, yp_master, yp_match, yp_next,
+        yp_order, yp_unbind, yp_update, ypbinderr_string, yperr_string, ypprot_err,
+    };
+
+    const YPERR_DOMAIN: c_int = 3;
+    const YPERR_YPBIND: c_int = 10;
+    const YPERR_NODOM: c_int = 12;
+
+    let dom = c"local";
+    let map = c"passwd.byname";
+    let key = c"root";
+
+    let mut domain = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    assert_eq!(unsafe { yp_get_default_domain(&mut domain) }, YPERR_NODOM);
+    assert!(domain.is_null());
+
+    assert_eq!(unsafe { yp_bind(dom.as_ptr()) }, YPERR_DOMAIN);
+    unsafe { yp_unbind(dom.as_ptr()) };
+
+    let mut val = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    let mut vallen: c_int = -1;
+    assert_eq!(
+        unsafe {
+            yp_match(
+                dom.as_ptr(),
+                map.as_ptr(),
+                key.as_ptr(),
+                4,
+                &mut val,
+                &mut vallen,
+            )
+        },
+        YPERR_DOMAIN
+    );
+    assert!(val.is_null());
+    assert_eq!(vallen, 0);
+
+    let mut outkey = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    let mut outkeylen: c_int = -1;
+    let mut outval = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    let mut outvallen: c_int = -1;
+    assert_eq!(
+        unsafe {
+            yp_first(
+                dom.as_ptr(),
+                map.as_ptr(),
+                &mut outkey,
+                &mut outkeylen,
+                &mut outval,
+                &mut outvallen,
+            )
+        },
+        YPERR_DOMAIN
+    );
+    assert!(outkey.is_null());
+    assert_eq!(outkeylen, 0);
+    assert!(outval.is_null());
+    assert_eq!(outvallen, 0);
+
+    outkey = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    outkeylen = -1;
+    outval = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    outvallen = -1;
+    assert_eq!(
+        unsafe {
+            yp_next(
+                dom.as_ptr(),
+                map.as_ptr(),
+                key.as_ptr(),
+                4,
+                &mut outkey,
+                &mut outkeylen,
+                &mut outval,
+                &mut outvallen,
+            )
+        },
+        YPERR_DOMAIN
+    );
+    assert!(outkey.is_null());
+    assert_eq!(outkeylen, 0);
+    assert!(outval.is_null());
+    assert_eq!(outvallen, 0);
+
+    assert_eq!(
+        unsafe { yp_all(dom.as_ptr(), map.as_ptr(), std::ptr::null_mut()) },
+        YPERR_DOMAIN
+    );
+
+    let mut master = std::ptr::NonNull::<c_char>::dangling().as_ptr();
+    assert_eq!(
+        unsafe { yp_master(dom.as_ptr(), map.as_ptr(), &mut master) },
+        YPERR_DOMAIN
+    );
+    assert!(master.is_null());
+
+    let mut order: c_uint = 123;
+    assert_eq!(
+        unsafe { yp_order(dom.as_ptr(), map.as_ptr(), &mut order) },
+        YPERR_DOMAIN
+    );
+    assert_eq!(order, 0);
+
+    let mut maplist = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+    assert_eq!(
+        unsafe { yp_maplist(dom.as_ptr(), &mut maplist) },
+        YPERR_DOMAIN
+    );
+    assert!(maplist.is_null());
+
+    assert_eq!(
+        unsafe {
+            yp_update(
+                dom.as_ptr(),
+                map.as_ptr(),
+                1,
+                key.as_ptr(),
+                4,
+                key.as_ptr(),
+                4,
+            )
+        },
+        YPERR_DOMAIN
+    );
+
+    assert_eq!(
+        unsafe { CStr::from_ptr(yperr_string(YPERR_NODOM)) }.to_bytes(),
+        b"local domain name not set"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(yperr_string(-1)) }.to_bytes(),
+        b"unknown yp error"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(ypbinderr_string(2)) }.to_bytes(),
+        b"Domain not bound"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(ypbinderr_string(-1)) }.to_bytes(),
+        b"unknown ypbind error"
+    );
+    assert_eq!(unsafe { ypprot_err(0) }, 0);
+    assert_eq!(unsafe { ypprot_err(1) }, YPERR_YPBIND);
 }
 
 // ---------------------------------------------------------------------------
@@ -8590,4 +8738,148 @@ fn ypprot_err_collapses_to_ypbind_or_zero() {
     assert_eq!(unsafe { ypprot_err(0) }, 0);
     assert_eq!(unsafe { ypprot_err(1) }, 10);
     assert_eq!(unsafe { ypprot_err(7) }, 10);
+}
+
+// ---------------------------------------------------------------------------
+// NIS+ nis_* fail-safe stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_local_queries_return_empty_strings() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_local_directory, nis_local_group, nis_local_host, nis_local_principal,
+    };
+    for name in [
+        unsafe { nis_local_directory() },
+        unsafe { nis_local_host() },
+        unsafe { nis_local_principal() },
+        unsafe { nis_local_group() },
+    ] {
+        assert!(!name.is_null());
+        let s = unsafe { CStr::from_ptr(name) };
+        assert_eq!(s.to_bytes(), b"");
+    }
+}
+
+#[test]
+fn nis_free_helpers_are_noops_on_null_and_arbitrary_pointers() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_free_directory, nis_free_object, nis_free_request, nis_freenames, nis_freeresult,
+        nis_freeservlist, nis_freetags,
+    };
+    // NULL inputs must not crash.
+    unsafe {
+        nis_freeresult(std::ptr::null_mut());
+        nis_freenames(std::ptr::null_mut());
+        nis_free_object(std::ptr::null_mut());
+        nis_free_directory(std::ptr::null_mut());
+        nis_free_request(std::ptr::null_mut());
+        nis_freeservlist(std::ptr::null_mut());
+        nis_freetags(std::ptr::null_mut());
+    }
+    // Bogus pointers must not be dereferenced — the stubs are pure
+    // no-ops so this verifies they don't try to walk the input.
+    let bogus = 0xDEAD_BEEF_usize as *mut c_void;
+    unsafe {
+        nis_freeresult(bogus);
+        nis_free_object(bogus);
+    }
+}
+
+#[test]
+fn nis_sperrno_returns_static_descriptions_for_known_codes() {
+    use frankenlibc_abi::unistd_abi::nis_sperrno;
+    let s = unsafe { CStr::from_ptr(nis_sperrno(0)) };
+    assert_eq!(s.to_bytes(), b"Success");
+    let s = unsafe { CStr::from_ptr(nis_sperrno(5)) };
+    assert_eq!(s.to_bytes(), b"Name unreachable");
+    let s = unsafe { CStr::from_ptr(nis_sperrno(63)) };
+    assert_eq!(s.to_bytes(), b"Generic NIS+ failure");
+    let s = unsafe { CStr::from_ptr(nis_sperrno(999)) };
+    assert_eq!(s.to_bytes(), b"Unknown NIS+ error");
+}
+
+#[test]
+fn nis_sperror_returns_malloced_label_message() {
+    use frankenlibc_abi::unistd_abi::nis_sperror;
+    let label = CString::new("mylabel").unwrap();
+    let p = unsafe { nis_sperror(5, label.as_ptr()) };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert_eq!(s.to_bytes(), b"mylabel: Name unreachable");
+    unsafe { frankenlibc_abi::malloc_abi::free(p as *mut c_void) };
+}
+
+#[test]
+fn nis_sperror_with_null_label_omits_prefix() {
+    use frankenlibc_abi::unistd_abi::nis_sperror;
+    let p = unsafe { nis_sperror(2, std::ptr::null()) };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert_eq!(s.to_bytes(), b"Not found");
+    unsafe { frankenlibc_abi::malloc_abi::free(p as *mut c_void) };
+}
+
+#[test]
+fn nis_sperror_r_writes_into_caller_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_sperror_r;
+    let label = CString::new("op").unwrap();
+    let mut buf = [0u8; 64];
+    let p = unsafe {
+        nis_sperror_r(
+            11,
+            label.as_ptr(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(!p.is_null());
+    assert_eq!(p as *const u8, buf.as_ptr());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert_eq!(s.to_bytes(), b"op: Out of memory");
+}
+
+#[test]
+fn nis_sperror_r_returns_erange_when_buffer_too_small() {
+    use frankenlibc_abi::unistd_abi::nis_sperror_r;
+    let mut buf = [0u8; 4];
+    let p = unsafe {
+        nis_sperror_r(
+            0,
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ERANGE);
+}
+
+#[test]
+fn nis_sperror_r_null_buf_returns_einval() {
+    use frankenlibc_abi::unistd_abi::nis_sperror_r;
+    let p = unsafe { nis_sperror_r(0, std::ptr::null(), std::ptr::null_mut(), 16) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+fn nis_perror_writes_to_stderr_without_crashing() {
+    use frankenlibc_abi::unistd_abi::nis_perror;
+    // We just verify it doesn't crash; capturing stderr from inside
+    // the test harness is unreliable across platforms.
+    let label = CString::new("msg").unwrap();
+    unsafe { nis_perror(5, label.as_ptr()) };
+    // NULL label is also valid.
+    unsafe { nis_perror(0, std::ptr::null()) };
+}
+
+#[test]
+fn nis_lerror_is_a_no_op() {
+    use frankenlibc_abi::unistd_abi::nis_lerror;
+    let label = CString::new("op").unwrap();
+    unsafe { nis_lerror(5, label.as_ptr()) };
+    unsafe { nis_lerror(0, std::ptr::null()) };
 }

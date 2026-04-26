@@ -7717,6 +7717,238 @@ const _: () = {
     let _ = YPERR_KEY;
 };
 
+// ---------------------------------------------------------------------------
+// NIS+ (nis_*) fail-safe stubs (libnsl parity)
+// ---------------------------------------------------------------------------
+//
+// NIS+ was deprecated by Sun in the late 1990s and is dead
+// infrastructure. These stubs let binaries that statically reference
+// the symbols resolve at link-edit while returning safe failure values
+// (NIS_NAMEUNREACHABLE) at runtime.
+
+const NIS_NAMEUNREACHABLE: c_int = 5;
+
+static NIS_LOCAL_EMPTY: [c_char; 1] = [0];
+
+/// libnsl `nis_local_directory() -> *const c_char` — return the
+/// local NIS+ directory name. Stub returns the empty string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_local_directory() -> *const c_char {
+    NIS_LOCAL_EMPTY.as_ptr()
+}
+
+/// libnsl `nis_local_host() -> *const c_char` — return the local
+/// NIS+ host name. Stub returns the empty string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_local_host() -> *const c_char {
+    NIS_LOCAL_EMPTY.as_ptr()
+}
+
+/// libnsl `nis_local_principal() -> *const c_char` — return the
+/// principal-name string for the calling process. Stub returns the
+/// empty string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_local_principal() -> *const c_char {
+    NIS_LOCAL_EMPTY.as_ptr()
+}
+
+/// libnsl `nis_local_group() -> *const c_char` — return the
+/// local NIS+ group name. Stub returns the empty string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_local_group() -> *const c_char {
+    NIS_LOCAL_EMPTY.as_ptr()
+}
+
+// nis_freeresult / nis_freenames / nis_free_object / nis_free_directory
+// / nis_free_request / nis_freeservlist / nis_freetags — every
+// query/list operation in our stubs would never have allocated
+// anything, so all the free helpers are no-ops.
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_freeresult(_result: *mut c_void) {}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_freenames(_names: *mut *mut c_char) {}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_free_object(_obj: *mut c_void) {}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_free_directory(_dir: *mut c_void) {}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_free_request(_req: *mut c_void) {}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_freeservlist(_list: *mut *mut c_void) {}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_freetags(_tags: *mut c_void) {}
+
+// Static descriptions for nis_sperrno() / nis_sperror() / nis_perror().
+// Indexed by the standard NIS+ enum nis_error values (0..63).
+fn nis_error_text(status: c_int) -> &'static [u8] {
+    match status {
+        0 => b"Success",
+        1 => b"Probably success",
+        2 => b"Not found",
+        3 => b"Probably not found",
+        4 => b"Cache expired",
+        5 => b"Name unreachable",
+        6 => b"Unknown object",
+        7 => b"Try again",
+        8 => b"System error",
+        9 => b"Chain broken",
+        10 => b"Permission denied",
+        11 => b"Out of memory",
+        12 => b"Object name exists",
+        13 => b"Not master server",
+        14 => b"Object/entry is invalid",
+        15 => b"Could not contact master",
+        16 => b"Could not generate name",
+        17 => b"Subsystem failure",
+        18 => b"Master server busy",
+        19 => b"Object update failure",
+        20 => b"Update could not be propagated",
+        21 => b"Operation not supported",
+        22 => b"Update partially failed",
+        23 => b"Lookup limit reached",
+        24 => b"Permission denied (modify)",
+        25 => b"Already at server end",
+        26 => b"Returned data malformed",
+        27 => b"Object/entry conflict",
+        28 => b"Operation not yet implemented",
+        63 => b"Generic NIS+ failure",
+        _ => b"Unknown NIS+ error",
+    }
+}
+
+/// libnsl `nis_sperrno(status) -> *const c_char` — return a static
+/// human-readable description of a NIS+ status code. The returned
+/// pointer is backed by a thread-local buffer and remains valid until
+/// the next `nis_sperrno` call on the same thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_sperrno(status: c_int) -> *const c_char {
+    thread_local! {
+        static NIS_SPERRNO_TLS: core::cell::RefCell<Vec<u8>> =
+            const { core::cell::RefCell::new(Vec::new()) };
+    }
+    NIS_SPERRNO_TLS.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        buf.clear();
+        buf.extend_from_slice(nis_error_text(status));
+        buf.push(0);
+        buf.as_ptr() as *const c_char
+    })
+}
+
+/// libnsl `nis_perror(status, label)` — write `<label>: <message>`
+/// to fd 2.
+///
+/// # Safety
+///
+/// `label`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_perror(status: c_int, label: *const c_char) {
+    let mut msg = Vec::<u8>::new();
+    if !label.is_null() {
+        // SAFETY: caller-supplied NUL-terminated string.
+        let lbytes = unsafe { CStr::from_ptr(label) }.to_bytes();
+        msg.extend_from_slice(lbytes);
+        msg.extend_from_slice(b": ");
+    }
+    msg.extend_from_slice(nis_error_text(status));
+    msg.push(b'\n');
+    // SAFETY: raw syscall write to stderr; the buffer outlives the call.
+    let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+}
+
+/// libnsl `nis_lerror(status, label)` — log to syslog. Stub no-op
+/// (syslog not wired into our libnsl stub layer).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_lerror(_status: c_int, _label: *const c_char) {}
+
+/// libnsl `nis_sperror(status, label) -> *mut c_char` — return a
+/// freshly-`malloc`-allocated `"<label>: <message>"` string the
+/// caller is responsible for `free`ing. Returns NULL on alloc
+/// failure.
+///
+/// # Safety
+///
+/// `label`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_sperror(status: c_int, label: *const c_char) -> *mut c_char {
+    let mut tmp = Vec::<u8>::new();
+    if !label.is_null() {
+        // SAFETY: caller-supplied NUL-terminated string.
+        let lbytes = unsafe { CStr::from_ptr(label) }.to_bytes();
+        tmp.extend_from_slice(lbytes);
+        tmp.extend_from_slice(b": ");
+    }
+    tmp.extend_from_slice(nis_error_text(status));
+    tmp.push(0);
+    let buf = unsafe { crate::malloc_abi::malloc(tmp.len()) };
+    if buf.is_null() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return core::ptr::null_mut();
+    }
+    // SAFETY: buf has tmp.len() writable bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            tmp.as_ptr() as *const c_char,
+            buf as *mut c_char,
+            tmp.len(),
+        );
+    }
+    buf as *mut c_char
+}
+
+/// libnsl `nis_sperror_r(status, label, *buf, buflen) -> *mut c_char`
+/// — write `"<label>: <message>"` into the caller's buffer and
+/// return `buf` on success, or NULL with errno=ERANGE if the buffer
+/// is too small.
+///
+/// # Safety
+///
+/// `buf`, when non-NULL, must point to at least `buflen` writable
+/// bytes. `label`, when non-NULL, must be a NUL-terminated C
+/// string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_sperror_r(
+    status: c_int,
+    label: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
+) -> *mut c_char {
+    if buf.is_null() || buflen == 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    }
+    let mut tmp = Vec::<u8>::new();
+    if !label.is_null() {
+        // SAFETY: caller-supplied NUL-terminated string.
+        let lbytes = unsafe { CStr::from_ptr(label) }.to_bytes();
+        tmp.extend_from_slice(lbytes);
+        tmp.extend_from_slice(b": ");
+    }
+    tmp.extend_from_slice(nis_error_text(status));
+    tmp.push(0);
+    if tmp.len() > buflen {
+        unsafe { set_abi_errno(errno::ERANGE) };
+        return core::ptr::null_mut();
+    }
+    // SAFETY: buf has buflen >= tmp.len() bytes.
+    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr() as *const c_char, buf, tmp.len()) };
+    buf
+}
+
+#[allow(dead_code)]
+const _: () = {
+    // Reference NIS_NAMEUNREACHABLE so future additions of nis_lookup
+    // / nis_list / etc. that return it stay grouped with this module.
+    let _ = NIS_NAMEUNREACHABLE;
+};
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.
