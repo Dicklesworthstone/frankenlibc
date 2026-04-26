@@ -6873,3 +6873,125 @@ pub unsafe extern "C" fn fpurge(stream: *mut c_void) -> c_int {
     unsafe { crate::glibc_internal_abi::__fpurge(stream) };
     0
 }
+
+// ---------------------------------------------------------------------------
+// fparseln (NetBSD libutil logical-line reader)
+// ---------------------------------------------------------------------------
+//
+// Drives our own fgetc loop to assemble physical lines, then folds them
+// through frankenlibc_core::stdio::fparseln per the libutil grammar.
+// Returns a malloc'd C string the caller must free().
+
+const FPARSELN_DEFAULT_DELIM: [u8; 3] = [b'\\', b'\n', b'#'];
+
+/// NetBSD libutil `fparseln(stream, *len, *lineno, delim, flags)` —
+/// read a logical line from `stream`, handling backslash
+/// continuation, comments, and escape sequences per the
+/// `frankenlibc_core::stdio::fparseln` rules. Returns a
+/// freshly-`malloc`-allocated NUL-terminated string the caller is
+/// responsible for freeing, or NULL on EOF / read error.
+///
+/// `delim`, when non-NULL, is a 3-byte array `[escape, separator,
+/// comment]`. NULL selects the documented defaults `['\\', '\n', '#']`.
+///
+/// `*len` (when non-NULL) is set to the length of the returned
+/// string excluding the trailing NUL. `*lineno` (when non-NULL) is
+/// incremented by the number of physical lines consumed.
+///
+/// # Safety
+///
+/// `stream` must be a valid `FILE *`. `len`/`lineno`/`delim`, when
+/// non-NULL, must point to writable storage of the appropriate type.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fparseln(
+    stream: *mut c_void,
+    len: *mut usize,
+    lineno: *mut usize,
+    delim: *const c_char,
+    flags: c_int,
+) -> *mut c_char {
+    if stream.is_null() {
+        if !len.is_null() {
+            unsafe { *len = 0 };
+        }
+        return std::ptr::null_mut();
+    }
+
+    let delim_bytes = if delim.is_null() {
+        FPARSELN_DEFAULT_DELIM
+    } else {
+        // SAFETY: caller-supplied 3-byte array.
+        unsafe { [*delim as u8, *delim.add(1) as u8, *delim.add(2) as u8] }
+    };
+
+    let mut out_buf: Vec<u8> = Vec::new();
+    let mut consumed_any_line = false;
+    let mut lines_consumed: usize = 0;
+
+    loop {
+        // Read one physical line via fgetc until separator or EOF.
+        let mut phys: Vec<u8> = Vec::new();
+        let mut hit_eof_immediately = true;
+        loop {
+            // SAFETY: stream is a valid FILE* per caller.
+            let c = unsafe { fgetc(stream) };
+            if c == -1 {
+                break;
+            }
+            hit_eof_immediately = false;
+            phys.push(c as u8);
+            if c as u8 == delim_bytes[1] {
+                break;
+            }
+        }
+        if hit_eof_immediately && !consumed_any_line {
+            // True EOF on the very first read of this fparseln call.
+            if !len.is_null() {
+                unsafe { *len = 0 };
+            }
+            return std::ptr::null_mut();
+        }
+        consumed_any_line = true;
+        lines_consumed += 1;
+
+        let outcome = frankenlibc_core::stdio::fparseln::fold_line(
+            &phys,
+            &mut out_buf,
+            delim_bytes,
+            flags as u32,
+        );
+        if matches!(
+            outcome,
+            frankenlibc_core::stdio::fparseln::FoldOutcome::Done
+        ) {
+            break;
+        }
+        // Continuation: loop and read the next physical line.
+        if hit_eof_immediately {
+            break;
+        }
+    }
+
+    if !lineno.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *lineno = (*lineno).wrapping_add(lines_consumed) };
+    }
+
+    // Allocate via malloc so the caller can free() per BSD contract.
+    let n = out_buf.len();
+    let raw = unsafe { crate::malloc_abi::malloc(n + 1) } as *mut c_char;
+    if raw.is_null() {
+        if !len.is_null() {
+            unsafe { *len = 0 };
+        }
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(out_buf.as_ptr(), raw as *mut u8, n);
+        *raw.add(n) = 0;
+    }
+    if !len.is_null() {
+        unsafe { *len = n };
+    }
+    raw
+}

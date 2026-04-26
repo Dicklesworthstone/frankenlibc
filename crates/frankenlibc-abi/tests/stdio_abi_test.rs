@@ -63,6 +63,7 @@ use frankenlibc_abi::stdio_abi::{
     fopen,
     fopen64,
     fopencookie,
+    fparseln,
     fprintf,
     fpurge,
     fputc,
@@ -3719,4 +3720,158 @@ fn fpurge_returns_zero_on_valid_stream() {
 fn fpurge_returns_minus_one_for_null_stream() {
     let rc = unsafe { fpurge(std::ptr::null_mut()) };
     assert_eq!(rc, -1);
+}
+
+// ---------------------------------------------------------------------------
+// fparseln (NetBSD libutil logical-line reader)
+// ---------------------------------------------------------------------------
+
+fn fparseln_temp_file(content: &[u8]) -> std::path::PathBuf {
+    let seq = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc-fparseln-{}-{seq}.txt",
+        std::process::id()
+    ));
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+fn fparseln_open_for_read(path: &std::path::Path) -> *mut c_void {
+    let cstr = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mode = c"r";
+    let fp = unsafe { fopen(cstr.as_ptr(), mode.as_ptr()) };
+    assert!(!fp.is_null());
+    fp
+}
+
+fn fparseln_collect_string(p: *mut c_char, len: usize) -> Vec<u8> {
+    assert!(!p.is_null());
+    let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, len).to_vec() };
+    unsafe { libc::free(p as *mut std::ffi::c_void) };
+    bytes
+}
+
+#[test]
+fn fparseln_plain_line_no_decoration() {
+    let path = fparseln_temp_file(b"hello\n");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 0;
+    let mut lineno: usize = 0;
+    let p = unsafe { fparseln(fp, &mut len, &mut lineno, std::ptr::null(), 0) };
+    let s = fparseln_collect_string(p, len);
+    assert_eq!(s, b"hello");
+    assert_eq!(lineno, 1);
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_strips_comment() {
+    let path = fparseln_temp_file(b"foo # bar\n");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 0;
+    let p = unsafe { fparseln(fp, &mut len, std::ptr::null_mut(), std::ptr::null(), 0) };
+    let s = fparseln_collect_string(p, len);
+    assert_eq!(s, b"foo ");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_joins_continuation_lines() {
+    let path = fparseln_temp_file(b"foo \\\nbar\n");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 0;
+    let mut lineno: usize = 5;
+    let p = unsafe { fparseln(fp, &mut len, &mut lineno, std::ptr::null(), 0) };
+    let s = fparseln_collect_string(p, len);
+    assert_eq!(s, b"foo bar");
+    assert_eq!(lineno, 7, "lineno must increment by 2 physical lines");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_returns_null_on_eof() {
+    let path = fparseln_temp_file(b"");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 99;
+    let p = unsafe { fparseln(fp, &mut len, std::ptr::null_mut(), std::ptr::null(), 0) };
+    assert!(p.is_null());
+    assert_eq!(len, 0);
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_unesc_all_returns_raw_line() {
+    let path = fparseln_temp_file(b"foo # bar \\\nbaz\n");
+    let fp = fparseln_open_for_read(&path);
+    let mut len: usize = 0;
+    // FPARSELN_UNESCALL = 0x0f
+    let p = unsafe { fparseln(fp, &mut len, std::ptr::null_mut(), std::ptr::null(), 0x0f) };
+    let s = fparseln_collect_string(p, len);
+    // No comment strip, no continuation, no escape processing.
+    assert_eq!(s, b"foo # bar \\");
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_custom_delimiters() {
+    // delim = ['$', ';', '%']: escape='$', sep=';', comment='%'.
+    let path = fparseln_temp_file(b"foo$;bar;baz%comment;");
+    let fp = fparseln_open_for_read(&path);
+    let delim = [b'$' as c_char, b';' as c_char, b'%' as c_char];
+    let mut len: usize = 0;
+    // First call: "foo$;bar" — $; is continuation; assembles as
+    // "foo" + "bar" = "foobar".
+    let p = unsafe { fparseln(fp, &mut len, std::ptr::null_mut(), delim.as_ptr(), 0) };
+    let s = fparseln_collect_string(p, len);
+    assert_eq!(s, b"foobar");
+
+    // Second call: "baz%comment" — % strips the comment, returns
+    // "baz". The trailing ';' (separator) is consumed.
+    let mut len2: usize = 0;
+    let p2 = unsafe { fparseln(fp, &mut len2, std::ptr::null_mut(), delim.as_ptr(), 0) };
+    let s2 = fparseln_collect_string(p2, len2);
+    assert_eq!(s2, b"baz");
+
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn fparseln_null_stream_returns_null() {
+    let mut len: usize = 99;
+    let p = unsafe {
+        fparseln(
+            std::ptr::null_mut(),
+            &mut len,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            0,
+        )
+    };
+    assert!(p.is_null());
+    assert_eq!(len, 0);
+}
+
+#[test]
+fn fparseln_null_len_pointer_safe() {
+    let path = fparseln_temp_file(b"x\n");
+    let fp = fparseln_open_for_read(&path);
+    let p = unsafe {
+        fparseln(
+            fp,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            0,
+        )
+    };
+    assert!(!p.is_null());
+    unsafe { libc::free(p as *mut std::ffi::c_void) };
+    unsafe { fclose(fp) };
+    let _ = std::fs::remove_file(&path);
 }

@@ -11,6 +11,7 @@
 
 pub mod buffer;
 pub mod file;
+pub mod fparseln;
 pub mod printf;
 pub mod scanf;
 
