@@ -10,6 +10,7 @@ pub mod dehumanize_number;
 pub mod ecvt;
 pub mod env;
 pub mod exit;
+pub mod expand_number;
 pub mod getbsize;
 pub mod math;
 pub mod random;

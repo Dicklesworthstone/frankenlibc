@@ -7,12 +7,12 @@ use std::ffi::c_char;
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
-    a64l, at_quick_exit, atoll, clearenv, confstr, dehumanize_number, drand48, ecvt, erand48, fcvt,
-    freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize,
-    getenv, getsubopt, initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps,
-    mrand48, nrand48, on_exit, qsort_r, random, reallocarray, reallocf, recallocarray, seed48,
-    setenv, setstate, srand48, srandom, strtod, strtof, strtold, strtoll, strtonum, strtoq,
-    strtoull, strtouq, system, unsetenv,
+    a64l, at_quick_exit, atoll, clearenv, confstr, dehumanize_number, drand48, ecvt, erand48,
+    expand_number, fcvt, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf,
+    get_phys_pages, getbsize, getenv, getsubopt, initstate, jrand48, l64a, lcong48, lrand48,
+    mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, qsort_r, random, reallocarray,
+    reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom, strtod, strtof, strtold,
+    strtoll, strtonum, strtoq, strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -5992,4 +5992,118 @@ fn dehumanize_leading_whitespace() {
     let rc = unsafe { dehumanize_number(s.as_ptr(), &mut size) };
     assert_eq!(rc, 0);
     assert_eq!(size, 42 * 1024);
+}
+
+// ---------------------------------------------------------------------------
+// expand_number (FreeBSD libutil decimal-fraction size parser)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn expand_plain_decimal() {
+    let s = c"42";
+    let mut num: u64 = 0;
+    let rc = unsafe { expand_number(s.as_ptr(), &mut num) };
+    assert_eq!(rc, 0);
+    assert_eq!(num, 42);
+}
+
+#[test]
+fn expand_kilobyte_suffix() {
+    let s = c"4K";
+    let mut num: u64 = 0;
+    let rc = unsafe { expand_number(s.as_ptr(), &mut num) };
+    assert_eq!(rc, 0);
+    assert_eq!(num, 4096);
+}
+
+#[test]
+fn expand_decimal_fraction() {
+    let s = c"1.5K";
+    let mut num: u64 = 0;
+    let rc = unsafe { expand_number(s.as_ptr(), &mut num) };
+    assert_eq!(rc, 0);
+    assert_eq!(num, 1536);
+}
+
+#[test]
+fn expand_negative_is_einval() {
+    let s = c"-1k";
+    let mut num: u64 = 0;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { expand_number(s.as_ptr(), &mut num) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn expand_b_suffix_is_einval() {
+    // FreeBSD expand_number does NOT recognize b/B (unlike NetBSD).
+    let s = c"4B";
+    let mut num: u64 = 0;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { expand_number(s.as_ptr(), &mut num) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn expand_fraction_without_suffix_is_einval() {
+    let s = c"1.5";
+    let mut num: u64 = 0;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { expand_number(s.as_ptr(), &mut num) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn expand_overflow_sets_erange() {
+    let s = c"16E"; // 16 * 1024^6 overflows u64::MAX
+    let mut num: u64 = 0;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { expand_number(s.as_ptr(), &mut num) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
+}
+
+#[test]
+fn expand_null_buf_is_einval() {
+    let mut num: u64 = 0;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { expand_number(ptr::null(), &mut num) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn expand_null_num_pointer_is_einval() {
+    let s = c"42";
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { expand_number(s.as_ptr(), ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn expand_all_size_suffixes() {
+    let cases: &[(&core::ffi::CStr, u64)] = &[
+        (c"1k", 1024),
+        (c"1K", 1024),
+        (c"2m", 2 * 1024 * 1024),
+        (c"2M", 2 * 1024 * 1024),
+        (c"1g", 1024 * 1024 * 1024),
+        (c"1G", 1024 * 1024 * 1024),
+        (c"1t", 1024u64.pow(4)),
+        (c"1T", 1024u64.pow(4)),
+        (c"1p", 1024u64.pow(5)),
+        (c"1P", 1024u64.pow(5)),
+        (c"1e", 1024u64.pow(6)),
+        (c"1E", 1024u64.pow(6)),
+    ];
+    for (s, expected) in cases {
+        let mut num: u64 = 0;
+        let rc = unsafe { expand_number(s.as_ptr(), &mut num) };
+        assert_eq!(rc, 0, "input {s:?} should parse");
+        assert_eq!(num, *expected, "input {s:?} value mismatch");
+    }
 }

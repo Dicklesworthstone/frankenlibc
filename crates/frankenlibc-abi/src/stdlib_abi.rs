@@ -4743,3 +4743,55 @@ pub unsafe extern "C" fn dehumanize_number(str_ptr: *const c_char, size: *mut i6
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// expand_number (FreeBSD libutil decimal-fraction size parser)
+// ---------------------------------------------------------------------------
+
+/// FreeBSD `expand_number(buf, num)` — parse `buf` as a non-negative
+/// human-readable size with optional decimal fraction and one-character
+/// suffix (k/K=1024, m/M=1024^2, g/G=1024^3, t/T=1024^4, p/P=1024^5,
+/// e/E=1024^6 — note: no `b/B`, unlike NetBSD `dehumanize_number`).
+/// Stores the result through `*num` and returns 0; on failure returns
+/// -1 with errno set to:
+///
+/// * `EINVAL` — empty input, missing digits, negative sign,
+///   fractional part without a suffix, unknown suffix, or trailing
+///   garbage.
+/// * `ERANGE` — arithmetic overflow during accumulation or the
+///   suffix multiply.
+///
+/// `buf == NULL` or `num == NULL` yields -1 with errno=EINVAL.
+///
+/// # Safety
+///
+/// Caller must ensure `buf`, when non-NULL, is a valid NUL-terminated
+/// C string and `num` points to writable `uint64_t` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn expand_number(buf: *const c_char, num: *mut u64) -> c_int {
+    use frankenlibc_core::stdlib::expand_number as core_ex;
+
+    if buf.is_null() || num.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+
+    // SAFETY: caller-supplied NUL-terminated C string.
+    let bytes = unsafe { CStr::from_ptr(buf) }.to_bytes();
+
+    match core_ex::parse(bytes) {
+        Ok(v) => {
+            // SAFETY: caller-supplied writable slot.
+            unsafe { *num = v };
+            0
+        }
+        Err(core_ex::ExpandError::Invalid) => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            -1
+        }
+        Err(core_ex::ExpandError::Overflow) => {
+            unsafe { set_abi_errno(libc::ERANGE) };
+            -1
+        }
+    }
+}
