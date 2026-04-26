@@ -3675,3 +3675,36 @@ fn libc_mallinfo_reports_nonzero_arena_or_uordblks() {
     let info = unsafe { __libc_mallinfo() };
     assert!(info.arena > 0 || info.uordblks > 0);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 3 _Float128 libm classification helpers (bd-sy6p6)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fpclassifyf128_classifies_nan_inf_zero_normal() {
+    use frankenlibc_abi::glibc_internal_abi::__fpclassifyf128;
+    // FP_NAN = 0, FP_INFINITE = 1, FP_ZERO = 2, FP_SUBNORMAL = 3, FP_NORMAL = 4
+    assert_eq!(unsafe { __fpclassifyf128(f64::NAN) }, 0);
+    assert_eq!(unsafe { __fpclassifyf128(f64::INFINITY) }, 1);
+    assert_eq!(unsafe { __fpclassifyf128(0.0_f64) }, 2);
+    assert_eq!(unsafe { __fpclassifyf128(1.0_f64) }, 4);
+}
+
+#[test]
+fn isinff128_returns_signed_one_for_inf_zero_otherwise() {
+    use frankenlibc_abi::glibc_internal_abi::__isinff128;
+    assert_eq!(unsafe { __isinff128(f64::INFINITY) }, 1);
+    assert_eq!(unsafe { __isinff128(f64::NEG_INFINITY) }, -1);
+    assert_eq!(unsafe { __isinff128(0.0_f64) }, 0);
+    assert_eq!(unsafe { __isinff128(1.0_f64) }, 0);
+    assert_eq!(unsafe { __isinff128(f64::NAN) }, 0);
+}
+
+#[test]
+fn signbitf128_distinguishes_positive_and_negative_zero() {
+    use frankenlibc_abi::glibc_internal_abi::__signbitf128;
+    assert_eq!(unsafe { __signbitf128(1.0_f64) }, 0);
+    assert_eq!(unsafe { __signbitf128(-1.0_f64) }, 1);
+    assert_eq!(unsafe { __signbitf128(0.0_f64) }, 0);
+    assert_eq!(unsafe { __signbitf128(-0.0_f64) }, 1);
+}

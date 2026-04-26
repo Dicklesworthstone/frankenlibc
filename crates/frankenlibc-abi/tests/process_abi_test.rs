@@ -1398,3 +1398,26 @@ fn under_waitid_observes_child_termination() {
     assert_eq!(info.si_signo, libc::SIGCHLD);
     assert_eq!(info.si_code, libc::CLD_EXITED);
 }
+
+// ---------------------------------------------------------------------------
+// Test for C99 _Exit (bd-sy6p6)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn capital_exit_terminates_child_with_status_in_fork() {
+    use frankenlibc_abi::process_abi::_Exit;
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let pid = unsafe { fork() };
+    assert!(pid >= 0, "fork should succeed");
+
+    if pid == 0 {
+        // Child: terminate via _Exit with a recognizable status.
+        unsafe { _Exit(73) };
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFEXITED(status), "child should exit normally via _Exit");
+    assert_eq!(libc::WEXITSTATUS(status), 73);
+}
