@@ -3497,3 +3497,42 @@ fn libc_use_alloca_matches_libc_alloca_cutoff() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// __libc_fatal (glibc internal noreturn fatal-error helper)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::glibc_internal_abi::__libc_fatal;
+use std::ffi::c_int;
+
+#[test]
+fn libc_fatal_aborts_child_with_message() {
+    // The function never returns and aborts the process. Run it
+    // in a forked child so we can observe SIGABRT without
+    // killing the test runner.
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+    if pid == 0 {
+        let msg = c"frankenlibc test fatal\n";
+        unsafe { __libc_fatal(msg.as_ptr()) };
+    }
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
+#[test]
+fn libc_fatal_null_message_still_aborts_with_fallback() {
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+    if pid == 0 {
+        unsafe { __libc_fatal(std::ptr::null()) };
+    }
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}

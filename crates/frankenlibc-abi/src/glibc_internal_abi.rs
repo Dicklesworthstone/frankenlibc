@@ -8943,3 +8943,39 @@ pub unsafe extern "C" fn __libc_alloca_cutoff(size: usize) -> c_int {
 pub unsafe extern "C" fn __libc_use_alloca(size: usize) -> c_int {
     unsafe { __libc_alloca_cutoff(size) }
 }
+
+// ---------------------------------------------------------------------------
+// __libc_fatal (glibc internal noreturn fatal-error helper)
+// ---------------------------------------------------------------------------
+
+/// glibc internal `__libc_fatal(message)` — write `message` to
+/// stderr then abort. Called by ld.so internals, pthread setup
+/// paths, and the malloc heap-corruption detector when something
+/// is unrecoverable. Marked `-> !` because we never return.
+///
+/// NULL `message` falls back to a generic "fatal: unknown error"
+/// diagnostic to avoid faulting on the diagnostic itself.
+///
+/// # Safety
+///
+/// `message`, when non-NULL, must be a NUL-terminated byte string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
+    if message.is_null() {
+        let fallback: &[u8] = b"fatal: unknown error\n";
+        unsafe {
+            libc::write(2, fallback.as_ptr() as *const c_void, fallback.len());
+            libc::abort();
+        }
+    }
+    let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+    unsafe {
+        libc::write(2, bytes.as_ptr() as *const c_void, bytes.len());
+        // Ensure a trailing newline so the diagnostic isn't merged
+        // with whatever the parent shell prints next.
+        if bytes.last().copied() != Some(b'\n') {
+            libc::write(2, b"\n".as_ptr() as *const c_void, 1);
+        }
+        libc::abort();
+    }
+}
