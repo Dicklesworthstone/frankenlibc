@@ -4700,3 +4700,59 @@ fn under_pthread_key_delete_freshly_created_key_returns_zero() {
     let rc = unsafe { __pthread_key_delete(key) };
     assert_eq!(rc, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Glibc reserved-namespace aliases:
+// __pthread_cond_init / __pthread_cond_destroy / __pthread_cond_timedwait
+// __pthread_attr_init / __pthread_attr_destroy
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_pthread_cond_init_destroy_round_trip() {
+    let mut cond: libc::pthread_cond_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { __pthread_cond_init(&mut cond, std::ptr::null()) };
+    assert_eq!(rc, 0);
+    let rc = unsafe { __pthread_cond_destroy(&mut cond) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_pthread_cond_timedwait_returns_etimedout_on_past_deadline() {
+    let mut cond: libc::pthread_cond_t = unsafe { std::mem::zeroed() };
+    let mut mutex: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+    unsafe {
+        assert_eq!(__pthread_cond_init(&mut cond, std::ptr::null()), 0);
+        assert_eq!(pthread_mutex_init(&mut mutex, std::ptr::null()), 0);
+    }
+    // abstime in the past — timedwait must return ETIMEDOUT immediately.
+    let abstime = libc::timespec {
+        tv_sec: 1,
+        tv_nsec: 0,
+    };
+    unsafe {
+        assert_eq!(pthread_mutex_lock(&mut mutex), 0);
+        let rc = __pthread_cond_timedwait(&mut cond, &mut mutex, &abstime);
+        assert_eq!(rc, libc::ETIMEDOUT);
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(__pthread_cond_destroy(&mut cond), 0);
+        assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+    }
+}
+
+#[test]
+fn under_pthread_attr_init_destroy_round_trip() {
+    let mut attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { __pthread_attr_init(&mut attr) };
+    assert_eq!(rc, 0);
+    let rc = unsafe { __pthread_attr_destroy(&mut attr) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_pthread_attr_destroy_on_uninitialized_returns_einval() {
+    // A zero-initialized attr was never registered as managed —
+    // destroy must reject it (matches public pthread_attr_destroy).
+    let mut attr: libc::pthread_attr_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { __pthread_attr_destroy(&mut attr) };
+    assert_eq!(rc, libc::EINVAL);
+}

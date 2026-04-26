@@ -2547,6 +2547,29 @@ pub unsafe extern "C" fn pthread_cond_destroy(cond: *mut libc::pthread_cond_t) -
     unsafe { core_condvar_destroy(cond_ptr) }
 }
 
+/// glibc reserved-namespace alias for [`pthread_cond_init`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_init`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_init(
+    cond: *mut libc::pthread_cond_t,
+    attr: *const libc::pthread_condattr_t,
+) -> c_int {
+    unsafe { pthread_cond_init(cond, attr) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_destroy`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_destroy`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_destroy(cond: *mut libc::pthread_cond_t) -> c_int {
+    unsafe { pthread_cond_destroy(cond) }
+}
+
 /// POSIX `pthread_cond_wait`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_cond_wait(
@@ -2896,6 +2919,20 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
     }
 
     rc
+}
+
+/// glibc reserved-namespace alias for [`pthread_cond_timedwait`].
+///
+/// # Safety
+///
+/// Same as [`pthread_cond_timedwait`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_cond_timedwait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+    abstime: *const libc::timespec,
+) -> c_int {
+    unsafe { pthread_cond_timedwait(cond, mutex, abstime) }
 }
 
 // ===========================================================================
@@ -3266,6 +3303,26 @@ pub unsafe extern "C" fn pthread_attr_destroy(attr: *mut libc::pthread_attr_t) -
         std::ptr::write_bytes(data, 0, 1);
     }
     0
+}
+
+/// glibc reserved-namespace alias for [`pthread_attr_init`].
+///
+/// # Safety
+///
+/// Same as [`pthread_attr_init`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_attr_init(attr: *mut libc::pthread_attr_t) -> c_int {
+    unsafe { pthread_attr_init(attr) }
+}
+
+/// glibc reserved-namespace alias for [`pthread_attr_destroy`].
+///
+/// # Safety
+///
+/// Same as [`pthread_attr_destroy`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pthread_attr_destroy(attr: *mut libc::pthread_attr_t) -> c_int {
+    unsafe { pthread_attr_destroy(attr) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
