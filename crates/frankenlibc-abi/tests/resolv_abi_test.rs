@@ -1514,3 +1514,154 @@ fn ns_makecanon_einval_on_null_inputs() {
     let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
     assert_eq!(errno, libc::EINVAL);
 }
+
+// ---------------------------------------------------------------------------
+// libresolv ns_parse_ttl / ns_format_ttl / ns_datetosecs
+// ---------------------------------------------------------------------------
+
+fn parse_ttl(s: &str) -> Option<u32> {
+    use frankenlibc_abi::resolv_abi::ns_parse_ttl;
+    let cstr = std::ffi::CString::new(s).unwrap();
+    let mut out: u32 = 0;
+    let rc = unsafe { ns_parse_ttl(cstr.as_ptr(), &mut out) };
+    if rc == 0 { Some(out) } else { None }
+}
+
+#[test]
+fn ns_parse_ttl_handles_units() {
+    assert_eq!(parse_ttl("60"), Some(60));
+    assert_eq!(parse_ttl("60S"), Some(60));
+    assert_eq!(parse_ttl("60s"), Some(60));
+    assert_eq!(parse_ttl("1M"), Some(60));
+    assert_eq!(parse_ttl("1H"), Some(3_600));
+    assert_eq!(parse_ttl("1D"), Some(86_400));
+    assert_eq!(parse_ttl("1W"), Some(604_800));
+    assert_eq!(parse_ttl("1d2h3m4s"), Some(86_400 + 7_200 + 180 + 4));
+    assert_eq!(parse_ttl("0"), Some(0));
+}
+
+#[test]
+fn ns_parse_ttl_rejects_syntax_errors() {
+    // Unit without preceding digits.
+    assert_eq!(parse_ttl("H"), None);
+    // Unknown unit.
+    assert_eq!(parse_ttl("5Z"), None);
+    // Non-digit non-unit character.
+    assert_eq!(parse_ttl("12+34"), None);
+    // Empty string is permissive: returns 0 (matches BIND reference loop
+    // semantics — the parse loop terminates without consuming any input
+    // and the accumulator remains zero).
+    assert_eq!(parse_ttl(""), Some(0));
+}
+
+#[test]
+fn ns_parse_ttl_rejects_overflow() {
+    // 2^32 = 4_294_967_296; this should overflow u32.
+    assert_eq!(parse_ttl("4294967296"), None);
+    // 7200W * 604800 sec/week = 4_354_560_000 > u32::MAX → overflow.
+    assert_eq!(parse_ttl("7200W"), None);
+    // 11-digit number (>10 digits) overruns u32 and is rejected by the
+    // digit-count guard.
+    assert_eq!(parse_ttl("99999999999"), None);
+}
+
+fn format_ttl(secs: u32, capacity: usize) -> Option<String> {
+    use frankenlibc_abi::resolv_abi::ns_format_ttl;
+    let mut buf = vec![0u8; capacity];
+    let rc = unsafe { ns_format_ttl(secs, buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    if rc < 0 {
+        return None;
+    }
+    let n = rc as usize;
+    Some(String::from_utf8(buf[..n].to_vec()).unwrap())
+}
+
+#[test]
+fn ns_format_ttl_single_unit_is_uppercase() {
+    assert_eq!(format_ttl(0, 32).as_deref(), Some("0S"));
+    assert_eq!(format_ttl(60, 32).as_deref(), Some("1M"));
+    assert_eq!(format_ttl(3_600, 32).as_deref(), Some("1H"));
+    assert_eq!(format_ttl(86_400, 32).as_deref(), Some("1D"));
+    assert_eq!(format_ttl(604_800, 32).as_deref(), Some("1W"));
+}
+
+#[test]
+fn ns_format_ttl_multi_unit_is_lowercase() {
+    // 86460 = 1 day + 1 minute → "1d1m" (lowercased per BIND9 ref).
+    assert_eq!(format_ttl(86_460, 32).as_deref(), Some("1d1m"));
+    // 3661 = 1h1m1s.
+    assert_eq!(format_ttl(3_661, 32).as_deref(), Some("1h1m1s"));
+}
+
+#[test]
+fn ns_format_ttl_round_trips_via_parse() {
+    for &val in &[0u32, 1, 59, 60, 3_600, 86_400, 86_461, 604_800, 1_234_567] {
+        let s = format_ttl(val, 64).expect("format should succeed");
+        let cs = std::ffi::CString::new(s.clone()).unwrap();
+        let mut out: u32 = 0;
+        let rc = unsafe { frankenlibc_abi::resolv_abi::ns_parse_ttl(cs.as_ptr(), &mut out) };
+        assert_eq!(rc, 0, "parse failed for round-trip '{s}' from {val}");
+        assert_eq!(out, val, "round-trip mismatch via '{s}'");
+    }
+}
+
+#[test]
+fn ns_format_ttl_returns_minus_one_when_buffer_too_small() {
+    use frankenlibc_abi::resolv_abi::ns_format_ttl;
+    // "0S" + NUL needs 3; buffer of 2 should fail.
+    let mut buf = [0u8; 2];
+    assert_eq!(
+        unsafe { ns_format_ttl(0, buf.as_mut_ptr() as *mut c_char, buf.len()) },
+        -1
+    );
+    // NULL dst → -1.
+    assert_eq!(unsafe { ns_format_ttl(0, std::ptr::null_mut(), 0) }, -1);
+}
+
+#[test]
+fn ns_datetosecs_parses_valid_utc_strings() {
+    use frankenlibc_abi::resolv_abi::ns_datetosecs;
+    // 2024-01-01T00:00:00 UTC = 1704067200 (well-known).
+    let s = std::ffi::CString::new("20240101000000").unwrap();
+    let mut errp: c_int = 99;
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 0);
+    assert_eq!(secs, 1_704_067_200);
+
+    // 1970-01-01T00:00:00 UTC = 0 (epoch).
+    let s = std::ffi::CString::new("19700101000000").unwrap();
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 0);
+    assert_eq!(secs, 0);
+}
+
+#[test]
+fn ns_datetosecs_rejects_malformed_strings() {
+    use frankenlibc_abi::resolv_abi::ns_datetosecs;
+    let mut errp: c_int = 0;
+
+    // Wrong length (13 chars).
+    let s = std::ffi::CString::new("2024010100000").unwrap();
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+
+    // Right length but non-digit.
+    let s = std::ffi::CString::new("2024X101000000").unwrap();
+    errp = 0;
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+
+    // Out-of-range month.
+    let s = std::ffi::CString::new("20241301000000").unwrap();
+    errp = 0;
+    let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+}
+
+#[test]
+fn ns_datetosecs_tolerates_null_errp() {
+    use frankenlibc_abi::resolv_abi::ns_datetosecs;
+    let s = std::ffi::CString::new("20240101000000").unwrap();
+    let secs = unsafe { ns_datetosecs(s.as_ptr(), std::ptr::null_mut()) };
+    assert_eq!(secs, 1_704_067_200);
+}

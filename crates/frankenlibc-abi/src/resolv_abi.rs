@@ -2324,3 +2324,272 @@ pub unsafe extern "C" fn ns_makecanon(
     }
     0
 }
+
+// ===========================================================================
+// libresolv ns_parse_ttl / ns_format_ttl / ns_datetosecs
+// ===========================================================================
+
+/// libresolv `ns_parse_ttl(src, *dst) -> int` — parse a DNS TTL
+/// string. Grammar (case-insensitive): `(number unit?)+` where
+/// `unit` is one of `W`, `D`, `H`, `M`, `S` and a missing trailing
+/// unit defaults to seconds. Multipliers: W=604800, D=86400,
+/// H=3600, M=60, S=1.
+///
+/// Returns 0 on success and writes the total seconds to `*dst`;
+/// returns -1 on syntax error or u32 overflow.
+///
+/// # Safety
+///
+/// `src` must be a NUL-terminated C string. `dst`, when non-NULL,
+/// must point to writable `u32` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_parse_ttl(src: *const c_char, dst: *mut u32) -> c_int {
+    if src.is_null() {
+        return -1;
+    }
+    // SAFETY: caller-supplied NUL-terminated string.
+    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let mut total: u32 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let mut tmp: u32 = 0;
+        let mut digits = 0;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            // overflow check on the per-component accumulator
+            let next = tmp
+                .checked_mul(10)
+                .and_then(|n| n.checked_add((bytes[i] - b'0') as u32));
+            tmp = match next {
+                Some(v) => v,
+                None => return -1,
+            };
+            digits += 1;
+            if digits > 10 {
+                return -1;
+            }
+            i += 1;
+        }
+        if digits == 0 {
+            return -1;
+        }
+        let mul: u32 = if i >= bytes.len() {
+            1 // missing trailing unit = seconds
+        } else {
+            match bytes[i] {
+                b'w' | b'W' => {
+                    i += 1;
+                    604_800
+                }
+                b'd' | b'D' => {
+                    i += 1;
+                    86_400
+                }
+                b'h' | b'H' => {
+                    i += 1;
+                    3_600
+                }
+                b'm' | b'M' => {
+                    i += 1;
+                    60
+                }
+                b's' | b'S' => {
+                    i += 1;
+                    1
+                }
+                _ => return -1,
+            }
+        };
+        let component = match tmp.checked_mul(mul) {
+            Some(v) => v,
+            None => return -1,
+        };
+        total = match total.checked_add(component) {
+            Some(v) => v,
+            None => return -1,
+        };
+    }
+    if !dst.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *dst = total };
+    }
+    0
+}
+
+#[inline]
+fn ttl_emit_unit(value: u32, unit: u8, dst: &mut [u8], pos: &mut usize) -> bool {
+    // Format value in decimal then append unit. Returns false on overflow.
+    let mut digits = [0u8; 10];
+    let mut n = value;
+    let mut len = 0usize;
+    if n == 0 {
+        digits[0] = b'0';
+        len = 1;
+    } else {
+        while n > 0 {
+            digits[len] = b'0' + (n % 10) as u8;
+            n /= 10;
+            len += 1;
+        }
+    }
+    if *pos + len + 1 > dst.len() {
+        return false;
+    }
+    for i in 0..len {
+        dst[*pos + i] = digits[len - 1 - i];
+    }
+    dst[*pos + len] = unit;
+    *pos += len + 1;
+    true
+}
+
+/// libresolv `ns_format_ttl(src, dst, dstlen) -> int` — format
+/// `src` (a TTL in seconds) as a C string at `dst` of capacity
+/// `dstlen`. Greedy decomposition into weeks (`W`), days (`D`),
+/// hours (`H`), minutes (`M`), seconds (`S`). When more than one
+/// unit is present the result is lowercase; with a single unit it
+/// is uppercase, matching BIND9's libresolv reference. The output
+/// is NUL-terminated.
+///
+/// Returns the number of characters written (excluding the
+/// terminating NUL) on success, or -1 on overflow.
+///
+/// # Safety
+///
+/// `dst`, when non-NULL, must point to at least `dstlen` writable
+/// bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_format_ttl(mut src: u32, dst: *mut c_char, dstlen: usize) -> c_int {
+    if dst.is_null() || dstlen == 0 {
+        return -1;
+    }
+    let secs = src % 60;
+    src /= 60;
+    let mins = src % 60;
+    src /= 60;
+    let hours = src % 24;
+    src /= 24;
+    let days = src % 7;
+    src /= 7;
+    let weeks = src;
+
+    // Need NUL-terminator slot; reserve one.
+    let mut buf = vec![0u8; dstlen];
+    let mut pos = 0usize;
+    let mut units = 0;
+    if weeks != 0 && ttl_emit_unit(weeks, b'W', &mut buf, &mut pos) {
+        units += 1;
+    } else if weeks != 0 {
+        return -1;
+    }
+    if days != 0 && ttl_emit_unit(days, b'D', &mut buf, &mut pos) {
+        units += 1;
+    } else if days != 0 {
+        return -1;
+    }
+    if hours != 0 && ttl_emit_unit(hours, b'H', &mut buf, &mut pos) {
+        units += 1;
+    } else if hours != 0 {
+        return -1;
+    }
+    if mins != 0 && ttl_emit_unit(mins, b'M', &mut buf, &mut pos) {
+        units += 1;
+    } else if mins != 0 {
+        return -1;
+    }
+    let any_higher = weeks != 0 || days != 0 || hours != 0 || mins != 0;
+    if secs != 0 || !any_higher {
+        if !ttl_emit_unit(secs, b'S', &mut buf, &mut pos) {
+            return -1;
+        }
+        units += 1;
+    }
+
+    if pos + 1 > dstlen {
+        return -1;
+    }
+
+    // Multi-unit results are lowercased per the BIND reference.
+    if units > 1 {
+        for b in buf.iter_mut().take(pos) {
+            if b.is_ascii_uppercase() {
+                *b = b.to_ascii_lowercase();
+            }
+        }
+    }
+
+    // SAFETY: dst points to dstlen writable bytes; we wrote `pos` <= dstlen-1.
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, dst, pos);
+        *dst.add(pos) = 0;
+    }
+    pos as c_int
+}
+
+/// libresolv `ns_datetosecs(cp, *errp) -> u32` — parse a 14-char
+/// `"YYYYMMDDHHMMSS"` UTC date string into seconds since epoch.
+/// Sets `*errp = 1` on parse error and returns 0; otherwise sets
+/// `*errp = 0` and returns the second count.
+///
+/// # Safety
+///
+/// `cp` must be a NUL-terminated C string. `errp`, when non-NULL,
+/// must point to writable `c_int` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_datetosecs(cp: *const c_char, errp: *mut c_int) -> u32 {
+    let set_err = |val: c_int| {
+        if !errp.is_null() {
+            // SAFETY: caller-supplied writable slot.
+            unsafe { *errp = val };
+        }
+    };
+    if cp.is_null() {
+        set_err(1);
+        return 0;
+    }
+    // SAFETY: caller-supplied NUL-terminated string.
+    let s = unsafe { CStr::from_ptr(cp) }.to_bytes();
+    if s.len() != 14 || !s.iter().all(u8::is_ascii_digit) {
+        set_err(1);
+        return 0;
+    }
+    let to_n = |range: core::ops::Range<usize>| -> i32 {
+        let mut v: i32 = 0;
+        for &b in &s[range] {
+            v = v * 10 + (b - b'0') as i32;
+        }
+        v
+    };
+    let year = to_n(0..4);
+    let month = to_n(4..6);
+    let day = to_n(6..8);
+    let hour = to_n(8..10);
+    let minute = to_n(10..12);
+    let second = to_n(12..14);
+
+    if !(1970..=9999).contains(&year)
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=60).contains(&second)
+    {
+        set_err(1);
+        return 0;
+    }
+
+    let mut tm: libc::tm = unsafe { core::mem::zeroed() };
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = minute;
+    tm.tm_sec = second;
+    // SAFETY: timegm reads tm by reference; tm is owned and well-formed.
+    let secs = unsafe { libc::timegm(&mut tm as *mut libc::tm) };
+    if secs < 0 {
+        set_err(1);
+        return 0;
+    }
+    set_err(0);
+    secs as u32
+}
