@@ -86,6 +86,7 @@ use frankenlibc_abi::stdio_abi::{
     ftello64,
     ftrylockfile,
     funlockfile,
+    funopen,
     fwrite,
     fwrite_unlocked,
     getc,
@@ -5200,4 +5201,124 @@ fn under_getline_null_args_return_minus_one() {
     assert_eq!(r, -1);
     let r = unsafe { __getline(&mut lineptr, std::ptr::null_mut(), std::ptr::null_mut()) };
     assert_eq!(r, -1);
+}
+
+// ---------------------------------------------------------------------------
+// funopen — BSD callback-based stdio over fopencookie
+// ---------------------------------------------------------------------------
+
+struct FunopenState {
+    data: Vec<u8>,
+    pos: usize,
+    closed: bool,
+}
+
+unsafe extern "C" fn funop_read(cookie: *mut c_void, buf: *mut c_char, n: c_int) -> c_int {
+    let s = unsafe { &mut *(cookie as *mut FunopenState) };
+    let avail = s.data.len().saturating_sub(s.pos);
+    let take = avail.min(n as usize);
+    if take == 0 {
+        return 0;
+    }
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, take) };
+    dst.copy_from_slice(&s.data[s.pos..s.pos + take]);
+    s.pos += take;
+    take as c_int
+}
+
+unsafe extern "C" fn funop_write(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
+    let s = unsafe { &mut *(cookie as *mut FunopenState) };
+    let bytes = unsafe { std::slice::from_raw_parts(buf as *const u8, n as usize) };
+    s.data.extend_from_slice(bytes);
+    s.pos = s.data.len();
+    n
+}
+
+unsafe extern "C" fn funop_seek(cookie: *mut c_void, offset: i64, whence: c_int) -> i64 {
+    let s = unsafe { &mut *(cookie as *mut FunopenState) };
+    let new_pos = match whence {
+        libc::SEEK_SET => offset,
+        libc::SEEK_CUR => s.pos as i64 + offset,
+        libc::SEEK_END => s.data.len() as i64 + offset,
+        _ => return -1,
+    };
+    if new_pos < 0 || new_pos > s.data.len() as i64 {
+        return -1;
+    }
+    s.pos = new_pos as usize;
+    new_pos
+}
+
+unsafe extern "C" fn funop_close(cookie: *mut c_void) -> c_int {
+    let s = unsafe { &mut *(cookie as *mut FunopenState) };
+    s.closed = true;
+    0
+}
+
+#[test]
+fn funopen_with_no_io_callbacks_returns_null_einval() {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let stream = unsafe { funopen(std::ptr::null(), None, None, None, None) };
+    assert!(stream.is_null());
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EINVAL
+    );
+}
+
+#[test]
+fn funopen_close_invokes_user_closefn_and_frees_trampoline() {
+    let state = Box::into_raw(Box::new(FunopenState {
+        data: Vec::new(),
+        pos: 0,
+        closed: false,
+    }));
+    let stream = unsafe {
+        funopen(
+            state as *const c_void,
+            None,
+            Some(funop_write),
+            None,
+            Some(funop_close),
+        )
+    };
+    assert!(!stream.is_null());
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let s = unsafe { Box::from_raw(state) };
+    assert!(s.closed, "user closefn must run via the close trampoline");
+}
+
+#[test]
+fn funopen_round_trips_write_seek_read() {
+    let state = Box::into_raw(Box::new(FunopenState {
+        data: Vec::new(),
+        pos: 0,
+        closed: false,
+    }));
+    let stream = unsafe {
+        funopen(
+            state as *const c_void,
+            Some(funop_read),
+            Some(funop_write),
+            Some(funop_seek),
+            Some(funop_close),
+        )
+    };
+    assert!(!stream.is_null());
+
+    let payload = b"funopen-rw";
+    let wrote = unsafe { fwrite(payload.as_ptr() as *const c_void, 1, payload.len(), stream) };
+    assert_eq!(wrote, payload.len());
+
+    assert_eq!(unsafe { fseek(stream, 0, libc::SEEK_SET) }, 0);
+
+    let mut out = [0u8; 10];
+    let read = unsafe { fread(out.as_mut_ptr() as *mut c_void, 1, out.len(), stream) };
+    assert_eq!(read, out.len());
+    assert_eq!(&out, payload);
+
+    assert_eq!(unsafe { fclose(stream) }, 0);
+    let s = unsafe { Box::from_raw(state) };
+    assert!(s.closed);
+    assert_eq!(s.data, payload);
 }

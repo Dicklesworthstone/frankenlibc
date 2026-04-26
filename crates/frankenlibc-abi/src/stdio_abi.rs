@@ -6419,6 +6419,196 @@ pub unsafe extern "C" fn fopencookie(
     id as *mut c_void
 }
 
+// ---------------------------------------------------------------------------
+// funopen — BSD callback-based stdio over fopencookie
+// ---------------------------------------------------------------------------
+//
+// `FILE *funopen(const void *cookie,
+//                int    (*readfn)(void *, char *, int),
+//                int    (*writefn)(void *, const char *, int),
+//                fpos_t (*seekfn)(void *, fpos_t, int),
+//                int    (*closefn)(void *));`
+//
+// Differences vs. glibc fopencookie:
+//   - read/write fns return int (truncated ssize_t) and take int byte
+//     count instead of size_t.
+//   - seek fn takes/returns fpos_t (off_t = i64) directly instead of
+//     reading/writing through a *mut off64_t pointer.
+//   - mode is inferred from which callbacks are NULL, not passed as a
+//     separate string. read+write -> "r+", read only -> "r", write only
+//     -> "w", both NULL -> EINVAL.
+//
+// Implementation: heap-allocate a `FunopenTrampoline` struct holding the
+// original BSD callbacks plus the user cookie, then build a
+// `CookieIoFuncs` with adapter functions that route through the
+// trampoline. The trampoline pointer is itself the cookie passed to
+// `fopencookie`. The close adapter invokes the user's closefn (if any)
+// and then frees the trampoline regardless of its result.
+
+type FunopenReadFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int) -> c_int;
+type FunopenWriteFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_int;
+type FunopenSeekFn = unsafe extern "C" fn(*mut c_void, i64, c_int) -> i64;
+type FunopenCloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+#[repr(C)]
+struct FunopenTrampoline {
+    cookie: *mut c_void,
+    readfn: Option<FunopenReadFn>,
+    writefn: Option<FunopenWriteFn>,
+    seekfn: Option<FunopenSeekFn>,
+    closefn: Option<FunopenCloseFn>,
+}
+
+unsafe extern "C" fn funopen_trampoline_read(
+    cookie: *mut c_void,
+    buf: *mut c_char,
+    nbytes: usize,
+) -> isize {
+    // SAFETY: cookie was set by funopen to a leaked Box<FunopenTrampoline>.
+    let tr = unsafe { &*(cookie as *const FunopenTrampoline) };
+    let Some(readfn) = tr.readfn else {
+        return 0;
+    };
+    let n = nbytes.min(c_int::MAX as usize) as c_int;
+    // SAFETY: buf is valid for `nbytes` bytes per fread/cookie contract.
+    let rc = unsafe { readfn(tr.cookie, buf, n) };
+    rc as isize
+}
+
+unsafe extern "C" fn funopen_trampoline_write(
+    cookie: *mut c_void,
+    buf: *const c_char,
+    nbytes: usize,
+) -> isize {
+    // SAFETY: cookie was set by funopen to a leaked Box<FunopenTrampoline>.
+    let tr = unsafe { &*(cookie as *const FunopenTrampoline) };
+    let Some(writefn) = tr.writefn else {
+        return 0;
+    };
+    let n = nbytes.min(c_int::MAX as usize) as c_int;
+    // SAFETY: buf is valid for `nbytes` bytes per fwrite/cookie contract.
+    let rc = unsafe { writefn(tr.cookie, buf, n) };
+    rc as isize
+}
+
+unsafe extern "C" fn funopen_trampoline_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
+    // SAFETY: cookie was set by funopen to a leaked Box<FunopenTrampoline>.
+    let tr = unsafe { &*(cookie as *const FunopenTrampoline) };
+    let Some(seekfn) = tr.seekfn else {
+        return -1;
+    };
+    if offset.is_null() {
+        return -1;
+    }
+    // SAFETY: caller-supplied writable slot per fopencookie contract.
+    let req = unsafe { *offset };
+    // SAFETY: BSD seek callback signature.
+    let result = unsafe { seekfn(tr.cookie, req, whence) };
+    if result < 0 {
+        return -1;
+    }
+    // SAFETY: caller-supplied writable slot per fopencookie contract.
+    unsafe { *offset = result };
+    0
+}
+
+unsafe extern "C" fn funopen_trampoline_close(cookie: *mut c_void) -> c_int {
+    // SAFETY: cookie was set by funopen to a leaked Box<FunopenTrampoline>;
+    // we now reclaim ownership and drop it after the user's closefn runs.
+    let tr_box = unsafe { Box::from_raw(cookie as *mut FunopenTrampoline) };
+    let rc = if let Some(closefn) = tr_box.closefn {
+        // SAFETY: BSD close callback signature.
+        unsafe { closefn(tr_box.cookie) }
+    } else {
+        0
+    };
+    drop(tr_box);
+    rc
+}
+
+/// BSD `funopen(cookie, readfn, writefn, seekfn, closefn)` — open a
+/// custom FILE backed by user callbacks. See module-level comment for
+/// the differences vs. fopencookie. Returns NULL on EINVAL (both
+/// readfn and writefn NULL) or allocation failure, with errno set.
+///
+/// # Safety
+///
+/// The supplied callbacks must remain valid for the lifetime of the
+/// returned stream. `cookie` is passed unmodified as the first
+/// argument to each callback.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn funopen(
+    cookie: *const c_void,
+    readfn: Option<FunopenReadFn>,
+    writefn: Option<FunopenWriteFn>,
+    seekfn: Option<FunopenSeekFn>,
+    closefn: Option<FunopenCloseFn>,
+) -> *mut c_void {
+    let mode: &CStr = match (readfn.is_some(), writefn.is_some()) {
+        (true, true) => c"r+",
+        (true, false) => c"r",
+        (false, true) => c"w",
+        (false, false) => {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return std::ptr::null_mut();
+        }
+    };
+
+    let trampoline = Box::new(FunopenTrampoline {
+        cookie: cookie as *mut c_void,
+        readfn,
+        writefn,
+        seekfn,
+        closefn,
+    });
+    let tr_ptr = Box::into_raw(trampoline) as *mut c_void;
+
+    // Build the cookie_io_functions_t adapter.
+    let funcs = CookieIoFuncs {
+        read: if readfn.is_some() {
+            Some(funopen_trampoline_read)
+        } else {
+            None
+        },
+        write: if writefn.is_some() {
+            Some(funopen_trampoline_write)
+        } else {
+            None
+        },
+        seek: if seekfn.is_some() {
+            Some(funopen_trampoline_seek)
+        } else {
+            None
+        },
+        // Always install the close adapter so the trampoline is freed
+        // even when the user supplied no closefn.
+        close: Some(funopen_trampoline_close),
+    };
+
+    // SAFETY: fopencookie reads `funcs` via *const c_void and copies
+    // the struct internally; mode is a static C string.
+    let stream = unsafe {
+        fopencookie(
+            tr_ptr,
+            mode.as_ptr(),
+            (&funcs as *const CookieIoFuncs) as *const c_void,
+        )
+    };
+    if stream.is_null() {
+        // Reclaim and drop the trampoline so we don't leak it.
+        // SAFETY: tr_ptr was just produced by Box::into_raw above and
+        // hasn't been registered with any fopencookie cookie stream
+        // because fopencookie returned NULL.
+        let _ = unsafe { Box::from_raw(tr_ptr as *mut FunopenTrampoline) };
+        return std::ptr::null_mut();
+    }
+    stream
+}
+
 // ===========================================================================
 // Batch: Unlocked stdio variants — Implemented
 // ===========================================================================
