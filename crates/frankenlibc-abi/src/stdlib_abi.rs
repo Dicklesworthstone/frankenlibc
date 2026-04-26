@@ -4910,3 +4910,192 @@ pub unsafe extern "C" fn fmtcheck(
         default_fmt
     }
 }
+
+// ---------------------------------------------------------------------------
+// StringList (NetBSD libutil sl_init / sl_add / sl_find / sl_free)
+// ---------------------------------------------------------------------------
+//
+// Tiny growable Vec<char*> with a public C-ABI struct layout. Used by ftpd,
+// kvm tools, mtree, and other BSD utilities. The pointer is stored as-is —
+// the StringList does NOT copy strings; the caller owns each string's
+// lifetime unless `sl_free(sl, all=1)` is asked to free them.
+
+/// Public StringList ABI layout. Field order, types, and sizes match
+/// NetBSD's `<stringlist.h>`:
+///
+/// ```c
+/// typedef struct _stringlist {
+///     char    **sl_str;
+///     size_t   sl_max;
+///     size_t   sl_cur;
+/// } StringList;
+/// ```
+#[repr(C)]
+pub struct StringList {
+    pub sl_str: *mut *mut c_char,
+    pub sl_max: usize,
+    pub sl_cur: usize,
+}
+
+const SL_INIT_CAPACITY: usize = 20;
+
+/// NetBSD `sl_init()` — allocate a fresh empty `StringList`. Returns
+/// NULL with errno=ENOMEM on allocation failure.
+///
+/// # Safety
+///
+/// No caller obligations. The returned pointer must eventually be
+/// passed to [`sl_free`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sl_init() -> *mut StringList {
+    // SAFETY: malloc returns NULL on failure; we propagate.
+    let header_size = core::mem::size_of::<StringList>();
+    let header = unsafe { crate::malloc_abi::malloc(header_size) } as *mut StringList;
+    if header.is_null() {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return ptr::null_mut();
+    }
+    let array_bytes = SL_INIT_CAPACITY
+        .checked_mul(core::mem::size_of::<*mut c_char>())
+        .unwrap_or(0);
+    let array = unsafe { crate::malloc_abi::malloc(array_bytes) } as *mut *mut c_char;
+    if array.is_null() {
+        unsafe { crate::malloc_abi::free(header.cast()) };
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return ptr::null_mut();
+    }
+    // SAFETY: header is a freshly-allocated StringList-sized buffer.
+    unsafe {
+        (*header).sl_str = array;
+        (*header).sl_max = SL_INIT_CAPACITY;
+        (*header).sl_cur = 0;
+    }
+    header
+}
+
+/// NetBSD `sl_add(sl, name)` — append `name` to the StringList,
+/// growing the backing array (via realloc with doubled capacity) if
+/// needed. Returns 0 on success, -1 with errno=ENOMEM on alloc
+/// failure.
+///
+/// The pointer `name` is stored as-is (no copy) — the caller owns
+/// the string's lifetime unless `sl_free(sl, 1)` is asked to free it.
+///
+/// # Safety
+///
+/// `sl` must be a pointer previously returned by [`sl_init`] (or
+/// equivalent), not yet freed. `name` may be any C-string pointer;
+/// passing NULL is permitted but fairly useless.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sl_add(sl: *mut StringList, name: *mut c_char) -> c_int {
+    if sl.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: sl came from sl_init.
+    let cur = unsafe { (*sl).sl_cur };
+    let max = unsafe { (*sl).sl_max };
+    if cur >= max {
+        // Grow with doubled capacity (matches NetBSD libutil).
+        let new_max = match max.checked_mul(2) {
+            Some(0) | None => SL_INIT_CAPACITY,
+            Some(n) => n,
+        };
+        let new_bytes = new_max
+            .checked_mul(core::mem::size_of::<*mut c_char>())
+            .unwrap_or(0);
+        if new_bytes == 0 {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return -1;
+        }
+        let old_arr = unsafe { (*sl).sl_str } as *mut c_void;
+        let new_arr = unsafe { crate::malloc_abi::realloc(old_arr, new_bytes) } as *mut *mut c_char;
+        if new_arr.is_null() {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return -1;
+        }
+        unsafe {
+            (*sl).sl_str = new_arr;
+            (*sl).sl_max = new_max;
+        }
+    }
+    // SAFETY: cur < sl_max (just enforced above) and sl_str is a
+    // valid array of sl_max char* slots.
+    unsafe {
+        let arr = (*sl).sl_str;
+        *arr.add(cur) = name;
+        (*sl).sl_cur = cur + 1;
+    }
+    0
+}
+
+/// NetBSD `sl_find(sl, name)` — linear-search for an entry whose
+/// stored C string compares equal to `name` (via byte equality up
+/// to NUL). Returns the matching pointer or NULL if no match.
+///
+/// # Safety
+///
+/// `sl` must be a pointer returned by [`sl_init`]. `name` must be a
+/// valid NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sl_find(sl: *mut StringList, name: *const c_char) -> *mut c_char {
+    if sl.is_null() || name.is_null() {
+        return ptr::null_mut();
+    }
+    // SAFETY: caller-supplied valid C string.
+    let needle = unsafe { CStr::from_ptr(name) }.to_bytes();
+    // SAFETY: sl came from sl_init; sl_str has sl_cur valid char* slots.
+    unsafe {
+        let arr = (*sl).sl_str;
+        let cur = (*sl).sl_cur;
+        let mut i = 0usize;
+        while i < cur {
+            let entry = *arr.add(i);
+            if !entry.is_null() {
+                let e_bytes = CStr::from_ptr(entry).to_bytes();
+                if e_bytes == needle {
+                    return entry;
+                }
+            }
+            i += 1;
+        }
+    }
+    ptr::null_mut()
+}
+
+/// NetBSD `sl_free(sl, all)` — release the StringList and its
+/// backing array. When `all != 0`, also `free()` each stored char*
+/// (typically used when the strings were `strdup`'d and the caller
+/// wants the StringList to take ownership at free time).
+///
+/// `sl == NULL` is a no-op.
+///
+/// # Safety
+///
+/// `sl`, when non-NULL, must be a pointer returned by [`sl_init`]
+/// and not yet freed.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn sl_free(sl: *mut StringList, all: c_int) {
+    if sl.is_null() {
+        return;
+    }
+    // SAFETY: sl came from sl_init.
+    unsafe {
+        let arr = (*sl).sl_str;
+        let cur = (*sl).sl_cur;
+        if all != 0 && !arr.is_null() {
+            let mut i = 0usize;
+            while i < cur {
+                let entry = *arr.add(i);
+                if !entry.is_null() {
+                    crate::malloc_abi::free(entry.cast());
+                }
+                i += 1;
+            }
+        }
+        if !arr.is_null() {
+            crate::malloc_abi::free(arr.cast());
+        }
+        crate::malloc_abi::free(sl.cast());
+    }
+}

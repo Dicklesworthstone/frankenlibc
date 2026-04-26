@@ -6442,3 +6442,160 @@ fn fmtcheck_pointer_distinct_from_string() {
     let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
     assert_eq!(p, default_fmt.as_ptr() as *const c_char);
 }
+
+// ---------------------------------------------------------------------------
+// StringList (NetBSD libutil sl_init / sl_add / sl_find / sl_free)
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::stdlib_abi::{sl_add, sl_find, sl_free, sl_init};
+
+#[test]
+fn sl_init_returns_empty_list() {
+    let sl = unsafe { sl_init() };
+    assert!(!sl.is_null());
+    unsafe {
+        assert_eq!((*sl).sl_cur, 0);
+        assert!(
+            (*sl).sl_max > 0,
+            "sl_max should be a positive initial capacity"
+        );
+        assert!(!(*sl).sl_str.is_null());
+        sl_free(sl, 0);
+    }
+}
+
+#[test]
+fn sl_add_grows_cur_and_stores_pointer() {
+    let sl = unsafe { sl_init() };
+    let s = c"alpha";
+    let rc = unsafe { sl_add(sl, s.as_ptr() as *mut c_char) };
+    assert_eq!(rc, 0);
+    unsafe {
+        assert_eq!((*sl).sl_cur, 1);
+        let stored = *(*sl).sl_str.add(0);
+        assert_eq!(stored as *const c_char, s.as_ptr());
+        sl_free(sl, 0);
+    }
+}
+
+#[test]
+fn sl_add_reallocates_past_initial_capacity() {
+    let sl = unsafe { sl_init() };
+    let names: Vec<std::ffi::CString> = (0..64)
+        .map(|i| std::ffi::CString::new(format!("entry{i}")).unwrap())
+        .collect();
+    for s in &names {
+        let rc = unsafe { sl_add(sl, s.as_ptr() as *mut c_char) };
+        assert_eq!(rc, 0);
+    }
+    unsafe {
+        assert_eq!((*sl).sl_cur, 64);
+        assert!((*sl).sl_max >= 64);
+        for (i, name) in names.iter().enumerate() {
+            let stored = *(*sl).sl_str.add(i);
+            assert_eq!(stored as *const c_char, name.as_ptr());
+        }
+        sl_free(sl, 0);
+    }
+}
+
+#[test]
+fn sl_find_returns_matching_pointer() {
+    let sl = unsafe { sl_init() };
+    let a = c"alpha";
+    let b = c"bravo";
+    let g = c"gamma";
+    unsafe {
+        sl_add(sl, a.as_ptr() as *mut c_char);
+        sl_add(sl, b.as_ptr() as *mut c_char);
+        sl_add(sl, g.as_ptr() as *mut c_char);
+
+        let needle = c"bravo";
+        let found = sl_find(sl, needle.as_ptr());
+        assert!(!found.is_null());
+        assert_eq!(found as *const c_char, b.as_ptr());
+
+        sl_free(sl, 0);
+    }
+}
+
+#[test]
+fn sl_find_returns_null_when_missing() {
+    let sl = unsafe { sl_init() };
+    let a = c"alpha";
+    unsafe {
+        sl_add(sl, a.as_ptr() as *mut c_char);
+        let needle = c"missing";
+        let found = sl_find(sl, needle.as_ptr());
+        assert!(found.is_null());
+        sl_free(sl, 0);
+    }
+}
+
+#[test]
+fn sl_find_empty_list_returns_null() {
+    let sl = unsafe { sl_init() };
+    let needle = c"anything";
+    let found = unsafe { sl_find(sl, needle.as_ptr()) };
+    assert!(found.is_null());
+    unsafe { sl_free(sl, 0) };
+}
+
+#[test]
+fn sl_free_null_is_no_op() {
+    unsafe { sl_free(ptr::null_mut(), 0) };
+    unsafe { sl_free(ptr::null_mut(), 1) };
+}
+
+#[test]
+fn sl_add_null_sl_returns_minus_one_with_einval() {
+    let s = c"oops";
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { sl_add(ptr::null_mut(), s.as_ptr() as *mut c_char) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn sl_find_null_sl_returns_null() {
+    let s = c"x";
+    let found = unsafe { sl_find(ptr::null_mut(), s.as_ptr()) };
+    assert!(found.is_null());
+}
+
+#[test]
+fn sl_find_null_needle_returns_null() {
+    let sl = unsafe { sl_init() };
+    let found = unsafe { sl_find(sl, ptr::null()) };
+    assert!(found.is_null());
+    unsafe { sl_free(sl, 0) };
+}
+
+#[test]
+fn sl_free_with_all_releases_each_string() {
+    let sl = unsafe { sl_init() };
+    let names = ["one", "two", "three"];
+    for n in &names {
+        let cs = std::ffi::CString::new(*n).unwrap();
+        let dup = unsafe { libc::strdup(cs.as_ptr()) };
+        let rc = unsafe { sl_add(sl, dup) };
+        assert_eq!(rc, 0);
+    }
+    unsafe {
+        assert_eq!((*sl).sl_cur, 3);
+        sl_free(sl, 1);
+    }
+}
+
+#[test]
+fn sl_find_distinguishes_substring_match() {
+    let sl = unsafe { sl_init() };
+    let prefix = c"prefix";
+    unsafe {
+        sl_add(sl, prefix.as_ptr() as *mut c_char);
+        let pre = c"pre";
+        let found = sl_find(sl, pre.as_ptr());
+        assert!(found.is_null(), "must NOT match a prefix-only substring");
+        sl_free(sl, 0);
+    }
+}
