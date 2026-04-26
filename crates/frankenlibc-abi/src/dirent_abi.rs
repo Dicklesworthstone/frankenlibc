@@ -399,6 +399,50 @@ pub unsafe extern "C" fn readdir_r(
     }
 }
 
+/// glibc reserved-namespace alias for [`opendir`].
+///
+/// # Safety
+///
+/// Same as [`opendir`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __opendir(name: *const c_char) -> *mut DIR {
+    unsafe { opendir(name) }
+}
+
+/// glibc reserved-namespace alias for [`closedir`].
+///
+/// # Safety
+///
+/// Same as [`closedir`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __closedir(dirp: *mut DIR) -> c_int {
+    unsafe { closedir(dirp) }
+}
+
+/// glibc reserved-namespace alias for [`readdir`].
+///
+/// # Safety
+///
+/// Same as [`readdir`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __readdir(dirp: *mut DIR) -> *mut libc::dirent {
+    unsafe { readdir(dirp) }
+}
+
+/// glibc reserved-namespace alias for [`readdir_r`].
+///
+/// # Safety
+///
+/// Same as [`readdir_r`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __readdir_r(
+    dirp: *mut DIR,
+    entry: *mut libc::dirent,
+    result: *mut *mut libc::dirent,
+) -> c_int {
+    unsafe { readdir_r(dirp, entry, result) }
+}
+
 // ---------------------------------------------------------------------------
 // readdir64 — on 64-bit Linux, identical layout to readdir
 // ---------------------------------------------------------------------------

@@ -723,3 +723,59 @@ fn readdir_empty_dir() {
     unsafe { closedir(dirp) };
     unsafe { libc::rmdir(path.as_ptr()) };
 }
+
+// ---------------------------------------------------------------------------
+// __opendir / __closedir / __readdir / __readdir_r (glibc reserved aliases)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_opendir_closedir_round_trip() {
+    let path = std::ffi::CString::new("/tmp").unwrap();
+    let dirp = unsafe { __opendir(path.as_ptr()) };
+    assert!(!dirp.is_null());
+    let rc = unsafe { __closedir(dirp) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_readdir_yields_entries() {
+    let path = std::ffi::CString::new("/tmp").unwrap();
+    let dirp = unsafe { __opendir(path.as_ptr()) };
+    assert!(!dirp.is_null());
+    let mut count = 0usize;
+    loop {
+        let entry = unsafe { __readdir(dirp) };
+        if entry.is_null() {
+            break;
+        }
+        count += 1;
+        if count > 10_000 {
+            break;
+        }
+    }
+    assert!(count >= 2, "/tmp should have at least . and ..");
+    unsafe { __closedir(dirp) };
+}
+
+#[test]
+fn under_readdir_r_yields_entries() {
+    let path = std::ffi::CString::new("/tmp").unwrap();
+    let dirp = unsafe { __opendir(path.as_ptr()) };
+    assert!(!dirp.is_null());
+    let mut entry: libc::dirent = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::dirent = std::ptr::null_mut();
+    let mut count = 0usize;
+    loop {
+        let rc = unsafe { __readdir_r(dirp, &mut entry, &mut result) };
+        assert_eq!(rc, 0);
+        if result.is_null() {
+            break;
+        }
+        count += 1;
+        if count > 10_000 {
+            break;
+        }
+    }
+    assert!(count >= 2);
+    unsafe { __closedir(dirp) };
+}
