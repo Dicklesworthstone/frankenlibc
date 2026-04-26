@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-26T19:09:27Z",
+  "generated_at": "2026-04-26T21:46:06Z",
   "summary": {
     "total_symbols": 4109,
     "status_validated": 4109,
@@ -11,7 +11,7 @@
     "fixture_linked": 366,
     "fixture_unlinked": 3743,
     "fixture_coverage_pct": 8.9,
-    "total_warnings": 155
+    "total_warnings": 162
   },
   "coverage_dashboard": {
     "total_symbols": 4109,
@@ -37,50 +37,16 @@
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 33,
+      "Implemented": 0,
       "RawSyscall": 0,
       "Stub": 0,
       "WrapsHostLibc": 0
     },
     "native_coverage_pct_delta": 0.0,
     "reclassified_symbol_count": 0,
-    "new_symbol_count": 33,
+    "new_symbol_count": 0,
     "removed_symbol_count": 0,
-    "new_symbols": [
-      "readColdStartFile",
-      "writeColdStartFile",
-      "xdr_cback_data",
-      "xdr_domainname",
-      "xdr_keydat",
-      "xdr_mapname",
-      "xdr_obj_p",
-      "xdr_peername",
-      "xdr_valdat",
-      "xdr_yp_buf",
-      "xdr_ypall",
-      "xdr_ypbind_binding",
-      "xdr_ypbind_resp",
-      "xdr_ypbind_resptype",
-      "xdr_ypbind_setdom",
-      "xdr_ypdelete_args",
-      "xdr_ypmap_parms",
-      "xdr_ypmaplist",
-      "xdr_yppush_status",
-      "xdr_yppushresp_xfr",
-      "xdr_ypreq_key",
-      "xdr_ypreq_nokey",
-      "xdr_ypreq_xfr",
-      "xdr_ypresp_all",
-      "xdr_ypresp_key_val",
-      "xdr_ypresp_maplist",
-      "xdr_ypresp_master",
-      "xdr_ypresp_order",
-      "xdr_ypresp_val",
-      "xdr_ypresp_xfr",
-      "xdr_ypstat",
-      "xdr_ypupdate_args",
-      "xdr_ypxfrstat"
-    ],
+    "new_symbols": [],
     "removed_symbols": []
   },
   "policy_checks": {
@@ -4433,6 +4399,16 @@
       "warnings": []
     },
     {
+      "symbol": "__cxa_thread_atexit_impl",
+      "status": "Implemented",
+      "module": "startup_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
       "symbol": "__isoc99_fscanf",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -4486,6 +4462,16 @@
       "symbol": "__isoc99_vsscanf",
       "status": "Implemented",
       "module": "stdio_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
+      "symbol": "__libc_start_main",
+      "status": "Implemented",
+      "module": "startup_abi",
       "valid": true,
       "findings": [],
       "warnings": [
@@ -4656,6 +4642,26 @@
       "symbol": "backtrace_symbols_fd",
       "status": "Implemented",
       "module": "unistd_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
+      "symbol": "calloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
+      "symbol": "cfree",
+      "status": "Implemented",
+      "module": "malloc_abi",
       "valid": true,
       "findings": [],
       "warnings": [
@@ -5086,6 +5092,16 @@
       "symbol": "fread_unlocked",
       "status": "Implemented",
       "module": "stdio_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
+      "symbol": "free",
+      "status": "Implemented",
+      "module": "malloc_abi",
       "valid": true,
       "findings": [],
       "warnings": [
@@ -5531,6 +5547,16 @@
         "function body not found (may use alternate pattern)"
       ],
       "warnings": []
+    },
+    {
+      "symbol": "malloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
     },
     {
       "symbol": "mblen",
@@ -6024,6 +6050,16 @@
     },
     {
       "symbol": "pvalloc",
+      "status": "Implemented",
+      "module": "malloc_abi",
+      "valid": true,
+      "findings": [],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
+      "symbol": "realloc",
       "status": "Implemented",
       "module": "malloc_abi",
       "valid": true,
