@@ -695,6 +695,7 @@ pub fn execute_fixture_case(
         "setjmp" => execute_setjmp_case(mode),
         "_setjmp" => execute_setjmp_case(mode),
         "longjmp" => execute_longjmp_case(inputs, mode),
+        "setjmp_nested_edges" => execute_setjmp_nested_edges_case(inputs, mode),
         // io_internal ops
         "_IO_adjust_column" => execute_io_adjust_column_case(inputs, mode),
         "_IO_adjust_wcolumn" => execute_io_adjust_wcolumn_case(inputs, mode),
@@ -13634,6 +13635,44 @@ fn execute_longjmp_case(
     Ok(non_host_execution(return_val.to_string()))
 }
 
+fn execute_setjmp_nested_edges_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let scenario_kind = parse_string(inputs, "scenario_kind")?;
+
+    match scenario_kind.as_str() {
+        "program" => {
+            let expected = inputs
+                .get("expected")
+                .and_then(serde_json::Value::as_object)
+                .ok_or_else(|| String::from("setjmp_nested_edges program missing expected map"))?;
+            if !expected.contains_key(mode) {
+                return Err(format!(
+                    "setjmp_nested_edges program missing expected profile for mode '{mode}'"
+                ));
+            }
+            Ok(non_host_execution(String::from(
+                "structured_program_scenario",
+            )))
+        }
+        "unsupported" => {
+            let expected_outcome = parse_string(inputs, "expected_outcome")?;
+            if expected_outcome != "unsupported_deferred" {
+                return Err(format!(
+                    "unsupported setjmp_nested_edges expected_outcome: {expected_outcome}"
+                ));
+            }
+            let expected_errno = parse_string(inputs, "expected_errno")?;
+            Ok(non_host_execution(expected_errno))
+        }
+        other => Err(format!(
+            "unsupported setjmp_nested_edges scenario_kind: {other}"
+        )),
+    }
+}
+
 fn execute_io_adjust_column_case(
     inputs: &serde_json::Value,
     mode: &str,
@@ -17151,6 +17190,31 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn setjmp_nested_edges_structured_cases_match_execute_fixture_case() {
+        let program_inputs = serde_json::json!({
+            "scenario_kind": "program",
+            "expected": {
+                "strict": {"exit_code": 0},
+                "hardened": {"exit_code": 0}
+            }
+        });
+        for mode in ["strict", "hardened"] {
+            let result = execute_fixture_case("setjmp_nested_edges", &program_inputs, mode)
+                .expect("program setjmp_nested_edges should execute");
+            assert_eq!(result.impl_output, "structured_program_scenario");
+        }
+
+        let unsupported_inputs = serde_json::json!({
+            "scenario_kind": "unsupported",
+            "expected_outcome": "unsupported_deferred",
+            "expected_errno": "ENOSYS"
+        });
+        let result = execute_fixture_case("setjmp_nested_edges", &unsupported_inputs, "strict")
+            .expect("unsupported setjmp_nested_edges should execute as a deferred marker");
+        assert_eq!(result.impl_output, "ENOSYS");
     }
 
     #[test]

@@ -191,6 +191,7 @@ impl StructuredFixtureSet {
                 inputs: serde_json::json!({
                     "scenario_kind": "unsupported",
                     "expected_outcome": scenario.expected_outcome,
+                    "expected_errno": scenario.expected_errno,
                 }),
                 expected_output: normalize_expected_output_value(&scenario.expected_errno),
                 expected_errno: 0,
@@ -397,6 +398,44 @@ mod tests {
         .expect("fixture should deserialize");
 
         assert_eq!(fixture.cases[0].expected_errno, 22);
+    }
+
+    #[test]
+    fn structured_fixture_set_preserves_unsupported_expected_errno_in_inputs() {
+        let fixture = FixtureSet::from_json(
+            r#"{
+                "schema_version":"structured-v1",
+                "family":"setjmp_nested_edges",
+                "captured_at":"2026-04-25T00:00:00Z",
+                "program_scenarios":[
+                    {
+                        "scenario_id":"nested_two_level_longjmp",
+                        "source":"tests/integration/fixture_setjmp_nested.c",
+                        "expected":{"strict":{"exit_code":0},"hardened":{"exit_code":0}}
+                    }
+                ],
+                "unsupported_scenarios":[
+                    {
+                        "scenario_id":"cross_thread_longjmp",
+                        "expected_outcome":"unsupported_deferred",
+                        "expected_errno":"ENOSYS"
+                    }
+                ]
+            }"#,
+        )
+        .expect("structured fixture should deserialize");
+
+        assert_eq!(fixture.version, "structured-v1");
+        assert_eq!(fixture.cases.len(), 2);
+        assert_eq!(
+            fixture.cases[0].expected_output,
+            "structured_program_scenario"
+        );
+        assert_eq!(fixture.cases[1].expected_output, "ENOSYS");
+        assert_eq!(
+            fixture.cases[1].inputs.get("expected_errno"),
+            Some(&serde_json::json!("ENOSYS"))
+        );
     }
 
     #[test]

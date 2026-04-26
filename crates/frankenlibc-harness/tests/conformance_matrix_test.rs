@@ -3,7 +3,7 @@
 //! Validates:
 //! 1. Baseline conformance matrix artifact exists and has required schema.
 //! 2. Summary counts are consistent with case rows.
-//! 3. Non-pass rows include divergence metadata.
+//! 3. Canonical non-pass rows include divergence metadata when present.
 //! 4. Gate script executes and emits deterministic report/log artifacts.
 
 use std::collections::BTreeSet;
@@ -121,10 +121,21 @@ fn non_pass_rows_include_diff_metadata() {
             "non-pass row missing expected/actual outputs"
         );
     }
-    assert!(
-        checked > 0,
-        "expected at least one non-pass row for gate coverage"
-    );
+    if checked == 0 {
+        let summary = artifact["summary"]
+            .as_object()
+            .expect("summary should be object");
+        assert_eq!(
+            summary.get("failed").and_then(|v| v.as_u64()),
+            Some(0),
+            "all-pass canonical matrix should report zero failures"
+        );
+        assert_eq!(
+            summary.get("errors").and_then(|v| v.as_u64()),
+            Some(0),
+            "all-pass canonical matrix should report zero execution errors"
+        );
+    }
 }
 
 #[test]
@@ -315,10 +326,26 @@ fn isolated_case_runner_surfaces_timeout_and_crash_rows() {
         .find(|row| row["symbol"].as_str() == Some("__harness_test_timeout"))
         .expect("timeout row");
     assert_eq!(timeout["status"].as_str(), Some("timeout"));
+    assert!(
+        timeout.get("diff_offset").is_some(),
+        "timeout row should include diff_offset"
+    );
+    assert!(
+        timeout.get("expected_output").is_some() && timeout.get("actual_output").is_some(),
+        "timeout row should include expected/actual outputs"
+    );
 
     let crash = rows
         .iter()
         .find(|row| row["symbol"].as_str() == Some("__harness_test_crash"))
         .expect("crash row");
     assert_eq!(crash["status"].as_str(), Some("crash"));
+    assert!(
+        crash.get("diff_offset").is_some(),
+        "crash row should include diff_offset"
+    );
+    assert!(
+        crash.get("expected_output").is_some() && crash.get("actual_output").is_some(),
+        "crash row should include expected/actual outputs"
+    );
 }

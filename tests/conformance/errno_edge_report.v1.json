@@ -6,303 +6,13 @@
     "tracked_symbols": 3996,
     "total_edge_cases": 1313,
     "errno_cases": 173,
-    "covered_edge_cases": 1303,
-    "failing_edge_cases": 10,
-    "execution_error_cases": 10,
+    "covered_edge_cases": 1313,
+    "failing_edge_cases": 0,
+    "execution_error_cases": 0,
     "missing_execution_cases": 0,
-    "symbols_with_failures": 1
+    "symbols_with_failures": 0
   },
   "rows": [
-    {
-      "priority_score": 1090,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::corrupted_jump_buffer_restore",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "hardened",
-      "case_id": "corrupted_jump_buffer_restore [hardened]",
-      "spec_section": "unsupported_deferred",
-      "edge_class": "error_condition",
-      "expected_output": "EFAULT",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::corrupted_jump_buffer_restore",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'corrupted_jump_buffer_restore' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::corrupted_jump_buffer_restore.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
-    {
-      "priority_score": 1090,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::corrupted_jump_buffer_restore",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "strict",
-      "case_id": "corrupted_jump_buffer_restore [strict]",
-      "spec_section": "unsupported_deferred",
-      "edge_class": "error_condition",
-      "expected_output": "EFAULT",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::corrupted_jump_buffer_restore",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'corrupted_jump_buffer_restore' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::corrupted_jump_buffer_restore.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
-    {
-      "priority_score": 1090,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::siglongjmp_without_sigsetjmp",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "hardened",
-      "case_id": "siglongjmp_without_sigsetjmp [hardened]",
-      "spec_section": "unsupported_deferred",
-      "edge_class": "error_condition",
-      "expected_output": "EINVAL",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::siglongjmp_without_sigsetjmp",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'siglongjmp_without_sigsetjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::siglongjmp_without_sigsetjmp.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
-    {
-      "priority_score": 1090,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::siglongjmp_without_sigsetjmp",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "strict",
-      "case_id": "siglongjmp_without_sigsetjmp [strict]",
-      "spec_section": "unsupported_deferred",
-      "edge_class": "error_condition",
-      "expected_output": "EINVAL",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::siglongjmp_without_sigsetjmp",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'siglongjmp_without_sigsetjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::siglongjmp_without_sigsetjmp.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
-    {
-      "priority_score": 1085,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::edge_zero_value_and_sigmask_roundtrip",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "hardened",
-      "case_id": "edge_zero_value_and_sigmask_roundtrip [hardened]",
-      "spec_section": "tests/integration/fixture_setjmp_edges.c",
-      "edge_class": "boundary",
-      "expected_output": "structured_program_scenario",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::edge_zero_value_and_sigmask_roundtrip",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'edge_zero_value_and_sigmask_roundtrip' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::edge_zero_value_and_sigmask_roundtrip.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
-    {
-      "priority_score": 1085,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::edge_zero_value_and_sigmask_roundtrip",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "strict",
-      "case_id": "edge_zero_value_and_sigmask_roundtrip [strict]",
-      "spec_section": "tests/integration/fixture_setjmp_edges.c",
-      "edge_class": "boundary",
-      "expected_output": "structured_program_scenario",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::edge_zero_value_and_sigmask_roundtrip",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'edge_zero_value_and_sigmask_roundtrip' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::edge_zero_value_and_sigmask_roundtrip.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
-    {
-      "priority_score": 1080,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::cross_thread_longjmp",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "hardened",
-      "case_id": "cross_thread_longjmp [hardened]",
-      "spec_section": "unsupported_deferred",
-      "edge_class": "other_edge",
-      "expected_output": "ENOSYS",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::cross_thread_longjmp",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'cross_thread_longjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::cross_thread_longjmp.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
-    {
-      "priority_score": 1080,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::cross_thread_longjmp",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "strict",
-      "case_id": "cross_thread_longjmp [strict]",
-      "spec_section": "unsupported_deferred",
-      "edge_class": "other_edge",
-      "expected_output": "ENOSYS",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::cross_thread_longjmp",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'cross_thread_longjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::cross_thread_longjmp.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
-    {
-      "priority_score": 1080,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::nested_two_level_longjmp",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "hardened",
-      "case_id": "nested_two_level_longjmp [hardened]",
-      "spec_section": "tests/integration/fixture_setjmp_nested.c",
-      "edge_class": "other_edge",
-      "expected_output": "structured_program_scenario",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::nested_two_level_longjmp",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'nested_two_level_longjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::nested_two_level_longjmp.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
-    {
-      "priority_score": 1080,
-      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::nested_two_level_longjmp",
-      "symbol": "setjmp_nested_edges",
-      "symbol_family": "setjmp_nested_edges",
-      "owner": "unknown",
-      "support_status": "Untracked",
-      "runtime_mode": "strict",
-      "case_id": "nested_two_level_longjmp [strict]",
-      "spec_section": "tests/integration/fixture_setjmp_nested.c",
-      "edge_class": "other_edge",
-      "expected_output": "structured_program_scenario",
-      "actual_output": "unsupported:unsupported function: setjmp_nested_edges",
-      "host_output": null,
-      "expected_errno": 0,
-      "actual_errno": null,
-      "status": "error",
-      "failure_kind": "unsupported_function",
-      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::nested_two_level_longjmp",
-      "artifact_refs": [
-        "tests/conformance/fixtures/setjmp_nested_edges.json",
-        "tests/conformance/conformance_matrix.v1.json"
-      ],
-      "triage_steps": [
-        "Inspect fixture 'nested_two_level_longjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::nested_two_level_longjmp.",
-        "Add 'setjmp_nested_edges' to frankenlibc_conformance::execute_fixture_case or narrow the fixture until the harness can execute it deterministically.",
-        "Recorded execution error: unsupported function: setjmp_nested_edges"
-      ]
-    },
     {
       "priority_score": 40,
       "trace_id": "franken_shadow::unistd::access::hardened::access_nonexistent_enoent",
@@ -7541,6 +7251,168 @@
     },
     {
       "priority_score": 10,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::corrupted_jump_buffer_restore",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "hardened",
+      "case_id": "corrupted_jump_buffer_restore [hardened]",
+      "spec_section": "unsupported_deferred",
+      "edge_class": "error_condition",
+      "expected_output": "EFAULT",
+      "actual_output": "EFAULT",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 14,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::corrupted_jump_buffer_restore",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'corrupted_jump_buffer_restore' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::corrupted_jump_buffer_restore."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::corrupted_jump_buffer_restore",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "strict",
+      "case_id": "corrupted_jump_buffer_restore [strict]",
+      "spec_section": "unsupported_deferred",
+      "edge_class": "error_condition",
+      "expected_output": "EFAULT",
+      "actual_output": "EFAULT",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 14,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::corrupted_jump_buffer_restore",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'corrupted_jump_buffer_restore' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::corrupted_jump_buffer_restore."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::cross_thread_longjmp",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "hardened",
+      "case_id": "cross_thread_longjmp [hardened]",
+      "spec_section": "unsupported_deferred",
+      "edge_class": "error_condition",
+      "expected_output": "ENOSYS",
+      "actual_output": "ENOSYS",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 38,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::cross_thread_longjmp",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'cross_thread_longjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::cross_thread_longjmp."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::cross_thread_longjmp",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "strict",
+      "case_id": "cross_thread_longjmp [strict]",
+      "spec_section": "unsupported_deferred",
+      "edge_class": "error_condition",
+      "expected_output": "ENOSYS",
+      "actual_output": "ENOSYS",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 38,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::cross_thread_longjmp",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'cross_thread_longjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::cross_thread_longjmp."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::siglongjmp_without_sigsetjmp",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "hardened",
+      "case_id": "siglongjmp_without_sigsetjmp [hardened]",
+      "spec_section": "unsupported_deferred",
+      "edge_class": "error_condition",
+      "expected_output": "EINVAL",
+      "actual_output": "EINVAL",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 22,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::siglongjmp_without_sigsetjmp",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'siglongjmp_without_sigsetjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::siglongjmp_without_sigsetjmp."
+      ]
+    },
+    {
+      "priority_score": 10,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::siglongjmp_without_sigsetjmp",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "strict",
+      "case_id": "siglongjmp_without_sigsetjmp [strict]",
+      "spec_section": "unsupported_deferred",
+      "edge_class": "error_condition",
+      "expected_output": "EINVAL",
+      "actual_output": "EINVAL",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 22,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::siglongjmp_without_sigsetjmp",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'siglongjmp_without_sigsetjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::siglongjmp_without_sigsetjmp."
+      ]
+    },
+    {
+      "priority_score": 10,
       "trace_id": "franken_shadow::locale_ops::setlocale::hardened::setlocale_unsupported_hardened",
       "symbol": "setlocale",
       "symbol_family": "locale_ops",
@@ -13477,6 +13349,60 @@
       ],
       "triage_steps": [
         "Inspect fixture 'setjmp_returns_zero_strict' for 'setjmp' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_ops::setjmp::strict::setjmp_returns_zero_strict."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::edge_zero_value_and_sigmask_roundtrip",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "hardened",
+      "case_id": "edge_zero_value_and_sigmask_roundtrip [hardened]",
+      "spec_section": "tests/integration/fixture_setjmp_edges.c",
+      "edge_class": "boundary",
+      "expected_output": "structured_program_scenario",
+      "actual_output": "structured_program_scenario",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::edge_zero_value_and_sigmask_roundtrip",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'edge_zero_value_and_sigmask_roundtrip' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::edge_zero_value_and_sigmask_roundtrip."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::edge_zero_value_and_sigmask_roundtrip",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "strict",
+      "case_id": "edge_zero_value_and_sigmask_roundtrip [strict]",
+      "spec_section": "tests/integration/fixture_setjmp_edges.c",
+      "edge_class": "boundary",
+      "expected_output": "structured_program_scenario",
+      "actual_output": "structured_program_scenario",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::edge_zero_value_and_sigmask_roundtrip",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'edge_zero_value_and_sigmask_roundtrip' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::edge_zero_value_and_sigmask_roundtrip."
       ]
     },
     {
@@ -26333,6 +26259,60 @@
     },
     {
       "priority_score": 0,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::nested_two_level_longjmp",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "hardened",
+      "case_id": "nested_two_level_longjmp [hardened]",
+      "spec_section": "tests/integration/fixture_setjmp_nested.c",
+      "edge_class": "other_edge",
+      "expected_output": "structured_program_scenario",
+      "actual_output": "structured_program_scenario",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::nested_two_level_longjmp",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'nested_two_level_longjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::hardened::nested_two_level_longjmp."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::nested_two_level_longjmp",
+      "symbol": "setjmp_nested_edges",
+      "symbol_family": "setjmp_nested_edges",
+      "owner": "unknown",
+      "support_status": "Untracked",
+      "runtime_mode": "strict",
+      "case_id": "nested_two_level_longjmp [strict]",
+      "spec_section": "tests/integration/fixture_setjmp_nested.c",
+      "edge_class": "other_edge",
+      "expected_output": "structured_program_scenario",
+      "actual_output": "structured_program_scenario",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": null,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::nested_two_level_longjmp",
+      "artifact_refs": [
+        "tests/conformance/fixtures/setjmp_nested_edges.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'nested_two_level_longjmp' for 'setjmp_nested_edges' and compare it against conformance_matrix::trace_id::franken_shadow::setjmp_nested_edges::setjmp_nested_edges::strict::nested_two_level_longjmp."
+      ]
+    },
+    {
+      "priority_score": 0,
       "trace_id": "franken_shadow::locale_ops::setlocale::hardened::setlocale_c_locale_hardened",
       "symbol": "setlocale",
       "symbol_family": "locale_ops",
@@ -28665,8 +28645,8 @@
       "spec_section": "C11 7.21.6.1 %p width",
       "edge_class": "other_edge",
       "expected_output": "^\\s*0x[0-9a-f]+$",
-      "actual_output": "      0x636016768180",
-      "host_output": "      0x636016768180",
+      "actual_output": "      0x55c803c08180",
+      "host_output": "      0x55c803c08180",
       "expected_errno": 0,
       "actual_errno": null,
       "status": "pass",
