@@ -7033,6 +7033,415 @@ pub unsafe extern "C" fn crypt_checksalt(setting: *const c_char) -> c_int {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Re-entrant crypt + crypt_gensalt family (libcrypt parity)
+// ---------------------------------------------------------------------------
+
+/// Minimum size of caller storage for crypt_r / crypt_rn results.
+/// libxcrypt sets `CRYPT_OUTPUT_SIZE = 384`. The `output` field
+/// sits at offset 0 of `struct crypt_data` for both glibc and
+/// libxcrypt, so writing the result there is layout-safe.
+const CRYPT_OUTPUT_SIZE: usize = 384;
+
+/// Maximum length of a generated salt string (algorithm prefix +
+/// optional rounds= + base64 random + terminating NUL).
+const CRYPT_GENSALT_OUTPUT_SIZE: usize = 192;
+
+/// Copy a NUL-terminated source string into a writable byte slice;
+/// returns Some(strlen-without-NUL) on success, None if dst is too
+/// small.
+#[inline]
+fn copy_cstr_into(src: &CStr, dst_ptr: *mut c_char, dst_len: usize) -> Option<usize> {
+    let bytes = src.to_bytes();
+    if bytes.len() + 1 > dst_len {
+        return None;
+    }
+    // SAFETY: caller validated dst_ptr/dst_len; bytes.len()+1 <= dst_len.
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, dst_ptr, bytes.len());
+        *dst_ptr.add(bytes.len()) = 0;
+    }
+    Some(bytes.len())
+}
+
+/// libcrypt `crypt_r(key, salt, *data) -> *mut c_char` —
+/// re-entrant `crypt`. Forwards to our `crypt()` and copies the
+/// result into the first `CRYPT_OUTPUT_SIZE` bytes of `data` (the
+/// `output` field at offset 0 of both glibc and libxcrypt's
+/// `struct crypt_data`). Returns the buffer pointer on success or
+/// NULL with errno on failure.
+///
+/// # Safety
+///
+/// `data` must point to writable storage of at least
+/// `CRYPT_OUTPUT_SIZE = 384` bytes (always true for any real
+/// `struct crypt_data`).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt_r(
+    key: *const c_char,
+    salt: *const c_char,
+    data: *mut c_void,
+) -> *mut c_char {
+    if data.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    }
+    let result = unsafe { crypt(key, salt) };
+    if result.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: result points to NUL-terminated static thread-local
+    // crypt buffer.
+    let cstr = unsafe { CStr::from_ptr(result) };
+    let dst = data as *mut c_char;
+    if copy_cstr_into(cstr, dst, CRYPT_OUTPUT_SIZE).is_none() {
+        unsafe { set_abi_errno(errno::ERANGE) };
+        return core::ptr::null_mut();
+    }
+    dst
+}
+
+/// libcrypt `crypt_rn(key, salt, *data, size) -> *mut c_char` —
+/// like [`crypt_r`] but with an explicit `size` for the data
+/// buffer. Refuses if `size` is too small.
+///
+/// # Safety
+///
+/// `data` must point to at least `size` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt_rn(
+    key: *const c_char,
+    salt: *const c_char,
+    data: *mut c_void,
+    size: c_int,
+) -> *mut c_char {
+    if data.is_null() || size <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    }
+    let result = unsafe { crypt(key, salt) };
+    if result.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: result is NUL-terminated.
+    let cstr = unsafe { CStr::from_ptr(result) };
+    let dst = data as *mut c_char;
+    if copy_cstr_into(cstr, dst, size as usize).is_none() {
+        unsafe { set_abi_errno(errno::ERANGE) };
+        return core::ptr::null_mut();
+    }
+    dst
+}
+
+/// libcrypt `crypt_ra(key, salt, **data, *size) -> *mut c_char` —
+/// auto-allocating re-entrant `crypt`. If `*data` is NULL or
+/// `*size` is too small, allocates a `CRYPT_OUTPUT_SIZE`-byte
+/// buffer via our `malloc_abi::malloc` and updates `*data + *size`
+/// before forwarding to the inner copy.
+///
+/// # Safety
+///
+/// `data` and `size` must each point to writable storage. Any
+/// existing buffer at `*data` must have been allocated with our
+/// `malloc` so the caller can `free` it.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt_ra(
+    key: *const c_char,
+    salt: *const c_char,
+    data: *mut *mut c_void,
+    size: *mut c_int,
+) -> *mut c_char {
+    if data.is_null() || size.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    }
+    let need = CRYPT_OUTPUT_SIZE as c_int;
+    // SAFETY: caller-supplied writable pointers.
+    let cur = unsafe { *data };
+    let cur_size = unsafe { *size };
+    if cur.is_null() || cur_size < need {
+        let new_buf = if cur.is_null() {
+            unsafe { crate::malloc_abi::malloc(need as usize) }
+        } else {
+            unsafe { crate::malloc_abi::realloc(cur, need as usize) }
+        };
+        if new_buf.is_null() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return core::ptr::null_mut();
+        }
+        unsafe {
+            *data = new_buf;
+            *size = need;
+        }
+    }
+    let buf = unsafe { *data };
+    unsafe { crypt_rn(key, salt, buf, *size) }
+}
+
+/// Pick the algorithm prefix for a `crypt_gensalt` call.
+/// `NULL`/empty maps to `"$6$"` (SHA-512); unsupported prefixes are
+/// rejected instead of silently changing the requested method.
+fn gensalt_prefix(prefix: *const c_char) -> Result<&'static [u8], c_int> {
+    if prefix.is_null() {
+        return Ok(b"$6$");
+    }
+    // SAFETY: caller-supplied NUL-terminated string.
+    let bytes = unsafe { CStr::from_ptr(prefix) }.to_bytes();
+    match bytes {
+        b"" => Ok(b"$6$"),
+        b"$1$" => Ok(b"$1$"),
+        b"$5$" => Ok(b"$5$"),
+        b"$6$" => Ok(b"$6$"),
+        _ => Err(errno::EINVAL),
+    }
+}
+
+fn gensalt_nrbytes(nrbytes: c_int) -> Result<usize, c_int> {
+    if nrbytes < 0 {
+        Err(errno::EINVAL)
+    } else {
+        Ok(nrbytes as usize)
+    }
+}
+
+/// Encode `rbytes[0..nrbytes]` (capped at 12 bytes → 16 base64
+/// chars) into the libxcrypt-style `./0-9A-Za-z` base64 alphabet
+/// and append exactly 16 chars to `out`.
+fn gensalt_encode_bytes(rbytes: *const c_char, nrbytes: usize, out: &mut Vec<u8>) {
+    const ALPHABET: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let n = nrbytes.min(12);
+    if n == 0 || rbytes.is_null() {
+        out.extend_from_slice(b"AAAAAAAAAAAAAAAA");
+        return;
+    }
+    // SAFETY: caller-supplied buffer of at least nrbytes bytes.
+    let bytes = unsafe { core::slice::from_raw_parts(rbytes as *const u8, n) };
+    let mut emitted = 0usize;
+    let mut i = 0;
+    while i + 3 <= bytes.len() && emitted + 4 <= 16 {
+        let b0 = bytes[i] as u32;
+        let b1 = bytes[i + 1] as u32;
+        let b2 = bytes[i + 2] as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((triple >> 18) & 0x3F) as usize]);
+        out.push(ALPHABET[((triple >> 12) & 0x3F) as usize]);
+        out.push(ALPHABET[((triple >> 6) & 0x3F) as usize]);
+        out.push(ALPHABET[(triple & 0x3F) as usize]);
+        emitted += 4;
+        i += 3;
+    }
+    while emitted < 16 {
+        out.push(b'A');
+        emitted += 1;
+    }
+}
+
+/// Build the salt string into `out`, in libxcrypt format:
+/// `prefix[rounds=N$]base64salt`. The result is NUL-terminated.
+fn build_gensalt(
+    prefix: *const c_char,
+    count: c_ulong,
+    rbytes: *const c_char,
+    nrbytes: usize,
+    out: &mut Vec<u8>,
+) -> Result<(), c_int> {
+    out.clear();
+    let p = gensalt_prefix(prefix)?;
+    out.extend_from_slice(p);
+    if (p == b"$5$" || p == b"$6$") && count >= 1000 {
+        use std::io::Write;
+        let _ = write!(out, "rounds={count}$");
+    }
+    gensalt_encode_bytes(rbytes, nrbytes, out);
+    if out.len() + 1 > CRYPT_GENSALT_OUTPUT_SIZE {
+        return Err(errno::ERANGE);
+    }
+    out.push(0);
+    Ok(())
+}
+
+std::thread_local! {
+    static GENSALT_TLS: core::cell::RefCell<Vec<u8>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+}
+
+/// libcrypt `crypt_gensalt(prefix, count, *rbytes, nrbytes) ->
+/// *mut c_char` — generate a salt string for the requested
+/// algorithm. NULL/unknown prefix maps to `"$6$"` (SHA-512); when
+/// `count >= 1000` we emit the optional `rounds=N$` segment.
+/// Returns a pointer to a thread-local static buffer; valid until
+/// the next call on the same thread.
+///
+/// # Safety
+///
+/// `prefix`, when non-NULL, must be a NUL-terminated C string.
+/// `rbytes`, when non-NULL, must point to at least `nrbytes`
+/// readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt_gensalt(
+    prefix: *const c_char,
+    count: c_ulong,
+    rbytes: *const c_char,
+    nrbytes: c_int,
+) -> *mut c_char {
+    let n = match gensalt_nrbytes(nrbytes) {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return core::ptr::null_mut();
+        }
+    };
+    GENSALT_TLS.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        match build_gensalt(prefix, count, rbytes, n, &mut buf) {
+            Ok(()) => buf.as_mut_ptr() as *mut c_char,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                core::ptr::null_mut()
+            }
+        }
+    })
+}
+
+/// libcrypt `crypt_gensalt_r(prefix, count, *rbytes, nrbytes,
+/// *output, output_size) -> *mut c_char` — same as
+/// [`crypt_gensalt`] but writes into the caller's buffer. Returns
+/// `output` on success or NULL + EINVAL/ERANGE on failure.
+///
+/// # Safety
+///
+/// `output` must point to at least `output_size` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt_gensalt_r(
+    prefix: *const c_char,
+    count: c_ulong,
+    rbytes: *const c_char,
+    nrbytes: c_int,
+    output: *mut c_char,
+    output_size: c_int,
+) -> *mut c_char {
+    if output.is_null() || output_size <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    }
+    let n = match gensalt_nrbytes(nrbytes) {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return core::ptr::null_mut();
+        }
+    };
+    let mut tmp = Vec::<u8>::new();
+    if let Err(e) = build_gensalt(prefix, count, rbytes, n, &mut tmp) {
+        unsafe { set_abi_errno(e) };
+        return core::ptr::null_mut();
+    }
+    if tmp.len() > output_size as usize {
+        unsafe { set_abi_errno(errno::ERANGE) };
+        return core::ptr::null_mut();
+    }
+    // SAFETY: output has at least output_size >= tmp.len() bytes; tmp
+    // already includes the NUL.
+    unsafe { core::ptr::copy_nonoverlapping(tmp.as_ptr() as *const c_char, output, tmp.len()) };
+    output
+}
+
+/// libcrypt `crypt_gensalt_rn(...)` — alternate name for
+/// [`crypt_gensalt_r`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt_gensalt_rn(
+    prefix: *const c_char,
+    count: c_ulong,
+    rbytes: *const c_char,
+    nrbytes: c_int,
+    output: *mut c_char,
+    output_size: c_int,
+) -> *mut c_char {
+    unsafe { crypt_gensalt_r(prefix, count, rbytes, nrbytes, output, output_size) }
+}
+
+/// libcrypt `crypt_gensalt_ra(prefix, count, *rbytes, nrbytes) ->
+/// *mut c_char` — auto-allocating gensalt. Returns a freshly
+/// `malloc`-allocated NUL-terminated string the caller is
+/// responsible for `free`ing. Returns NULL on alloc failure.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn crypt_gensalt_ra(
+    prefix: *const c_char,
+    count: c_ulong,
+    rbytes: *const c_char,
+    nrbytes: c_int,
+) -> *mut c_char {
+    let n = match gensalt_nrbytes(nrbytes) {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return core::ptr::null_mut();
+        }
+    };
+    let mut tmp = Vec::<u8>::new();
+    if let Err(e) = build_gensalt(prefix, count, rbytes, n, &mut tmp) {
+        unsafe { set_abi_errno(e) };
+        return core::ptr::null_mut();
+    }
+    let buf = unsafe { crate::malloc_abi::malloc(tmp.len()) };
+    if buf.is_null() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return core::ptr::null_mut();
+    }
+    // SAFETY: buf has at least tmp.len() bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            tmp.as_ptr() as *const c_char,
+            buf as *mut c_char,
+            tmp.len(),
+        );
+    }
+    buf as *mut c_char
+}
+
+/// libcrypt `xcrypt_r(key, salt, *data) -> *mut c_char` — alias
+/// of [`crypt_r`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xcrypt_r(
+    key: *const c_char,
+    salt: *const c_char,
+    data: *mut c_void,
+) -> *mut c_char {
+    unsafe { crypt_r(key, salt, data) }
+}
+
+/// libcrypt `xcrypt_gensalt(prefix, count, *rbytes, nrbytes) ->
+/// *mut c_char` — alias of [`crypt_gensalt`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xcrypt_gensalt(
+    prefix: *const c_char,
+    count: c_ulong,
+    rbytes: *const c_char,
+    nrbytes: c_int,
+) -> *mut c_char {
+    unsafe { crypt_gensalt(prefix, count, rbytes, nrbytes) }
+}
+
+/// libcrypt `xcrypt_gensalt_r(...)` — alias of [`crypt_gensalt_r`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn xcrypt_gensalt_r(
+    prefix: *const c_char,
+    count: c_ulong,
+    rbytes: *const c_char,
+    nrbytes: c_int,
+    output: *mut c_char,
+    output_size: c_int,
+) -> *mut c_char {
+    unsafe { crypt_gensalt_r(prefix, count, rbytes, nrbytes, output, output_size) }
+}
+
+#[allow(dead_code)]
+const _: () = {
+    // Compile-time hint: keep CRYPT_GENSALT_OUTPUT_SIZE referenced
+    // even though all gensalt paths size-check via the runtime Vec.
+    let _: usize = CRYPT_GENSALT_OUTPUT_SIZE;
+};
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.

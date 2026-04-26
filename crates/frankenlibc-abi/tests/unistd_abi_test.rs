@@ -8118,3 +8118,295 @@ fn crypt_checksalt_classifies_known_prefixes() {
     // NULL input must not crash; returns CRYPT_SALT_INVALID.
     assert_eq!(unsafe { crypt_checksalt(std::ptr::null()) }, 1);
 }
+
+// ---------------------------------------------------------------------------
+// crypt_r / crypt_rn / crypt_ra + crypt_gensalt family
+// ---------------------------------------------------------------------------
+
+#[test]
+fn crypt_r_writes_into_caller_buffer_matching_crypt() {
+    use frankenlibc_abi::unistd_abi::{crypt, crypt_r};
+    let key = CString::new("hunter2").unwrap();
+    let salt = CString::new("$6$abcdefgh").unwrap();
+    let mut data = [0u8; 512];
+    let p = unsafe {
+        crypt_r(
+            key.as_ptr(),
+            salt.as_ptr(),
+            data.as_mut_ptr() as *mut c_void,
+        )
+    };
+    assert!(!p.is_null());
+    let s_r = unsafe { CStr::from_ptr(p) };
+    let s_plain = unsafe { CStr::from_ptr(crypt(key.as_ptr(), salt.as_ptr())) };
+    assert_eq!(s_r, s_plain);
+    // Result was written at offset 0 of the data buffer.
+    assert_eq!(p as *const u8, data.as_ptr());
+}
+
+#[test]
+fn crypt_rn_refuses_buffer_too_small() {
+    use frankenlibc_abi::unistd_abi::crypt_rn;
+    let key = CString::new("password").unwrap();
+    let salt = CString::new("$6$saltsalt").unwrap();
+    let mut buf = [0u8; 8]; // too small for SHA-512 result
+    let p = unsafe {
+        crypt_rn(
+            key.as_ptr(),
+            salt.as_ptr(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ERANGE);
+}
+
+#[test]
+fn crypt_ra_allocates_buffer_when_data_null() {
+    use frankenlibc_abi::unistd_abi::crypt_ra;
+    let key = CString::new("password").unwrap();
+    let salt = CString::new("$6$saltsalt").unwrap();
+    let mut data: *mut c_void = std::ptr::null_mut();
+    let mut size: c_int = 0;
+    let p = unsafe { crypt_ra(key.as_ptr(), salt.as_ptr(), &mut data, &mut size) };
+    assert!(!p.is_null());
+    assert!(!data.is_null());
+    assert!(size >= 384);
+    // Free via our malloc_abi; data was allocated through it.
+    unsafe { frankenlibc_abi::malloc_abi::free(data) };
+}
+
+#[test]
+fn crypt_gensalt_default_is_sha512() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt;
+    let rbytes = b"randombytes!";
+    let p = unsafe {
+        crypt_gensalt(
+            std::ptr::null(),
+            0,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+        )
+    };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert!(s.to_bytes().starts_with(b"$6$"), "got: {s:?}");
+    assert!(s.to_bytes().len() >= 3 + 16, "len: {}", s.to_bytes().len()); // "$6$" + 16 chars of salt
+}
+
+#[test]
+fn crypt_gensalt_explicit_md5_prefix() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt;
+    let prefix = CString::new("$1$").unwrap();
+    let rbytes = b"someentropyhere";
+    let p = unsafe {
+        crypt_gensalt(
+            prefix.as_ptr(),
+            0,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+        )
+    };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert!(s.to_bytes().starts_with(b"$1$"), "got: {s:?}");
+}
+
+#[test]
+fn crypt_gensalt_with_rounds_emits_rounds_segment_for_sha() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt;
+    let prefix = CString::new("$6$").unwrap();
+    let rbytes = b"morerandomnessok";
+    let p = unsafe {
+        crypt_gensalt(
+            prefix.as_ptr(),
+            10_000,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+        )
+    };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    let bytes = s.to_bytes();
+    let prefix = b"$6$rounds=10000$";
+    assert!(bytes.starts_with(prefix), "got: {s:?}");
+    assert!(
+        bytes.len() >= prefix.len() + 16,
+        "salt tail was truncated: {s:?}"
+    );
+}
+
+#[test]
+fn crypt_gensalt_r_returns_erange_on_small_buffer() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt_r;
+    let mut out = [0u8; 4]; // too small even for "$6$" + NUL
+    let p = unsafe {
+        crypt_gensalt_r(
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            out.as_mut_ptr() as *mut c_char,
+            out.len() as c_int,
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ERANGE);
+}
+
+#[test]
+fn crypt_gensalt_rejects_invalid_prefix_and_negative_entropy_size() {
+    use frankenlibc_abi::unistd_abi::{crypt_gensalt, crypt_gensalt_r};
+    let bogus = CString::new("$2b$").unwrap();
+    let mut out = [0u8; 64];
+
+    let p = unsafe { crypt_gensalt(bogus.as_ptr(), 0, std::ptr::null(), 0) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+
+    let p = unsafe {
+        crypt_gensalt_r(
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            -1,
+            out.as_mut_ptr() as *mut c_char,
+            out.len() as c_int,
+        )
+    };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+fn crypt_gensalt_rn_matches_r_variant() {
+    use frankenlibc_abi::unistd_abi::{crypt_gensalt_r, crypt_gensalt_rn};
+    let prefix = CString::new("$5$").unwrap();
+    let rbytes = b"someentropyhere";
+    let mut a = [0u8; 64];
+    let mut b = [0u8; 64];
+
+    let pa = unsafe {
+        crypt_gensalt_r(
+            prefix.as_ptr(),
+            5000,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+            a.as_mut_ptr() as *mut c_char,
+            a.len() as c_int,
+        )
+    };
+    let pb = unsafe {
+        crypt_gensalt_rn(
+            prefix.as_ptr(),
+            5000,
+            rbytes.as_ptr() as *const c_char,
+            rbytes.len() as c_int,
+            b.as_mut_ptr() as *mut c_char,
+            b.len() as c_int,
+        )
+    };
+
+    assert!(!pa.is_null() && !pb.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(pa) }, unsafe { CStr::from_ptr(pb) });
+}
+
+#[test]
+fn crypt_ra_grows_existing_too_small_buffer() {
+    use frankenlibc_abi::unistd_abi::crypt_ra;
+    let key = CString::new("password").unwrap();
+    let salt = CString::new("$6$saltsalt").unwrap();
+    let mut data = unsafe { frankenlibc_abi::malloc_abi::malloc(8) };
+    assert!(!data.is_null());
+    let mut size: c_int = 8;
+
+    let p = unsafe { crypt_ra(key.as_ptr(), salt.as_ptr(), &mut data, &mut size) };
+    assert!(!p.is_null());
+    assert!(!data.is_null());
+    assert!(size >= 384);
+    assert_eq!(p as *mut c_void, data);
+    unsafe { frankenlibc_abi::malloc_abi::free(data) };
+}
+
+#[test]
+fn crypt_gensalt_ra_allocates_via_malloc() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt_ra;
+    let p = unsafe { crypt_gensalt_ra(std::ptr::null(), 0, std::ptr::null(), 0) };
+    assert!(!p.is_null());
+    let s = unsafe { CStr::from_ptr(p) };
+    assert!(s.to_bytes().starts_with(b"$6$"));
+    unsafe { frankenlibc_abi::malloc_abi::free(p as *mut c_void) };
+}
+
+#[test]
+fn xcrypt_aliases_match_crypt_counterparts() {
+    use frankenlibc_abi::unistd_abi::{
+        crypt, crypt_gensalt, crypt_gensalt_r, crypt_r, xcrypt_gensalt, xcrypt_gensalt_r, xcrypt_r,
+    };
+    let key = CString::new("hunter2").unwrap();
+    let salt = CString::new("$6$abcdefgh").unwrap();
+
+    // xcrypt_r vs crypt_r write the same bytes.
+    let mut a = [0u8; 384];
+    let mut b = [0u8; 384];
+    let pa = unsafe { crypt_r(key.as_ptr(), salt.as_ptr(), a.as_mut_ptr() as *mut c_void) };
+    let pb = unsafe { xcrypt_r(key.as_ptr(), salt.as_ptr(), b.as_mut_ptr() as *mut c_void) };
+    assert_eq!(unsafe { CStr::from_ptr(pa) }, unsafe { CStr::from_ptr(pb) });
+
+    // xcrypt_gensalt vs crypt_gensalt produce identical strings for the
+    // same arguments.
+    let r = b"sixteenrandomby!";
+    let pa = unsafe {
+        crypt_gensalt(
+            std::ptr::null(),
+            0,
+            r.as_ptr() as *const c_char,
+            r.len() as c_int,
+        )
+    };
+    let pb = unsafe {
+        xcrypt_gensalt(
+            std::ptr::null(),
+            0,
+            r.as_ptr() as *const c_char,
+            r.len() as c_int,
+        )
+    };
+    assert_eq!(unsafe { CStr::from_ptr(pa) }, unsafe { CStr::from_ptr(pb) });
+
+    // Same for the _r variant.
+    let mut buf = [0u8; 64];
+    let pc = unsafe {
+        xcrypt_gensalt_r(
+            std::ptr::null(),
+            0,
+            r.as_ptr() as *const c_char,
+            r.len() as c_int,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len() as c_int,
+        )
+    };
+    assert!(!pc.is_null());
+    let mut buf2 = [0u8; 64];
+    let pd = unsafe {
+        crypt_gensalt_r(
+            std::ptr::null(),
+            0,
+            r.as_ptr() as *const c_char,
+            r.len() as c_int,
+            buf2.as_mut_ptr() as *mut c_char,
+            buf2.len() as c_int,
+        )
+    };
+    assert_eq!(unsafe { CStr::from_ptr(pc) }, unsafe { CStr::from_ptr(pd) });
+
+    // Sanity: the gensalt result is a valid input for crypt().
+    let salt_str = unsafe { CStr::from_ptr(pa) };
+    let hashed = unsafe { crypt(key.as_ptr(), salt_str.as_ptr()) };
+    assert!(!hashed.is_null());
+}
