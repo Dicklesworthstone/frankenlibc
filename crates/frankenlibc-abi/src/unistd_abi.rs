@@ -10783,6 +10783,26 @@ pub unsafe extern "C" fn __cxa_finalize(dso_handle: *mut c_void) {
     }
 }
 
+/// Itanium C++ ABI `__cxa_pure_virtual` — stub installed in vtable
+/// slots for pure virtual functions. If a caller dispatches through
+/// an under-construction or partially-destructed object whose
+/// vtable still points to a pure-virtual entry, control reaches
+/// here. We mirror glibc's behavior: write a diagnostic to stderr
+/// and abort.
+///
+/// Without this symbol, every C++ binary linked against our libc
+/// fails at link time with an undefined reference.
+///
+/// Marked `-> !` because we never return.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_pure_virtual() -> ! {
+    let msg: &[u8] = b"pure virtual method called\n";
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+        libc::abort();
+    }
+}
+
 /// Stack canary value, initialized from AT_RANDOM for proper randomization.
 ///
 /// The low byte is forced to 0x00 (NUL terminator) to prevent string-based

@@ -5853,6 +5853,41 @@ fn secure_path_root_owned_secure_file_passes() {
 }
 
 // ===========================================================================
+// __cxa_pure_virtual (Itanium C++ ABI pure-virtual stub)
+// ===========================================================================
+
+#[test]
+fn cxa_pure_virtual_aborts_child_process() {
+    // The function never returns and aborts the process. Run it in
+    // a forked child so we can observe SIGABRT without killing the
+    // test runner.
+    use frankenlibc_abi::unistd_abi::__cxa_pure_virtual;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        // Child: invoke the stub. Should abort immediately.
+        unsafe { __cxa_pure_virtual() };
+        // Unreachable.
+    }
+
+    // Parent: wait for child and verify it died via SIGABRT.
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(
+        libc::WIFSIGNALED(status),
+        "child must have terminated by signal"
+    );
+    assert_eq!(
+        libc::WTERMSIG(status),
+        libc::SIGABRT,
+        "child must have terminated by SIGABRT"
+    );
+}
+
+// ===========================================================================
 // __dso_handle (Itanium C++ ABI per-DSO handle)
 // ===========================================================================
 
