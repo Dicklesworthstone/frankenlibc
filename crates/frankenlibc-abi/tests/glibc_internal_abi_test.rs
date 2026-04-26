@@ -3615,3 +3615,63 @@ fn nss_next2_returns_unavail() {
     };
     assert_eq!(rc, -1);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 4 GLIBC_PRIVATE last-mile internal symbols (bd-kapb7)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn libc_dlerror_result_default_is_null() {
+    use frankenlibc_abi::glibc_internal_abi::__libc_dlerror_result;
+    let p = unsafe { (&raw const __libc_dlerror_result).read() };
+    assert!(p.is_null());
+}
+
+#[test]
+fn itoa_lower_digits_table_is_lowercase_hex() {
+    use frankenlibc_abi::glibc_internal_abi::_itoa_lower_digits;
+    let bytes: &[std::ffi::c_char; 17] = &_itoa_lower_digits;
+    let s: Vec<u8> = bytes[..16].iter().map(|c| *c as u8).collect();
+    assert_eq!(&s, b"0123456789abcdef");
+    assert_eq!(bytes[16], 0);
+}
+
+#[test]
+fn libc_fcntl64_forwards_to_fcntl_getfd() {
+    use frankenlibc_abi::glibc_internal_abi::__libc_fcntl64;
+    let f = std::fs::File::open("/dev/null").unwrap();
+    let fd = std::os::unix::io::AsRawFd::as_raw_fd(&f);
+    let flags = unsafe { __libc_fcntl64(fd, libc::F_GETFD, 0) };
+    assert!(flags >= 0);
+}
+
+#[test]
+fn libc_fcntl64_setfd_roundtrip() {
+    use frankenlibc_abi::glibc_internal_abi::__libc_fcntl64;
+    let f = std::fs::File::open("/dev/null").unwrap();
+    let fd = std::os::unix::io::AsRawFd::as_raw_fd(&f);
+    let original = unsafe { __libc_fcntl64(fd, libc::F_GETFD, 0) };
+    assert!(original >= 0);
+    let target = original | libc::FD_CLOEXEC;
+    let rc = unsafe { __libc_fcntl64(fd, libc::F_SETFD, target as std::ffi::c_long) };
+    assert_eq!(rc, 0);
+    let after = unsafe { __libc_fcntl64(fd, libc::F_GETFD, 0) };
+    assert_eq!(after & libc::FD_CLOEXEC, libc::FD_CLOEXEC);
+}
+
+#[test]
+fn libc_fcntl64_invalid_fd_returns_minus_one() {
+    use frankenlibc_abi::glibc_internal_abi::__libc_fcntl64;
+    let rc = unsafe { __libc_fcntl64(-1, libc::F_GETFD, 0) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn libc_mallinfo_reports_nonzero_arena_or_uordblks() {
+    use frankenlibc_abi::glibc_internal_abi::__libc_mallinfo;
+    // Ensure the allocator has been touched.
+    let bumper: Vec<u8> = vec![0u8; 65536];
+    std::hint::black_box(&bumper);
+    let info = unsafe { __libc_mallinfo() };
+    assert!(info.arena > 0 || info.uordblks > 0);
+}

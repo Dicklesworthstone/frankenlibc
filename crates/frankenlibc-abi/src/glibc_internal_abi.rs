@@ -1321,7 +1321,7 @@ pub unsafe extern "C" fn res_send(
 // NSS internal functions: FrankenLibC uses native /etc/passwd|group|hosts parsing
 // instead of glibc's NSS module system. These stubs return "unavailable" so callers
 // fall back to our native implementations (pwd_abi, grp_abi, resolv_abi).
-// NSS_STATUS_UNAVAIL = -1, NSS_STATUS_NOTFOUND = -2
+// NSS_STATUS_TRYAGAIN = -2, NSS_STATUS_UNAVAIL = -1, NSS_STATUS_NOTFOUND = 0
 // __nss_configure_lookup: configure NSS database — no-op, we parse files directly
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __nss_configure_lookup(
@@ -9050,4 +9050,71 @@ pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
         }
         libc::abort();
     }
+}
+
+// ===========================================================================
+// 4 GLIBC_PRIVATE / GLIBC_2.2.5 last-mile internal symbols (bd-kapb7)
+// ===========================================================================
+//
+// glibc exposes a small set of "private" globals/functions that link-time
+// consumers (the dynamic linker, libthread_db, internal printf, mallinfo
+// users) expect to resolve. The other internal data symbols of this family
+// (__abort_msg, __nptl_*, __pthread_keys, __resp) already exist elsewhere
+// in this crate. The four below close the remaining gap.
+
+/// `__libc_dlerror_result` — TLS slot holding the per-thread last
+/// dlerror() result struct. NULL until a dl* call has populated it.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static mut __libc_dlerror_result: *mut c_void = std::ptr::null_mut();
+
+/// `_itoa_lower_digits` — 17-byte (16 hex chars + NUL) lookup table
+/// for the lower-case digit set used by glibc's internal `_itoa`
+/// integer formatter.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static _itoa_lower_digits: [c_char; 17] = [
+    b'0' as c_char,
+    b'1' as c_char,
+    b'2' as c_char,
+    b'3' as c_char,
+    b'4' as c_char,
+    b'5' as c_char,
+    b'6' as c_char,
+    b'7' as c_char,
+    b'8' as c_char,
+    b'9' as c_char,
+    b'a' as c_char,
+    b'b' as c_char,
+    b'c' as c_char,
+    b'd' as c_char,
+    b'e' as c_char,
+    b'f' as c_char,
+    0,
+];
+
+/// `__libc_fcntl64(fd, cmd, arg) -> int` — GLIBC_PRIVATE 64-bit
+/// fcntl shim. Forwards to the host `fcntl` with the third
+/// argument passed through verbatim (the only callers of this
+/// internal entry are glibc's own LFS variants, which always
+/// pass an integer-or-pointer-width arg).
+///
+/// # Safety
+///
+/// `fd` must be a valid file descriptor for the requested `cmd`.
+/// `arg` must match the `cmd` contract per `fcntl(2)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_fcntl64(fd: c_int, cmd: c_int, arg: std::ffi::c_long) -> c_int {
+    unsafe { libc::fcntl(fd, cmd, arg) }
+}
+
+/// `__libc_mallinfo() -> struct mallinfo` — GLIBC_2.2.5 alias for
+/// `mallinfo()`. Forwards to libc's `mallinfo` so the returned
+/// counters reflect actual host allocator state.
+///
+/// # Safety
+///
+/// Trivially safe at the FFI boundary; documented `unsafe extern "C"`
+/// for symmetry with the rest of the GLIBC_PRIVATE shims.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_mallinfo() -> libc::mallinfo {
+    unsafe { libc::mallinfo() }
 }
