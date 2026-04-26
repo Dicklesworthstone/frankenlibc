@@ -581,3 +581,75 @@ fn multiple_mappings_independent() {
     assert_eq!(unsafe { munmap(ptr1, len) }, 0);
     assert_eq!(unsafe { munmap(ptr2, len) }, 0);
 }
+
+// ---------------------------------------------------------------------------
+// __msync / __mremap / __mmap64 (glibc reserved aliases)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_msync_succeeds_on_anon_mapping() {
+    use frankenlibc_abi::mmap_abi::{__msync, mmap, munmap};
+    let len = 4096;
+    let ptr = unsafe {
+        mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+    let rc = unsafe { __msync(ptr, len, libc::MS_SYNC) };
+    assert_eq!(rc, 0);
+    assert_eq!(unsafe { munmap(ptr, len) }, 0);
+}
+
+#[test]
+fn under_mremap_grows_anon_mapping() {
+    use frankenlibc_abi::mmap_abi::{__mremap, mmap, munmap};
+    let small = 4096;
+    let large = 8192;
+    let ptr = unsafe {
+        mmap(
+            std::ptr::null_mut(),
+            small,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+    let new_ptr = unsafe {
+        __mremap(
+            ptr,
+            small,
+            large,
+            libc::MREMAP_MAYMOVE,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_ne!(new_ptr, libc::MAP_FAILED);
+    assert_eq!(unsafe { munmap(new_ptr, large) }, 0);
+}
+
+#[test]
+fn under_mmap64_creates_anon_mapping() {
+    use frankenlibc_abi::mmap_abi::munmap;
+    use frankenlibc_abi::unistd_abi::__mmap64;
+    let len = 4096;
+    let ptr = unsafe {
+        __mmap64(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+    assert_eq!(unsafe { munmap(ptr, len) }, 0);
+}

@@ -776,6 +776,17 @@ fn under_pwrite_pread_round_trip_at_offset() {
 }
 
 #[test]
+fn under_pipe_creates_pair() {
+    use frankenlibc_abi::io_abi::__pipe;
+    let mut fds: [c_int; 2] = [-1, -1];
+    let rc = unsafe { __pipe(fds.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+    assert!(fds[0] >= 0 && fds[1] >= 0);
+    unsafe { close(fds[0]) };
+    unsafe { close(fds[1]) };
+}
+
+#[test]
 fn under_writev_readv_round_trip() {
     let fd = make_temp_file_fd();
     let part1 = b"alias-";

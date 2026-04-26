@@ -3,9 +3,7 @@
 //! Integration tests for err.h ABI entrypoints (warn/warnx only;
 //! err/errx call _exit and cannot be tested in-process).
 
-use frankenlibc_abi::err_abi::{
-    err_set_exit, vwarn, vwarnc, vwarnx, warn, warnc, warnx,
-};
+use frankenlibc_abi::err_abi::{err_set_exit, vwarn, vwarnc, vwarnx, warn, warnc, warnx};
 use std::ffi::{c_char, c_int};
 
 // ---------------------------------------------------------------------------

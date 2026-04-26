@@ -397,3 +397,29 @@ pub unsafe extern "C" fn mremap(
         }
     }
 }
+
+/// glibc reserved-namespace alias for [`msync`].
+///
+/// # Safety
+///
+/// Same as [`msync`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
+    unsafe { msync(addr, length, flags) }
+}
+
+/// glibc reserved-namespace alias for [`mremap`].
+///
+/// # Safety
+///
+/// Same as [`mremap`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __mremap(
+    old_address: *mut c_void,
+    old_size: usize,
+    new_size: usize,
+    flags: c_int,
+    new_address: *mut c_void,
+) -> *mut c_void {
+    unsafe { mremap(old_address, old_size, new_size, flags, new_address) }
+}

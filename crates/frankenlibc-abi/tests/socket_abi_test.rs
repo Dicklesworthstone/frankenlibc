@@ -1393,9 +1393,7 @@ fn under_setsockopt_getsockopt_round_trip_keepalive() {
 fn under_shutdown_on_socketpair_succeeds() {
     let mut pair = [-1 as c_int; 2];
     assert_eq!(
-        unsafe {
-            socket_abi::__socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, pair.as_mut_ptr())
-        },
+        unsafe { socket_abi::__socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, pair.as_mut_ptr()) },
         0
     );
     let rc = unsafe { socket_abi::__shutdown(pair[0], libc::SHUT_RDWR) };

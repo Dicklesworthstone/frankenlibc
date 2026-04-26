@@ -1062,6 +1062,19 @@ pub unsafe extern "C" fn sigaltstack(
     rc
 }
 
+/// glibc reserved-namespace alias for [`sigaltstack`].
+///
+/// # Safety
+///
+/// Same as [`sigaltstack`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigaltstack(
+    ss: *const libc::stack_t,
+    old_ss: *mut libc::stack_t,
+) -> c_int {
+    unsafe { sigaltstack(ss, old_ss) }
+}
+
 // ---------------------------------------------------------------------------
 // sigaction
 // ---------------------------------------------------------------------------

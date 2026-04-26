@@ -3981,6 +3981,23 @@ pub unsafe extern "C" fn mmap64(
     unsafe { crate::mmap_abi::mmap(addr, len, prot, flags, fd, offset) }
 }
 
+/// glibc reserved-namespace alias for [`mmap64`].
+///
+/// # Safety
+///
+/// Same as [`mmap64`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __mmap64(
+    addr: *mut c_void,
+    len: usize,
+    prot: c_int,
+    flags: c_int,
+    fd: c_int,
+    offset: i64,
+) -> *mut c_void {
+    unsafe { mmap64(addr, len, prot, flags, fd, offset) }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sendfile64(
     out_fd: c_int,

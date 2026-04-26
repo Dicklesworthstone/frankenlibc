@@ -1327,3 +1327,14 @@ fn under_sigignore_sighold_sigrelse_round_trip() {
     // affected.
     let _ = unsafe { sigaction(libc::SIGUSR2, &prev, std::ptr::null_mut()) };
 }
+
+#[test]
+fn under_sigaltstack_query_only_succeeds() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    use frankenlibc_abi::signal_abi::__sigaltstack;
+    // Query-only call (NULL ss) — must succeed without disturbing
+    // any installed altstack.
+    let mut old: libc::stack_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { __sigaltstack(std::ptr::null(), &mut old) };
+    assert_eq!(rc, 0);
+}

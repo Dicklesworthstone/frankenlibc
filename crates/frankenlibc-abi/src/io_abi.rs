@@ -110,6 +110,16 @@ pub unsafe extern "C" fn pipe(pipefd: *mut c_int) -> c_int {
     rc
 }
 
+/// glibc reserved-namespace alias for [`pipe`].
+///
+/// # Safety
+///
+/// Same as [`pipe`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pipe(pipefd: *mut c_int) -> c_int {
+    unsafe { pipe(pipefd) }
+}
+
 // ---------------------------------------------------------------------------
 // fcntl
 // ---------------------------------------------------------------------------
