@@ -3,6 +3,7 @@
 //! Integration tests for POSIX I/O ABI entrypoints.
 
 use std::ffi::{c_int, c_uint};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::io_abi::{
     __dup3, __pipe2, __pread, __pwrite, __readv, __writev, copy_file_range, dup, dup2, dup3, fcntl,
@@ -735,9 +736,12 @@ fn under_dup3_works_like_dup3() {
 
 fn make_temp_file_fd() -> c_int {
     use std::os::unix::ffi::OsStrExt;
+    static TEMP_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = TEMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "franken_io_alias_{}_{:p}",
+        "franken_io_alias_{}_{}_{:p}",
         std::process::id(),
+        seq,
         &0u8 as *const u8
     ));
     let path_c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();

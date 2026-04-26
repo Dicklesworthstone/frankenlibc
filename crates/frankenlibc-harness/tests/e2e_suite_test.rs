@@ -42,6 +42,25 @@ fn latest_run_dir(root: &Path, parent: &str, prefix: &str) -> Option<PathBuf> {
     runs.last().map(|e| e.path())
 }
 
+fn latest_e2e_seed_run_dir(root: &Path, seed: &str) -> Option<PathBuf> {
+    let e2e_dir = root.join("target/e2e_suite");
+    if !e2e_dir.exists() {
+        return None;
+    }
+
+    let suffix = format!("-s{seed}");
+    let mut runs: Vec<_> = std::fs::read_dir(&e2e_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with("e2e-") && name.ends_with(&suffix)
+        })
+        .collect();
+    runs.sort_by_key(|e| e.file_name());
+    runs.last().map(|e| e.path())
+}
+
 #[test]
 fn e2e_suite_script_exists() {
     let root = workspace_root();
@@ -278,6 +297,7 @@ fn e2e_manifest_validator_and_catalog_exist() {
 #[test]
 fn e2e_suite_runs_and_produces_jsonl() {
     let root = workspace_root();
+    let seed = "43001";
 
     // Run just the fault scenario with a very short timeout
     let output = Command::new("bash")
@@ -285,6 +305,7 @@ fn e2e_suite_runs_and_produces_jsonl() {
         .arg("fault")
         .arg("strict")
         .env("TIMEOUT_SECONDS", "2")
+        .env("FRANKENLIBC_E2E_SEED", seed)
         .output()
         .expect("e2e_suite.sh should execute");
 
@@ -292,22 +313,8 @@ fn e2e_suite_runs_and_produces_jsonl() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("E2E Suite v1"), "Should print suite header");
 
-    // Find the trace.jsonl in the latest run directory
-    let e2e_dir = root.join("target/e2e_suite");
-    if !e2e_dir.exists() {
-        // Suite didn't produce output (maybe no lib), skip
-        return;
-    }
-
-    let mut runs: Vec<_> = std::fs::read_dir(&e2e_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("e2e-"))
-        .collect();
-    runs.sort_by_key(|e| e.file_name());
-
-    if let Some(latest) = runs.last() {
-        let trace_path = latest.path().join("trace.jsonl");
+    if let Some(latest) = latest_e2e_seed_run_dir(&root, seed) {
+        let trace_path = latest.join("trace.jsonl");
         if trace_path.exists() {
             let content = std::fs::read_to_string(&trace_path).unwrap();
             let mut valid_lines = 0;
