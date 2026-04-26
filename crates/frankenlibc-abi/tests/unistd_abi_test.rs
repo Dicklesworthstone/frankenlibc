@@ -8369,6 +8369,8 @@ fn xcrypt_aliases_match_crypt_counterparts() {
             r.len() as c_int,
         )
     };
+    assert!(!pa.is_null());
+    let pa_bytes = unsafe { CStr::from_ptr(pa) }.to_bytes().to_vec();
     let pb = unsafe {
         xcrypt_gensalt(
             std::ptr::null(),
@@ -8377,7 +8379,8 @@ fn xcrypt_aliases_match_crypt_counterparts() {
             r.len() as c_int,
         )
     };
-    assert_eq!(unsafe { CStr::from_ptr(pa) }, unsafe { CStr::from_ptr(pb) });
+    assert!(!pb.is_null());
+    assert_eq!(pa_bytes, unsafe { CStr::from_ptr(pb) }.to_bytes());
 
     // Same for the _r variant.
     let mut buf = [0u8; 64];
@@ -8406,7 +8409,185 @@ fn xcrypt_aliases_match_crypt_counterparts() {
     assert_eq!(unsafe { CStr::from_ptr(pc) }, unsafe { CStr::from_ptr(pd) });
 
     // Sanity: the gensalt result is a valid input for crypt().
-    let salt_str = unsafe { CStr::from_ptr(pa) };
+    let salt_str = CString::new(pa_bytes).unwrap();
     let hashed = unsafe { crypt(key.as_ptr(), salt_str.as_ptr()) };
     assert!(!hashed.is_null());
+}
+
+// ---------------------------------------------------------------------------
+// NIS / yp_* fail-safe stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn yp_get_default_domain_returns_nodom_and_zeroes_outptr() {
+    use frankenlibc_abi::unistd_abi::yp_get_default_domain;
+    let mut out: *mut c_char = 0xDEAD_BEEF_usize as *mut c_char;
+    let rc = unsafe { yp_get_default_domain(&mut out) };
+    assert_eq!(rc, 12, "YPERR_NODOM expected"); // YPERR_NODOM
+    assert!(out.is_null());
+}
+
+#[test]
+fn yp_bind_returns_ypdomain_unbind_is_noop() {
+    use frankenlibc_abi::unistd_abi::{yp_bind, yp_unbind};
+    let dom = CString::new("nis.example.com").unwrap();
+    let rc = unsafe { yp_bind(dom.as_ptr()) };
+    assert_eq!(rc, 3, "YPERR_DOMAIN expected"); // YPERR_DOMAIN
+    unsafe { yp_unbind(dom.as_ptr()) };
+}
+
+#[test]
+fn yp_match_zeroes_outputs_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_match;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("passwd.byname").unwrap();
+    let key = CString::new("alice").unwrap();
+    let mut val: *mut c_char = 0xDEAD_BEEF_usize as *mut c_char;
+    let mut vallen: c_int = 99;
+    let rc = unsafe {
+        yp_match(
+            dom.as_ptr(),
+            map.as_ptr(),
+            key.as_ptr(),
+            key.as_bytes().len() as c_int,
+            &mut val,
+            &mut vallen,
+        )
+    };
+    assert_eq!(rc, 3);
+    assert!(val.is_null());
+    assert_eq!(vallen, 0);
+}
+
+#[test]
+fn yp_first_zeroes_all_outputs() {
+    use frankenlibc_abi::unistd_abi::yp_first;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("hosts.byname").unwrap();
+    let mut k: *mut c_char = 0xDEAD as *mut c_char;
+    let mut kl: c_int = 99;
+    let mut v: *mut c_char = 0xCAFE as *mut c_char;
+    let mut vl: c_int = 99;
+    let rc = unsafe { yp_first(dom.as_ptr(), map.as_ptr(), &mut k, &mut kl, &mut v, &mut vl) };
+    assert_eq!(rc, 3);
+    assert!(k.is_null() && v.is_null() && kl == 0 && vl == 0);
+}
+
+#[test]
+fn yp_next_zeroes_all_outputs() {
+    use frankenlibc_abi::unistd_abi::yp_next;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("group.byname").unwrap();
+    let inkey = b"prev";
+    let mut k: *mut c_char = 0xDEAD as *mut c_char;
+    let mut kl: c_int = 99;
+    let mut v: *mut c_char = 0xCAFE as *mut c_char;
+    let mut vl: c_int = 99;
+    let rc = unsafe {
+        yp_next(
+            dom.as_ptr(),
+            map.as_ptr(),
+            inkey.as_ptr() as *const c_char,
+            inkey.len() as c_int,
+            &mut k,
+            &mut kl,
+            &mut v,
+            &mut vl,
+        )
+    };
+    assert_eq!(rc, 3);
+    assert!(k.is_null() && v.is_null() && kl == 0 && vl == 0);
+}
+
+#[test]
+fn yp_all_does_not_invoke_callback_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_all;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("netgroup").unwrap();
+    let cb_dummy: usize = 0xCAFEBABE;
+    let rc = unsafe { yp_all(dom.as_ptr(), map.as_ptr(), cb_dummy as *mut c_void) };
+    assert_eq!(rc, 3);
+}
+
+#[test]
+fn yp_master_zeroes_outname_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_master;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("services.byname").unwrap();
+    let mut out: *mut c_char = 0xDEAD as *mut c_char;
+    let rc = unsafe { yp_master(dom.as_ptr(), map.as_ptr(), &mut out) };
+    assert_eq!(rc, 3);
+    assert!(out.is_null());
+}
+
+#[test]
+fn yp_order_zeroes_order_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_order;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("passwd.byname").unwrap();
+    let mut order: c_uint = 99;
+    let rc = unsafe { yp_order(dom.as_ptr(), map.as_ptr(), &mut order) };
+    assert_eq!(rc, 3);
+    assert_eq!(order, 0);
+}
+
+#[test]
+fn yp_maplist_zeroes_outptr_and_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_maplist;
+    let dom = CString::new("d").unwrap();
+    let mut out: *mut c_void = 0xDEAD as *mut c_void;
+    let rc = unsafe { yp_maplist(dom.as_ptr(), &mut out) };
+    assert_eq!(rc, 3);
+    assert!(out.is_null());
+}
+
+#[test]
+fn yp_update_returns_ypdomain() {
+    use frankenlibc_abi::unistd_abi::yp_update;
+    let dom = CString::new("d").unwrap();
+    let map = CString::new("passwd.byname").unwrap();
+    let key = b"alice";
+    let data = b"alice:x:1000";
+    let rc = unsafe {
+        yp_update(
+            dom.as_ptr(),
+            map.as_ptr(),
+            1,
+            key.as_ptr() as *const c_char,
+            key.len() as c_int,
+            data.as_ptr() as *const c_char,
+            data.len() as c_int,
+        )
+    };
+    assert_eq!(rc, 3);
+}
+
+#[test]
+fn yperr_string_returns_static_descriptions() {
+    use frankenlibc_abi::unistd_abi::yperr_string;
+    let s = unsafe { CStr::from_ptr(yperr_string(0)) };
+    assert_eq!(s.to_bytes(), b"Success");
+    let s = unsafe { CStr::from_ptr(yperr_string(12)) };
+    assert_eq!(s.to_bytes(), b"local domain name not set");
+    let s = unsafe { CStr::from_ptr(yperr_string(999)) };
+    assert_eq!(s.to_bytes(), b"unknown yp error");
+}
+
+#[test]
+fn ypbinderr_string_returns_static_descriptions() {
+    use frankenlibc_abi::unistd_abi::ypbinderr_string;
+    let s = unsafe { CStr::from_ptr(ypbinderr_string(0)) };
+    assert_eq!(s.to_bytes(), b"Success");
+    let s = unsafe { CStr::from_ptr(ypbinderr_string(2)) };
+    assert_eq!(s.to_bytes(), b"Domain not bound");
+    let s = unsafe { CStr::from_ptr(ypbinderr_string(99)) };
+    assert_eq!(s.to_bytes(), b"unknown ypbind error");
+}
+
+#[test]
+fn ypprot_err_collapses_to_ypbind_or_zero() {
+    use frankenlibc_abi::unistd_abi::ypprot_err;
+    assert_eq!(unsafe { ypprot_err(0) }, 0);
+    assert_eq!(unsafe { ypprot_err(1) }, 10);
+    assert_eq!(unsafe { ypprot_err(7) }, 10);
 }

@@ -7267,8 +7267,9 @@ std::thread_local! {
 
 /// libcrypt `crypt_gensalt(prefix, count, *rbytes, nrbytes) ->
 /// *mut c_char` — generate a salt string for the requested
-/// algorithm. NULL/unknown prefix maps to `"$6$"` (SHA-512); when
-/// `count >= 1000` we emit the optional `rounds=N$` segment.
+/// algorithm. NULL/empty prefix maps to `"$6$"` (SHA-512);
+/// unsupported prefixes are rejected with EINVAL. When `count >=
+/// 1000` we emit the optional `rounds=N$` segment.
 /// Returns a pointer to a thread-local static buffer; valid until
 /// the next call on the same thread.
 ///
@@ -7440,6 +7441,280 @@ const _: () = {
     // Compile-time hint: keep CRYPT_GENSALT_OUTPUT_SIZE referenced
     // even though all gensalt paths size-check via the runtime Vec.
     let _: usize = CRYPT_GENSALT_OUTPUT_SIZE;
+};
+
+// ---------------------------------------------------------------------------
+// NIS / yp_* fail-safe stubs (libnsl parity)
+// ---------------------------------------------------------------------------
+//
+// NIS / Yellow Pages is dead infrastructure; modern Linux systems do
+// not run ypbind. These wrappers exist so binaries that statically
+// reference yp_* through libc do not fail at link time, and a graceful
+// YPERR_NODOM (= 12, "local NIS domain name not set") is returned at
+// runtime. Programs that link libnsl.so.1 explicitly still get the
+// real impls there.
+
+const YPERR_BADARGS: c_int = 1;
+const YPERR_DOMAIN: c_int = 3;
+const YPERR_KEY: c_int = 5;
+const YPERR_YPBIND: c_int = 10;
+const YPERR_NODOM: c_int = 12;
+
+/// libnsl `yp_get_default_domain(**outdomain) -> int` — returns the
+/// local NIS domain name. Stub writes NULL and returns YPERR_NODOM.
+///
+/// # Safety
+///
+/// `outdomain`, when non-NULL, must point to writable storage for a
+/// `*mut c_char`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yp_get_default_domain(outdomain: *mut *mut c_char) -> c_int {
+    if !outdomain.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outdomain = core::ptr::null_mut() };
+    }
+    YPERR_NODOM
+}
+
+/// libnsl `yp_bind(*dom) -> int` — bind to a NIS server. Stub
+/// returns YPERR_DOMAIN.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yp_bind(_dom: *const c_char) -> c_int {
+    YPERR_DOMAIN
+}
+
+/// libnsl `yp_unbind(*dom)` — unbind from a NIS server. No-op.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yp_unbind(_dom: *const c_char) {}
+
+/// libnsl `yp_match(*dom, *map, *key, keylen, **val, *vallen) ->
+/// int`. Zeros outputs and returns YPERR_DOMAIN.
+///
+/// # Safety
+///
+/// `val` and `vallen`, when non-NULL, must point to writable
+/// storage. `key`, when non-NULL, must point to at least `keylen`
+/// readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yp_match(
+    _dom: *const c_char,
+    _map: *const c_char,
+    _key: *const c_char,
+    _keylen: c_int,
+    val: *mut *mut c_char,
+    vallen: *mut c_int,
+) -> c_int {
+    if !val.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *val = core::ptr::null_mut() };
+    }
+    if !vallen.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *vallen = 0 };
+    }
+    YPERR_DOMAIN
+}
+
+/// libnsl `yp_first(*dom, *map, **outkey, *outkeylen, **outval,
+/// *outvallen) -> int`. Zeros outputs and returns YPERR_DOMAIN.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yp_first(
+    _dom: *const c_char,
+    _map: *const c_char,
+    outkey: *mut *mut c_char,
+    outkeylen: *mut c_int,
+    outval: *mut *mut c_char,
+    outvallen: *mut c_int,
+) -> c_int {
+    if !outkey.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outkey = core::ptr::null_mut() };
+    }
+    if !outkeylen.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outkeylen = 0 };
+    }
+    if !outval.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outval = core::ptr::null_mut() };
+    }
+    if !outvallen.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outvallen = 0 };
+    }
+    YPERR_DOMAIN
+}
+
+/// libnsl `yp_next(*dom, *map, *inkey, inkeylen, **outkey,
+/// *outkeylen, **outval, *outvallen) -> int`. Zeros outputs and
+/// returns YPERR_DOMAIN.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn yp_next(
+    _dom: *const c_char,
+    _map: *const c_char,
+    _inkey: *const c_char,
+    _inkeylen: c_int,
+    outkey: *mut *mut c_char,
+    outkeylen: *mut c_int,
+    outval: *mut *mut c_char,
+    outvallen: *mut c_int,
+) -> c_int {
+    if !outkey.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outkey = core::ptr::null_mut() };
+    }
+    if !outkeylen.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outkeylen = 0 };
+    }
+    if !outval.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outval = core::ptr::null_mut() };
+    }
+    if !outvallen.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outvallen = 0 };
+    }
+    YPERR_DOMAIN
+}
+
+/// libnsl `yp_all(*dom, *map, *callback) -> int`. Stub returns
+/// YPERR_DOMAIN without invoking the callback.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yp_all(
+    _dom: *const c_char,
+    _map: *const c_char,
+    _callback: *mut c_void,
+) -> c_int {
+    YPERR_DOMAIN
+}
+
+/// libnsl `yp_master(*dom, *map, **outname) -> int`. Stub returns
+/// YPERR_DOMAIN.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yp_master(
+    _dom: *const c_char,
+    _map: *const c_char,
+    outname: *mut *mut c_char,
+) -> c_int {
+    if !outname.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outname = core::ptr::null_mut() };
+    }
+    YPERR_DOMAIN
+}
+
+/// libnsl `yp_order(*dom, *map, *order) -> int`. Stub returns
+/// YPERR_DOMAIN.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yp_order(
+    _dom: *const c_char,
+    _map: *const c_char,
+    order: *mut c_uint,
+) -> c_int {
+    if !order.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *order = 0 };
+    }
+    YPERR_DOMAIN
+}
+
+/// libnsl `yp_maplist(*dom, **outmaplist) -> int`. Stub returns
+/// YPERR_DOMAIN.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yp_maplist(_dom: *const c_char, outmaplist: *mut *mut c_void) -> c_int {
+    if !outmaplist.is_null() {
+        // SAFETY: caller-supplied writable slot.
+        unsafe { *outmaplist = core::ptr::null_mut() };
+    }
+    YPERR_DOMAIN
+}
+
+/// libnsl `yp_update(*dom, *map, ypop, *key, keylen, *data,
+/// datalen) -> int`. Stub returns YPERR_DOMAIN.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn yp_update(
+    _dom: *const c_char,
+    _map: *const c_char,
+    _ypop: c_uint,
+    _key: *const c_char,
+    _keylen: c_int,
+    _data: *const c_char,
+    _datalen: c_int,
+) -> c_int {
+    YPERR_DOMAIN
+}
+
+// Static error message strings for yperr_string and ypbinderr_string.
+// Storage is process-static so callers may rely on the returned
+// pointers remaining valid for the lifetime of the program.
+static YPERR_MSGS: [&[u8]; 17] = [
+    b"Success\0",
+    b"Bad arguments\0",
+    b"RPC failure\0",
+    b"can't bind to server which serves this domain\0",
+    b"no such map in server's domain\0",
+    b"no such key in map\0",
+    b"internal yp library error\0",
+    b"resource allocation failure\0",
+    b"no more records in map database\0",
+    b"can't communicate with portmapper\0",
+    b"can't communicate with ypbind\0",
+    b"can't communicate with ypserv\0",
+    b"local domain name not set\0",
+    b"yp database is bad\0",
+    b"yp version mismatch\0",
+    b"access violation\0",
+    b"database busy\0",
+];
+
+static YPBINDERR_MSGS: [&[u8]; 4] = [
+    b"Success\0",
+    b"Internal ypbind error\0",
+    b"Domain not bound\0",
+    b"System resource allocation failure\0",
+];
+
+/// libnsl `yperr_string(err) -> *const c_char` — return a static
+/// human-readable description for the given YPERR_* code.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn yperr_string(err: c_int) -> *const c_char {
+    if (0..YPERR_MSGS.len() as c_int).contains(&err) {
+        YPERR_MSGS[err as usize].as_ptr() as *const c_char
+    } else {
+        c"unknown yp error".as_ptr()
+    }
+}
+
+/// libnsl `ypbinderr_string(err) -> *const c_char` — return a
+/// static description for the given ypbind-protocol error.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ypbinderr_string(err: c_int) -> *const c_char {
+    if (0..YPBINDERR_MSGS.len() as c_int).contains(&err) {
+        YPBINDERR_MSGS[err as usize].as_ptr() as *const c_char
+    } else {
+        c"unknown ypbind error".as_ptr()
+    }
+}
+
+/// libnsl `ypprot_err(code) -> int` — convert a ypbind protocol
+/// error code (`ypbind_resptype.ypbind_status`) into a `YPERR_*`
+/// value. Without a real NIS runtime we collapse all non-zero
+/// codes to `YPERR_YPBIND`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ypprot_err(code: c_uint) -> c_int {
+    if code == 0 { 0 } else { YPERR_YPBIND }
+}
+
+#[allow(dead_code)]
+const _: () = {
+    // Keep YPERR_BADARGS / YPERR_KEY referenced even though they don't
+    // appear in any of the always-fail stubs above; they're part of
+    // the public yp ABI catalogue.
+    let _ = YPERR_BADARGS;
+    let _ = YPERR_KEY;
 };
 
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
