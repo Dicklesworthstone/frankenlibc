@@ -4,6 +4,7 @@
 
 use frankenlibc_abi::efun_abi::{
     EFunc, ecalloc, efopen, emalloc, erealloc, esetfunc, estrdup, estrlcat, estrlcpy, estrndup,
+    estrtoi, estrtou,
 };
 use frankenlibc_abi::stdio_abi::fclose;
 use std::ffi::{CStr, c_char, c_int, c_void};
@@ -301,5 +302,135 @@ fn efopen_null_args_invoke_callback() {
     let f = unsafe { efopen(std::ptr::null(), c"r".as_ptr()) };
     assert!(f.is_null());
     assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 1);
+    restore_callback(saved);
+}
+
+// ---------------------------------------------------------------------------
+// estrtoi / estrtou
+// ---------------------------------------------------------------------------
+
+#[test]
+fn estrtoi_in_range_returns_value_silently() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"42";
+    let v = unsafe { estrtoi(s.as_ptr(), 10, 0, 100) };
+    assert_eq!(v, 42 as libc::intmax_t);
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtoi_no_digits_invokes_callback() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"   xyz";
+    let _ = unsafe { estrtoi(s.as_ptr(), 10, 0, 100) };
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 1);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtoi_invalid_base_invokes_callback() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"42";
+    let _ = unsafe { estrtoi(s.as_ptr(), 1, 0, 100) };
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 1);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtoi_out_of_range_invokes_callback_and_returns_clamped() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"500";
+    let v = unsafe { estrtoi(s.as_ptr(), 10, 0, 100) };
+    assert_eq!(v, 100 as libc::intmax_t);
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 1);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtoi_null_nptr_invokes_callback() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let v = unsafe { estrtoi(std::ptr::null(), 10, 0, 100) };
+    assert_eq!(v, 0 as libc::intmax_t);
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 1);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtoi_negative_in_negative_range_silent() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"-12";
+    let v = unsafe { estrtoi(s.as_ptr(), 10, -100, 100) };
+    assert_eq!(v, -12 as libc::intmax_t);
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtou_in_range_returns_value_silently() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"42";
+    let v = unsafe { estrtou(s.as_ptr(), 10, 0, 100) };
+    assert_eq!(v, 42 as libc::uintmax_t);
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtou_above_hi_invokes_callback_and_returns_clamped() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"1000";
+    let v = unsafe { estrtou(s.as_ptr(), 10, 0, 100) };
+    assert_eq!(v, 100 as libc::uintmax_t);
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 1);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtou_no_digits_invokes_callback() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"abc";
+    let _ = unsafe { estrtou(s.as_ptr(), 10, 0, 100) };
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 1);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtou_invalid_base_invokes_callback() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"42";
+    let _ = unsafe { estrtou(s.as_ptr(), 99, 0, 100) };
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 1);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtou_null_nptr_invokes_callback() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let v = unsafe { estrtou(std::ptr::null(), 10, 0, 100) };
+    assert_eq!(v, 0 as libc::uintmax_t);
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 1);
+    restore_callback(saved);
+}
+
+#[test]
+fn estrtou_hex_prefix_works() {
+    let _guard = EFUN_TEST_LOCK.lock().unwrap();
+    let saved = install_test_callback();
+    let s = c"0xff";
+    let v = unsafe { estrtou(s.as_ptr(), 16, 0, 0xffff) };
+    assert_eq!(v, 0xff as libc::uintmax_t);
+    assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
     restore_callback(saved);
 }

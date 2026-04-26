@@ -228,6 +228,77 @@ pub unsafe extern "C" fn efopen(path: *const c_char, mode: *const c_char) -> *mu
     f
 }
 
+/// NetBSD `estrtoi(nptr, base, lo, hi)` — bounded signed integer
+/// parser that exits on failure. Wraps [`crate::stdlib_abi::strtoi`]
+/// and, on any non-success rstatus (`EINVAL`, `ENOTSUP`, `ERANGE`),
+/// invokes the global efun callback. The returned value is
+/// `strtoi`'s clamped result (or 0 on missing-digits / NULL nptr).
+///
+/// # Safety
+///
+/// `nptr` must be NUL-terminated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn estrtoi(
+    nptr: *const c_char,
+    base: c_int,
+    lo: libc::intmax_t,
+    hi: libc::intmax_t,
+) -> libc::intmax_t {
+    if nptr.is_null() {
+        unsafe { report_failure(libc::EXIT_FAILURE, c"estrtoi: NULL argument") };
+        return 0;
+    }
+    let mut rstatus: c_int = 0;
+    let v = unsafe {
+        crate::stdlib_abi::strtoi(nptr, std::ptr::null_mut(), base, lo, hi, &mut rstatus)
+    };
+    if rstatus != 0 {
+        let msg: &CStr = match rstatus {
+            x if x == libc::EINVAL => c"estrtoi: no digits to parse",
+            x if x == libc::ENOTSUP => c"estrtoi: invalid base",
+            x if x == libc::ERANGE => c"estrtoi: value out of range",
+            _ => c"estrtoi: parse failure",
+        };
+        unsafe { report_failure(libc::EXIT_FAILURE, msg) };
+    }
+    v
+}
+
+/// NetBSD `estrtou(nptr, base, lo, hi)` — bounded unsigned integer
+/// parser that exits on failure. Wraps [`crate::stdlib_abi::strtou`]
+/// and routes non-success rstatus through the global efun callback.
+/// See [`estrtoi`] for the failure-mode contract.
+///
+/// # Safety
+///
+/// Same as [`estrtoi`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn estrtou(
+    nptr: *const c_char,
+    base: c_int,
+    lo: libc::uintmax_t,
+    hi: libc::uintmax_t,
+) -> libc::uintmax_t {
+    if nptr.is_null() {
+        unsafe { report_failure(libc::EXIT_FAILURE, c"estrtou: NULL argument") };
+        return 0;
+    }
+    let mut rstatus: c_int = 0;
+    let v = unsafe {
+        crate::stdlib_abi::strtou(nptr, std::ptr::null_mut(), base, lo, hi, &mut rstatus)
+    };
+    if rstatus != 0 {
+        let msg: &CStr = match rstatus {
+            x if x == libc::EINVAL => c"estrtou: no digits to parse",
+            x if x == libc::ENOTSUP => c"estrtou: invalid base",
+            x if x == libc::ERANGE => c"estrtou: value out of range",
+            _ => c"estrtou: parse failure",
+        };
+        unsafe { report_failure(libc::EXIT_FAILURE, msg) };
+    }
+    v
+}
+
 #[cfg(test)]
 pub(crate) mod test_helpers {
     //! Internal helpers exposed for the integration tests so they
