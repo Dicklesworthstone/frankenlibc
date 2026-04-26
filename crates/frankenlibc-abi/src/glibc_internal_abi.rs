@@ -6288,6 +6288,12 @@ pub unsafe extern "C" fn times(buf: *mut c_void) -> c_long {
         }
     }
 }
+
+/// glibc reserved-namespace alias for [`times`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __times(buf: *mut c_void) -> c_long {
+    unsafe { times(buf) }
+}
 // tr_break: obsolete regex debugging hook — no-op
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tr_break() {}

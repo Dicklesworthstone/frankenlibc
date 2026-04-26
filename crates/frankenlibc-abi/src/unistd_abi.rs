@@ -1984,6 +1984,16 @@ pub unsafe extern "C" fn getrusage(who: c_int, usage: *mut libc::rusage) -> c_in
     }
 }
 
+/// glibc reserved-namespace alias for [`getrusage`].
+///
+/// # Safety
+///
+/// Same as [`getrusage`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getrusage(who: c_int, usage: *mut libc::rusage) -> c_int {
+    unsafe { getrusage(who, usage) }
+}
+
 // ---------------------------------------------------------------------------
 // alarm / sysconf
 // ---------------------------------------------------------------------------
@@ -2181,6 +2191,30 @@ pub unsafe extern "C" fn getitimer(which: c_int, curr_value: *mut libc::itimerva
             -1
         }
     }
+}
+
+/// glibc reserved-namespace alias for [`setitimer`].
+///
+/// # Safety
+///
+/// Same as [`setitimer`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setitimer(
+    which: c_int,
+    new_value: *const libc::itimerval,
+    old_value: *mut libc::itimerval,
+) -> c_int {
+    unsafe { setitimer(which, new_value, old_value) }
+}
+
+/// glibc reserved-namespace alias for [`getitimer`].
+///
+/// # Safety
+///
+/// Same as [`getitimer`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getitimer(which: c_int, curr_value: *mut libc::itimerval) -> c_int {
+    unsafe { getitimer(which, curr_value) }
 }
 
 // ---------------------------------------------------------------------------
@@ -3222,6 +3256,16 @@ pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> libc::c_l
     };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
     out
+}
+
+/// glibc reserved-namespace alias for [`pathconf`].
+///
+/// # Safety
+///
+/// Same as [`pathconf`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pathconf(path: *const c_char, name: c_int) -> libc::c_long {
+    unsafe { pathconf(path, name) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9644,6 +9688,18 @@ pub unsafe extern "C" fn setpriority(which: c_int, who: libc::id_t, prio: c_int)
             -1
         }
     }
+}
+
+/// glibc reserved-namespace alias for [`getpriority`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getpriority(which: c_int, who: libc::id_t) -> c_int {
+    unsafe { getpriority(which, who) }
+}
+
+/// glibc reserved-namespace alias for [`setpriority`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setpriority(which: c_int, who: libc::id_t, prio: c_int) -> c_int {
+    unsafe { setpriority(which, who, prio) }
 }
 
 // ---------------------------------------------------------------------------

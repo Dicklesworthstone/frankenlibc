@@ -5915,6 +5915,86 @@ fn under_gettid_matches_gettid() {
 }
 
 // ===========================================================================
+// __setrlimit + __getrusage + __pathconf + __getitimer + __setitimer +
+// __getpriority + __setpriority + __times (glibc reserved aliases)
+// ===========================================================================
+
+#[test]
+fn under_setrlimit_to_self_succeeds() {
+    use frankenlibc_abi::resource_abi::__setrlimit;
+    let mut current: libc::rlimit = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut current) };
+    assert_eq!(rc, 0);
+    let rc = unsafe { __setrlimit(libc::RLIMIT_NOFILE as c_int, &current) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_getrusage_self_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__getrusage;
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    let rc = unsafe { __getrusage(libc::RUSAGE_SELF, &mut usage) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_pathconf_known_path_returns_value() {
+    use frankenlibc_abi::unistd_abi::__pathconf;
+    let p = c"/tmp";
+    // _PC_NAME_MAX is well-defined for any FS that supports filenames.
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let v = unsafe { __pathconf(p.as_ptr(), libc::_PC_NAME_MAX) };
+    assert!(v >= 0, "pathconf returned {v}");
+}
+
+#[test]
+fn under_getitimer_setitimer_round_trip() {
+    use frankenlibc_abi::unistd_abi::{__getitimer, __setitimer};
+    // Disable the timer (zero values), then read it back via __getitimer.
+    let zero = libc::itimerval {
+        it_interval: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+        it_value: libc::timeval {
+            tv_sec: 0,
+            tv_usec: 0,
+        },
+    };
+    let rc = unsafe { __setitimer(libc::ITIMER_REAL, &zero, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    let mut got: libc::itimerval = unsafe { std::mem::zeroed() };
+    let rc = unsafe { __getitimer(libc::ITIMER_REAL, &mut got) };
+    assert_eq!(rc, 0);
+    assert_eq!(got.it_value.tv_sec, 0);
+    assert_eq!(got.it_value.tv_usec, 0);
+}
+
+#[test]
+fn under_getpriority_setpriority_round_trip_for_self() {
+    use frankenlibc_abi::unistd_abi::{__getpriority, __setpriority};
+    // Read current PRIO_PROCESS for self, then set it to the same
+    // value (always permitted).
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let cur = unsafe { __getpriority(libc::PRIO_PROCESS as c_int, 0) };
+    // getpriority can legitimately return -1; check errno.
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(err, 0, "getpriority errno = {err}");
+    let rc = unsafe { __setpriority(libc::PRIO_PROCESS as c_int, 0, cur) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_times_returns_nonzero_clock_ticks() {
+    use frankenlibc_abi::glibc_internal_abi::__times;
+    let mut buf: libc::tms = unsafe { std::mem::zeroed() };
+    let v = unsafe { __times((&mut buf) as *mut _ as *mut std::ffi::c_void) };
+    // times returns the elapsed real time in clock ticks since
+    // some past time; on Linux it's monotonically nonnegative.
+    assert!(v >= 0);
+}
+
+// ===========================================================================
 // __chdir + __fchdir + __mkdir + __rmdir + __unlink + __link +
 // __symlink + __rename + __access (glibc reserved aliases)
 // ===========================================================================

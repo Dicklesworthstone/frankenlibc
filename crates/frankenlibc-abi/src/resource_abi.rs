@@ -116,3 +116,13 @@ pub unsafe extern "C" fn setrlimit(resource: c_int, rlim: *const libc::rlimit) -
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, adverse);
     rc
 }
+
+/// glibc reserved-namespace alias for [`setrlimit`].
+///
+/// # Safety
+///
+/// Same as [`setrlimit`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setrlimit(resource: c_int, rlim: *const libc::rlimit) -> c_int {
+    unsafe { setrlimit(resource, rlim) }
+}
