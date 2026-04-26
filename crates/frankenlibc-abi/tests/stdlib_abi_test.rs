@@ -7,12 +7,12 @@ use std::ffi::c_char;
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
-    a64l, at_quick_exit, atoll, clearenv, confstr, drand48, ecvt, erand48, fcvt, freezero, gcvt,
-    get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv, getsubopt,
-    initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48,
-    on_exit, qsort_r, random, reallocarray, reallocf, recallocarray, seed48, setenv, setstate,
-    srand48, srandom, strtod, strtof, strtold, strtoll, strtonum, strtoq, strtoull, strtouq,
-    system, unsetenv,
+    a64l, at_quick_exit, atoll, clearenv, confstr, dehumanize_number, drand48, ecvt, erand48, fcvt,
+    freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize,
+    getenv, getsubopt, initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps,
+    mrand48, nrand48, on_exit, qsort_r, random, reallocarray, reallocf, recallocarray, seed48,
+    setenv, setstate, srand48, srandom, strtod, strtof, strtold, strtoll, strtonum, strtoq,
+    strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -5877,4 +5877,119 @@ fn arc4random_stir_is_no_op() {
     unsafe { arc4random_stir() };
     // Multiple calls don't accumulate state.
     unsafe { arc4random_stir() };
+}
+
+// ---------------------------------------------------------------------------
+// dehumanize_number (NetBSD libutil human-readable size parser)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dehumanize_plain_decimal() {
+    let s = c"42";
+    let mut size: i64 = 0;
+    let rc = unsafe { dehumanize_number(s.as_ptr(), &mut size) };
+    assert_eq!(rc, 0);
+    assert_eq!(size, 42);
+}
+
+#[test]
+fn dehumanize_kilobyte_suffix() {
+    let s = c"4K";
+    let mut size: i64 = 0;
+    let rc = unsafe { dehumanize_number(s.as_ptr(), &mut size) };
+    assert_eq!(rc, 0);
+    assert_eq!(size, 4096);
+}
+
+#[test]
+fn dehumanize_negative_with_suffix() {
+    let s = c"-1m";
+    let mut size: i64 = 0;
+    let rc = unsafe { dehumanize_number(s.as_ptr(), &mut size) };
+    assert_eq!(rc, 0);
+    assert_eq!(size, -(1024 * 1024));
+}
+
+#[test]
+fn dehumanize_invalid_suffix_sets_einval() {
+    let s = c"42z";
+    let mut size: i64 = 0;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { dehumanize_number(s.as_ptr(), &mut size) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn dehumanize_overflow_sets_erange() {
+    let s = c"99999999999999999999";
+    let mut size: i64 = 0;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { dehumanize_number(s.as_ptr(), &mut size) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::ERANGE);
+}
+
+#[test]
+fn dehumanize_null_str_sets_einval() {
+    let mut size: i64 = 0;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { dehumanize_number(ptr::null(), &mut size) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn dehumanize_null_size_pointer_sets_einval() {
+    let s = c"42";
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { dehumanize_number(s.as_ptr(), ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn dehumanize_empty_string_sets_einval() {
+    let s = c"";
+    let mut size: i64 = 0;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { dehumanize_number(s.as_ptr(), &mut size) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn dehumanize_all_size_suffixes() {
+    // Spot-check each documented suffix.
+    let cases: &[(&core::ffi::CStr, i64)] = &[
+        (c"1b", 1),
+        (c"1B", 1),
+        (c"1k", 1024),
+        (c"1K", 1024),
+        (c"2m", 2 * 1024 * 1024),
+        (c"2M", 2 * 1024 * 1024),
+        (c"1g", 1024 * 1024 * 1024),
+        (c"1G", 1024 * 1024 * 1024),
+        (c"1t", 1024i64.pow(4)),
+        (c"1T", 1024i64.pow(4)),
+        (c"1p", 1024i64.pow(5)),
+        (c"1P", 1024i64.pow(5)),
+        (c"1e", 1024i64.pow(6)),
+        (c"1E", 1024i64.pow(6)),
+    ];
+    for (s, expected) in cases {
+        let mut size: i64 = 0;
+        let rc = unsafe { dehumanize_number(s.as_ptr(), &mut size) };
+        assert_eq!(rc, 0, "input {s:?} should parse");
+        assert_eq!(size, *expected, "input {s:?} value mismatch");
+    }
+}
+
+#[test]
+fn dehumanize_leading_whitespace() {
+    let s = c"  42K";
+    let mut size: i64 = 0;
+    let rc = unsafe { dehumanize_number(s.as_ptr(), &mut size) };
+    assert_eq!(rc, 0);
+    assert_eq!(size, 42 * 1024);
 }

@@ -6,6 +6,7 @@
 
 pub mod base64;
 pub mod conversion;
+pub mod dehumanize_number;
 pub mod ecvt;
 pub mod env;
 pub mod exit;

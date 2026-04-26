@@ -4687,3 +4687,59 @@ pub unsafe extern "C" fn reallocf(ptr: *mut c_void, size: usize) -> *mut c_void 
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// dehumanize_number (NetBSD libutil human-readable size parser)
+// ---------------------------------------------------------------------------
+//
+// Pure-byte parsing logic lives in `frankenlibc_core::stdlib::dehumanize_number`.
+// This shim owns NUL-terminated C-string handling, NULL `size` guard,
+// and mapping the Invalid/Overflow categories to the EINVAL/ERANGE
+// errno values that NetBSD documents.
+
+/// NetBSD `dehumanize_number(str, size)` — parse `str` into an int64
+/// with optional one-character size suffix (b/B=1, k/K=1024, m/M=1024^2,
+/// g/G=1024^3, t/T=1024^4, p/P=1024^5, e/E=1024^6) and write the
+/// result through `*size`. Returns 0 on success, -1 on failure with
+/// errno set to:
+///
+/// * `EINVAL` — `str` was NULL, empty, contained non-digit non-suffix
+///   bytes, had trailing garbage past the suffix, or the suffix was
+///   not one of the recognized characters.
+/// * `ERANGE` — arithmetic overflow during digit accumulation or the
+///   suffix multiply (the resulting value won't fit in i64).
+///
+/// `size` may not be NULL; passing NULL yields -1 with errno=EINVAL.
+///
+/// # Safety
+///
+/// Caller must ensure `str`, when non-NULL, is a valid NUL-terminated
+/// C string and `size` points to writable `int64_t` storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn dehumanize_number(str_ptr: *const c_char, size: *mut i64) -> c_int {
+    use frankenlibc_core::stdlib::dehumanize_number as core_dh;
+
+    if str_ptr.is_null() || size.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+
+    // SAFETY: caller-supplied NUL-terminated C string.
+    let bytes = unsafe { CStr::from_ptr(str_ptr) }.to_bytes();
+
+    match core_dh::parse(bytes) {
+        Ok(v) => {
+            // SAFETY: caller-supplied writable slot.
+            unsafe { *size = v };
+            0
+        }
+        Err(core_dh::DehumanizeError::Invalid) => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            -1
+        }
+        Err(core_dh::DehumanizeError::Overflow) => {
+            unsafe { set_abi_errno(libc::ERANGE) };
+            -1
+        }
+    }
+}
