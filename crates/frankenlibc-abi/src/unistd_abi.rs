@@ -18073,4 +18073,172 @@ pub unsafe extern "C" fn flopenat(
     }
 }
 
+// ---------------------------------------------------------------------------
+// setproctitle / setproctitle_init (FreeBSD/libbsd ps-visible name)
+// ---------------------------------------------------------------------------
+
+use std::sync::Mutex as _ProcTitleMutex;
+
+struct ProcTitleStorage {
+    /// Address of argv[0] (start of the writable region).
+    base: *mut c_char,
+    /// Total writable bytes.
+    capacity: usize,
+}
+// SAFETY: pointer references process-static crt0 memory; mutation
+// is serialized by the Mutex around `PROCTITLE_STATE`.
+unsafe impl Send for ProcTitleStorage {}
+
+static PROCTITLE_STATE: _ProcTitleMutex<Option<ProcTitleStorage>> = _ProcTitleMutex::new(None);
+
+const PR_SET_NAME_FOR_TITLE: c_int = 15;
+
+/// FreeBSD `setproctitle_init(argc, argv, envp)` — capture the
+/// argv+envp memory region so [`setproctitle`] can later overwrite
+/// it. Must be called BEFORE any setproctitle call. After this
+/// call, the runtime owns the contiguous span; the caller must not
+/// rely on argv[i] / envp[i] pointers remaining stable.
+///
+/// # Safety
+///
+/// `argv` and `envp` must be the actual crt0 vectors; `argc` must
+/// match the argv terminator.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setproctitle_init(
+    argc: c_int,
+    argv: *mut *mut c_char,
+    envp: *mut *mut c_char,
+) {
+    if argv.is_null() || argc <= 0 {
+        return;
+    }
+    // SAFETY: argv came from crt0; argv[0] points to the start of
+    // the contiguous string region.
+    let argv0 = unsafe { *argv };
+    if argv0.is_null() {
+        return;
+    }
+    let mut end: *mut c_char = argv0;
+    // SAFETY: walk each argv[i] / envp[i] string to its terminating
+    // NUL; the kernel guarantees these strings live in a contiguous
+    // region directly above argv0.
+    unsafe {
+        for i in 0..(argc as isize) {
+            let s = *argv.offset(i);
+            if s.is_null() {
+                break;
+            }
+            let mut p = s;
+            while *p != 0 {
+                p = p.add(1);
+            }
+            if (p as usize) > (end as usize) {
+                end = p;
+            }
+        }
+        if !envp.is_null() {
+            let mut i: isize = 0;
+            loop {
+                let s = *envp.offset(i);
+                if s.is_null() {
+                    break;
+                }
+                let mut p = s;
+                while *p != 0 {
+                    p = p.add(1);
+                }
+                if (p as usize) > (end as usize) {
+                    end = p;
+                }
+                i += 1;
+            }
+        }
+    }
+    let capacity = (end as usize) - (argv0 as usize) + 1;
+    let mut guard = PROCTITLE_STATE.lock().unwrap_or_else(|p| p.into_inner());
+    *guard = Some(ProcTitleStorage {
+        base: argv0,
+        capacity,
+    });
+}
+
+/// FreeBSD `setproctitle(fmt, ...)` — render a printf-style format
+/// string and write it into the captured argv0 region (zero-padding
+/// the unused tail). Also calls prctl(PR_SET_NAME) to update
+/// /proc/self/comm. By default the title is prefixed with
+/// `<progname>: `; pass a `fmt` starting with `-` to suppress.
+///
+/// # Safety
+///
+/// Caller must ensure `fmt`, when non-NULL, is a valid
+/// NUL-terminated printf format string and the variadic arguments
+/// match.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setproctitle(fmt: *const c_char, mut args: ...) {
+    let guard = PROCTITLE_STATE.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(storage) = guard.as_ref() else {
+        return;
+    };
+
+    let title_bytes: Vec<u8> = if fmt.is_null() {
+        Vec::new()
+    } else {
+        // SAFETY: caller-supplied valid C format string.
+        let fmt_bytes = unsafe { CStr::from_ptr(fmt) }.to_bytes();
+        let suppress_prefix = fmt_bytes.first() == Some(&b'-');
+        let render_fmt = if suppress_prefix {
+            &fmt_bytes[1..]
+        } else {
+            fmt_bytes
+        };
+
+        use frankenlibc_core::stdio::printf::parse_format_string;
+        let segments = parse_format_string(render_fmt);
+        let max_args = crate::stdio_abi::MAX_VA_ARGS;
+        let extract_count = frankenlibc_core::stdio::count_printf_args(&segments).min(max_args);
+        let mut arg_buf = [0u64; crate::stdio_abi::MAX_VA_ARGS];
+        for slot in arg_buf.iter_mut().take(extract_count) {
+            *slot = unsafe { args.arg::<u64>() };
+        }
+        let body =
+            unsafe { crate::stdio_abi::render_printf(render_fmt, arg_buf.as_ptr(), extract_count) };
+
+        if suppress_prefix {
+            body
+        } else {
+            let mut out = Vec::with_capacity(body.len() + 32);
+            let progname_ptr = crate::startup_abi::program_invocation_short_name
+                .load(std::sync::atomic::Ordering::Acquire);
+            if !progname_ptr.is_null() {
+                // SAFETY: published progname is a NUL-terminated C string
+                // in process-static storage.
+                let pn = unsafe { CStr::from_ptr(progname_ptr) }.to_bytes();
+                out.extend_from_slice(pn);
+                out.extend_from_slice(b": ");
+            }
+            out.extend_from_slice(&body);
+            out
+        }
+    };
+
+    let cap = storage.capacity;
+    let copy_len = title_bytes.len().min(cap.saturating_sub(1));
+
+    // SAFETY: storage.base + cap is the captured crt0 argv/envp
+    // region; mutations are serialized via the Mutex.
+    unsafe {
+        std::ptr::write_bytes(storage.base as *mut u8, 0, cap);
+        std::ptr::copy_nonoverlapping(title_bytes.as_ptr(), storage.base as *mut u8, copy_len);
+    }
+
+    if !title_bytes.is_empty() {
+        let mut comm = [0u8; 16];
+        let n = title_bytes.len().min(15);
+        comm[..n].copy_from_slice(&title_bytes[..n]);
+        let _ = syscall::sys_prctl(PR_SET_NAME_FOR_TITLE, comm.as_ptr() as usize, 0, 0, 0);
+    }
+
+    drop(guard);
+}
+
 // ── __sig* aliases ──────────────────────────────────────────────────────────
