@@ -24026,3 +24026,228 @@ pub unsafe extern "C" fn _xdr_ib_request(_xdrs: *mut c_void, _req: *mut c_void) 
 pub unsafe extern "C" fn _xdr_nis_result(_xdrs: *mut c_void, _res: *mut c_void) -> c_int {
     1
 }
+
+// ---------------------------------------------------------------------------
+// 7 Linux 6.13+ syscall wrappers (bd-idcx7)
+// ---------------------------------------------------------------------------
+//
+// Kernel 6.13 added the xattr-at family (extended attribute syscalls that
+// take a dirfd + AT_-style flags), 6.15 added open_tree_attr, and 6.16
+// added file_getattr/file_setattr. glibc has not yet wrapped these, so
+// frankenlibc is the canonical entrypoint. All forward via the host
+// syscall trampoline with errno propagation.
+
+const SYS_SETXATTRAT: libc::c_long = 463;
+const SYS_GETXATTRAT: libc::c_long = 464;
+const SYS_LISTXATTRAT: libc::c_long = 465;
+const SYS_REMOVEXATTRAT: libc::c_long = 466;
+const SYS_OPEN_TREE_ATTR: libc::c_long = 467;
+const SYS_FILE_GETATTR: libc::c_long = 468;
+const SYS_FILE_SETATTR: libc::c_long = 469;
+
+/// Linux `setxattrat(dirfd, path, at_flags, name, *uargs, usize) ->
+/// int` (Linux 6.13+, `SYS_setxattrat = 463`) — AT-relative
+/// extended-attribute setter. `uargs` points to a
+/// `struct xattr_args { __aligned_u64 value; __u32 size; __u32 flags; }`
+/// (libc has not yet exposed this struct; treat it as an opaque
+/// pointer plus its byte size).
+///
+/// # Safety
+///
+/// Standard Linux `*at` contract: `path` must be a valid C string,
+/// `name` a valid C string, and `uargs`/`usize` either NULL/0 or
+/// match a valid `struct xattr_args` extent.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setxattrat(
+    dirfd: c_int,
+    path: *const c_char,
+    at_flags: c_uint,
+    name: *const c_char,
+    uargs: *const c_void,
+    usize_: usize,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            SYS_SETXATTRAT,
+            dirfd as libc::c_long,
+            path as libc::c_long,
+            at_flags as libc::c_long,
+            name as libc::c_long,
+            uargs as libc::c_long,
+            usize_ as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `getxattrat(dirfd, path, at_flags, name, *uargs, usize) ->
+/// int` (Linux 6.13+, `SYS_getxattrat = 464`) — AT-relative
+/// extended-attribute getter.
+///
+/// # Safety
+///
+/// Same as `setxattrat`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getxattrat(
+    dirfd: c_int,
+    path: *const c_char,
+    at_flags: c_uint,
+    name: *const c_char,
+    uargs: *mut c_void,
+    usize_: usize,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            SYS_GETXATTRAT,
+            dirfd as libc::c_long,
+            path as libc::c_long,
+            at_flags as libc::c_long,
+            name as libc::c_long,
+            uargs as libc::c_long,
+            usize_ as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `listxattrat(dirfd, path, at_flags, list, size) -> int`
+/// (Linux 6.13+, `SYS_listxattrat = 465`) — AT-relative
+/// extended-attribute name listing.
+///
+/// # Safety
+///
+/// `path` must be a valid C string and `list`/`size` must describe a
+/// writable buffer (NULL/0 is allowed for size-query mode).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn listxattrat(
+    dirfd: c_int,
+    path: *const c_char,
+    at_flags: c_uint,
+    list: *mut c_char,
+    size: usize,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            SYS_LISTXATTRAT,
+            dirfd as libc::c_long,
+            path as libc::c_long,
+            at_flags as libc::c_long,
+            list as libc::c_long,
+            size as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `removexattrat(dirfd, path, at_flags, name) -> int`
+/// (Linux 6.13+, `SYS_removexattrat = 466`) — AT-relative
+/// extended-attribute removal.
+///
+/// # Safety
+///
+/// `path` and `name` must be valid C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn removexattrat(
+    dirfd: c_int,
+    path: *const c_char,
+    at_flags: c_uint,
+    name: *const c_char,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            SYS_REMOVEXATTRAT,
+            dirfd as libc::c_long,
+            path as libc::c_long,
+            at_flags as libc::c_long,
+            name as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `open_tree_attr(dirfd, path, flags, *attr, size) -> int`
+/// (Linux 6.15+, `SYS_open_tree_attr = 467`) — `open_tree` variant
+/// that sets a `struct mount_attr` in one syscall.
+///
+/// # Safety
+///
+/// `path` must be a valid C string. `attr` must be a valid pointer
+/// to a `struct mount_attr` of `size` bytes (NULL+0 is a kernel
+/// error).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn open_tree_attr(
+    dirfd: c_int,
+    path: *const c_char,
+    flags: c_uint,
+    attr: *mut c_void,
+    size: usize,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            SYS_OPEN_TREE_ATTR,
+            dirfd as libc::c_long,
+            path as libc::c_long,
+            flags as libc::c_long,
+            attr as libc::c_long,
+            size as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `file_getattr(dirfd, path, *uattr, usize, at_flags) -> int`
+/// (Linux 6.16+, `SYS_file_getattr = 468`) — uniform get for
+/// file attributes (reads a `struct file_attr`).
+///
+/// # Safety
+///
+/// `path` must be a valid C string. `uattr` must point to a
+/// writable `struct file_attr` of `usize` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn file_getattr(
+    dirfd: c_int,
+    path: *const c_char,
+    uattr: *mut c_void,
+    usize_: usize,
+    at_flags: c_uint,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            SYS_FILE_GETATTR,
+            dirfd as libc::c_long,
+            path as libc::c_long,
+            uattr as libc::c_long,
+            usize_ as libc::c_long,
+            at_flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `file_setattr(dirfd, path, *uattr, usize, at_flags) -> int`
+/// (Linux 6.16+, `SYS_file_setattr = 469`) — uniform set for
+/// file attributes.
+///
+/// # Safety
+///
+/// Same as `file_getattr`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn file_setattr(
+    dirfd: c_int,
+    path: *const c_char,
+    uattr: *const c_void,
+    usize_: usize,
+    at_flags: c_uint,
+) -> c_int {
+    let rc = unsafe {
+        libc::syscall(
+            SYS_FILE_SETATTR,
+            dirfd as libc::c_long,
+            path as libc::c_long,
+            uattr as libc::c_long,
+            usize_ as libc::c_long,
+            at_flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}

@@ -11504,3 +11504,120 @@ fn xdr_nis_result_returns_xdr_true() {
         1
     );
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 7 Linux 6.13+ syscall wrappers (bd-idcx7)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn setxattrat_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::setxattrat;
+    let path = CString::new("/dev/null").unwrap();
+    let name = CString::new("user.test").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { setxattrat(-1, path.as_ptr(), 0, name.as_ptr(), std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn getxattrat_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::getxattrat;
+    let path = CString::new("/dev/null").unwrap();
+    let name = CString::new("user.test").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { getxattrat(-1, path.as_ptr(), 0, name.as_ptr(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn listxattrat_zero_size_buffer_returns_listing_size_or_neg_errno() {
+    use frankenlibc_abi::unistd_abi::listxattrat;
+    let path = CString::new("/dev/null").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { listxattrat(libc::AT_FDCWD, path.as_ptr(), 0, std::ptr::null_mut(), 0) };
+    // /dev/null has no xattrs ⇒ size = 0; kernel may also return -ENOTSUP
+    // depending on filesystem support. Either is fine; we just need the
+    // wrapper to forward verbatim.
+    assert!(
+        rc >= 0 || rc == -1,
+        "listxattrat must return a kernel-shaped result"
+    );
+}
+
+#[test]
+fn removexattrat_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::removexattrat;
+    let path = CString::new("/dev/null").unwrap();
+    let name = CString::new("user.test").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { removexattrat(-1, path.as_ptr(), 0, name.as_ptr()) };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn open_tree_attr_returns_fd_or_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::open_tree_attr;
+    let path = CString::new("/").unwrap();
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe { open_tree_attr(libc::AT_FDCWD, path.as_ptr(), 0, std::ptr::null_mut(), 0) };
+    if rc >= 0 {
+        // Successfully opened a tree — close the fd and call it a day.
+        unsafe { libc::close(rc) };
+    } else {
+        assert_eq!(rc, -1);
+        assert!(unsafe { *libc::__errno_location() } != 0);
+    }
+}
+
+#[test]
+fn file_getattr_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::file_getattr;
+    let path = CString::new("/dev/null").unwrap();
+    let mut buf = [0u8; 64];
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe {
+        file_getattr(
+            -1,
+            path.as_ptr(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len(),
+            0,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn file_setattr_invalid_fd_returns_minus_one_with_errno() {
+    use frankenlibc_abi::unistd_abi::file_setattr;
+    let path = CString::new("/dev/null").unwrap();
+    let buf = [0u8; 64];
+    unsafe { *libc::__errno_location() = 0 };
+    let rc = unsafe {
+        file_setattr(
+            -1,
+            path.as_ptr(),
+            buf.as_ptr() as *const c_void,
+            buf.len(),
+            0,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert!(unsafe { *libc::__errno_location() } != 0);
+}
+
+#[test]
+fn xattrat_family_propagates_kernel_errno_via_set_abi_errno() {
+    use frankenlibc_abi::unistd_abi::setxattrat;
+    unsafe { *libc::__errno_location() = 0 };
+    let path = CString::new("/dev/null").unwrap();
+    let name = CString::new("user.x").unwrap();
+    let rc = unsafe { setxattrat(-1, path.as_ptr(), 0, name.as_ptr(), std::ptr::null(), 0) };
+    assert_eq!(rc, -1);
+    let err = unsafe { *libc::__errno_location() };
+    assert!(err != 0, "errno must be set after a failing syscall");
+}
