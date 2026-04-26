@@ -10718,6 +10718,21 @@ pub unsafe extern "C" fn getdents64(fd: c_int, dirp: *mut c_void, count: usize) 
 // Batch: C++ ABI / Stack protection — Implemented
 // ===========================================================================
 
+/// Itanium C++ ABI `__dso_handle` — a `void *` global defined
+/// per-DSO whose **address** serves as the unique handle that
+/// callers pass as the third argument to [`__cxa_atexit`]. The
+/// stored value is conventionally NULL (static-link layout) or the
+/// symbol's own address (shared-link layout); only the address of
+/// the symbol is observable, not the value.
+///
+/// Without this symbol, C++ programs linking against our libc
+/// fail at static-init time when the compiler emits
+/// `__cxa_atexit(..., &__dso_handle)`.
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static __dso_handle: std::sync::atomic::AtomicPtr<c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
 /// Wrapper to make raw pointers Send-safe for __cxa_atexit handler list.
 struct CxaHandler(unsafe extern "C" fn(*mut c_void), *mut c_void, *mut c_void);
 // SAFETY: __cxa_atexit handlers are always called from the same process;

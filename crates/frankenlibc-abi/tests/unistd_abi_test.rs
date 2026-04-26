@@ -5851,3 +5851,48 @@ fn secure_path_root_owned_secure_file_passes() {
         );
     }
 }
+
+// ===========================================================================
+// __dso_handle (Itanium C++ ABI per-DSO handle)
+// ===========================================================================
+
+#[test]
+fn dso_handle_symbol_resolves_and_is_stable() {
+    // The address of __dso_handle is the unique handle; the value
+    // stored at that address is conventionally NULL for static-link
+    // builds. Both reads of the address must return the same
+    // pointer (proves the symbol is a real global, not a temporary).
+    let a: *const _ = &raw const frankenlibc_abi::unistd_abi::__dso_handle;
+    let b: *const _ = &raw const frankenlibc_abi::unistd_abi::__dso_handle;
+    assert_eq!(a, b);
+}
+
+#[test]
+fn dso_handle_address_works_as_cxa_atexit_dso_arg() {
+    // Register a destructor with `&__dso_handle` as the DSO key,
+    // then run `__cxa_finalize` with the same key — the
+    // destructor must fire exactly once.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static FIRED: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn dtor(_arg: *mut std::ffi::c_void) {
+        FIRED.fetch_add(1, Ordering::SeqCst);
+    }
+
+    FIRED.store(0, Ordering::SeqCst);
+    let dso = &raw const frankenlibc_abi::unistd_abi::__dso_handle as *mut std::ffi::c_void;
+    let rc = unsafe { frankenlibc_abi::unistd_abi::__cxa_atexit(dtor, std::ptr::null_mut(), dso) };
+    assert_eq!(rc, 0, "__cxa_atexit must accept &__dso_handle");
+
+    unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+    assert_eq!(
+        FIRED.load(Ordering::SeqCst),
+        1,
+        "destructor registered with &__dso_handle must fire on __cxa_finalize"
+    );
+
+    // Calling __cxa_finalize again with the same dso must NOT
+    // re-fire (we drained the matching entries).
+    unsafe { frankenlibc_abi::unistd_abi::__cxa_finalize(dso) };
+    assert_eq!(FIRED.load(Ordering::SeqCst), 1);
+}
