@@ -6995,3 +6995,116 @@ pub unsafe extern "C" fn fparseln(
     }
     raw
 }
+
+// ---------------------------------------------------------------------------
+// strvis / strnvis / strunvis / strnunvis (NetBSD vis(3) family)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `strvis(dst, src, flags)` — encode `src` into `dst` per
+/// the vis(3) byte transformation. Returns the number of bytes
+/// written excluding the trailing NUL.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is a valid NUL-terminated C string and
+/// `dst` is large enough (worst case 4 × strlen(src) + 1).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strvis(dst: *mut c_char, src: *const c_char, flags: c_int) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    unsafe {
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+        *dst.add(encoded.len()) = 0;
+    }
+    encoded.len() as c_int
+}
+
+/// NetBSD `strnvis(dst, dlen, src, flags)` — bounded variant of
+/// [`strvis`]. Returns encoded length on success or -1 if `dst`
+/// would overflow (the prefix that fits is still NUL-terminated).
+///
+/// # Safety
+///
+/// Same as [`strvis`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnvis(
+    dst: *mut c_char,
+    dlen: usize,
+    src: *const c_char,
+    flags: c_int,
+) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
+    if encoded.len() < dlen {
+        unsafe {
+            std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
+            *dst.add(encoded.len()) = 0;
+        }
+        encoded.len() as c_int
+    } else {
+        let copy_len = dlen - 1;
+        unsafe {
+            std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, copy_len);
+            *dst.add(copy_len) = 0;
+        }
+        -1
+    }
+}
+
+/// NetBSD `strunvis(dst, src)` — decode `src` into `dst`. Returns
+/// the number of decoded bytes (excluding NUL) or -1 on malformed
+/// input.
+///
+/// # Safety
+///
+/// Caller must ensure `src` is a valid NUL-terminated C string and
+/// `dst` is at least `strlen(src) + 1` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strunvis(dst: *mut c_char, src: *const c_char) -> c_int {
+    if dst.is_null() || src.is_null() {
+        return -1;
+    }
+    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
+        Some(v) => v,
+        None => return -1,
+    };
+    unsafe {
+        std::ptr::copy_nonoverlapping(decoded.as_ptr(), dst as *mut u8, decoded.len());
+        *dst.add(decoded.len()) = 0;
+    }
+    decoded.len() as c_int
+}
+
+/// NetBSD `strnunvis(dst, dlen, src)` — bounded variant of
+/// [`strunvis`]. Returns decoded length or -1 on malformed input
+/// or buffer too small.
+///
+/// # Safety
+///
+/// Same as [`strunvis`] but `dst` need only have `dlen` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strnunvis(dst: *mut c_char, dlen: usize, src: *const c_char) -> c_int {
+    if dst.is_null() || src.is_null() || dlen == 0 {
+        return -1;
+    }
+    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
+        Some(v) => v,
+        None => return -1,
+    };
+    if decoded.len() + 1 > dlen {
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(decoded.as_ptr(), dst as *mut u8, decoded.len());
+        *dst.add(decoded.len()) = 0;
+    }
+    decoded.len() as c_int
+}

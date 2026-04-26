@@ -119,6 +119,10 @@ use frankenlibc_abi::stdio_abi::{
     stderr,
     stdin,
     stdout,
+    strnunvis,
+    strnvis,
+    strunvis,
+    strvis,
     take_last_decision_gate_for_tests,
     tmpfile,
     tmpfile64,
@@ -3874,4 +3878,130 @@ fn fparseln_null_len_pointer_safe() {
     unsafe { libc::free(p as *mut std::ffi::c_void) };
     unsafe { fclose(fp) };
     let _ = std::fs::remove_file(&path);
+}
+
+// ---------------------------------------------------------------------------
+// strvis / strnvis / strunvis / strnunvis (NetBSD vis(3) family)
+// ---------------------------------------------------------------------------
+
+fn vis_buf<const N: usize>() -> [c_char; N] {
+    [0; N]
+}
+
+fn vis_string(buf: &[c_char], n: c_int) -> Vec<u8> {
+    buf[..n as usize].iter().map(|&c| c as u8).collect()
+}
+
+#[test]
+fn strvis_encodes_printable_unchanged() {
+    let src = c"hello";
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(n, 5);
+    assert_eq!(vis_string(&buf, n), b"hello");
+}
+
+#[test]
+fn strvis_doubles_backslash() {
+    let src = c"a\\b";
+    let mut buf = vis_buf::<32>();
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.as_ptr(), 0) };
+    assert_eq!(vis_string(&buf, n), b"a\\\\b");
+}
+
+#[test]
+fn strvis_with_octal_flag_renders_three_digit_octal() {
+    let mut buf = vis_buf::<32>();
+    let n = unsafe {
+        strnvis(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"\xff".as_ptr(),
+            0x01, // VIS_OCTAL
+        )
+    };
+    assert_eq!(vis_string(&buf, n), b"\\377");
+}
+
+#[test]
+fn strnvis_truncates_and_returns_minus_one() {
+    let src = c"\x01\x02";
+    let mut buf = vis_buf::<4>(); // can fit at most 3 chars + NUL
+    let n = unsafe { strnvis(buf.as_mut_ptr(), buf.len(), src.as_ptr(), 0) };
+    assert_eq!(n, -1, "must signal overflow");
+    assert_eq!(buf[buf.len() - 1], 0);
+}
+
+#[test]
+fn strnvis_fits_exactly() {
+    let src = c"ab";
+    let mut buf = vis_buf::<3>();
+    let n = unsafe { strnvis(buf.as_mut_ptr(), buf.len(), src.as_ptr(), 0) };
+    assert_eq!(n, 2);
+    assert_eq!(vis_string(&buf, n), b"ab");
+}
+
+#[test]
+fn strunvis_decodes_caret_escape() {
+    let src = c"\\^A\\^B";
+    let mut buf = vis_buf::<8>();
+    let n = unsafe { strunvis(buf.as_mut_ptr(), src.as_ptr()) };
+    assert_eq!(n, 2);
+    assert_eq!(vis_string(&buf, n), b"\x01\x02");
+}
+
+#[test]
+fn strunvis_decodes_octal_triple() {
+    let src = c"\\377\\000A";
+    let mut buf = vis_buf::<8>();
+    let n = unsafe { strunvis(buf.as_mut_ptr(), src.as_ptr()) };
+    // The middle "\\000" decodes to a literal NUL byte; vis_string
+    // collects the raw decoded bytes regardless of NUL.
+    assert_eq!(n, 3);
+    let bytes = vis_string(&buf, n);
+    assert_eq!(bytes, vec![0xff, 0x00, b'A']);
+}
+
+#[test]
+fn strunvis_returns_minus_one_on_malformed_input() {
+    let src = c"abc\\";
+    let mut buf = vis_buf::<8>();
+    let n = unsafe { strunvis(buf.as_mut_ptr(), src.as_ptr()) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strnunvis_returns_minus_one_when_decoded_too_big() {
+    let src = c"\\^A\\^B\\^C\\^D";
+    let mut buf = vis_buf::<3>(); // can fit 2 decoded + NUL
+    let n = unsafe { strnunvis(buf.as_mut_ptr(), buf.len(), src.as_ptr()) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn vis_round_trip_via_abi() {
+    let payload = c"hello \\ world\x01\x02\x03";
+    let mut enc_buf = vis_buf::<128>();
+    let enc_n = unsafe { strvis(enc_buf.as_mut_ptr(), payload.as_ptr(), 0) };
+    assert!(enc_n > 0);
+    let mut dec_buf = vis_buf::<64>();
+    let dec_n = unsafe { strunvis(dec_buf.as_mut_ptr(), enc_buf.as_ptr()) };
+    assert_eq!(dec_n, payload.to_bytes().len() as c_int);
+    assert_eq!(vis_string(&dec_buf, dec_n), payload.to_bytes());
+}
+
+#[test]
+fn strvis_null_args_return_minus_one() {
+    let src = c"x";
+    let mut buf = vis_buf::<8>();
+    assert_eq!(unsafe { strvis(std::ptr::null_mut(), src.as_ptr(), 0) }, -1);
+    assert_eq!(unsafe { strvis(buf.as_mut_ptr(), std::ptr::null(), 0) }, -1);
+}
+
+#[test]
+fn strunvis_null_args_return_minus_one() {
+    let src = c"x";
+    let mut buf = vis_buf::<8>();
+    assert_eq!(unsafe { strunvis(std::ptr::null_mut(), src.as_ptr()) }, -1);
+    assert_eq!(unsafe { strunvis(buf.as_mut_ptr(), std::ptr::null()) }, -1);
 }

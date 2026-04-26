@@ -14,6 +14,7 @@ pub mod file;
 pub mod fparseln;
 pub mod printf;
 pub mod scanf;
+pub mod vis;
 
 pub use buffer::{BUFSIZ, BufMode, StreamBuffer};
 pub use file::{MemBacking, OpenFlags, StdioStream, flags_to_oflags, parse_mode};
