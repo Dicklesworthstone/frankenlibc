@@ -7411,3 +7411,151 @@ fn cachestat_either_returns_data_or_enosys_on_real_file() {
     unsafe { libc::close(fd) };
     let _ = std::fs::remove_file(&path);
 }
+
+// ---------------------------------------------------------------------------
+// NUMA memory policy: get/set_mempolicy + mbind + migrate_pages + move_pages
+// + set_mempolicy_home_node
+// ---------------------------------------------------------------------------
+
+#[test]
+fn get_mempolicy_returns_default_for_calling_thread() {
+    use frankenlibc_abi::unistd_abi::get_mempolicy;
+    let mut mode: c_int = -1;
+    let rc = unsafe { get_mempolicy(&mut mode, std::ptr::null_mut(), 0, std::ptr::null_mut(), 0) };
+    if rc == 0 {
+        assert!(mode >= 0);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EPERM || errno == libc::EINVAL,
+            "unexpected get_mempolicy errno: {errno}"
+        );
+    }
+}
+
+#[test]
+fn set_mempolicy_default_round_trip() {
+    use frankenlibc_abi::unistd_abi::{get_mempolicy, set_mempolicy};
+    let rc = unsafe { set_mempolicy(0, std::ptr::null(), 0) };
+    if rc != 0 {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EPERM,
+            "unexpected set_mempolicy errno: {errno}"
+        );
+        return;
+    }
+    let mut mode: c_int = -1;
+    let rc = unsafe { get_mempolicy(&mut mode, std::ptr::null_mut(), 0, std::ptr::null_mut(), 0) };
+    assert_eq!(rc, 0);
+    assert_eq!(mode, 0);
+}
+
+#[test]
+fn mbind_invalid_mode_returns_einval() {
+    use frankenlibc_abi::unistd_abi::mbind;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let p = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            page_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert!(p != libc::MAP_FAILED);
+
+    let rc = unsafe {
+        mbind(
+            p,
+            page_size as libc::c_ulong,
+            255, // invalid mode
+            std::ptr::null(),
+            0,
+            0,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::EINVAL || errno == libc::ENOSYS,
+        "unexpected mbind errno: {errno}"
+    );
+
+    unsafe { libc::munmap(p, page_size) };
+}
+
+#[test]
+fn migrate_pages_to_nonexistent_pid_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::migrate_pages;
+    let rc = unsafe { migrate_pages(i32::MAX, 0, std::ptr::null(), std::ptr::null()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::ESRCH || errno == libc::ENOSYS || errno == libc::EPERM,
+        "unexpected migrate_pages errno: {errno}"
+    );
+}
+
+#[test]
+fn move_pages_query_only_for_self_returns_node_or_known_errno() {
+    use frankenlibc_abi::unistd_abi::move_pages;
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let p = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            page_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert!(p != libc::MAP_FAILED);
+    unsafe { *(p as *mut u8) = 0x42 };
+
+    let pages: [*mut c_void; 1] = [p];
+    let mut status: [c_int; 1] = [-99];
+    let rc = unsafe {
+        move_pages(
+            0,
+            1,
+            pages.as_ptr(),
+            std::ptr::null(),
+            status.as_mut_ptr(),
+            0,
+        )
+    };
+    if rc == 0 {
+        assert!(status[0] >= 0 || status[0] == -libc::ENOENT);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::EINVAL || errno == libc::ENOSYS || errno == libc::EPERM,
+            "unexpected move_pages errno: {errno}"
+        );
+    }
+
+    unsafe { libc::munmap(p, page_size) };
+}
+
+#[test]
+fn set_mempolicy_home_node_either_succeeds_or_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::set_mempolicy_home_node;
+    // (start=0, len=0) is a documented no-op on kernels that support
+    // the call: returns 0. Older kernels return ENOSYS. Anything else
+    // is unexpected. Verify the wrapper at least round-trips through
+    // the kernel without UB.
+    let rc = unsafe { set_mempolicy_home_node(0, 0, 0, 0) };
+    if rc == -1 {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EINVAL || errno == libc::EFAULT,
+            "unexpected set_mempolicy_home_node errno: {errno}"
+        );
+    } else {
+        assert_eq!(rc, 0, "non-error return must be 0");
+    }
+}

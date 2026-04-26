@@ -5048,6 +5048,198 @@ pub unsafe extern "C" fn cachestat(
 }
 
 // ---------------------------------------------------------------------------
+// NUMA memory policy (set/get_mempolicy + mbind + migrate_pages + move_pages
+// + set_mempolicy_home_node)
+// ---------------------------------------------------------------------------
+
+#[inline]
+unsafe fn raw_syscall_with_errno_long(rc: libc::c_long) -> libc::c_long {
+    if rc < 0 {
+        let e = unsafe { *libc::__errno_location() };
+        unsafe { set_abi_errno(e) };
+        return -1;
+    }
+    rc
+}
+
+/// Linux `set_mempolicy(mode, *nodemask, maxnode) -> long`
+/// (`SYS_set_mempolicy = 238`) — set the calling thread's default
+/// NUMA memory policy.
+///
+/// # Safety
+///
+/// `nodemask`, when non-NULL, must point to at least
+/// `(maxnode + 7) / 8` readable bytes describing a valid node bitmap.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn set_mempolicy(
+    mode: c_int,
+    nodemask: *const c_ulong,
+    maxnode: c_ulong,
+) -> c_long {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_set_mempolicy,
+            mode as libc::c_long,
+            nodemask as libc::c_long,
+            maxnode as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno_long(rc) }
+}
+
+/// Linux `get_mempolicy(*mode, *nodemask, maxnode, addr, flags) ->
+/// long` (`SYS_get_mempolicy = 239`) — read the NUMA policy for the
+/// calling thread or for a specific address.
+///
+/// # Safety
+///
+/// `mode`, when non-NULL, must point to writable `c_int` storage.
+/// `nodemask`, when non-NULL, must point to at least
+/// `(maxnode + 7) / 8` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn get_mempolicy(
+    mode: *mut c_int,
+    nodemask: *mut c_ulong,
+    maxnode: c_ulong,
+    addr: *mut c_void,
+    flags: c_ulong,
+) -> c_long {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_get_mempolicy,
+            mode as libc::c_long,
+            nodemask as libc::c_long,
+            maxnode as libc::c_long,
+            addr as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno_long(rc) }
+}
+
+/// Linux `mbind(addr, len, mode, *nodemask, maxnode, flags) -> long`
+/// (`SYS_mbind = 237`) — set the NUMA memory policy for a range of
+/// virtual memory.
+///
+/// # Safety
+///
+/// `addr` must point to a memory region of at least `len` bytes.
+/// `nodemask`, when non-NULL, follows the same shape as in
+/// [`set_mempolicy`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn mbind(
+    addr: *mut c_void,
+    len: c_ulong,
+    mode: c_int,
+    nodemask: *const c_ulong,
+    maxnode: c_ulong,
+    flags: c_uint,
+) -> c_long {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_mbind,
+            addr as libc::c_long,
+            len as libc::c_long,
+            mode as libc::c_long,
+            nodemask as libc::c_long,
+            maxnode as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno_long(rc) }
+}
+
+/// Linux `migrate_pages(pid, maxnode, *old_nodes, *new_nodes) ->
+/// long` (`SYS_migrate_pages = 256`) — move all pages of `pid`
+/// (or 0 for the calling process) on `old_nodes` to the
+/// corresponding entries in `new_nodes`.
+///
+/// # Safety
+///
+/// `old_nodes` and `new_nodes`, when non-NULL, must each point to at
+/// least `(maxnode + 7) / 8` readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn migrate_pages(
+    pid: c_int,
+    maxnode: c_ulong,
+    old_nodes: *const c_ulong,
+    new_nodes: *const c_ulong,
+) -> c_long {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_migrate_pages,
+            pid as libc::c_long,
+            maxnode as libc::c_long,
+            old_nodes as libc::c_long,
+            new_nodes as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno_long(rc) }
+}
+
+/// Linux `move_pages(pid, count, **pages, *nodes, *status, flags) ->
+/// long` (`SYS_move_pages = 279`) — move the listed pages (in
+/// process `pid`, or the calling process if 0) to the specified
+/// target NUMA nodes. If `nodes` is NULL the call only queries
+/// current locations into `status`.
+///
+/// # Safety
+///
+/// `pages` must point to an array of `count` pointers. `nodes`,
+/// when non-NULL, must point to `count` `c_int` entries. `status`,
+/// when non-NULL, must point to writable `count` `c_int` entries.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn move_pages(
+    pid: c_int,
+    count: c_ulong,
+    pages: *const *mut c_void,
+    nodes: *const c_int,
+    status: *mut c_int,
+    flags: c_int,
+) -> c_long {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_move_pages,
+            pid as libc::c_long,
+            count as libc::c_long,
+            pages as libc::c_long,
+            nodes as libc::c_long,
+            status as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno_long(rc) }
+}
+
+/// Linux `set_mempolicy_home_node(start, len, home_node, flags) ->
+/// long` (Linux 5.17+, `SYS_set_mempolicy_home_node = 450`) — set
+/// the preferred NUMA home node for an existing memory range.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn set_mempolicy_home_node(
+    start: c_ulong,
+    len: c_ulong,
+    home_node: c_ulong,
+    flags: c_ulong,
+) -> c_long {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_set_mempolicy_home_node,
+            start as libc::c_long,
+            len as libc::c_long,
+            home_node as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno_long(rc) }
+}
+
+// ---------------------------------------------------------------------------
 // Scheduler — RawSyscall
 // ---------------------------------------------------------------------------
 
