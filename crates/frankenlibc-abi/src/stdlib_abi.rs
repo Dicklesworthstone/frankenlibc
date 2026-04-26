@@ -5208,6 +5208,76 @@ pub unsafe extern "C" fn fmtcheck(
 }
 
 // ---------------------------------------------------------------------------
+// strpct / strspct (NetBSD libutil percentage formatters)
+// ---------------------------------------------------------------------------
+
+/// Internal helper: copy `rendered` into `buf` (NUL-terminated)
+/// per snprintf-style truncation rules. Returns `buf` on success
+/// or NULL on `buf.is_null() || bufsize == 0`.
+unsafe fn strpct_write(buf: *mut c_char, bufsize: usize, rendered: &[u8]) -> *mut c_char {
+    if buf.is_null() || bufsize == 0 {
+        return std::ptr::null_mut();
+    }
+    let cap = bufsize.saturating_sub(1);
+    let n = rendered.len().min(cap);
+    unsafe {
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), buf as *mut u8, n);
+        *buf.add(n) = 0;
+    }
+    buf
+}
+
+/// NetBSD `strpct(buf, bufsize, num, denom, precision)` — render
+/// the unsigned percentage `100 * num / denom` rounded to
+/// `precision` fractional digits into `buf`. Returns `buf` on
+/// success, or NULL when `buf` is NULL / `bufsize` is zero.
+/// `denom == 0` writes `"0"` (or `"0.000…0"` with `precision`
+/// trailing zeros).
+///
+/// # Safety
+///
+/// `buf`, when non-NULL, must be valid for `bufsize` writable
+/// bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strpct(
+    buf: *mut c_char,
+    bufsize: usize,
+    num: uintmax_t,
+    denom: uintmax_t,
+    precision: usize,
+) -> *mut c_char {
+    let rendered = frankenlibc_core::stdlib::strpct::format_percent_unsigned(
+        num as u128,
+        denom as u128,
+        precision,
+    );
+    unsafe { strpct_write(buf, bufsize, &rendered) }
+}
+
+/// NetBSD `strspct(buf, bufsize, num, denom, precision)` — signed
+/// variant of [`strpct`]. Rendered value is negative iff `num` and
+/// `denom` differ in sign; a true zero never carries a `-` sign.
+///
+/// # Safety
+///
+/// Same as [`strpct`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn strspct(
+    buf: *mut c_char,
+    bufsize: usize,
+    num: intmax_t,
+    denom: intmax_t,
+    precision: usize,
+) -> *mut c_char {
+    let rendered = frankenlibc_core::stdlib::strpct::format_percent_signed(
+        num as i128,
+        denom as i128,
+        precision,
+    );
+    unsafe { strpct_write(buf, bufsize, &rendered) }
+}
+
+// ---------------------------------------------------------------------------
 // StringList (NetBSD libutil sl_init / sl_add / sl_find / sl_free)
 // ---------------------------------------------------------------------------
 //

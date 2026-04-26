@@ -12,9 +12,9 @@ use frankenlibc_abi::stdlib_abi::{
     expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf,
     get_phys_pages, getbsize, getenv, getsubopt, humanize_number, initstate, jrand48, l64a,
     lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, qsort_r, random,
-    reallocarray, reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom, strtod,
-    strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq, system,
-    unsetenv,
+    reallocarray, reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom, strpct,
+    strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq,
+    system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -7434,4 +7434,117 @@ fn strtou_null_nptr_sets_einval() {
     };
     assert_eq!(v, 0 as uintmax_t);
     assert_eq!(rstatus, libc::EINVAL);
+}
+
+// ---------------------------------------------------------------------------
+// strpct / strspct (NetBSD libutil percentage formatters)
+// ---------------------------------------------------------------------------
+
+fn strpct_collect(buf: &[c_char]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for &c in buf {
+        let b = c as u8;
+        if b == 0 {
+            break;
+        }
+        out.push(b);
+    }
+    out
+}
+
+#[test]
+fn strpct_renders_integer_percent() {
+    let mut buf = [0 as c_char; 16];
+    let r = unsafe { strpct(buf.as_mut_ptr(), buf.len(), 33, 100, 0) };
+    assert_eq!(r, buf.as_mut_ptr());
+    assert_eq!(strpct_collect(&buf), b"33".to_vec());
+}
+
+#[test]
+fn strpct_renders_with_precision() {
+    let mut buf = [0 as c_char; 16];
+    let r = unsafe { strpct(buf.as_mut_ptr(), buf.len(), 1, 3, 2) };
+    assert_eq!(r, buf.as_mut_ptr());
+    assert_eq!(strpct_collect(&buf), b"33.33".to_vec());
+}
+
+#[test]
+fn strpct_rounds_to_nearest() {
+    let mut buf = [0 as c_char; 16];
+    let _ = unsafe { strpct(buf.as_mut_ptr(), buf.len(), 2, 3, 2) };
+    assert_eq!(strpct_collect(&buf), b"66.67".to_vec());
+}
+
+#[test]
+fn strpct_zero_denom_yields_zero() {
+    let mut buf = [0 as c_char; 16];
+    let _ = unsafe { strpct(buf.as_mut_ptr(), buf.len(), 5, 0, 0) };
+    assert_eq!(strpct_collect(&buf), b"0".to_vec());
+
+    let mut buf = [0 as c_char; 16];
+    let _ = unsafe { strpct(buf.as_mut_ptr(), buf.len(), 5, 0, 3) };
+    assert_eq!(strpct_collect(&buf), b"0.000".to_vec());
+}
+
+#[test]
+fn strpct_truncates_to_bufsize() {
+    let mut buf = [0 as c_char; 4]; // holds 3 chars + NUL
+    let r = unsafe { strpct(buf.as_mut_ptr(), buf.len(), 1, 3, 4) };
+    // Full would be "33.3333"; truncated to 3 chars + NUL.
+    assert_eq!(r, buf.as_mut_ptr());
+    assert_eq!(strpct_collect(&buf), b"33.".to_vec());
+    assert_eq!(buf[3] as u8, 0);
+}
+
+#[test]
+fn strpct_null_buf_returns_null() {
+    let r = unsafe { strpct(std::ptr::null_mut(), 16, 1, 3, 0) };
+    assert!(r.is_null());
+}
+
+#[test]
+fn strpct_zero_bufsize_returns_null() {
+    let mut buf = [0 as c_char; 16];
+    let r = unsafe { strpct(buf.as_mut_ptr(), 0, 1, 3, 0) };
+    assert!(r.is_null());
+}
+
+#[test]
+fn strspct_negative_when_denom_negative() {
+    let mut buf = [0 as c_char; 16];
+    let r = unsafe { strspct(buf.as_mut_ptr(), buf.len(), 1, -4, 0) };
+    assert_eq!(r, buf.as_mut_ptr());
+    assert_eq!(strpct_collect(&buf), b"-25".to_vec());
+}
+
+#[test]
+fn strspct_negative_when_num_negative() {
+    let mut buf = [0 as c_char; 16];
+    let _ = unsafe { strspct(buf.as_mut_ptr(), buf.len(), -1, 4, 0) };
+    assert_eq!(strpct_collect(&buf), b"-25".to_vec());
+}
+
+#[test]
+fn strspct_double_negative_is_positive() {
+    let mut buf = [0 as c_char; 16];
+    let _ = unsafe { strspct(buf.as_mut_ptr(), buf.len(), -1, -4, 0) };
+    assert_eq!(strpct_collect(&buf), b"25".to_vec());
+}
+
+#[test]
+fn strspct_zero_does_not_carry_minus_sign() {
+    let mut buf = [0 as c_char; 16];
+    let _ = unsafe { strspct(buf.as_mut_ptr(), buf.len(), 0, -1, 0) };
+    assert_eq!(strpct_collect(&buf), b"0".to_vec());
+
+    let mut buf = [0 as c_char; 16];
+    let _ = unsafe { strspct(buf.as_mut_ptr(), buf.len(), -0, 1, 2) };
+    assert_eq!(strpct_collect(&buf), b"0.00".to_vec());
+}
+
+#[test]
+fn strspct_negative_with_precision() {
+    let mut buf = [0 as c_char; 16];
+    let _ = unsafe { strspct(buf.as_mut_ptr(), buf.len(), -1, 100, 2) };
+    assert_eq!(strpct_collect(&buf), b"-1.00".to_vec());
 }
