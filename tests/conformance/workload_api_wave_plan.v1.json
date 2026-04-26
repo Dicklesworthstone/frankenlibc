@@ -27,7 +27,7 @@
     },
     "trace_fixtures_dir": {
       "path": "tests/conformance/fixtures",
-      "fixture_count": 55
+      "fixture_count": 56
     }
   },
   "scoring": {
