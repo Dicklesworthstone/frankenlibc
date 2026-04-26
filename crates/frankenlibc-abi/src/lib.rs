@@ -115,6 +115,8 @@ pub mod isoc_abi;
 #[cfg(not(test))]
 pub mod mmap_abi;
 #[cfg(not(test))]
+pub mod nlist_abi;
+#[cfg(not(test))]
 pub mod poll_abi;
 #[cfg(not(test))]
 pub mod process_abi;
