@@ -3454,3 +3454,46 @@ fn inet_net_round_trip_via_abi() {
     let result = unsafe { std::ffi::CStr::from_ptr(out) }.to_bytes();
     assert_eq!(result, b"10.1/16");
 }
+
+// ---------------------------------------------------------------------------
+// __libc_alloca_cutoff / __libc_use_alloca
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::glibc_internal_abi::{__libc_alloca_cutoff, __libc_use_alloca};
+
+#[test]
+fn libc_alloca_cutoff_returns_one_for_small_sizes() {
+    assert_eq!(unsafe { __libc_alloca_cutoff(0) }, 1);
+    assert_eq!(unsafe { __libc_alloca_cutoff(1) }, 1);
+    assert_eq!(unsafe { __libc_alloca_cutoff(64) }, 1);
+    assert_eq!(unsafe { __libc_alloca_cutoff(1024) }, 1);
+}
+
+#[test]
+fn libc_alloca_cutoff_returns_zero_for_huge_sizes() {
+    // Sizes well above any plausible threshold (1 MiB, 1 GiB, SIZE_MAX).
+    assert_eq!(unsafe { __libc_alloca_cutoff(1 << 20) }, 0);
+    assert_eq!(unsafe { __libc_alloca_cutoff(1 << 30) }, 0);
+    assert_eq!(unsafe { __libc_alloca_cutoff(usize::MAX) }, 0);
+}
+
+#[test]
+fn libc_use_alloca_matches_libc_alloca_cutoff() {
+    for size in [
+        0usize,
+        1,
+        64,
+        4096,
+        16384,
+        65536,
+        1 << 20,
+        1 << 30,
+        usize::MAX,
+    ] {
+        assert_eq!(
+            unsafe { __libc_use_alloca(size) },
+            unsafe { __libc_alloca_cutoff(size) },
+            "divergence at size {size}",
+        );
+    }
+}

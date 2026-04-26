@@ -8903,3 +8903,43 @@ pub unsafe extern "C" fn inet_net_ntop(
     }
     dst
 }
+
+// ---------------------------------------------------------------------------
+// __libc_alloca_cutoff / __libc_use_alloca (glibc internal alloca-safety)
+// ---------------------------------------------------------------------------
+//
+// glibc-internal callers (NSS modules, locale parsers, sprintf width
+// handling) consult these to decide whether `size` bytes can safely
+// be allocated on the stack via alloca() or whether they must fall
+// back to malloc. The threshold matches glibc's convention:
+// `min(PTHREAD_STACK_MIN/4, 65536)`. PTHREAD_STACK_MIN on Linux
+// x86_64 is 16384 → threshold = 4096; on aarch64 it's 131072 →
+// threshold = 32768. We use 16384 as a safe portable upper bound.
+
+const ALLOCA_CUTOFF: usize = {
+    let stack_min_quarter = libc::PTHREAD_STACK_MIN / 4;
+    if stack_min_quarter < 65536 {
+        stack_min_quarter
+    } else {
+        65536
+    }
+};
+
+/// glibc internal `__libc_alloca_cutoff(size)` — return non-zero
+/// iff `size` bytes can safely be allocated on the current
+/// thread's stack via alloca(). Threshold matches glibc's
+/// `min(PTHREAD_STACK_MIN/4, 65536)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloca_cutoff(size: usize) -> c_int {
+    if size <= ALLOCA_CUTOFF { 1 } else { 0 }
+}
+
+/// glibc internal `__libc_use_alloca(size)` — alias for
+/// [`__libc_alloca_cutoff`]. glibc exposes both names for
+/// historical reasons; `__libc_use_alloca` is more commonly
+/// referenced in inline-expanded macro form, but the symbol is
+/// also exported for callers compiled without that header.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_use_alloca(size: usize) -> c_int {
+    unsafe { __libc_alloca_cutoff(size) }
+}
