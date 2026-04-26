@@ -5887,6 +5887,25 @@ fn cxa_pure_virtual_aborts_child_process() {
     );
 }
 
+#[test]
+fn cxa_throw_bad_array_new_length_aborts_child_process() {
+    use frankenlibc_abi::unistd_abi::__cxa_throw_bad_array_new_length;
+
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+
+    if pid == 0 {
+        unsafe { __cxa_throw_bad_array_new_length() };
+        // Unreachable.
+    }
+
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
 // ===========================================================================
 // __dso_handle (Itanium C++ ABI per-DSO handle)
 // ===========================================================================

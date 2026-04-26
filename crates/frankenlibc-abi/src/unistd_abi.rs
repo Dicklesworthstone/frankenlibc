@@ -10803,6 +10803,25 @@ pub unsafe extern "C" fn __cxa_pure_virtual() -> ! {
     }
 }
 
+/// Itanium C++ ABI `__cxa_throw_bad_array_new_length` — entry
+/// point compilers emit when a `new T[n]` allocation expression
+/// computes an array length whose byte size would overflow
+/// `size_t`. The full ABI calls for this to throw a
+/// `std::bad_array_new_length` exception; with no exception
+/// runtime available we mirror [`__cxa_pure_virtual`]'s
+/// fail-stop convention: write a diagnostic to stderr and abort.
+///
+/// Without this symbol, C++ binaries that use array-new
+/// expressions fail at link time with an undefined reference.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __cxa_throw_bad_array_new_length() -> ! {
+    let msg: &[u8] = b"bad_array_new_length\n";
+    unsafe {
+        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+        libc::abort();
+    }
+}
+
 /// Stack canary value, initialized from AT_RANDOM for proper randomization.
 ///
 /// The low byte is forced to 0x00 (NUL terminator) to prevent string-based
