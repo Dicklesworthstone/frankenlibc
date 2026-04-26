@@ -1328,3 +1328,189 @@ fn dns_metrics_counters_increment_on_hosts_miss() {
     // We just verify the counter is accessible and consistent
     assert!(after.queries_attempted >= before.queries_attempted);
 }
+
+// ---------------------------------------------------------------------------
+// libresolv ns_get/put16/32 + ns_samename/samedomain/subdomain/makecanon
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ns_get16_reads_big_endian() {
+    use frankenlibc_abi::resolv_abi::ns_get16;
+    let buf = [0x12u8, 0x34u8];
+    assert_eq!(unsafe { ns_get16(buf.as_ptr()) }, 0x1234);
+    assert_eq!(unsafe { ns_get16(std::ptr::null()) }, 0);
+}
+
+#[test]
+fn ns_get32_reads_big_endian() {
+    use frankenlibc_abi::resolv_abi::ns_get32;
+    let buf = [0xDE, 0xAD, 0xBE, 0xEF];
+    assert_eq!(unsafe { ns_get32(buf.as_ptr()) }, 0xDEAD_BEEF);
+    assert_eq!(unsafe { ns_get32(std::ptr::null()) }, 0);
+}
+
+#[test]
+fn ns_put16_writes_big_endian() {
+    use frankenlibc_abi::resolv_abi::ns_put16;
+    let mut buf = [0u8; 2];
+    unsafe { ns_put16(0x1234, buf.as_mut_ptr()) };
+    assert_eq!(buf, [0x12, 0x34]);
+
+    // NULL dst is a no-op (no UB).
+    unsafe { ns_put16(0xFFFF, std::ptr::null_mut()) };
+}
+
+#[test]
+fn ns_put32_writes_big_endian() {
+    use frankenlibc_abi::resolv_abi::ns_put32;
+    let mut buf = [0u8; 4];
+    unsafe { ns_put32(0xCAFE_BABE, buf.as_mut_ptr()) };
+    assert_eq!(buf, [0xCA, 0xFE, 0xBA, 0xBE]);
+}
+
+#[test]
+fn ns_samename_case_insensitive_with_optional_dot() {
+    use frankenlibc_abi::resolv_abi::ns_samename;
+
+    fn cs(s: &'static str) -> std::ffi::CString {
+        std::ffi::CString::new(s).unwrap()
+    }
+
+    assert_eq!(
+        unsafe { ns_samename(cs("foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samename(cs("FOO.COM").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samename(cs("foo.com").as_ptr(), cs("foo.com.").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samename(cs("foo.com").as_ptr(), cs("bar.com").as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { ns_samename(std::ptr::null(), cs("x").as_ptr()) },
+        -1
+    );
+}
+
+#[test]
+fn ns_samedomain_root_and_subdomains() {
+    use frankenlibc_abi::resolv_abi::ns_samedomain;
+
+    fn cs(s: &'static str) -> std::ffi::CString {
+        std::ffi::CString::new(s).unwrap()
+    }
+
+    // Root domain (empty / ".") matches everything.
+    assert_eq!(
+        unsafe { ns_samedomain(cs("foo.com").as_ptr(), cs("").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samedomain(cs("foo.com").as_ptr(), cs(".").as_ptr()) },
+        1
+    );
+
+    // Equal names match.
+    assert_eq!(
+        unsafe { ns_samedomain(cs("foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+
+    // Proper subdomain matches.
+    assert_eq!(
+        unsafe { ns_samedomain(cs("www.foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+    assert_eq!(
+        unsafe { ns_samedomain(cs("a.b.foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+
+    // Suffix-but-not-subdomain rejects (no dot before suffix).
+    assert_eq!(
+        unsafe { ns_samedomain(cs("zzzfoo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        0
+    );
+
+    // Different names reject.
+    assert_eq!(
+        unsafe { ns_samedomain(cs("bar.com").as_ptr(), cs("foo.com").as_ptr()) },
+        0
+    );
+}
+
+#[test]
+fn ns_subdomain_only_for_proper_subdomains() {
+    use frankenlibc_abi::resolv_abi::ns_subdomain;
+
+    fn cs(s: &'static str) -> std::ffi::CString {
+        std::ffi::CString::new(s).unwrap()
+    }
+
+    // Same name → not a proper subdomain.
+    assert_eq!(
+        unsafe { ns_subdomain(cs("foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        0
+    );
+    // Proper subdomain → 1.
+    assert_eq!(
+        unsafe { ns_subdomain(cs("www.foo.com").as_ptr(), cs("foo.com").as_ptr()) },
+        1
+    );
+    // Unrelated names → 0.
+    assert_eq!(
+        unsafe { ns_subdomain(cs("bar.com").as_ptr(), cs("foo.com").as_ptr()) },
+        0
+    );
+}
+
+#[test]
+fn ns_makecanon_appends_trailing_dot() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = std::ffi::CString::new("foo.com").unwrap();
+    let mut buf = [0u8; 16];
+    let rc = unsafe { ns_makecanon(src.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert_eq!(rc, 0);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const c_char) };
+    assert_eq!(s.to_bytes(), b"foo.com.");
+}
+
+#[test]
+fn ns_makecanon_preserves_existing_trailing_dot() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = std::ffi::CString::new("foo.com.").unwrap();
+    let mut buf = [0u8; 16];
+    let rc = unsafe { ns_makecanon(src.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert_eq!(rc, 0);
+    let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const c_char) };
+    assert_eq!(s.to_bytes(), b"foo.com.");
+}
+
+#[test]
+fn ns_makecanon_emsgsize_when_dst_too_small() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = std::ffi::CString::new("foo.com").unwrap();
+    // src is 7 bytes; result needs 9 (foo.com. + NUL); buffer of 8
+    // should fail.
+    let mut buf = [0u8; 8];
+    let rc = unsafe { ns_makecanon(src.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+}
+
+#[test]
+fn ns_makecanon_einval_on_null_inputs() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let mut buf = [0u8; 16];
+    let rc = unsafe { ns_makecanon(std::ptr::null(), buf.as_mut_ptr() as *mut c_char, 16) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}

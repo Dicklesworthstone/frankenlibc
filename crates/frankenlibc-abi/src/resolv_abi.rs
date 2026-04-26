@@ -2087,3 +2087,240 @@ pub unsafe extern "C" fn __h_errno_location() -> *mut c_int {
 }
 
 // gai_cancel/gai_error/gai_suspend are defined in unistd_abi.rs
+
+// ===========================================================================
+// libresolv ns_* helpers — byte read/write + name comparators + canon
+// ===========================================================================
+//
+// These are the small parsing primitives BIND/libresolv expose under
+// `<arpa/nameser.h>`. Programs that link against libresolv.so.2 (or
+// LD_PRELOAD frankenlibc) can resolve them here. The high-level
+// resolver (getaddrinfo, gethostbyname, etc.) lives above; these are
+// the low-level helpers it builds on.
+
+/// libresolv `ns_get16(*src) -> u16` — read a big-endian 16-bit
+/// unsigned integer from the 2 bytes pointed to by `src`.
+///
+/// # Safety
+///
+/// `src` must point to at least 2 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_get16(src: *const u8) -> u16 {
+    if src.is_null() {
+        return 0;
+    }
+    // SAFETY: caller-supplied 2-byte buffer.
+    let b0 = unsafe { *src };
+    let b1 = unsafe { *src.add(1) };
+    ((b0 as u16) << 8) | (b1 as u16)
+}
+
+/// libresolv `ns_get32(*src) -> u32` — read a big-endian 32-bit
+/// unsigned integer from the 4 bytes pointed to by `src`.
+///
+/// # Safety
+///
+/// `src` must point to at least 4 readable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_get32(src: *const u8) -> u32 {
+    if src.is_null() {
+        return 0;
+    }
+    // SAFETY: caller-supplied 4-byte buffer.
+    let bytes = unsafe { core::slice::from_raw_parts(src, 4) };
+    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+/// libresolv `ns_put16(value, *dst)` — write `value` as a big-endian
+/// 16-bit unsigned integer to the 2 bytes at `dst`.
+///
+/// # Safety
+///
+/// `dst` must point to at least 2 writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_put16(value: u16, dst: *mut u8) {
+    if dst.is_null() {
+        return;
+    }
+    // SAFETY: caller-supplied 2-byte buffer.
+    unsafe {
+        *dst = (value >> 8) as u8;
+        *dst.add(1) = value as u8;
+    }
+}
+
+/// libresolv `ns_put32(value, *dst)` — write `value` as a big-endian
+/// 32-bit unsigned integer to the 4 bytes at `dst`.
+///
+/// # Safety
+///
+/// `dst` must point to at least 4 writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_put32(value: u32, dst: *mut u8) {
+    if dst.is_null() {
+        return;
+    }
+    let bytes = value.to_be_bytes();
+    // SAFETY: caller-supplied 4-byte buffer.
+    unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, 4) };
+}
+
+// --- name helpers ---
+
+/// Strip an optional single trailing dot for comparison purposes.
+fn strip_trailing_dot(s: &[u8]) -> &[u8] {
+    if let Some(&b'.') = s.last() {
+        &s[..s.len() - 1]
+    } else {
+        s
+    }
+}
+
+/// Lowercase a single byte for case-insensitive ASCII compare. DNS
+/// names are case-insensitive in the ASCII range; non-ASCII bytes are
+/// compared byte-for-byte.
+#[inline]
+fn dns_lower(c: u8) -> u8 {
+    if c.is_ascii_uppercase() { c | 0x20 } else { c }
+}
+
+fn names_eq_no_case_no_dot(a: &[u8], b: &[u8]) -> bool {
+    let a = strip_trailing_dot(a);
+    let b = strip_trailing_dot(b);
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .all(|(x, y)| dns_lower(*x) == dns_lower(*y))
+}
+
+/// libresolv `ns_samename(a, b) -> int` — case-insensitively compare
+/// two DNS names. Returns 1 if same, 0 if different, -1 on error
+/// (NULL inputs).
+///
+/// Trailing dots are tolerated: `"foo.com"` and `"foo.com."` compare
+/// equal.
+///
+/// # Safety
+///
+/// `a` and `b`, when non-NULL, must be NUL-terminated C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_samename(a: *const c_char, b: *const c_char) -> c_int {
+    if a.is_null() || b.is_null() {
+        return -1;
+    }
+    // SAFETY: caller-supplied NUL-terminated strings.
+    let abytes = unsafe { CStr::from_ptr(a) }.to_bytes();
+    let bbytes = unsafe { CStr::from_ptr(b) }.to_bytes();
+    if names_eq_no_case_no_dot(abytes, bbytes) {
+        1
+    } else {
+        0
+    }
+}
+
+/// libresolv `ns_samedomain(a, b) -> int` — return 1 if `a` is in
+/// (or equal to) domain `b`. The empty string `""` and the root
+/// label `"."` are the root domain: every other name is in them.
+/// Otherwise, `a` is in `b` when stripping the leading
+/// `len(a) - len(b) - 1` characters of `a` (plus a separator dot)
+/// yields exactly `b`.
+///
+/// Returns 0 if `a` is not in `b`. Trailing dots are tolerated for
+/// either argument.
+///
+/// # Safety
+///
+/// `a` and `b`, when non-NULL, must be NUL-terminated C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_samedomain(a: *const c_char, b: *const c_char) -> c_int {
+    if a.is_null() || b.is_null() {
+        return 0;
+    }
+    // SAFETY: caller-supplied NUL-terminated strings.
+    let abytes = unsafe { CStr::from_ptr(a) }.to_bytes();
+    let bbytes = unsafe { CStr::from_ptr(b) }.to_bytes();
+    let a = strip_trailing_dot(abytes);
+    let b = strip_trailing_dot(bbytes);
+    if b.is_empty() {
+        return 1;
+    }
+    if a.len() == b.len() {
+        return if names_eq_no_case_no_dot(a, b) { 1 } else { 0 };
+    }
+    if a.len() < b.len() + 1 {
+        return 0;
+    }
+    let split = a.len() - b.len() - 1;
+    if a[split] != b'.' {
+        return 0;
+    }
+    if names_eq_no_case_no_dot(&a[split + 1..], b) {
+        1
+    } else {
+        0
+    }
+}
+
+/// libresolv `ns_subdomain(a, b) -> int` — return 1 if `a` is a
+/// PROPER subdomain of `b` (i.e., `samedomain(a, b) && !samename(a,
+/// b)`). Returns 0 otherwise.
+///
+/// # Safety
+///
+/// `a` and `b`, when non-NULL, must be NUL-terminated C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_subdomain(a: *const c_char, b: *const c_char) -> c_int {
+    let same_dom = unsafe { ns_samedomain(a, b) };
+    if same_dom != 1 {
+        return 0;
+    }
+    let same_name = unsafe { ns_samename(a, b) };
+    if same_name == 1 { 0 } else { 1 }
+}
+
+/// libresolv `ns_makecanon(src, dst, dstsiz) -> int` — copy `src` to
+/// `dst`, ensuring the result is NUL-terminated and ends with a
+/// trailing dot (the canonical form). Returns 0 on success, or -1
+/// with errno set to `EMSGSIZE` if `dst` is too small (or `EINVAL`
+/// if either pointer is NULL).
+///
+/// If `src` already ends with a dot it is copied verbatim; otherwise
+/// a `.` is appended.
+///
+/// # Safety
+///
+/// `src` must be a NUL-terminated C string. `dst` must point to at
+/// least `dstsiz` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn ns_makecanon(
+    src: *const c_char,
+    dst: *mut c_char,
+    dstsiz: usize,
+) -> c_int {
+    if src.is_null() || dst.is_null() {
+        unsafe { set_abi_errno(frankenlibc_core::errno::EINVAL) };
+        return -1;
+    }
+    // SAFETY: caller-supplied NUL-terminated string.
+    let sbytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let needs_dot = sbytes.last().copied() != Some(b'.');
+    let extra: usize = if needs_dot { 1 } else { 0 };
+    let needed = sbytes.len().saturating_add(extra).saturating_add(1);
+    if needed > dstsiz {
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        return -1;
+    }
+    // SAFETY: dst points to dstsiz writable bytes; we write needed ≤ dstsiz.
+    unsafe {
+        core::ptr::copy_nonoverlapping(sbytes.as_ptr() as *const c_char, dst, sbytes.len());
+        let mut off = sbytes.len();
+        if needs_dot {
+            *dst.add(off) = b'.' as c_char;
+            off += 1;
+        }
+        *dst.add(off) = 0;
+    }
+    0
+}
