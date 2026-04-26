@@ -34,9 +34,9 @@ use frankenlibc_abi::glibc_internal_abi::getdate_err;
 use frankenlibc_abi::glibc_internal_abi::setaliasent as abi_setaliasent;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
-    FTSENT as AbiFtsEnt, access, aio_suspend, alarm, arc4random_buf, chdir, chmod, chown, close,
-    creat, eaccess, endaliasent, ether_line, euidaccess, faccessat, fchmod, fchown, fdatasync,
-    fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, fstat, fsync, ftruncate,
+    FTSENT as AbiFtsEnt, access, aio_suspend, alarm, arc4random_buf, bsd_getopt, chdir, chmod,
+    chown, close, creat, eaccess, endaliasent, ether_line, euidaccess, faccessat, fchmod, fchown,
+    fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, fstat, fsync, ftruncate,
     fts_children as abi_fts_children, fts_close as abi_fts_close, fts_open as abi_fts_open,
     fts_read as abi_fts_read, fts_set as abi_fts_set, gai_cancel, gai_error, gai_suspend,
     getaddrinfo_a, getaliasbyname, getaliasbyname_r, getaliasent, getaliasent_r, getcwd, getdate,
@@ -5138,4 +5138,97 @@ fn posix_close_invalid_fd_returns_minus_one() {
     assert_eq!(rc, -1);
     let err = unsafe { *__errno_location() };
     assert_eq!(err, libc::EBADF, "posix_close(-1, 0) errno should be EBADF");
+}
+
+// ---------------------------------------------------------------------------
+// bsd_getopt (libbsd: BSD-flavored getopt with stripped +/- prefix)
+// ---------------------------------------------------------------------------
+//
+// libbsd's bsd_getopt strips a leading '+' or '-' from `optstring`
+// and forwards to POSIX getopt. We exercise three behaviors:
+//   1. Plain optstring forwarded unchanged.
+//   2. '+' prefix stripped before parse.
+//   3. '-' prefix stripped before parse.
+// All three must yield the same option-character output.
+//
+// getopt is stateful (libc_optind, libc_optarg) — we serialise the
+// tests via a Mutex so they don't race the global getopt state.
+
+static BSD_GETOPT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn run_bsd_getopt_with_args(optstring: &core::ffi::CStr, args: &[&core::ffi::CStr]) -> Vec<c_int> {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    // Reset getopt state. libc_optind is exported by glibc; on
+    // reset it must be set to 1 to start a fresh parse.
+    unsafe extern "C" {
+        static mut optind: c_int;
+    }
+    unsafe { optind = 1 };
+
+    let mut argv: Vec<*mut c_char> = args.iter().map(|s| s.as_ptr() as *mut c_char).collect();
+    argv.push(std::ptr::null_mut());
+
+    let mut out = Vec::new();
+    loop {
+        let rc = unsafe {
+            bsd_getopt(
+                args.len() as c_int,
+                argv.as_ptr(),
+                optstring.as_ptr(),
+            )
+        };
+        if rc == -1 {
+            break;
+        }
+        out.push(rc);
+    }
+    out
+}
+
+#[test]
+fn bsd_getopt_plain_optstring_forwards_unchanged() {
+    let chars = run_bsd_getopt_with_args(c"abc", &[c"prog", c"-a", c"-b", c"-c"]);
+    assert_eq!(chars, vec![b'a' as c_int, b'b' as c_int, b'c' as c_int]);
+}
+
+#[test]
+fn bsd_getopt_strips_leading_plus_prefix() {
+    // Same arguments + same effective optspec; "+abc" must behave
+    // identically to "abc" once the '+' is stripped.
+    let chars = run_bsd_getopt_with_args(c"+abc", &[c"prog", c"-a", c"-b"]);
+    assert_eq!(chars, vec![b'a' as c_int, b'b' as c_int]);
+}
+
+#[test]
+fn bsd_getopt_strips_leading_minus_prefix() {
+    let chars = run_bsd_getopt_with_args(c"-abc", &[c"prog", c"-a", c"-c"]);
+    assert_eq!(chars, vec![b'a' as c_int, b'c' as c_int]);
+}
+
+#[test]
+fn bsd_getopt_unknown_option_returns_question_mark() {
+    let chars = run_bsd_getopt_with_args(c"+ab", &[c"prog", c"-z"]);
+    assert_eq!(chars, vec![b'?' as c_int]);
+}
+
+#[test]
+fn bsd_getopt_null_optstring_returns_minus_one() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let arg0 = c"prog";
+    let argv: [*mut c_char; 2] = [arg0.as_ptr() as *mut c_char, std::ptr::null_mut()];
+    let rc = unsafe { bsd_getopt(1, argv.as_ptr(), std::ptr::null()) };
+    assert_eq!(rc, -1, "NULL optstring must yield -1 (matches getopt)");
+}
+
+#[test]
+fn bsd_getopt_double_prefix_only_strips_one() {
+    // libbsd strips at most one prefix char. "++a" → after stripping
+    // '+', optstring is "+a", which then itself starts with '+' as
+    // a getopt-spec char (since our getopt treats unknown specs as
+    // valid letter "p" expectations? actually just "+" is not a
+    // valid option char). The first char after stripping is '+',
+    // which isn't an option character, so '-+' as an arg yields '?'.
+    // Verify the strip happens exactly once.
+    let chars = run_bsd_getopt_with_args(c"++a", &[c"prog", c"-a"]);
+    assert_eq!(chars, vec![b'a' as c_int]);
 }

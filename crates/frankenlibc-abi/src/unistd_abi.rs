@@ -2410,6 +2410,47 @@ pub unsafe extern "C" fn getopt(
     rc
 }
 
+/// libbsd `bsd_getopt(nargc, nargv, options)` — thin BSD-flavored
+/// wrapper over POSIX [`getopt`]. The leading `+` or `-` of
+/// `options`, if present, is stripped before delegation: glibc
+/// uses those prefixes to toggle GNU-style argument permutation
+/// vs. POSIX strict ordering, but our getopt is unconditionally
+/// POSIX-strict so the prefix would otherwise be misparsed as an
+/// option spec.
+///
+/// `options == NULL` is forwarded as-is and inherits the NULL
+/// rejection from [`getopt`] (yielding `-1` with errno=EINVAL).
+///
+/// # Safety
+///
+/// Caller must satisfy the same invariants as for [`getopt`]:
+/// `argv` points to an `argc + 1`-long array of NUL-terminated C
+/// strings (the extra slot being the conventional NULL terminator),
+/// and `options`, when non-NULL, is a valid NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bsd_getopt(
+    nargc: c_int,
+    nargv: *const *mut c_char,
+    options: *const c_char,
+) -> c_int {
+    let stripped = if options.is_null() {
+        options
+    } else {
+        // SAFETY: caller-supplied NUL-terminated C string.
+        let first = unsafe { *options };
+        if first == b'+' as c_char || first == b'-' as c_char {
+            // SAFETY: skipping past the prefix into the same string;
+            // the underlying buffer is at least one byte longer than
+            // a non-empty C string, and the resulting pointer is
+            // still NUL-terminated.
+            unsafe { options.add(1) }
+        } else {
+            options
+        }
+    };
+    unsafe { getopt(nargc, nargv, stripped) }
+}
+
 /// GNU `getopt_long` — parse long command-line options.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getopt_long(
