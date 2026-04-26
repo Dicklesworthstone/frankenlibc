@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-25T21:22:59Z",
+  "generated_at": "2026-04-26T01:10:53Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "56474c19be34f90a4539c420dc800934bac6ffd615542d943675cbcdbc740c54",
+      "sha256": "446ff54bbd307fac7fca020a3132138357b89ae6c1cb05406994ca19a126e349",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "b34396c28aecef0bd9c86f81c778d78164cc416bc36f989f4cc5e927647f61e2",
+      "sha256": "5214a69db3b61d2495c76ae8bae6347c92ef4bf0a84f85401a8be1276169f2e8",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "360ac647ab4eb0463f1d8286a983bd98f8ce79df6e00c40e5000df7c25407c86",
+      "sha256": "f6da039ebcbd4ec7653cf6517b125161830192149b311adccae58fb2cc5e721b",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -171,8 +171,8 @@
       "kind": "report",
       "required": true,
       "critical": false,
-      "sha256": "ccee7360ce5165a6b1b2e0c84dded3a6112b2b1d0bc116a1897ded6e3d4065c0",
-      "size_bytes": 1787348,
+      "sha256": "fffd009c03853d5c743be56cc40367e21b0872f76d3211bfb4584d16388f927c",
+      "size_bytes": 1787651,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -230,7 +230,7 @@
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "56474c19be34f90a4539c420dc800934bac6ffd615542d943675cbcdbc740c54",
+      "sha256": "446ff54bbd307fac7fca020a3132138357b89ae6c1cb05406994ca19a126e349",
       "size_bytes": 5609
     },
     "replacement_levels": {
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "b34396c28aecef0bd9c86f81c778d78164cc416bc36f989f4cc5e927647f61e2",
+      "sha256": "5214a69db3b61d2495c76ae8bae6347c92ef4bf0a84f85401a8be1276169f2e8",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "360ac647ab4eb0463f1d8286a983bd98f8ce79df6e00c40e5000df7c25407c86",
+      "sha256": "f6da039ebcbd4ec7653cf6517b125161830192149b311adccae58fb2cc5e721b",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -270,8 +270,8 @@
     },
     "symbol_fixture_coverage": {
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "ccee7360ce5165a6b1b2e0c84dded3a6112b2b1d0bc116a1897ded6e3d4065c0",
-      "size_bytes": 1787348
+      "sha256": "fffd009c03853d5c743be56cc40367e21b0872f76d3211bfb4584d16388f927c",
+      "size_bytes": 1787651
     },
     "closure_contract": {
       "path": "tests/conformance/closure_contract.v1.json",

@@ -1,6 +1,6 @@
-warning: frankenlibc-core@0.1.0: No SMT solver found for /data/tmp/cargo-target-frankenlibc-codex-scanf/debug/build/frankenlibc-core-14c0c4b13ffdf56c/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+warning: frankenlibc-core@0.1.0: No SMT solver found for /data/tmp/cargo-target-frankenlibc-codex-socket/debug/build/frankenlibc-core-14c0c4b13ffdf56c/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-frankenlibc-codex-socket/debug/deps/pthread_thread_lifecycle_test-509c74c377310bbc)
+warning: frankenlibc-core@0.1.0: No SMT solver found for /data/tmp/cargo-target-frankenlibc-codex-socket/debug/build/frankenlibc-core-14c0c4b13ffdf56c/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
-     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-frankenlibc-codex-scanf/debug/deps/pthread_thread_lifecycle_test-509c74c377310bbc)
-warning: frankenlibc-core@0.1.0: No SMT solver found for /data/tmp/cargo-target-frankenlibc-codex-scanf/debug/build/frankenlibc-core-14c0c4b13ffdf56c/out/stdio_synth/proof/stdio_tables.smt2. Skipping solver execution.
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
-     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-frankenlibc-codex-scanf/debug/deps/pthread_thread_lifecycle_test-509c74c377310bbc)
+     Running tests/pthread_thread_lifecycle_test.rs (/data/tmp/cargo-target-frankenlibc-codex-socket/debug/deps/pthread_thread_lifecycle_test-509c74c377310bbc)
