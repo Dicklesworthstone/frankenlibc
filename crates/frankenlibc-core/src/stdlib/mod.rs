@@ -11,6 +11,7 @@ pub mod ecvt;
 pub mod env;
 pub mod exit;
 pub mod expand_number;
+pub mod fmtcheck;
 pub mod getbsize;
 pub mod humanize_number;
 pub mod math;

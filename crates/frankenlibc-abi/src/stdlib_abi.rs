@@ -4864,3 +4864,49 @@ pub unsafe extern "C" fn humanize_number(
         Err(_) => -1,
     }
 }
+
+// ---------------------------------------------------------------------------
+// fmtcheck (NetBSD/FreeBSD libutil printf-format compatibility check)
+// ---------------------------------------------------------------------------
+
+/// NetBSD/FreeBSD `fmtcheck(user, default_fmt)` — return `user` if
+/// its printf-format conversion specifiers are compatible with
+/// `default_fmt`'s; otherwise return `default_fmt`. "Compatible"
+/// means same sequence of variadic-consuming conversions, with
+/// matching type and length-modifier classes (per the rules in
+/// `frankenlibc_core::stdlib::fmtcheck`).
+///
+/// `user == NULL` returns `default_fmt`. `default_fmt == NULL` is
+/// only safe if `user` is also NULL or has an empty conversion
+/// list — otherwise the caller would later printf with no fallback;
+/// we still hand back `default_fmt` (NULL) and let the caller deal
+/// with it.
+///
+/// # Safety
+///
+/// Caller must ensure `user` and `default_fmt`, when non-NULL, are
+/// valid NUL-terminated C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn fmtcheck(
+    user: *const c_char,
+    default_fmt: *const c_char,
+) -> *const c_char {
+    use frankenlibc_core::stdlib::fmtcheck as core_fc;
+
+    if user.is_null() {
+        return default_fmt;
+    }
+    if default_fmt.is_null() {
+        return default_fmt;
+    }
+
+    // SAFETY: caller-supplied NUL-terminated C strings.
+    let user_bytes = unsafe { CStr::from_ptr(user) }.to_bytes();
+    let default_bytes = unsafe { CStr::from_ptr(default_fmt) }.to_bytes();
+
+    if core_fc::compatible(user_bytes, default_bytes) {
+        user
+    } else {
+        default_fmt
+    }
+}

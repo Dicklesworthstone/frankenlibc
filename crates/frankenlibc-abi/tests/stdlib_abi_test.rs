@@ -8,7 +8,7 @@ use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atoll, clearenv, confstr, dehumanize_number, drand48, ecvt, erand48,
-    expand_number, fcvt, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf,
+    expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf,
     get_phys_pages, getbsize, getenv, getsubopt, humanize_number, initstate, jrand48, l64a,
     lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, qsort_r, random,
     reallocarray, reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom, strtod,
@@ -6339,4 +6339,106 @@ fn humanize_suffix_is_appended_after_prefix() {
         )
     };
     assert_eq!(hn_string(&buf, n), "4 KiB/s");
+}
+
+// ---------------------------------------------------------------------------
+// fmtcheck (NetBSD/FreeBSD libutil printf-format compatibility check)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fmtcheck_returns_user_when_compatible() {
+    let user = c"User said: %s with code %d";
+    let default_fmt = c"%s|%d";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, user.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_returns_default_when_incompatible_count() {
+    let user = c"%d";
+    let default_fmt = c"%d %s";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, default_fmt.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_returns_default_when_incompatible_type() {
+    let user = c"%d";
+    let default_fmt = c"%s";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, default_fmt.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_returns_default_when_length_modifier_differs() {
+    let user = c"%d";
+    let default_fmt = c"%ld";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, default_fmt.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_d_and_i_interchange() {
+    let user = c"%i";
+    let default_fmt = c"%d";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, user.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_unsigned_family_interchange() {
+    let user = c"%X";
+    let default_fmt = c"%u";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, user.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_floats_all_match() {
+    let user = c"%g";
+    let default_fmt = c"%f";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, user.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_null_user_returns_default() {
+    let default_fmt = c"%d";
+    let p = unsafe { fmtcheck(ptr::null(), default_fmt.as_ptr()) };
+    assert_eq!(p, default_fmt.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_null_default_returns_default() {
+    let user = c"%d";
+    let p = unsafe { fmtcheck(user.as_ptr(), ptr::null()) };
+    assert!(
+        p.is_null(),
+        "NULL default → return NULL even if user is set"
+    );
+}
+
+#[test]
+fn fmtcheck_both_empty_strings_compatible() {
+    let user = c"plain user text";
+    let default_fmt = c"different default text";
+    // Neither has conversions; lists are empty and equal → user wins.
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, user.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_ignores_flags_width_precision() {
+    let user = c"%-+10.3d";
+    let default_fmt = c"%d";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, user.as_ptr() as *const c_char);
+}
+
+#[test]
+fn fmtcheck_pointer_distinct_from_string() {
+    let user = c"%p";
+    let default_fmt = c"%s";
+    let p = unsafe { fmtcheck(user.as_ptr(), default_fmt.as_ptr()) };
+    assert_eq!(p, default_fmt.as_ptr() as *const c_char);
 }
