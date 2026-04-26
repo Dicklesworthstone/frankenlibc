@@ -6447,7 +6447,7 @@ fn fmtcheck_pointer_distinct_from_string() {
 // StringList (NetBSD libutil sl_init / sl_add / sl_find / sl_free)
 // ---------------------------------------------------------------------------
 
-use frankenlibc_abi::stdlib_abi::{sl_add, sl_find, sl_free, sl_init};
+use frankenlibc_abi::stdlib_abi::{getmode, setmode, sl_add, sl_find, sl_free, sl_init};
 
 #[test]
 fn sl_init_returns_empty_list() {
@@ -6598,4 +6598,110 @@ fn sl_find_distinguishes_substring_match() {
         assert!(found.is_null(), "must NOT match a prefix-only substring");
         sl_free(sl, 0);
     }
+}
+
+// ---------------------------------------------------------------------------
+// setmode / getmode (BSD chmod symbolic-mode parser/applier)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn setmode_user_add_execute_then_getmode() {
+    let s = c"u+x";
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    assert!(!bbox.is_null());
+    let new_mode = unsafe { getmode(bbox, 0o644) };
+    assert_eq!(new_mode, 0o744);
+    unsafe { libc::free(bbox) };
+}
+
+#[test]
+fn setmode_all_set_rwx() {
+    let s = c"a=rwx";
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    assert!(!bbox.is_null());
+    let new_mode = unsafe { getmode(bbox, 0o000) };
+    assert_eq!(new_mode, 0o777);
+    unsafe { libc::free(bbox) };
+}
+
+#[test]
+fn setmode_comma_chained_clauses() {
+    let s = c"u=rwx,g=rx,o=r";
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    assert!(!bbox.is_null());
+    let new_mode = unsafe { getmode(bbox, 0o000) };
+    assert_eq!(new_mode, 0o754);
+    unsafe { libc::free(bbox) };
+}
+
+#[test]
+fn setmode_invalid_returns_null_with_einval() {
+    let s = c"u+z";
+    unsafe { *__errno_location() = 0 };
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    assert!(bbox.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn setmode_null_input_returns_null_with_einval() {
+    unsafe { *__errno_location() = 0 };
+    let bbox = unsafe { setmode(ptr::null()) };
+    assert!(bbox.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn getmode_null_bbox_returns_input_unchanged() {
+    let m = unsafe { getmode(ptr::null(), 0o644) };
+    assert_eq!(m, 0o644);
+}
+
+#[test]
+fn getmode_bad_magic_returns_input_unchanged() {
+    let mut garbage = [0u8; 64];
+    for (i, b) in garbage.iter_mut().enumerate() {
+        *b = (i * 7) as u8;
+    }
+    let m = unsafe { getmode(garbage.as_ptr() as *const std::ffi::c_void, 0o644) };
+    assert_eq!(m, 0o644);
+}
+
+#[test]
+fn setmode_setuid_with_user_clause() {
+    let s = c"u+s";
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    assert!(!bbox.is_null());
+    let new_mode = unsafe { getmode(bbox, 0o755) };
+    assert_eq!(new_mode, 0o4755);
+    unsafe { libc::free(bbox) };
+}
+
+#[test]
+fn setmode_sticky_with_default_who() {
+    let s = c"+t";
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    assert!(!bbox.is_null());
+    let new_mode = unsafe { getmode(bbox, 0o755) };
+    assert_eq!(new_mode, 0o1755);
+    unsafe { libc::free(bbox) };
+}
+
+#[test]
+fn setmode_preserves_high_file_type_bits() {
+    let s = c"a=rwx";
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    let new_mode = unsafe { getmode(bbox, 0o100644) };
+    assert_eq!(new_mode, 0o100777);
+    unsafe { libc::free(bbox) };
+}
+
+#[test]
+fn setmode_round_trip_with_multiple_clauses_and_apply() {
+    let s = c"u=rwx,go=r,u+s";
+    let bbox = unsafe { setmode(s.as_ptr()) };
+    assert!(!bbox.is_null());
+    let new_mode = unsafe { getmode(bbox, 0o777) };
+    assert_eq!(new_mode, 0o4744);
+    unsafe { libc::free(bbox) };
 }

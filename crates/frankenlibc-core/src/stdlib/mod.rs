@@ -18,6 +18,7 @@ pub mod math;
 pub mod random;
 pub mod random48;
 pub mod random_sv;
+pub mod setmode;
 pub mod sort;
 pub mod strtonum;
 pub mod subopt;

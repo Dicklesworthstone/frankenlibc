@@ -5099,3 +5099,111 @@ pub unsafe extern "C" fn sl_free(sl: *mut StringList, all: c_int) {
         crate::malloc_abi::free(sl.cast());
     }
 }
+
+// ---------------------------------------------------------------------------
+// setmode / getmode (BSD chmod symbolic-mode parser/applier)
+// ---------------------------------------------------------------------------
+//
+// The "bitbox" returned by setmode is opaque to the caller. We
+// allocate a little header { magic, n_ops } followed by the
+// ChmodOp array on the C heap so getmode can recover the slice.
+
+use frankenlibc_core::stdlib::setmode as core_sm;
+
+const SETMODE_MAGIC: u32 = 0x53745468; // 'StTh' — "setmode header"
+
+/// Bitbox header. Followed in memory by an `[ChmodOp; n_ops]` slice.
+#[repr(C)]
+struct SetmodeHeader {
+    magic: u32,
+    n_ops: u32,
+}
+
+/// BSD `setmode(mode_str)` — parse a chmod symbolic mode string
+/// into a process-static "bitbox" that [`getmode`] can later apply.
+/// Returns NULL on parse error or on malloc failure.
+///
+/// `mode_str == NULL` is malformed and yields NULL with errno=EINVAL.
+///
+/// # Safety
+///
+/// Caller must ensure `mode_str`, when non-NULL, is a valid
+/// NUL-terminated C string. The returned pointer must be released
+/// by the caller via `free()` (matching BSD's documented contract).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setmode(mode_str: *const c_char) -> *mut c_void {
+    if mode_str.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return ptr::null_mut();
+    }
+    // SAFETY: caller-supplied NUL-terminated C string.
+    let bytes = unsafe { CStr::from_ptr(mode_str) }.to_bytes();
+    let ops = match core_sm::parse(bytes) {
+        Some(v) => v,
+        None => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return ptr::null_mut();
+        }
+    };
+
+    let header_size = core::mem::size_of::<SetmodeHeader>();
+    let op_size = core::mem::size_of::<core_sm::ChmodOp>();
+    let total = match header_size.checked_add(ops.len().saturating_mul(op_size)) {
+        Some(t) if t < usize::MAX => t,
+        _ => {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return ptr::null_mut();
+        }
+    };
+    let raw = unsafe { crate::malloc_abi::malloc(total) };
+    if raw.is_null() {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return ptr::null_mut();
+    }
+
+    // SAFETY: raw is a freshly-allocated buffer of at least `total`
+    // bytes; we initialize the header followed by the op slice.
+    unsafe {
+        let header_ptr = raw as *mut SetmodeHeader;
+        (*header_ptr).magic = SETMODE_MAGIC;
+        (*header_ptr).n_ops = ops.len() as u32;
+        let ops_ptr = (raw as *mut u8).add(header_size) as *mut core_sm::ChmodOp;
+        for (i, op) in ops.iter().enumerate() {
+            *ops_ptr.add(i) = *op;
+        }
+    }
+    raw
+}
+
+/// BSD `getmode(bbox, current_mode)` — apply the operations in
+/// `bbox` (as previously returned by [`setmode`]) to `current_mode`,
+/// returning the new mode.
+///
+/// `bbox == NULL` returns `current_mode` unchanged. A bbox with the
+/// wrong magic header is treated as malformed and also returns
+/// `current_mode` unchanged (rather than reading uninitialized
+/// memory).
+///
+/// # Safety
+///
+/// `bbox`, when non-NULL, must point to a buffer previously
+/// returned by [`setmode`] (or have the same in-memory layout).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getmode(bbox: *const c_void, current_mode: libc::mode_t) -> libc::mode_t {
+    if bbox.is_null() {
+        return current_mode;
+    }
+    // SAFETY: bbox came from setmode (or has the same layout).
+    let header = unsafe { &*(bbox as *const SetmodeHeader) };
+    if header.magic != SETMODE_MAGIC {
+        return current_mode;
+    }
+    let n = header.n_ops as usize;
+    let header_size = core::mem::size_of::<SetmodeHeader>();
+    // SAFETY: setmode laid out [header][ops; n_ops] contiguously.
+    let ops_slice = unsafe {
+        let ops_ptr = (bbox as *const u8).add(header_size) as *const core_sm::ChmodOp;
+        std::slice::from_raw_parts(ops_ptr, n)
+    };
+    core_sm::apply(ops_slice, current_mode)
+}
