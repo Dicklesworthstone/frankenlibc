@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 4010,
+  "total_exported": 4050,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -2472,12 +2472,75 @@
       "default_stub": false
     },
     {
+      "symbol": "crypt_gensalt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "libxcrypt-compatible salt generation into a thread-local buffer for $1$/$5$/$6$ prefixes; invalid prefixes or negative entropy sizes return NULL with EINVAL",
+      "hardened_semantics": "Same deterministic salt generation and invalid-input rejection",
+      "default_stub": false
+    },
+    {
+      "symbol": "crypt_gensalt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Caller-buffer salt generation for $1$/$5$/$6$ prefixes; returns ERANGE when output is too small and EINVAL for invalid inputs",
+      "hardened_semantics": "Same caller-buffer generation and deterministic error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "crypt_gensalt_ra",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Auto-allocating salt generation using FrankenLibC malloc; returns NULL with EINVAL/ENOMEM on invalid input or allocation failure",
+      "hardened_semantics": "Same auto-allocation path and deterministic error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "crypt_gensalt_rn",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Alternate caller-buffer salt generation name delegating to crypt_gensalt_r semantics",
+      "hardened_semantics": "Same alias behavior as crypt_gensalt_r",
+      "default_stub": false
+    },
+    {
       "symbol": "crypt_preferred_method",
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "strict_semantics": "Returns static preferred crypt method prefix $6$ for SHA-512",
       "hardened_semantics": "Same static process-lifetime string",
+      "default_stub": false
+    },
+    {
+      "symbol": "crypt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Reentrant crypt variant copying the native crypt result into the caller's crypt_data output buffer",
+      "hardened_semantics": "Same reentrant copy path with null data rejection",
+      "default_stub": false
+    },
+    {
+      "symbol": "crypt_ra",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Auto-allocating reentrant crypt variant that malloc/reallocs caller storage before copying the native crypt result",
+      "hardened_semantics": "Same auto-allocation path with null pointer and allocation-failure checks",
+      "default_stub": false
+    },
+    {
+      "symbol": "crypt_rn",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Size-checked reentrant crypt variant copying into caller storage or returning ERANGE when too small",
+      "hardened_semantics": "Same size-checked copy path",
       "default_stub": false
     },
     {
@@ -2532,6 +2595,33 @@
       "perf_class": "coldpath",
       "strict_semantics": "Historical libcrypt alias of crypt using the native Rust crypt implementation",
       "hardened_semantics": "Same alias behavior as crypt",
+      "default_stub": false
+    },
+    {
+      "symbol": "xcrypt_gensalt",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Historical alias of crypt_gensalt using the native salt-generation implementation",
+      "hardened_semantics": "Same alias behavior as crypt_gensalt",
+      "default_stub": false
+    },
+    {
+      "symbol": "xcrypt_gensalt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Historical alias of crypt_gensalt_r using the native caller-buffer salt-generation implementation",
+      "hardened_semantics": "Same alias behavior as crypt_gensalt_r",
+      "default_stub": false
+    },
+    {
+      "symbol": "xcrypt_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "Historical alias of crypt_r using the native reentrant crypt implementation",
+      "hardened_semantics": "Same alias behavior as crypt_r",
       "default_stub": false
     },
     {
@@ -19726,6 +19816,150 @@
       "module": "rpc_abi"
     },
     {
+      "symbol": "nis_free_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ directory free helper is a no-op because FrankenLibC NIS+ query stubs never allocate directory objects",
+      "hardened_semantics": "Same no-op free-helper contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_free_object",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ object free helper is a no-op because FrankenLibC NIS+ query stubs never allocate objects",
+      "hardened_semantics": "Same no-op free-helper contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_free_request",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ request free helper is a no-op because FrankenLibC NIS+ query stubs never allocate requests",
+      "hardened_semantics": "Same no-op free-helper contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_freenames",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ names free helper is a no-op because FrankenLibC NIS+ query stubs never allocate name arrays",
+      "hardened_semantics": "Same no-op free-helper contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_freeresult",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ result free helper is a no-op because FrankenLibC NIS+ query stubs never allocate result objects",
+      "hardened_semantics": "Same no-op free-helper contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_freeservlist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ server-list free helper is a no-op because FrankenLibC NIS+ query stubs never allocate server lists",
+      "hardened_semantics": "Same no-op free-helper contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_freetags",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ tag free helper is a no-op because FrankenLibC NIS+ query stubs never allocate tags",
+      "hardened_semantics": "Same no-op free-helper contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_lerror",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ syslog-style error logger is a no-op in the fail-safe libnsl layer",
+      "hardened_semantics": "Same no-op logging contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_local_directory",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ local directory query returns a process-static empty C string",
+      "hardened_semantics": "Same process-static empty-string contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_local_group",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ local group query returns a process-static empty C string",
+      "hardened_semantics": "Same process-static empty-string contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_local_host",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ local host query returns a process-static empty C string",
+      "hardened_semantics": "Same process-static empty-string contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_local_principal",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ local principal query returns a process-static empty C string",
+      "hardened_semantics": "Same process-static empty-string contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_perror",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ stderr formatter writes label plus static status text through the raw write syscall",
+      "hardened_semantics": "Same raw-syscall formatter contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_sperrno",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ status formatter returns a thread-local C string for known and unknown status codes",
+      "hardened_semantics": "Same thread-local formatter contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_sperror",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ malloc-allocating status formatter returns label plus static status text or NULL with ENOMEM",
+      "hardened_semantics": "Same malloc-backed formatter contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "nis_sperror_r",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS+ caller-buffer status formatter writes label plus status text or fails with EINVAL/ERANGE",
+      "hardened_semantics": "Same caller-buffer formatter contract",
+      "default_stub": false
+    },
+    {
       "symbol": "ns_name_compress",
       "status": "Implemented",
       "module": "glibc_internal_abi"
@@ -32019,23 +32253,149 @@
       "strict_semantics": true,
       "hardened_semantics": true,
       "default_stub": false
+    },
+    {
+      "symbol": "yp_all",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS yp_all fail-safe entrypoint; returns YPERR_DOMAIN without invoking callbacks when no NIS runtime is present",
+      "hardened_semantics": "Same fail-safe no-callback contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_bind",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS bind fail-safe entrypoint returning YPERR_DOMAIN on unsupported local NIS service",
+      "hardened_semantics": "Same deterministic fail-safe error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_first",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS first-record fail-safe entrypoint; zeros output key/value slots and returns YPERR_DOMAIN",
+      "hardened_semantics": "Same output-zeroing and fail-safe error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_get_default_domain",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS default-domain lookup fail-safe entrypoint; writes NULL output and returns YPERR_NODOM",
+      "hardened_semantics": "Same NULL-output and fail-safe error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_maplist",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS map-list fail-safe entrypoint; writes NULL output and returns YPERR_DOMAIN",
+      "hardened_semantics": "Same NULL-output and fail-safe error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_master",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS master lookup fail-safe entrypoint; writes NULL output and returns YPERR_DOMAIN",
+      "hardened_semantics": "Same NULL-output and fail-safe error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_match",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS key lookup fail-safe entrypoint; zeros output value slots and returns YPERR_DOMAIN",
+      "hardened_semantics": "Same output-zeroing and fail-safe error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_next",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS next-record fail-safe entrypoint; zeros output key/value slots and returns YPERR_DOMAIN",
+      "hardened_semantics": "Same output-zeroing and fail-safe error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_order",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS order lookup fail-safe entrypoint; writes zero order and returns YPERR_DOMAIN",
+      "hardened_semantics": "Same zero-output and fail-safe error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_unbind",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS unbind fail-safe entrypoint; no-op when no NIS runtime is present",
+      "hardened_semantics": "Same no-op contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yp_update",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS update fail-safe entrypoint returning YPERR_DOMAIN on unsupported local NIS service",
+      "hardened_semantics": "Same deterministic fail-safe error contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "ypbinderr_string",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS ypbind error-code formatter returning process-static C strings",
+      "hardened_semantics": "Same process-static formatter contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "yperr_string",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS error-code formatter returning process-static C strings",
+      "hardened_semantics": "Same process-static formatter contract",
+      "default_stub": false
+    },
+    {
+      "symbol": "ypprot_err",
+      "status": "Implemented",
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NIS protocol-error mapper returning 0 for success and YPERR_YPBIND for nonzero ypbind status",
+      "hardened_semantics": "Same deterministic protocol-error mapping",
+      "default_stub": false
     }
   ],
   "summary": {
-    "total": 3996,
-    "implemented": 3592,
-    "raw_syscall": 404,
+    "total": 4050,
+    "implemented": 3640,
+    "raw_syscall": 410,
     "wraps_host_libc": 0,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 3592,
-  "raw_syscall": 404,
+  "implemented": 3640,
+  "raw_syscall": 410,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 3592,
-    "raw_syscall": 404,
+    "implemented": 3640,
+    "raw_syscall": 410,
     "glibc_call_through": 0,
     "stub": 0
   }

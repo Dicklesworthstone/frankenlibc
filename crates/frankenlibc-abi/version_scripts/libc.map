@@ -1779,13 +1779,23 @@ GLIBC_2.2.5 {
         /* crypt */
         crypt;
         crypt_checksalt;
+        crypt_gensalt;
+        crypt_gensalt_r;
+        crypt_gensalt_ra;
+        crypt_gensalt_rn;
         crypt_preferred_method;
+        crypt_r;
+        crypt_ra;
+        crypt_rn;
         encrypt;
         encrypt_r;
         fcrypt;
         setkey;
         setkey_r;
         xcrypt;
+        xcrypt_gensalt;
+        xcrypt_gensalt_r;
+        xcrypt_r;
 
         /* SysV IPC */
         shmget;
@@ -3295,6 +3305,22 @@ GLIBC_2.2.5 {
         monstartup;
         netname2host;
         netname2user;
+        nis_free_directory;
+        nis_free_object;
+        nis_free_request;
+        nis_freenames;
+        nis_freeresult;
+        nis_freeservlist;
+        nis_freetags;
+        nis_lerror;
+        nis_local_directory;
+        nis_local_group;
+        nis_local_host;
+        nis_local_principal;
+        nis_perror;
+        nis_sperrno;
+        nis_sperror;
+        nis_sperror_r;
         ns_name_compress;
         ns_name_ntop;
         ns_name_pack;
@@ -3544,6 +3570,20 @@ GLIBC_2.2.5 {
         xdrrec_skiprecord;
         xdrstdio_create;
         xencrypt;
+        yp_all;
+        yp_bind;
+        yp_first;
+        yp_get_default_domain;
+        yp_maplist;
+        yp_master;
+        yp_match;
+        yp_next;
+        yp_order;
+        yp_unbind;
+        yp_update;
+        ypbinderr_string;
+        yperr_string;
+        ypprot_err;
 
 
         /* final gap-closing symbols */

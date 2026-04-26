@@ -8562,6 +8562,169 @@ fn yp_fail_safe_stubs_zero_outputs_and_return_stable_errors() {
     assert_eq!(unsafe { ypprot_err(1) }, YPERR_YPBIND);
 }
 
+#[test]
+fn nis_plus_fail_safe_helpers_format_and_free_deterministically() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_free_directory, nis_free_object, nis_free_request, nis_freenames, nis_freeresult,
+        nis_freeservlist, nis_freetags, nis_lerror, nis_local_directory, nis_local_group,
+        nis_local_host, nis_local_principal, nis_sperrno, nis_sperror, nis_sperror_r,
+    };
+
+    let empty = c"";
+    assert_eq!(unsafe { CStr::from_ptr(nis_local_directory()) }, empty);
+    assert_eq!(unsafe { CStr::from_ptr(nis_local_host()) }, empty);
+    assert_eq!(unsafe { CStr::from_ptr(nis_local_principal()) }, empty);
+    assert_eq!(unsafe { CStr::from_ptr(nis_local_group()) }, empty);
+
+    let name_unreachable = unsafe { CStr::from_ptr(nis_sperrno(5)) }
+        .to_bytes()
+        .to_vec();
+    assert_eq!(name_unreachable, b"Name unreachable");
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_sperrno(999)) }.to_bytes(),
+        b"Unknown NIS+ error"
+    );
+
+    let label = c"nis";
+    let allocated = unsafe { nis_sperror(5, label.as_ptr()) };
+    assert!(!allocated.is_null());
+    assert_eq!(
+        unsafe { CStr::from_ptr(allocated) }.to_bytes(),
+        b"nis: Name unreachable"
+    );
+    unsafe { frankenlibc_abi::malloc_abi::free(allocated as *mut c_void) };
+
+    let mut small = [0u8; 4];
+    clear_errno();
+    let p = unsafe { nis_sperror_r(5, label.as_ptr(), small.as_mut_ptr() as *mut c_char, 4) };
+    assert!(p.is_null());
+    assert_eq!(errno_value(), libc::ERANGE);
+
+    let mut out = [0u8; 64];
+    let p = unsafe {
+        nis_sperror_r(
+            5,
+            label.as_ptr(),
+            out.as_mut_ptr() as *mut c_char,
+            out.len(),
+        )
+    };
+    assert_eq!(p, out.as_mut_ptr() as *mut c_char);
+    assert_eq!(
+        unsafe { CStr::from_ptr(p) }.to_bytes(),
+        b"nis: Name unreachable"
+    );
+
+    unsafe {
+        nis_lerror(5, label.as_ptr());
+        nis_freeresult(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+        nis_freenames(std::ptr::NonNull::<*mut c_char>::dangling().as_ptr());
+        nis_free_object(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+        nis_free_directory(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+        nis_free_request(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+        nis_freeservlist(std::ptr::NonNull::<*mut c_void>::dangling().as_ptr());
+        nis_freetags(std::ptr::NonNull::<c_void>::dangling().as_ptr());
+    }
+}
+
+#[test]
+fn nis_plus_name_helpers_split_compare_and_clone_deterministically() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_clone_directory, nis_clone_object, nis_clone_result, nis_dir_cmp, nis_domain_of,
+        nis_domain_of_r, nis_leaf_of, nis_leaf_of_r, nis_name_of, nis_name_of_r,
+    };
+
+    let name = c"host.subdom.dom.";
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_domain_of(name.as_ptr())) }.to_bytes(),
+        b"subdom.dom."
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_leaf_of(name.as_ptr())) }.to_bytes(),
+        b"host"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_name_of(name.as_ptr())) }.to_bytes(),
+        b"host.subdom.dom."
+    );
+
+    let escaped = c"host\\.part.dom.";
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_domain_of(escaped.as_ptr())) }.to_bytes(),
+        b"dom."
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(nis_leaf_of(escaped.as_ptr())) }.to_bytes(),
+        b"host\\.part"
+    );
+
+    let mut out = [0u8; 64];
+    let p = unsafe { nis_domain_of_r(name.as_ptr(), out.as_mut_ptr() as *mut c_char, out.len()) };
+    assert_eq!(p, out.as_mut_ptr() as *mut c_char);
+    assert_eq!(unsafe { CStr::from_ptr(p) }.to_bytes(), b"subdom.dom.");
+
+    let p = unsafe { nis_leaf_of_r(name.as_ptr(), out.as_mut_ptr() as *mut c_char, out.len()) };
+    assert_eq!(p, out.as_mut_ptr() as *mut c_char);
+    assert_eq!(unsafe { CStr::from_ptr(p) }.to_bytes(), b"host");
+
+    let p = unsafe { nis_name_of_r(name.as_ptr(), out.as_mut_ptr() as *mut c_char, out.len()) };
+    assert_eq!(p, out.as_mut_ptr() as *mut c_char);
+    assert_eq!(unsafe { CStr::from_ptr(p) }.to_bytes(), b"host.subdom.dom.");
+
+    let mut small = [0u8; 4];
+    clear_errno();
+    let p = unsafe {
+        nis_name_of_r(
+            name.as_ptr(),
+            small.as_mut_ptr() as *mut c_char,
+            small.len(),
+        )
+    };
+    assert!(p.is_null());
+    assert_eq!(errno_value(), libc::ERANGE);
+
+    clear_errno();
+    let p = unsafe { nis_leaf_of_r(name.as_ptr(), std::ptr::null_mut(), 0) };
+    assert!(p.is_null());
+    assert_eq!(errno_value(), libc::EINVAL);
+
+    assert_eq!(unsafe { nis_dir_cmp(c"Dom.".as_ptr(), c"dom".as_ptr()) }, 1);
+    assert_eq!(
+        unsafe { nis_dir_cmp(c"aaa.".as_ptr(), c"bbb.".as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { nis_dir_cmp(c"bbb.".as_ptr(), c"aaa.".as_ptr()) },
+        2
+    );
+    assert_eq!(
+        unsafe { nis_dir_cmp(std::ptr::null(), c"aaa.".as_ptr()) },
+        3
+    );
+
+    assert!(
+        unsafe { nis_clone_directory(std::ptr::NonNull::<c_void>::dangling().as_ptr()) }.is_null()
+    );
+    assert!(
+        unsafe {
+            nis_clone_object(
+                std::ptr::NonNull::<c_void>::dangling().as_ptr(),
+                std::ptr::NonNull::<c_void>::dangling().as_ptr(),
+            )
+        }
+        .is_null()
+    );
+    assert!(
+        unsafe {
+            nis_clone_result(
+                std::ptr::NonNull::<c_void>::dangling().as_ptr(),
+                std::ptr::NonNull::<c_void>::dangling().as_ptr(),
+            )
+        }
+        .is_null()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // NIS / yp_* fail-safe stubs
 // ---------------------------------------------------------------------------
@@ -8882,4 +9045,122 @@ fn nis_lerror_is_a_no_op() {
     let label = CString::new("op").unwrap();
     unsafe { nis_lerror(5, label.as_ptr()) };
     unsafe { nis_lerror(0, std::ptr::null()) };
+}
+
+// ---------------------------------------------------------------------------
+// nis_domain_of / leaf_of / name_of (+ _r) + nis_dir_cmp + clone stubs
+// ---------------------------------------------------------------------------
+
+fn nis_helpers_cstr_to_string(p: *const c_char) -> String {
+    unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+}
+
+#[test]
+fn nis_domain_of_strips_first_label() {
+    use frankenlibc_abi::unistd_abi::nis_domain_of;
+    let n = CString::new("host.subdom.dom.").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_domain_of(n.as_ptr()) }),
+        "subdom.dom."
+    );
+    let single = CString::new("host").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_domain_of(single.as_ptr()) }),
+        ""
+    );
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_domain_of(std::ptr::null()) }),
+        ""
+    );
+}
+
+#[test]
+fn nis_domain_of_r_writes_into_caller_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_domain_of_r;
+    let n = CString::new("a.b.c.").unwrap();
+    let mut buf = [0u8; 32];
+    let p = unsafe { nis_domain_of_r(n.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(!p.is_null());
+    assert_eq!(nis_helpers_cstr_to_string(p), "b.c.");
+    assert_eq!(p as *const u8, buf.as_ptr());
+}
+
+#[test]
+fn nis_domain_of_r_returns_erange_on_small_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_domain_of_r;
+    let n = CString::new("a.bcdef.").unwrap();
+    let mut buf = [0u8; 4];
+    let p = unsafe { nis_domain_of_r(n.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::ERANGE);
+}
+
+#[test]
+fn nis_leaf_of_returns_first_label() {
+    use frankenlibc_abi::unistd_abi::nis_leaf_of;
+    let n = CString::new("host.subdom.dom.").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_leaf_of(n.as_ptr()) }),
+        "host"
+    );
+    let single = CString::new("alone").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_leaf_of(single.as_ptr()) }),
+        "alone"
+    );
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_leaf_of(std::ptr::null()) }),
+        ""
+    );
+}
+
+#[test]
+fn nis_leaf_of_r_writes_into_caller_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_leaf_of_r;
+    let n = CString::new("alpha.beta.gamma.").unwrap();
+    let mut buf = [0u8; 32];
+    let p = unsafe { nis_leaf_of_r(n.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(!p.is_null());
+    assert_eq!(nis_helpers_cstr_to_string(p), "alpha");
+}
+
+#[test]
+fn nis_name_of_passes_through_when_no_local_directory() {
+    use frankenlibc_abi::unistd_abi::nis_name_of;
+    let n = CString::new("alice.users.subdom.dom.").unwrap();
+    assert_eq!(
+        nis_helpers_cstr_to_string(unsafe { nis_name_of(n.as_ptr()) }),
+        "alice.users.subdom.dom."
+    );
+}
+
+#[test]
+fn nis_name_of_r_writes_pass_through_into_buffer() {
+    use frankenlibc_abi::unistd_abi::nis_name_of_r;
+    let n = CString::new("x.y.").unwrap();
+    let mut buf = [0u8; 16];
+    let p = unsafe { nis_name_of_r(n.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert!(!p.is_null());
+    assert_eq!(nis_helpers_cstr_to_string(p), "x.y.");
+}
+
+#[test]
+fn nis_dir_cmp_classifies_known_orderings() {
+    use frankenlibc_abi::unistd_abi::nis_dir_cmp;
+    let a = CString::new("alpha.dom.").unwrap();
+    let b = CString::new("beta.dom.").unwrap();
+    let same = CString::new("ALPHA.dom").unwrap();
+    assert_eq!(unsafe { nis_dir_cmp(a.as_ptr(), b.as_ptr()) }, 0);
+    assert_eq!(unsafe { nis_dir_cmp(b.as_ptr(), a.as_ptr()) }, 2);
+    assert_eq!(unsafe { nis_dir_cmp(a.as_ptr(), same.as_ptr()) }, 1);
+    assert_eq!(unsafe { nis_dir_cmp(std::ptr::null(), a.as_ptr()) }, 3);
+}
+
+#[test]
+fn nis_clone_helpers_return_null() {
+    use frankenlibc_abi::unistd_abi::{nis_clone_directory, nis_clone_object, nis_clone_result};
+    assert!(unsafe { nis_clone_directory(std::ptr::null()) }.is_null());
+    assert!(unsafe { nis_clone_object(std::ptr::null(), std::ptr::null_mut()) }.is_null());
+    assert!(unsafe { nis_clone_result(std::ptr::null(), std::ptr::null_mut()) }.is_null());
 }

@@ -7949,6 +7949,290 @@ const _: () = {
     let _ = NIS_NAMEUNREACHABLE;
 };
 
+// ---------------------------------------------------------------------------
+// NIS+ name-handling helpers (nis_domain_of / leaf_of / name_of + _r) +
+// nis_dir_cmp + clone stubs
+// ---------------------------------------------------------------------------
+
+/// Find the byte index of the first un-escaped '.' in `bytes`. A
+/// '.' preceded by an odd number of consecutive '\\' characters is
+/// considered escaped (NIS+ name escaping convention).
+fn nis_first_unescaped_dot(bytes: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'.' {
+            let mut bs = 0usize;
+            let mut j = i;
+            while j > 0 && bytes[j - 1] == b'\\' {
+                bs += 1;
+                j -= 1;
+            }
+            if bs.is_multiple_of(2) {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+thread_local! {
+    static NIS_DOMAIN_OF_TLS: core::cell::RefCell<Vec<u8>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+    static NIS_LEAF_OF_TLS: core::cell::RefCell<Vec<u8>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+    static NIS_NAME_OF_TLS: core::cell::RefCell<Vec<u8>> =
+        const { core::cell::RefCell::new(Vec::new()) };
+}
+
+/// libnsl `nis_domain_of(name) -> *mut c_char` — strip the first
+/// label of a NIS+ name and return the rest. For `"host.subdom.dom."`
+/// returns `"subdom.dom."`. NULL or empty input returns the empty
+/// string.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_domain_of(name: *const c_char) -> *mut c_char {
+    NIS_DOMAIN_OF_TLS.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        buf.clear();
+        if !name.is_null() {
+            // SAFETY: caller-supplied NUL-terminated string.
+            let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+            if let Some(dot) = nis_first_unescaped_dot(bytes) {
+                buf.extend_from_slice(&bytes[dot + 1..]);
+            }
+        }
+        buf.push(0);
+        buf.as_mut_ptr() as *mut c_char
+    })
+}
+
+/// libnsl `nis_domain_of_r(name, *buf, buflen) -> *mut c_char` —
+/// like [`nis_domain_of`] but writes into the caller's buffer.
+/// Returns `buf` on success, NULL with errno=ERANGE on overflow.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string. `buf`
+/// must point to at least `buflen` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_domain_of_r(
+    name: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
+) -> *mut c_char {
+    if buf.is_null() || buflen == 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    }
+    let mut tail: &[u8] = &[];
+    if !name.is_null() {
+        // SAFETY: caller-supplied NUL-terminated string.
+        let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+        if let Some(dot) = nis_first_unescaped_dot(bytes) {
+            tail = &bytes[dot + 1..];
+        }
+    }
+    if tail.len() + 1 > buflen {
+        unsafe { set_abi_errno(errno::ERANGE) };
+        return core::ptr::null_mut();
+    }
+    // SAFETY: buf has buflen >= tail.len()+1 bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(tail.as_ptr() as *const c_char, buf, tail.len());
+        *buf.add(tail.len()) = 0;
+    }
+    buf
+}
+
+/// libnsl `nis_leaf_of(name) -> *mut c_char` — return the first
+/// label of a NIS+ name. For `"host.subdom.dom."` returns `"host"`.
+/// NULL or empty input returns the empty string.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_leaf_of(name: *const c_char) -> *mut c_char {
+    NIS_LEAF_OF_TLS.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        buf.clear();
+        if !name.is_null() {
+            // SAFETY: caller-supplied NUL-terminated string.
+            let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+            let head_end = nis_first_unescaped_dot(bytes).unwrap_or(bytes.len());
+            buf.extend_from_slice(&bytes[..head_end]);
+        }
+        buf.push(0);
+        buf.as_mut_ptr() as *mut c_char
+    })
+}
+
+/// libnsl `nis_leaf_of_r(name, *buf, buflen) -> *mut c_char` —
+/// like [`nis_leaf_of`] but writes into the caller's buffer.
+///
+/// # Safety
+///
+/// See [`nis_domain_of_r`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_leaf_of_r(
+    name: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
+) -> *mut c_char {
+    if buf.is_null() || buflen == 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    }
+    let mut head: &[u8] = &[];
+    if !name.is_null() {
+        // SAFETY: caller-supplied NUL-terminated string.
+        let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+        let head_end = nis_first_unescaped_dot(bytes).unwrap_or(bytes.len());
+        head = &bytes[..head_end];
+    }
+    if head.len() + 1 > buflen {
+        unsafe { set_abi_errno(errno::ERANGE) };
+        return core::ptr::null_mut();
+    }
+    // SAFETY: buf has buflen >= head.len()+1 bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(head.as_ptr() as *const c_char, buf, head.len());
+        *buf.add(head.len()) = 0;
+    }
+    buf
+}
+
+/// libnsl `nis_name_of(name) -> *mut c_char` — return the part of
+/// `name` that is "in" the local NIS+ directory. Without a local
+/// directory configured we behave as a pass-through and return the
+/// input verbatim.
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be a NUL-terminated C string.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_name_of(name: *const c_char) -> *mut c_char {
+    NIS_NAME_OF_TLS.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        buf.clear();
+        if !name.is_null() {
+            // SAFETY: caller-supplied NUL-terminated string.
+            let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+            buf.extend_from_slice(bytes);
+        }
+        buf.push(0);
+        buf.as_mut_ptr() as *mut c_char
+    })
+}
+
+/// libnsl `nis_name_of_r(name, *buf, buflen) -> *mut c_char` —
+/// pass-through copy of `name` into the caller's buffer (see
+/// [`nis_name_of`] for the reasoning).
+///
+/// # Safety
+///
+/// See [`nis_domain_of_r`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_name_of_r(
+    name: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
+) -> *mut c_char {
+    if buf.is_null() || buflen == 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    }
+    let mut s: &[u8] = &[];
+    if !name.is_null() {
+        // SAFETY: caller-supplied NUL-terminated string.
+        s = unsafe { CStr::from_ptr(name) }.to_bytes();
+    }
+    if s.len() + 1 > buflen {
+        unsafe { set_abi_errno(errno::ERANGE) };
+        return core::ptr::null_mut();
+    }
+    // SAFETY: buf has buflen >= s.len()+1 bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(s.as_ptr() as *const c_char, buf, s.len());
+        *buf.add(s.len()) = 0;
+    }
+    buf
+}
+
+/// libnsl `nis_dir_cmp(a, b) -> nis_compare_t` — compare two
+/// NIS+ directory names (case-insensitive ASCII). Returns 1 if
+/// equal (`SAME_NAME`), 0 if `a < b` (`LOWER_NAME`), 2 if `a > b`
+/// (`HIGHER_NAME`), or 3 (`NOT_SEQUENTIAL`) when either input is
+/// NULL. Note: glibc's nis_compare_t enum uses LOWER_NAME=0,
+/// SAME_NAME=1, HIGHER_NAME=2, NOT_SEQUENTIAL=3.
+///
+/// # Safety
+///
+/// `a` and `b`, when non-NULL, must be NUL-terminated C strings.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_dir_cmp(a: *const c_char, b: *const c_char) -> c_int {
+    if a.is_null() || b.is_null() {
+        return 3; // NOT_SEQUENTIAL
+    }
+    // SAFETY: caller-supplied NUL-terminated strings.
+    let ab = unsafe { CStr::from_ptr(a) }.to_bytes();
+    let bb = unsafe { CStr::from_ptr(b) }.to_bytes();
+    // Strip a single trailing dot (NIS+ convention) before compare.
+    fn stripped(s: &[u8]) -> &[u8] {
+        if s.last() == Some(&b'.') {
+            &s[..s.len() - 1]
+        } else {
+            s
+        }
+    }
+    let ab = stripped(ab);
+    let bb = stripped(bb);
+    let lower = |x: u8| -> u8 { if x.is_ascii_uppercase() { x | 0x20 } else { x } };
+    let common = ab.len().min(bb.len());
+    for i in 0..common {
+        let ca = lower(ab[i]);
+        let cb = lower(bb[i]);
+        if ca < cb {
+            return 0; // LOWER_NAME
+        }
+        if ca > cb {
+            return 2; // HIGHER_NAME
+        }
+    }
+    if ab.len() == bb.len() {
+        1 // SAME_NAME
+    } else if ab.len() < bb.len() {
+        0
+    } else {
+        2
+    }
+}
+
+/// libnsl `nis_clone_directory(*src) -> *mut c_void` — would deep-
+/// copy a NIS+ directory object. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_clone_directory(_src: *const c_void) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// libnsl `nis_clone_object(*src, *dest) -> *mut c_void` — would
+/// deep-copy a NIS+ object. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_clone_object(_src: *const c_void, _dest: *mut c_void) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// libnsl `nis_clone_result(*src, *dest) -> *mut c_void` — would
+/// deep-copy a NIS+ result. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn nis_clone_result(_src: *const c_void, _dest: *mut c_void) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.
