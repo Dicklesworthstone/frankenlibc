@@ -3708,3 +3708,95 @@ fn signbitf128_distinguishes_positive_and_negative_zero() {
     assert_eq!(unsafe { __signbitf128(0.0_f64) }, 0);
     assert_eq!(unsafe { __signbitf128(-0.0_f64) }, 1);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 50 GLIBC_PRIVATE _thread_db_* libthread_db.so.1 introspection
+// constants (bd-qn6q1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn thread_db_offset_constants_are_zero_placeholders() {
+    use frankenlibc_abi::glibc_internal_abi::*;
+    // Sample-check that the offset/sizeof constants ship as zeroed
+    // placeholders so libthread_db sees "no thread layout exposed".
+    assert_eq!(_thread_db_const_thread_area, 0);
+    assert_eq!(_thread_db_sizeof_pthread, 0);
+    assert_eq!(_thread_db_sizeof_dtv_slotinfo, 0);
+    assert_eq!(_thread_db_sizeof_pthread_key_data, 0);
+    assert_eq!(_thread_db_sizeof_pthread_key_struct, 0);
+    assert_eq!(_thread_db_pthread_tid, 0);
+    assert_eq!(_thread_db_pthread_specific, 0);
+    assert_eq!(_thread_db_pthread_list, 0);
+    assert_eq!(_thread_db_link_map_l_tls_modid, 0);
+    assert_eq!(_thread_db_link_map_l_tls_offset, 0);
+    assert_eq!(_thread_db_dtv_dtv, 0);
+    assert_eq!(_thread_db_dtv_t_pointer_val, 0);
+    assert_eq!(_thread_db_td_eventbuf_t_eventnum, 0);
+    assert_eq!(_thread_db_td_thr_events_t_event_bits, 0);
+}
+
+#[test]
+fn thread_db_nptl_aliases_are_zero_placeholders() {
+    use frankenlibc_abi::glibc_internal_abi::*;
+    assert_eq!(_thread_db___nptl_last_event, 0);
+    assert_eq!(_thread_db___nptl_nthreads, 0);
+    assert_eq!(_thread_db___nptl_rtld_global, 0);
+    assert_eq!(_thread_db___pthread_keys, 0);
+}
+
+#[test]
+fn thread_db_key_struct_constants_are_zero_placeholders() {
+    use frankenlibc_abi::glibc_internal_abi::*;
+    assert_eq!(_thread_db_pthread_key_data_data, 0);
+    assert_eq!(_thread_db_pthread_key_data_level2_data, 0);
+    assert_eq!(_thread_db_pthread_key_data_seq, 0);
+    assert_eq!(_thread_db_pthread_key_struct_destr, 0);
+    assert_eq!(_thread_db_pthread_key_struct_seq, 0);
+    assert_eq!(_thread_db_sizeof_pthread_key_data_level2, 0);
+}
+
+#[test]
+fn thread_db_eventbuf_constants_are_zero_placeholders() {
+    use frankenlibc_abi::glibc_internal_abi::*;
+    assert_eq!(_thread_db_pthread_eventbuf, 0);
+    assert_eq!(_thread_db_pthread_eventbuf_eventmask, 0);
+    assert_eq!(_thread_db_pthread_eventbuf_eventmask_event_bits, 0);
+    assert_eq!(_thread_db_sizeof_td_eventbuf_t, 0);
+    assert_eq!(_thread_db_td_eventbuf_t_eventdata, 0);
+    assert_eq!(_thread_db_pthread_nextevent, 0);
+    assert_eq!(_thread_db_pthread_report_events, 0);
+    assert_eq!(_thread_db_sizeof_td_thr_events_t, 0);
+}
+
+#[test]
+fn thread_db_pthread_misc_constants_are_zero_placeholders() {
+    use frankenlibc_abi::glibc_internal_abi::*;
+    assert_eq!(_thread_db_pthread_cancelhandling, 0);
+    assert_eq!(_thread_db_pthread_dtvp, 0);
+    assert_eq!(_thread_db_pthread_schedparam_sched_priority, 0);
+    assert_eq!(_thread_db_pthread_schedpolicy, 0);
+    assert_eq!(_thread_db_pthread_start_routine, 0);
+}
+
+#[test]
+fn thread_db_dtv_and_list_constants_are_zero_placeholders() {
+    use frankenlibc_abi::glibc_internal_abi::*;
+    assert_eq!(_thread_db_dtv_slotinfo_gen, 0);
+    assert_eq!(_thread_db_dtv_slotinfo_list_len, 0);
+    assert_eq!(_thread_db_dtv_slotinfo_list_next, 0);
+    assert_eq!(_thread_db_dtv_slotinfo_list_slotinfo, 0);
+    assert_eq!(_thread_db_dtv_slotinfo_map, 0);
+    assert_eq!(_thread_db_dtv_t_counter, 0);
+    assert_eq!(_thread_db_sizeof_dtv_slotinfo_list, 0);
+    assert_eq!(_thread_db_list_t_next, 0);
+    assert_eq!(_thread_db_list_t_prev, 0);
+    assert_eq!(_thread_db_sizeof_list_t, 0);
+}
+
+#[test]
+fn thread_db_rtld_global_constants_are_zero_placeholders() {
+    use frankenlibc_abi::glibc_internal_abi::*;
+    assert_eq!(_thread_db_rtld_global__dl_stack_used, 0);
+    assert_eq!(_thread_db_rtld_global__dl_stack_user, 0);
+    assert_eq!(_thread_db_rtld_global__dl_tls_dtv_slotinfo_list, 0);
+}

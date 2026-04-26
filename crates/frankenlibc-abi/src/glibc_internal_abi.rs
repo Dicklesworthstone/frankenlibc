@@ -9142,3 +9142,84 @@ pub unsafe extern "C" fn __libc_fcntl64(fd: c_int, cmd: c_int, arg: std::ffi::c_
 pub unsafe extern "C" fn __libc_mallinfo() -> libc::mallinfo {
     unsafe { libc::mallinfo() }
 }
+
+// ===========================================================================
+// 51 GLIBC_PRIVATE _thread_db_* libthread_db.so.1 introspection constants
+// (bd-qn6q1)
+// ===========================================================================
+//
+// libthread_db.so.1 is loaded by gdb when it attaches to a process to walk
+// the in-memory pthread structs. It reads a fixed set of size_t constants
+// from the libc image (offsets/sizes within glibc's internal `struct
+// pthread`, dtv slots, etc.). FrankenLibC owns its own thread state and
+// does not expose a glibc-shaped `struct pthread`, so we ship zeroed
+// placeholders. gdb's libthread_db will see all-zero offsets, decide it
+// can't introspect the thread layout, and report "thread debugging not
+// supported on this binary" — graceful degradation rather than crashing
+// the loader.
+//
+// Each symbol matches glibc's read-only `R` linkage; consumers always
+// treat them as `const size_t`.
+
+macro_rules! td_const {
+    ($($name:ident),* $(,)?) => {
+        $(
+            #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+            #[allow(non_upper_case_globals)]
+            pub static $name: usize = 0;
+        )*
+    };
+}
+
+td_const!(
+    _thread_db___nptl_last_event,
+    _thread_db___nptl_nthreads,
+    _thread_db___nptl_rtld_global,
+    _thread_db___pthread_keys,
+    _thread_db_const_thread_area,
+    _thread_db_dtv_dtv,
+    _thread_db_dtv_slotinfo_gen,
+    _thread_db_dtv_slotinfo_list_len,
+    _thread_db_dtv_slotinfo_list_next,
+    _thread_db_dtv_slotinfo_list_slotinfo,
+    _thread_db_dtv_slotinfo_map,
+    _thread_db_dtv_t_counter,
+    _thread_db_dtv_t_pointer_val,
+    _thread_db_link_map_l_tls_modid,
+    _thread_db_link_map_l_tls_offset,
+    _thread_db_list_t_next,
+    _thread_db_list_t_prev,
+    _thread_db_pthread_cancelhandling,
+    _thread_db_pthread_dtvp,
+    _thread_db_pthread_eventbuf,
+    _thread_db_pthread_eventbuf_eventmask,
+    _thread_db_pthread_eventbuf_eventmask_event_bits,
+    _thread_db_pthread_key_data_data,
+    _thread_db_pthread_key_data_level2_data,
+    _thread_db_pthread_key_data_seq,
+    _thread_db_pthread_key_struct_destr,
+    _thread_db_pthread_key_struct_seq,
+    _thread_db_pthread_list,
+    _thread_db_pthread_nextevent,
+    _thread_db_pthread_report_events,
+    _thread_db_pthread_schedparam_sched_priority,
+    _thread_db_pthread_schedpolicy,
+    _thread_db_pthread_specific,
+    _thread_db_pthread_start_routine,
+    _thread_db_pthread_tid,
+    _thread_db_rtld_global__dl_stack_used,
+    _thread_db_rtld_global__dl_stack_user,
+    _thread_db_rtld_global__dl_tls_dtv_slotinfo_list,
+    _thread_db_sizeof_dtv_slotinfo,
+    _thread_db_sizeof_dtv_slotinfo_list,
+    _thread_db_sizeof_list_t,
+    _thread_db_sizeof_pthread,
+    _thread_db_sizeof_pthread_key_data,
+    _thread_db_sizeof_pthread_key_data_level2,
+    _thread_db_sizeof_pthread_key_struct,
+    _thread_db_sizeof_td_eventbuf_t,
+    _thread_db_sizeof_td_thr_events_t,
+    _thread_db_td_eventbuf_t_eventdata,
+    _thread_db_td_eventbuf_t_eventnum,
+    _thread_db_td_thr_events_t_event_bits,
+);
