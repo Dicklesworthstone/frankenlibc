@@ -4841,6 +4841,99 @@ pub unsafe extern "C" fn mq_clockreceive(
 }
 
 // ---------------------------------------------------------------------------
+// openat2 (Linux 5.6+, glibc 2.34) and futex_waitv (Linux 5.16+, glibc 2.35)
+// ---------------------------------------------------------------------------
+
+/// Linux `openat2(dirfd, pathname, *open_how, size) -> int` —
+/// extended openat that takes a versioned `struct open_how`. The
+/// kernel rejects calls whose `size` is wrong for its known
+/// versions, so callers must pass `size_of::<open_how>()`.
+///
+/// Forwards to syscall 437 via `libc::syscall`. Returns the new
+/// fd on success or -1 with errno set.
+///
+/// # Safety
+///
+/// `pathname` must be a NUL-terminated C string. `how` must point
+/// to readable storage of at least `size` bytes describing a valid
+/// `open_how` struct.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn openat2(
+    dirfd: c_int,
+    pathname: *const c_char,
+    how: *const c_void,
+    size: usize,
+) -> c_int {
+    if pathname.is_null() || how.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel via libc::syscall; the kernel
+    // enforces struct-size validation against its known versions.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_openat2,
+            dirfd as libc::c_long,
+            pathname as libc::c_long,
+            how as libc::c_long,
+            size as libc::c_long,
+        )
+    };
+    if rc < 0 {
+        let e = unsafe { *libc::__errno_location() };
+        unsafe { set_abi_errno(e) };
+        return -1;
+    }
+    rc as c_int
+}
+
+/// Linux `futex_waitv(*waiters, nr_futexes, flags, *timeout,
+/// clockid) -> int` — wait on multiple futexes simultaneously.
+/// Returns the index of the woken futex on success, or -1 with
+/// errno set on timeout / error.
+///
+/// The kernel rejects `flags != 0`, `nr_futexes == 0`, and
+/// `nr_futexes > FUTEX_WAITV_MAX (= 128)`; we also defend against
+/// NULL `waiters` with `nr_futexes > 0`.
+///
+/// # Safety
+///
+/// `waiters`, when `nr_futexes > 0`, must point to an array of
+/// `nr_futexes` valid `struct futex_waitv` entries. `timeout`,
+/// when non-NULL, must point to a valid `timespec`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn futex_waitv(
+    waiters: *const c_void,
+    nr_futexes: c_uint,
+    flags: c_uint,
+    timeout: *const libc::timespec,
+    clockid: libc::clockid_t,
+) -> c_int {
+    if nr_futexes > 0 && waiters.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // Cast through the core syscall's typed `FutexWaitV` pointer; the
+    // raw layout matches our wrapper's opaque c_void caller view.
+    let waiters_typed = waiters as *const frankenlibc_core::syscall::FutexWaitV;
+    match unsafe {
+        frankenlibc_core::syscall::sys_futex_waitv(
+            waiters_typed,
+            nr_futexes,
+            flags,
+            timeout as *const u8,
+            clockid,
+        )
+    } {
+        Ok(idx) => idx,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Scheduler — RawSyscall
 // ---------------------------------------------------------------------------
 

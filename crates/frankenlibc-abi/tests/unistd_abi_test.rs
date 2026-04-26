@@ -7115,3 +7115,182 @@ fn mq_clocksend_null_abstime_blocks_until_full_then_eagain() {
     let _ = unsafe { fl::mq_close(mqd) };
     let _ = unsafe { fl::mq_unlink(qn.as_ptr()) };
 }
+
+// ---------------------------------------------------------------------------
+// openat2 / futex_waitv
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+struct OpenHow {
+    flags: u64,
+    mode: u64,
+    resolve: u64,
+}
+
+#[test]
+fn openat2_opens_existing_file_in_temp_dir() {
+    use frankenlibc_abi::unistd_abi::openat2;
+    let path = std::env::temp_dir().join(format!("frankenlibc_openat2_{}.txt", std::process::id()));
+    std::fs::write(&path, b"hello").unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    let how = OpenHow {
+        flags: libc::O_RDONLY as u64,
+        mode: 0,
+        resolve: 0,
+    };
+    let fd = unsafe {
+        openat2(
+            libc::AT_FDCWD,
+            cpath.as_ptr(),
+            &how as *const OpenHow as *const c_void,
+            std::mem::size_of::<OpenHow>(),
+        )
+    };
+    assert!(
+        fd >= 0,
+        "openat2 failed: {}",
+        std::io::Error::last_os_error()
+    );
+
+    let mut buf = [0u8; 16];
+    let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut c_void, buf.len()) };
+    assert_eq!(n, 5);
+    assert_eq!(&buf[..5], b"hello");
+
+    unsafe { libc::close(fd) };
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn openat2_returns_einval_on_wrong_struct_size() {
+    use frankenlibc_abi::unistd_abi::openat2;
+    let path = CString::new("/tmp").unwrap();
+    let how = OpenHow {
+        flags: 0,
+        mode: 0,
+        resolve: 0,
+    };
+    // Pass a clearly-wrong size (1 byte). Kernel should reject.
+    let rc = unsafe {
+        openat2(
+            libc::AT_FDCWD,
+            path.as_ptr(),
+            &how as *const OpenHow as *const c_void,
+            1,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+fn openat2_null_pathname_returns_efault() {
+    use frankenlibc_abi::unistd_abi::openat2;
+    let how = OpenHow {
+        flags: 0,
+        mode: 0,
+        resolve: 0,
+    };
+    let rc = unsafe {
+        openat2(
+            libc::AT_FDCWD,
+            std::ptr::null(),
+            &how as *const OpenHow as *const c_void,
+            std::mem::size_of::<OpenHow>(),
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn futex_waitv_zero_count_with_null_returns_einval() {
+    use frankenlibc_abi::unistd_abi::futex_waitv;
+    // Zero futexes is invalid per the kernel.
+    let rc = unsafe {
+        futex_waitv(
+            std::ptr::null(),
+            0,
+            0,
+            std::ptr::null(),
+            libc::CLOCK_MONOTONIC,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+fn futex_waitv_null_waiters_with_positive_count_returns_efault() {
+    use frankenlibc_abi::unistd_abi::futex_waitv;
+    let rc = unsafe {
+        futex_waitv(
+            std::ptr::null(),
+            1,
+            0,
+            std::ptr::null(),
+            libc::CLOCK_MONOTONIC,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn futex_waitv_immediate_timeout_returns_etimedout() {
+    use frankenlibc_abi::unistd_abi::futex_waitv;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    // FUTEX_32 + FUTEX_PRIVATE_FLAG = 2 | 0x80 = 0x82, but the
+    // futex_waitv kernel ABI uses just FUTEX2 size flags. For a 32-bit
+    // futex we use FUTEX2_SIZE_U32 = 2.
+    const FUTEX2_SIZE_U32: u32 = 2;
+
+    #[repr(C)]
+    struct FutexWaitV {
+        val: u64,
+        uaddr: u64,
+        flags: u32,
+        reserved: u32,
+    }
+
+    let value = AtomicU32::new(42);
+    let waiter = FutexWaitV {
+        val: 42, // wait while uaddr == 42; will time out since nothing wakes us
+        uaddr: &value as *const AtomicU32 as u64,
+        flags: FUTEX2_SIZE_U32,
+        reserved: 0,
+    };
+
+    // Set timeout to "now" so the kernel returns ETIMEDOUT immediately.
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) };
+
+    let rc = unsafe {
+        futex_waitv(
+            &waiter as *const FutexWaitV as *const c_void,
+            1,
+            0,
+            &now,
+            libc::CLOCK_MONOTONIC,
+        )
+    };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    // Kernel reports ETIMEDOUT for a deadline already in the past.
+    // Some kernels return EAGAIN instead if the value didn't match (it
+    // does match here), but accept either to be defensive.
+    assert!(
+        errno == libc::ETIMEDOUT || errno == libc::EAGAIN,
+        "expected ETIMEDOUT or EAGAIN, got {errno}"
+    );
+    let _ = value.load(Ordering::SeqCst); // silence unused warning
+}
