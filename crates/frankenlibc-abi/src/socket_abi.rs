@@ -915,3 +915,80 @@ pub unsafe extern "C" fn __getpeername(
 ) -> c_int {
     unsafe { getpeername(sockfd, addr, addrlen) }
 }
+
+/// glibc reserved-namespace alias for [`socketpair`].
+///
+/// # Safety
+///
+/// Same as [`socketpair`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __socketpair(
+    domain: c_int,
+    sock_type: c_int,
+    protocol: c_int,
+    sv: *mut c_int,
+) -> c_int {
+    unsafe { socketpair(domain, sock_type, protocol, sv) }
+}
+
+/// glibc reserved-namespace alias for [`sendmsg`].
+///
+/// # Safety
+///
+/// Same as [`sendmsg`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sendmsg(sockfd: c_int, msg: *const libc::msghdr, flags: c_int) -> isize {
+    unsafe { sendmsg(sockfd, msg, flags) }
+}
+
+/// glibc reserved-namespace alias for [`recvmsg`].
+///
+/// # Safety
+///
+/// Same as [`recvmsg`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __recvmsg(sockfd: c_int, msg: *mut libc::msghdr, flags: c_int) -> isize {
+    unsafe { recvmsg(sockfd, msg, flags) }
+}
+
+/// glibc reserved-namespace alias for [`setsockopt`].
+///
+/// # Safety
+///
+/// Same as [`setsockopt`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __setsockopt(
+    sockfd: c_int,
+    level: c_int,
+    optname: c_int,
+    optval: *const c_void,
+    optlen: u32,
+) -> c_int {
+    unsafe { setsockopt(sockfd, level, optname, optval, optlen) }
+}
+
+/// glibc reserved-namespace alias for [`getsockopt`].
+///
+/// # Safety
+///
+/// Same as [`getsockopt`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __getsockopt(
+    sockfd: c_int,
+    level: c_int,
+    optname: c_int,
+    optval: *mut c_void,
+    optlen: *mut u32,
+) -> c_int {
+    unsafe { getsockopt(sockfd, level, optname, optval, optlen) }
+}
+
+/// glibc reserved-namespace alias for [`shutdown`].
+///
+/// # Safety
+///
+/// Same as [`shutdown`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __shutdown(sockfd: c_int, how: c_int) -> c_int {
+    unsafe { shutdown(sockfd, how) }
+}

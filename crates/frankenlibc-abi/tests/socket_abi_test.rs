@@ -1305,3 +1305,101 @@ fn under_bind_listen_accept_aliases_via_unix_listener() {
     unsafe { close_fd(listener) };
     let _ = std::fs::remove_file(&path);
 }
+
+// ---------------------------------------------------------------------------
+// __socketpair / __sendmsg / __recvmsg / __setsockopt / __getsockopt /
+// __shutdown (glibc reserved-namespace aliases — companion to bd-xniy3)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn under_socketpair_creates_connected_pair() {
+    let mut pair = [-1 as c_int; 2];
+    let rc =
+        unsafe { socket_abi::__socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, pair.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+    assert!(pair[0] >= 0 && pair[1] >= 0);
+    unsafe { close_fd(pair[0]) };
+    unsafe { close_fd(pair[1]) };
+}
+
+#[test]
+fn under_sendmsg_recvmsg_round_trip() {
+    let mut pair = [-1 as c_int; 2];
+    assert_eq!(
+        unsafe { socket_abi::__socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, pair.as_mut_ptr(),) },
+        0
+    );
+    let (a, b) = (pair[0], pair[1]);
+
+    let payload = b"alias msghdr";
+    let iov = libc::iovec {
+        iov_base: payload.as_ptr() as *mut c_void,
+        iov_len: payload.len(),
+    };
+    let mut hdr_send: libc::msghdr = unsafe { std::mem::zeroed() };
+    hdr_send.msg_iov = (&iov as *const libc::iovec) as *mut libc::iovec;
+    hdr_send.msg_iovlen = 1;
+    let n = unsafe { socket_abi::__sendmsg(a, &hdr_send, 0) };
+    assert_eq!(n as usize, payload.len());
+
+    let mut buf = [0u8; 32];
+    let r_iov = libc::iovec {
+        iov_base: buf.as_mut_ptr() as *mut c_void,
+        iov_len: buf.len(),
+    };
+    let mut hdr_recv: libc::msghdr = unsafe { std::mem::zeroed() };
+    hdr_recv.msg_iov = (&r_iov as *const libc::iovec) as *mut libc::iovec;
+    hdr_recv.msg_iovlen = 1;
+    let n = unsafe { socket_abi::__recvmsg(b, &mut hdr_recv, 0) };
+    assert_eq!(n as usize, payload.len());
+    assert_eq!(&buf[..payload.len()], payload);
+
+    unsafe { close_fd(a) };
+    unsafe { close_fd(b) };
+}
+
+#[test]
+fn under_setsockopt_getsockopt_round_trip_keepalive() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0);
+    let one: c_int = 1;
+    let rc = unsafe {
+        socket_abi::__setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_KEEPALIVE,
+            &one as *const _ as *const c_void,
+            std::mem::size_of::<c_int>() as u32,
+        )
+    };
+    assert_eq!(rc, 0, "__setsockopt SO_KEEPALIVE should succeed");
+    let mut got: c_int = 0;
+    let mut got_len: u32 = std::mem::size_of::<c_int>() as u32;
+    let rc = unsafe {
+        socket_abi::__getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_KEEPALIVE,
+            &mut got as *mut _ as *mut c_void,
+            &mut got_len,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert!(got != 0, "SO_KEEPALIVE should now be set");
+    unsafe { close_fd(fd) };
+}
+
+#[test]
+fn under_shutdown_on_socketpair_succeeds() {
+    let mut pair = [-1 as c_int; 2];
+    assert_eq!(
+        unsafe {
+            socket_abi::__socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, pair.as_mut_ptr())
+        },
+        0
+    );
+    let rc = unsafe { socket_abi::__shutdown(pair[0], libc::SHUT_RDWR) };
+    assert_eq!(rc, 0);
+    unsafe { close_fd(pair[0]) };
+    unsafe { close_fd(pair[1]) };
+}
