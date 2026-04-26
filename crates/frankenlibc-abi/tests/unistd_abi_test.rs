@@ -7685,3 +7685,131 @@ fn kexec_file_load_unprivileged_returns_known_errno() {
         "unexpected kexec_file_load errno: {errno}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// set_robust_list / get_robust_list / lsm_get_self_attr / lsm_set_self_attr /
+// lsm_list_modules
+// ---------------------------------------------------------------------------
+
+#[test]
+fn get_robust_list_for_self_returns_head_and_len() {
+    use frankenlibc_abi::unistd_abi::get_robust_list;
+    let mut head: *mut c_void = std::ptr::null_mut();
+    let mut len: usize = 0;
+    let rc = unsafe { get_robust_list(0, &mut head, &mut len) };
+    if rc == 0 {
+        // Glibc threads have a robust_list_head registered; head is
+        // typically non-NULL inside a threaded test runner. len matches
+        // sizeof(struct robust_list_head) = 24 bytes on x86_64.
+        assert!(len == 24 || len == 0);
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        // Older kernels: ENOSYS. Sandbox: EPERM.
+        assert!(
+            errno == libc::ENOSYS || errno == libc::EPERM,
+            "unexpected get_robust_list errno: {errno}"
+        );
+    }
+}
+
+#[test]
+fn get_robust_list_null_pointers_return_efault() {
+    use frankenlibc_abi::unistd_abi::get_robust_list;
+    let rc = unsafe { get_robust_list(0, std::ptr::null_mut(), std::ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn set_robust_list_with_zero_len_round_trip() {
+    use frankenlibc_abi::unistd_abi::{get_robust_list, set_robust_list};
+
+    // Save current head + len so we can restore.
+    let mut saved_head: *mut c_void = std::ptr::null_mut();
+    let mut saved_len: usize = 0;
+    let rc = unsafe { get_robust_list(0, &mut saved_head, &mut saved_len) };
+    if rc != 0 {
+        return; // sandbox lacks the syscall; nothing to test.
+    }
+
+    // set_robust_list(NULL, 0) is the documented "unregister" form.
+    let rc = unsafe { set_robust_list(std::ptr::null_mut(), 0) };
+    assert!(
+        rc == 0 || {
+            let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+            errno == libc::ENOSYS || errno == libc::EINVAL
+        }
+    );
+
+    // Restore the original head + len so the test runner doesn't lose
+    // its robust mutex cleanup hook.
+    let _ = unsafe { set_robust_list(saved_head, saved_len) };
+}
+
+#[test]
+fn lsm_get_self_attr_null_size_returns_efault() {
+    use frankenlibc_abi::unistd_abi::lsm_get_self_attr;
+    let rc = unsafe { lsm_get_self_attr(0, std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn lsm_get_self_attr_invalid_attr_returns_known_errno() {
+    use frankenlibc_abi::unistd_abi::lsm_get_self_attr;
+    let mut size: u32 = 0;
+    let rc = unsafe { lsm_get_self_attr(0xFFFF_FFFF, std::ptr::null_mut(), &mut size, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert!(
+        errno == libc::ENOSYS
+            || errno == libc::EINVAL
+            || errno == libc::EOPNOTSUPP
+            || errno == libc::ENOENT,
+        "unexpected lsm_get_self_attr errno: {errno}"
+    );
+}
+
+#[test]
+fn lsm_set_self_attr_null_ctx_with_positive_size_returns_efault() {
+    use frankenlibc_abi::unistd_abi::lsm_set_self_attr;
+    let rc = unsafe { lsm_set_self_attr(0, std::ptr::null(), 16, 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn lsm_list_modules_null_size_returns_efault() {
+    use frankenlibc_abi::unistd_abi::lsm_list_modules;
+    let rc = unsafe { lsm_list_modules(std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EFAULT);
+}
+
+#[test]
+fn lsm_list_modules_query_size_returns_data_or_known_errno() {
+    use frankenlibc_abi::unistd_abi::lsm_list_modules;
+    // Size-only query: pass NULL ids + size=0 to learn the required
+    // buffer length on Linux 6.8+. Older kernels return ENOSYS.
+    let mut size: u32 = 0;
+    let rc = unsafe { lsm_list_modules(std::ptr::null_mut(), &mut size, 0) };
+    if rc == 0 {
+        // size now holds the count of LSM module IDs available.
+        // No further assertion; just verifying the wrapper round-trips.
+    } else {
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        // E2BIG when the kernel needs a bigger buffer is also valid; we
+        // accept the typical fallbacks here.
+        assert!(
+            errno == libc::ENOSYS
+                || errno == libc::E2BIG
+                || errno == libc::EINVAL
+                || errno == libc::EOPNOTSUPP,
+            "unexpected lsm_list_modules errno: {errno}"
+        );
+    }
+}

@@ -5480,6 +5480,158 @@ pub unsafe extern "C" fn kexec_file_load(
 }
 
 // ---------------------------------------------------------------------------
+// Robust futex list (set_robust_list / get_robust_list) + LSM self-attr API
+// ---------------------------------------------------------------------------
+
+/// Linux `set_robust_list(*head, len) -> int`
+/// (`SYS_set_robust_list = 273`) — register a per-thread robust
+/// futex list head. The kernel walks the list when the thread exits
+/// to release any held mutexes whose owner died unexpectedly.
+///
+/// # Safety
+///
+/// `head`, when non-NULL, must point to a valid
+/// `struct robust_list_head` of `len` bytes that lives at least
+/// until the thread exits.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn set_robust_list(head: *mut c_void, len: usize) -> c_int {
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_set_robust_list,
+            head as libc::c_long,
+            len as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `get_robust_list(pid, **head_ptr, *len_ptr) -> int`
+/// (`SYS_get_robust_list = 274`) — read the robust-futex list head
+/// + length previously registered for `pid` (or 0 = self).
+///
+/// # Safety
+///
+/// `head_ptr` and `len_ptr` must each point to writable storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn get_robust_list(
+    pid: c_int,
+    head_ptr: *mut *mut c_void,
+    len_ptr: *mut usize,
+) -> c_int {
+    if head_ptr.is_null() || len_ptr.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_get_robust_list,
+            pid as libc::c_long,
+            head_ptr as libc::c_long,
+            len_ptr as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `lsm_get_self_attr(attr_id, *ctx, *size, flags) -> int`
+/// (Linux 6.8+, syscall 459) — read an LSM attribute (e.g. SELinux
+/// `current` context) for the calling thread into `ctx`. The
+/// caller's `*size` is updated to the actual length on success or
+/// to the required length on `E2BIG`.
+///
+/// # Safety
+///
+/// `size` must point to writable `u32` storage. `ctx`, when
+/// non-NULL, must point to at least `*size` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lsm_get_self_attr(
+    attr_id: c_uint,
+    ctx: *mut c_void,
+    size: *mut u32,
+    flags: c_uint,
+) -> c_int {
+    if size.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    const SYS_LSM_GET_SELF_ATTR: libc::c_long = 459;
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            SYS_LSM_GET_SELF_ATTR,
+            attr_id as libc::c_long,
+            ctx as libc::c_long,
+            size as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `lsm_set_self_attr(attr_id, *ctx, size, flags) -> int`
+/// (Linux 6.8+, syscall 460) — write an LSM attribute for the
+/// calling thread.
+///
+/// # Safety
+///
+/// `ctx` must point to at least `size` readable bytes describing
+/// the LSM-specific attribute payload.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lsm_set_self_attr(
+    attr_id: c_uint,
+    ctx: *const c_void,
+    size: u32,
+    flags: c_uint,
+) -> c_int {
+    if size > 0 && ctx.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    const SYS_LSM_SET_SELF_ATTR: libc::c_long = 460;
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            SYS_LSM_SET_SELF_ATTR,
+            attr_id as libc::c_long,
+            ctx as libc::c_long,
+            size as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+/// Linux `lsm_list_modules(*ids, *size, flags) -> int` (Linux 6.8+,
+/// syscall 461) — enumerate LSM module IDs into `ids`, with `*size`
+/// updated to the actual length on success or required length on
+/// `E2BIG`.
+///
+/// # Safety
+///
+/// `size` must point to writable `u32` storage. `ids`, when
+/// non-NULL, must point to at least `*size` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn lsm_list_modules(ids: *mut u64, size: *mut u32, flags: c_uint) -> c_int {
+    if size.is_null() {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
+    const SYS_LSM_LIST_MODULES: libc::c_long = 461;
+    // SAFETY: forwarding to the kernel.
+    let rc = unsafe {
+        libc::syscall(
+            SYS_LSM_LIST_MODULES,
+            ids as libc::c_long,
+            size as libc::c_long,
+            flags as libc::c_long,
+        )
+    };
+    unsafe { raw_syscall_with_errno(rc) }
+}
+
+// ---------------------------------------------------------------------------
 // Scheduler — RawSyscall
 // ---------------------------------------------------------------------------
 
