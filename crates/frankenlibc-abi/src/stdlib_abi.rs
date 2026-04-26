@@ -1417,6 +1417,51 @@ pub unsafe extern "C" fn secure_getenv(name: *const c_char) -> *mut c_char {
 }
 
 // ---------------------------------------------------------------------------
+// getenv_r (NetBSD re-entrant getenv)
+// ---------------------------------------------------------------------------
+
+/// NetBSD `getenv_r(name, buf, buflen)` — re-entrant `getenv`. Look
+/// up the environment variable `name` and copy its value (with
+/// trailing NUL) into `buf`. Returns:
+///
+/// - `0` on success.
+/// - `-1` with `errno = ENOENT` if the variable is not set.
+/// - `-1` with `errno = ERANGE` if `buf` is too small for the
+///   value plus the trailing NUL.
+/// - `-1` with `errno = EINVAL` if `name` or `buf` is NULL.
+///
+/// Useful for callers that want to avoid the global-pointer
+/// aliasing risk of plain [`getenv`] (whose return pointer can be
+/// invalidated by a concurrent `setenv`/`unsetenv`).
+///
+/// # Safety
+///
+/// `name`, when non-NULL, must be NUL-terminated. `buf`, when
+/// non-NULL, must be valid for `buflen` writable bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getenv_r(name: *const c_char, buf: *mut c_char, buflen: usize) -> c_int {
+    if name.is_null() || buf.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let value = unsafe { getenv(name) };
+    if value.is_null() {
+        unsafe { set_abi_errno(libc::ENOENT) };
+        return -1;
+    }
+    let value_bytes = unsafe { CStr::from_ptr(value) }.to_bytes();
+    if value_bytes.len() + 1 > buflen {
+        unsafe { set_abi_errno(libc::ERANGE) };
+        return -1;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(value_bytes.as_ptr(), buf as *mut u8, value_bytes.len());
+        *buf.add(value_bytes.len()) = 0;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
 // setenv
 // ---------------------------------------------------------------------------
 

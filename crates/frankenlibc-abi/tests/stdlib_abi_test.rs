@@ -2,7 +2,7 @@
 
 //! Integration tests for `<stdlib.h>` ABI entrypoints.
 
-use std::ffi::{c_char, c_int, c_uchar, c_uint};
+use std::ffi::{CStr, c_char, c_int, c_uchar, c_uint};
 use std::os::unix::ffi::OsStrExt;
 
 use frankenlibc_abi::errno_abi::__errno_location;
@@ -10,11 +10,11 @@ use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atoll, clearenv, confstr, dehumanize_number, drand48, ecvt, erand48,
     expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf,
-    get_phys_pages, getbsize, getenv, getsubopt, humanize_number, initstate, jrand48, l64a,
-    lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, qsort_r, random,
-    reallocarray, reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom, strpct,
-    strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq,
-    system, unsetenv,
+    get_phys_pages, getbsize, getenv, getenv_r, getsubopt, humanize_number, initstate, jrand48,
+    l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, qsort_r,
+    random, reallocarray, reallocf, recallocarray, seed48, setenv, setstate, srand48, srandom,
+    strpct, strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull,
+    strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -7547,4 +7547,120 @@ fn strspct_negative_with_precision() {
     let mut buf = [0 as c_char; 16];
     let _ = unsafe { strspct(buf.as_mut_ptr(), buf.len(), -1, 100, 2) };
     assert_eq!(strpct_collect(&buf), b"-1.00".to_vec());
+}
+
+// ---------------------------------------------------------------------------
+// getenv_r (NetBSD re-entrant getenv)
+// ---------------------------------------------------------------------------
+
+/// Serialize tests that touch the global env so concurrent test
+/// runs don't observe each other's setenv mutations.
+static GETENV_R_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn getenv_r_returns_zero_and_copies_value() {
+    let _g = GETENV_R_LOCK.lock().unwrap();
+    let key = c"FRANKENLIBC_GETENV_R_TEST";
+    let value = c"hello-from-getenv_r";
+    unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) };
+
+    let mut buf = [0 as c_char; 64];
+    let r = unsafe { getenv_r(key.as_ptr(), buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(r, 0);
+    let got = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(got, value);
+
+    unsafe { libc::unsetenv(key.as_ptr()) };
+}
+
+#[test]
+fn getenv_r_missing_variable_sets_enoent() {
+    let _g = GETENV_R_LOCK.lock().unwrap();
+    let key = c"FRANKENLIBC_GETENV_R_MISSING_XYZZY";
+    unsafe { libc::unsetenv(key.as_ptr()) };
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let mut buf = [0 as c_char; 32];
+    let r = unsafe { getenv_r(key.as_ptr(), buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(r, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::ENOENT
+    );
+}
+
+#[test]
+fn getenv_r_undersized_buffer_sets_erange() {
+    let _g = GETENV_R_LOCK.lock().unwrap();
+    let key = c"FRANKENLIBC_GETENV_R_BIG";
+    let value = c"abcdefghijklmnopqrstuvwxyz"; // 26 bytes + NUL
+    unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) };
+
+    let mut buf = [0 as c_char; 8];
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { getenv_r(key.as_ptr(), buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(r, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::ERANGE
+    );
+
+    unsafe { libc::unsetenv(key.as_ptr()) };
+}
+
+#[test]
+fn getenv_r_exact_room_succeeds() {
+    let _g = GETENV_R_LOCK.lock().unwrap();
+    let key = c"FRANKENLIBC_GETENV_R_EXACT";
+    let value = c"five!"; // 5 bytes + NUL = 6
+    unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) };
+
+    let mut buf = [0 as c_char; 6];
+    let r = unsafe { getenv_r(key.as_ptr(), buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(r, 0);
+    assert_eq!(unsafe { CStr::from_ptr(buf.as_ptr()) }, value);
+
+    unsafe { libc::unsetenv(key.as_ptr()) };
+}
+
+#[test]
+fn getenv_r_null_name_sets_einval() {
+    let mut buf = [0 as c_char; 16];
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { getenv_r(std::ptr::null(), buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(r, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EINVAL
+    );
+}
+
+#[test]
+fn getenv_r_null_buf_sets_einval() {
+    let key = c"PATH";
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { getenv_r(key.as_ptr(), std::ptr::null_mut(), 16) };
+    assert_eq!(r, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::EINVAL
+    );
+}
+
+#[test]
+fn getenv_r_zero_buflen_with_set_value_returns_erange() {
+    let _g = GETENV_R_LOCK.lock().unwrap();
+    let key = c"FRANKENLIBC_GETENV_R_ZEROBUF";
+    let value = c"x";
+    unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) };
+
+    let mut buf = [0 as c_char; 4];
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let r = unsafe { getenv_r(key.as_ptr(), buf.as_mut_ptr(), 0) };
+    assert_eq!(r, -1);
+    assert_eq!(
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
+        libc::ERANGE
+    );
+
+    unsafe { libc::unsetenv(key.as_ptr()) };
 }
