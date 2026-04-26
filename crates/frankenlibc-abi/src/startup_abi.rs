@@ -1102,3 +1102,81 @@ pub unsafe extern "C" fn __frankenlibc_startup_snapshot(
     unsafe { *out = snapshot };
     0
 }
+
+// ===========================================================================
+// getprogname / setprogname — BSD program-name accessors
+// ===========================================================================
+//
+// NetBSD/OpenBSD-origin (glibc 2.41 also exposes them) for tools and
+// libraries that want to query or override the basename of argv[0]
+// without depending on the GNU-specific `program_invocation_short_name`
+// global. Backing storage is the same `program_invocation_short_name`
+// AtomicPtr that the existing err.h family already consults — so the
+// three vocabularies (BSD, GNU, __progname) stay in sync.
+
+/// BSD `getprogname()` — return a pointer to the cached program
+/// short name, or an empty static C string if startup hasn't yet
+/// published one.
+///
+/// The returned pointer is owned by the runtime; callers must not
+/// free it. For the lifetime contract, see `setprogname`: if the
+/// program supplied its own buffer through setprogname, that buffer
+/// is what we hand back, so the caller is responsible for keeping
+/// it alive (matching the NetBSD documented behavior).
+///
+/// # Safety
+///
+/// No caller obligations — the function is `extern "C"` only because
+/// it is part of the public C ABI.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getprogname() -> *const c_char {
+    static EMPTY: [u8; 1] = [0];
+    let p = program_invocation_short_name.load(Ordering::Acquire);
+    if p.is_null() {
+        EMPTY.as_ptr() as *const c_char
+    } else {
+        p as *const c_char
+    }
+}
+
+/// BSD `setprogname(progname)` — store the basename (last `/`
+/// component) of `progname` as the cached program short name.
+/// Subsequent calls to `getprogname`, the err.h family, and the
+/// glibc `program_invocation_short_name` / `__progname` aliases all
+/// observe the new value.
+///
+/// `progname == NULL` is a no-op (matches NetBSD).
+///
+/// The caller retains ownership of the buffer. Per the NetBSD
+/// `setprogname(3)` contract, the runtime stores the supplied
+/// pointer directly (after walking it to the basename) — it does
+/// **not** copy the bytes. Callers that pass stack-allocated or
+/// freed storage are responsible for the resulting use-after-free.
+///
+/// # Safety
+///
+/// Caller must ensure `progname`, when non-NULL, is a valid
+/// NUL-terminated C string with static or program-lifetime storage.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn setprogname(progname: *const c_char) {
+    if progname.is_null() {
+        return;
+    }
+
+    // Walk to the basename (last `/` + 1) without dereferencing the
+    // pointer beyond the C-string contract.
+    let mut base = progname as *mut c_char;
+    let mut p = progname;
+    // SAFETY: caller contract guarantees `progname` is a valid C string.
+    unsafe {
+        while *p != 0 {
+            if *p == b'/' as c_char {
+                base = (p as *mut c_char).add(1);
+            }
+            p = p.add(1);
+        }
+    }
+
+    program_invocation_short_name.store(base, Ordering::Release);
+    __progname.store(base, Ordering::Release);
+}

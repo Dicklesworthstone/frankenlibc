@@ -14,8 +14,9 @@ use std::sync::atomic::Ordering;
 
 use frankenlibc_abi::startup_abi::{
     __cxa_thread_atexit_impl, __frankenlibc_startup_phase0, __frankenlibc_startup_snapshot,
-    __progname, StartupFailureReason, StartupInvariantSnapshot, StartupPolicyDecision,
-    program_invocation_name, program_invocation_short_name, startup_policy_snapshot_for_tests,
+    __progname, StartupFailureReason, StartupInvariantSnapshot, StartupPolicyDecision, getprogname,
+    program_invocation_name, program_invocation_short_name, setprogname,
+    startup_policy_snapshot_for_tests,
 };
 
 // ---------------------------------------------------------------------------
@@ -565,4 +566,121 @@ fn phase0_only_fini_hook_no_init() {
         )
     };
     assert_eq!(rc, 42);
+}
+
+// ---------------------------------------------------------------------------
+// getprogname / setprogname (BSD program-name accessors)
+// ---------------------------------------------------------------------------
+//
+// These tests share the same backing storage as program_invocation_short_name
+// and __progname (intentional aliasing per the bd-zt2w1 contract). They
+// take the existing STARTUP_TEST_LOCK so they don't race against the
+// CRT-startup tests above which also rewrite those globals.
+
+fn cstr_lifetime(s: &'static [u8]) -> *const c_char {
+    assert_eq!(s.last(), Some(&0), "fixture must be NUL-terminated");
+    s.as_ptr() as *const c_char
+}
+
+#[test]
+fn getprogname_returns_nonnull_even_when_unset() {
+    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    // Force the slot to NULL so we exercise the empty-fallback branch.
+    program_invocation_short_name.store(ptr::null_mut(), Ordering::Release);
+    __progname.store(ptr::null_mut(), Ordering::Release);
+
+    let p = unsafe { getprogname() };
+    assert!(!p.is_null(), "getprogname must never return NULL");
+    let s = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
+    assert_eq!(s, b"", "unset progname should be the empty string");
+}
+
+#[test]
+fn setprogname_stores_basename() {
+    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let buf: &'static [u8] = b"/usr/local/bin/myprog\0";
+    unsafe { setprogname(cstr_lifetime(buf)) };
+
+    let p = unsafe { getprogname() };
+    let bytes = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
+    assert_eq!(
+        bytes, b"myprog",
+        "basename must be everything after the last '/'"
+    );
+
+    // Both glibc-compatible aliases observe the same value.
+    let short = program_invocation_short_name.load(Ordering::Acquire);
+    let prog = __progname.load(Ordering::Acquire);
+    assert_eq!(short, prog as *mut _);
+    let short_bytes = unsafe { std::ffi::CStr::from_ptr(short) }.to_bytes();
+    assert_eq!(short_bytes, b"myprog");
+}
+
+#[test]
+fn setprogname_no_slash_uses_input_directly() {
+    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let buf: &'static [u8] = b"barename\0";
+    unsafe { setprogname(cstr_lifetime(buf)) };
+    let p = unsafe { getprogname() };
+    let bytes = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
+    assert_eq!(bytes, b"barename");
+}
+
+#[test]
+fn setprogname_trailing_slash_yields_empty() {
+    // Pathological case: "/foo/" — the basename is "" (everything after
+    // the trailing slash). Matches NetBSD behavior.
+    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let buf: &'static [u8] = b"/foo/\0";
+    unsafe { setprogname(cstr_lifetime(buf)) };
+    let p = unsafe { getprogname() };
+    let bytes = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
+    assert_eq!(bytes, b"");
+}
+
+#[test]
+fn setprogname_null_is_no_op() {
+    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let buf: &'static [u8] = b"sentinel\0";
+    unsafe { setprogname(cstr_lifetime(buf)) };
+    let before = program_invocation_short_name.load(Ordering::Acquire);
+
+    // NULL must not crash and must not clobber the stored pointer.
+    unsafe { setprogname(ptr::null()) };
+
+    let after = program_invocation_short_name.load(Ordering::Acquire);
+    assert_eq!(
+        before, after,
+        "NULL setprogname must leave the slot untouched"
+    );
+    let p = unsafe { getprogname() };
+    let bytes = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
+    assert_eq!(bytes, b"sentinel");
+}
+
+#[test]
+fn setprogname_overrides_previous_value() {
+    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let first: &'static [u8] = b"/first/path/aaa\0";
+    let second: &'static [u8] = b"/second/path/bbb\0";
+
+    unsafe { setprogname(cstr_lifetime(first)) };
+    let p1 = unsafe { getprogname() };
+    let bytes1 = unsafe { std::ffi::CStr::from_ptr(p1) }.to_bytes();
+    assert_eq!(bytes1, b"aaa");
+
+    unsafe { setprogname(cstr_lifetime(second)) };
+    let p2 = unsafe { getprogname() };
+    let bytes2 = unsafe { std::ffi::CStr::from_ptr(p2) }.to_bytes();
+    assert_eq!(bytes2, b"bbb");
+}
+
+#[test]
+fn getprogname_pointer_aliases_short_name_when_set() {
+    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let buf: &'static [u8] = b"/path/aliascheck\0";
+    unsafe { setprogname(cstr_lifetime(buf)) };
+    let p = unsafe { getprogname() };
+    let short = program_invocation_short_name.load(Ordering::Acquire) as *const c_char;
+    assert_eq!(p, short, "getprogname must hand back the cached pointer");
 }
