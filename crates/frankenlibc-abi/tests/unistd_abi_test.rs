@@ -9418,8 +9418,8 @@ fn readColdStartFile_returns_null_and_writeColdStartFile_returns_false() {
 fn nss_files_end_stubs_return_nss_status_success() {
     use frankenlibc_abi::unistd_abi::{
         _nss_files_endaliasent, _nss_files_endetherent, _nss_files_endgrent, _nss_files_endhostent,
-        _nss_files_endnetent, _nss_files_endnetgrent, _nss_files_endprotoent, _nss_files_endpwent,
-        _nss_files_endrpcent, _nss_files_endservent, _nss_files_endsgent, _nss_files_endspent,
+        _nss_files_endnetent, _nss_files_endprotoent, _nss_files_endpwent, _nss_files_endrpcent,
+        _nss_files_endservent, _nss_files_endsgent, _nss_files_endspent,
     };
 
     macro_rules! assert_nss_success {
@@ -9437,7 +9437,6 @@ fn nss_files_end_stubs_return_nss_status_success() {
     assert_nss_success!(_nss_files_endgrent);
     assert_nss_success!(_nss_files_endhostent);
     assert_nss_success!(_nss_files_endnetent);
-    assert_nss_success!(_nss_files_endnetgrent);
     assert_nss_success!(_nss_files_endprotoent);
     assert_nss_success!(_nss_files_endpwent);
     assert_nss_success!(_nss_files_endrpcent);
@@ -9446,23 +9445,30 @@ fn nss_files_end_stubs_return_nss_status_success() {
     assert_nss_success!(_nss_files_endspent);
 }
 
+#[test]
+fn nss_files_endnetgrent_returns_success_with_state_arg() {
+    use frankenlibc_abi::unistd_abi::_nss_files_endnetgrent;
+    assert_eq!(unsafe { _nss_files_endnetgrent(std::ptr::null_mut()) }, 1);
+    let bogus_result = std::ptr::dangling_mut::<c_void>();
+    assert_eq!(unsafe { _nss_files_endnetgrent(bogus_result) }, 1);
+}
+
 // ---------------------------------------------------------------------------
 // _nss_files_setXX NSS plugin "begin iteration" stubs
 // ---------------------------------------------------------------------------
 
 #[test]
 fn nss_files_set_void_stubs_return_success() {
-    use frankenlibc_abi::unistd_abi::{_nss_files_setaliasent, _nss_files_setetherent};
+    use frankenlibc_abi::unistd_abi::_nss_files_setaliasent;
     assert_eq!(unsafe { _nss_files_setaliasent() }, 1);
-    assert_eq!(unsafe { _nss_files_setetherent() }, 1);
 }
 
 #[test]
 fn nss_files_set_stayopen_stubs_return_success_for_both_flag_values() {
     use frankenlibc_abi::unistd_abi::{
-        _nss_files_setgrent, _nss_files_sethostent, _nss_files_setnetent, _nss_files_setprotoent,
-        _nss_files_setpwent, _nss_files_setrpcent, _nss_files_setservent, _nss_files_setsgent,
-        _nss_files_setspent,
+        _nss_files_setetherent, _nss_files_setgrent, _nss_files_sethostent, _nss_files_setnetent,
+        _nss_files_setprotoent, _nss_files_setpwent, _nss_files_setrpcent, _nss_files_setservent,
+        _nss_files_setsgent, _nss_files_setspent,
     };
 
     macro_rules! check {
@@ -9480,6 +9486,7 @@ fn nss_files_set_stayopen_stubs_return_success_for_both_flag_values() {
         }};
     }
 
+    check!(_nss_files_setetherent);
     check!(_nss_files_setgrent);
     check!(_nss_files_sethostent);
     check!(_nss_files_setnetent);
@@ -9499,9 +9506,482 @@ fn nss_files_setnetgrent_returns_success_with_null_or_arbitrary_args() {
         1
     );
     let group = CString::new("admins").unwrap();
-    let bogus_result = 0xCAFE_BABE_usize as *mut c_void;
+    let bogus_result = std::ptr::dangling_mut::<c_void>();
     assert_eq!(
         unsafe { _nss_files_setnetgrent(group.as_ptr(), bogus_result) },
         1
     );
+}
+
+// ---------------------------------------------------------------------------
+// _nss_files_getXX_r NSS plugin lookup stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_files_get_ent_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getaliasent_r, _nss_files_getetherent_r, _nss_files_getgrent_r,
+        _nss_files_getnetgrent_r, _nss_files_getprotoent_r, _nss_files_getpwent_r,
+        _nss_files_getrpcent_r, _nss_files_getservent_r, _nss_files_getsgent_r,
+        _nss_files_getspent_r,
+    };
+
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe { $f(std::ptr::null_mut(), std::ptr::null_mut(), 0, &mut err,) },
+                0,
+                concat!(stringify!($f), " should return NSS_STATUS_NOTFOUND")
+            );
+            assert_eq!(err, libc::ENOENT);
+            assert_eq!(
+                unsafe {
+                    $f(
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        std::ptr::null_mut(),
+                    )
+                },
+                0,
+                concat!(stringify!($f), " should tolerate null errnop")
+            );
+        }};
+    }
+
+    check!(_nss_files_getaliasent_r);
+    check!(_nss_files_getetherent_r);
+    check!(_nss_files_getgrent_r);
+    check!(_nss_files_getnetgrent_r);
+    check!(_nss_files_getprotoent_r);
+    check!(_nss_files_getpwent_r);
+    check!(_nss_files_getrpcent_r);
+    check!(_nss_files_getservent_r);
+    check!(_nss_files_getsgent_r);
+    check!(_nss_files_getspent_r);
+}
+
+#[test]
+fn nss_files_get_host_and_net_ent_stubs_set_both_error_slots() {
+    use frankenlibc_abi::unistd_abi::{_nss_files_gethostent_r, _nss_files_getnetent_r};
+
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            let mut h_err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                        &mut h_err,
+                    )
+                },
+                0,
+                concat!(stringify!($f), " should return NSS_STATUS_NOTFOUND")
+            );
+            assert_eq!(err, libc::ENOENT);
+            assert_eq!(h_err, 1);
+        }};
+    }
+
+    check!(_nss_files_gethostent_r);
+    check!(_nss_files_getnetent_r);
+}
+
+#[test]
+fn nss_files_get_by_string_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getaliasbyname_r, _nss_files_getgrnam_r, _nss_files_gethostton_r,
+        _nss_files_getntohost_r, _nss_files_getprotobyname_r, _nss_files_getpwnam_r,
+        _nss_files_getrpcbyname_r, _nss_files_getsgnam_r, _nss_files_getspnam_r,
+    };
+
+    let key = CString::new("missing").unwrap();
+    macro_rules! check {
+        ($f:ident) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        key.as_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                    )
+                },
+                0,
+                concat!(stringify!($f), " should return NSS_STATUS_NOTFOUND")
+            );
+            assert_eq!(err, libc::ENOENT);
+            assert_eq!(
+                unsafe {
+                    $f(
+                        std::ptr::null(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        std::ptr::null_mut(),
+                    )
+                },
+                0,
+                concat!(stringify!($f), " should tolerate null key and errnop")
+            );
+        }};
+    }
+
+    check!(_nss_files_getaliasbyname_r);
+    check!(_nss_files_getgrnam_r);
+    check!(_nss_files_gethostton_r);
+    check!(_nss_files_getntohost_r);
+    check!(_nss_files_getprotobyname_r);
+    check!(_nss_files_getpwnam_r);
+    check!(_nss_files_getrpcbyname_r);
+    check!(_nss_files_getsgnam_r);
+    check!(_nss_files_getspnam_r);
+}
+
+#[test]
+fn nss_files_get_by_int_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getgrgid_r, _nss_files_getprotobynumber_r, _nss_files_getpwuid_r,
+        _nss_files_getrpcbynumber_r,
+    };
+
+    macro_rules! check {
+        ($f:ident, $key:expr) => {{
+            let mut err = 0;
+            assert_eq!(
+                unsafe {
+                    $f(
+                        $key,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut err,
+                    )
+                },
+                0,
+                concat!(stringify!($f), " should return NSS_STATUS_NOTFOUND")
+            );
+            assert_eq!(err, libc::ENOENT);
+        }};
+    }
+
+    check!(_nss_files_getgrgid_r, 0 as libc::gid_t);
+    check!(_nss_files_getprotobynumber_r, 9999);
+    check!(_nss_files_getpwuid_r, 0 as libc::uid_t);
+    check!(_nss_files_getrpcbynumber_r, 9999);
+}
+
+#[test]
+fn nss_files_get_host_stubs_return_notfound_and_set_errno_slots() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getcanonname_r, _nss_files_gethostbyaddr_r, _nss_files_gethostbyaddr2_r,
+        _nss_files_gethostbyname_r, _nss_files_gethostbyname2_r, _nss_files_gethostbyname3_r,
+        _nss_files_gethostbyname4_r,
+    };
+
+    let name = CString::new("missing.example").unwrap();
+    let mut err = 0;
+    let mut h_err = 0;
+    let mut canon = std::ptr::dangling_mut();
+    assert_eq!(
+        unsafe {
+            _nss_files_getcanonname_r(
+                name.as_ptr(),
+                std::ptr::null_mut(),
+                0,
+                &mut canon,
+                &mut err,
+                &mut h_err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+    assert!(canon.is_null());
+
+    err = 0;
+    h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_gethostbyname_r(
+                name.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+
+    err = 0;
+    h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_gethostbyname2_r(
+                name.as_ptr(),
+                libc::AF_INET,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+
+    err = 0;
+    h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_gethostbyname3_r(
+                name.as_ptr(),
+                libc::AF_INET,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+
+    err = 0;
+    h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_gethostbyname4_r(
+                name.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+
+    err = 0;
+    h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_gethostbyaddr_r(
+                std::ptr::null(),
+                0,
+                libc::AF_INET,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+
+    err = 0;
+    h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_gethostbyaddr2_r(
+                std::ptr::null(),
+                0,
+                libc::AF_INET,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+}
+
+#[test]
+fn nss_files_get_service_and_network_stubs_return_notfound_and_set_errno() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_getnetbyaddr_r, _nss_files_getnetbyname_r, _nss_files_getservbyname_r,
+        _nss_files_getservbyport_r,
+    };
+
+    let network = CString::new("missing-net").unwrap();
+    let service = CString::new("missing").unwrap();
+    let proto = CString::new("tcp").unwrap();
+    let mut err = 0;
+    let mut h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_getnetbyaddr_r(
+                0,
+                libc::AF_INET,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+
+    err = 0;
+    h_err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_getnetbyname_r(
+                network.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+                &mut h_err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+    assert_eq!(h_err, 1);
+
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_getservbyname_r(
+                service.as_ptr(),
+                proto.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+
+    err = 0;
+    assert_eq!(
+        unsafe {
+            _nss_files_getservbyport_r(
+                80,
+                proto.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+            )
+        },
+        0
+    );
+    assert_eq!(err, libc::ENOENT);
+}
+
+// ---------------------------------------------------------------------------
+// _nss_files_init + initgroups_dyn + parse_* tail stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_files_init_returns_success() {
+    use frankenlibc_abi::unistd_abi::_nss_files_init;
+    assert_eq!(unsafe { _nss_files_init() }, 1);
+}
+
+#[test]
+fn nss_files_initgroups_dyn_returns_notfound_and_sets_errnop() {
+    use frankenlibc_abi::unistd_abi::_nss_files_initgroups_dyn;
+    let user = CString::new("alice").unwrap();
+    let mut start: libc::c_long = 0;
+    let mut size: libc::c_long = 0;
+    let mut groupsp: *mut libc::gid_t = std::ptr::null_mut();
+    let mut errnop: c_int = 0;
+    let rc = unsafe {
+        _nss_files_initgroups_dyn(
+            user.as_ptr(),
+            1000,
+            &mut start,
+            &mut size,
+            &mut groupsp,
+            -1,
+            &mut errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+    let rc2 = unsafe {
+        _nss_files_initgroups_dyn(
+            user.as_ptr(),
+            1000,
+            &mut start,
+            &mut size,
+            &mut groupsp,
+            -1,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc2, 0);
+}
+
+#[test]
+fn nss_files_parse_stubs_return_zero_skip_line() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_files_parse_etherent, _nss_files_parse_grent, _nss_files_parse_netent,
+        _nss_files_parse_protoent, _nss_files_parse_pwent, _nss_files_parse_rpcent,
+        _nss_files_parse_servent, _nss_files_parse_sgent,
+    };
+    let mut line = *b"alice:x:1000:1000::/home/alice:/bin/sh\0";
+    let mut errnop: c_int = 99;
+
+    macro_rules! check {
+        ($f:ident) => {{
+            let rc = unsafe {
+                $f(
+                    line.as_mut_ptr() as *mut c_char,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    line.len(),
+                    &mut errnop,
+                )
+            };
+            assert_eq!(rc, 0, concat!(stringify!($f), " should return 0 (skip)"));
+        }};
+    }
+
+    check!(_nss_files_parse_etherent);
+    check!(_nss_files_parse_grent);
+    check!(_nss_files_parse_netent);
+    check!(_nss_files_parse_protoent);
+    check!(_nss_files_parse_pwent);
+    check!(_nss_files_parse_rpcent);
+    check!(_nss_files_parse_servent);
+    check!(_nss_files_parse_sgent);
 }

@@ -8569,8 +8569,8 @@ pub unsafe extern "C" fn writeColdStartFile(_obj: *const c_void) -> c_int {
 //
 // These are the GLIBC_PRIVATE-versioned NSS plugin entries for the
 // `files` source (i.e. /etc/passwd, /etc/group, /etc/hosts, ...)
-// when nsswitch.conf chooses it. Each takes no arguments and returns
-// `enum nss_status`. Returning NSS_STATUS_SUCCESS (= 1, "I
+// when nsswitch.conf chooses it. All but endnetgrent take no arguments
+// and return `enum nss_status`. Returning NSS_STATUS_SUCCESS (= 1, "I
 // successfully ended the iteration") is the safe stub since we never
 // started one — the NSS dispatch layer accepts it and moves on.
 
@@ -8590,13 +8590,19 @@ nss_files_end_stub!(_nss_files_endetherent);
 nss_files_end_stub!(_nss_files_endgrent);
 nss_files_end_stub!(_nss_files_endhostent);
 nss_files_end_stub!(_nss_files_endnetent);
-nss_files_end_stub!(_nss_files_endnetgrent);
 nss_files_end_stub!(_nss_files_endprotoent);
 nss_files_end_stub!(_nss_files_endpwent);
 nss_files_end_stub!(_nss_files_endrpcent);
 nss_files_end_stub!(_nss_files_endservent);
 nss_files_end_stub!(_nss_files_endsgent);
 nss_files_end_stub!(_nss_files_endspent);
+
+/// `_nss_files_endnetgrent(*result) -> nss_status` — netgroup end
+/// callbacks receive the iterator state object.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_endnetgrent(_result: *mut c_void) -> c_int {
+    NSS_STATUS_SUCCESS
+}
 
 // ---------------------------------------------------------------------------
 // _nss_files_setXX NSS plugin "begin iteration" stubs
@@ -8628,7 +8634,7 @@ macro_rules! nss_files_set_stayopen_stub {
 }
 
 nss_files_set_void_stub!(_nss_files_setaliasent);
-nss_files_set_void_stub!(_nss_files_setetherent);
+nss_files_set_stayopen_stub!(_nss_files_setetherent);
 nss_files_set_stayopen_stub!(_nss_files_setgrent);
 nss_files_set_stayopen_stub!(_nss_files_sethostent);
 nss_files_set_stayopen_stub!(_nss_files_setnetent);
@@ -8737,14 +8743,44 @@ macro_rules! nss_files_get_by_int_stub {
 nss_files_get_ent_stub!(_nss_files_getaliasent_r);
 nss_files_get_ent_stub!(_nss_files_getetherent_r);
 nss_files_get_ent_stub!(_nss_files_getgrent_r);
-nss_files_get_ent_stub!(_nss_files_gethostent_r);
-nss_files_get_ent_stub!(_nss_files_getnetent_r);
 nss_files_get_ent_stub!(_nss_files_getprotoent_r);
 nss_files_get_ent_stub!(_nss_files_getpwent_r);
 nss_files_get_ent_stub!(_nss_files_getrpcent_r);
 nss_files_get_ent_stub!(_nss_files_getservent_r);
 nss_files_get_ent_stub!(_nss_files_getsgent_r);
 nss_files_get_ent_stub!(_nss_files_getspent_r);
+
+/// `_nss_files_gethostent_r(*result, *buf, buflen, *errnop,
+/// *h_errnop)` — host database iteration carries both errno and
+/// h_errno slots.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_gethostent_r(
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_getnetent_r(*result, *buf, buflen, *errnop,
+/// *h_errnop)` — network database iteration carries both errno and
+/// h_errno slots.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getnetent_r(
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
 
 // `_nss_files_getnetgrent_r(*result, *buf, buflen, *errnop)` —
 // special variant returning the next netgroup triple. Signature is
@@ -8753,10 +8789,9 @@ nss_files_get_ent_stub!(_nss_files_getspent_r);
 // dereference it).
 nss_files_get_ent_stub!(_nss_files_getnetgrent_r);
 
-// 12 single-key string lookup stubs.
+// 9 single-key string lookup stubs.
 nss_files_get_by_str_stub!(_nss_files_getaliasbyname_r);
 nss_files_get_by_str_stub!(_nss_files_getgrnam_r);
-nss_files_get_by_str_stub!(_nss_files_getnetbyname_r);
 nss_files_get_by_str_stub!(_nss_files_getprotobyname_r);
 nss_files_get_by_str_stub!(_nss_files_getpwnam_r);
 nss_files_get_by_str_stub!(_nss_files_getrpcbyname_r);
@@ -8771,6 +8806,26 @@ nss_files_get_by_int_stub!(_nss_files_getgrgid_r, libc::gid_t);
 nss_files_get_by_int_stub!(_nss_files_getpwuid_r, libc::uid_t);
 nss_files_get_by_int_stub!(_nss_files_getprotobynumber_r, c_int);
 nss_files_get_by_int_stub!(_nss_files_getrpcbynumber_r, c_int);
+
+/// `_nss_files_getcanonname_r(name, *buffer, buflen, **result,
+/// *errnop, *h_errnop)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getcanonname_r(
+    _name: *const c_char,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    result: *mut *mut c_char,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    if !result.is_null() {
+        // SAFETY: caller-supplied output slot per NSS contract.
+        unsafe { *result = std::ptr::null_mut() };
+    }
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
 
 /// `_nss_files_gethostbyname_r(name, *result, *buf, buflen,
 /// *errnop, *h_errnop)` — extra `*h_errnop` slot for h_errno.
@@ -8850,7 +8905,7 @@ pub unsafe extern "C" fn _nss_files_gethostbyname4_r(
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn _nss_files_gethostbyaddr_r(
     _addr: *const c_void,
-    _len: usize,
+    _len: libc::socklen_t,
     _af: c_int,
     _result: *mut c_void,
     _buffer: *mut c_char,
@@ -8863,8 +8918,28 @@ pub unsafe extern "C" fn _nss_files_gethostbyaddr_r(
     NSS_STATUS_NOTFOUND
 }
 
+/// `_nss_files_gethostbyaddr2_r(addr, len, type, *result, *buf,
+/// buflen, *errnop, *h_errnop, *ttlp)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_files_gethostbyaddr2_r(
+    _addr: *const c_void,
+    _len: libc::socklen_t,
+    _af: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+    _ttlp: *mut i32,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
 /// `_nss_files_getnetbyaddr_r(net, type, *result, *buf, buflen,
-/// *errnop)`.
+/// *errnop, *h_errnop)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _nss_files_getnetbyaddr_r(
     _net: u32,
@@ -8873,8 +8948,26 @@ pub unsafe extern "C" fn _nss_files_getnetbyaddr_r(
     _buffer: *mut c_char,
     _buflen: usize,
     errnop: *mut c_int,
+    h_errnop: *mut c_int,
 ) -> c_int {
     unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_getnetbyname_r(name, *result, *buf, buflen,
+/// *errnop, *h_errnop)`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_getnetbyname_r(
+    _name: *const c_char,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_herr_host_not_found(h_errnop) };
     NSS_STATUS_NOTFOUND
 }
 
@@ -8907,6 +9000,64 @@ pub unsafe extern "C" fn _nss_files_getservbyport_r(
     unsafe { nss_set_errnop_enoent(errnop) };
     NSS_STATUS_NOTFOUND
 }
+
+// ---------------------------------------------------------------------------
+// Remaining _nss_files_* tail entries (init + initgroups_dyn + parse_*)
+// ---------------------------------------------------------------------------
+
+/// `_nss_files_init() -> nss_status` — module initialization. Some
+/// glibc versions return void; we return NSS_STATUS_SUCCESS so both
+/// callers see a clean success.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_files_init() -> c_int {
+    NSS_STATUS_SUCCESS
+}
+
+/// `_nss_files_initgroups_dyn(user, gid, *start, *size, **groupsp,
+/// limit, *errnop) -> nss_status` — supplementary group lookup.
+/// Stub returns NSS_STATUS_NOTFOUND with errnop=ENOENT.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_files_initgroups_dyn(
+    _user: *const c_char,
+    _gid: libc::gid_t,
+    _start: *mut c_long,
+    _size: *mut c_long,
+    _groupsp: *mut *mut libc::gid_t,
+    _limit: c_long,
+    errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+/// `_nss_files_parse_*(line, *result, *parser_data, buflen, *errnop)
+/// -> int` — internal line parsers. Each returns 1 on success, 0 to
+/// signal "skip this line", -1 to signal ERANGE. Stubs return 0
+/// (skip) so callers walk to the next line without complaint.
+macro_rules! nss_files_parse_stub {
+    ($name:ident) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(
+            _line: *mut c_char,
+            _result: *mut c_void,
+            _data: *mut c_void,
+            _buflen: usize,
+            _errnop: *mut c_int,
+        ) -> c_int {
+            0
+        }
+    };
+}
+
+nss_files_parse_stub!(_nss_files_parse_etherent);
+nss_files_parse_stub!(_nss_files_parse_grent);
+nss_files_parse_stub!(_nss_files_parse_netent);
+nss_files_parse_stub!(_nss_files_parse_protoent);
+nss_files_parse_stub!(_nss_files_parse_pwent);
+nss_files_parse_stub!(_nss_files_parse_rpcent);
+nss_files_parse_stub!(_nss_files_parse_servent);
+nss_files_parse_stub!(_nss_files_parse_sgent);
 
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
