@@ -11351,3 +11351,156 @@ fn nss_systemd_block_is_per_thread() {
     assert_eq!(_nss_systemd_is_blocked(), 1);
     _nss_systemd_block(0);
 }
+
+// ---------------------------------------------------------------------------
+// Tests for 18 GLIBC_PRIVATE libnsl NIS+/yp internal helpers (bd-pjnky)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nis_create_ib_request_returns_null() {
+    use frankenlibc_abi::unistd_abi::__create_ib_request;
+    let name = CString::new("any.directory.").unwrap();
+    let p = unsafe { __create_ib_request(name.as_ptr(), 0) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn nis_do_niscall3_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::__do_niscall3;
+    let rc = unsafe {
+        __do_niscall3(
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    assert_eq!(rc, 5); // NIS_NAMEUNREACHABLE
+}
+
+#[test]
+fn nis_follow_path_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__follow_path;
+    let next = CString::new("alias.").unwrap();
+    let rc = unsafe {
+        __follow_path(
+            std::ptr::null_mut(),
+            next.as_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn nis_free_fdresult_is_void_noop() {
+    use frankenlibc_abi::unistd_abi::__free_fdresult;
+    unsafe { __free_fdresult(std::ptr::null_mut()) };
+}
+
+#[test]
+fn nis_default_access_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__nis_default_access;
+    assert_eq!(unsafe { __nis_default_access(std::ptr::null_mut(), 0) }, 0);
+}
+
+#[test]
+fn nis_default_group_owner_return_null() {
+    use frankenlibc_abi::unistd_abi::{__nis_default_group, __nis_default_owner};
+    assert!(unsafe { __nis_default_group(std::ptr::null()) }.is_null());
+    assert!(unsafe { __nis_default_owner(std::ptr::null()) }.is_null());
+}
+
+#[test]
+fn nis_default_ttl_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__nis_default_ttl;
+    assert_eq!(unsafe { __nis_default_ttl(std::ptr::null()) }, 0);
+}
+
+#[test]
+fn nis_finddirectory_returns_notfound() {
+    use frankenlibc_abi::unistd_abi::__nis_finddirectory;
+    let name = CString::new("org_dir.").unwrap();
+    let rc = unsafe { __nis_finddirectory(std::ptr::null_mut(), name.as_ptr()) };
+    assert_eq!(rc, 1); // NIS_NOTFOUND
+}
+
+#[test]
+fn nis_hash_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__nis_hash;
+    let key = b"abc";
+    assert_eq!(
+        unsafe { __nis_hash(key.as_ptr() as *const c_void, key.len() as c_uint) },
+        0
+    );
+}
+
+#[test]
+fn nisbind_connect_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__nisbind_connect;
+    assert_eq!(unsafe { __nisbind_connect(std::ptr::null_mut()) }, -1);
+}
+
+#[test]
+fn nisbind_create_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__nisbind_create;
+    let rc = unsafe {
+        __nisbind_create(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn nisbind_destroy_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__nisbind_destroy;
+    assert_eq!(unsafe { __nisbind_destroy(std::ptr::null_mut()) }, 0);
+}
+
+#[test]
+fn nisbind_next_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__nisbind_next;
+    assert_eq!(unsafe { __nisbind_next(std::ptr::null_mut()) }, -1);
+}
+
+#[test]
+fn prepare_niscall_returns_nameunreachable() {
+    use frankenlibc_abi::unistd_abi::__prepare_niscall;
+    let name = CString::new("foo.bar.").unwrap();
+    let rc =
+        unsafe { __prepare_niscall(name.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), 0) };
+    assert_eq!(rc, 5); // NIS_NAMEUNREACHABLE
+}
+
+#[test]
+fn yp_check_reports_no_nis_configured() {
+    use frankenlibc_abi::unistd_abi::__yp_check;
+    let rc = unsafe { __yp_check(std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn xdr_ib_request_returns_xdr_true() {
+    use frankenlibc_abi::unistd_abi::_xdr_ib_request;
+    assert_eq!(
+        unsafe { _xdr_ib_request(std::ptr::null_mut(), std::ptr::null_mut()) },
+        1
+    );
+}
+
+#[test]
+fn xdr_nis_result_returns_xdr_true() {
+    use frankenlibc_abi::unistd_abi::_xdr_nis_result;
+    assert_eq!(
+        unsafe { _xdr_nis_result(std::ptr::null_mut(), std::ptr::null_mut()) },
+        1
+    );
+}

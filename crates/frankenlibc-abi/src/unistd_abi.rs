@@ -23860,3 +23860,169 @@ pub extern "C" fn _nss_systemd_block(b: c_int) -> c_int {
 pub extern "C" fn _nss_systemd_is_blocked() -> c_int {
     NSS_SYSTEMD_BLOCK_FLAG.with(|f| f.get())
 }
+
+// ---------------------------------------------------------------------------
+// 18 GLIBC_PRIVATE libnsl NIS+/yp internal helpers (bd-pjnky)
+// ---------------------------------------------------------------------------
+//
+// NIS+ result codes (libnsl <rpcsvc/nis.h>): NIS_SUCCESS=0,
+// NIS_NOTFOUND=1, NIS_NAMEUNREACHABLE=5. These stubs report "no NIS+
+// server reachable" for any active call and return safe defaults
+// (NULL/0/empty) for queries.
+
+const NIS_NOTFOUND_LIBNSL_PRIV: c_int = 1;
+const NIS_NAMEUNREACHABLE_LIBNSL_PRIV: c_int = 5;
+
+/// `__create_ib_request(name, flags) -> *ib_request` — allocate an
+/// internal-binding request. Stub returns NULL (no NIS+ surface
+/// active).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __create_ib_request(_name: *const c_char, _flags: c_uint) -> *mut c_void {
+    core::ptr::null_mut()
+}
+
+/// `__do_niscall3(*bptr, fn, *arg, *res, flags) -> nis_error` — issue
+/// a NIS+ RPC call. Stub returns NIS_NAMEUNREACHABLE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __do_niscall3(
+    _bptr: *mut c_void,
+    _fn_no: c_uint,
+    _arg: *mut c_void,
+    _res: *mut c_void,
+    _flags: c_uint,
+) -> c_int {
+    NIS_NAMEUNREACHABLE_LIBNSL_PRIV
+}
+
+/// `__follow_path(*path, *next, *req, *bptr) -> int` — follow a
+/// NIS+ alias chain. Stub returns 0 (no further entries).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __follow_path(
+    _path: *mut c_char,
+    _next: *const c_char,
+    _req: *mut c_void,
+    _bptr: *mut c_void,
+) -> c_int {
+    0
+}
+
+/// `__free_fdresult(*fdres)` — free a `struct fd_result`. Stub
+/// no-op (we never allocated one).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __free_fdresult(_fdres: *mut c_void) {}
+
+/// `__nis_default_access(*tbl, defaults) -> u32` — default object
+/// access mask. Stub returns 0 (no permissions).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nis_default_access(_tbl: *mut c_void, _defaults: c_uint) -> c_uint {
+    0
+}
+
+/// `__nis_default_group(defaults) -> *const c_char` — default group
+/// principal name. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nis_default_group(_defaults: *const c_char) -> *const c_char {
+    core::ptr::null()
+}
+
+/// `__nis_default_owner(defaults) -> *const c_char` — default owner
+/// principal. Stub returns NULL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nis_default_owner(_defaults: *const c_char) -> *const c_char {
+    core::ptr::null()
+}
+
+/// `__nis_default_ttl(defaults) -> u32` — default object TTL in
+/// seconds. Stub returns 0 (caller will pick its own).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nis_default_ttl(_defaults: *const c_char) -> c_uint {
+    0
+}
+
+/// `__nis_finddirectory(*dir, *name) -> nis_error` — locate the
+/// directory entry for `name`. Stub returns NIS_NOTFOUND.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nis_finddirectory(_dir: *mut c_void, _name: *const c_char) -> c_int {
+    NIS_NOTFOUND_LIBNSL_PRIV
+}
+
+/// `__nis_hash(*key, keylen) -> u32` — internal NIS+ hash function.
+/// Stub returns 0.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nis_hash(_key: *const c_void, _keylen: c_uint) -> c_uint {
+    0
+}
+
+/// `__nisbind_connect(*bptr) -> int` — open the binding's socket.
+/// Stub returns -1 (failure).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nisbind_connect(_bptr: *mut c_void) -> c_int {
+    -1
+}
+
+/// `__nisbind_create(*bptr, *server, count, flags, *res, *args) ->
+/// int` — initialize a binding. Stub returns -1.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn __nisbind_create(
+    _bptr: *mut c_void,
+    _server: *mut c_void,
+    _count: c_uint,
+    _flags: c_uint,
+    _res: *mut c_void,
+    _args: *mut c_void,
+) -> c_int {
+    -1
+}
+
+/// `__nisbind_destroy(*bptr) -> int` — release binding resources.
+/// Stub returns 0 (nothing to release).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nisbind_destroy(_bptr: *mut c_void) -> c_int {
+    0
+}
+
+/// `__nisbind_next(*bptr) -> int` — try the next NIS+ server in the
+/// binding. Stub returns -1 (no more servers).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __nisbind_next(_bptr: *mut c_void) -> c_int {
+    -1
+}
+
+/// `__prepare_niscall(name, *bptr, *out_dir, flags) -> nis_error` —
+/// resolve the name and choose a binding. Stub returns
+/// NIS_NAMEUNREACHABLE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __prepare_niscall(
+    _name: *const c_char,
+    _bptr: *mut c_void,
+    _out_dir: *mut c_void,
+    _flags: c_uint,
+) -> c_int {
+    NIS_NAMEUNREACHABLE_LIBNSL_PRIV
+}
+
+/// `__yp_check(*outdomain) -> int` — check whether YP is configured.
+/// Returns 1 if a default domain is bound, 0 otherwise. Stub returns
+/// 0 (no NIS configured); when `outdomain` is non-NULL the slot is
+/// untouched (caller's existing value preserved).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __yp_check(_outdomain: *mut *mut c_char) -> c_int {
+    0
+}
+
+/// `_xdr_ib_request(*xdrs, *req) -> int` — XDR codec for the
+/// internal-binding request struct. Stub returns XDR_TRUE (1) so
+/// the caller's encode/decode loop terminates cleanly on an empty
+/// payload.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _xdr_ib_request(_xdrs: *mut c_void, _req: *mut c_void) -> c_int {
+    1
+}
+
+/// `_xdr_nis_result(*xdrs, *res) -> int` — XDR codec for
+/// `struct nis_result`. Stub returns XDR_TRUE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _xdr_nis_result(_xdrs: *mut c_void, _res: *mut c_void) -> c_int {
+    1
+}
