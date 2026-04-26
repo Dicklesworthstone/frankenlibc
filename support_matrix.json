@@ -1505,7 +1505,7 @@
       "symbol": "argp_parse",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp, dlsym delegate",
+      "notes": "GNU argp phase-1 native empty-parser parity; non-empty parser returns EINVAL until full argp support",
       "module": "unistd_abi"
     },
     {

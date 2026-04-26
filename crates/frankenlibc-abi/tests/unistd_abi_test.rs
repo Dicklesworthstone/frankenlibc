@@ -1723,7 +1723,7 @@ fn makecontext_swapcontext_round_trip() {
 }
 
 // ---------------------------------------------------------------------------
-// argp_parse stub test
+// argp_parse parity tests
 // ---------------------------------------------------------------------------
 // Note: glibc's argp_parse segfaults on NULL argp pointer.
 // Our native implementation returns EINVAL, but in test mode we link against
@@ -1767,6 +1767,95 @@ fn argp_parse_empty_args_succeeds() {
         rc, 0,
         "argp_parse with empty argp and no args should succeed"
     );
+}
+
+fn empty_argp_storage() -> [usize; 7] {
+    [0; 7]
+}
+
+#[test]
+fn abi_argp_parse_empty_argp_matches_glibc_index_contracts() {
+    let argp_struct = empty_argp_storage();
+    let prog = b"test\0";
+    let extra = b"extra\0";
+    let mut argv = [
+        prog.as_ptr() as *mut c_char,
+        extra.as_ptr() as *mut c_char,
+        std::ptr::null_mut(),
+    ];
+
+    let mut index: c_int = -1;
+    clear_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            2,
+            argv.as_mut_ptr(),
+            0,
+            &mut index,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), 0);
+    assert_eq!(index, 1);
+
+    index = -1;
+    clear_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            1,
+            argv.as_mut_ptr(),
+            0,
+            &mut index,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), 0);
+    assert_eq!(index, 1);
+
+    index = -1;
+    clear_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            0,
+            std::ptr::null_mut(),
+            0,
+            &mut index,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), 0);
+    assert_eq!(index, 0);
+}
+
+#[test]
+fn abi_argp_parse_nonempty_argp_remains_explicitly_unsupported() {
+    let mut argp_struct = empty_argp_storage();
+    argp_struct[0] = 1;
+    let prog = b"test\0";
+    let mut argv = [prog.as_ptr() as *mut c_char, std::ptr::null_mut()];
+    let mut index: c_int = -1;
+
+    clear_errno();
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::argp_parse(
+            argp_struct.as_ptr().cast(),
+            1,
+            argv.as_mut_ptr(),
+            0,
+            &mut index,
+            std::ptr::null_mut(),
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert_eq!(errno_value(), libc::EINVAL);
+    assert_eq!(index, -1);
 }
 
 // ---------------------------------------------------------------------------
