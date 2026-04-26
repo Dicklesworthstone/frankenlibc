@@ -9985,3 +9985,187 @@ fn nss_files_parse_stubs_return_zero_skip_line() {
     check!(_nss_files_parse_servent);
     check!(_nss_files_parse_sgent);
 }
+
+// ---------------------------------------------------------------------------
+// _nss_dns_* NSS DNS plugin lookup stubs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nss_dns_getcanonname_returns_notfound_with_h_errnop() {
+    use frankenlibc_abi::unistd_abi::_nss_dns_getcanonname_r;
+    let name = CString::new("missing.example").unwrap();
+    let mut buf = [0u8; 64];
+    let mut result: *mut c_char = std::ptr::null_mut();
+    let mut errnop: c_int = 0;
+    let mut h_errnop: c_int = 0;
+    let rc = unsafe {
+        _nss_dns_getcanonname_r(
+            name.as_ptr(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut result,
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(h_errnop, 1);
+}
+
+#[test]
+fn nss_dns_gethostbyname_family_returns_notfound_and_sets_h_errnop() {
+    use frankenlibc_abi::unistd_abi::{
+        _nss_dns_gethostbyname_r, _nss_dns_gethostbyname2_r, _nss_dns_gethostbyname3_r,
+        _nss_dns_gethostbyname4_r,
+    };
+    let name = CString::new("missing.example").unwrap();
+    let mut errnop: c_int = 0;
+    let mut h_errnop: c_int = 0;
+    let mut buf = [0u8; 64];
+
+    let rc = unsafe {
+        _nss_dns_gethostbyname_r(
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let rc = unsafe {
+        _nss_dns_gethostbyname2_r(
+            name.as_ptr(),
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let mut ttl: i32 = 0;
+    let mut canon: *mut c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_dns_gethostbyname3_r(
+            name.as_ptr(),
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+            &mut ttl,
+            &mut canon,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let mut pat: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe {
+        _nss_dns_gethostbyname4_r(
+            name.as_ptr(),
+            &mut pat,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+            &mut ttl,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+}
+
+#[test]
+fn nss_dns_gethostbyaddr_family_returns_notfound_and_sets_h_errnop() {
+    use frankenlibc_abi::unistd_abi::{_nss_dns_gethostbyaddr_r, _nss_dns_gethostbyaddr2_r};
+    let addr = [127u8, 0, 0, 1];
+    let mut errnop: c_int = 0;
+    let mut h_errnop: c_int = 0;
+    let mut buf = [0u8; 64];
+
+    let rc = unsafe {
+        _nss_dns_gethostbyaddr_r(
+            addr.as_ptr() as *const c_void,
+            4,
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let mut ttl: i32 = 0;
+    let rc = unsafe {
+        _nss_dns_gethostbyaddr2_r(
+            addr.as_ptr() as *const c_void,
+            4,
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+            &mut ttl,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+}
+
+#[test]
+fn nss_dns_getnet_family_returns_notfound_and_sets_h_errnop() {
+    use frankenlibc_abi::unistd_abi::{_nss_dns_getnetbyaddr_r, _nss_dns_getnetbyname_r};
+    let name = CString::new("loopback").unwrap();
+    let mut errnop: c_int = 0;
+    let mut h_errnop: c_int = 0;
+    let mut buf = [0u8; 64];
+
+    let rc = unsafe {
+        _nss_dns_getnetbyname_r(
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(errnop, libc::ENOENT);
+    assert_eq!(h_errnop, 1);
+
+    h_errnop = 0;
+    let rc = unsafe {
+        _nss_dns_getnetbyaddr_r(
+            0x7F00_0000,
+            libc::AF_INET,
+            std::ptr::null_mut(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut errnop,
+            &mut h_errnop,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errnop, 1);
+}

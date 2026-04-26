@@ -9059,6 +9059,166 @@ nss_files_parse_stub!(_nss_files_parse_rpcent);
 nss_files_parse_stub!(_nss_files_parse_servent);
 nss_files_parse_stub!(_nss_files_parse_sgent);
 
+// ---------------------------------------------------------------------------
+// _nss_dns_* NSS DNS plugin lookup stubs
+// ---------------------------------------------------------------------------
+//
+// Each returns NSS_STATUS_NOTFOUND (= 0) and sets *errnop = ENOENT
+// + *h_errnop = HOST_NOT_FOUND (= 1) when non-NULL, so the NSS
+// dispatch layer falls through to the next module. Without a real
+// resolver-backed NSS_DNS module we never claim to have an answer.
+
+#[inline]
+unsafe fn nss_set_h_errnop_host_not_found(h_errnop: *mut c_int) {
+    if !h_errnop.is_null() {
+        // SAFETY: caller-supplied writable slot per NSS contract.
+        unsafe { *h_errnop = 1 }; // HOST_NOT_FOUND
+    }
+}
+
+/// `_nss_dns_getcanonname_r(name, *buffer, buflen, **result,
+/// *errnop, *h_errnop) -> nss_status` — return canonical name for
+/// `name`. Stub: NOTFOUND + h_errno = HOST_NOT_FOUND.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_dns_getcanonname_r(
+    _name: *const c_char,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    _result: *mut *mut c_char,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_dns_gethostbyname_r(
+    _name: *const c_char,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_dns_gethostbyname2_r(
+    _name: *const c_char,
+    _af: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_dns_gethostbyname3_r(
+    _name: *const c_char,
+    _af: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+    _ttlp: *mut i32,
+    _canonp: *mut *mut c_char,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_dns_gethostbyname4_r(
+    _name: *const c_char,
+    _pat: *mut *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+    _ttlp: *mut i32,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_dns_gethostbyaddr_r(
+    _addr: *const c_void,
+    _len: usize,
+    _af: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn _nss_dns_gethostbyaddr2_r(
+    _addr: *const c_void,
+    _len: usize,
+    _af: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+    _ttlp: *mut i32,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_dns_getnetbyname_r(
+    _name: *const c_char,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _nss_dns_getnetbyaddr_r(
+    _net: u32,
+    _af: c_int,
+    _result: *mut c_void,
+    _buffer: *mut c_char,
+    _buflen: usize,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> c_int {
+    unsafe { nss_set_errnop_enoent(errnop) };
+    unsafe { nss_set_h_errnop_host_not_found(h_errnop) };
+    NSS_STATUS_NOTFOUND
+}
+
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
 // moved to frankenlibc_core::crypt. The crypt() entry above dispatches
 // directly to the core impls — no further shim layer needed.
