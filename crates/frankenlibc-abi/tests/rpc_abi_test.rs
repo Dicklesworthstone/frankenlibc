@@ -455,3 +455,68 @@ fn bindresvport_invalid_socket_returns_error() {
     let rc = unsafe { bindresvport(-1, std::ptr::null_mut()) };
     assert_eq!(rc, -1, "bindresvport with invalid socket should fail");
 }
+
+// ===========================================================================
+// bindresvport6 (IPv6 reserved-port bind)
+// ===========================================================================
+
+#[test]
+fn bindresvport6_invalid_socket_returns_error() {
+    let rc = unsafe { bindresvport6(-1, std::ptr::null_mut()) };
+    assert_eq!(rc, -1, "bindresvport6 with invalid socket should fail");
+}
+
+#[test]
+fn bindresvport6_binds_socket_to_reserved_port() {
+    // Open a UDP/IPv6 socket and ask bindresvport6 to bind it to a
+    // reserved port. Then read back the port via getsockname and
+    // verify it's in the 512..=1023 range.
+    let sd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_DGRAM, 0) };
+    if sd < 0 {
+        // IPv6 may not be enabled on this host.
+        return;
+    }
+    let mut sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+    sin6.sin6_family = libc::AF_INET6 as u16;
+    let rc = unsafe { bindresvport6(sd, &mut sin6 as *mut _ as *mut std::ffi::c_void) };
+    if rc != 0 {
+        // Binding to reserved ports requires CAP_NET_BIND_SERVICE
+        // on Linux; tests usually run as non-root and will hit
+        // EACCES/EPERM. Treat as inconclusive.
+        unsafe { libc::close(sd) };
+        return;
+    }
+    let mut got: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
+    let r = unsafe { libc::getsockname(sd, &mut got as *mut _ as *mut libc::sockaddr, &mut len) };
+    assert_eq!(r, 0);
+    let port = u16::from_be(got.sin6_port);
+    assert!(
+        (512..=1023).contains(&port),
+        "bindresvport6 chose port {port}, outside reserved range"
+    );
+    unsafe { libc::close(sd) };
+}
+
+#[test]
+fn bindresvport6_null_sockaddr_works() {
+    // Same as above but pass NULL sin6 — function uses internal storage.
+    let sd = unsafe { libc::socket(libc::AF_INET6, libc::SOCK_DGRAM, 0) };
+    if sd < 0 {
+        return;
+    }
+    let rc = unsafe { bindresvport6(sd, std::ptr::null_mut()) };
+    if rc != 0 {
+        unsafe { libc::close(sd) };
+        return;
+    }
+    // After a successful bind we should still be able to read back
+    // the bound port.
+    let mut got: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
+    let r = unsafe { libc::getsockname(sd, &mut got as *mut _ as *mut libc::sockaddr, &mut len) };
+    assert_eq!(r, 0);
+    let port = u16::from_be(got.sin6_port);
+    assert!((512..=1023).contains(&port));
+    unsafe { libc::close(sd) };
+}

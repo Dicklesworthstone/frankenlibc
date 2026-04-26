@@ -3269,6 +3269,55 @@ pub unsafe extern "C" fn bindresvport(sd: c_int, sin: *mut c_void) -> c_int {
     -1
 }
 
+/// Bind a socket to a reserved IPv6 port (512..1023). IPv6
+/// companion to [`bindresvport`]. Tries ports in a
+/// process-id-rotated order until one binds successfully. If
+/// `sin6` is NULL, an in6addr_any sockaddr_in6 is synthesized.
+/// Returns 0 on success, -1 on failure with errno set
+/// (EADDRINUSE if no reserved port is available).
+///
+/// # Safety
+///
+/// `sin6` must be NULL or point to a valid `struct sockaddr_in6`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn bindresvport6(sd: c_int, sin6: *mut c_void) -> c_int {
+    let mut local_sin6: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+    let sa: *mut libc::sockaddr_in6 = if sin6.is_null() {
+        local_sin6.sin6_family = libc::AF_INET6 as u16;
+        // sin6_addr is already zero (in6addr_any) from the zeroed init.
+        &mut local_sin6
+    } else {
+        sin6.cast()
+    };
+
+    let pid = raw_syscall::sys_getpid() as u16;
+    let start = 600 + (pid % 424); // range [600, 1023]
+
+    for i in 0..512 {
+        let port = 512 + ((start as u32 + i as u32) % 512) as u16;
+        unsafe {
+            (*sa).sin6_port = port.to_be();
+        }
+        match unsafe {
+            raw_syscall::sys_bind(
+                sd,
+                (sa as *const libc::sockaddr_in6).cast::<u8>(),
+                std::mem::size_of::<libc::sockaddr_in6>() as u32,
+            )
+        } {
+            Ok(()) => return 0,
+            Err(err) => {
+                if err != libc::EADDRINUSE {
+                    unsafe { set_abi_errno(err) };
+                    return -1;
+                }
+            }
+        }
+    }
+    unsafe { set_abi_errno(libc::EADDRINUSE) };
+    -1
+}
+
 // --- rpc_createerr: this is a thread-local struct in glibc. The
 //     __rpc_thread_createerr() accessor above returns a pointer to it.
 //     Direct symbol interposition of the variable is not needed because
