@@ -4,9 +4,9 @@
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "summary": {
     "tracked_symbols": 3996,
-    "total_edge_cases": 1521,
+    "total_edge_cases": 1633,
     "errno_cases": 177,
-    "covered_edge_cases": 1521,
+    "covered_edge_cases": 1633,
     "failing_edge_cases": 0,
     "execution_error_cases": 0,
     "missing_execution_cases": 0,
@@ -16026,6 +16026,60 @@
     },
     {
       "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_uc::hardened::stdc_bit_ceil_uc_zero",
+      "symbol": "stdc_bit_ceil_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_ceil_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.14",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_uc::hardened::stdc_bit_ceil_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_ceil_uc_zero' for 'stdc_bit_ceil_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_uc::hardened::stdc_bit_ceil_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_uc::strict::stdc_bit_ceil_uc_zero",
+      "symbol": "stdc_bit_ceil_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_ceil_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.14",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_uc::strict::stdc_bit_ceil_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_ceil_uc_zero' for 'stdc_bit_ceil_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_uc::strict::stdc_bit_ceil_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
       "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_ui::hardened::stdc_bit_ceil_ui_zero",
       "symbol": "stdc_bit_ceil_ui",
       "symbol_family": "stdbit/ops",
@@ -16184,6 +16238,114 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_bit_ceil_ull_zero' for 'stdc_bit_ceil_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_ull::strict::stdc_bit_ceil_ull_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_us::hardened::stdc_bit_ceil_us_zero",
+      "symbol": "stdc_bit_ceil_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_ceil_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.14",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_us::hardened::stdc_bit_ceil_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_ceil_us_zero' for 'stdc_bit_ceil_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_us::hardened::stdc_bit_ceil_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_us::strict::stdc_bit_ceil_us_zero",
+      "symbol": "stdc_bit_ceil_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_ceil_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.14",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_us::strict::stdc_bit_ceil_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_ceil_us_zero' for 'stdc_bit_ceil_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_us::strict::stdc_bit_ceil_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_uc::hardened::stdc_bit_floor_uc_zero",
+      "symbol": "stdc_bit_floor_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_floor_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.13",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_uc::hardened::stdc_bit_floor_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_floor_uc_zero' for 'stdc_bit_floor_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_uc::hardened::stdc_bit_floor_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_uc::strict::stdc_bit_floor_uc_zero",
+      "symbol": "stdc_bit_floor_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_floor_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.13",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_uc::strict::stdc_bit_floor_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_floor_uc_zero' for 'stdc_bit_floor_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_uc::strict::stdc_bit_floor_uc_zero."
       ]
     },
     {
@@ -16350,6 +16512,114 @@
     },
     {
       "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_us::hardened::stdc_bit_floor_us_zero",
+      "symbol": "stdc_bit_floor_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_floor_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.13",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_us::hardened::stdc_bit_floor_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_floor_us_zero' for 'stdc_bit_floor_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_us::hardened::stdc_bit_floor_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_us::strict::stdc_bit_floor_us_zero",
+      "symbol": "stdc_bit_floor_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_floor_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.13",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_us::strict::stdc_bit_floor_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_floor_us_zero' for 'stdc_bit_floor_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_us::strict::stdc_bit_floor_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_uc::hardened::stdc_bit_width_uc_zero",
+      "symbol": "stdc_bit_width_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_width_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.12",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_uc::hardened::stdc_bit_width_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_width_uc_zero' for 'stdc_bit_width_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_uc::hardened::stdc_bit_width_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_uc::strict::stdc_bit_width_uc_zero",
+      "symbol": "stdc_bit_width_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_width_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.12",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_uc::strict::stdc_bit_width_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_width_uc_zero' for 'stdc_bit_width_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_uc::strict::stdc_bit_width_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
       "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_ui::hardened::stdc_bit_width_ui_zero",
       "symbol": "stdc_bit_width_ui",
       "symbol_family": "stdbit/ops",
@@ -16512,6 +16782,114 @@
     },
     {
       "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_us::hardened::stdc_bit_width_us_zero",
+      "symbol": "stdc_bit_width_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_width_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.12",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_us::hardened::stdc_bit_width_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_width_us_zero' for 'stdc_bit_width_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_us::hardened::stdc_bit_width_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_us::strict::stdc_bit_width_us_zero",
+      "symbol": "stdc_bit_width_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_width_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.12",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_us::strict::stdc_bit_width_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_width_us_zero' for 'stdc_bit_width_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_us::strict::stdc_bit_width_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_uc::hardened::stdc_count_ones_uc_zero",
+      "symbol": "stdc_count_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_count_ones_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.9",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_uc::hardened::stdc_count_ones_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_ones_uc_zero' for 'stdc_count_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_uc::hardened::stdc_count_ones_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_uc::strict::stdc_count_ones_uc_zero",
+      "symbol": "stdc_count_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_count_ones_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.9",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_uc::strict::stdc_count_ones_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_ones_uc_zero' for 'stdc_count_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_uc::strict::stdc_count_ones_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
       "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_ui::hardened::stdc_count_ones_ui_zero",
       "symbol": "stdc_count_ones_ui",
       "symbol_family": "stdbit/ops",
@@ -16670,6 +17048,168 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_count_ones_ull_zero' for 'stdc_count_ones_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_ull::strict::stdc_count_ones_ull_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_us::hardened::stdc_count_ones_us_zero",
+      "symbol": "stdc_count_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_count_ones_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.9",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_us::hardened::stdc_count_ones_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_ones_us_zero' for 'stdc_count_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_us::hardened::stdc_count_ones_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_us::strict::stdc_count_ones_us_zero",
+      "symbol": "stdc_count_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_count_ones_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.9",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_us::strict::stdc_count_ones_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_ones_us_zero' for 'stdc_count_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_us::strict::stdc_count_ones_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_uc::hardened::stdc_count_zeros_uc_sparse",
+      "symbol": "stdc_count_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_count_zeros_uc_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.10",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_uc::hardened::stdc_count_zeros_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_zeros_uc_sparse' for 'stdc_count_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_uc::hardened::stdc_count_zeros_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_uc::strict::stdc_count_zeros_uc_sparse",
+      "symbol": "stdc_count_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_count_zeros_uc_sparse [strict]",
+      "spec_section": "C23 7.18a.4.10",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_uc::strict::stdc_count_zeros_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_zeros_uc_sparse' for 'stdc_count_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_uc::strict::stdc_count_zeros_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_uc::hardened::stdc_count_zeros_uc_zero",
+      "symbol": "stdc_count_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_count_zeros_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.10",
+      "edge_class": "boundary",
+      "expected_output": "8",
+      "actual_output": "8",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 8,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_uc::hardened::stdc_count_zeros_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_zeros_uc_zero' for 'stdc_count_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_uc::hardened::stdc_count_zeros_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_uc::strict::stdc_count_zeros_uc_zero",
+      "symbol": "stdc_count_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_count_zeros_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.10",
+      "edge_class": "boundary",
+      "expected_output": "8",
+      "actual_output": "8",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 8,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_uc::strict::stdc_count_zeros_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_zeros_uc_zero' for 'stdc_count_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_uc::strict::stdc_count_zeros_uc_zero."
       ]
     },
     {
@@ -16998,6 +17538,168 @@
     },
     {
       "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_us::hardened::stdc_count_zeros_us_sparse",
+      "symbol": "stdc_count_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_count_zeros_us_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.10",
+      "edge_class": "boundary",
+      "expected_output": "11",
+      "actual_output": "11",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 11,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_us::hardened::stdc_count_zeros_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_zeros_us_sparse' for 'stdc_count_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_us::hardened::stdc_count_zeros_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_us::strict::stdc_count_zeros_us_sparse",
+      "symbol": "stdc_count_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_count_zeros_us_sparse [strict]",
+      "spec_section": "C23 7.18a.4.10",
+      "edge_class": "boundary",
+      "expected_output": "11",
+      "actual_output": "11",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 11,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_us::strict::stdc_count_zeros_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_zeros_us_sparse' for 'stdc_count_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_us::strict::stdc_count_zeros_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_us::hardened::stdc_count_zeros_us_zero",
+      "symbol": "stdc_count_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_count_zeros_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.10",
+      "edge_class": "boundary",
+      "expected_output": "16",
+      "actual_output": "16",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 16,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_us::hardened::stdc_count_zeros_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_zeros_us_zero' for 'stdc_count_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_us::hardened::stdc_count_zeros_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_zeros_us::strict::stdc_count_zeros_us_zero",
+      "symbol": "stdc_count_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_count_zeros_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.10",
+      "edge_class": "boundary",
+      "expected_output": "16",
+      "actual_output": "16",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 16,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_us::strict::stdc_count_zeros_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_zeros_us_zero' for 'stdc_count_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_zeros_us::strict::stdc_count_zeros_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_uc::hardened::stdc_first_leading_one_uc_zero",
+      "symbol": "stdc_first_leading_one_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_leading_one_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.6",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_uc::hardened::stdc_first_leading_one_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_one_uc_zero' for 'stdc_first_leading_one_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_uc::hardened::stdc_first_leading_one_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_uc::strict::stdc_first_leading_one_uc_zero",
+      "symbol": "stdc_first_leading_one_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_leading_one_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.6",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_uc::strict::stdc_first_leading_one_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_one_uc_zero' for 'stdc_first_leading_one_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_uc::strict::stdc_first_leading_one_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
       "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_ui::hardened::stdc_first_leading_one_ui_zero",
       "symbol": "stdc_first_leading_one_ui",
       "symbol_family": "stdbit/ops",
@@ -17156,6 +17858,168 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_first_leading_one_ull_zero' for 'stdc_first_leading_one_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_ull::strict::stdc_first_leading_one_ull_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_us::hardened::stdc_first_leading_one_us_zero",
+      "symbol": "stdc_first_leading_one_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_leading_one_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.6",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_us::hardened::stdc_first_leading_one_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_one_us_zero' for 'stdc_first_leading_one_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_us::hardened::stdc_first_leading_one_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_us::strict::stdc_first_leading_one_us_zero",
+      "symbol": "stdc_first_leading_one_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_leading_one_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.6",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_us::strict::stdc_first_leading_one_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_one_us_zero' for 'stdc_first_leading_one_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_us::strict::stdc_first_leading_one_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::hardened::stdc_first_leading_zero_uc_top_nibble",
+      "symbol": "stdc_first_leading_zero_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_leading_zero_uc_top_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.5",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::hardened::stdc_first_leading_zero_uc_top_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_zero_uc_top_nibble' for 'stdc_first_leading_zero_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::hardened::stdc_first_leading_zero_uc_top_nibble."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::strict::stdc_first_leading_zero_uc_top_nibble",
+      "symbol": "stdc_first_leading_zero_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_leading_zero_uc_top_nibble [strict]",
+      "spec_section": "C23 7.18a.4.5",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::strict::stdc_first_leading_zero_uc_top_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_zero_uc_top_nibble' for 'stdc_first_leading_zero_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::strict::stdc_first_leading_zero_uc_top_nibble."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::hardened::stdc_first_leading_zero_uc_zero",
+      "symbol": "stdc_first_leading_zero_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_leading_zero_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.5",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::hardened::stdc_first_leading_zero_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_zero_uc_zero' for 'stdc_first_leading_zero_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::hardened::stdc_first_leading_zero_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::strict::stdc_first_leading_zero_uc_zero",
+      "symbol": "stdc_first_leading_zero_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_leading_zero_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.5",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::strict::stdc_first_leading_zero_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_zero_uc_zero' for 'stdc_first_leading_zero_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_uc::strict::stdc_first_leading_zero_uc_zero."
       ]
     },
     {
@@ -17484,6 +18348,168 @@
     },
     {
       "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_us::hardened::stdc_first_leading_zero_us_top_nibble",
+      "symbol": "stdc_first_leading_zero_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_leading_zero_us_top_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.5",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_us::hardened::stdc_first_leading_zero_us_top_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_zero_us_top_nibble' for 'stdc_first_leading_zero_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_us::hardened::stdc_first_leading_zero_us_top_nibble."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_us::strict::stdc_first_leading_zero_us_top_nibble",
+      "symbol": "stdc_first_leading_zero_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_leading_zero_us_top_nibble [strict]",
+      "spec_section": "C23 7.18a.4.5",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_us::strict::stdc_first_leading_zero_us_top_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_zero_us_top_nibble' for 'stdc_first_leading_zero_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_us::strict::stdc_first_leading_zero_us_top_nibble."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_us::hardened::stdc_first_leading_zero_us_zero",
+      "symbol": "stdc_first_leading_zero_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_leading_zero_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.5",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_us::hardened::stdc_first_leading_zero_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_zero_us_zero' for 'stdc_first_leading_zero_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_us::hardened::stdc_first_leading_zero_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_zero_us::strict::stdc_first_leading_zero_us_zero",
+      "symbol": "stdc_first_leading_zero_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_leading_zero_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.5",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_us::strict::stdc_first_leading_zero_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_zero_us_zero' for 'stdc_first_leading_zero_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_zero_us::strict::stdc_first_leading_zero_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::hardened::stdc_first_trailing_one_uc_zero",
+      "symbol": "stdc_first_trailing_one_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_trailing_one_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.8",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::hardened::stdc_first_trailing_one_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_one_uc_zero' for 'stdc_first_trailing_one_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::hardened::stdc_first_trailing_one_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::strict::stdc_first_trailing_one_uc_zero",
+      "symbol": "stdc_first_trailing_one_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_trailing_one_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.8",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::strict::stdc_first_trailing_one_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_one_uc_zero' for 'stdc_first_trailing_one_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::strict::stdc_first_trailing_one_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
       "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_ui::hardened::stdc_first_trailing_one_ui_zero",
       "symbol": "stdc_first_trailing_one_ui",
       "symbol_family": "stdbit/ops",
@@ -17642,6 +18668,168 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_first_trailing_one_ull_zero' for 'stdc_first_trailing_one_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_ull::strict::stdc_first_trailing_one_ull_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_us::hardened::stdc_first_trailing_one_us_zero",
+      "symbol": "stdc_first_trailing_one_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_trailing_one_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.8",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_us::hardened::stdc_first_trailing_one_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_one_us_zero' for 'stdc_first_trailing_one_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_us::hardened::stdc_first_trailing_one_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_us::strict::stdc_first_trailing_one_us_zero",
+      "symbol": "stdc_first_trailing_one_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_trailing_one_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.8",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_us::strict::stdc_first_trailing_one_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_one_us_zero' for 'stdc_first_trailing_one_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_us::strict::stdc_first_trailing_one_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::hardened::stdc_first_trailing_zero_uc_low_nibble",
+      "symbol": "stdc_first_trailing_zero_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_trailing_zero_uc_low_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.7",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::hardened::stdc_first_trailing_zero_uc_low_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_zero_uc_low_nibble' for 'stdc_first_trailing_zero_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::hardened::stdc_first_trailing_zero_uc_low_nibble."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::strict::stdc_first_trailing_zero_uc_low_nibble",
+      "symbol": "stdc_first_trailing_zero_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_trailing_zero_uc_low_nibble [strict]",
+      "spec_section": "C23 7.18a.4.7",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::strict::stdc_first_trailing_zero_uc_low_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_zero_uc_low_nibble' for 'stdc_first_trailing_zero_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::strict::stdc_first_trailing_zero_uc_low_nibble."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::hardened::stdc_first_trailing_zero_uc_zero",
+      "symbol": "stdc_first_trailing_zero_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_trailing_zero_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.7",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::hardened::stdc_first_trailing_zero_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_zero_uc_zero' for 'stdc_first_trailing_zero_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::hardened::stdc_first_trailing_zero_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::strict::stdc_first_trailing_zero_uc_zero",
+      "symbol": "stdc_first_trailing_zero_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_trailing_zero_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.7",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::strict::stdc_first_trailing_zero_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_zero_uc_zero' for 'stdc_first_trailing_zero_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_uc::strict::stdc_first_trailing_zero_uc_zero."
       ]
     },
     {
@@ -17970,6 +19158,168 @@
     },
     {
       "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::hardened::stdc_first_trailing_zero_us_low_nibble",
+      "symbol": "stdc_first_trailing_zero_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_trailing_zero_us_low_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.7",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::hardened::stdc_first_trailing_zero_us_low_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_zero_us_low_nibble' for 'stdc_first_trailing_zero_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::hardened::stdc_first_trailing_zero_us_low_nibble."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::strict::stdc_first_trailing_zero_us_low_nibble",
+      "symbol": "stdc_first_trailing_zero_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_trailing_zero_us_low_nibble [strict]",
+      "spec_section": "C23 7.18a.4.7",
+      "edge_class": "boundary",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::strict::stdc_first_trailing_zero_us_low_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_zero_us_low_nibble' for 'stdc_first_trailing_zero_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::strict::stdc_first_trailing_zero_us_low_nibble."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::hardened::stdc_first_trailing_zero_us_zero",
+      "symbol": "stdc_first_trailing_zero_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_trailing_zero_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.7",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::hardened::stdc_first_trailing_zero_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_zero_us_zero' for 'stdc_first_trailing_zero_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::hardened::stdc_first_trailing_zero_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::strict::stdc_first_trailing_zero_us_zero",
+      "symbol": "stdc_first_trailing_zero_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_trailing_zero_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.7",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::strict::stdc_first_trailing_zero_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_zero_us_zero' for 'stdc_first_trailing_zero_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_zero_us::strict::stdc_first_trailing_zero_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_uc::hardened::stdc_has_single_bit_uc_zero",
+      "symbol": "stdc_has_single_bit_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_has_single_bit_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.11",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_uc::hardened::stdc_has_single_bit_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_has_single_bit_uc_zero' for 'stdc_has_single_bit_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_uc::hardened::stdc_has_single_bit_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_uc::strict::stdc_has_single_bit_uc_zero",
+      "symbol": "stdc_has_single_bit_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_has_single_bit_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.11",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_uc::strict::stdc_has_single_bit_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_has_single_bit_uc_zero' for 'stdc_has_single_bit_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_uc::strict::stdc_has_single_bit_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
       "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_ui::hardened::stdc_has_single_bit_ui_zero",
       "symbol": "stdc_has_single_bit_ui",
       "symbol_family": "stdbit/ops",
@@ -18132,6 +19482,114 @@
     },
     {
       "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_us::hardened::stdc_has_single_bit_us_zero",
+      "symbol": "stdc_has_single_bit_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_has_single_bit_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.11",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_us::hardened::stdc_has_single_bit_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_has_single_bit_us_zero' for 'stdc_has_single_bit_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_us::hardened::stdc_has_single_bit_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_us::strict::stdc_has_single_bit_us_zero",
+      "symbol": "stdc_has_single_bit_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_has_single_bit_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.11",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_us::strict::stdc_has_single_bit_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_has_single_bit_us_zero' for 'stdc_has_single_bit_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_us::strict::stdc_has_single_bit_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_uc::hardened::stdc_leading_ones_uc_zero",
+      "symbol": "stdc_leading_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_leading_ones_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.2",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_uc::hardened::stdc_leading_ones_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_ones_uc_zero' for 'stdc_leading_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_uc::hardened::stdc_leading_ones_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_uc::strict::stdc_leading_ones_uc_zero",
+      "symbol": "stdc_leading_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_leading_ones_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.2",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_uc::strict::stdc_leading_ones_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_ones_uc_zero' for 'stdc_leading_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_uc::strict::stdc_leading_ones_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
       "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_ui::hardened::stdc_leading_ones_ui_zero",
       "symbol": "stdc_leading_ones_ui",
       "symbol_family": "stdbit/ops",
@@ -18290,6 +19748,168 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_leading_ones_ull_zero' for 'stdc_leading_ones_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_ull::strict::stdc_leading_ones_ull_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_us::hardened::stdc_leading_ones_us_zero",
+      "symbol": "stdc_leading_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_leading_ones_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.2",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_us::hardened::stdc_leading_ones_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_ones_us_zero' for 'stdc_leading_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_us::hardened::stdc_leading_ones_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_us::strict::stdc_leading_ones_us_zero",
+      "symbol": "stdc_leading_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_leading_ones_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.2",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_us::strict::stdc_leading_ones_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_ones_us_zero' for 'stdc_leading_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_us::strict::stdc_leading_ones_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_uc::hardened::stdc_leading_zeros_uc_sparse",
+      "symbol": "stdc_leading_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_leading_zeros_uc_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.1",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_uc::hardened::stdc_leading_zeros_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_zeros_uc_sparse' for 'stdc_leading_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_uc::hardened::stdc_leading_zeros_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_uc::strict::stdc_leading_zeros_uc_sparse",
+      "symbol": "stdc_leading_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_leading_zeros_uc_sparse [strict]",
+      "spec_section": "C23 7.18a.4.1",
+      "edge_class": "boundary",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_uc::strict::stdc_leading_zeros_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_zeros_uc_sparse' for 'stdc_leading_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_uc::strict::stdc_leading_zeros_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_uc::hardened::stdc_leading_zeros_uc_zero",
+      "symbol": "stdc_leading_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_leading_zeros_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.1",
+      "edge_class": "boundary",
+      "expected_output": "8",
+      "actual_output": "8",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 8,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_uc::hardened::stdc_leading_zeros_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_zeros_uc_zero' for 'stdc_leading_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_uc::hardened::stdc_leading_zeros_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_uc::strict::stdc_leading_zeros_uc_zero",
+      "symbol": "stdc_leading_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_leading_zeros_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.1",
+      "edge_class": "boundary",
+      "expected_output": "8",
+      "actual_output": "8",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 8,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_uc::strict::stdc_leading_zeros_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_zeros_uc_zero' for 'stdc_leading_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_uc::strict::stdc_leading_zeros_uc_zero."
       ]
     },
     {
@@ -18618,6 +20238,168 @@
     },
     {
       "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_us::hardened::stdc_leading_zeros_us_sparse",
+      "symbol": "stdc_leading_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_leading_zeros_us_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.1",
+      "edge_class": "boundary",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_us::hardened::stdc_leading_zeros_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_zeros_us_sparse' for 'stdc_leading_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_us::hardened::stdc_leading_zeros_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_us::strict::stdc_leading_zeros_us_sparse",
+      "symbol": "stdc_leading_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_leading_zeros_us_sparse [strict]",
+      "spec_section": "C23 7.18a.4.1",
+      "edge_class": "boundary",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_us::strict::stdc_leading_zeros_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_zeros_us_sparse' for 'stdc_leading_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_us::strict::stdc_leading_zeros_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_us::hardened::stdc_leading_zeros_us_zero",
+      "symbol": "stdc_leading_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_leading_zeros_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.1",
+      "edge_class": "boundary",
+      "expected_output": "16",
+      "actual_output": "16",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 16,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_us::hardened::stdc_leading_zeros_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_zeros_us_zero' for 'stdc_leading_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_us::hardened::stdc_leading_zeros_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_zeros_us::strict::stdc_leading_zeros_us_zero",
+      "symbol": "stdc_leading_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_leading_zeros_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.1",
+      "edge_class": "boundary",
+      "expected_output": "16",
+      "actual_output": "16",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 16,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_us::strict::stdc_leading_zeros_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_zeros_us_zero' for 'stdc_leading_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_zeros_us::strict::stdc_leading_zeros_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_uc::hardened::stdc_trailing_ones_uc_zero",
+      "symbol": "stdc_trailing_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_trailing_ones_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.4",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_uc::hardened::stdc_trailing_ones_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_ones_uc_zero' for 'stdc_trailing_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_uc::hardened::stdc_trailing_ones_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_uc::strict::stdc_trailing_ones_uc_zero",
+      "symbol": "stdc_trailing_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_trailing_ones_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.4",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_uc::strict::stdc_trailing_ones_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_ones_uc_zero' for 'stdc_trailing_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_uc::strict::stdc_trailing_ones_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
       "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_ui::hardened::stdc_trailing_ones_ui_zero",
       "symbol": "stdc_trailing_ones_ui",
       "symbol_family": "stdbit/ops",
@@ -18776,6 +20558,168 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_trailing_ones_ull_zero' for 'stdc_trailing_ones_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_ull::strict::stdc_trailing_ones_ull_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_us::hardened::stdc_trailing_ones_us_zero",
+      "symbol": "stdc_trailing_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_trailing_ones_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.4",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_us::hardened::stdc_trailing_ones_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_ones_us_zero' for 'stdc_trailing_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_us::hardened::stdc_trailing_ones_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_us::strict::stdc_trailing_ones_us_zero",
+      "symbol": "stdc_trailing_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_trailing_ones_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.4",
+      "edge_class": "boundary",
+      "expected_output": "0",
+      "actual_output": "0",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 0,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_us::strict::stdc_trailing_ones_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_ones_us_zero' for 'stdc_trailing_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_us::strict::stdc_trailing_ones_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::hardened::stdc_trailing_zeros_uc_shifted",
+      "symbol": "stdc_trailing_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_trailing_zeros_uc_shifted [hardened]",
+      "spec_section": "C23 7.18a.4.3",
+      "edge_class": "boundary",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::hardened::stdc_trailing_zeros_uc_shifted",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_zeros_uc_shifted' for 'stdc_trailing_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::hardened::stdc_trailing_zeros_uc_shifted."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::strict::stdc_trailing_zeros_uc_shifted",
+      "symbol": "stdc_trailing_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_trailing_zeros_uc_shifted [strict]",
+      "spec_section": "C23 7.18a.4.3",
+      "edge_class": "boundary",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::strict::stdc_trailing_zeros_uc_shifted",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_zeros_uc_shifted' for 'stdc_trailing_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::strict::stdc_trailing_zeros_uc_shifted."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::hardened::stdc_trailing_zeros_uc_zero",
+      "symbol": "stdc_trailing_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_trailing_zeros_uc_zero [hardened]",
+      "spec_section": "C23 7.18a.4.3",
+      "edge_class": "boundary",
+      "expected_output": "8",
+      "actual_output": "8",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 8,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::hardened::stdc_trailing_zeros_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_zeros_uc_zero' for 'stdc_trailing_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::hardened::stdc_trailing_zeros_uc_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::strict::stdc_trailing_zeros_uc_zero",
+      "symbol": "stdc_trailing_zeros_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_trailing_zeros_uc_zero [strict]",
+      "spec_section": "C23 7.18a.4.3",
+      "edge_class": "boundary",
+      "expected_output": "8",
+      "actual_output": "8",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 8,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::strict::stdc_trailing_zeros_uc_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_zeros_uc_zero' for 'stdc_trailing_zeros_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_uc::strict::stdc_trailing_zeros_uc_zero."
       ]
     },
     {
@@ -19100,6 +21044,114 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_trailing_zeros_ull_zero' for 'stdc_trailing_zeros_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_ull::strict::stdc_trailing_zeros_ull_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_us::hardened::stdc_trailing_zeros_us_shifted",
+      "symbol": "stdc_trailing_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_trailing_zeros_us_shifted [hardened]",
+      "spec_section": "C23 7.18a.4.3",
+      "edge_class": "boundary",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_us::hardened::stdc_trailing_zeros_us_shifted",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_zeros_us_shifted' for 'stdc_trailing_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_us::hardened::stdc_trailing_zeros_us_shifted."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_us::strict::stdc_trailing_zeros_us_shifted",
+      "symbol": "stdc_trailing_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_trailing_zeros_us_shifted [strict]",
+      "spec_section": "C23 7.18a.4.3",
+      "edge_class": "boundary",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_us::strict::stdc_trailing_zeros_us_shifted",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_zeros_us_shifted' for 'stdc_trailing_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_us::strict::stdc_trailing_zeros_us_shifted."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_us::hardened::stdc_trailing_zeros_us_zero",
+      "symbol": "stdc_trailing_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_trailing_zeros_us_zero [hardened]",
+      "spec_section": "C23 7.18a.4.3",
+      "edge_class": "boundary",
+      "expected_output": "16",
+      "actual_output": "16",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 16,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_us::hardened::stdc_trailing_zeros_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_zeros_us_zero' for 'stdc_trailing_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_us::hardened::stdc_trailing_zeros_us_zero."
+      ]
+    },
+    {
+      "priority_score": 5,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_zeros_us::strict::stdc_trailing_zeros_us_zero",
+      "symbol": "stdc_trailing_zeros_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_trailing_zeros_us_zero [strict]",
+      "spec_section": "C23 7.18a.4.3",
+      "edge_class": "boundary",
+      "expected_output": "16",
+      "actual_output": "16",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 16,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_us::strict::stdc_trailing_zeros_us_zero",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_zeros_us_zero' for 'stdc_trailing_zeros_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_zeros_us::strict::stdc_trailing_zeros_us_zero."
       ]
     },
     {
@@ -32587,8 +34639,8 @@
       "spec_section": "C11 7.21.6.1 %p width",
       "edge_class": "other_edge",
       "expected_output": "^\\s*0x[0-9a-f]+$",
-      "actual_output": "      0x625667dcb180",
-      "host_output": "      0x625667dcb180",
+      "actual_output": "      0x5e04ac404180",
+      "host_output": "      0x5e04ac404180",
       "expected_errno": 0,
       "actual_errno": null,
       "status": "pass",
@@ -35655,6 +37707,60 @@
     },
     {
       "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_uc::hardened::stdc_bit_ceil_uc_sparse",
+      "symbol": "stdc_bit_ceil_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_ceil_uc_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.14",
+      "edge_class": "other_edge",
+      "expected_output": "128",
+      "actual_output": "128",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 128,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_uc::hardened::stdc_bit_ceil_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_ceil_uc_sparse' for 'stdc_bit_ceil_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_uc::hardened::stdc_bit_ceil_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_uc::strict::stdc_bit_ceil_uc_sparse",
+      "symbol": "stdc_bit_ceil_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_ceil_uc_sparse [strict]",
+      "spec_section": "C23 7.18a.4.14",
+      "edge_class": "other_edge",
+      "expected_output": "128",
+      "actual_output": "128",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 128,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_uc::strict::stdc_bit_ceil_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_ceil_uc_sparse' for 'stdc_bit_ceil_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_uc::strict::stdc_bit_ceil_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
       "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_ui::hardened::stdc_bit_ceil_ui_sparse",
       "symbol": "stdc_bit_ceil_ui",
       "symbol_family": "stdbit/ops",
@@ -35813,6 +37919,114 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_bit_ceil_ull_sparse' for 'stdc_bit_ceil_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_ull::strict::stdc_bit_ceil_ull_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_us::hardened::stdc_bit_ceil_us_sparse",
+      "symbol": "stdc_bit_ceil_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_ceil_us_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.14",
+      "edge_class": "other_edge",
+      "expected_output": "4096",
+      "actual_output": "4096",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4096,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_us::hardened::stdc_bit_ceil_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_ceil_us_sparse' for 'stdc_bit_ceil_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_us::hardened::stdc_bit_ceil_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_ceil_us::strict::stdc_bit_ceil_us_sparse",
+      "symbol": "stdc_bit_ceil_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_ceil_us_sparse [strict]",
+      "spec_section": "C23 7.18a.4.14",
+      "edge_class": "other_edge",
+      "expected_output": "4096",
+      "actual_output": "4096",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4096,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_us::strict::stdc_bit_ceil_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_ceil_us_sparse' for 'stdc_bit_ceil_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_ceil_us::strict::stdc_bit_ceil_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_uc::hardened::stdc_bit_floor_uc_sparse",
+      "symbol": "stdc_bit_floor_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_floor_uc_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.13",
+      "edge_class": "other_edge",
+      "expected_output": "64",
+      "actual_output": "64",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 64,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_uc::hardened::stdc_bit_floor_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_floor_uc_sparse' for 'stdc_bit_floor_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_uc::hardened::stdc_bit_floor_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_uc::strict::stdc_bit_floor_uc_sparse",
+      "symbol": "stdc_bit_floor_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_floor_uc_sparse [strict]",
+      "spec_section": "C23 7.18a.4.13",
+      "edge_class": "other_edge",
+      "expected_output": "64",
+      "actual_output": "64",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 64,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_uc::strict::stdc_bit_floor_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_floor_uc_sparse' for 'stdc_bit_floor_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_uc::strict::stdc_bit_floor_uc_sparse."
       ]
     },
     {
@@ -35979,6 +38193,114 @@
     },
     {
       "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_us::hardened::stdc_bit_floor_us_sparse",
+      "symbol": "stdc_bit_floor_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_floor_us_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.13",
+      "edge_class": "other_edge",
+      "expected_output": "2048",
+      "actual_output": "2048",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 2048,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_us::hardened::stdc_bit_floor_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_floor_us_sparse' for 'stdc_bit_floor_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_us::hardened::stdc_bit_floor_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_floor_us::strict::stdc_bit_floor_us_sparse",
+      "symbol": "stdc_bit_floor_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_floor_us_sparse [strict]",
+      "spec_section": "C23 7.18a.4.13",
+      "edge_class": "other_edge",
+      "expected_output": "2048",
+      "actual_output": "2048",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 2048,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_us::strict::stdc_bit_floor_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_floor_us_sparse' for 'stdc_bit_floor_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_floor_us::strict::stdc_bit_floor_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_uc::hardened::stdc_bit_width_uc_sparse",
+      "symbol": "stdc_bit_width_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_width_uc_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.12",
+      "edge_class": "other_edge",
+      "expected_output": "7",
+      "actual_output": "7",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 7,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_uc::hardened::stdc_bit_width_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_width_uc_sparse' for 'stdc_bit_width_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_uc::hardened::stdc_bit_width_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_uc::strict::stdc_bit_width_uc_sparse",
+      "symbol": "stdc_bit_width_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_width_uc_sparse [strict]",
+      "spec_section": "C23 7.18a.4.12",
+      "edge_class": "other_edge",
+      "expected_output": "7",
+      "actual_output": "7",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 7,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_uc::strict::stdc_bit_width_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_width_uc_sparse' for 'stdc_bit_width_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_uc::strict::stdc_bit_width_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
       "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_ui::hardened::stdc_bit_width_ui_sparse",
       "symbol": "stdc_bit_width_ui",
       "symbol_family": "stdbit/ops",
@@ -36137,6 +38459,114 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_bit_width_ull_sparse' for 'stdc_bit_width_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_ull::strict::stdc_bit_width_ull_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_us::hardened::stdc_bit_width_us_sparse",
+      "symbol": "stdc_bit_width_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_bit_width_us_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.12",
+      "edge_class": "other_edge",
+      "expected_output": "12",
+      "actual_output": "12",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 12,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_us::hardened::stdc_bit_width_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_width_us_sparse' for 'stdc_bit_width_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_us::hardened::stdc_bit_width_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_bit_width_us::strict::stdc_bit_width_us_sparse",
+      "symbol": "stdc_bit_width_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_bit_width_us_sparse [strict]",
+      "spec_section": "C23 7.18a.4.12",
+      "edge_class": "other_edge",
+      "expected_output": "12",
+      "actual_output": "12",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 12,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_us::strict::stdc_bit_width_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_bit_width_us_sparse' for 'stdc_bit_width_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_bit_width_us::strict::stdc_bit_width_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_uc::hardened::stdc_count_ones_uc_sparse",
+      "symbol": "stdc_count_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_count_ones_uc_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.9",
+      "edge_class": "other_edge",
+      "expected_output": "3",
+      "actual_output": "3",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 3,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_uc::hardened::stdc_count_ones_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_ones_uc_sparse' for 'stdc_count_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_uc::hardened::stdc_count_ones_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_uc::strict::stdc_count_ones_uc_sparse",
+      "symbol": "stdc_count_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_count_ones_uc_sparse [strict]",
+      "spec_section": "C23 7.18a.4.9",
+      "edge_class": "other_edge",
+      "expected_output": "3",
+      "actual_output": "3",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 3,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_uc::strict::stdc_count_ones_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_ones_uc_sparse' for 'stdc_count_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_uc::strict::stdc_count_ones_uc_sparse."
       ]
     },
     {
@@ -36303,6 +38733,114 @@
     },
     {
       "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_us::hardened::stdc_count_ones_us_sparse",
+      "symbol": "stdc_count_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_count_ones_us_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.9",
+      "edge_class": "other_edge",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_us::hardened::stdc_count_ones_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_ones_us_sparse' for 'stdc_count_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_us::hardened::stdc_count_ones_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_count_ones_us::strict::stdc_count_ones_us_sparse",
+      "symbol": "stdc_count_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_count_ones_us_sparse [strict]",
+      "spec_section": "C23 7.18a.4.9",
+      "edge_class": "other_edge",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_us::strict::stdc_count_ones_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_count_ones_us_sparse' for 'stdc_count_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_count_ones_us::strict::stdc_count_ones_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_uc::hardened::stdc_first_leading_one_uc_sparse",
+      "symbol": "stdc_first_leading_one_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_leading_one_uc_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.6",
+      "edge_class": "other_edge",
+      "expected_output": "2",
+      "actual_output": "2",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 2,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_uc::hardened::stdc_first_leading_one_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_one_uc_sparse' for 'stdc_first_leading_one_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_uc::hardened::stdc_first_leading_one_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_uc::strict::stdc_first_leading_one_uc_sparse",
+      "symbol": "stdc_first_leading_one_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_leading_one_uc_sparse [strict]",
+      "spec_section": "C23 7.18a.4.6",
+      "edge_class": "other_edge",
+      "expected_output": "2",
+      "actual_output": "2",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 2,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_uc::strict::stdc_first_leading_one_uc_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_one_uc_sparse' for 'stdc_first_leading_one_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_uc::strict::stdc_first_leading_one_uc_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
       "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_ui::hardened::stdc_first_leading_one_ui_sparse",
       "symbol": "stdc_first_leading_one_ui",
       "symbol_family": "stdbit/ops",
@@ -36461,6 +38999,114 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_first_leading_one_ull_sparse' for 'stdc_first_leading_one_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_ull::strict::stdc_first_leading_one_ull_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_us::hardened::stdc_first_leading_one_us_sparse",
+      "symbol": "stdc_first_leading_one_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_leading_one_us_sparse [hardened]",
+      "spec_section": "C23 7.18a.4.6",
+      "edge_class": "other_edge",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_us::hardened::stdc_first_leading_one_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_one_us_sparse' for 'stdc_first_leading_one_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_us::hardened::stdc_first_leading_one_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_leading_one_us::strict::stdc_first_leading_one_us_sparse",
+      "symbol": "stdc_first_leading_one_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_leading_one_us_sparse [strict]",
+      "spec_section": "C23 7.18a.4.6",
+      "edge_class": "other_edge",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_us::strict::stdc_first_leading_one_us_sparse",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_leading_one_us_sparse' for 'stdc_first_leading_one_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_leading_one_us::strict::stdc_first_leading_one_us_sparse."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::hardened::stdc_first_trailing_one_uc_shifted",
+      "symbol": "stdc_first_trailing_one_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_trailing_one_uc_shifted [hardened]",
+      "spec_section": "C23 7.18a.4.8",
+      "edge_class": "other_edge",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::hardened::stdc_first_trailing_one_uc_shifted",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_one_uc_shifted' for 'stdc_first_trailing_one_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::hardened::stdc_first_trailing_one_uc_shifted."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::strict::stdc_first_trailing_one_uc_shifted",
+      "symbol": "stdc_first_trailing_one_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_trailing_one_uc_shifted [strict]",
+      "spec_section": "C23 7.18a.4.8",
+      "edge_class": "other_edge",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::strict::stdc_first_trailing_one_uc_shifted",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_one_uc_shifted' for 'stdc_first_trailing_one_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_uc::strict::stdc_first_trailing_one_uc_shifted."
       ]
     },
     {
@@ -36627,6 +39273,114 @@
     },
     {
       "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_us::hardened::stdc_first_trailing_one_us_shifted",
+      "symbol": "stdc_first_trailing_one_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_first_trailing_one_us_shifted [hardened]",
+      "spec_section": "C23 7.18a.4.8",
+      "edge_class": "other_edge",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_us::hardened::stdc_first_trailing_one_us_shifted",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_one_us_shifted' for 'stdc_first_trailing_one_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_us::hardened::stdc_first_trailing_one_us_shifted."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_first_trailing_one_us::strict::stdc_first_trailing_one_us_shifted",
+      "symbol": "stdc_first_trailing_one_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_first_trailing_one_us_shifted [strict]",
+      "spec_section": "C23 7.18a.4.8",
+      "edge_class": "other_edge",
+      "expected_output": "5",
+      "actual_output": "5",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 5,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_us::strict::stdc_first_trailing_one_us_shifted",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_first_trailing_one_us_shifted' for 'stdc_first_trailing_one_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_first_trailing_one_us::strict::stdc_first_trailing_one_us_shifted."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_uc::hardened::stdc_has_single_bit_uc_power",
+      "symbol": "stdc_has_single_bit_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_has_single_bit_uc_power [hardened]",
+      "spec_section": "C23 7.18a.4.11",
+      "edge_class": "other_edge",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_uc::hardened::stdc_has_single_bit_uc_power",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_has_single_bit_uc_power' for 'stdc_has_single_bit_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_uc::hardened::stdc_has_single_bit_uc_power."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_uc::strict::stdc_has_single_bit_uc_power",
+      "symbol": "stdc_has_single_bit_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_has_single_bit_uc_power [strict]",
+      "spec_section": "C23 7.18a.4.11",
+      "edge_class": "other_edge",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_uc::strict::stdc_has_single_bit_uc_power",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_has_single_bit_uc_power' for 'stdc_has_single_bit_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_uc::strict::stdc_has_single_bit_uc_power."
+      ]
+    },
+    {
+      "priority_score": 0,
       "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_ui::hardened::stdc_has_single_bit_ui_power",
       "symbol": "stdc_has_single_bit_ui",
       "symbol_family": "stdbit/ops",
@@ -36785,6 +39539,114 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_has_single_bit_ull_power' for 'stdc_has_single_bit_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_ull::strict::stdc_has_single_bit_ull_power."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_us::hardened::stdc_has_single_bit_us_power",
+      "symbol": "stdc_has_single_bit_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_has_single_bit_us_power [hardened]",
+      "spec_section": "C23 7.18a.4.11",
+      "edge_class": "other_edge",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_us::hardened::stdc_has_single_bit_us_power",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_has_single_bit_us_power' for 'stdc_has_single_bit_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_us::hardened::stdc_has_single_bit_us_power."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_has_single_bit_us::strict::stdc_has_single_bit_us_power",
+      "symbol": "stdc_has_single_bit_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_has_single_bit_us_power [strict]",
+      "spec_section": "C23 7.18a.4.11",
+      "edge_class": "other_edge",
+      "expected_output": "1",
+      "actual_output": "1",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 1,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_us::strict::stdc_has_single_bit_us_power",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_has_single_bit_us_power' for 'stdc_has_single_bit_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_has_single_bit_us::strict::stdc_has_single_bit_us_power."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_uc::hardened::stdc_leading_ones_uc_top_nibble",
+      "symbol": "stdc_leading_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_leading_ones_uc_top_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.2",
+      "edge_class": "other_edge",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_uc::hardened::stdc_leading_ones_uc_top_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_ones_uc_top_nibble' for 'stdc_leading_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_uc::hardened::stdc_leading_ones_uc_top_nibble."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_uc::strict::stdc_leading_ones_uc_top_nibble",
+      "symbol": "stdc_leading_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_leading_ones_uc_top_nibble [strict]",
+      "spec_section": "C23 7.18a.4.2",
+      "edge_class": "other_edge",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_uc::strict::stdc_leading_ones_uc_top_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_ones_uc_top_nibble' for 'stdc_leading_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_uc::strict::stdc_leading_ones_uc_top_nibble."
       ]
     },
     {
@@ -36951,6 +39813,114 @@
     },
     {
       "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_us::hardened::stdc_leading_ones_us_top_nibble",
+      "symbol": "stdc_leading_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_leading_ones_us_top_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.2",
+      "edge_class": "other_edge",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_us::hardened::stdc_leading_ones_us_top_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_ones_us_top_nibble' for 'stdc_leading_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_us::hardened::stdc_leading_ones_us_top_nibble."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_leading_ones_us::strict::stdc_leading_ones_us_top_nibble",
+      "symbol": "stdc_leading_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_leading_ones_us_top_nibble [strict]",
+      "spec_section": "C23 7.18a.4.2",
+      "edge_class": "other_edge",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_us::strict::stdc_leading_ones_us_top_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_leading_ones_us_top_nibble' for 'stdc_leading_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_leading_ones_us::strict::stdc_leading_ones_us_top_nibble."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_uc::hardened::stdc_trailing_ones_uc_low_nibble",
+      "symbol": "stdc_trailing_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_trailing_ones_uc_low_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.4",
+      "edge_class": "other_edge",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_uc::hardened::stdc_trailing_ones_uc_low_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_ones_uc_low_nibble' for 'stdc_trailing_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_uc::hardened::stdc_trailing_ones_uc_low_nibble."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_uc::strict::stdc_trailing_ones_uc_low_nibble",
+      "symbol": "stdc_trailing_ones_uc",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_trailing_ones_uc_low_nibble [strict]",
+      "spec_section": "C23 7.18a.4.4",
+      "edge_class": "other_edge",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_uc::strict::stdc_trailing_ones_uc_low_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_ones_uc_low_nibble' for 'stdc_trailing_ones_uc' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_uc::strict::stdc_trailing_ones_uc_low_nibble."
+      ]
+    },
+    {
+      "priority_score": 0,
       "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_ui::hardened::stdc_trailing_ones_ui_low_nibble",
       "symbol": "stdc_trailing_ones_ui",
       "symbol_family": "stdbit/ops",
@@ -37109,6 +40079,60 @@
       ],
       "triage_steps": [
         "Inspect fixture 'stdc_trailing_ones_ull_low_nibble' for 'stdc_trailing_ones_ull' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_ull::strict::stdc_trailing_ones_ull_low_nibble."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_us::hardened::stdc_trailing_ones_us_low_nibble",
+      "symbol": "stdc_trailing_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "hardened",
+      "case_id": "stdc_trailing_ones_us_low_nibble [hardened]",
+      "spec_section": "C23 7.18a.4.4",
+      "edge_class": "other_edge",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_us::hardened::stdc_trailing_ones_us_low_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_ones_us_low_nibble' for 'stdc_trailing_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_us::hardened::stdc_trailing_ones_us_low_nibble."
+      ]
+    },
+    {
+      "priority_score": 0,
+      "trace_id": "franken_shadow::stdbit/ops::stdc_trailing_ones_us::strict::stdc_trailing_ones_us_low_nibble",
+      "symbol": "stdc_trailing_ones_us",
+      "symbol_family": "stdbit/ops",
+      "owner": "stdbit_abi",
+      "support_status": "Implemented",
+      "runtime_mode": "strict",
+      "case_id": "stdc_trailing_ones_us_low_nibble [strict]",
+      "spec_section": "C23 7.18a.4.4",
+      "edge_class": "other_edge",
+      "expected_output": "4",
+      "actual_output": "4",
+      "host_output": "SKIP",
+      "expected_errno": 0,
+      "actual_errno": 4,
+      "status": "pass",
+      "failure_kind": "covered",
+      "diff_ref": "conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_us::strict::stdc_trailing_ones_us_low_nibble",
+      "artifact_refs": [
+        "tests/conformance/fixtures/stdbit_ops.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "triage_steps": [
+        "Inspect fixture 'stdc_trailing_ones_us_low_nibble' for 'stdc_trailing_ones_us' and compare it against conformance_matrix::trace_id::franken_shadow::stdbit/ops::stdc_trailing_ones_us::strict::stdc_trailing_ones_us_low_nibble."
       ]
     },
     {

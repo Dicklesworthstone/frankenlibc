@@ -1,23 +1,23 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.5",
-  "generated_at": "2026-04-26T01:08:16Z",
+  "generated_at": "2026-04-26T03:04:55Z",
   "summary": {
-    "total_fixture_files": 55,
-    "valid_fixture_files": 55,
+    "total_fixture_files": 56,
+    "valid_fixture_files": 56,
     "invalid_fixture_files": 0,
-    "total_cases": 1079,
+    "total_cases": 1249,
     "total_issues": 0,
     "total_warnings": 0,
-    "unique_families": 54,
-    "unique_symbols": 299,
+    "unique_families": 55,
+    "unique_symbols": 384,
     "determinism_verified": true
   },
   "regression_detection": {
     "status": "clean",
     "invalid_fixture_files": [],
     "invalid_fixture_issue_counts": {},
-    "baseline_fixture_digest": "b92eac60d38d68d717f0486cdb0aaae2193bae2bb474522f47a9ae8ccf7ac484"
+    "baseline_fixture_digest": "4b3fa27c679d9ddb589f6c6289bec606d8adc4516a6866fe53935b33c92f0aaf"
   },
   "fixture_results": [
     {
@@ -94,8 +94,8 @@
       "file": "grp_ops.json",
       "version": "v1",
       "family": "grp_ops",
-      "case_count": 10,
-      "fixture_hash": "279b68d06ddfc898",
+      "case_count": 12,
+      "fixture_hash": "ddb9255ac967ca8b",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -284,8 +284,8 @@
       "file": "pwd_ops.json",
       "version": "v1",
       "family": "pwd_ops",
-      "case_count": 10,
-      "fixture_hash": "5b0166f6f4eb7c46",
+      "case_count": 12,
+      "fixture_hash": "aa7d819fabf03c95",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -304,8 +304,8 @@
       "file": "resolver.json",
       "version": "v1",
       "family": "resolv/dns",
-      "case_count": 23,
-      "fixture_hash": "2faf293979e764f5",
+      "case_count": 25,
+      "fixture_hash": "1e505071183007b5",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -411,11 +411,21 @@
       "warnings": []
     },
     {
+      "file": "stdbit_ops.json",
+      "version": "v1",
+      "family": "stdbit/ops",
+      "case_count": 140,
+      "fixture_hash": "dcae7bac0a0dabbe",
+      "valid": true,
+      "issues": [],
+      "warnings": []
+    },
+    {
       "file": "stdio_file_ops.json",
       "version": "v1",
       "family": "stdio_file_ops",
-      "case_count": 28,
-      "fixture_hash": "ad33cc9047883394",
+      "case_count": 52,
+      "fixture_hash": "5e865785991b7ce7",
       "valid": true,
       "issues": [],
       "warnings": []
@@ -572,8 +582,8 @@
     }
   ],
   "regression_baseline": {
-    "symbol_count": 299,
-    "total_cases": 1079,
+    "symbol_count": 384,
+    "total_cases": 1249,
     "symbols": {
       "DnsHeader::new_query": {
         "count": 1,
@@ -851,6 +861,12 @@
           "math_ops.json"
         ]
       },
+      "asprintf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
       "atan": {
         "count": 1,
         "fixtures": [
@@ -1023,6 +1039,12 @@
           "loader_edges.json"
         ]
       },
+      "dprintf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
       "duplocale": {
         "count": 2,
         "fixtures": [
@@ -1039,6 +1061,18 @@
         "count": 2,
         "fixtures": [
           "resolver.json"
+        ]
+      },
+      "endgrent": {
+        "count": 2,
+        "fixtures": [
+          "grp_ops.json"
+        ]
+      },
+      "endpwent": {
+        "count": 2,
+        "fixtures": [
+          "pwd_ops.json"
         ]
       },
       "erf": {
@@ -1107,6 +1141,12 @@
           "stdio_file_ops.json"
         ]
       },
+      "fgets": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
       "fileno": {
         "count": 3,
         "fixtures": [
@@ -1155,6 +1195,12 @@
           "stdio_file_ops.json"
         ]
       },
+      "fputs": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
       "fread": {
         "count": 2,
         "fixtures": [
@@ -1165,6 +1211,12 @@
         "count": 1,
         "fixtures": [
           "allocator.json"
+        ]
+      },
+      "freeaddrinfo": {
+        "count": 2,
+        "fixtures": [
+          "resolver.json"
         ]
       },
       "freelocale": {
@@ -1677,6 +1729,12 @@
           "math_ops.json"
         ]
       },
+      "printf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
       "pthread_clockjoin_np": {
         "count": 6,
         "fixtures": [
@@ -1929,6 +1987,12 @@
           "socket_ops.json"
         ]
       },
+      "setbuf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
       "setgrent": {
         "count": 2,
         "fixtures": [
@@ -1963,6 +2027,12 @@
         "count": 2,
         "fixtures": [
           "session_ops.json"
+        ]
+      },
+      "setvbuf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
         ]
       },
       "shmat": {
@@ -2066,6 +2136,426 @@
         "count": 9,
         "fixtures": [
           "signal_ops.json"
+        ]
+      },
+      "stdc_bit_ceil_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_ceil_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_ceil_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_ceil_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_ceil_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_floor_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_floor_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_floor_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_floor_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_floor_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_width_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_width_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_width_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_width_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_bit_width_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_ones_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_ones_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_ones_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_ones_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_ones_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_zeros_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_zeros_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_zeros_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_zeros_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_count_zeros_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_one_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_one_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_one_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_one_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_one_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_zero_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_zero_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_zero_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_zero_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_leading_zero_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_one_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_one_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_one_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_one_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_one_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_zero_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_zero_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_zero_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_zero_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_first_trailing_zero_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_has_single_bit_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_has_single_bit_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_has_single_bit_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_has_single_bit_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_has_single_bit_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_ones_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_ones_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_ones_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_ones_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_ones_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_zeros_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_zeros_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_zeros_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_zeros_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_leading_zeros_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_ones_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_ones_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_ones_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_ones_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_ones_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_zeros_uc": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_zeros_ui": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_zeros_ul": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_zeros_ull": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
+        ]
+      },
+      "stdc_trailing_zeros_us": {
+        "count": 2,
+        "fixtures": [
+          "stdbit_ops.json"
         ]
       },
       "strcat": {
@@ -2263,10 +2753,40 @@
           "search_ops.json"
         ]
       },
+      "ungetc": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
       "uselocale": {
         "count": 2,
         "fixtures": [
           "locale_ops.json"
+        ]
+      },
+      "vasprintf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
+      "vdprintf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
+      "vsnprintf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
+        ]
+      },
+      "vsprintf": {
+        "count": 2,
+        "fixtures": [
+          "stdio_file_ops.json"
         ]
       },
       "waitpid": {
@@ -2419,7 +2939,7 @@
     "dlfcn_ops.json": "b7dc2f68346047d6",
     "elf_loader.json": "a564323dcac2924a",
     "errno_ops.json": "1dd9b2d822578222",
-    "grp_ops.json": "279b68d06ddfc898",
+    "grp_ops.json": "ddb9255ac967ca8b",
     "iconv_phase1.json": "b8a60a0a37f3ce94",
     "inet_ops.json": "c075da66c5ff6ac4",
     "io_internal_ops.json": "6e65f4468f622224",
@@ -2438,9 +2958,9 @@
     "pthread_mutex.json": "da205001a273e414",
     "pthread_thread.json": "fb6dc8acc17d9764",
     "pthread_tls_keys.json": "be6e8e18f3c8f265",
-    "pwd_ops.json": "5b0166f6f4eb7c46",
+    "pwd_ops.json": "aa7d819fabf03c95",
     "regex_glob_ops.json": "79f9e164f3f41dfa",
-    "resolver.json": "2faf293979e764f5",
+    "resolver.json": "1e505071183007b5",
     "resource_ops.json": "37bb4d3d3c66ddd9",
     "scanf_conformance.json": "3bf25931ceac522c",
     "search_ops.json": "89ede2c6430b4017",
@@ -2451,7 +2971,8 @@
     "socket_ops.json": "e4d160e2c6d32a95",
     "spawn_exec_ops.json": "9f1653399ce4ec14",
     "startup_ops.json": "c9eda25f37ddc3a8",
-    "stdio_file_ops.json": "ad33cc9047883394",
+    "stdbit_ops.json": "dcae7bac0a0dabbe",
+    "stdio_file_ops.json": "5e865785991b7ce7",
     "stdlib_conversion.json": "17f389b5edfb0577",
     "stdlib_numeric.json": "2525cd9c74b24312",
     "stdlib_sort.json": "008e876fb94f9b92",
