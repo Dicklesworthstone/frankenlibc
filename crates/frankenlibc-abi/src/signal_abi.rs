@@ -1688,3 +1688,103 @@ pub unsafe extern "C" fn raise_default_signal(sig: c_int) -> c_int {
 
     error
 }
+
+// ---------------------------------------------------------------------------
+// glibc reserved-namespace aliases:
+// __sigprocmask / __sigwait / __pause / __raise / __kill / __killpg /
+// __sigignore / __sighold / __sigrelse
+// ---------------------------------------------------------------------------
+
+/// glibc reserved-namespace alias for [`sigprocmask`].
+///
+/// # Safety
+///
+/// Same as [`sigprocmask`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigprocmask(
+    how: c_int,
+    set: *const libc::sigset_t,
+    oldset: *mut libc::sigset_t,
+) -> c_int {
+    unsafe { sigprocmask(how, set, oldset) }
+}
+
+/// glibc reserved-namespace alias for [`sigwait`].
+///
+/// # Safety
+///
+/// Same as [`sigwait`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    unsafe { sigwait(set, sig) }
+}
+
+/// glibc reserved-namespace alias for [`pause`].
+///
+/// # Safety
+///
+/// Same as [`pause`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __pause() -> c_int {
+    unsafe { pause() }
+}
+
+/// glibc reserved-namespace alias for [`raise`].
+///
+/// # Safety
+///
+/// Same as [`raise`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __raise(signum: c_int) -> c_int {
+    unsafe { raise(signum) }
+}
+
+/// glibc reserved-namespace alias for [`kill`].
+///
+/// # Safety
+///
+/// Same as [`kill`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __kill(pid: libc::pid_t, signum: c_int) -> c_int {
+    unsafe { kill(pid, signum) }
+}
+
+/// glibc reserved-namespace alias for [`killpg`].
+///
+/// # Safety
+///
+/// Same as [`killpg`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __killpg(pgrp: libc::pid_t, signum: c_int) -> c_int {
+    unsafe { killpg(pgrp, signum) }
+}
+
+/// glibc reserved-namespace alias for [`sigignore`].
+///
+/// # Safety
+///
+/// Same as [`sigignore`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigignore(sig: c_int) -> c_int {
+    unsafe { sigignore(sig) }
+}
+
+/// glibc reserved-namespace alias for [`sighold`].
+///
+/// # Safety
+///
+/// Same as [`sighold`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sighold(sig: c_int) -> c_int {
+    unsafe { sighold(sig) }
+}
+
+/// glibc reserved-namespace alias for [`sigrelse`].
+///
+/// # Safety
+///
+/// Same as [`sigrelse`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigrelse(sig: c_int) -> c_int {
+    unsafe { sigrelse(sig) }
+}

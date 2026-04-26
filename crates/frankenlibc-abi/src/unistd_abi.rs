@@ -6422,6 +6422,26 @@ pub unsafe extern "C" fn sigwaitinfo(set: *const c_void, info: *mut c_void) -> c
     }
 }
 
+/// glibc reserved-namespace alias for [`sigqueue`].
+///
+/// # Safety
+///
+/// Same as [`sigqueue`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigqueue(pid: libc::pid_t, sig: c_int, value: libc::sigval) -> c_int {
+    unsafe { sigqueue(pid, sig, value) }
+}
+
+/// glibc reserved-namespace alias for [`sigwaitinfo`].
+///
+/// # Safety
+///
+/// Same as [`sigwaitinfo`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __sigwaitinfo(set: *const c_void, info: *mut c_void) -> c_int {
+    unsafe { sigwaitinfo(set, info) }
+}
+
 // ---------------------------------------------------------------------------
 // getifaddrs / freeifaddrs — Implemented (native netlink)
 // ---------------------------------------------------------------------------

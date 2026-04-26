@@ -1252,3 +1252,78 @@ fn raise_default_signal_zero_signal_is_invalid() {
     assert_eq!(rc, -1);
     assert_eq!(unsafe { *__errno_location() }, errno::EINVAL);
 }
+
+// ---------------------------------------------------------------------------
+// glibc reserved-namespace aliases:
+// __sigprocmask / __sigwait / __pause / __raise / __kill / __killpg /
+// __sigignore / __sighold / __sigrelse
+// ---------------------------------------------------------------------------
+
+use frankenlibc_abi::signal_abi::{
+    __kill, __killpg, __raise, __sighold, __sigignore, __sigprocmask, __sigrelse,
+};
+
+#[test]
+fn under_sigprocmask_swap_round_trip() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let mut empty: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe { sigemptyset(&mut empty) };
+    let mut blocked: libc::sigset_t = unsafe { std::mem::zeroed() };
+    unsafe { sigemptyset(&mut blocked) };
+    unsafe { sigaddset(&mut blocked, libc::SIGUSR1) };
+
+    let mut prev: libc::sigset_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { __sigprocmask(libc::SIG_BLOCK, &blocked, &mut prev) };
+    assert_eq!(rc, 0);
+
+    // Restore.
+    let rc = unsafe { __sigprocmask(libc::SIG_SETMASK, &prev, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_kill_with_signal_zero_returns_zero_for_self() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let me = unsafe { libc::getpid() };
+    let rc = unsafe { __kill(me, 0) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_killpg_signal_zero_returns_zero_for_self() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    let pgrp = unsafe { libc::getpgrp() };
+    let rc = unsafe { __killpg(pgrp, 0) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_raise_invalid_signal_returns_minus_one() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { __raise(99999) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn under_sigignore_sighold_sigrelse_round_trip() {
+    let _guard = TEST_GUARD.lock().expect("test guard lock should succeed");
+    // SIGUSR2 is a safe signal to ignore briefly. Save the current
+    // disposition first (via a temporary sigaction read), then
+    // exercise __sigignore/__sighold/__sigrelse and restore.
+    let mut prev: libc::sigaction = unsafe { std::mem::zeroed() };
+    let nullact: *const libc::sigaction = std::ptr::null();
+    let _ = unsafe { sigaction(libc::SIGUSR2, nullact, &mut prev) };
+
+    // __sighold + __sigrelse: block then unblock.
+    assert_eq!(unsafe { __sighold(libc::SIGUSR2) }, 0);
+    assert_eq!(unsafe { __sigrelse(libc::SIGUSR2) }, 0);
+
+    // __sigignore: install SIG_IGN. (Verifying via getting+restoring
+    // is enough to exercise the alias path.)
+    assert_eq!(unsafe { __sigignore(libc::SIGUSR2) }, 0);
+
+    // Restore the original disposition so subsequent tests aren't
+    // affected.
+    let _ = unsafe { sigaction(libc::SIGUSR2, &prev, std::ptr::null_mut()) };
+}
