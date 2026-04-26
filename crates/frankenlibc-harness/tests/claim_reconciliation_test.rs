@@ -23,6 +23,23 @@ fn unique_temp_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("frankenlibc-{name}-{stamp}-{}", std::process::id()))
 }
 
+fn parse_report(stdout: &str, stderr: &str) -> serde_json::Value {
+    let parsed = serde_json::from_str(stdout);
+    let error = parsed
+        .as_ref()
+        .err()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    assert!(
+        parsed.is_ok(),
+        "Failed to parse reconciliation report: {}\nstdout: {}\nstderr: {}",
+        error,
+        stdout,
+        stderr
+    );
+    parsed.expect("claim reconciliation report parse checked above")
+}
+
 #[test]
 fn claim_reconciliation_gate_passes() {
     let repo_root = workspace_root();
@@ -44,12 +61,7 @@ fn claim_reconciliation_gate_passes() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     // Parse the JSON report
-    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
-        panic!(
-            "Failed to parse reconciliation report: {}\nstdout: {}\nstderr: {}",
-            e, stdout, stderr
-        );
-    });
+    let report = parse_report(&stdout, &stderr);
 
     let status = report["status"].as_str().unwrap_or("unknown");
     let errors = report["summary"]["errors"].as_u64().unwrap_or(999);
@@ -105,7 +117,7 @@ fn claim_reconciliation_detects_readme_drift_and_routes_owner() {
 
     let mutated_readme = std::fs::read_to_string(&readme_src)
         .expect("README.md should exist")
-        .replace("total_exported=3996", "total_exported=1");
+        .replace("total_exported=4109", "total_exported=1");
     std::fs::write(&mutated_readme_path, mutated_readme).expect("failed to write mutated README");
 
     let output = Command::new("python3")
@@ -124,12 +136,7 @@ fn claim_reconciliation_detects_readme_drift_and_routes_owner() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
-        panic!(
-            "Failed to parse reconciliation report: {}\nstdout: {}\nstderr: {}",
-            e, stdout, stderr
-        );
-    });
+    let report = parse_report(&stdout, &stderr);
 
     assert_eq!(report["status"].as_str(), Some("fail"));
     let findings = report["findings"]
@@ -204,12 +211,7 @@ fn claim_reconciliation_detects_replacement_level_blocker_drift_and_routes_owner
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
-        panic!(
-            "Failed to parse reconciliation report: {}\nstdout: {}\nstderr: {}",
-            e, stdout, stderr
-        );
-    });
+    let report = parse_report(&stdout, &stderr);
 
     assert_eq!(report["status"].as_str(), Some("fail"));
     let findings = report["findings"]
@@ -277,12 +279,7 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
-        panic!(
-            "Failed to parse reconciliation report: {}\nstdout: {}\nstderr: {}",
-            e, stdout, stderr
-        );
-    });
+    let report = parse_report(&stdout, &stderr);
 
     assert_eq!(report["status"].as_str(), Some("fail"));
     let findings = report["findings"]
@@ -357,12 +354,7 @@ fn claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
-        panic!(
-            "Failed to parse reconciliation report: {}\nstdout: {}\nstderr: {}",
-            e, stdout, stderr
-        );
-    });
+    let report = parse_report(&stdout, &stderr);
 
     assert_eq!(report["status"].as_str(), Some("fail"));
     let findings = report["findings"]

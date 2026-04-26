@@ -416,53 +416,53 @@ fn err_set_exit_returns_previous_hook() {
 
 #[test]
 fn err_set_exit_hook_runs_before_errx_in_child() {
-    // Fork a child, install a hook that writes a marker byte to
-    // a pipe, then call errx. The parent reads the pipe to
-    // confirm the hook fired before _exit.
+    // Run a fresh test-binary child instead of forking from this
+    // multi-threaded harness. Calling mutex-backed Rust code after
+    // fork can deadlock if another test thread owned runtime state.
     let _guard = ERR_SET_EXIT_LOCK.lock().unwrap();
-    use frankenlibc_abi::err_abi::errx;
 
-    let mut pipefds = [0 as c_int; 2];
-    let rc = unsafe { libc::pipe(pipefds.as_mut_ptr()) };
-    assert_eq!(rc, 0, "pipe failed");
-    let read_fd = pipefds[0];
-    let write_fd = pipefds[1];
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("err_set_exit_child_process")
+        .arg("--nocapture")
+        .env("FLC_ERR_SET_EXIT_CHILD", "1")
+        .output()
+        .expect("failed to run err_set_exit child process");
 
-    // Stash write_fd in a global the child-side hook can see.
-    HOOK_PIPE_WRITE.store(write_fd, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        output.status.code(),
+        Some(7),
+        "child should exit via errx(7)"
+    );
+    assert!(
+        output.stderr.contains(&7),
+        "child hook did not write eval marker to stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output
+            .stderr
+            .windows(b"err_set_exit child".len())
+            .any(|window| window == b"err_set_exit child"),
+        "errx diagnostic missing from stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
-    let child = unsafe { libc::fork() };
-    assert!(child >= 0, "fork failed");
-
-    if child == 0 {
-        // Child: install hook, call errx with a known eval, never returns.
-        unsafe { libc::close(read_fd) };
-        unsafe { err_set_exit(Some(child_hook)) };
-        let fmt = c"err_set_exit child";
-        unsafe { errx(7, fmt.as_ptr()) }; // -> ! (exits with eval=7)
-        // Unreachable.
+#[test]
+#[ignore]
+fn err_set_exit_child_process() {
+    if std::env::var_os("FLC_ERR_SET_EXIT_CHILD").is_none() {
+        return;
     }
 
-    // Parent: close write end, read the marker byte, wait for child.
-    unsafe { libc::close(write_fd) };
-    let mut byte = [0u8; 8];
-    let n = unsafe {
-        libc::read(
-            read_fd,
-            byte.as_mut_ptr() as *mut std::ffi::c_void,
-            byte.len(),
-        )
-    };
-    let mut status: c_int = 0;
-    let _ = unsafe { libc::waitpid(child, &mut status, 0) };
-    unsafe { libc::close(read_fd) };
+    use frankenlibc_abi::err_abi::errx;
 
-    assert!(n >= 1, "hook did not write to pipe (n={n})");
-    // First byte is the eval the hook saw.
-    assert_eq!(byte[0], 7, "hook received wrong eval");
-    // Child exit status should match the eval errx used.
-    assert!(libc::WIFEXITED(status), "child must have exited normally");
-    assert_eq!(libc::WEXITSTATUS(status), 7, "child exit code should be 7");
+    HOOK_PIPE_WRITE.store(libc::STDERR_FILENO, std::sync::atomic::Ordering::SeqCst);
+    unsafe { err_set_exit(Some(child_hook)) };
+    let fmt = c"err_set_exit child";
+    unsafe { errx(7, fmt.as_ptr()) };
 }
 
 static HOOK_PIPE_WRITE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);

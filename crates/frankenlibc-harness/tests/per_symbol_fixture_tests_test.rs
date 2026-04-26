@@ -25,10 +25,21 @@ fn load_conformance_coverage_baseline() -> serde_json::Value {
     load_json(&path)
 }
 
+fn temp_report_path(label: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before Unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "frankenlibc-per-symbol-{label}-{}-{nanos}.json",
+        std::process::id()
+    ))
+}
+
 #[test]
 fn per_symbol_report_generates_successfully() {
     let root = repo_root();
-    let report_path = root.join("tests/conformance/per_symbol_fixture_tests.v1.json");
+    let report_path = temp_report_path("generate");
     let output = Command::new("python3")
         .args([
             root.join("scripts/generate_per_symbol_fixture_tests.py")
@@ -177,8 +188,8 @@ fn per_symbol_uncovered_actions_present() {
 #[test]
 fn per_symbol_report_reproducible() {
     let root = repo_root();
-    let report_path = root.join("tests/conformance/per_symbol_fixture_tests.v1.json");
-    let data1 = load_json(&report_path);
+    let report_path_1 = temp_report_path("repro-1");
+    let report_path_2 = temp_report_path("repro-2");
 
     let output = Command::new("python3")
         .args([
@@ -186,14 +197,28 @@ fn per_symbol_report_reproducible() {
                 .to_str()
                 .unwrap(),
             "-o",
-            report_path.to_str().unwrap(),
+            report_path_1.to_str().unwrap(),
         ])
         .current_dir(&root)
         .output()
         .expect("failed to execute generator");
     assert!(output.status.success());
 
-    let data2 = load_json(&report_path);
+    let output = Command::new("python3")
+        .args([
+            root.join("scripts/generate_per_symbol_fixture_tests.py")
+                .to_str()
+                .unwrap(),
+            "-o",
+            report_path_2.to_str().unwrap(),
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute generator");
+    assert!(output.status.success());
+
+    let data1 = load_json(&report_path_1);
+    let data2 = load_json(&report_path_2);
     assert_eq!(
         data1["report_hash"].as_str(),
         data2["report_hash"].as_str(),

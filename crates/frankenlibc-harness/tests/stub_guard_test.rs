@@ -28,6 +28,7 @@ fn abi_source_mentions_export(content: &str, symbol: &str) -> bool {
     let static_mut_pattern = format!("pub static mut {symbol}");
     let macro_arg_fn_pattern = format!("!({symbol}(");
     let macro_arg_value_pattern = format!("!({symbol},");
+    let macro_arg_bare_pattern = format!("!({symbol});");
 
     content.contains(&fn_pattern)
         || content.contains(&export_name_pattern)
@@ -35,6 +36,7 @@ fn abi_source_mentions_export(content: &str, symbol: &str) -> bool {
         || content.contains(&static_mut_pattern)
         || content.contains(&macro_arg_fn_pattern)
         || content.contains(&macro_arg_value_pattern)
+        || content.contains(&macro_arg_bare_pattern)
 }
 
 fn supported_via_host_visible_symbol(symbol: &str) -> bool {
