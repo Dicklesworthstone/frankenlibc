@@ -1164,6 +1164,102 @@ pub unsafe extern "C" fn mkdir(path: *const c_char, mode: libc::mode_t) -> c_int
 }
 
 // ---------------------------------------------------------------------------
+// glibc reserved-namespace aliases:
+// __chdir / __fchdir / __mkdir / __rmdir / __unlink / __link /
+// __symlink / __rename / __access
+// ---------------------------------------------------------------------------
+
+/// glibc reserved-namespace alias for [`access`].
+///
+/// # Safety
+///
+/// Same as [`access`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __access(path: *const c_char, amode: c_int) -> c_int {
+    unsafe { access(path, amode) }
+}
+
+/// glibc reserved-namespace alias for [`chdir`].
+///
+/// # Safety
+///
+/// Same as [`chdir`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __chdir(path: *const c_char) -> c_int {
+    unsafe { chdir(path) }
+}
+
+/// glibc reserved-namespace alias for [`fchdir`].
+///
+/// # Safety
+///
+/// Same as [`fchdir`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __fchdir(fd: c_int) -> c_int {
+    unsafe { fchdir(fd) }
+}
+
+/// glibc reserved-namespace alias for [`mkdir`].
+///
+/// # Safety
+///
+/// Same as [`mkdir`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __mkdir(path: *const c_char, mode: libc::mode_t) -> c_int {
+    unsafe { mkdir(path, mode) }
+}
+
+/// glibc reserved-namespace alias for [`rmdir`].
+///
+/// # Safety
+///
+/// Same as [`rmdir`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __rmdir(path: *const c_char) -> c_int {
+    unsafe { rmdir(path) }
+}
+
+/// glibc reserved-namespace alias for [`unlink`].
+///
+/// # Safety
+///
+/// Same as [`unlink`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __unlink(path: *const c_char) -> c_int {
+    unsafe { unlink(path) }
+}
+
+/// glibc reserved-namespace alias for [`link`].
+///
+/// # Safety
+///
+/// Same as [`link`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __link(oldpath: *const c_char, newpath: *const c_char) -> c_int {
+    unsafe { link(oldpath, newpath) }
+}
+
+/// glibc reserved-namespace alias for [`symlink`].
+///
+/// # Safety
+///
+/// Same as [`symlink`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __symlink(target: *const c_char, linkpath: *const c_char) -> c_int {
+    unsafe { symlink(target, linkpath) }
+}
+
+/// glibc reserved-namespace alias for [`rename`].
+///
+/// # Safety
+///
+/// Same as [`rename`].
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __rename(oldpath: *const c_char, newpath: *const c_char) -> c_int {
+    unsafe { rename(oldpath, newpath) }
+}
+
+// ---------------------------------------------------------------------------
 // chmod / fchmod
 // ---------------------------------------------------------------------------
 

@@ -5915,6 +5915,109 @@ fn under_gettid_matches_gettid() {
 }
 
 // ===========================================================================
+// __chdir + __fchdir + __mkdir + __rmdir + __unlink + __link +
+// __symlink + __rename + __access (glibc reserved aliases)
+// ===========================================================================
+
+#[test]
+fn under_access_existing_path_returns_zero() {
+    use frankenlibc_abi::unistd_abi::__access;
+    let p = c"/tmp";
+    let rc = unsafe { __access(p.as_ptr(), libc::F_OK) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_access_missing_path_returns_minus_one() {
+    use frankenlibc_abi::unistd_abi::__access;
+    let p = c"/nonexistent_franken_aliases_xyz";
+    let rc = unsafe { __access(p.as_ptr(), libc::F_OK) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn under_chdir_to_tmp_succeeds() {
+    use frankenlibc_abi::unistd_abi::{__chdir, getcwd};
+    // Save and restore cwd to avoid disturbing other tests.
+    let mut saved = [0 as c_char; 4096];
+    let p_saved = unsafe { getcwd(saved.as_mut_ptr(), saved.len()) };
+    assert!(!p_saved.is_null());
+    let p = c"/tmp";
+    let rc = unsafe { __chdir(p.as_ptr()) };
+    assert_eq!(rc, 0);
+    // Restore using the same alias to also exercise it.
+    let rc = unsafe { __chdir(saved.as_ptr()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_fchdir_round_trip() {
+    use frankenlibc_abi::unistd_abi::{__fchdir, getcwd};
+    let saved_fd = unsafe { libc::open(c".".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+    assert!(saved_fd >= 0);
+    // Open /tmp as a directory fd, fchdir to it, then back.
+    let tmp_fd = unsafe { libc::open(c"/tmp".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+    assert!(tmp_fd >= 0);
+    let rc = unsafe { __fchdir(tmp_fd) };
+    assert_eq!(rc, 0);
+    let mut buf = [0 as c_char; 4096];
+    let _ = unsafe { getcwd(buf.as_mut_ptr(), buf.len()) };
+    let rc = unsafe { __fchdir(saved_fd) };
+    assert_eq!(rc, 0);
+    unsafe { libc::close(tmp_fd) };
+    unsafe { libc::close(saved_fd) };
+}
+
+#[test]
+fn under_mkdir_rmdir_round_trip() {
+    use frankenlibc_abi::unistd_abi::{__mkdir, __rmdir};
+    let path = format!("/tmp/franken_under_mkdir_{}", std::process::id());
+    let path_c = std::ffi::CString::new(path.clone()).unwrap();
+    let rc = unsafe { __mkdir(path_c.as_ptr(), 0o755) };
+    assert_eq!(rc, 0);
+    let rc = unsafe { __rmdir(path_c.as_ptr()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn under_unlink_link_symlink_rename_round_trip() {
+    use frankenlibc_abi::unistd_abi::{__link, __rename, __symlink, __unlink};
+    let base = format!("/tmp/franken_under_path_{}", std::process::id());
+    let primary = format!("{base}_primary");
+    let hardlink = format!("{base}_hardlink");
+    let symlink = format!("{base}_symlink");
+    let renamed = format!("{base}_renamed");
+
+    // Create primary file.
+    std::fs::write(&primary, b"x").unwrap();
+
+    let primary_c = std::ffi::CString::new(primary.clone()).unwrap();
+    let hardlink_c = std::ffi::CString::new(hardlink.clone()).unwrap();
+    let symlink_c = std::ffi::CString::new(symlink.clone()).unwrap();
+    let renamed_c = std::ffi::CString::new(renamed.clone()).unwrap();
+
+    // __link: create hardlink.
+    assert_eq!(
+        unsafe { __link(primary_c.as_ptr(), hardlink_c.as_ptr()) },
+        0
+    );
+    // __symlink: create symlink.
+    assert_eq!(
+        unsafe { __symlink(primary_c.as_ptr(), symlink_c.as_ptr()) },
+        0
+    );
+    // __rename: rename hardlink to renamed.
+    assert_eq!(
+        unsafe { __rename(hardlink_c.as_ptr(), renamed_c.as_ptr()) },
+        0
+    );
+    // __unlink: clean up all of them.
+    assert_eq!(unsafe { __unlink(renamed_c.as_ptr()) }, 0);
+    assert_eq!(unsafe { __unlink(symlink_c.as_ptr()) }, 0);
+    assert_eq!(unsafe { __unlink(primary_c.as_ptr()) }, 0);
+}
+
+// ===========================================================================
 // __getcwd / __getlogin / __getlogin_r (glibc reserved aliases)
 // ===========================================================================
 
