@@ -4,7 +4,15 @@
 //! err/errx call _exit and cannot be tested in-process).
 
 use frankenlibc_abi::err_abi::{err_set_exit, vwarn, vwarnc, vwarnx, warn, warnc, warnx};
-use std::ffi::{c_char, c_int};
+use frankenlibc_abi::malloc_abi::{free, malloc};
+use std::ffi::{c_char, c_int, c_void};
+
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let ptr = unsafe { malloc(bytes.len()).cast::<c_char>() };
+    assert!(!ptr.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len()) };
+    ptr
+}
 
 // ---------------------------------------------------------------------------
 // warn / warnx — these write to stderr but don't exit
@@ -131,6 +139,44 @@ fn test_warnx_preserves_errno() {
         unsafe { *frankenlibc_abi::errno_abi::__errno_location() },
         libc::ENOENT
     );
+}
+
+#[test]
+fn warnx_ignores_tracked_unterminated_fmt_in_child() -> Result<(), Box<dyn std::error::Error>> {
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("warnx_tracked_unterminated_fmt_child_process")
+        .arg("--nocapture")
+        .env("FLC_WARNX_UNTERMINATED_FMT_CHILD", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "child exited with {:?}",
+        output.status
+    );
+    assert!(
+        !output
+            .stderr
+            .windows(b"TRACKED_UNTERMINATED_ERR_FMT".len())
+            .any(|window| window == b"TRACKED_UNTERMINATED_ERR_FMT"),
+        "unterminated tracked format leaked into stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn warnx_tracked_unterminated_fmt_child_process() {
+    if std::env::var_os("FLC_WARNX_UNTERMINATED_FMT_CHILD").is_none() {
+        return;
+    }
+
+    let fmt = unsafe { malloc_unterminated(b"TRACKED_UNTERMINATED_ERR_FMT") };
+    unsafe { warnx(fmt.cast_const()) };
+    unsafe { free(fmt.cast::<c_void>()) };
 }
 
 // ---------------------------------------------------------------------------

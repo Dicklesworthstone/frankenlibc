@@ -10,6 +10,24 @@ use std::ffi::{CStr, c_char, c_int, c_void};
 
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
 
+use crate::malloc_abi::known_remaining;
+use crate::util::scan_c_string;
+
+/// Read a caller-supplied err(3) format string without walking past tracked
+/// allocations that never reached a NUL terminator.
+#[inline]
+unsafe fn read_format_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    Some(bytes.to_vec())
+}
+
 // ---------------------------------------------------------------------------
 // Program name helper
 // ---------------------------------------------------------------------------
@@ -128,15 +146,18 @@ fn write_err_message_with_code(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usi
 /// va_list variant: parse + extract args from `ap`, then write with
 /// the explicit code.
 fn vformat_and_write_with_code(fmt: *const c_char, ap: *mut c_void, code: c_int) {
-    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
+    let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
+        write_err_message_with_code(&[], &[], 0, code);
+        return;
+    };
     use frankenlibc_core::stdio::printf::parse_format_string;
-    let segments = parse_format_string(fmt_bytes);
+    let segments = parse_format_string(&fmt_bytes);
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe {
         super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count);
     }
-    write_err_message_with_code(fmt_bytes, &arg_buf, extract_count, code);
+    write_err_message_with_code(&fmt_bytes, &arg_buf, extract_count, code);
 }
 
 /// Convert errno to a human-readable byte string.
@@ -211,15 +232,18 @@ macro_rules! extract_err_args {
 /// Parse format string and extract args from a va_list pointer into a buffer,
 /// then call `write_err_message`.
 fn vformat_and_write(fmt: *const c_char, ap: *mut c_void, with_errno: bool) {
-    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
+    let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
+        write_err_message(&[], &[], 0, with_errno);
+        return;
+    };
     use frankenlibc_core::stdio::printf::parse_format_string;
-    let segments = parse_format_string(fmt_bytes);
+    let segments = parse_format_string(&fmt_bytes);
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe {
         super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count);
     }
-    write_err_message(fmt_bytes, &arg_buf, extract_count, with_errno);
+    write_err_message(&fmt_bytes, &arg_buf, extract_count, with_errno);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,13 +257,16 @@ pub unsafe extern "C" fn warn(fmt: *const c_char, mut args: ...) {
         write_err_message(&[], &[], 0, true);
         return;
     }
-    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
+    let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
+        write_err_message(&[], &[], 0, true);
+        return;
+    };
     use frankenlibc_core::stdio::printf::parse_format_string;
-    let segments = parse_format_string(fmt_bytes);
+    let segments = parse_format_string(&fmt_bytes);
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    write_err_message(fmt_bytes, &arg_buf, extract_count, true);
+    write_err_message(&fmt_bytes, &arg_buf, extract_count, true);
 }
 
 /// BSD `vwarn` — va_list version of `warn`.
@@ -263,13 +290,16 @@ pub unsafe extern "C" fn warnx(fmt: *const c_char, mut args: ...) {
         write_err_message(&[], &[], 0, false);
         return;
     }
-    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
+    let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
+        write_err_message(&[], &[], 0, false);
+        return;
+    };
     use frankenlibc_core::stdio::printf::parse_format_string;
-    let segments = parse_format_string(fmt_bytes);
+    let segments = parse_format_string(&fmt_bytes);
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    write_err_message(fmt_bytes, &arg_buf, extract_count, false);
+    write_err_message(&fmt_bytes, &arg_buf, extract_count, false);
 }
 
 /// BSD `vwarnx` — va_list version of `warnx`.
@@ -292,13 +322,16 @@ pub unsafe extern "C" fn err(eval: c_int, fmt: *const c_char, mut args: ...) -> 
     if fmt.is_null() {
         write_err_message(&[], &[], 0, true);
     } else {
-        let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
-        use frankenlibc_core::stdio::printf::parse_format_string;
-        let segments = parse_format_string(fmt_bytes);
-        let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
-        let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
-        extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-        write_err_message(fmt_bytes, &arg_buf, extract_count, true);
+        if let Some(fmt_bytes) = unsafe { read_format_bytes(fmt) } {
+            use frankenlibc_core::stdio::printf::parse_format_string;
+            let segments = parse_format_string(&fmt_bytes);
+            let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
+            let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+            extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
+            write_err_message(&fmt_bytes, &arg_buf, extract_count, true);
+        } else {
+            write_err_message(&[], &[], 0, true);
+        }
     }
     invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
@@ -326,13 +359,16 @@ pub unsafe extern "C" fn errx(eval: c_int, fmt: *const c_char, mut args: ...) ->
     if fmt.is_null() {
         write_err_message(&[], &[], 0, false);
     } else {
-        let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
-        use frankenlibc_core::stdio::printf::parse_format_string;
-        let segments = parse_format_string(fmt_bytes);
-        let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
-        let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
-        extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-        write_err_message(fmt_bytes, &arg_buf, extract_count, false);
+        if let Some(fmt_bytes) = unsafe { read_format_bytes(fmt) } {
+            use frankenlibc_core::stdio::printf::parse_format_string;
+            let segments = parse_format_string(&fmt_bytes);
+            let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
+            let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+            extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
+            write_err_message(&fmt_bytes, &arg_buf, extract_count, false);
+        } else {
+            write_err_message(&[], &[], 0, false);
+        }
     }
     invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
@@ -364,13 +400,16 @@ pub unsafe extern "C" fn warnc(code: c_int, fmt: *const c_char, mut args: ...) {
         write_err_message_with_code(&[], &[], 0, code);
         return;
     }
-    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
+    let Some(fmt_bytes) = (unsafe { read_format_bytes(fmt) }) else {
+        write_err_message_with_code(&[], &[], 0, code);
+        return;
+    };
     use frankenlibc_core::stdio::printf::parse_format_string;
-    let segments = parse_format_string(fmt_bytes);
+    let segments = parse_format_string(&fmt_bytes);
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    write_err_message_with_code(fmt_bytes, &arg_buf, extract_count, code);
+    write_err_message_with_code(&fmt_bytes, &arg_buf, extract_count, code);
 }
 
 /// BSD `vwarnc` — va_list version of `warnc`.
@@ -395,13 +434,16 @@ pub unsafe extern "C" fn errc(eval: c_int, code: c_int, fmt: *const c_char, mut 
     if fmt.is_null() {
         write_err_message_with_code(&[], &[], 0, code);
     } else {
-        let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(fmt) };
-        use frankenlibc_core::stdio::printf::parse_format_string;
-        let segments = parse_format_string(fmt_bytes);
-        let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
-        let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
-        extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
-        write_err_message_with_code(fmt_bytes, &arg_buf, extract_count, code);
+        if let Some(fmt_bytes) = unsafe { read_format_bytes(fmt) } {
+            use frankenlibc_core::stdio::printf::parse_format_string;
+            let segments = parse_format_string(&fmt_bytes);
+            let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
+            let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
+            extract_err_args!(&segments, &mut args, &mut arg_buf, extract_count);
+            write_err_message_with_code(&fmt_bytes, &arg_buf, extract_count, code);
+        } else {
+            write_err_message_with_code(&[], &[], 0, code);
+        }
     }
     invoke_exit_hook(eval);
     frankenlibc_core::syscall::sys_exit_group(eval)
