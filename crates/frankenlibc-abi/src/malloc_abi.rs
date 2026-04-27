@@ -1463,6 +1463,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     };
 
     if is_bump_ptr(ptr) {
+        let _ = fallback_remove(ptr);
         return;
     }
     if strict_allocator_host_path_active()
@@ -1727,6 +1728,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), copy_size);
             }
         }
+        let _ = fallback_remove(ptr);
         fallback_insert_sized(out, size.max(1));
         return out;
     }
