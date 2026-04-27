@@ -115,6 +115,10 @@ GLIBC_2.2.5 {
         bcopy;
         bzero;
         explicit_bzero;
+        explicit_memset;
+        memset_explicit;
+        consttime_bcmp;
+        consttime_memequal;
         timingsafe_bcmp;
         timingsafe_memcmp;
 
@@ -345,6 +349,7 @@ GLIBC_2.2.5 {
         gnu_get_libc_release;
         confstr;
         getbsize;
+        reallocarr;
         strtonum;
         dehumanize_number;
         expand_number;
@@ -356,6 +361,7 @@ GLIBC_2.2.5 {
         pidfile_close;
         pidfile_remove;
         pidfile_fileno;
+        pidfile_signal;
 
         /* ctype internal */
         __ctype_b_loc;
@@ -1735,6 +1741,10 @@ GLIBC_2.2.5 {
         capget;
         capset;
         futex;
+        futex_waitv;
+        futex_wake;
+        futex_wait;
+        futex_requeue;
         membarrier;
         ioprio_set;
         ioprio_get;

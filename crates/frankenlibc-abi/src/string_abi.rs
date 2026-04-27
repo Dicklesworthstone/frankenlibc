@@ -4231,16 +4231,26 @@ pub unsafe extern "C" fn explicit_bzero(s: *mut c_void, n: usize) {
 /// char` and replicated across the buffer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn explicit_memset(s: *mut c_void, c: c_int, n: usize) -> *mut c_void {
-    if n == 0 {
-        return s;
-    }
-    // SAFETY: caller-supplied writable region of length n.
-    unsafe { libc::memset(s, c, n) };
+    // Route through our ABI memset so explicit_memset gets the same
+    // null handling, membrane accounting, and volatile byte path as memset.
+    let out = unsafe { memset(s, c, n) };
     // Defeat dead-store elimination: ensure the compiler can't prove
     // the write is unused. black_box pins the address through an
     // optimization barrier.
     std::hint::black_box(s);
-    s
+    out
+}
+
+/// C23 `memset_explicit(b, c, len) -> *b` — guaranteed non-elidable
+/// byte fill. NetBSD exposes this as an alias of [`explicit_memset`].
+///
+/// # Safety
+///
+/// `b` must be valid for `len` bytes; `c` is interpreted as `unsigned
+/// char` and replicated across the buffer.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn memset_explicit(b: *mut c_void, c: c_int, len: usize) -> *mut c_void {
+    unsafe { explicit_memset(b, c, len) }
 }
 
 // ---------------------------------------------------------------------------

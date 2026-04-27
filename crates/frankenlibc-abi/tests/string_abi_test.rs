@@ -2575,6 +2575,22 @@ fn bd_jt6vm_explicit_memset_writes_byte_value_and_returns_buffer() {
 }
 
 #[test]
+fn bd_jt6vm_explicit_memset_null_nonzero_uses_memset_null_guard() {
+    use frankenlibc_abi::string_abi::explicit_memset;
+    let p = unsafe { explicit_memset(std::ptr::null_mut(), 0xAB, 4) };
+    assert!(p.is_null());
+}
+
+#[test]
+fn bd_jt6vm_memset_explicit_alias_writes_byte_value() {
+    use frankenlibc_abi::string_abi::memset_explicit;
+    let mut buf = [0u8; 16];
+    let p = unsafe { memset_explicit(buf.as_mut_ptr() as *mut std::ffi::c_void, 0x5A, buf.len()) };
+    assert_eq!(p, buf.as_mut_ptr() as *mut std::ffi::c_void);
+    assert!(buf.iter().all(|b| *b == 0x5A));
+}
+
+#[test]
 fn bd_jt6vm_explicit_memset_zero_length_is_noop() {
     use frankenlibc_abi::string_abi::explicit_memset;
     let mut buf = [0xCDu8; 8];
