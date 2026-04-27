@@ -335,6 +335,10 @@ unsafe fn opt_cstr<'a>(ptr: *const c_char) -> Result<Option<&'a CStr>, ()> {
     Ok(Some(unsafe { CStr::from_bytes_with_nul_unchecked(bytes) }))
 }
 
+unsafe fn required_cstr_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
+    unsafe { opt_cstr(ptr) }.ok().flatten().map(CStr::to_bytes)
+}
+
 enum HostsAddress {
     V4(Ipv4Addr),
     #[allow(dead_code)]
@@ -2220,12 +2224,12 @@ fn names_eq_no_case_no_dot(a: &[u8], b: &[u8]) -> bool {
 /// `a` and `b`, when non-NULL, must be NUL-terminated C strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_samename(a: *const c_char, b: *const c_char) -> c_int {
-    if a.is_null() || b.is_null() {
+    let Some(abytes) = (unsafe { required_cstr_bytes(a) }) else {
         return -1;
-    }
-    // SAFETY: caller-supplied NUL-terminated strings.
-    let abytes = unsafe { CStr::from_ptr(a) }.to_bytes();
-    let bbytes = unsafe { CStr::from_ptr(b) }.to_bytes();
+    };
+    let Some(bbytes) = (unsafe { required_cstr_bytes(b) }) else {
+        return -1;
+    };
     if names_eq_no_case_no_dot(abytes, bbytes) {
         1
     } else {
@@ -2248,12 +2252,12 @@ pub unsafe extern "C" fn ns_samename(a: *const c_char, b: *const c_char) -> c_in
 /// `a` and `b`, when non-NULL, must be NUL-terminated C strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_samedomain(a: *const c_char, b: *const c_char) -> c_int {
-    if a.is_null() || b.is_null() {
+    let Some(abytes) = (unsafe { required_cstr_bytes(a) }) else {
         return 0;
-    }
-    // SAFETY: caller-supplied NUL-terminated strings.
-    let abytes = unsafe { CStr::from_ptr(a) }.to_bytes();
-    let bbytes = unsafe { CStr::from_ptr(b) }.to_bytes();
+    };
+    let Some(bbytes) = (unsafe { required_cstr_bytes(b) }) else {
+        return 0;
+    };
     let a = strip_trailing_dot(abytes);
     let b = strip_trailing_dot(bbytes);
     if b.is_empty() {
@@ -2312,12 +2316,14 @@ pub unsafe extern "C" fn ns_makecanon(
     dst: *mut c_char,
     dstsiz: usize,
 ) -> c_int {
-    if src.is_null() || dst.is_null() {
+    let Some(sbytes) = (unsafe { required_cstr_bytes(src) }) else {
+        unsafe { set_abi_errno(frankenlibc_core::errno::EINVAL) };
+        return -1;
+    };
+    if dst.is_null() {
         unsafe { set_abi_errno(frankenlibc_core::errno::EINVAL) };
         return -1;
     }
-    // SAFETY: caller-supplied NUL-terminated string.
-    let sbytes = unsafe { CStr::from_ptr(src) }.to_bytes();
     let needs_dot = sbytes.last().copied() != Some(b'.');
     let extra: usize = if needs_dot { 1 } else { 0 };
     let needed = sbytes.len().saturating_add(extra).saturating_add(1);
@@ -2357,11 +2363,9 @@ pub unsafe extern "C" fn ns_makecanon(
 /// must point to writable `u32` storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_parse_ttl(src: *const c_char, dst: *mut u32) -> c_int {
-    if src.is_null() {
+    let Some(bytes) = (unsafe { required_cstr_bytes(src) }) else {
         return -1;
-    }
-    // SAFETY: caller-supplied NUL-terminated string.
-    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    };
     let mut total: u32 = 0;
     let mut i = 0;
     while i < bytes.len() {
@@ -2606,12 +2610,10 @@ pub unsafe extern "C" fn ns_datetosecs(cp: *const c_char, errp: *mut c_int) -> u
             unsafe { *errp = val };
         }
     };
-    if cp.is_null() {
+    let Some(s) = (unsafe { required_cstr_bytes(cp) }) else {
         set_err(1);
         return 0;
-    }
-    // SAFETY: caller-supplied NUL-terminated string.
-    let s = unsafe { CStr::from_ptr(cp) }.to_bytes();
+    };
     if s.len() != 14 || !s.iter().all(u8::is_ascii_digit) {
         set_err(1);
         return 0;

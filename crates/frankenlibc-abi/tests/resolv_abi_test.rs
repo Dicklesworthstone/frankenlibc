@@ -1512,6 +1512,22 @@ fn ns_samename_case_insensitive_with_optional_dot() {
 }
 
 #[test]
+fn ns_samename_rejects_tracked_unterminated_inputs() {
+    use frankenlibc_abi::resolv_abi::ns_samename;
+    let unterminated = malloc_unterminated(b"foo.com");
+    let other = std::ffi::CString::new("foo.com").unwrap();
+
+    assert_eq!(
+        unsafe { ns_samename(unterminated.as_ptr(), other.as_ptr()) },
+        -1
+    );
+    assert_eq!(
+        unsafe { ns_samename(other.as_ptr(), unterminated.as_ptr()) },
+        -1
+    );
+}
+
+#[test]
 fn ns_samedomain_root_and_subdomains() {
     use frankenlibc_abi::resolv_abi::ns_samedomain;
 
@@ -1554,6 +1570,22 @@ fn ns_samedomain_root_and_subdomains() {
     // Different names reject.
     assert_eq!(
         unsafe { ns_samedomain(cs("bar.com").as_ptr(), cs("foo.com").as_ptr()) },
+        0
+    );
+}
+
+#[test]
+fn ns_samedomain_rejects_tracked_unterminated_inputs() {
+    use frankenlibc_abi::resolv_abi::ns_samedomain;
+    let unterminated = malloc_unterminated(b"www.foo.com");
+    let domain = std::ffi::CString::new("foo.com").unwrap();
+
+    assert_eq!(
+        unsafe { ns_samedomain(unterminated.as_ptr(), domain.as_ptr()) },
+        0
+    );
+    assert_eq!(
+        unsafe { ns_samedomain(domain.as_ptr(), unterminated.as_ptr()) },
         0
     );
 }
@@ -1628,6 +1660,18 @@ fn ns_makecanon_einval_on_null_inputs() {
     assert_eq!(errno, libc::EINVAL);
 }
 
+#[test]
+fn ns_makecanon_rejects_tracked_unterminated_src() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = malloc_unterminated(b"foo.com");
+    let mut buf = [0u8; 16];
+
+    let rc = unsafe { ns_makecanon(src.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EINVAL);
+}
+
 // ---------------------------------------------------------------------------
 // libresolv ns_parse_ttl / ns_format_ttl / ns_datetosecs
 // ---------------------------------------------------------------------------
@@ -1676,6 +1720,17 @@ fn ns_parse_ttl_rejects_overflow() {
     // 11-digit number (>10 digits) overruns u32 and is rejected by the
     // digit-count guard.
     assert_eq!(parse_ttl("99999999999"), None);
+}
+
+#[test]
+fn ns_parse_ttl_rejects_tracked_unterminated_input() {
+    use frankenlibc_abi::resolv_abi::ns_parse_ttl;
+    let src = malloc_unterminated(b"60S");
+    let mut out = 123u32;
+
+    let rc = unsafe { ns_parse_ttl(src.as_ptr(), &mut out) };
+    assert_eq!(rc, -1);
+    assert_eq!(out, 123);
 }
 
 fn format_ttl(secs: u32, capacity: usize) -> Option<String> {
@@ -1792,6 +1847,17 @@ fn ns_datetosecs_rejects_malformed_strings() {
     let s = std::ffi::CString::new("21060207062816").unwrap();
     errp = 0;
     let _ = unsafe { ns_datetosecs(s.as_ptr(), &mut errp) };
+    assert_eq!(errp, 1);
+}
+
+#[test]
+fn ns_datetosecs_rejects_tracked_unterminated_input() {
+    use frankenlibc_abi::resolv_abi::ns_datetosecs;
+    let src = malloc_unterminated(b"20240101000000");
+    let mut errp: c_int = 0;
+
+    let secs = unsafe { ns_datetosecs(src.as_ptr(), &mut errp) };
+    assert_eq!(secs, 0);
     assert_eq!(errp, 1);
 }
 
