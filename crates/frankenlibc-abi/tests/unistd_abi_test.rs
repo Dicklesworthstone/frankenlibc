@@ -4670,6 +4670,29 @@ fn fstab_wrappers_surface_host_entries() {
 }
 
 #[test]
+fn fstab_lookup_rejects_tracked_unterminated_keys() {
+    let raw_file = malloc_tracked_unterminated(b"/");
+    let raw_spec = malloc_tracked_unterminated(b"/dev/root");
+
+    unsafe {
+        *__errno_location() = 0;
+        let by_file = getfsfile(raw_file) as *mut Fstab;
+        let file_err = *__errno_location();
+        assert!(by_file.is_null());
+        assert_eq!(file_err, libc::EINVAL);
+
+        *__errno_location() = 0;
+        let by_spec = getfsspec(raw_spec) as *mut Fstab;
+        let spec_err = *__errno_location();
+        assert!(by_spec.is_null());
+        assert_eq!(spec_err, libc::EINVAL);
+
+        frankenlibc_abi::malloc_abi::free(raw_file.cast());
+        frankenlibc_abi::malloc_abi::free(raw_spec.cast());
+    }
+}
+
+#[test]
 fn ttyent_wrappers_match_host_miss_shape() {
     let tty_name = CString::new("frankenlibc-no-such-tty").unwrap();
     let missing = unsafe { getttynam(tty_name.as_ptr()) as *mut TtyEnt };
@@ -4693,6 +4716,22 @@ fn ttyent_wrappers_match_host_miss_shape() {
 
     let end_rc = unsafe { endttyent() };
     assert_eq!(end_rc, 1, "endttyent should mirror host success shape");
+}
+
+#[test]
+fn getttynam_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"tty1");
+
+    unsafe {
+        *__errno_location() = 0;
+        let entry = getttynam(raw_name) as *mut TtyEnt;
+        let err = *__errno_location();
+
+        assert!(entry.is_null());
+        assert_eq!(err, libc::EINVAL);
+
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
 }
 
 #[test]

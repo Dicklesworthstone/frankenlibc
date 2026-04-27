@@ -21656,7 +21656,10 @@ pub unsafe extern "C" fn getfsfile(file: *const c_char) -> *mut c_void {
     if file.is_null() {
         return std::ptr::null_mut();
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(file) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(file) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
     // Rewind
     unsafe { setfsent() };
     FSTAB_STATE.with(|cell| {
@@ -21670,7 +21673,7 @@ pub unsafe extern "C" fn getfsfile(file: *const c_char) -> *mut c_void {
             let file_ptr = unsafe { *((ent as *const *const c_char).add(1)) };
             if !file_ptr.is_null() {
                 let entry_file = unsafe { std::ffi::CStr::from_ptr(file_ptr) }.to_bytes();
-                if entry_file == needle {
+                if entry_file == needle.as_slice() {
                     return ent;
                 }
             }
@@ -21687,7 +21690,10 @@ pub unsafe extern "C" fn getfsspec(spec: *const c_char) -> *mut c_void {
     if spec.is_null() {
         return std::ptr::null_mut();
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(spec) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(spec) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
     // Rewind
     unsafe { setfsent() };
     FSTAB_STATE.with(|cell| {
@@ -21701,7 +21707,7 @@ pub unsafe extern "C" fn getfsspec(spec: *const c_char) -> *mut c_void {
             let spec_ptr = unsafe { *(ent as *const *const c_char) };
             if !spec_ptr.is_null() {
                 let entry_spec = unsafe { std::ffi::CStr::from_ptr(spec_ptr) }.to_bytes();
-                if entry_spec == needle {
+                if entry_spec == needle.as_slice() {
                     return ent;
                 }
             }
@@ -21878,7 +21884,10 @@ pub unsafe extern "C" fn getttynam(name: *const c_char) -> *mut c_void {
     if name.is_null() {
         return std::ptr::null_mut();
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
     unsafe { setttyent() };
     TTYENT_STATE.with(|cell| {
         let state = unsafe { &mut *cell.get() };
@@ -21890,7 +21899,7 @@ pub unsafe extern "C" fn getttynam(name: *const c_char) -> *mut c_void {
             let name_ptr = unsafe { *(ent as *const *const c_char) };
             if !name_ptr.is_null() {
                 let entry_name = unsafe { std::ffi::CStr::from_ptr(name_ptr) }.to_bytes();
-                if entry_name == needle {
+                if entry_name == needle.as_slice() {
                     return ent;
                 }
             }
