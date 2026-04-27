@@ -80,6 +80,18 @@ unsafe fn free_tracked(raw: *mut c_void) {
     unsafe { free(raw) };
 }
 
+unsafe fn fill_tracked_bytes(raw: *mut c_void, len: usize, value: u8) {
+    unsafe { std::ptr::write_bytes(raw.cast::<u8>(), value, len) };
+}
+
+unsafe fn assert_tracked_bytes_eq(raw: *const c_void, len: usize, expected: u8) {
+    let bytes = unsafe { std::slice::from_raw_parts(raw.cast::<u8>(), len) };
+    assert!(
+        bytes.iter().all(|&byte| byte == expected),
+        "tracked bytes should remain untouched"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // getpwnam
 // ---------------------------------------------------------------------------
@@ -314,7 +326,9 @@ fn getpwuid_r_rejects_tracked_short_result_slot_before_write() {
     with_passwd_file(FIXTURE, || unsafe {
         let mut pwd: libc::passwd = std::mem::zeroed();
         let mut buf = vec![0u8; 1024];
-        let raw = tracked_zeroed_bytes(std::mem::size_of::<*mut libc::passwd>() - 1);
+        let raw_len = std::mem::size_of::<*mut libc::passwd>() - 1;
+        let raw = tracked_zeroed_bytes(raw_len);
+        fill_tracked_bytes(raw, raw_len, 0xA5);
         assert_known_short(raw, std::mem::size_of::<*mut libc::passwd>());
 
         let rc = getpwuid_r(
@@ -326,6 +340,7 @@ fn getpwuid_r_rejects_tracked_short_result_slot_before_write() {
         );
 
         assert_eq!(rc, libc::EINVAL);
+        assert_tracked_bytes_eq(raw, raw_len, 0xA5);
         free_tracked(raw);
     });
 }
@@ -335,7 +350,9 @@ fn getpwuid_r_rejects_tracked_misaligned_result_slot_before_write() {
     with_passwd_file(FIXTURE, || unsafe {
         let mut pwd: libc::passwd = std::mem::zeroed();
         let mut buf = vec![0u8; 1024];
-        let raw = tracked_zeroed_bytes(std::mem::size_of::<*mut libc::passwd>() + 1);
+        let raw_len = std::mem::size_of::<*mut libc::passwd>() + 1;
+        let raw = tracked_zeroed_bytes(raw_len);
+        fill_tracked_bytes(raw, raw_len, 0xA5);
         let result = raw.cast::<u8>().add(1).cast::<*mut libc::passwd>();
         assert_ne!(
             (result as usize) % std::mem::align_of::<*mut libc::passwd>(),
@@ -351,6 +368,7 @@ fn getpwuid_r_rejects_tracked_misaligned_result_slot_before_write() {
         );
 
         assert_eq!(rc, libc::EINVAL);
+        assert_tracked_bytes_eq(raw, raw_len, 0xA5);
         free_tracked(raw);
     });
 }
