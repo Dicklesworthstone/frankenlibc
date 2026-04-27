@@ -9,13 +9,14 @@
 //! Fork/exec/wait tests are in separate integration test suites
 //! because they require child process creation.
 
-use std::ffi::{CString, c_char, c_int};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::os::unix::fs::symlink;
 use std::os::unix::io::AsRawFd;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use frankenlibc_abi::glibc_internal_abi::{pidfd_spawn, pidfd_spawnp};
+use frankenlibc_abi::malloc_abi::{free, malloc};
 use frankenlibc_abi::process_abi::*;
 use frankenlibc_abi::unistd_abi::{
     posix_spawn_file_actions_addclosefrom_np, posix_spawn_file_actions_addtcsetpgrp_np,
@@ -46,6 +47,13 @@ impl AlignedBuf {
     fn as_ptr(&self) -> *const u8 {
         self.0.as_ptr()
     }
+}
+
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let ptr = unsafe { malloc(bytes.len()).cast::<c_char>() };
+    assert!(!ptr.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len()) };
+    ptr
 }
 
 fn pid_from_fdinfo(pidfd: c_int) -> Option<libc::pid_t> {
@@ -565,6 +573,33 @@ fn posix_spawnp_missing_binary_returns_enoent() {
         libc::ENOENT,
         "posix_spawnp should surface ENOENT when PATH search finds nothing"
     );
+    assert_eq!(pid, -1, "pid must remain unchanged on spawn failure");
+}
+
+#[test]
+fn posix_spawnp_skips_tracked_unterminated_path_env() {
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap();
+    let missing =
+        CString::new("frankenlibc_nonexistent_spawn_binary_526e67273888434d98d12286").unwrap();
+    let argv: [*const c_char; 2] = [missing.as_ptr(), std::ptr::null()];
+    let path_env = unsafe { malloc_unterminated(b"PATH=/definitely_missing_frankenlibc") };
+    let envp: [*mut c_char; 2] = [path_env, std::ptr::null_mut()];
+    let mut pid: libc::pid_t = -1;
+
+    let rc = unsafe {
+        posix_spawnp(
+            &mut pid,
+            missing.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr().cast(),
+            envp.as_ptr().cast(),
+        )
+    };
+
+    unsafe { free(path_env.cast::<c_void>()) };
+
+    assert_eq!(rc, libc::ENOENT);
     assert_eq!(pid, -1, "pid must remain unchanged on spawn failure");
 }
 

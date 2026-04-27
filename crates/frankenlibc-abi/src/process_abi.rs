@@ -59,9 +59,11 @@ unsafe fn walk_env_for_path(mut envp: *const *mut c_char) -> Vec<u8> {
         if entry.is_null() {
             break;
         }
-        // SAFETY: each environment entry is a valid NUL-terminated string.
-        let env_slice = unsafe { std::ffi::CStr::from_ptr(entry) }.to_bytes();
-        if let Some(path_value) = env_slice.strip_prefix(b"PATH=") {
+        // Caller-provided envp entries can be malformed. Bound scans for tracked
+        // allocations so an unterminated entry cannot bleed into adjacent memory.
+        if let Some(env_slice) = unsafe { read_bounded_cstr(entry) }
+            && let Some(path_value) = env_slice.strip_prefix(b"PATH=")
+        {
             return path_value.to_vec();
         }
         // SAFETY: advancing within a NULL-terminated environment vector.
