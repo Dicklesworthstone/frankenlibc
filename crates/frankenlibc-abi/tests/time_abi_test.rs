@@ -29,6 +29,19 @@ fn time_writes_to_pointer() {
     assert_eq!(ret, t, "time() should write same value as returned");
 }
 
+#[test]
+fn time_rejects_tracked_short_tloc() {
+    let required = std::mem::size_of::<i64>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let ret = unsafe { time_abi::time(raw.cast()) };
+
+    assert_eq!(ret, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
 // ---------------------------------------------------------------------------
 // clock_gettime
 // ---------------------------------------------------------------------------
@@ -136,6 +149,62 @@ fn localtime_r_returns_nonnull() {
     assert!(tm.tm_year >= 124, "year should be >= 2024");
 }
 
+#[test]
+fn gmtime_r_rejects_tracked_short_timer() {
+    let required = std::mem::size_of::<i64>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+
+    let result = unsafe { time_abi::gmtime_r(raw.cast(), &mut tm) };
+
+    assert!(result.is_null());
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn localtime_r_rejects_tracked_short_timer() {
+    let required = std::mem::size_of::<i64>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+
+    let result = unsafe { time_abi::localtime_r(raw.cast(), &mut tm) };
+
+    assert!(result.is_null());
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn gmtime_r_rejects_tracked_short_result() {
+    let epoch: i64 = 0;
+    let required = std::mem::size_of::<libc::tm>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let result = unsafe { time_abi::gmtime_r(&epoch, raw.cast()) };
+
+    assert!(result.is_null());
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn localtime_r_rejects_tracked_short_result() {
+    let epoch: i64 = 0;
+    let required = std::mem::size_of::<libc::tm>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let result = unsafe { time_abi::localtime_r(&epoch, raw.cast()) };
+
+    assert!(result.is_null());
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
 // ---------------------------------------------------------------------------
 // mktime / timegm
 // ---------------------------------------------------------------------------
@@ -175,6 +244,19 @@ fn timegm_epoch_zero() {
     tm.tm_mday = 1;
     let result = unsafe { time_abi::timegm(&mut tm) };
     assert_eq!(result, 0, "timegm(1970-01-01) should be 0");
+}
+
+#[test]
+fn mktime_rejects_tracked_short_tm() {
+    let required = std::mem::size_of::<libc::tm>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let result = unsafe { time_abi::mktime(raw.cast()) };
+
+    assert_eq!(result, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------
@@ -677,6 +759,42 @@ fn strftime_time() {
     assert_eq!(s.to_bytes(), b"14:30:45");
 }
 
+#[test]
+fn strftime_rejects_tracked_short_output_buffer() {
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    tm.tm_year = 126;
+    let fmt = b"%Y\0";
+    let raw = unsafe { malloc_tracked_bytes(2) };
+    assert_known_short(raw.cast(), 8);
+
+    let len = unsafe { time_abi::strftime(raw, 8, fmt.as_ptr().cast::<c_char>(), &tm as *const _) };
+
+    assert_eq!(len, 0);
+    unsafe { free_tracked(raw.cast()) };
+}
+
+#[test]
+fn strftime_rejects_tracked_short_tm() {
+    let required = std::mem::size_of::<libc::tm>();
+    let raw_tm = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw_tm, required);
+    let mut buf = [0x55_u8; 16];
+    let fmt = b"%Y\0";
+
+    let len = unsafe {
+        time_abi::strftime(
+            buf.as_mut_ptr().cast::<c_char>(),
+            buf.len(),
+            fmt.as_ptr().cast::<c_char>(),
+            raw_tm.cast(),
+        )
+    };
+
+    assert_eq!(len, 0);
+    assert_eq!(buf, [0x55_u8; 16]);
+    unsafe { free_tracked(raw_tm) };
+}
+
 unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
     let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
     assert!(!raw.is_null());
@@ -751,12 +869,36 @@ fn gmtime_returns_nonnull() {
 }
 
 #[test]
+fn gmtime_rejects_tracked_short_timer() {
+    let required = std::mem::size_of::<i64>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let result = unsafe { time_abi::gmtime(raw.cast()) };
+
+    assert!(result.is_null());
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
 fn localtime_returns_nonnull() {
     let now = unsafe { time_abi::time(std::ptr::null_mut()) };
     let result = unsafe { time_abi::localtime(&now) };
     assert!(!result.is_null());
     let tm = unsafe { &*result };
     assert!(tm.tm_year >= 124);
+}
+
+#[test]
+fn localtime_rejects_tracked_short_timer() {
+    let required = std::mem::size_of::<i64>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let result = unsafe { time_abi::localtime(raw.cast()) };
+
+    assert!(result.is_null());
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------
@@ -773,10 +915,34 @@ fn asctime_returns_nonnull() {
 }
 
 #[test]
+fn asctime_rejects_tracked_short_tm() {
+    let required = std::mem::size_of::<libc::tm>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let result = unsafe { time_abi::asctime(raw.cast()) };
+
+    assert!(result.is_null());
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
 fn ctime_returns_nonnull() {
     let now = unsafe { time_abi::time(std::ptr::null_mut()) };
     let result = unsafe { time_abi::ctime(&now) };
     assert!(!result.is_null());
+}
+
+#[test]
+fn ctime_rejects_tracked_short_timer() {
+    let required = std::mem::size_of::<i64>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let result = unsafe { time_abi::ctime(raw.cast()) };
+
+    assert!(result.is_null());
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------
@@ -884,6 +1050,26 @@ fn strptime_returns_null_on_mismatch() {
         )
     };
     assert!(result.is_null());
+}
+
+#[test]
+fn strptime_rejects_tracked_short_tm() {
+    let input = b"2026-02-25\0";
+    let fmt = b"%Y-%m-%d\0";
+    let required = std::mem::size_of::<libc::tm>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let result = unsafe {
+        time_abi::strptime(
+            input.as_ptr().cast::<c_char>(),
+            fmt.as_ptr().cast::<c_char>(),
+            raw.cast(),
+        )
+    };
+
+    assert!(result.is_null());
+    unsafe { free_tracked(raw) };
 }
 
 #[test]

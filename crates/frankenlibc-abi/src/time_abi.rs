@@ -267,6 +267,11 @@ fn raw_getauxval(typ: c_ulong) -> Option<c_ulong> {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn time(tloc: *mut i64) -> i64 {
+    if !tracked_optional_object_fits(tloc.cast_const()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
     let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
     if rc != 0 {
@@ -371,7 +376,11 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
 /// Returns null on failure.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn localtime_r(timer: *const i64, result: *mut libc::tm) -> *mut libc::tm {
-    if timer.is_null() || result.is_null() {
+    if timer.is_null()
+        || result.is_null()
+        || !tracked_required_object_fits(timer)
+        || !tracked_required_object_fits(result.cast_const())
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         return std::ptr::null_mut();
     }
@@ -391,7 +400,11 @@ pub unsafe extern "C" fn localtime_r(timer: *const i64, result: *mut libc::tm) -
 /// Identical to `localtime_r` since we only support UTC.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *mut libc::tm {
-    if timer.is_null() || result.is_null() {
+    if timer.is_null()
+        || result.is_null()
+        || !tracked_required_object_fits(timer)
+        || !tracked_required_object_fits(result.cast_const())
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         return std::ptr::null_mut();
     }
@@ -427,6 +440,11 @@ pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
     }
 
     if tm.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 8, true);
+        return -1;
+    }
+    if !tracked_required_object_fits(tm.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Time, decision.profile, 8, true);
         return -1;
@@ -687,6 +705,11 @@ pub unsafe extern "C" fn strftime(
         return 0;
     }
 
+    if !tracked_region_fits(s.cast(), maxsize) || !tracked_required_object_fits(tm) {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
+        return 0;
+    }
+
     // Read the format string as a byte slice.
     let (fmt_len, terminated) = unsafe { scan_c_string(format, known_remaining(format as usize)) };
     if !terminated {
@@ -719,60 +742,68 @@ std::thread_local! {
 /// POSIX `gmtime` — convert time_t to broken-down UTC time (non-reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gmtime(timer: *const i64) -> *mut libc::tm {
-    if timer.is_null() {
+    if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
     GMTIME_BUF.with(|cell| {
         let ptr = cell.get();
-        unsafe {
-            gmtime_r(timer, ptr);
+        let result = unsafe { gmtime_r(timer, ptr) };
+        if result.is_null() {
+            std::ptr::null_mut()
+        } else {
+            ptr
         }
-        ptr
     })
 }
 
 /// POSIX `localtime` — convert time_t to broken-down local time (non-reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn localtime(timer: *const i64) -> *mut libc::tm {
-    if timer.is_null() {
+    if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
     LOCALTIME_BUF.with(|cell| {
         let ptr = cell.get();
-        unsafe {
-            localtime_r(timer, ptr);
+        let result = unsafe { localtime_r(timer, ptr) };
+        if result.is_null() {
+            std::ptr::null_mut()
+        } else {
+            ptr
         }
-        ptr
     })
 }
 
 /// POSIX `asctime` — convert broken-down time to string (non-reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asctime(tm: *const libc::tm) -> *mut std::ffi::c_char {
-    if tm.is_null() {
+    if tm.is_null() || !tracked_required_object_fits(tm) {
         return std::ptr::null_mut();
     }
     ASCTIME_BUF.with(|cell| {
         let ptr = cell.get();
-        unsafe {
-            asctime_r(tm, (*ptr).as_mut_ptr() as *mut std::ffi::c_char);
+        let result = unsafe { asctime_r(tm, (*ptr).as_mut_ptr() as *mut std::ffi::c_char) };
+        if result.is_null() {
+            std::ptr::null_mut()
+        } else {
+            unsafe { (*ptr).as_mut_ptr() as *mut std::ffi::c_char }
         }
-        unsafe { (*ptr).as_mut_ptr() as *mut std::ffi::c_char }
     })
 }
 
 /// POSIX `ctime` — convert time_t to string (non-reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
-    if timer.is_null() {
+    if timer.is_null() || !tracked_required_object_fits(timer) {
         return std::ptr::null_mut();
     }
     CTIME_BUF.with(|cell| {
         let ptr = cell.get();
-        unsafe {
-            ctime_r(timer, (*ptr).as_mut_ptr() as *mut std::ffi::c_char);
+        let result = unsafe { ctime_r(timer, (*ptr).as_mut_ptr() as *mut std::ffi::c_char) };
+        if result.is_null() {
+            std::ptr::null_mut()
+        } else {
+            unsafe { (*ptr).as_mut_ptr() as *mut std::ffi::c_char }
         }
-        unsafe { (*ptr).as_mut_ptr() as *mut std::ffi::c_char }
     })
 }
 
@@ -841,6 +872,9 @@ pub unsafe extern "C" fn strptime(
     tm: *mut libc::tm,
 ) -> *mut std::ffi::c_char {
     if s.is_null() || format.is_null() || tm.is_null() {
+        return std::ptr::null_mut();
+    }
+    if !tracked_required_object_fits(tm.cast_const()) {
         return std::ptr::null_mut();
     }
 
