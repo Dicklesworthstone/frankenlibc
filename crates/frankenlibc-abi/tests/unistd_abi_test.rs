@@ -8326,6 +8326,43 @@ fn xcrypt_alias_matches_crypt_for_md5() {
 }
 
 #[test]
+fn crypt_rejects_tracked_unterminated_key_and_salt() {
+    use frankenlibc_abi::unistd_abi::crypt;
+    let valid_key = CString::new("hunter2").unwrap();
+    let valid_salt = CString::new("$6$abcdefgh").unwrap();
+
+    unsafe {
+        let key = b"unterminated-key";
+        let raw_key = frankenlibc_abi::malloc_abi::malloc(key.len()).cast::<u8>();
+        assert!(!raw_key.is_null());
+        std::ptr::copy_nonoverlapping(key.as_ptr(), raw_key, key.len());
+
+        *__errno_location() = 0;
+        let hashed = crypt(raw_key.cast(), valid_salt.as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_key.cast());
+
+        assert!(hashed.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+
+    unsafe {
+        let salt = b"$6$unterminated-salt";
+        let raw_salt = frankenlibc_abi::malloc_abi::malloc(salt.len()).cast::<u8>();
+        assert!(!raw_salt.is_null());
+        std::ptr::copy_nonoverlapping(salt.as_ptr(), raw_salt, salt.len());
+
+        *__errno_location() = 0;
+        let hashed = crypt(valid_key.as_ptr(), raw_salt.cast());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_salt.cast());
+
+        assert!(hashed.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn encrypt_setkey_des_stubs_are_noops() {
     use frankenlibc_abi::unistd_abi::{encrypt, encrypt_r, setkey, setkey_r};
     let mut block: [c_char; 64] = [0; 64];
@@ -8365,6 +8402,22 @@ fn crypt_checksalt_classifies_known_prefixes() {
     assert_eq!(unsafe { crypt_checksalt(des2.as_ptr()) }, 1);
     // NULL input must not crash; returns CRYPT_SALT_INVALID.
     assert_eq!(unsafe { crypt_checksalt(std::ptr::null()) }, 1);
+}
+
+#[test]
+fn crypt_checksalt_rejects_tracked_unterminated_setting() {
+    use frankenlibc_abi::unistd_abi::crypt_checksalt;
+    let setting = b"$6$unterminated-setting";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(setting.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(setting.as_ptr(), raw, setting.len());
+        let rc = crypt_checksalt(raw.cast());
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, 1);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -8529,6 +8582,26 @@ fn crypt_gensalt_rejects_invalid_prefix_and_negative_entropy_size() {
     assert!(p.is_null());
     let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
     assert_eq!(errno, libc::EINVAL);
+}
+
+#[test]
+fn crypt_gensalt_rejects_tracked_unterminated_prefix() {
+    use frankenlibc_abi::unistd_abi::crypt_gensalt;
+    let prefix = b"$6$unterminated";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(prefix.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(prefix.as_ptr(), raw, prefix.len());
+
+        *__errno_location() = 0;
+        let generated = crypt_gensalt(raw.cast(), 0, std::ptr::null(), 0);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert!(generated.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
 }
 
 #[test]

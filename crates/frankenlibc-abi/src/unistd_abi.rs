@@ -6965,15 +6965,21 @@ pub unsafe extern "C" fn crypt(key: *const c_char, salt: *const c_char) -> *mut 
         return std::ptr::null_mut();
     }
 
-    let key_bytes = unsafe { CStr::from_ptr(key) }.to_bytes();
-    let salt_bytes = unsafe { CStr::from_ptr(salt) }.to_bytes();
+    let Some(key_bytes) = (unsafe { read_c_string_bytes(key) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    };
+    let Some(salt_bytes) = (unsafe { read_c_string_bytes(salt) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    };
 
     let result = if salt_bytes.starts_with(b"$6$") {
-        crypt_sha512(key_bytes, salt_bytes)
+        crypt_sha512(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$5$") {
-        crypt_sha256(key_bytes, salt_bytes)
+        crypt_sha256(&key_bytes, &salt_bytes)
     } else if salt_bytes.starts_with(b"$1$") {
-        crypt_md5(key_bytes, salt_bytes)
+        crypt_md5(&key_bytes, &salt_bytes)
     } else {
         // Traditional DES or unknown — return error (DES is obsolete and insecure)
         unsafe { set_abi_errno(errno::EINVAL) };
@@ -7063,8 +7069,9 @@ pub unsafe extern "C" fn crypt_checksalt(setting: *const c_char) -> c_int {
     if setting.is_null() {
         return 1;
     }
-    // SAFETY: caller-supplied NUL-terminated string.
-    let bytes = unsafe { CStr::from_ptr(setting) }.to_bytes();
+    let Some(bytes) = (unsafe { read_c_string_bytes(setting) }) else {
+        return 1;
+    };
     if bytes.starts_with(b"$1$") || bytes.starts_with(b"$5$") || bytes.starts_with(b"$6$") {
         0
     } else {
@@ -7224,9 +7231,10 @@ fn gensalt_prefix(prefix: *const c_char) -> Result<&'static [u8], c_int> {
     if prefix.is_null() {
         return Ok(b"$6$");
     }
-    // SAFETY: caller-supplied NUL-terminated string.
-    let bytes = unsafe { CStr::from_ptr(prefix) }.to_bytes();
-    match bytes {
+    let Some(bytes) = (unsafe { read_c_string_bytes(prefix) }) else {
+        return Err(errno::EINVAL);
+    };
+    match bytes.as_slice() {
         b"" => Ok(b"$6$"),
         b"$1$" => Ok(b"$1$"),
         b"$5$" => Ok(b"$5$"),
