@@ -416,11 +416,18 @@ fn resolve_gethostbyname_target(name: Option<&CStr>, repair: bool) -> Option<(Ve
 }
 
 #[inline]
-fn align_up(offset: usize, align: usize) -> usize {
+fn is_aligned_for<T>(ptr: *const c_void) -> bool {
+    (ptr as usize).is_multiple_of(align_of::<T>())
+}
+
+fn aligned_buffer_offset(base: *const c_char, min_offset: usize, align: usize) -> Option<usize> {
     if align <= 1 {
-        return offset;
+        return Some(min_offset);
     }
-    (offset + (align - 1)) & !(align - 1)
+    let addr = (base as usize).checked_add(min_offset)?;
+    let rem = addr % align;
+    let padding = if rem == 0 { 0 } else { align - rem };
+    min_offset.checked_add(padding)
 }
 
 #[inline]
@@ -508,8 +515,11 @@ unsafe fn write_reentrant_hostent(
     if result.is_null() {
         return Err(libc::EINVAL);
     }
+    if !is_aligned_for::<libc::hostent>(result_buf) {
+        return Err(libc::EINVAL);
+    }
 
-    let name_len = name_bytes.len().saturating_add(1);
+    let name_len = name_bytes.len().checked_add(1).ok_or(libc::ERANGE)?;
     if name_len > buflen {
         return Err(libc::ERANGE);
     }
@@ -521,8 +531,9 @@ unsafe fn write_reentrant_hostent(
     let name_ptr = buf;
     let mut offset = name_len;
 
-    offset = align_up(offset, align_of::<*mut c_char>());
-    if offset + 4 > buflen {
+    offset = aligned_buffer_offset(buf, offset, align_of::<u8>()).ok_or(libc::ERANGE)?;
+    let addr_end = offset.checked_add(4).ok_or(libc::ERANGE)?;
+    if addr_end > buflen {
         return Err(libc::ERANGE);
     }
     // SAFETY: bounds checked above.
@@ -530,22 +541,24 @@ unsafe fn write_reentrant_hostent(
     let addr = ip.octets();
     // SAFETY: addr_ptr points to at least 4 writable bytes.
     unsafe { ptr::copy_nonoverlapping(addr.as_ptr(), addr_ptr, addr.len()) };
-    offset += 4;
+    offset = addr_end;
 
-    offset = align_up(offset, align_of::<*mut c_char>());
+    offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
     let aliases_bytes = size_of::<*mut c_char>();
-    if offset + aliases_bytes > buflen {
+    let aliases_end = offset.checked_add(aliases_bytes).ok_or(libc::ERANGE)?;
+    if aliases_end > buflen {
         return Err(libc::ERANGE);
     }
     // SAFETY: bounds checked above and alignment enforced.
     let aliases_ptr = unsafe { buf.add(offset).cast::<*mut c_char>() };
     // SAFETY: aliases_ptr points to one pointer-sized slot.
     unsafe { *aliases_ptr = ptr::null_mut() };
-    offset += aliases_bytes;
+    offset = aliases_end;
 
-    offset = align_up(offset, align_of::<*mut c_char>());
+    offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
     let addr_list_bytes = size_of::<*mut c_char>() * 2;
-    if offset + addr_list_bytes > buflen {
+    let addr_list_end = offset.checked_add(addr_list_bytes).ok_or(libc::ERANGE)?;
+    if addr_list_end > buflen {
         return Err(libc::ERANGE);
     }
     // SAFETY: bounds checked above and alignment enforced.

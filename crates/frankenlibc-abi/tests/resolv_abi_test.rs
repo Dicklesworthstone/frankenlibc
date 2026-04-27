@@ -17,6 +17,7 @@ use frankenlibc_abi::malloc_abi;
 use frankenlibc_abi::resolv_abi;
 
 const HOST_NOT_FOUND_ERRNO: i32 = 1;
+const NO_RECOVERY_ERRNO: i32 = 3;
 const HOSTS_PATH_ENV: &str = "FRANKENLIBC_HOSTS_PATH";
 const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
 const PROC_NET_ROUTE_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_ROUTE_PATH";
@@ -57,6 +58,29 @@ fn temp_resolver_path(kind: &str) -> std::path::PathBuf {
 fn with_resolver_lock<T>(f: impl FnOnce() -> T) -> T {
     let _guard = RESOLVER_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     f()
+}
+
+fn misaligned_hostent_result_ptr(storage: &mut [u8]) -> *mut c_void {
+    let align = mem::align_of::<libc::hostent>();
+    let base = storage.as_mut_ptr();
+    for offset in 1..=align {
+        let candidate = base.wrapping_add(offset);
+        if !(candidate as usize).is_multiple_of(align) {
+            return candidate.cast::<c_void>();
+        }
+    }
+    base.cast::<c_void>()
+}
+
+fn misaligned_c_char_buffer(storage: &mut [c_char], align: usize) -> (*mut c_char, usize) {
+    let base = storage.as_mut_ptr();
+    for offset in 1..=align.max(1) {
+        let candidate = base.wrapping_add(offset);
+        if !(candidate as usize).is_multiple_of(align) {
+            return (candidate, storage.len() - offset);
+        }
+    }
+    (base, storage.len())
 }
 
 fn with_resolver_backends<T>(
@@ -262,6 +286,66 @@ fn gethostbyname_r_numeric_ipv4_populates_result() {
 }
 
 #[test]
+fn gethostbyname_r_handles_misaligned_scratch_buffer() {
+    let query = CString::new("10.20.30.40").expect("query should be valid C string");
+    let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+    let mut scratch = [0i8; 260];
+    let (scratch_ptr, scratch_len) =
+        misaligned_c_char_buffer(&mut scratch, mem::align_of::<*mut c_char>());
+    assert!(!(scratch_ptr as usize).is_multiple_of(mem::align_of::<*mut c_char>()));
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        inet_abi::gethostbyname_r(
+            query.as_ptr(),
+            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+            scratch_ptr,
+            scratch_len,
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(h_errno, 0);
+    assert_eq!(
+        result_ptr,
+        (&mut hostent as *mut libc::hostent).cast::<c_void>()
+    );
+    assert!((hostent.h_aliases as usize).is_multiple_of(mem::align_of::<*mut c_char>()));
+    assert!((hostent.h_addr_list as usize).is_multiple_of(mem::align_of::<*mut c_char>()));
+
+    let first_addr_ptr = unsafe { *hostent.h_addr_list };
+    let octets = unsafe { std::slice::from_raw_parts(first_addr_ptr.cast::<u8>(), 4) };
+    assert_eq!(octets, [10, 20, 30, 40]);
+}
+
+#[test]
+fn gethostbyname_r_rejects_misaligned_result_buf() {
+    let query = CString::new("10.20.30.40").expect("query should be valid C string");
+    let mut result_storage =
+        vec![0u8; mem::size_of::<libc::hostent>() + mem::align_of::<libc::hostent>()];
+    let result_buf = misaligned_hostent_result_ptr(&mut result_storage);
+    let mut scratch = [0i8; 256];
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        inet_abi::gethostbyname_r(
+            query.as_ptr(),
+            result_buf,
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result_ptr.is_null());
+    assert_eq!(h_errno, NO_RECOVERY_ERRNO);
+}
+
+#[test]
 fn gethostbyaddr_r_small_buffer_returns_erange_preserves_h_errno() {
     // glibc parity (bd-a892): gethostbyaddr_r must also leave
     // *h_errnop untouched on ERANGE — symmetric to gethostbyname_r.
@@ -291,6 +375,35 @@ fn gethostbyaddr_r_small_buffer_returns_erange_preserves_h_errno() {
             h_errno, SENTINEL,
             "ERANGE must leave *h_errnop untouched (glibc parity)"
         );
+    });
+}
+
+#[test]
+fn gethostbyaddr_r_rejects_misaligned_result_buf() {
+    with_resolver_backends(Some(b"10.0.0.42 somehost\n"), None, |_| {
+        let octets: [u8; 4] = [10, 0, 0, 42];
+        let mut result_storage =
+            vec![0u8; mem::size_of::<libc::hostent>() + mem::align_of::<libc::hostent>()];
+        let result_buf = misaligned_hostent_result_ptr(&mut result_storage);
+        let mut scratch = [0i8; 256];
+        let mut result_ptr: *mut c_void = ptr::null_mut();
+        let mut h_errno = -1;
+
+        let rc = unsafe {
+            inet_abi::gethostbyaddr_r(
+                octets.as_ptr().cast::<c_void>(),
+                octets.len() as libc::socklen_t,
+                libc::AF_INET,
+                result_buf,
+                scratch.as_mut_ptr(),
+                scratch.len(),
+                &mut result_ptr,
+                &mut h_errno,
+            )
+        };
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result_ptr.is_null());
+        assert_eq!(h_errno, NO_RECOVERY_ERRNO);
     });
 }
 
