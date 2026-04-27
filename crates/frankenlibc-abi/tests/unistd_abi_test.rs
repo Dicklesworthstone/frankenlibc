@@ -6668,6 +6668,29 @@ fn setproctitle_default_prefix_includes_progname() {
 }
 
 #[test]
+fn setproctitle_skips_unterminated_published_progname() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, mut envp, backing) = build_synthetic_argv("originalname", 64);
+    unsafe { setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr()) };
+
+    let raw_progname = malloc_tracked_unterminated(b"badprog");
+    let old_progname = frankenlibc_abi::startup_abi::program_invocation_short_name
+        .swap(raw_progname, std::sync::atomic::Ordering::AcqRel);
+
+    let fmt = c"hello";
+    unsafe {
+        setproctitle(fmt.as_ptr());
+        frankenlibc_abi::startup_abi::program_invocation_short_name
+            .store(old_progname, std::sync::atomic::Ordering::Release);
+        frankenlibc_abi::malloc_abi::free(raw_progname.cast());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"hello");
+}
+
+#[test]
 fn setproctitle_truncates_at_capacity_minus_one() {
     let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     // Tight buffer: progname "x" + 8 bytes of padding = capacity 10.

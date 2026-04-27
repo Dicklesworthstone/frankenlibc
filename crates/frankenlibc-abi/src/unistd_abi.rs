@@ -4,7 +4,7 @@
 //! directory navigation (getcwd/chdir), process identity (getpid/getppid/getuid/...),
 //! link operations (link/symlink/readlink/unlink/rmdir), and sync (fsync/fdatasync).
 
-use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
+use std::ffi::{CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
@@ -23467,6 +23467,7 @@ unsafe impl Send for ProcTitleStorage {}
 static PROCTITLE_STATE: _ProcTitleMutex<Option<ProcTitleStorage>> = _ProcTitleMutex::new(None);
 
 const PR_SET_NAME_FOR_TITLE: c_int = 15;
+const PROCTITLE_PROGNAME_SCAN_LIMIT: usize = libc::PATH_MAX as usize;
 
 fn clear_proctitle_state() {
     let mut guard = PROCTITLE_STATE.lock().unwrap_or_else(|p| p.into_inner());
@@ -23593,11 +23594,24 @@ pub unsafe extern "C" fn setproctitle(fmt: *const c_char, mut args: ...) {
             let progname_ptr = crate::startup_abi::program_invocation_short_name
                 .load(std::sync::atomic::Ordering::Acquire);
             if !progname_ptr.is_null() {
-                // SAFETY: published progname is a NUL-terminated C string
-                // in process-static storage.
-                let pn = unsafe { CStr::from_ptr(progname_ptr) }.to_bytes();
-                out.extend_from_slice(pn);
-                out.extend_from_slice(b": ");
+                let progname_addr = progname_ptr as usize;
+                let storage_addr = storage.base as usize;
+                let storage_bound = progname_addr
+                    .checked_sub(storage_addr)
+                    .filter(|&offset| offset < storage.capacity)
+                    .map(|offset| storage.capacity - offset);
+                let bound = storage_bound
+                    .or_else(|| known_remaining(progname_addr))
+                    .unwrap_or(PROCTITLE_PROGNAME_SCAN_LIMIT);
+                let (progname_len, progname_terminated) =
+                    unsafe { scan_c_string(progname_ptr, Some(bound)) };
+                if progname_terminated {
+                    let pn = unsafe {
+                        std::slice::from_raw_parts(progname_ptr.cast::<u8>(), progname_len)
+                    };
+                    out.extend_from_slice(pn);
+                    out.extend_from_slice(b": ");
+                }
             }
             out.extend_from_slice(&body);
             out
