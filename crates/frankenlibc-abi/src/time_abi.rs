@@ -32,6 +32,16 @@ fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
 }
 
+#[inline]
+fn tracked_required_object_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null() && tracked_region_fits(ptr.cast::<c_void>(), core::mem::size_of::<T>())
+}
+
+#[inline]
+fn tracked_optional_object_fits<T>(ptr: *const T) -> bool {
+    ptr.is_null() || tracked_required_object_fits(ptr)
+}
+
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VdsoCallOutcome {
@@ -281,6 +291,11 @@ pub unsafe extern "C" fn clock_gettime(clock_id: c_int, tp: *mut libc::timespec)
         return -1;
     }
 
+    if !tracked_required_object_fits(tp.cast_const()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
     if !time_core::valid_clock_id(clock_id) && !time_core::valid_clock_id_extended(clock_id) {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -462,6 +477,11 @@ pub unsafe extern "C" fn gettimeofday(tv: *mut libc::timeval, tz: *mut c_void) -
         return -1;
     }
 
+    if !tracked_required_object_fits(tv.cast_const()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
     let rc = unsafe { raw_gettimeofday(tv) };
     if rc != 0 {
         unsafe { set_abi_errno(last_host_errno(errno::EINVAL)) };
@@ -482,6 +502,11 @@ pub unsafe extern "C" fn clock_getres(clock_id: c_int, res: *mut libc::timespec)
         return -1;
     }
 
+    if !tracked_optional_object_fits(res.cast_const()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
     match unsafe { raw_syscall::sys_clock_getres(clock_id, res as *mut u8) } {
         Ok(()) => 0,
         Err(e) => {
@@ -499,6 +524,11 @@ pub unsafe extern "C" fn clock_getres(clock_id: c_int, res: *mut libc::timespec)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nanosleep(req: *const libc::timespec, rem: *mut libc::timespec) -> c_int {
     if req.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
+    if !tracked_required_object_fits(req) || !tracked_optional_object_fits(rem.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
@@ -538,6 +568,11 @@ pub unsafe extern "C" fn clock_nanosleep(
     }
 
     if req.is_null() {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
+        return errno::EFAULT;
+    }
+
+    if !tracked_required_object_fits(req) || !tracked_optional_object_fits(rem.cast_const()) {
         runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
         return errno::EFAULT;
     }
@@ -1137,6 +1172,11 @@ pub unsafe extern "C" fn clock_settime(
     clk_id: libc::clockid_t,
     tp: *const libc::timespec,
 ) -> std::ffi::c_int {
+    if !tracked_required_object_fits(tp) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
     match unsafe { raw_syscall::sys_clock_settime(clk_id, tp as *const u8) } {
         Ok(()) => 0,
         Err(e) => {
@@ -1188,6 +1228,9 @@ pub unsafe extern "C" fn timespec_get(ts: *mut libc::timespec, base: c_int) -> c
     if ts.is_null() || base != TIME_UTC {
         return 0;
     }
+    if !tracked_required_object_fits(ts.cast_const()) {
+        return 0;
+    }
     let rc = unsafe { raw_clock_gettime(libc::CLOCK_REALTIME, ts) };
     if rc == 0 { base } else { 0 }
 }
@@ -1223,6 +1266,10 @@ pub unsafe extern "C" fn timespec_getres(ts: *mut libc::timespec, base: c_int) -
         // Per spec, null ts is allowed — just verifies base is supported.
         runtime_policy::observe(ApiFamily::Time, decision.profile, 5, false);
         return base;
+    }
+    if !tracked_required_object_fits(ts.cast_const()) {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
+        return 0;
     }
     let result = match unsafe { raw_syscall::sys_clock_getres(libc::CLOCK_REALTIME, ts as *mut u8) }
     {

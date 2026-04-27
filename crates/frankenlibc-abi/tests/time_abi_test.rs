@@ -7,7 +7,7 @@
 //! strftime, gmtime, localtime, asctime, ctime, strptime, tzset,
 //! timespec_get, timespec_getres.
 
-use std::ffi::c_char;
+use std::ffi::{c_char, c_void};
 
 use frankenlibc_abi::time_abi;
 
@@ -70,6 +70,19 @@ fn clock_gettime_monotonic_is_non_decreasing() {
     let t1 = ts1.tv_sec as u64 * 1_000_000_000 + ts1.tv_nsec as u64;
     let t2 = ts2.tv_sec as u64 * 1_000_000_000 + ts2.tv_nsec as u64;
     assert!(t2 >= t1, "CLOCK_MONOTONIC should be non-decreasing");
+}
+
+#[test]
+fn clock_gettime_rejects_tracked_short_timespec() {
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { time_abi::clock_gettime(libc::CLOCK_REALTIME, raw.cast()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +219,19 @@ fn gettimeofday_agrees_with_time() {
     unsafe { time_abi::gettimeofday(&mut tv, std::ptr::null_mut()) };
     // Should agree within 1 second
     assert!((tv.tv_sec - t).abs() <= 1);
+}
+
+#[test]
+fn gettimeofday_rejects_tracked_short_timeval() {
+    let required = std::mem::size_of::<libc::timeval>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { time_abi::gettimeofday(raw.cast(), std::ptr::null_mut()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
 
 #[test]
@@ -441,6 +467,25 @@ fn clock_getres_realtime() {
     assert!(res.tv_nsec >= 0);
 }
 
+#[test]
+fn clock_getres_allows_null_res() {
+    let rc = unsafe { time_abi::clock_getres(libc::CLOCK_REALTIME, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "clock_getres(CLOCK_REALTIME, NULL) should succeed");
+}
+
+#[test]
+fn clock_getres_rejects_tracked_short_timespec() {
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { time_abi::clock_getres(libc::CLOCK_REALTIME, raw.cast()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
 // ---------------------------------------------------------------------------
 // nanosleep
 // ---------------------------------------------------------------------------
@@ -454,6 +499,36 @@ fn nanosleep_short_sleep() {
     let mut rem: libc::timespec = unsafe { std::mem::zeroed() };
     let rc = unsafe { time_abi::nanosleep(&req, &mut rem) };
     assert_eq!(rc, 0, "nanosleep(1ms) should succeed");
+}
+
+#[test]
+fn nanosleep_rejects_tracked_short_req() {
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { time_abi::nanosleep(raw.cast(), std::ptr::null_mut()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn nanosleep_rejects_tracked_short_rem() {
+    let req = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { time_abi::nanosleep(&req, raw.cast()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +689,35 @@ unsafe fn malloc_tracked_bytes(len: usize) -> *mut c_char {
     assert!(!raw.is_null());
     unsafe { std::ptr::write_bytes(raw, 0x55, len) };
     raw.cast()
+}
+
+unsafe fn malloc_tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw, 0, len) };
+    raw.cast()
+}
+
+fn assert_known_short(raw: *const c_void, required: usize) {
+    let remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_ne!(
+        remaining,
+        usize::MAX,
+        "test allocation should be tracked by malloc metadata"
+    );
+    assert!(
+        remaining < required,
+        "test allocation should expose {remaining} tracked bytes, less than required {required}"
+    );
+}
+
+fn errno_value() -> i32 {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+unsafe fn free_tracked(raw: *mut c_void) {
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
 }
 
 #[test]
@@ -870,6 +974,18 @@ fn timespec_get_time_utc() {
 }
 
 #[test]
+fn timespec_get_rejects_tracked_short_timespec() {
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { time_abi::timespec_get(raw.cast(), 1) };
+
+    assert_eq!(rc, 0);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
 fn timespec_getres_time_utc() {
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
     let rc = unsafe { time_abi::timespec_getres(&mut ts, 1) };
@@ -878,6 +994,24 @@ fn timespec_getres_time_utc() {
         "timespec_getres with TIME_UTC should return TIME_UTC"
     );
     assert!(ts.tv_nsec >= 0);
+}
+
+#[test]
+fn timespec_getres_allows_null_ts() {
+    let rc = unsafe { time_abi::timespec_getres(std::ptr::null_mut(), 1) };
+    assert_eq!(rc, 1);
+}
+
+#[test]
+fn timespec_getres_rejects_tracked_short_timespec() {
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { time_abi::timespec_getres(raw.cast(), 1) };
+
+    assert_eq!(rc, 0);
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +1031,36 @@ fn under_clock_nanosleep_zero_time_returns_zero() {
 }
 
 #[test]
+fn under_clock_nanosleep_rejects_tracked_short_req() {
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe {
+        time_abi::__clock_nanosleep(libc::CLOCK_MONOTONIC, 0, raw.cast(), std::ptr::null_mut())
+    };
+
+    assert_eq!(rc, libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn under_clock_nanosleep_rejects_tracked_short_rem() {
+    let req = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { time_abi::__clock_nanosleep(libc::CLOCK_MONOTONIC, 0, &req, raw.cast()) };
+
+    assert_eq!(rc, libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
 fn under_clock_settime_invalid_clock_fails() {
     // Setting CLOCK_MONOTONIC is not allowed → __clock_settime returns -1.
     let ts = libc::timespec {
@@ -905,4 +1069,17 @@ fn under_clock_settime_invalid_clock_fails() {
     };
     let rc = unsafe { time_abi::__clock_settime(libc::CLOCK_MONOTONIC, &ts) };
     assert_eq!(rc, -1);
+}
+
+#[test]
+fn under_clock_settime_rejects_tracked_short_timespec() {
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { time_abi::__clock_settime(libc::CLOCK_REALTIME, raw.cast()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
