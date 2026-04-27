@@ -735,14 +735,14 @@ pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
 // strptime — native implementation
 // ---------------------------------------------------------------------------
 
-/// Parse at most 2 decimal digits from `input[pos..]`, returning (value, new_pos).
+/// Parse at most `max_digits` decimal digits from `input[pos..]`, returning (value, new_pos).
 /// Returns `None` if no digit is found at `pos`.
-unsafe fn parse_digits(input: *const u8, pos: usize, max_digits: usize) -> Option<(i32, usize)> {
+fn parse_digits(input: &[u8], pos: usize, max_digits: usize) -> Option<(i32, usize)> {
     let mut val: i32 = 0;
     let mut count = 0usize;
     let mut p = pos;
-    while count < max_digits {
-        let ch = unsafe { *input.add(p) };
+    while count < max_digits && p < input.len() {
+        let ch = input[p];
         if ch.is_ascii_digit() {
             val = val * 10 + (ch - b'0') as i32;
             p += 1;
@@ -755,8 +755,8 @@ unsafe fn parse_digits(input: *const u8, pos: usize, max_digits: usize) -> Optio
 }
 
 /// Skip leading ASCII whitespace from `input[pos..]`.
-unsafe fn skip_ws(input: *const u8, mut pos: usize) -> usize {
-    while unsafe { *input.add(pos) }.is_ascii_whitespace() {
+fn skip_ws(input: &[u8], mut pos: usize) -> usize {
+    while input.get(pos).is_some_and(u8::is_ascii_whitespace) {
         pos += 1;
     }
     pos
@@ -764,14 +764,15 @@ unsafe fn skip_ws(input: *const u8, mut pos: usize) -> usize {
 
 /// Match a case-insensitive prefix from `input[pos..]` against `name`.
 /// Returns new position after the match, or `None` if no match.
-unsafe fn match_name(input: *const u8, pos: usize, name: &[u8]) -> Option<usize> {
-    for (i, &expected) in name.iter().enumerate() {
-        let ch = unsafe { *input.add(pos + i) };
+fn match_name(input: &[u8], pos: usize, name: &[u8]) -> Option<usize> {
+    let end = pos.checked_add(name.len())?;
+    let candidate = input.get(pos..end)?;
+    for (&ch, &expected) in candidate.iter().zip(name) {
         if !ch.eq_ignore_ascii_case(&expected) {
             return None;
         }
     }
-    Some(pos + name.len())
+    Some(end)
 }
 
 static ABBR_MONTHS: [&[u8]; 12] = [
@@ -798,31 +799,34 @@ pub unsafe extern "C" fn strptime(
         return std::ptr::null_mut();
     }
 
-    let input = s as *const u8;
-    let fmt = format as *const u8;
+    let (input_len, input_terminated) = unsafe { scan_c_string(s, known_remaining(s as usize)) };
+    let (fmt_len, fmt_terminated) =
+        unsafe { scan_c_string(format, known_remaining(format as usize)) };
+    if !input_terminated || !fmt_terminated {
+        return std::ptr::null_mut();
+    }
+
+    let input_ptr = s as *const u8;
+    let input = unsafe { std::slice::from_raw_parts(input_ptr, input_len) };
+    let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
     let mut si = 0usize; // position in input
     let mut fi = 0usize; // position in format
     let mut century: Option<i32> = None;
     let mut is_pm: Option<bool> = None;
 
-    loop {
-        let fc = unsafe { *fmt.add(fi) };
-        if fc == 0 {
-            break; // end of format
-        }
-
+    while fi < fmt.len() {
+        let fc = fmt[fi];
         if fc == b'%' {
             fi += 1;
-            let spec = unsafe { *fmt.add(fi) };
-            if spec == 0 {
+            let Some(&spec) = fmt.get(fi) else {
                 return std::ptr::null_mut(); // trailing %
-            }
+            };
             fi += 1;
 
             match spec {
                 b'Y' => {
                     // 4-digit year
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 4) } {
+                    if let Some((val, new_si)) = parse_digits(input, si, 4) {
                         unsafe { (*tm).tm_year = val - 1900 };
                         si = new_si;
                     } else {
@@ -831,7 +835,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'C' => {
                     // Century (first 2 digits of year)
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 2) } {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         century = Some(val);
                         si = new_si;
                     } else {
@@ -840,7 +844,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'y' => {
                     // 2-digit year within century
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 2) } {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         unsafe { (*tm).tm_year = val + if val < 69 { 100 } else { 0 } };
                         si = new_si;
                     } else {
@@ -849,7 +853,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'm' => {
                     // Month [01,12]
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 2) } {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         unsafe { (*tm).tm_mon = val - 1 };
                         si = new_si;
                     } else {
@@ -858,8 +862,8 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'd' | b'e' => {
                     // Day of month [01,31] (%e allows leading space)
-                    si = unsafe { skip_ws(input, si) };
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 2) } {
+                    si = skip_ws(input, si);
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         unsafe { (*tm).tm_mday = val };
                         si = new_si;
                     } else {
@@ -868,7 +872,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'H' => {
                     // Hour (24-hour) [00,23]
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 2) } {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         unsafe { (*tm).tm_hour = val };
                         si = new_si;
                     } else {
@@ -877,7 +881,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'I' => {
                     // Hour (12-hour) [01,12]
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 2) } {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         unsafe { (*tm).tm_hour = val % 12 };
                         si = new_si;
                     } else {
@@ -886,10 +890,10 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'p' => {
                     // AM/PM
-                    if let Some(new_si) = unsafe { match_name(input, si, b"am") } {
+                    if let Some(new_si) = match_name(input, si, b"am") {
                         is_pm = Some(false);
                         si = new_si;
-                    } else if let Some(new_si) = unsafe { match_name(input, si, b"pm") } {
+                    } else if let Some(new_si) = match_name(input, si, b"pm") {
                         is_pm = Some(true);
                         si = new_si;
                     } else {
@@ -898,7 +902,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'M' => {
                     // Minute [00,59]
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 2) } {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         unsafe { (*tm).tm_min = val };
                         si = new_si;
                     } else {
@@ -907,7 +911,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'S' => {
                     // Second [00,60] (60 for leap second)
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 2) } {
+                    if let Some((val, new_si)) = parse_digits(input, si, 2) {
                         unsafe { (*tm).tm_sec = val };
                         si = new_si;
                     } else {
@@ -916,7 +920,7 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'j' => {
                     // Day of year [001,366]
-                    if let Some((val, new_si)) = unsafe { parse_digits(input, si, 3) } {
+                    if let Some((val, new_si)) = parse_digits(input, si, 3) {
                         unsafe { (*tm).tm_yday = val - 1 };
                         si = new_si;
                     } else {
@@ -927,11 +931,11 @@ pub unsafe extern "C" fn strptime(
                     // Abbreviated or full month name
                     let mut found = false;
                     for (idx, name) in ABBR_MONTHS.iter().enumerate() {
-                        if let Some(new_si) = unsafe { match_name(input, si, name) } {
+                        if let Some(new_si) = match_name(input, si, name) {
                             unsafe { (*tm).tm_mon = idx as i32 };
                             si = new_si;
                             // Skip remaining alphabetic chars (for full month names)
-                            while unsafe { *input.add(si) }.is_ascii_alphabetic() {
+                            while input.get(si).is_some_and(u8::is_ascii_alphabetic) {
                                 si += 1;
                             }
                             found = true;
@@ -946,10 +950,10 @@ pub unsafe extern "C" fn strptime(
                     // Abbreviated or full weekday name
                     let mut found = false;
                     for (idx, name) in ABBR_DAYS.iter().enumerate() {
-                        if let Some(new_si) = unsafe { match_name(input, si, name) } {
+                        if let Some(new_si) = match_name(input, si, name) {
                             unsafe { (*tm).tm_wday = idx as i32 };
                             si = new_si;
-                            while unsafe { *input.add(si) }.is_ascii_alphabetic() {
+                            while input.get(si).is_some_and(u8::is_ascii_alphabetic) {
                                 si += 1;
                             }
                             found = true;
@@ -962,11 +966,11 @@ pub unsafe extern "C" fn strptime(
                 }
                 b'n' | b't' => {
                     // Any whitespace
-                    si = unsafe { skip_ws(input, si) };
+                    si = skip_ws(input, si);
                 }
                 b'%' => {
                     // Literal %
-                    if unsafe { *input.add(si) } != b'%' {
+                    if input.get(si).copied() != Some(b'%') {
                         return std::ptr::null_mut();
                     }
                     si += 1;
@@ -976,7 +980,7 @@ pub unsafe extern "C" fn strptime(
                     // %m/%d/%y
                     let result = unsafe {
                         strptime(
-                            input.add(si) as *const std::ffi::c_char,
+                            input_ptr.add(si) as *const std::ffi::c_char,
                             c"%m/%d/%y".as_ptr(),
                             tm,
                         )
@@ -984,14 +988,21 @@ pub unsafe extern "C" fn strptime(
                     if result.is_null() {
                         return std::ptr::null_mut();
                     }
-                    si += unsafe { result.offset_from(input.add(si) as *const std::ffi::c_char) }
-                        as usize;
+                    let consumed =
+                        unsafe { result.offset_from(input_ptr.add(si) as *const std::ffi::c_char) };
+                    if consumed < 0 {
+                        return std::ptr::null_mut();
+                    }
+                    si = si.saturating_add(consumed as usize);
+                    if si > input.len() {
+                        return std::ptr::null_mut();
+                    }
                 }
                 b'T' => {
                     // %H:%M:%S
                     let result = unsafe {
                         strptime(
-                            input.add(si) as *const std::ffi::c_char,
+                            input_ptr.add(si) as *const std::ffi::c_char,
                             c"%H:%M:%S".as_ptr(),
                             tm,
                         )
@@ -999,14 +1010,21 @@ pub unsafe extern "C" fn strptime(
                     if result.is_null() {
                         return std::ptr::null_mut();
                     }
-                    si += unsafe { result.offset_from(input.add(si) as *const std::ffi::c_char) }
-                        as usize;
+                    let consumed =
+                        unsafe { result.offset_from(input_ptr.add(si) as *const std::ffi::c_char) };
+                    if consumed < 0 {
+                        return std::ptr::null_mut();
+                    }
+                    si = si.saturating_add(consumed as usize);
+                    if si > input.len() {
+                        return std::ptr::null_mut();
+                    }
                 }
                 b'R' => {
                     // %H:%M
                     let result = unsafe {
                         strptime(
-                            input.add(si) as *const std::ffi::c_char,
+                            input_ptr.add(si) as *const std::ffi::c_char,
                             c"%H:%M".as_ptr(),
                             tm,
                         )
@@ -1014,14 +1032,21 @@ pub unsafe extern "C" fn strptime(
                     if result.is_null() {
                         return std::ptr::null_mut();
                     }
-                    si += unsafe { result.offset_from(input.add(si) as *const std::ffi::c_char) }
-                        as usize;
+                    let consumed =
+                        unsafe { result.offset_from(input_ptr.add(si) as *const std::ffi::c_char) };
+                    if consumed < 0 {
+                        return std::ptr::null_mut();
+                    }
+                    si = si.saturating_add(consumed as usize);
+                    if si > input.len() {
+                        return std::ptr::null_mut();
+                    }
                 }
                 b'F' => {
                     // %Y-%m-%d
                     let result = unsafe {
                         strptime(
-                            input.add(si) as *const std::ffi::c_char,
+                            input_ptr.add(si) as *const std::ffi::c_char,
                             c"%Y-%m-%d".as_ptr(),
                             tm,
                         )
@@ -1029,8 +1054,15 @@ pub unsafe extern "C" fn strptime(
                     if result.is_null() {
                         return std::ptr::null_mut();
                     }
-                    si += unsafe { result.offset_from(input.add(si) as *const std::ffi::c_char) }
-                        as usize;
+                    let consumed =
+                        unsafe { result.offset_from(input_ptr.add(si) as *const std::ffi::c_char) };
+                    if consumed < 0 {
+                        return std::ptr::null_mut();
+                    }
+                    si = si.saturating_add(consumed as usize);
+                    if si > input.len() {
+                        return std::ptr::null_mut();
+                    }
                 }
                 _ => {
                     // Unknown specifier — fail
@@ -1040,10 +1072,10 @@ pub unsafe extern "C" fn strptime(
         } else if fc.is_ascii_whitespace() {
             // Format whitespace matches any amount of input whitespace
             fi += 1;
-            si = unsafe { skip_ws(input, si) };
+            si = skip_ws(input, si);
         } else {
             // Literal character match
-            if unsafe { *input.add(si) } != fc {
+            if input.get(si).copied() != Some(fc) {
                 return std::ptr::null_mut();
             }
             fi += 1;
@@ -1067,7 +1099,7 @@ pub unsafe extern "C" fn strptime(
         }
     }
 
-    unsafe { input.add(si) as *mut std::ffi::c_char }
+    unsafe { input_ptr.add(si) as *mut std::ffi::c_char }
 }
 
 // ---------------------------------------------------------------------------

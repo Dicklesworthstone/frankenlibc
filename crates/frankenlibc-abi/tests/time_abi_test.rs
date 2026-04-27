@@ -737,6 +737,36 @@ fn strptime_returns_position_after_parsed() {
 }
 
 #[test]
+fn strptime_rejects_tracked_unterminated_input() {
+    unsafe {
+        let raw_input = malloc_unterminated(b"2026");
+        let fmt = b"%Y\0";
+        let mut tm: libc::tm = std::mem::zeroed();
+
+        let result = time_abi::strptime(raw_input, fmt.as_ptr().cast::<c_char>(), &mut tm);
+
+        frankenlibc_abi::malloc_abi::free(raw_input.cast());
+        assert!(result.is_null());
+        assert_eq!(tm.tm_year, 0);
+    }
+}
+
+#[test]
+fn strptime_rejects_tracked_unterminated_format() {
+    unsafe {
+        let input = b"2026\0";
+        let raw_fmt = malloc_unterminated(b"%Y");
+        let mut tm: libc::tm = std::mem::zeroed();
+
+        let result = time_abi::strptime(input.as_ptr().cast::<c_char>(), raw_fmt, &mut tm);
+
+        frankenlibc_abi::malloc_abi::free(raw_fmt.cast());
+        assert!(result.is_null());
+        assert_eq!(tm.tm_year, 0);
+    }
+}
+
+#[test]
 fn strptime_weekday_name() {
     let input = b"Monday\0";
     let fmt = b"%A\0";
