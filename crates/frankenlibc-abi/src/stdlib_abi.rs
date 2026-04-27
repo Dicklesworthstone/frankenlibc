@@ -34,6 +34,7 @@ unsafe fn set_abi_errno_if_clear(err: c_int) {
 }
 
 const MAX_EXPLICIT_BZERO_LEN: usize = isize::MAX as usize;
+const ENV_NAME_SCAN_LIMIT: usize = 131_072;
 
 #[inline]
 fn bounded_zero_len(ptr: *mut c_void, requested: usize) -> Option<usize> {
@@ -54,6 +55,13 @@ unsafe fn read_bounded_cstr_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     }
     let bytes = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) };
     Some(bytes.to_vec())
+}
+
+#[inline]
+fn env_name_scan_bound(ptr: *const c_char) -> usize {
+    known_remaining(ptr as usize)
+        .map(|remaining| remaining.min(ENV_NAME_SCAN_LIMIT))
+        .unwrap_or(ENV_NAME_SCAN_LIMIT)
 }
 
 unsafe extern "C" {
@@ -1372,7 +1380,7 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     // runtime may route here. In that window we must not recurse back into
     // pointer validation or runtime-policy orchestration.
     if getenv_bootstrap_sensitive() {
-        let (len, terminated) = unsafe { scan_c_string(name, None) };
+        let (len, terminated) = unsafe { scan_c_string(name, Some(env_name_scan_bound(name))) };
         if !terminated {
             return ptr::null_mut();
         }
@@ -1397,8 +1405,7 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
         return ptr::null_mut();
     }
 
-    let bound = known_remaining(name as usize);
-    let (len, terminated) = unsafe { scan_c_string(name, bound) };
+    let (len, terminated) = unsafe { scan_c_string(name, Some(env_name_scan_bound(name))) };
     if !terminated {
         // Unterminated names are always rejected to avoid passing non-C strings to libc.
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);

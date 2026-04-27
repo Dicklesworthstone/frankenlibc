@@ -655,6 +655,16 @@ fn clearenv_removes_newly_set_variable() {
 }
 
 #[test]
+fn getenv_rejects_tracked_unterminated_name() {
+    let raw_name = unsafe { malloc_unterminated(b"FRANKENLIBC_GETENV_UNTERMINATED") };
+
+    unsafe {
+        assert!(getenv(raw_name).is_null());
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+}
+
+#[test]
 fn setenv_rejects_unterminated_name_and_value() {
     let valid_name = c"FRANKENLIBC_SETENV_UNTERMINATED_VALUE";
     let value = c"present";
