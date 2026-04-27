@@ -4898,21 +4898,43 @@ pub unsafe extern "C" fn getpw(uid: c_uint, buf: *mut c_char) -> c_int {
         return -1;
     }
     let pw = unsafe { &*pw };
-    let name = unsafe { std::ffi::CStr::from_ptr(pw.pw_name) }.to_bytes();
-    let passwd = unsafe { std::ffi::CStr::from_ptr(pw.pw_passwd) }.to_bytes();
-    let gecos = unsafe { std::ffi::CStr::from_ptr(pw.pw_gecos) }.to_bytes();
-    let dir = unsafe { std::ffi::CStr::from_ptr(pw.pw_dir) }.to_bytes();
-    let shell = unsafe { std::ffi::CStr::from_ptr(pw.pw_shell) }.to_bytes();
-    let line = format!(
-        "{}:{}:{}:{}:{}:{}:{}",
-        unsafe { std::str::from_utf8_unchecked(name) },
-        unsafe { std::str::from_utf8_unchecked(passwd) },
-        pw.pw_uid,
-        pw.pw_gid,
-        unsafe { std::str::from_utf8_unchecked(gecos) },
-        unsafe { std::str::from_utf8_unchecked(dir) },
-        unsafe { std::str::from_utf8_unchecked(shell) },
+    let Some(name) = (unsafe { bounded_c_string_bytes(pw.pw_name, PASSWD_FIELD_SCAN_LIMIT) })
+    else {
+        return -1;
+    };
+    let Some(passwd) = (unsafe { bounded_c_string_bytes(pw.pw_passwd, PASSWD_FIELD_SCAN_LIMIT) })
+    else {
+        return -1;
+    };
+    let Some(gecos) = (unsafe { bounded_c_string_bytes(pw.pw_gecos, PASSWD_FIELD_SCAN_LIMIT) })
+    else {
+        return -1;
+    };
+    let Some(dir) = (unsafe { bounded_c_string_bytes(pw.pw_dir, PASSWD_FIELD_SCAN_LIMIT) }) else {
+        return -1;
+    };
+    let Some(shell) = (unsafe { bounded_c_string_bytes(pw.pw_shell, PASSWD_FIELD_SCAN_LIMIT) })
+    else {
+        return -1;
+    };
+    let uid: c_uint = pw.pw_uid;
+    let gid: c_uint = pw.pw_gid;
+    let mut line = Vec::with_capacity(
+        name.len() + passwd.len() + gecos.len() + dir.len() + shell.len() + 6 + 20,
     );
+    line.extend_from_slice(&name);
+    line.push(b':');
+    line.extend_from_slice(&passwd);
+    line.push(b':');
+    line.extend_from_slice(uid.to_string().as_bytes());
+    line.push(b':');
+    line.extend_from_slice(gid.to_string().as_bytes());
+    line.push(b':');
+    line.extend_from_slice(&gecos);
+    line.push(b':');
+    line.extend_from_slice(&dir);
+    line.push(b':');
+    line.extend_from_slice(&shell);
     unsafe {
         std::ptr::copy_nonoverlapping(line.as_ptr(), buf as *mut u8, line.len());
         *buf.add(line.len()) = 0;

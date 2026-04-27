@@ -74,6 +74,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     _pthread_cleanup_pop_restore,
     _pthread_cleanup_push,
     _pthread_cleanup_push_defer,
+    getpw,
     inet6_opt_append,
     inet6_opt_find,
     inet6_opt_finish,
@@ -2467,6 +2468,35 @@ fn putpwent_rejects_tracked_unterminated_passwd_fields() {
         assert_eq!(err, libc::EINVAL);
         assert_eq!(close_rc, 0);
     }
+}
+
+#[test]
+fn getpw_preserves_non_utf8_passwd_field_bytes() {
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/tmp/glibc-internal-tests");
+    std::fs::create_dir_all(&dir).expect("create test temp dir");
+    let path = dir.join(format!("getpw-nonutf8-{}.passwd", std::process::id()));
+    let mut content = b"raw:x:4242:7:name-".to_vec();
+    content.push(0xff);
+    content.extend_from_slice(b":/home/raw:/bin/sh\n");
+    std::fs::write(&path, content).expect("write test passwd file");
+
+    unsafe {
+        std::env::set_var("FRANKENLIBC_PASSWD_PATH", &path);
+    }
+    let mut buf = [0 as c_char; 128];
+    let rc = unsafe { getpw(4242, buf.as_mut_ptr()) };
+    unsafe {
+        std::env::remove_var("FRANKENLIBC_PASSWD_PATH");
+    }
+
+    assert_eq!(rc, 0);
+    let nul = buf
+        .iter()
+        .position(|&b| b == 0)
+        .expect("getpw output should be nul-terminated");
+    let bytes: Vec<u8> = buf[..nul].iter().map(|&b| b as u8).collect();
+    assert_eq!(bytes, b"raw:x:4242:7:name-\xff:/home/raw:/bin/sh");
 }
 
 #[test]
