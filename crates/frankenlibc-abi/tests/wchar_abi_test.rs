@@ -27,6 +27,13 @@ fn wstr(s: &[u8]) -> Vec<u32> {
     v
 }
 
+unsafe fn malloc_unterminated_wide(wchars: &[u32]) -> *mut u32 {
+    let ptr = unsafe { malloc(std::mem::size_of_val(wchars)) }.cast::<u32>();
+    assert!(!ptr.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(wchars.as_ptr(), ptr, wchars.len()) };
+    ptr
+}
+
 // ── wcslen ──────────────────────────────────────────────────────────────────
 
 #[test]
@@ -777,6 +784,21 @@ fn wcstombs_converts_wide_to_utf8() {
     assert_eq!(dst[3], 0);
 }
 
+#[test]
+fn wcstombs_rejects_tracked_unterminated_wide_input() {
+    unsafe {
+        let src = malloc_unterminated_wide(&[b'A' as u32, b'B' as u32]);
+        let mut dst = [0u8; 8];
+
+        set_errno(0);
+        let n = wcstombs(dst.as_mut_ptr(), src, dst.len());
+        assert_eq!(n, usize::MAX);
+        assert_eq!(errno_value(), libc::EILSEQ);
+
+        free(src.cast());
+    }
+}
+
 // ── mbsinit / mbrlen ────────────────────────────────────────────────────────
 
 #[test]
@@ -842,6 +864,28 @@ fn wcsnrtombs_converts_bounded() {
     assert!(src_ptr.is_null()); // NUL was reached → src set to null
     assert_eq!(dst[0] as u8, b'A');
     assert_eq!(dst[1] as u8, b'B');
+}
+
+#[test]
+fn wcsnrtombs_rejects_tracked_source_shorter_than_nwc() {
+    unsafe {
+        let src = malloc_unterminated_wide(&[b'A' as u32, b'B' as u32]);
+        let mut src_ptr = src.cast::<libc::wchar_t>() as *const libc::wchar_t;
+        let mut dst = [0_i8; 8];
+
+        set_errno(0);
+        let written = wcsnrtombs(
+            dst.as_mut_ptr(),
+            &mut src_ptr,
+            3,
+            dst.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(written, usize::MAX);
+        assert_eq!(errno_value(), libc::EILSEQ);
+
+        free(src.cast());
+    }
 }
 
 // ── basename / dirname ──────────────────────────────────────────────────────
@@ -1259,6 +1303,29 @@ fn wcsrtombs_converts_and_updates_source_pointer() {
     assert_eq!(dst[1] as u8, 0xE7);
     assert_eq!(dst[2] as u8, 0x95);
     assert_eq!(dst[3] as u8, 0x8C);
+}
+
+#[test]
+fn wcsrtombs_rejects_tracked_unterminated_wide_input() {
+    unsafe {
+        let src = malloc_unterminated_wide(&[b'A' as u32, b'B' as u32]);
+        let mut src_ptr = src.cast::<libc::wchar_t>() as *const libc::wchar_t;
+        let original = src_ptr;
+        let mut dst = [0_i8; 8];
+
+        set_errno(0);
+        let written = wcsrtombs(
+            dst.as_mut_ptr(),
+            &mut src_ptr,
+            dst.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(written, usize::MAX);
+        assert_eq!(errno_value(), libc::EILSEQ);
+        assert_eq!(src_ptr, original);
+
+        free(src.cast());
+    }
 }
 
 #[test]

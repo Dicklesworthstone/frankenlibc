@@ -159,6 +159,12 @@ unsafe fn scan_known_multibyte_string(ptr: *const std::ffi::c_char) -> Option<us
     if terminated { Some(len) } else { None }
 }
 
+unsafe fn scan_known_wide_string(ptr: *const u32) -> Option<usize> {
+    let bound = known_remaining(ptr as usize).map(bytes_to_wchars);
+    let (len, terminated) = unsafe { scan_w_string(ptr, bound) };
+    if terminated { Some(len) } else { None }
+}
+
 // ---------------------------------------------------------------------------
 // wcslen
 // ---------------------------------------------------------------------------
@@ -1768,11 +1774,13 @@ pub unsafe extern "C" fn wcstombs(dst: *mut u8, src: *const u32, n: usize) -> us
     if src.is_null() {
         return usize::MAX;
     }
-    // Find length of wide string
-    let mut wlen = 0usize;
-    while unsafe { *src.add(wlen) } != 0 {
-        wlen += 1;
-    }
+    let wlen = match unsafe { scan_known_wide_string(src) } {
+        Some(wlen) => wlen,
+        None => {
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
+    };
     let src_slice = unsafe { std::slice::from_raw_parts(src, wlen + 1) }; // include NUL
     if dst.is_null() {
         // Count mode
@@ -2169,8 +2177,13 @@ pub unsafe extern "C" fn wcsrtombs(
         return 0;
     }
 
-    // SAFETY: source pointer references a NUL-terminated wide string.
-    let src_len = unsafe { wcslen(src_ptr as *const u32) };
+    let src_len = match unsafe { scan_known_wide_string(src_ptr as *const u32) } {
+        Some(src_len) => src_len,
+        None => {
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return usize::MAX;
+        }
+    };
     // SAFETY: include terminating NUL.
     let src_slice = unsafe { std::slice::from_raw_parts(src_ptr as *const u32, src_len + 1) };
 
@@ -3991,8 +4004,10 @@ pub unsafe extern "C" fn wcsnrtombs(
     let mut written = 0usize;
     let mut wchars_consumed = 0usize;
     let mut buf = [0u8; 4]; // MB_CUR_MAX for UTF-8
+    let source_bound = known_remaining(s as usize).map(bytes_to_wchars);
+    let max_wchars = source_bound.map(|bound| bound.min(nwc)).unwrap_or(nwc);
 
-    while wchars_consumed < nwc {
+    while wchars_consumed < max_wchars {
         let wc = unsafe { *s };
         if wc == 0 {
             if !dst.is_null() {
@@ -4034,6 +4049,10 @@ pub unsafe extern "C" fn wcsnrtombs(
         written += ret;
         wchars_consumed += 1;
         s = unsafe { s.add(1) };
+    }
+    if source_bound.is_some_and(|bound| bound < nwc) && wchars_consumed == max_wchars {
+        unsafe { set_abi_errno(libc::EILSEQ) };
+        return usize::MAX;
     }
     unsafe { *src = s };
     written
