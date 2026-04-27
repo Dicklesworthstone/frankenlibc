@@ -34,6 +34,11 @@ fn aligned_buffer_offset(base: *const c_char, min_offset: usize, align: usize) -
     min_offset.checked_add(padding)
 }
 
+#[inline]
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
+
 /// Read a user-supplied C string pointer with a known-region bound so a
 /// non-NUL-terminated argument cannot walk arbitrary process memory through
 /// `CStr::from_ptr`. Returns `None` for null or unterminated input.
@@ -133,6 +138,12 @@ pub unsafe extern "C" fn inet_pton(af: c_int, src: *const c_char, dst: *mut c_vo
         }
     };
 
+    if !tracked_region_fits(dst as *const c_void, dst_size) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
+        return -1;
+    }
+
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dst_size) };
     let rc = inet_core::inet_pton(af, src_bytes, dst_slice);
     runtime_policy::observe(ApiFamily::Inet, decision.profile, 10, rc != 1);
@@ -176,16 +187,27 @@ pub unsafe extern "C" fn inet_ntop(
         }
     };
 
+    if !tracked_region_fits(src, src_size) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
+        return std::ptr::null();
+    }
+
     let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, src_size) };
     match inet_core::inet_ntop(af, src_slice) {
         Some(text) => {
-            if text.len() + 1 > size as usize {
+            let required = text.len() + 1;
+            if required > size as usize {
                 unsafe { set_abi_errno(errno::ENOSPC) };
                 runtime_policy::observe(ApiFamily::Inet, decision.profile, 10, true);
                 return std::ptr::null();
             }
-            let dst_slice =
-                unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, size as usize) };
+            if !tracked_region_fits(dst.cast_const().cast(), required) {
+                unsafe { set_abi_errno(errno::EFAULT) };
+                runtime_policy::observe(ApiFamily::Inet, decision.profile, 10, true);
+                return std::ptr::null();
+            }
+            let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, required) };
             dst_slice[..text.len()].copy_from_slice(&text);
             dst_slice[text.len()] = 0; // NUL terminator
             runtime_policy::observe(ApiFamily::Inet, decision.profile, 10, false);
@@ -215,6 +237,10 @@ pub unsafe extern "C" fn inet_aton(cp: *const c_char, inp: *mut u32) -> c_int {
     }
 
     if cp.is_null() || inp.is_null() {
+        runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
+        return 0;
+    }
+    if !tracked_region_fits(inp.cast_const().cast(), std::mem::size_of::<u32>()) {
         runtime_policy::observe(ApiFamily::Inet, decision.profile, 5, true);
         return 0;
     }
@@ -355,6 +381,11 @@ pub unsafe extern "C" fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_ch
         unsafe { set_abi_errno(errno::EFAULT) };
         return std::ptr::null_mut();
     }
+    if !tracked_region_fits(ifname.cast_const().cast(), libc::IF_NAMESIZE) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return std::ptr::null_mut();
+    }
+
     let sock = match raw_syscall::sys_socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0) {
         Ok(fd) => fd,
         Err(e) => {

@@ -56,6 +56,16 @@ fn services_alias_fixture() -> Option<(CString, CString, u16)> {
     ))
 }
 
+fn tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) };
+    assert!(!raw.is_null());
+    unsafe {
+        std::ptr::write_bytes(raw.cast::<u8>(), 0, len);
+    }
+    raw
+}
+
 // ---------------------------------------------------------------------------
 // htons / htonl / ntohs / ntohl — byte order conversions
 // ---------------------------------------------------------------------------
@@ -226,6 +236,19 @@ fn inet_pton_bad_family_returns_neg1() {
     assert_eq!(rc, -1);
 }
 
+#[test]
+fn inet_pton_rejects_tracked_short_dst() {
+    let src = CString::new("127.0.0.1").unwrap();
+    let raw_dst = tracked_zeroed_bytes(1);
+    unsafe { set_abi_errno(0) };
+    let rc = unsafe { frankenlibc_abi::inet_abi::inet_pton(AF_INET, src.as_ptr(), raw_dst) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_dst);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // inet_ntop tests
 // ---------------------------------------------------------------------------
@@ -346,6 +369,41 @@ fn inet_ntop_bad_family_returns_null() {
     assert!(ret.is_null());
 }
 
+#[test]
+fn inet_ntop_rejects_tracked_short_src() {
+    let raw_src = tracked_zeroed_bytes(1);
+    let mut buf = [0u8; 16];
+    unsafe { set_abi_errno(0) };
+    let ret = unsafe {
+        frankenlibc_abi::inet_abi::inet_ntop(
+            AF_INET,
+            raw_src,
+            buf.as_mut_ptr().cast(),
+            buf.len() as u32,
+        )
+    };
+    assert!(ret.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_src);
+    }
+}
+
+#[test]
+fn inet_ntop_rejects_tracked_short_dst() {
+    let addr: [u8; 4] = [127, 0, 0, 1];
+    let raw_dst = tracked_zeroed_bytes(4);
+    unsafe { set_abi_errno(0) };
+    let ret = unsafe {
+        frankenlibc_abi::inet_abi::inet_ntop(AF_INET, addr.as_ptr().cast(), raw_dst.cast(), 16)
+    };
+    assert!(ret.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_dst);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // inet_pton + inet_ntop roundtrip
 // ---------------------------------------------------------------------------
@@ -446,6 +504,19 @@ fn inet_aton_empty_returns_zero() {
     let mut addr: u32 = 0;
     let rc = unsafe { inet_aton(src.as_ptr(), &mut addr) };
     assert_eq!(rc, 0);
+}
+
+#[test]
+fn inet_aton_rejects_tracked_short_output() {
+    let src = CString::new("127.0.0.1").unwrap();
+    let raw_out = tracked_zeroed_bytes(1);
+    unsafe { set_abi_errno(libc::E2BIG) };
+    let rc = unsafe { frankenlibc_abi::inet_abi::inet_aton(src.as_ptr(), raw_out.cast::<u32>()) };
+    assert_eq!(rc, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::E2BIG);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_out);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -642,6 +713,18 @@ fn if_indextoname_huge_returns_null() {
     let mut buf = [0u8; 16];
     let ret = unsafe { if_indextoname(0xFFFFFFFF, buf.as_mut_ptr().cast()) };
     assert!(ret.is_null());
+}
+
+#[test]
+fn if_indextoname_rejects_tracked_short_name_buffer() {
+    let raw_name = tracked_zeroed_bytes(1);
+    unsafe { set_abi_errno(0) };
+    let ret = unsafe { frankenlibc_abi::inet_abi::if_indextoname(1, raw_name.cast()) };
+    assert!(ret.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_name);
+    }
 }
 
 #[test]
