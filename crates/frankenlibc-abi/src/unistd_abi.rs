@@ -3187,8 +3187,10 @@ unsafe fn mkdtemp_inner(template: *mut c_char) -> (*mut c_char, bool) {
         return (std::ptr::null_mut(), true);
     }
 
-    // SAFETY: `template` must be writable and NUL-terminated by ABI contract.
-    let template_bytes = unsafe { std::ffi::CStr::from_ptr(template) }.to_bytes();
+    let Some(template_bytes) = (unsafe { read_c_string_bytes(template) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return (std::ptr::null_mut(), true);
+    };
     if template_bytes.len() < MKDTEMP_SUFFIX_LEN
         || !template_bytes[template_bytes.len() - MKDTEMP_SUFFIX_LEN..]
             .iter()

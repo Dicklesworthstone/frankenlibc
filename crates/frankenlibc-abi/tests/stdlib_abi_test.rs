@@ -853,6 +853,24 @@ fn mkdtemp_creates_directory_and_rewrites_suffix() {
 }
 
 #[test]
+fn mkdtemp_rejects_tracked_unterminated_template() {
+    let template = b"/tmp/frankenlibc-mkdtemp-unterminated-XXXXXX";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(template.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(template.as_ptr(), raw, template.len());
+        *__errno_location() = 0;
+        let out = mkdtemp(raw.cast());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert!(out.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn lockf_tlock_test_and_unlock_roundtrip() {
     let template = temp_template("lockf", ".tmp");
     // SAFETY: template is NUL-terminated by construction.
