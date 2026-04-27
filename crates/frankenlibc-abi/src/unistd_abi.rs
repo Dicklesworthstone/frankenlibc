@@ -232,11 +232,20 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc
         return -1;
     }
 
-    let (effective_count, clamped) = maybe_clamp_io_len(
-        count,
-        buf as usize,
-        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
-    );
+    let repair_enabled =
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
+    if !repair_enabled && !tracked_region_fits(buf as usize, count) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(8, count),
+            true,
+        );
+        return -1;
+    }
+
+    let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
     // SAFETY: syscall wrapper expects raw fd/buffer/count.
     let rc = unsafe { sys_read_fd(fd, buf, effective_count) };
     runtime_policy::observe(
@@ -284,11 +293,20 @@ pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: usize) -> l
         return -1;
     }
 
-    let (effective_count, clamped) = maybe_clamp_io_len(
-        count,
-        buf as usize,
-        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
-    );
+    let repair_enabled =
+        mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
+    if !repair_enabled && !tracked_region_fits(buf as usize, count) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(
+            ApiFamily::Stdio,
+            decision.profile,
+            runtime_policy::scaled_cost(8, count),
+            true,
+        );
+        return -1;
+    }
+
+    let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
     // SAFETY: syscall wrapper expects raw fd/buffer/count.
     let rc = unsafe { sys_write_fd(fd, buf, effective_count) };
     runtime_policy::observe(

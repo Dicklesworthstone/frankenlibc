@@ -4512,6 +4512,39 @@ fn open_write_read_close_round_trip() {
 }
 
 #[test]
+fn read_rejects_tracked_short_output_buffer() {
+    const OVERLONG_IO_LEN: usize = 1 << 20;
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+
+    clear_errno();
+    let n = unsafe { read(-1, raw, OVERLONG_IO_LEN) };
+    assert_eq!(n, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
+fn write_rejects_tracked_short_input_buffer() {
+    const OVERLONG_IO_LEN: usize = 1 << 20;
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    unsafe { raw.cast::<u8>().write(b'x') };
+
+    clear_errno();
+    let n = unsafe { write(-1, raw.cast_const(), OVERLONG_IO_LEN) };
+    assert_eq!(n, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
 fn getutid_and_getutline_follow_native_utmp_fixture() {
     let entries = [
         utmp_entry(libc::BOOT_TIME, b"bt0", b"system boot", b""),

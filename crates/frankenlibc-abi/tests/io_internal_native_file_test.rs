@@ -5,6 +5,7 @@
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 
+use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::io_internal_abi::{
     _IO_iter_begin, _IO_iter_end, _IO_iter_file, _IO_iter_next, DEFAULT_FD_VTABLE,
     NATIVE_FILE_MAGIC, NATIVE_IO_JUMP_T, NativeFile, NativeFileBufMode, NativeFileVtable,
@@ -286,6 +287,33 @@ fn temp_memfd() -> c_int {
     fd
 }
 
+fn temp_devnull_fd() -> c_int {
+    let path = b"/dev/null\0";
+    let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_WRONLY) };
+    assert!(fd >= 0, "open /dev/null failed");
+    fd
+}
+
+fn tracked_zeroed_bytes(len: usize) -> *mut u8 {
+    assert!(len > 0);
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) };
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw.cast::<u8>(), 0, len) };
+    raw.cast()
+}
+
+unsafe fn free_tracked(ptr: *mut u8) {
+    unsafe { frankenlibc_abi::malloc_abi::free(ptr.cast()) };
+}
+
+fn clear_errno() {
+    unsafe { *__errno_location() = 0 };
+}
+
+fn errno_value() -> c_int {
+    unsafe { *__errno_location() }
+}
+
 #[test]
 fn vtable_default_has_all_fields() {
     let _read = DEFAULT_FD_VTABLE.read;
@@ -478,6 +506,71 @@ fn vtable_write_invalid_fd_returns_error() {
     let data = b"test";
     let ret = unsafe { (vtable.write)(&mut f, data.as_ptr(), data.len()) };
     assert_eq!(ret, -1, "write on invalid fd should return -1");
+}
+
+#[test]
+fn vtable_read_rejects_tracked_short_buffer() {
+    const OVERLONG_IO_LEN: usize = 1 << 20;
+    let fd = temp_memfd();
+    let mut f = NativeFile::new(fd, file_flags::READ, NativeFileBufMode::None);
+    let vtable = &DEFAULT_FD_VTABLE;
+    let raw = tracked_zeroed_bytes(1);
+
+    clear_errno();
+    let ret = unsafe { (vtable.read)(&mut f, raw, OVERLONG_IO_LEN) };
+    assert_eq!(ret, -1, "tracked-short read buffer must fail");
+    assert!(f.is_error());
+    assert_eq!(errno_value(), libc::EFAULT);
+
+    unsafe {
+        free_tracked(raw);
+        raw_syscall::sys_close(fd).expect("close memfd");
+    }
+}
+
+#[test]
+fn vtable_write_rejects_tracked_short_buffer() {
+    const OVERLONG_IO_LEN: usize = 1 << 20;
+    let fd = temp_devnull_fd();
+    let mut f = NativeFile::new(fd, file_flags::WRITE, NativeFileBufMode::None);
+    let vtable = &DEFAULT_FD_VTABLE;
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { raw.write(b'x') };
+
+    clear_errno();
+    let ret = unsafe { (vtable.write)(&mut f, raw.cast_const(), OVERLONG_IO_LEN) };
+    assert_eq!(ret, -1, "tracked-short write buffer must fail");
+    assert!(f.is_error());
+    assert_eq!(errno_value(), libc::EFAULT);
+    assert_eq!(f.offset(), 0);
+
+    unsafe {
+        free_tracked(raw);
+        raw_syscall::sys_close(fd).expect("close memfd");
+    }
+}
+
+#[test]
+fn vtable_flush_rejects_tracked_short_pending_buffer() {
+    const OVERLONG_IO_LEN: usize = 1 << 20;
+    let fd = temp_devnull_fd();
+    let mut f = NativeFile::new(fd, file_flags::WRITE, NativeFileBufMode::Full);
+    let vtable = &DEFAULT_FD_VTABLE;
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { raw.write(b'z') };
+    let out_of_bounds_pos = ((raw as usize) + OVERLONG_IO_LEN) as *mut u8;
+    f.set_buffer_state(raw, out_of_bounds_pos, out_of_bounds_pos, OVERLONG_IO_LEN);
+
+    clear_errno();
+    let ret = unsafe { (vtable.flush)(&mut f) };
+    assert_eq!(ret, -1, "tracked-short flush buffer must fail");
+    assert!(f.is_error());
+    assert_eq!(errno_value(), libc::EFAULT);
+
+    unsafe {
+        free_tracked(raw);
+        raw_syscall::sys_close(fd).expect("close memfd");
+    }
 }
 
 // ===========================================================================

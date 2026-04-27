@@ -17,8 +17,11 @@ use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicI8, Ordering};
 
+use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::stdio_abi;
+use frankenlibc_core::errno;
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::bloom::PointerBloomFilter;
 use frankenlibc_membrane::config::SafetyLevel;
@@ -29,6 +32,11 @@ use frankenlibc_membrane::evidence::{
 };
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use parking_lot::ReentrantMutex;
+
+#[inline]
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
 
 // ---------------------------------------------------------------------------
 // Native FILE struct (bd-zh1y.3.1)
@@ -979,6 +987,13 @@ unsafe fn vtable_fd_read(file: *mut NativeFile, buf: *mut u8, count: usize) -> i
     if fd < 0 {
         return -1;
     }
+    if (buf.is_null() && count > 0) || !tracked_region_fits(buf.cast_const().cast(), count) {
+        unsafe {
+            (*file).set_error();
+            set_abi_errno(errno::EFAULT);
+        }
+        return -1;
+    }
     let ret = unsafe { raw_syscall::sys_read(fd, buf, count) };
     match ret {
         Ok(n) => {
@@ -1007,6 +1022,13 @@ unsafe fn vtable_fd_read(file: *mut NativeFile, buf: *mut u8, count: usize) -> i
 unsafe fn vtable_fd_write(file: *mut NativeFile, buf: *const u8, count: usize) -> isize {
     let fd = unsafe { (*file).fd() };
     if fd < 0 {
+        return -1;
+    }
+    if (buf.is_null() && count > 0) || !tracked_region_fits(buf.cast(), count) {
+        unsafe {
+            (*file).set_error();
+            set_abi_errno(errno::EFAULT);
+        }
         return -1;
     }
     let ret = unsafe { raw_syscall::sys_write(fd, buf, count) };
@@ -1079,7 +1101,9 @@ unsafe fn vtable_fd_close(file: *mut NativeFile) -> c_int {
 unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
     let base = unsafe { (*file).buffer_base() };
     let pos = unsafe { (*file).buffer_pos() };
-    if base.is_null() || pos <= base {
+    let base_addr = base as usize;
+    let pos_addr = pos as usize;
+    if base_addr == 0 || pos_addr <= base_addr {
         return 0; // Nothing to flush.
     }
     // Only flush if the stream is writable (buffered write data exists).
@@ -1090,7 +1114,14 @@ unsafe fn vtable_fd_flush(file: *mut NativeFile) -> c_int {
     if fd < 0 {
         return -1;
     }
-    let pending = unsafe { pos.offset_from(base) } as usize;
+    let pending = pos_addr - base_addr;
+    if !tracked_region_fits(base.cast_const().cast(), pending) {
+        unsafe {
+            (*file).set_error();
+            set_abi_errno(errno::EFAULT);
+        }
+        return -1;
+    }
     let mut written = 0usize;
     while written < pending {
         let ret = unsafe {
@@ -1826,12 +1857,17 @@ unsafe extern "C" fn trampoline_read(fp: *mut c_void, buf: *mut c_void, n: isize
     if n < 0 {
         return -1;
     }
+    let len = n as usize;
+    if (buf.is_null() && len > 0) || !tracked_region_fits(buf.cast_const(), len) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
     let fd = unsafe { stdio_abi::fileno(fp) };
     if fd < 0 {
         return -1;
     }
     // Use the raw-syscall-backed unistd helper, not buffered stdio.
-    unsafe { crate::unistd_abi::sys_read_fd(fd, buf, n as usize) }
+    unsafe { crate::unistd_abi::sys_read_fd(fd, buf, len) }
 }
 
 /// Trampoline for `__write`: low-level write to fd.
@@ -1843,12 +1879,17 @@ unsafe extern "C" fn trampoline_write(fp: *mut c_void, buf: *const c_void, n: is
     if n < 0 {
         return -1;
     }
+    let len = n as usize;
+    if (buf.is_null() && len > 0) || !tracked_region_fits(buf, len) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
     let fd = unsafe { stdio_abi::fileno(fp) };
     if fd < 0 {
         return -1;
     }
     // Use the raw-syscall-backed unistd helper, not buffered stdio.
-    unsafe { crate::unistd_abi::sys_write_fd(fd, buf, n as usize) }
+    unsafe { crate::unistd_abi::sys_write_fd(fd, buf, len) }
 }
 
 /// Trampoline for `__seek`: low-level lseek on fd.
