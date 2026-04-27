@@ -19017,7 +19017,10 @@ pub unsafe extern "C" fn getaliasbyname(name: *const c_char) -> *mut c_void {
         unsafe { set_abi_errno(libc::ENOENT) };
         return std::ptr::null_mut();
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
     let content = match std::fs::read(ALIASES_PATH) {
         Ok(c) => c,
         Err(_) => {
@@ -19027,7 +19030,7 @@ pub unsafe extern "C" fn getaliasbyname(name: *const c_char) -> *mut c_void {
     };
     for line in content.split(|&b| b == b'\n') {
         if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(line)
-            && entry.name.eq_ignore_ascii_case(needle)
+            && entry.name.eq_ignore_ascii_case(&needle)
         {
             return ALIAS_ITER.with(|cell| {
                 let state = unsafe { &mut *cell.get() };
@@ -19055,7 +19058,9 @@ pub unsafe extern "C" fn getaliasbyname_r(
     if name.is_null() || result_buf.is_null() || buffer.is_null() {
         return libc::EINVAL;
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        return libc::EINVAL;
+    };
     let content = match std::fs::read(ALIASES_PATH) {
         Ok(c) => c,
         Err(_) => {
@@ -19065,7 +19070,7 @@ pub unsafe extern "C" fn getaliasbyname_r(
     };
     for line in content.split(|&b| b == b'\n') {
         if let Some(entry) = frankenlibc_core::aliases::parse_aliases_line(line)
-            && entry.name.eq_ignore_ascii_case(needle)
+            && entry.name.eq_ignore_ascii_case(&needle)
         {
             let pname = &entry.name;
             let members = &entry.members;
@@ -19290,7 +19295,15 @@ pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
     if netgroup.is_null() {
         return 0;
     }
-    let group = unsafe { std::ffi::CStr::from_ptr(netgroup) }.to_bytes();
+    let Some(group) = (unsafe { read_c_string_bytes(netgroup) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        NETGROUP_ITER.with(|cell| {
+            let state = unsafe { &mut *cell.get() };
+            state.triples.clear();
+            state.pos = 0;
+        });
+        return 0;
+    };
     let content = match std::fs::read(NETGROUP_PATH) {
         Ok(c) => c,
         Err(_) => {
@@ -19303,7 +19316,7 @@ pub unsafe extern "C" fn setnetgrent(netgroup: *const c_char) -> c_int {
             return 0;
         }
     };
-    let triples = frankenlibc_core::netgroup::parse_netgroup_triples(&content, group);
+    let triples = frankenlibc_core::netgroup::parse_netgroup_triples(&content, &group);
     NETGROUP_ITER.with(|cell| {
         let state = unsafe { &mut *cell.get() };
         state.triples = triples;

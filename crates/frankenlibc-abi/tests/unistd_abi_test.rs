@@ -4915,6 +4915,31 @@ fn setnetgrent_missing_group_matches_host_miss_shape() {
 }
 
 #[test]
+fn setnetgrent_rejects_tracked_unterminated_group() {
+    let raw_group = malloc_tracked_unterminated(b"frankenlibc-netgroup");
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = setnetgrent(raw_group);
+        let err = *__errno_location();
+
+        assert_eq!(rc, 0);
+        assert_eq!(err, libc::EINVAL);
+
+        let mut host = std::ptr::dangling_mut::<c_char>();
+        let mut user = std::ptr::dangling_mut::<c_char>();
+        let mut domain = std::ptr::dangling_mut::<c_char>();
+        let next = getnetgrent(&mut host, &mut user, &mut domain);
+        assert_eq!(next, 0);
+        assert_eq!(host, std::ptr::dangling_mut::<c_char>());
+        assert_eq!(user, std::ptr::dangling_mut::<c_char>());
+        assert_eq!(domain, std::ptr::dangling_mut::<c_char>());
+
+        frankenlibc_abi::malloc_abi::free(raw_group.cast());
+    }
+}
+
+#[test]
 fn alias_lookup_missing_entry_sets_errno() {
     let missing = CString::new("frankenlibc-no-such-alias").unwrap();
     unsafe { *__errno_location() = 0 };
@@ -4949,6 +4974,43 @@ fn alias_lookup_missing_entry_sets_errno() {
         "missing alias should null the result pointer"
     );
     assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+}
+
+#[test]
+fn alias_lookup_rejects_tracked_unterminated_name() {
+    #[repr(C)]
+    struct AliasEnt {
+        alias_name: *mut c_char,
+        alias_members_len: usize,
+        alias_members: *mut *mut c_char,
+        alias_local: c_int,
+    }
+
+    let raw_name = malloc_tracked_unterminated(b"frankenlibc-alias");
+
+    unsafe {
+        *__errno_location() = 0;
+        let plain = getaliasbyname(raw_name);
+        let plain_err = *__errno_location();
+        assert!(plain.is_null());
+        assert_eq!(plain_err, libc::EINVAL);
+
+        let mut ent: AliasEnt = std::mem::zeroed();
+        let mut buf = [0i8; 512];
+        let mut result = std::ptr::dangling_mut::<c_void>();
+        let rc = getaliasbyname_r(
+            raw_name,
+            (&mut ent as *mut AliasEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
 }
 
 #[test]
