@@ -54,6 +54,19 @@ unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
 }
 
 #[inline]
+unsafe fn read_bounded_c_string_with_nul(ptr: *const c_char, limit: usize) -> Option<Vec<u8>> {
+    if ptr.is_null() || limit == 0 {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, Some(limit)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len + 1) };
+    Some(bytes.to_vec())
+}
+
+#[inline]
 fn packed_entry_cstr_bytes(storage: &[u8], ptr: *const c_char) -> Option<&[u8]> {
     if ptr.is_null() {
         return None;
@@ -12653,10 +12666,11 @@ pub unsafe extern "C" fn fgetpwent(stream: *mut c_void) -> *mut c_void {
             return std::ptr::null_mut(); // EOF or error
         }
 
-        // Find the NUL terminator to get the line length.
-        let line_len = unsafe { CStr::from_ptr(line_buf.as_ptr().cast::<c_char>()) }
-            .to_bytes()
-            .len();
+        // `fgets` writes into a fixed local buffer; keep the scan inside it.
+        let line_len = line_buf
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(line_buf.len());
         let line = &line_buf[..line_len];
 
         // Skip blank lines and comments; parse_passwd_line returns None for those.
@@ -12690,9 +12704,10 @@ pub unsafe extern "C" fn fgetgrent(stream: *mut c_void) -> *mut c_void {
             return std::ptr::null_mut(); // EOF or error
         }
 
-        let line_len = unsafe { CStr::from_ptr(line_buf.as_ptr().cast::<c_char>()) }
-            .to_bytes()
-            .len();
+        let line_len = line_buf
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(line_buf.len());
         let line = &line_buf[..line_len];
 
         if let Some(entry) = frankenlibc_core::grp::parse_group_line(line) {
@@ -12835,13 +12850,12 @@ pub unsafe extern "C" fn getlogin() -> *mut c_char {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
         return std::ptr::null_mut();
     }
-    let name = unsafe { CStr::from_ptr(name_ptr) };
-    let bytes = name.to_bytes_with_nul();
-    if bytes.len() > GETLOGIN_MAX_LEN {
+    let Some(bytes) = (unsafe { read_bounded_c_string_with_nul(name_ptr, GETLOGIN_MAX_LEN) })
+    else {
         unsafe { set_abi_errno(errno::ERANGE) };
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
         return std::ptr::null_mut();
-    }
+    };
     let dst = std::ptr::addr_of_mut!(GETLOGIN_FALLBACK).cast::<c_char>();
     unsafe {
         std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), dst, bytes.len());
@@ -12884,8 +12898,11 @@ pub unsafe extern "C" fn getlogin_r(buf: *mut c_char, bufsize: usize) -> c_int {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
         return errno::ENOENT;
     }
-    let name = unsafe { CStr::from_ptr(name_ptr) };
-    let bytes = name.to_bytes_with_nul();
+    let Some(bytes) = (unsafe { read_bounded_c_string_with_nul(name_ptr, GETLOGIN_MAX_LEN) })
+    else {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+        return errno::ERANGE;
+    };
     if bytes.len() > bufsize {
         runtime_policy::observe(
             ApiFamily::Resolver,
