@@ -4429,6 +4429,28 @@ fn getprotobyname_r_resolves_tcp_and_nulls_missing() {
 }
 
 #[test]
+fn getprotobyname_r_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"tcp");
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 512];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    let rc = unsafe {
+        getprotobyname_r(
+            raw_name,
+            (&mut proto as *mut libc::protoent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_name.cast()) };
+}
+
+#[test]
 fn getprotobynumber_r_and_getprotoent_r_surface_entries() {
     let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
     let mut buf = [0i8; 512];
@@ -4570,6 +4592,30 @@ fn getnetbyname_rejects_tracked_unterminated_name() {
         assert_eq!(err, libc::EINVAL);
         frankenlibc_abi::malloc_abi::free(raw_name.cast());
     }
+}
+
+#[test]
+fn getnetbyname_r_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"loopback");
+    let mut net: NetEnt = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        getnetbyname_r(
+            raw_name,
+            (&mut net as *mut NetEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_name.cast()) };
 }
 
 #[test]

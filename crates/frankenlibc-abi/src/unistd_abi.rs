@@ -22353,14 +22353,16 @@ pub unsafe extern "C" fn getnetbyname_r(
     if name.is_null() {
         return libc::EINVAL;
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        return libc::EINVAL;
+    };
     let content = match std::fs::read(NETWORKS_PATH) {
         Ok(c) => c,
         Err(_) => return 0,
     };
     for line in content.split(|&b| b == b'\n') {
         if let Some((pname, pnet)) = parse_networks_line(line)
-            && pname.eq_ignore_ascii_case(needle)
+            && pname.eq_ignore_ascii_case(needle.as_slice())
         {
             return unsafe { fill_netent_r(&pname, pnet, result_buf, buf, buflen, result) };
         }
@@ -22478,7 +22480,9 @@ pub unsafe extern "C" fn getprotobyname_r(
         return libc::EINVAL;
     }
 
-    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        return libc::EINVAL;
+    };
     let content = match std::fs::read(PROTOCOLS_PATH) {
         Ok(c) => c,
         Err(_) => return 0, // not found, result stays NULL (glibc behavior)
@@ -22501,7 +22505,7 @@ pub unsafe extern "C" fn getprotobyname_r(
             Some(f) => f,
             None => continue,
         };
-        if pname.eq_ignore_ascii_case(needle)
+        if pname.eq_ignore_ascii_case(needle.as_slice())
             && let Some(num) = std::str::from_utf8(pnum_str)
                 .ok()
                 .and_then(|s| s.parse::<c_int>().ok())
