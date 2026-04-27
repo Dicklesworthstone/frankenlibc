@@ -2253,6 +2253,32 @@ fn getopt_parses_short_options_and_required_argument() {
 }
 
 #[test]
+fn getopt_rejects_tracked_unterminated_optstring() {
+    let _guard = GETOPT_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let args = [
+        std::ffi::CString::new("prog").expect("valid argv"),
+        std::ffi::CString::new("-a").expect("valid argv"),
+    ];
+    let mut argv: Vec<*mut libc::c_char> = args
+        .iter()
+        .map(|arg| arg.as_ptr() as *mut libc::c_char)
+        .collect();
+    let argc = argv.len() as libc::c_int;
+    argv.push(ptr::null_mut());
+    let optstring = unsafe { malloc_unterminated(b"a") };
+
+    unsafe {
+        reset_getopt_globals();
+        *__errno_location() = 0;
+    }
+    let rc = unsafe { getopt(argc, argv.as_ptr(), optstring.cast_const()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(optstring.cast()) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
 fn getopt_long_parses_named_options_and_inline_values() {
     let _guard = GETOPT_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let args = [
@@ -2344,6 +2370,58 @@ fn getopt_long_parses_named_options_and_inline_values() {
         },
         -1
     );
+}
+
+#[test]
+fn getopt_long_rejects_tracked_unterminated_optstring() {
+    let _guard = GETOPT_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let args = [
+        std::ffi::CString::new("prog").expect("valid argv"),
+        std::ffi::CString::new("--alpha").expect("valid argv"),
+    ];
+    let mut argv: Vec<*mut libc::c_char> = args
+        .iter()
+        .map(|arg| arg.as_ptr() as *mut libc::c_char)
+        .collect();
+    let argc = argv.len() as libc::c_int;
+    argv.push(ptr::null_mut());
+
+    let alpha = c"alpha";
+    let longopts = [
+        libc::option {
+            name: alpha.as_ptr(),
+            has_arg: 0,
+            flag: ptr::null_mut(),
+            val: b'a' as libc::c_int,
+        },
+        libc::option {
+            name: ptr::null(),
+            has_arg: 0,
+            flag: ptr::null_mut(),
+            val: 0,
+        },
+    ];
+    let optstring = unsafe { malloc_unterminated(b"a") };
+    let mut longindex: libc::c_int = -1;
+
+    unsafe {
+        reset_getopt_globals();
+        *__errno_location() = 0;
+    }
+    let rc = unsafe {
+        getopt_long(
+            argc,
+            argv.as_ptr(),
+            optstring.cast_const(),
+            longopts.as_ptr(),
+            &mut longindex,
+        )
+    };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(optstring.cast()) };
+    assert_eq!(rc, -1);
+    assert_eq!(longindex, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]

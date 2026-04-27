@@ -2629,8 +2629,12 @@ pub unsafe extern "C" fn getopt(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     }
-    let optspec = unsafe { CStr::from_ptr(optstring).to_bytes() };
-    let rc = unsafe { parse_getopt_short(argc, argv, optspec) };
+    let Some(optspec) = (unsafe { read_c_string_bytes(optstring) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    };
+    let rc = unsafe { parse_getopt_short(argc, argv, &optspec) };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -2708,10 +2712,14 @@ pub unsafe extern "C" fn getopt_long(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     }
-    let optspec = unsafe { CStr::from_ptr(optstring).to_bytes() };
-    let rc = match unsafe { parse_getopt_long(argc, argv, optspec, longopts, longindex) } {
+    let Some(optspec) = (unsafe { read_c_string_bytes(optstring) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return -1;
+    };
+    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex) } {
         Some(value) => value,
-        None => unsafe { parse_getopt_short(argc, argv, optspec) },
+        None => unsafe { parse_getopt_short(argc, argv, &optspec) },
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
