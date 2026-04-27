@@ -68,9 +68,9 @@ use frankenlibc_abi::glibc_internal_abi::setaliasent as abi_setaliasent;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::unistd_abi::{
     FTSENT as AbiFtsEnt, access, aio_suspend, alarm, arc4random_buf, bsd_getopt, chdir, chmod,
-    chown, close, creat, eaccess, endaliasent, ether_line, euidaccess, faccessat, fchmod, fchown,
-    fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, flopen, flopenat, fstat,
-    fsync, ftruncate, fts_children as abi_fts_children, fts_close as abi_fts_close,
+    chown, close, closelog, creat, eaccess, endaliasent, ether_line, euidaccess, faccessat, fchmod,
+    fchown, fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, flopen, flopenat,
+    fstat, fsync, ftruncate, fts_children as abi_fts_children, fts_close as abi_fts_close,
     fts_open as abi_fts_open, fts_read as abi_fts_read, fts_set as abi_fts_set, gai_cancel,
     gai_error, gai_suspend, getaddrinfo_a, getaliasbyname, getaliasbyname_r, getaliasent,
     getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile, getfsspec,
@@ -79,12 +79,12 @@ use frankenlibc_abi::unistd_abi::{
     getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r, getttyent, getttynam,
     getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64, gsignal,
     isatty, link, logout, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd, open,
-    pathconf, pidfd_getfd, process_madvise, process_mrelease, process_vm_readv, process_vm_writev,
-    read, readlink, readpassphrase, rename, rmdir, semctl, semop, setfsent, sethostent, setnetent,
-    setnetgrent, setns, setproctitle, setproctitle_init, setprotoent, setservent, setttyent,
-    setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l,
-    symlink, sysconf, truncate, umask, uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname,
-    wordexp as abi_wordexp, wordfree as abi_wordfree, write,
+    openlog, pathconf, pidfd_getfd, process_madvise, process_mrelease, process_vm_readv,
+    process_vm_writev, read, readlink, readpassphrase, rename, rmdir, semctl, semop, setfsent,
+    sethostent, setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent,
+    setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat,
+    strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
+    updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -3665,6 +3665,99 @@ fn strfmon_invalid_inputs_set_einval() {
         -1
     );
     assert_eq!(errno_value(), libc::EINVAL);
+}
+
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<c_char>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw.cast::<u8>(), bytes.len()) };
+    raw
+}
+
+#[test]
+fn syslog_ignores_tracked_unterminated_ident_in_child() -> Result<(), Box<dyn std::error::Error>> {
+    let payload = b"TRACKED_UNTERMINATED_SYSLOG_IDENT";
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("syslog_tracked_unterminated_ident_child_process")
+        .arg("--nocapture")
+        .env("FLC_SYSLOG_UNTERMINATED_IDENT_CHILD", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "child exited with {:?}",
+        output.status
+    );
+    assert!(
+        !output
+            .stderr
+            .windows(payload.len())
+            .any(|window| window == payload),
+        "unterminated tracked ident leaked into stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn syslog_tracked_unterminated_ident_child_process() {
+    if std::env::var_os("FLC_SYSLOG_UNTERMINATED_IDENT_CHILD").is_none() {
+        return;
+    }
+
+    let ident = unsafe { malloc_unterminated(b"TRACKED_UNTERMINATED_SYSLOG_IDENT") };
+    unsafe {
+        openlog(ident.cast_const(), libc::LOG_PERROR, 0);
+        syslog(libc::LOG_ERR, c"safe syslog message".as_ptr());
+        closelog();
+        frankenlibc_abi::malloc_abi::free(ident.cast());
+    }
+}
+
+#[test]
+fn syslog_ignores_tracked_unterminated_format_in_child() -> Result<(), Box<dyn std::error::Error>> {
+    let payload = b"TRACKED_UNTERMINATED_SYSLOG_FMT";
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("syslog_tracked_unterminated_format_child_process")
+        .arg("--nocapture")
+        .env("FLC_SYSLOG_UNTERMINATED_FMT_CHILD", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "child exited with {:?}",
+        output.status
+    );
+    assert!(
+        !output
+            .stderr
+            .windows(payload.len())
+            .any(|window| window == payload),
+        "unterminated tracked format leaked into stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn syslog_tracked_unterminated_format_child_process() {
+    if std::env::var_os("FLC_SYSLOG_UNTERMINATED_FMT_CHILD").is_none() {
+        return;
+    }
+
+    let fmt = unsafe { malloc_unterminated(b"TRACKED_UNTERMINATED_SYSLOG_FMT") };
+    unsafe {
+        openlog(c"frankenlibc-syslog-test".as_ptr(), libc::LOG_PERROR, 0);
+        syslog(libc::LOG_ERR, fmt.cast_const());
+        closelog();
+        frankenlibc_abi::malloc_abi::free(fmt.cast());
+    }
 }
 
 #[test]

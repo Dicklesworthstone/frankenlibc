@@ -2791,12 +2791,12 @@ fn syslog_send(priority: c_int, message: &[u8]) {
     };
     let pri = facility | level;
 
-    let ident = if !state.ident_ptr.is_null() {
-        unsafe { CStr::from_ptr(state.ident_ptr) }
-            .to_str()
-            .unwrap_or("unknown")
+    let ident = if state.ident_ptr.is_null() {
+        "unknown".to_string()
     } else {
-        "unknown"
+        unsafe { read_c_string_bytes(state.ident_ptr) }
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_else(|| "unknown".to_string())
     };
 
     let mut tv = libc::timespec {
@@ -2965,14 +2965,16 @@ pub unsafe extern "C" fn syslog(priority: c_int, format: *const c_char, mut args
     if format.is_null() {
         return;
     }
-    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(format) };
+    let Some(fmt_bytes) = (unsafe { read_c_string_bytes(format) }) else {
+        return;
+    };
     use frankenlibc_core::stdio::printf::parse_format_string;
-    let segments = parse_format_string(fmt_bytes);
+    let segments = parse_format_string(&fmt_bytes);
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
     let rendered =
-        unsafe { super::stdio_abi::render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
     syslog_send(priority, &rendered);
 }
 
@@ -2993,14 +2995,16 @@ pub unsafe extern "C" fn vsyslog(priority: c_int, format: *const c_char, ap: *mu
     if format.is_null() {
         return;
     }
-    let fmt_bytes = unsafe { super::stdio_abi::c_str_bytes(format) };
+    let Some(fmt_bytes) = (unsafe { read_c_string_bytes(format) }) else {
+        return;
+    };
     use frankenlibc_core::stdio::printf::parse_format_string;
-    let segments = parse_format_string(fmt_bytes);
+    let segments = parse_format_string(&fmt_bytes);
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
     let rendered =
-        unsafe { super::stdio_abi::render_printf(fmt_bytes, arg_buf.as_ptr(), extract_count) };
+        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
     syslog_send(priority, &rendered);
 }
 
