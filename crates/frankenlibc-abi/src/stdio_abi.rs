@@ -7982,7 +7982,11 @@ fn vis_options_from_env() -> u32 {
     if val_ptr.is_null() {
         return 0;
     }
-    let bytes = unsafe { CStr::from_ptr(val_ptr) }.to_bytes();
+    let (len, terminated) = unsafe { scan_c_str_len(val_ptr, None) };
+    if !terminated {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(val_ptr.cast::<u8>(), len) };
     frankenlibc_core::stdio::vis::parse_vis_options(bytes)
 }
 

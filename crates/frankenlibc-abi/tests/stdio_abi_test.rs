@@ -4083,6 +4083,8 @@ fn vis_string(buf: &[c_char], n: c_int) -> Vec<u8> {
 unsafe fn tracked_bytes_without_nul(bytes: &[u8]) -> *mut c_char {
     let ptr = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<c_char>() };
     assert!(!ptr.is_null());
+    let usable = unsafe { frankenlibc_abi::malloc_abi::malloc_usable_size(ptr.cast()) };
+    unsafe { std::ptr::write_bytes(ptr.cast::<u8>(), 0x7f, usable.max(bytes.len())) };
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len()) };
     ptr
 }
@@ -5176,6 +5178,52 @@ fn strenvisx_unknown_env_tokens_are_ignored() {
     // Only VIS_OCTAL is recognized; bytes match the octal-mode form.
     let bytes: Vec<u8> = (0..n as usize).map(|i| buf[i] as u8).collect();
     assert_eq!(bytes, b"\\012".to_vec());
+}
+
+#[test]
+fn strenvisx_ignores_tracked_unterminated_vis_options() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(None);
+    let assignment = b"VIS_OPTIONS=VIS_OCTAL\0";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(assignment.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        let usable = frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast());
+        std::ptr::write_bytes(raw, 0x7f, usable.max(assignment.len()));
+        std::ptr::copy_nonoverlapping(assignment.as_ptr(), raw, assignment.len());
+        assert_eq!(frankenlibc_abi::stdlib_abi::putenv(raw.cast()), 0);
+        *raw.add(assignment.len() - 1) = b'X';
+
+        let payload: &[u8] = b"\n";
+        let mut env_buf = [0 as c_char; 16];
+        let mut base_buf = [0 as c_char; 16];
+        let mut cerr: c_int = 99;
+        let env_len = strenvisx(
+            env_buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+            &mut cerr,
+        );
+        let base_len = strvisx(
+            base_buf.as_mut_ptr(),
+            payload.as_ptr() as *const c_char,
+            payload.len(),
+            0,
+        );
+
+        *raw.add(assignment.len() - 1) = 0;
+        libc::unsetenv(c"VIS_OPTIONS".as_ptr());
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(env_len, base_len);
+        assert_eq!(cerr, 0);
+        assert_eq!(
+            vis_string(&env_buf, env_len),
+            vis_string(&base_buf, base_len)
+        );
+    }
 }
 
 #[test]
