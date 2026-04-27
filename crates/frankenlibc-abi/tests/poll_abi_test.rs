@@ -5,7 +5,7 @@
 //! Covers: poll, ppoll, select, pselect, epoll_create/create1/ctl/wait/pwait,
 //! eventfd, timerfd_create/settime/gettime, sched_yield, prctl.
 
-use std::ffi::c_int;
+use std::ffi::{c_int, c_void};
 use std::ptr;
 
 use frankenlibc_abi::errno_abi::__errno_location;
@@ -22,6 +22,37 @@ fn pipe_pair() -> (c_int, c_int) {
     let rc = unsafe { frankenlibc_abi::io_abi::pipe(&mut fds as *mut c_int) };
     assert_eq!(rc, 0, "pipe() should succeed");
     (fds[0], fds[1])
+}
+
+fn tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(len);
+        assert!(!raw.is_null());
+        std::ptr::write_bytes(raw.cast::<u8>(), 0, len);
+        raw
+    }
+}
+
+fn free_tracked(raw: *mut c_void) {
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
+}
+
+fn assert_known_short(raw: *const c_void, required: usize) {
+    let remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert!(
+        remaining < required,
+        "test allocation should be tracked shorter than {required}; got {remaining}"
+    );
+}
+
+fn clear_errno() {
+    unsafe { *__errno_location() = 0 };
+}
+
+fn errno_value() -> c_int {
+    unsafe { *__errno_location() }
 }
 
 // ---------------------------------------------------------------------------
@@ -73,6 +104,24 @@ fn poll_empty_fds_timeout() {
     assert_eq!(rc, 0, "poll with nfds=0 and timeout=0 should return 0");
 }
 
+#[test]
+fn poll_rejects_tracked_short_pollfd_array() {
+    let required = std::mem::size_of::<libc::pollfd>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    let fd_bytes = (-1 as c_int).to_ne_bytes();
+    unsafe {
+        std::ptr::copy_nonoverlapping(fd_bytes.as_ptr(), raw.cast::<u8>(), fd_bytes.len());
+    }
+    assert_known_short(raw, required);
+    clear_errno();
+
+    let rc = unsafe { poll(raw.cast::<libc::pollfd>(), 1, 0) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), errno::EFAULT);
+    free_tracked(raw);
+}
+
 // ---------------------------------------------------------------------------
 // ppoll
 // ---------------------------------------------------------------------------
@@ -96,6 +145,30 @@ fn ppoll_timeout_zero() {
         close(r);
         close(w);
     }
+}
+
+#[test]
+fn ppoll_rejects_tracked_short_pollfd_array() {
+    use frankenlibc_abi::poll_abi::ppoll;
+
+    let required = std::mem::size_of::<libc::pollfd>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    let fd_bytes = (-1 as c_int).to_ne_bytes();
+    unsafe {
+        std::ptr::copy_nonoverlapping(fd_bytes.as_ptr(), raw.cast::<u8>(), fd_bytes.len());
+    }
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    assert_known_short(raw, required);
+    clear_errno();
+
+    let rc = unsafe { ppoll(raw.cast::<libc::pollfd>(), 1, &ts, ptr::null()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), errno::EFAULT);
+    free_tracked(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +232,34 @@ fn select_detects_readable() {
         close(r);
         close(w);
     }
+}
+
+#[test]
+fn select_rejects_tracked_short_fd_set() {
+    use frankenlibc_abi::poll_abi::select;
+
+    let required = std::mem::size_of::<libc::c_long>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    let mut tv = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
+    assert_known_short(raw, required);
+    clear_errno();
+
+    let rc = unsafe {
+        select(
+            1,
+            raw.cast::<libc::fd_set>(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &mut tv,
+        )
+    };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), errno::EFAULT);
+    free_tracked(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +334,39 @@ fn epoll_ctl_add_and_wait() {
 }
 
 #[test]
+fn epoll_ctl_add_rejects_tracked_short_event() {
+    let epfd = unsafe { epoll_create1(0) };
+    assert!(epfd >= 0);
+    let (r, w) = pipe_pair();
+    let required = std::mem::size_of::<libc::epoll_event>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    let events = (libc::EPOLLIN as u32).to_ne_bytes();
+    unsafe {
+        std::ptr::copy_nonoverlapping(events.as_ptr(), raw.cast::<u8>(), events.len());
+    }
+    assert_known_short(raw, required);
+    clear_errno();
+
+    let rc = unsafe {
+        epoll_ctl(
+            epfd,
+            libc::EPOLL_CTL_ADD,
+            r,
+            raw.cast::<libc::epoll_event>(),
+        )
+    };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), errno::EFAULT);
+    free_tracked(raw);
+    unsafe {
+        close(r);
+        close(w);
+        close(epfd);
+    }
+}
+
+#[test]
 fn epoll_wait_null_events_fails() {
     let epfd = unsafe { epoll_create1(0) };
     assert!(epfd >= 0);
@@ -252,6 +386,23 @@ fn epoll_wait_zero_maxevents_fails() {
     let n = unsafe { epoll_wait(epfd, events.as_mut_ptr(), 0, 0) };
     assert_eq!(n, -1, "epoll_wait with maxevents=0 should fail");
     assert_eq!(unsafe { *__errno_location() }, errno::EINVAL);
+    unsafe { close(epfd) };
+}
+
+#[test]
+fn epoll_wait_rejects_tracked_short_events() {
+    let epfd = unsafe { epoll_create1(0) };
+    assert!(epfd >= 0);
+    let required = std::mem::size_of::<libc::epoll_event>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    assert_known_short(raw, required);
+    clear_errno();
+
+    let n = unsafe { epoll_wait(epfd, raw.cast::<libc::epoll_event>(), 1, 0) };
+
+    assert_eq!(n, -1);
+    assert_eq!(errno_value(), errno::EFAULT);
+    free_tracked(raw);
     unsafe { close(epfd) };
 }
 
@@ -355,6 +506,22 @@ fn timerfd_settime_null_fails() {
 }
 
 #[test]
+fn timerfd_settime_rejects_tracked_short_new_value() {
+    use frankenlibc_abi::poll_abi::timerfd_settime;
+
+    let required = std::mem::size_of::<libc::itimerspec>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    assert_known_short(raw, required);
+    clear_errno();
+
+    let rc = unsafe { timerfd_settime(-1, 0, raw.cast::<libc::itimerspec>(), ptr::null_mut()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), errno::EFAULT);
+    free_tracked(raw);
+}
+
+#[test]
 fn timerfd_gettime_null_fails() {
     use frankenlibc_abi::poll_abi::{timerfd_create, timerfd_gettime};
     let fd = unsafe { timerfd_create(libc::CLOCK_MONOTONIC, 0) };
@@ -364,6 +531,22 @@ fn timerfd_gettime_null_fails() {
     assert_eq!(rc, -1, "timerfd_gettime with null should fail");
 
     unsafe { close(fd) };
+}
+
+#[test]
+fn timerfd_gettime_rejects_tracked_short_output() {
+    use frankenlibc_abi::poll_abi::timerfd_gettime;
+
+    let required = std::mem::size_of::<libc::itimerspec>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    assert_known_short(raw, required);
+    clear_errno();
+
+    let rc = unsafe { timerfd_gettime(-1, raw.cast::<libc::itimerspec>()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), errno::EFAULT);
+    free_tracked(raw);
 }
 
 // ---------------------------------------------------------------------------
