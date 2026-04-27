@@ -1491,8 +1491,7 @@ fn prctl_set_and_get_name() {
             0,
         )
     };
-    let got_str = std::str::from_utf8(&got[..11]).unwrap();
-    assert_eq!(got_str, "test_thread");
+    assert_eq!(&got[..11], b"test_thread");
 }
 
 #[test]
@@ -1578,7 +1577,7 @@ fn under_epoll_wait_zero_timeout_on_empty_set_returns_zero() {
     use frankenlibc_abi::poll_abi::__epoll_wait;
     let epfd = unsafe { libc::epoll_create1(0) };
     assert!(epfd >= 0);
-    let mut events = [unsafe { std::mem::zeroed::<libc::epoll_event>() }; 1];
+    let mut events = [libc::epoll_event { events: 0, u64: 0 }; 1];
     let rc = unsafe { __epoll_wait(epfd, events.as_mut_ptr(), 1, 0) };
     assert_eq!(rc, 0);
     unsafe { libc::close(epfd) };
@@ -1589,7 +1588,7 @@ fn under_epoll_pwait_zero_timeout_on_empty_set_returns_zero() {
     use frankenlibc_abi::poll_abi::__epoll_pwait;
     let epfd = unsafe { libc::epoll_create1(0) };
     assert!(epfd >= 0);
-    let mut events = [unsafe { std::mem::zeroed::<libc::epoll_event>() }; 1];
+    let mut events = [libc::epoll_event { events: 0, u64: 0 }; 1];
     let rc = unsafe { __epoll_pwait(epfd, events.as_mut_ptr(), 1, 0, std::ptr::null()) };
     assert_eq!(rc, 0);
     unsafe { libc::close(epfd) };
