@@ -5815,10 +5815,25 @@ pub unsafe extern "C" fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_i
         return 1;
     }
 
+    let s1_bytes = unsafe { read_c_string_bytes(s1) };
+    let s2_bytes = unsafe { read_c_string_bytes(s2) };
+    match (s1_bytes, s2_bytes) {
+        (Some(s1_bytes), Some(s2_bytes)) => strverscmp_bytes(&s1_bytes, &s2_bytes),
+        (None, Some(_)) => -1,
+        (Some(_), None) => 1,
+        (None, None) => 0,
+    }
+}
+
+fn strvers_byte(bytes: &[u8], index: usize) -> u8 {
+    bytes.get(index).copied().unwrap_or(0)
+}
+
+fn strverscmp_bytes(s1: &[u8], s2: &[u8]) -> c_int {
     let mut i = 0usize;
     loop {
-        let c1 = unsafe { *s1.add(i) } as u8;
-        let c2 = unsafe { *s2.add(i) } as u8;
+        let c1 = strvers_byte(s1, i);
+        let c2 = strvers_byte(s2, i);
 
         // Both hit NUL: equal.
         if c1 == 0 && c2 == 0 {
@@ -5833,8 +5848,8 @@ pub unsafe extern "C" fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_i
             if leading_zero {
                 // Left-aligned comparison (treat as fraction after decimal point).
                 loop {
-                    let d1 = unsafe { *s1.add(i) } as u8;
-                    let d2 = unsafe { *s2.add(i) } as u8;
+                    let d1 = strvers_byte(s1, i);
+                    let d2 = strvers_byte(s2, i);
                     let is_d1 = d1.is_ascii_digit();
                     let is_d2 = d2.is_ascii_digit();
                     if !is_d1 && !is_d2 {
@@ -5860,8 +5875,8 @@ pub unsafe extern "C" fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_i
 
                 // Walk both digit sequences simultaneously.
                 loop {
-                    let d1 = unsafe { *s1.add(start + len1) } as u8;
-                    let d2 = unsafe { *s2.add(start + len2) } as u8;
+                    let d1 = strvers_byte(s1, start + len1);
+                    let d2 = strvers_byte(s2, start + len2);
                     let is_d1 = d1.is_ascii_digit();
                     let is_d2 = d2.is_ascii_digit();
 

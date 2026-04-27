@@ -862,6 +862,19 @@ fn strverscmp_leading_zero_prefix_ordering() {
     assert!(unsafe { strverscmp(c"0009".as_ptr(), c"009".as_ptr()) } < 0);
 }
 
+#[test]
+fn strverscmp_bounds_tracked_unterminated_inputs() {
+    unsafe {
+        let raw = malloc_unterminated(b"file2");
+
+        assert!(strverscmp(raw, c"file10".as_ptr()) < 0);
+        assert!(strverscmp(c"file10".as_ptr(), raw) > 0);
+        assert_eq!(strverscmp(raw, raw), 0);
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
 // ===========================================================================
 // swab
 // ===========================================================================
