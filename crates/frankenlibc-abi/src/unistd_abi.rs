@@ -7898,11 +7898,13 @@ pub unsafe extern "C" fn nis_sperrno(status: c_int) -> *const c_char {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nis_perror(status: c_int, label: *const c_char) {
     let mut msg = Vec::<u8>::new();
-    if !label.is_null() {
-        // SAFETY: caller-supplied NUL-terminated string.
-        let lbytes = unsafe { CStr::from_ptr(label) }.to_bytes();
-        msg.extend_from_slice(lbytes);
-        msg.extend_from_slice(b": ");
+    match unsafe { read_optional_c_string_bytes(label) } {
+        Ok(Some(lbytes)) => {
+            msg.extend_from_slice(&lbytes);
+            msg.extend_from_slice(b": ");
+        }
+        Ok(None) => {}
+        Err(e) => unsafe { set_abi_errno(e) },
     }
     msg.extend_from_slice(nis_error_text(status));
     msg.push(b'\n');
@@ -7926,11 +7928,16 @@ pub unsafe extern "C" fn nis_lerror(_status: c_int, _label: *const c_char) {}
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nis_sperror(status: c_int, label: *const c_char) -> *mut c_char {
     let mut tmp = Vec::<u8>::new();
-    if !label.is_null() {
-        // SAFETY: caller-supplied NUL-terminated string.
-        let lbytes = unsafe { CStr::from_ptr(label) }.to_bytes();
-        tmp.extend_from_slice(lbytes);
-        tmp.extend_from_slice(b": ");
+    match unsafe { read_optional_c_string_bytes(label) } {
+        Ok(Some(lbytes)) => {
+            tmp.extend_from_slice(&lbytes);
+            tmp.extend_from_slice(b": ");
+        }
+        Ok(None) => {}
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return core::ptr::null_mut();
+        }
     }
     tmp.extend_from_slice(nis_error_text(status));
     tmp.push(0);
@@ -7972,11 +7979,16 @@ pub unsafe extern "C" fn nis_sperror_r(
         return core::ptr::null_mut();
     }
     let mut tmp = Vec::<u8>::new();
-    if !label.is_null() {
-        // SAFETY: caller-supplied NUL-terminated string.
-        let lbytes = unsafe { CStr::from_ptr(label) }.to_bytes();
-        tmp.extend_from_slice(lbytes);
-        tmp.extend_from_slice(b": ");
+    match unsafe { read_optional_c_string_bytes(label) } {
+        Ok(Some(lbytes)) => {
+            tmp.extend_from_slice(&lbytes);
+            tmp.extend_from_slice(b": ");
+        }
+        Ok(None) => {}
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return core::ptr::null_mut();
+        }
     }
     tmp.extend_from_slice(nis_error_text(status));
     tmp.push(0);
@@ -8023,6 +8035,18 @@ fn nis_first_unescaped_dot(bytes: &[u8]) -> Option<usize> {
     None
 }
 
+#[inline]
+unsafe fn read_optional_c_string_bytes(ptr: *const c_char) -> Result<Option<Vec<u8>>, c_int> {
+    if ptr.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: ABI callers provide C string pointers; read_c_string_bytes
+    // applies a hard bound for tracked allocations and rejects missing NULs.
+    unsafe { read_c_string_bytes(ptr) }
+        .map(Some)
+        .ok_or(errno::EINVAL)
+}
+
 thread_local! {
     static NIS_DOMAIN_OF_TLS: core::cell::RefCell<Vec<u8>> =
         const { core::cell::RefCell::new(Vec::new()) };
@@ -8045,12 +8069,14 @@ pub unsafe extern "C" fn nis_domain_of(name: *const c_char) -> *mut c_char {
     NIS_DOMAIN_OF_TLS.with(|cell| {
         let mut buf = cell.borrow_mut();
         buf.clear();
-        if !name.is_null() {
-            // SAFETY: caller-supplied NUL-terminated string.
-            let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
-            if let Some(dot) = nis_first_unescaped_dot(bytes) {
-                buf.extend_from_slice(&bytes[dot + 1..]);
+        match unsafe { read_optional_c_string_bytes(name) } {
+            Ok(Some(bytes)) => {
+                if let Some(dot) = nis_first_unescaped_dot(&bytes) {
+                    buf.extend_from_slice(&bytes[dot + 1..]);
+                }
             }
+            Ok(None) => {}
+            Err(e) => unsafe { set_abi_errno(e) },
         }
         buf.push(0);
         buf.as_mut_ptr() as *mut c_char
@@ -8075,14 +8101,19 @@ pub unsafe extern "C" fn nis_domain_of_r(
         unsafe { set_abi_errno(errno::EINVAL) };
         return core::ptr::null_mut();
     }
-    let mut tail: &[u8] = &[];
-    if !name.is_null() {
-        // SAFETY: caller-supplied NUL-terminated string.
-        let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
-        if let Some(dot) = nis_first_unescaped_dot(bytes) {
-            tail = &bytes[dot + 1..];
+    let name_bytes = match unsafe { read_optional_c_string_bytes(name) } {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return core::ptr::null_mut();
         }
-    }
+    };
+    let tail = if let Some(dot) = nis_first_unescaped_dot(&name_bytes) {
+        &name_bytes[dot + 1..]
+    } else {
+        &[]
+    };
     if tail.len() + 1 > buflen {
         unsafe { set_abi_errno(errno::ERANGE) };
         return core::ptr::null_mut();
@@ -8107,11 +8138,13 @@ pub unsafe extern "C" fn nis_leaf_of(name: *const c_char) -> *mut c_char {
     NIS_LEAF_OF_TLS.with(|cell| {
         let mut buf = cell.borrow_mut();
         buf.clear();
-        if !name.is_null() {
-            // SAFETY: caller-supplied NUL-terminated string.
-            let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
-            let head_end = nis_first_unescaped_dot(bytes).unwrap_or(bytes.len());
-            buf.extend_from_slice(&bytes[..head_end]);
+        match unsafe { read_optional_c_string_bytes(name) } {
+            Ok(Some(bytes)) => {
+                let head_end = nis_first_unescaped_dot(&bytes).unwrap_or(bytes.len());
+                buf.extend_from_slice(&bytes[..head_end]);
+            }
+            Ok(None) => {}
+            Err(e) => unsafe { set_abi_errno(e) },
         }
         buf.push(0);
         buf.as_mut_ptr() as *mut c_char
@@ -8134,13 +8167,16 @@ pub unsafe extern "C" fn nis_leaf_of_r(
         unsafe { set_abi_errno(errno::EINVAL) };
         return core::ptr::null_mut();
     }
-    let mut head: &[u8] = &[];
-    if !name.is_null() {
-        // SAFETY: caller-supplied NUL-terminated string.
-        let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
-        let head_end = nis_first_unescaped_dot(bytes).unwrap_or(bytes.len());
-        head = &bytes[..head_end];
-    }
+    let name_bytes = match unsafe { read_optional_c_string_bytes(name) } {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return core::ptr::null_mut();
+        }
+    };
+    let head_end = nis_first_unescaped_dot(&name_bytes).unwrap_or(name_bytes.len());
+    let head = &name_bytes[..head_end];
     if head.len() + 1 > buflen {
         unsafe { set_abi_errno(errno::ERANGE) };
         return core::ptr::null_mut();
@@ -8166,10 +8202,12 @@ pub unsafe extern "C" fn nis_name_of(name: *const c_char) -> *mut c_char {
     NIS_NAME_OF_TLS.with(|cell| {
         let mut buf = cell.borrow_mut();
         buf.clear();
-        if !name.is_null() {
-            // SAFETY: caller-supplied NUL-terminated string.
-            let bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
-            buf.extend_from_slice(bytes);
+        match unsafe { read_optional_c_string_bytes(name) } {
+            Ok(Some(bytes)) => {
+                buf.extend_from_slice(&bytes);
+            }
+            Ok(None) => {}
+            Err(e) => unsafe { set_abi_errno(e) },
         }
         buf.push(0);
         buf.as_mut_ptr() as *mut c_char
@@ -8193,11 +8231,15 @@ pub unsafe extern "C" fn nis_name_of_r(
         unsafe { set_abi_errno(errno::EINVAL) };
         return core::ptr::null_mut();
     }
-    let mut s: &[u8] = &[];
-    if !name.is_null() {
-        // SAFETY: caller-supplied NUL-terminated string.
-        s = unsafe { CStr::from_ptr(name) }.to_bytes();
-    }
+    let name_bytes = match unsafe { read_optional_c_string_bytes(name) } {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return core::ptr::null_mut();
+        }
+    };
+    let s = name_bytes.as_slice();
     if s.len() + 1 > buflen {
         unsafe { set_abi_errno(errno::ERANGE) };
         return core::ptr::null_mut();
@@ -8225,9 +8267,12 @@ pub unsafe extern "C" fn nis_dir_cmp(a: *const c_char, b: *const c_char) -> c_in
     if a.is_null() || b.is_null() {
         return 3; // NOT_SEQUENTIAL
     }
-    // SAFETY: caller-supplied NUL-terminated strings.
-    let ab = unsafe { CStr::from_ptr(a) }.to_bytes();
-    let bb = unsafe { CStr::from_ptr(b) }.to_bytes();
+    let Some(ab) = (unsafe { read_c_string_bytes(a) }) else {
+        return 3;
+    };
+    let Some(bb) = (unsafe { read_c_string_bytes(b) }) else {
+        return 3;
+    };
     // Strip a single trailing dot (NIS+ convention) before compare.
     fn stripped(s: &[u8]) -> &[u8] {
         if s.last() == Some(&b'.') {
@@ -8236,8 +8281,8 @@ pub unsafe extern "C" fn nis_dir_cmp(a: *const c_char, b: *const c_char) -> c_in
             s
         }
     }
-    let ab = stripped(ab);
-    let bb = stripped(bb);
+    let ab = stripped(&ab);
+    let bb = stripped(&bb);
     let lower = |x: u8| -> u8 { if x.is_ascii_uppercase() { x | 0x20 } else { x } };
     let common = ab.len().min(bb.len());
     for i in 0..common {

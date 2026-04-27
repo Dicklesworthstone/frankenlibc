@@ -9350,6 +9350,29 @@ fn nis_sperror_r_null_buf_returns_einval() {
 }
 
 #[test]
+fn nis_sperror_rejects_tracked_unterminated_label() {
+    use frankenlibc_abi::unistd_abi::{nis_sperror, nis_sperror_r};
+    let raw = nis_malloc_unterminated(b"unterminated-nis-label");
+
+    unsafe {
+        *__errno_location() = 0;
+        let p = nis_sperror(5, raw);
+        let err = *__errno_location();
+        assert!(p.is_null());
+        assert_eq!(err, libc::EINVAL);
+
+        let mut buf = [0u8; 64];
+        *__errno_location() = 0;
+        let p = nis_sperror_r(5, raw, buf.as_mut_ptr() as *mut c_char, buf.len());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert!(p.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn nis_perror_writes_to_stderr_without_crashing() {
     use frankenlibc_abi::unistd_abi::nis_perror;
     // We just verify it doesn't crash; capturing stderr from inside
@@ -9374,6 +9397,15 @@ fn nis_lerror_is_a_no_op() {
 
 fn nis_helpers_cstr_to_string(p: *const c_char) -> String {
     unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+}
+
+fn nis_malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len());
+        raw.cast()
+    }
 }
 
 #[test]
@@ -9476,6 +9508,49 @@ fn nis_dir_cmp_classifies_known_orderings() {
     assert_eq!(unsafe { nis_dir_cmp(b.as_ptr(), a.as_ptr()) }, 2);
     assert_eq!(unsafe { nis_dir_cmp(a.as_ptr(), same.as_ptr()) }, 1);
     assert_eq!(unsafe { nis_dir_cmp(std::ptr::null(), a.as_ptr()) }, 3);
+}
+
+#[test]
+fn nis_name_helpers_reject_tracked_unterminated_inputs() {
+    use frankenlibc_abi::unistd_abi::{
+        nis_dir_cmp, nis_domain_of, nis_domain_of_r, nis_leaf_of, nis_leaf_of_r, nis_name_of,
+        nis_name_of_r,
+    };
+    let raw = nis_malloc_unterminated(b"host.subdom.dom.");
+    let valid = CString::new("host.subdom.dom.").unwrap();
+
+    unsafe {
+        *__errno_location() = 0;
+        let p = nis_domain_of(raw);
+        assert_eq!(nis_helpers_cstr_to_string(p), "");
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        let p = nis_leaf_of(raw);
+        assert_eq!(nis_helpers_cstr_to_string(p), "");
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        let p = nis_name_of(raw);
+        assert_eq!(nis_helpers_cstr_to_string(p), "");
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        let mut buf = [0u8; 64];
+        *__errno_location() = 0;
+        assert!(nis_domain_of_r(raw, buf.as_mut_ptr() as *mut c_char, buf.len()).is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        assert!(nis_leaf_of_r(raw, buf.as_mut_ptr() as *mut c_char, buf.len()).is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        assert!(nis_name_of_r(raw, buf.as_mut_ptr() as *mut c_char, buf.len()).is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        assert_eq!(nis_dir_cmp(raw, valid.as_ptr()), 3);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
 }
 
 #[test]
