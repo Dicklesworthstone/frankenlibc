@@ -950,6 +950,20 @@ fn snprintf_truncates_and_reports_full_length() {
 }
 
 #[test]
+fn snprintf_percent_m_formats_errno_message() {
+    let mut buf = [0_i8; 64];
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = libc::EINVAL;
+    }
+
+    let written = unsafe { snprintf(buf.as_mut_ptr(), buf.len(), c"%m".as_ptr()) };
+    assert_eq!(written, "Invalid argument".len() as c_int);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"Invalid argument");
+}
+
+#[test]
 fn snprintf_records_ffi_pcc_gate_when_runtime_ready() {
     signal_runtime_ready_for_tests();
     let _ = take_last_decision_gate_for_tests();

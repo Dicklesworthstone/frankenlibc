@@ -3079,8 +3079,11 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                         )
                     };
                     if rc == 0 {
-                        let msg = unsafe { CStr::from_ptr(err_buf.as_ptr() as *const c_char) };
-                        format_str(msg.to_bytes(), &resolved_spec, &mut buf);
+                        let msg_len = err_buf
+                            .iter()
+                            .position(|&byte| byte == 0)
+                            .unwrap_or(err_buf.len());
+                        format_str(&err_buf[..msg_len], &resolved_spec, &mut buf);
                     } else {
                         buf.extend_from_slice(b"Unknown error");
                     }
