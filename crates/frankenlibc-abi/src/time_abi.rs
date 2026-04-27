@@ -17,6 +17,7 @@ use frankenlibc_membrane::MembraneAction;
 use frankenlibc_membrane::runtime_math::ApiFamily;
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
@@ -642,7 +643,11 @@ pub unsafe extern "C" fn strftime(
     }
 
     // Read the format string as a byte slice.
-    let (fmt_len, _terminated) = unsafe { scan_c_string(format, None) };
+    let (fmt_len, terminated) = unsafe { scan_c_string(format, known_remaining(format as usize)) };
+    if !terminated {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
+        return 0;
+    }
     let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
 
     // Read the broken-down time.

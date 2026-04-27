@@ -546,6 +546,30 @@ fn strftime_time() {
     assert_eq!(s.to_bytes(), b"14:30:45");
 }
 
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
+    raw.cast()
+}
+
+#[test]
+fn strftime_rejects_tracked_unterminated_format() {
+    unsafe {
+        let raw_fmt = malloc_unterminated(b"%Y");
+        let epoch: i64 = 0;
+        let mut tm: libc::tm = std::mem::zeroed();
+        time_abi::gmtime_r(&epoch, &mut tm);
+        let mut buf = [0x55_u8; 16];
+
+        let len = time_abi::strftime(buf.as_mut_ptr().cast::<c_char>(), buf.len(), raw_fmt, &tm);
+
+        assert_eq!(len, 0);
+        assert_eq!(buf, [0x55_u8; 16]);
+        frankenlibc_abi::malloc_abi::free(raw_fmt.cast());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // gmtime / localtime (non-reentrant)
 // ---------------------------------------------------------------------------
