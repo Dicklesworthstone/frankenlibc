@@ -86,17 +86,17 @@ use frankenlibc_abi::unistd_abi::{
     gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname, getaliasbyname_r,
     getaliasent, getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile,
     getfsspec, getgid, gethostbyname2, gethostbyname2_r, gethostent_r, gethostname, getnetbyaddr_r,
-    getnetbyname, getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid, getppid,
-    getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r,
-    getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64,
-    globfree64, gsignal, isatty, link, logout, logwtmp, lseek, lstat, mkdir, mkfifo, mount_setattr,
-    msgrcv, msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise,
-    process_mrelease, process_vm_readv, process_vm_writev, read, readlink, readpassphrase, rename,
-    rmdir, sem_open, sem_unlink, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
-    setns, setproctitle, setproctitle_init, setprotoent, setservent, setttyent, setutent, shmdt,
-    sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf,
-    syslog, truncate, umask, uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname, wctrans,
-    wordexp as abi_wordexp, wordfree as abi_wordfree, write,
+    getnetbyname, getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getopt, getopt_long,
+    getpid, getppid, getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent,
+    getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline,
+    getutline_r, glob64, globfree64, gsignal, isatty, link, logout, logwtmp, lseek, lstat, mkdir,
+    mkfifo, mount_setattr, msgrcv, msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd,
+    process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read, readlink,
+    readpassphrase, rename, rmdir, sem_open, sem_unlink, semctl, semop, setfsent, sethostent,
+    setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent, setservent,
+    setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon,
+    strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
+    updwtmpx, usleep, utmpname, wctrans, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -5937,14 +5937,18 @@ fn posix_close_invalid_fd_returns_minus_one() {
 
 static BSD_GETOPT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn run_bsd_getopt_with_args(optstring: &core::ffi::CStr, args: &[&core::ffi::CStr]) -> Vec<c_int> {
-    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    // Reset getopt state. libc_optind is exported by glibc; on
-    // reset it must be set to 1 to start a fresh parse.
+fn reset_getopt_state_for_test() {
+    // Reset getopt state. libc_optind is exported by glibc; setting
+    // it to 0 forces the ABI shim to clear its bundled-option cursor.
     unsafe extern "C" {
         static mut optind: c_int;
     }
-    unsafe { optind = 1 };
+    unsafe { optind = 0 };
+}
+
+fn run_bsd_getopt_with_args(optstring: &core::ffi::CStr, args: &[&core::ffi::CStr]) -> Vec<c_int> {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
 
     let mut argv: Vec<*mut c_char> = args.iter().map(|s| s.as_ptr() as *mut c_char).collect();
     argv.push(std::ptr::null_mut());
@@ -5989,6 +5993,7 @@ fn bsd_getopt_unknown_option_returns_question_mark() {
 #[test]
 fn bsd_getopt_null_optstring_returns_minus_one() {
     let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
     let arg0 = c"prog";
     let argv: [*mut c_char; 2] = [arg0.as_ptr() as *mut c_char, std::ptr::null_mut()];
     let rc = unsafe { bsd_getopt(1, argv.as_ptr(), std::ptr::null()) };
@@ -6006,6 +6011,112 @@ fn bsd_getopt_double_prefix_only_strips_one() {
     // Verify the strip happens exactly once.
     let chars = run_bsd_getopt_with_args(c"++a", &[c"prog", c"-a"]);
     assert_eq!(chars, vec![b'a' as c_int]);
+}
+
+#[test]
+fn getopt_rejects_tracked_unterminated_argv_entry() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+    let raw_arg = malloc_tracked_unterminated(b"-a");
+    let mut argv = vec![
+        c"prog".as_ptr() as *mut c_char,
+        raw_arg,
+        std::ptr::null_mut(),
+    ];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = getopt(2, argv.as_mut_ptr(), c"a".as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_arg.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn getopt_long_rejects_tracked_unterminated_argv_entry() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+    let raw_arg = malloc_tracked_unterminated(b"--alpha");
+    let mut argv = vec![
+        c"prog".as_ptr() as *mut c_char,
+        raw_arg,
+        std::ptr::null_mut(),
+    ];
+    let longopts = [
+        libc::option {
+            name: c"alpha".as_ptr(),
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: b'a' as c_int,
+        },
+        libc::option {
+            name: std::ptr::null(),
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: 0,
+        },
+    ];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = getopt_long(
+            2,
+            argv.as_mut_ptr(),
+            c"".as_ptr(),
+            longopts.as_ptr(),
+            std::ptr::null_mut(),
+        );
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_arg.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn getopt_long_rejects_tracked_unterminated_option_name() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+    let raw_name = malloc_tracked_unterminated(b"alpha");
+    let mut argv = vec![
+        c"prog".as_ptr() as *mut c_char,
+        c"--alpha".as_ptr() as *mut c_char,
+        std::ptr::null_mut(),
+    ];
+    let longopts = [
+        libc::option {
+            name: raw_name,
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: b'a' as c_int,
+        },
+        libc::option {
+            name: std::ptr::null(),
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: 0,
+        },
+    ];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = getopt_long(
+            2,
+            argv.as_mut_ptr(),
+            c"".as_ptr(),
+            longopts.as_ptr(),
+            std::ptr::null_mut(),
+        );
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
 }
 
 // ---------------------------------------------------------------------------

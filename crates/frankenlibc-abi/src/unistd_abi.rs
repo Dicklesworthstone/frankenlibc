@@ -2402,12 +2402,11 @@ use frankenlibc_core::getopt::{ArgRef, GetoptState, StepOutcome};
 /// the canonical POSIX state.
 static mut GETOPT_NEXTCHAR: Option<ArgRef> = None;
 
-/// Reconstruct a C-style argv into a borrowed byte-slice vector.
+/// Reconstruct a C-style argv into owned byte vectors.
 ///
-/// Returns `None` for any null entry within `0..argc`. Each `&[u8]`
-/// shares the underlying argv element's lifetime — callers must keep
-/// `argv` valid for the duration of the borrow.
-unsafe fn argv_byte_slices<'a>(argc: c_int, argv: *const *mut c_char) -> Option<Vec<&'a [u8]>> {
+/// Returns `None` for any null or tracked-unterminated entry within
+/// `0..argc`.
+unsafe fn argv_byte_slices(argc: c_int, argv: *const *mut c_char) -> Option<Vec<Vec<u8>>> {
     let argc = usize::try_from(argc).ok()?;
     let mut out = Vec::with_capacity(argc);
     for i in 0..argc {
@@ -2415,7 +2414,7 @@ unsafe fn argv_byte_slices<'a>(argc: c_int, argv: *const *mut c_char) -> Option<
         if p.is_null() {
             return None;
         }
-        out.push(unsafe { CStr::from_ptr(p) }.to_bytes());
+        out.push(unsafe { read_c_string_bytes(p) }?);
     }
     Some(out)
 }
@@ -2424,10 +2423,14 @@ unsafe fn parse_getopt_short(argc: c_int, argv: *const *mut c_char, optspec: &[u
     if argc <= 0 || argv.is_null() {
         return -1;
     }
-    let argv_slices = match unsafe { argv_byte_slices(argc, argv) } {
+    let argv_bytes = match unsafe { argv_byte_slices(argc, argv) } {
         Some(v) => v,
-        None => return -1,
+        None => {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
     };
+    let argv_slices: Vec<&[u8]> = argv_bytes.iter().map(Vec::as_slice).collect();
 
     let mut state = GetoptState {
         optind: unsafe { libc_optind.max(0) as usize },
@@ -2491,10 +2494,14 @@ unsafe fn parse_getopt_long(
     if current.is_null() {
         return Some(-1);
     }
-    if unsafe { *current != b'-' as c_char || *current.add(1) != b'-' as c_char } {
+    let Some(current_bytes) = (unsafe { read_c_string_bytes(current) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return Some(-1);
+    };
+    if !current_bytes.starts_with(b"--") {
         return None;
     }
-    if unsafe { *current.add(2) == 0 } {
+    if current_bytes.len() == 2 {
         unsafe {
             libc_optind += 1;
             GETOPT_NEXTCHAR = None;
@@ -2502,15 +2509,11 @@ unsafe fn parse_getopt_long(
         return Some(-1);
     }
 
-    let mut split = unsafe { current.add(2) };
-    while unsafe { *split != 0 && *split != b'=' as c_char } {
-        split = unsafe { split.add(1) };
-    }
-    let name_ptr = unsafe { current.add(2) };
-    let name_len = unsafe { split.offset_from(name_ptr) as usize };
-    let name = unsafe { std::slice::from_raw_parts(name_ptr.cast::<u8>(), name_len) };
-    let inline_value = if unsafe { *split == b'=' as c_char } {
-        unsafe { split.add(1) }
+    let body = &current_bytes[2..];
+    let split_idx = body.iter().position(|&b| b == b'=').unwrap_or(body.len());
+    let name = &body[..split_idx];
+    let inline_value = if split_idx < body.len() {
+        unsafe { current.add(2 + split_idx + 1) }
     } else {
         std::ptr::null()
     };
@@ -2527,8 +2530,11 @@ unsafe fn parse_getopt_long(
         if long_name.is_null() {
             break;
         }
-        let candidate = unsafe { CStr::from_ptr(long_name).to_bytes() };
-        if candidate == name {
+        let Some(candidate) = (unsafe { read_c_string_bytes(long_name) }) else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return Some(-1);
+        };
+        if candidate.as_slice() == name {
             if !longindex.is_null() {
                 unsafe {
                     *longindex = idx as c_int;
