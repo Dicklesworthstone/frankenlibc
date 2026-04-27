@@ -4516,6 +4516,12 @@ fn read_rejects_tracked_short_output_buffer() {
     const OVERLONG_IO_LEN: usize = 1 << 20;
 
     let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert!(
+        tracked_remaining < OVERLONG_IO_LEN,
+        "test allocation should be tracked as shorter than the requested read"
+    );
 
     clear_errno();
     let n = unsafe { read(-1, raw, OVERLONG_IO_LEN) };
@@ -4533,6 +4539,12 @@ fn write_rejects_tracked_short_input_buffer() {
 
     let raw = malloc_tracked_zeroed_bytes(1);
     unsafe { raw.cast::<u8>().write(b'x') };
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert!(
+        tracked_remaining < OVERLONG_IO_LEN,
+        "test allocation should be tracked as shorter than the requested write"
+    );
 
     clear_errno();
     let n = unsafe { write(-1, raw.cast_const(), OVERLONG_IO_LEN) };

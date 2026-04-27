@@ -1074,7 +1074,7 @@ fn fallback_contains(ptr: *mut c_void) -> bool {
 }
 
 fn fallback_insert_sized(ptr: *mut c_void, size: usize) {
-    if ptr.is_null() || is_bump_ptr(ptr) {
+    if ptr.is_null() {
         return;
     }
     let Some(key) = fallback_key(ptr) else {
@@ -1248,6 +1248,11 @@ pub fn signal_runtime_ready_for_tests() {
 #[doc(hidden)]
 pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
     runtime_policy::take_last_explainability().map(|explain| explain.decision_gate)
+}
+
+#[doc(hidden)]
+pub fn malloc_known_remaining_for_tests(ptr: *const c_void) -> Option<usize> {
+    known_remaining(ptr as usize)
 }
 
 #[inline]
