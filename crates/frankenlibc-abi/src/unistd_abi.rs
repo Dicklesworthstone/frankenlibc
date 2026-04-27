@@ -19544,6 +19544,10 @@ pub unsafe extern "C" fn getnetgrent_r(
 // RPC database (/etc/rpc) native implementation
 // ---------------------------------------------------------------------------
 
+const RPC_ENTRY_STORAGE_BYTES: usize = 1024;
+const RPC_ENTRY_STRUCT_BYTES: usize = 24;
+const RPC_ENTRY_ALIAS_SLOTS: usize = 32;
+
 /// Persistent RPC database iteration state.
 struct RpcDb {
     lines: Vec<String>,
@@ -19621,9 +19625,9 @@ fn fill_rpc_tls_from_entry(entry: &frankenlibc_core::rpc::RpcEntry) -> *mut c_vo
     // };
     // Size: 24 bytes (with padding)
     thread_local! {
-        static RPC_BUF: std::cell::RefCell<[u8; 1024]> = const { std::cell::RefCell::new([0u8; 1024]) };
-        static RPC_ENT: std::cell::RefCell<[u8; 24]> = const { std::cell::RefCell::new([0u8; 24]) };
-        static RPC_ALIASES: std::cell::RefCell<[*mut c_char; 32]> = const { std::cell::RefCell::new([std::ptr::null_mut(); 32]) };
+        static RPC_BUF: std::cell::RefCell<[u8; RPC_ENTRY_STORAGE_BYTES]> = const { std::cell::RefCell::new([0u8; RPC_ENTRY_STORAGE_BYTES]) };
+        static RPC_ENT: std::cell::RefCell<[u8; RPC_ENTRY_STRUCT_BYTES]> = const { std::cell::RefCell::new([0u8; RPC_ENTRY_STRUCT_BYTES]) };
+        static RPC_ALIASES: std::cell::RefCell<[*mut c_char; RPC_ENTRY_ALIAS_SLOTS]> = const { std::cell::RefCell::new([std::ptr::null_mut(); RPC_ENTRY_ALIAS_SLOTS]) };
     }
 
     let name_bytes = entry.name.as_slice();
@@ -19637,6 +19641,7 @@ fn fill_rpc_tls_from_entry(entry: &frankenlibc_core::rpc::RpcEntry) -> *mut c_vo
                 let mut ent = ent.borrow_mut();
                 let mut al = al.borrow_mut();
 
+                al.fill(std::ptr::null_mut());
                 let mut off = 0usize;
                 if off + name_bytes.len() + 1 > buf.len() {
                     return std::ptr::null_mut();
@@ -19647,8 +19652,8 @@ fn fill_rpc_tls_from_entry(entry: &frankenlibc_core::rpc::RpcEntry) -> *mut c_vo
                 off += name_bytes.len() + 1;
 
                 let max_aliases = al.len() - 1; // Leave room for NULL terminator.
-                let num_al = aliases.len().min(max_aliases);
-                for (i, alias) in aliases.iter().take(num_al).enumerate() {
+                let mut copied_aliases = 0usize;
+                for (i, alias) in aliases.iter().take(max_aliases).enumerate() {
                     let ab = alias.as_slice();
                     if off + ab.len() + 1 > buf.len() {
                         break;
@@ -19657,8 +19662,9 @@ fn fill_rpc_tls_from_entry(entry: &frankenlibc_core::rpc::RpcEntry) -> *mut c_vo
                     buf[off + ab.len()] = 0;
                     al[i] = buf[off..].as_ptr() as *mut c_char;
                     off += ab.len() + 1;
+                    copied_aliases = i + 1;
                 }
-                al[num_al] = std::ptr::null_mut();
+                al[copied_aliases] = std::ptr::null_mut();
 
                 let ent_ptr = ent.as_mut_ptr();
                 unsafe {
@@ -19695,12 +19701,23 @@ unsafe fn fill_rpcent_result(
     let buf = buffer as *mut u8;
     let mut off = 0usize;
 
-    let name = unsafe { CStr::from_ptr(src.r_name) }.to_bytes_with_nul();
+    if src.r_name.is_null() {
+        return libc::EINVAL;
+    }
+    let (name_len, name_terminated) =
+        unsafe { scan_c_string(src.r_name, Some(RPC_ENTRY_STORAGE_BYTES)) };
+    if !name_terminated {
+        return libc::EINVAL;
+    }
+    let name_len_with_nul = name_len + 1;
     let alias_count = if src.r_aliases.is_null() {
         0
     } else {
         let mut count = 0usize;
         loop {
+            if count >= RPC_ENTRY_ALIAS_SLOTS {
+                return libc::EINVAL;
+            }
             let alias_ptr = unsafe { *src.r_aliases.add(count) };
             if alias_ptr.is_null() {
                 break;
@@ -19717,25 +19734,34 @@ unsafe fn fill_rpcent_result(
     }
 
     let name_ptr = unsafe { buf.add(off) as *mut c_char };
-    if off + name.len() > buflen {
+    if off + name_len_with_nul > buflen {
         return libc::ERANGE;
     }
     unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.add(off), name.len());
+        std::ptr::copy_nonoverlapping(src.r_name.cast::<u8>(), buf.add(off), name_len_with_nul);
     }
-    off += name.len();
+    off += name_len_with_nul;
 
     for i in 0..alias_count {
-        let alias = unsafe { CStr::from_ptr(*src.r_aliases.add(i)) }.to_bytes_with_nul();
-        if off + alias.len() > buflen {
+        let alias_src = unsafe { *src.r_aliases.add(i) };
+        if alias_src.is_null() {
+            return libc::EINVAL;
+        }
+        let (alias_len, alias_terminated) =
+            unsafe { scan_c_string(alias_src, Some(RPC_ENTRY_STORAGE_BYTES)) };
+        if !alias_terminated {
+            return libc::EINVAL;
+        }
+        let alias_len_with_nul = alias_len + 1;
+        if off + alias_len_with_nul > buflen {
             return libc::ERANGE;
         }
         let alias_ptr = unsafe { buf.add(off) as *mut c_char };
         unsafe {
-            std::ptr::copy_nonoverlapping(alias.as_ptr(), buf.add(off), alias.len());
+            std::ptr::copy_nonoverlapping(alias_src.cast::<u8>(), buf.add(off), alias_len_with_nul);
             *(aliases_region as *mut *mut c_char).add(i) = alias_ptr;
         }
-        off += alias.len();
+        off += alias_len_with_nul;
     }
     unsafe {
         *(aliases_region as *mut *mut c_char).add(alias_count) = std::ptr::null_mut();
