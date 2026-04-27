@@ -234,7 +234,7 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    if !repair_enabled && !tracked_region_fits(buf as usize, count) {
+    if !tracked_region_fits(buf as usize, count) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(
             ApiFamily::Stdio,
@@ -295,7 +295,7 @@ pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: usize) -> l
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    if !repair_enabled && !tracked_region_fits(buf as usize, count) {
+    if !tracked_region_fits(buf as usize, count) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(
             ApiFamily::Stdio,
