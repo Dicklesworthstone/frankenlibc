@@ -3456,6 +3456,22 @@ fn fdopen_invalid_fd_returns_null() {
 }
 
 #[test]
+fn fdopen_rejects_tracked_unterminated_mode() {
+    let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
+    assert!(!mode.is_null());
+    unsafe { *mode = b'w' as c_char };
+
+    unsafe { *libc::__errno_location() = 0 };
+    let stream = unsafe { fdopen(0, mode.cast_const()) };
+    let err = unsafe { *libc::__errno_location() };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(mode.cast::<c_void>()) };
+
+    assert!(stream.is_null(), "fdopen should reject unterminated mode");
+    assert_eq!(err, libc::EINVAL, "unterminated mode should set EINVAL");
+}
+
+#[test]
 fn fdopen_mode_mismatch_fails() {
     let path = temp_path("fdopen_mismatch");
     let _ = fs::remove_file(&path);
