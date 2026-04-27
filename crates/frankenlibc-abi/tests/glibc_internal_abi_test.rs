@@ -2483,6 +2483,42 @@ fn test_inet_aton_exact_null_input() {
     assert_eq!(rc, 0);
 }
 
+#[test]
+fn inet_text_parsers_reject_tracked_unterminated_inputs() {
+    unsafe {
+        let raw_ip = malloc_unterminated(b"192.168.1.1");
+        let mut addr: u32 = 0;
+        assert_eq!(__inet_aton_exact(raw_ip, &mut addr), 0);
+        assert_eq!(
+            frankenlibc_abi::glibc_internal_abi::inet_network(raw_ip),
+            u32::MAX
+        );
+
+        let mut net = [0u8; 4];
+        *__errno_location() = 0;
+        let prefix = frankenlibc_abi::glibc_internal_abi::inet_net_pton(
+            libc::AF_INET,
+            raw_ip,
+            net.as_mut_ptr().cast(),
+            net.len(),
+        );
+        let net_errno = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_ip.cast());
+        assert_eq!(prefix, -1);
+        assert_eq!(net_errno, libc::EINVAL);
+
+        let raw_nsap = malloc_unterminated(b"47000580ffff");
+        let mut nsap = [0u8; 8];
+        let parsed = frankenlibc_abi::glibc_internal_abi::inet_nsap_addr(
+            raw_nsap,
+            nsap.as_mut_ptr().cast(),
+            nsap.len() as i32,
+        );
+        frankenlibc_abi::malloc_abi::free(raw_nsap.cast());
+        assert_eq!(parsed, 0);
+    }
+}
+
 // ===========================================================================
 // __inet_pton_length — inet_pton with explicit source length
 // ===========================================================================

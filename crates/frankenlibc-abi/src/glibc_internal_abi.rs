@@ -33,6 +33,8 @@ const GCONV_NOCONV: c_int = -1;
 const ICONV_ERROR_VALUE: usize = usize::MAX;
 const HOSTID_PATH: &[u8] = b"/etc/hostid\0";
 const DNS_CSTR_SCAN_LIMIT: usize = frankenlibc_core::resolv::dns_name::NS_MAXDNAME;
+const INET_TEXT_SCAN_LIMIT: usize = 128;
+const NSAP_TEXT_SCAN_LIMIT: usize = 512;
 
 #[inline]
 unsafe fn bounded_c_string_bytes(ptr: *const c_char, max_scan: usize) -> Option<Vec<u8>> {
@@ -2599,18 +2601,13 @@ pub unsafe extern "C" fn inet_netof(inp: c_uint) -> c_uint {
 // inet_network: native — parse dotted-decimal to host-order network number
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet_network(cp: *const c_char) -> c_uint {
-    if cp.is_null() {
+    let Some(bytes) = (unsafe { bounded_c_string_bytes(cp, INET_TEXT_SCAN_LIMIT) }) else {
         return u32::MAX;
-    }
+    };
     let mut result: u32 = 0;
     let mut parts = 0u32;
     let mut cur: u32 = 0;
-    let mut p = cp.cast::<u8>();
-    loop {
-        let b = unsafe { *p };
-        if b == 0 {
-            break;
-        }
+    for &b in &bytes {
         if b == b'.' {
             if parts >= 3 {
                 return u32::MAX;
@@ -2619,11 +2616,16 @@ pub unsafe extern "C" fn inet_network(cp: *const c_char) -> c_uint {
             cur = 0;
             parts += 1;
         } else if b.is_ascii_digit() {
-            cur = cur * 10 + (b - b'0') as u32;
+            let Some(next) = cur
+                .checked_mul(10)
+                .and_then(|value| value.checked_add((b - b'0') as u32))
+            else {
+                return u32::MAX;
+            };
+            cur = next;
         } else {
             return u32::MAX;
         }
-        p = unsafe { p.add(1) };
     }
     result = (result << 8) | (cur & 0xFF);
     for _ in parts..3 {
@@ -2641,9 +2643,11 @@ pub unsafe extern "C" fn inet_nsap_addr(
     if cp.is_null() || buf.is_null() || buflen <= 0 {
         return 0;
     }
-    let text = unsafe { std::ffi::CStr::from_ptr(cp) }.to_bytes();
+    let Some(text) = (unsafe { bounded_c_string_bytes(cp, NSAP_TEXT_SCAN_LIMIT) }) else {
+        return 0;
+    };
     let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen as usize) };
-    frankenlibc_core::inet::nsap::parse_nsap_addr(text, dst) as c_uint
+    frankenlibc_core::inet::nsap::parse_nsap_addr(&text, dst) as c_uint
 }
 // inet_nsap_ntoa: convert binary NSAP address to hex string
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7052,8 +7056,10 @@ pub unsafe extern "C" fn __inet_aton_exact(cp: *const c_char, inp: *mut u32) -> 
     if cp.is_null() || inp.is_null() {
         return 0;
     }
-    let src_bytes = unsafe { std::ffi::CStr::from_ptr(cp) }.to_bytes();
-    match frankenlibc_core::inet::parse_ipv4(src_bytes) {
+    let Some(src_bytes) = (unsafe { bounded_c_string_bytes(cp, INET_TEXT_SCAN_LIMIT) }) else {
+        return 0;
+    };
+    match frankenlibc_core::inet::parse_ipv4(&src_bytes) {
         Some(octets) => {
             // Write as network-byte-order u32 (same as in_addr.s_addr)
             unsafe { *inp = u32::from_ne_bytes(octets) };
@@ -8930,15 +8936,17 @@ pub unsafe extern "C" fn inet_net_pton(
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    // SAFETY: caller-supplied NUL-terminated C string.
-    let src_bytes = unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes();
+    let Some(src_bytes) = (unsafe { bounded_c_string_bytes(src, INET_TEXT_SCAN_LIMIT) }) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
     // SAFETY: caller-supplied writable region of `size` bytes.
     let dst_slice: &mut [u8] = if size == 0 {
         &mut []
     } else {
         unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, size) }
     };
-    match core_np::parse(src_bytes, dst_slice) {
+    match core_np::parse(&src_bytes, dst_slice) {
         Ok(p) => p as c_int,
         Err(core_np::NetPtonError::BufferTooSmall) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
