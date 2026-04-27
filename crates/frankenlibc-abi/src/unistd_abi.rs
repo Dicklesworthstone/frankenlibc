@@ -17522,13 +17522,16 @@ pub unsafe extern "C" fn fts_open(
         if path_ptr.is_null() {
             break;
         }
-        let cstr = unsafe { CStr::from_ptr(path_ptr) };
-        if cstr.to_bytes().is_empty() {
+        let Some(path_bytes) = (unsafe { read_c_string_bytes(path_ptr) }) else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return std::ptr::null_mut();
+        };
+        if path_bytes.is_empty() {
             unsafe { set_abi_errno(0) };
             return std::ptr::null_mut();
         }
         use std::os::unix::ffi::OsStringExt;
-        let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(cstr.to_bytes().to_vec()));
+        let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(path_bytes));
         let follow_root = options & FTS_COMFOLLOW != 0;
         roots.push(path.clone());
         queue.push_back(FtsEntryInternal {

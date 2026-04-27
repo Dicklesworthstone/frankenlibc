@@ -331,6 +331,25 @@ fn fts_open_zero_mode_and_empty_roots_match_host_behavior() {
 }
 
 #[test]
+fn fts_open_rejects_tracked_unterminated_root_path() {
+    let raw_root = malloc_tracked_unterminated(b"/tmp/frankenlibc-fts-root");
+    let argv = [raw_root.cast_const(), std::ptr::null()];
+
+    unsafe {
+        clear_errno();
+        let stream = abi_fts_open(argv.as_ptr(), TEST_FTS_PHYSICAL, None);
+        let err = errno_value();
+        if !stream.is_null() {
+            assert_eq!(abi_fts_close(stream), 0);
+        }
+        frankenlibc_abi::malloc_abi::free(raw_root.cast());
+
+        assert!(stream.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn fts_children_before_first_read_matches_host_root_listing() {
     let dir_root = temp_path_buf("fts_roots_dir");
     let file_root = temp_path_buf("fts_roots_file");
