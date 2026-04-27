@@ -89,6 +89,13 @@ unsafe fn malloc_tracked_i32s(values: &[i32]) -> *mut i32 {
     raw
 }
 
+unsafe fn malloc_tracked_bytes(len: usize) -> *mut u8 {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw, 0, len) };
+    raw
+}
+
 fn unique_shm_name(prefix: &str) -> CString {
     let n = SHM_NAME_NONCE.fetch_add(1, Ordering::Relaxed);
     CString::new(format!("/{prefix}-{}-{n}", std::process::id())).expect("valid shm name")
@@ -3623,6 +3630,17 @@ fn erand48_uses_caller_state() {
 }
 
 #[test]
+fn erand48_rejects_tracked_short_state() {
+    let raw = unsafe { malloc_tracked_bytes(2) }.cast::<u16>();
+    unsafe {
+        *raw = 0x1234;
+        let result = erand48(raw);
+        assert_eq!(result, 0.0);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
 fn nrand48_uses_caller_state() {
     // nrand48 uses caller-supplied state, not global — no lock needed.
     let mut state = [0u16, 0, 1];
@@ -3631,10 +3649,32 @@ fn nrand48_uses_caller_state() {
 }
 
 #[test]
+fn nrand48_rejects_tracked_short_state() {
+    let raw = unsafe { malloc_tracked_bytes(2) }.cast::<u16>();
+    unsafe {
+        *raw = 0x1234;
+        let result = nrand48(raw);
+        assert_eq!(result, 0);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
 fn jrand48_uses_caller_state() {
     // jrand48 uses caller-supplied state, not global — no lock needed.
     let mut state = [0xFFFFu16, 0xFFFF, 0xFFFF];
     let _ = unsafe { jrand48(state.as_mut_ptr()) };
+}
+
+#[test]
+fn jrand48_rejects_tracked_short_state() {
+    let raw = unsafe { malloc_tracked_bytes(2) }.cast::<u16>();
+    unsafe {
+        *raw = 0x1234;
+        let result = jrand48(raw);
+        assert_eq!(result, 0);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
 }
 
 #[test]
@@ -3650,6 +3690,22 @@ fn seed48_returns_old_state() {
 }
 
 #[test]
+fn seed48_rejects_tracked_short_seed_without_reseeding() {
+    let _lock = drand48_lock();
+    let raw = unsafe { malloc_tracked_bytes(2) }.cast::<u16>();
+    unsafe {
+        *raw = 0xFFFF;
+        srand48(100);
+        let expected = drand48();
+        srand48(100);
+        let old_ptr = seed48(raw);
+        assert!(!old_ptr.is_null());
+        assert_eq!(drand48(), expected);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
 fn lcong48_sets_custom_params() {
     let _lock = drand48_lock();
     unsafe {
@@ -3658,6 +3714,21 @@ fn lcong48_sets_custom_params() {
         let v = drand48();
         let expected = 1.0 / ((1u64 << 48) as f64);
         assert!((v - expected).abs() < 1e-20, "lcong48 custom: {v}");
+    }
+}
+
+#[test]
+fn lcong48_rejects_tracked_short_params_without_reconfiguring() {
+    let _lock = drand48_lock();
+    let raw = unsafe { malloc_tracked_bytes(2) }.cast::<u16>();
+    unsafe {
+        *raw = 0;
+        srand48(7);
+        let expected = drand48();
+        srand48(7);
+        lcong48(raw);
+        assert_eq!(drand48(), expected);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
     }
 }
 
@@ -3710,6 +3781,44 @@ fn initstate_setstate_roundtrip() {
         let _ = setstate(buf.as_mut_ptr() as *mut libc::c_char);
         let seq2: Vec<libc::c_long> = (0..5).map(|_| random()).collect();
         assert_eq!(seq1, seq2);
+    }
+}
+
+#[test]
+fn initstate_rejects_buffers_smaller_than_minimum() {
+    let _lock = random_lock();
+    let mut buf = [0u8; 7];
+    unsafe {
+        *__errno_location() = 0;
+        let result = initstate(99, buf.as_mut_ptr().cast(), buf.len());
+        assert!(result.is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+    }
+}
+
+#[test]
+fn initstate_rejects_tracked_size_beyond_allocation() {
+    let _lock = random_lock();
+    let raw = unsafe { malloc_tracked_bytes(8) };
+    unsafe {
+        *__errno_location() = 0;
+        let result = initstate(99, raw.cast(), 128);
+        assert!(result.is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
+fn setstate_rejects_tracked_too_short_state() {
+    let _lock = random_lock();
+    let raw = unsafe { malloc_tracked_bytes(4) };
+    unsafe {
+        *__errno_location() = 0;
+        let result = setstate(raw.cast());
+        assert!(result.is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
     }
 }
 

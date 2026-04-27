@@ -2669,6 +2669,11 @@ pub unsafe extern "C" fn clearenv() -> c_int {
 // drand48 family (9 functions)
 // ===========================================================================
 
+const RAND48_STATE_BYTES: usize = core::mem::size_of::<[u16; 3]>();
+const RAND48_PARAM_BYTES: usize = core::mem::size_of::<[u16; 7]>();
+const RANDOM_STATE_MIN_BYTES: usize = 8;
+const RANDOM_STATE_MAX_BYTES: usize = 128;
+
 /// `drand48` — return a double in [0.0, 1.0) using global 48-bit state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn drand48() -> c_double {
@@ -2693,7 +2698,10 @@ pub unsafe extern "C" fn erand48(xsubi: *mut u16) -> c_double {
         xsubi.is_null(),
         0,
     );
-    if matches!(decision.action, MembraneAction::Deny) || xsubi.is_null() {
+    if matches!(decision.action, MembraneAction::Deny)
+        || xsubi.is_null()
+        || !tracked_region_fits(xsubi.cast(), RAND48_STATE_BYTES)
+    {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
         return 0.0;
     }
@@ -2727,7 +2735,10 @@ pub unsafe extern "C" fn nrand48(xsubi: *mut u16) -> c_long {
         xsubi.is_null(),
         0,
     );
-    if matches!(decision.action, MembraneAction::Deny) || xsubi.is_null() {
+    if matches!(decision.action, MembraneAction::Deny)
+        || xsubi.is_null()
+        || !tracked_region_fits(xsubi.cast(), RAND48_STATE_BYTES)
+    {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
         return 0;
     }
@@ -2761,7 +2772,10 @@ pub unsafe extern "C" fn jrand48(xsubi: *mut u16) -> c_long {
         xsubi.is_null(),
         0,
     );
-    if matches!(decision.action, MembraneAction::Deny) || xsubi.is_null() {
+    if matches!(decision.action, MembraneAction::Deny)
+        || xsubi.is_null()
+        || !tracked_region_fits(xsubi.cast(), RAND48_STATE_BYTES)
+    {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
         return 0;
     }
@@ -2797,7 +2811,10 @@ pub unsafe extern "C" fn seed48(seed16v: *mut u16) -> *mut u16 {
         seed16v.is_null(),
         0,
     );
-    if matches!(decision.action, MembraneAction::Deny) || seed16v.is_null() {
+    if matches!(decision.action, MembraneAction::Deny)
+        || seed16v.is_null()
+        || !tracked_region_fits(seed16v.cast(), RAND48_STATE_BYTES)
+    {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
         return std::ptr::addr_of_mut!(OLD_SEED) as *mut u16;
     }
@@ -2822,7 +2839,10 @@ pub unsafe extern "C" fn lcong48(param: *mut u16) {
         param.is_null(),
         0,
     );
-    if matches!(decision.action, MembraneAction::Deny) || param.is_null() {
+    if matches!(decision.action, MembraneAction::Deny)
+        || param.is_null()
+        || !tracked_region_fits(param.cast(), RAND48_PARAM_BYTES)
+    {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, true);
         return;
     }
@@ -2871,7 +2891,16 @@ pub unsafe extern "C" fn initstate(seed: c_uint, state: *mut c_char, size: usize
         state.is_null(),
         0,
     );
-    if matches!(decision.action, MembraneAction::Deny) || state.is_null() {
+    if matches!(decision.action, MembraneAction::Deny)
+        || state.is_null()
+        || size < RANDOM_STATE_MIN_BYTES
+    {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return ptr::null_mut();
+    }
+    if !tracked_region_fits(state.cast_const().cast(), size) {
+        unsafe { set_abi_errno(libc::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
         return ptr::null_mut();
     }
@@ -2893,11 +2922,19 @@ pub unsafe extern "C" fn setstate(state: *mut c_char) -> *mut c_char {
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) || state.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
         return ptr::null_mut();
     }
-    // glibc setstate expects a buffer of at least 8 bytes; use a safe upper bound.
-    let buf = unsafe { std::slice::from_raw_parts(state as *const u8, 128) };
+    let state_len = known_remaining(state as usize)
+        .map(|remaining| remaining.min(RANDOM_STATE_MAX_BYTES))
+        .unwrap_or(RANDOM_STATE_MAX_BYTES);
+    if state_len < RANDOM_STATE_MIN_BYTES {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return ptr::null_mut();
+    }
+    let buf = unsafe { std::slice::from_raw_parts(state as *const u8, state_len) };
     let _ = frankenlibc_core::stdlib::setstate(buf);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, false);
     state
