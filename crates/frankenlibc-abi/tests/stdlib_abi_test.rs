@@ -7775,6 +7775,54 @@ fn radixsort_null_entry_returns_minus_one() {
 }
 
 #[test]
+fn radixsort_rejects_tracked_pointer_array_shorter_than_count() {
+    let owned: Vec<Vec<u8>> = vec![b"good\0".to_vec()];
+    let raw_ptrs = unsafe {
+        frankenlibc_abi::malloc_abi::malloc(std::mem::size_of::<*const c_uchar>())
+            .cast::<*const c_uchar>()
+    };
+    assert!(!raw_ptrs.is_null());
+    unsafe { *raw_ptrs = owned[0].as_ptr() as *const c_uchar };
+
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { radixsort(raw_ptrs, 2, std::ptr::null(), 0) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_ptrs.cast()) };
+}
+
+#[test]
+fn radixsort_rejects_tracked_unterminated_entry() {
+    let owned: Vec<Vec<u8>> = vec![b"good\0".to_vec()];
+    let raw = unsafe { malloc_unterminated(b"unterminated") };
+    let mut ptrs: Vec<*const c_uchar> = vec![owned[0].as_ptr() as _, raw.cast()];
+
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { radixsort(ptrs.as_mut_ptr(), ptrs.len() as c_int, std::ptr::null(), 0) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
+#[test]
+fn radixsort_rejects_tracked_table_shorter_than_translation_map() {
+    let inputs: &[&[u8]] = &[b"b", b"a"];
+    let (_owned, mut ptrs) = radix_fixture(inputs);
+    let table = unsafe { frankenlibc_abi::malloc_abi::malloc(1) }.cast::<c_uchar>();
+    assert!(!table.is_null());
+    unsafe { *table = 0 };
+
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { radixsort(ptrs.as_mut_ptr(), ptrs.len() as c_int, table, 0) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+    unsafe { frankenlibc_abi::malloc_abi::free(table.cast()) };
+}
+
+#[test]
 fn radixsort_shorter_string_sorts_first() {
     let inputs: &[&[u8]] = &[b"abc", b"ab", b"abcd"];
     let (_owned, mut ptrs) = radix_fixture(inputs);

@@ -1269,6 +1269,22 @@ unsafe fn radixsort_impl(
     if n < 2 {
         return 0;
     }
+    let pointer_bytes = match n.checked_mul(core::mem::size_of::<*const c_uchar>()) {
+        Some(bytes) => bytes,
+        None => {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
+        }
+    };
+    if !tracked_region_fits(base.cast_const().cast(), pointer_bytes) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    if !table.is_null() && !tracked_region_fits(table.cast(), 256) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+
     let endbyte_u8 = (endbyte & 0xff) as u8;
     let ptrs: &mut [*const c_uchar] = unsafe { std::slice::from_raw_parts_mut(base, n) };
 
@@ -1278,14 +1294,17 @@ unsafe fn radixsort_impl(
             unsafe { set_abi_errno(libc::EINVAL) };
             return -1;
         }
+        let scan_cap = known_remaining(p as usize)
+            .map(|remaining| remaining.min(RADIXSORT_MAX_SCAN))
+            .unwrap_or(RADIXSORT_MAX_SCAN);
         let mut len = 0usize;
-        while len < RADIXSORT_MAX_SCAN {
+        while len < scan_cap {
             if unsafe { *p.add(len) } == endbyte_u8 {
                 break;
             }
             len += 1;
         }
-        if len == RADIXSORT_MAX_SCAN {
+        if len == scan_cap {
             unsafe { set_abi_errno(libc::EINVAL) };
             return -1;
         }
