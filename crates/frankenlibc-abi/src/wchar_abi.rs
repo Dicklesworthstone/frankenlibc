@@ -165,6 +165,12 @@ unsafe fn scan_known_wide_string(ptr: *const u32) -> Option<usize> {
     if terminated { Some(len) } else { None }
 }
 
+unsafe fn bounded_wide_len(ptr: *const u32) -> usize {
+    let bound = known_remaining(ptr as usize).map(bytes_to_wchars);
+    let (len, _) = unsafe { scan_w_string(ptr, bound) };
+    len
+}
+
 // ---------------------------------------------------------------------------
 // wcslen
 // ---------------------------------------------------------------------------
@@ -4097,22 +4103,16 @@ pub unsafe extern "C" fn wcslcat(
     }
     if dlen == siz {
         // dst not NUL-terminated within siz
-        let mut slen = 0usize;
-        while unsafe { *src.add(slen) } != 0 {
-            slen += 1;
-        }
-        return siz + slen;
+        let slen = unsafe { bounded_wide_len(src.cast::<u32>()) };
+        return siz.saturating_add(slen);
     }
-    let mut i = 0usize;
-    while unsafe { *src.add(i) } != 0 {
-        if dlen + i < siz - 1 {
-            unsafe { *dst.add(dlen + i) = *src.add(i) };
-        }
-        i += 1;
+    let slen = unsafe { bounded_wide_len(src.cast::<u32>()) };
+    let copy_len = slen.min(siz - dlen - 1);
+    for i in 0..copy_len {
+        unsafe { *dst.add(dlen + i) = *src.add(i) };
     }
-    let end = if dlen + i < siz { dlen + i } else { siz - 1 };
-    unsafe { *dst.add(end) = 0 };
-    dlen + i
+    unsafe { *dst.add(dlen + copy_len) = 0 };
+    dlen.saturating_add(slen)
 }
 
 /// BSD `wcslcpy` — size-bounded wide string copy.
@@ -4126,24 +4126,15 @@ pub unsafe extern "C" fn wcslcpy(
         if src.is_null() {
             return 0;
         }
-        let mut len = 0usize;
-        while unsafe { *src.add(len) } != 0 {
-            len += 1;
-        }
-        return len;
+        return unsafe { bounded_wide_len(src.cast::<u32>()) };
     }
-    let mut i = 0usize;
-    while i < siz - 1 && unsafe { *src.add(i) } != 0 {
+    let src_len = unsafe { bounded_wide_len(src.cast::<u32>()) };
+    let copy_len = src_len.min(siz - 1);
+    for i in 0..copy_len {
         unsafe { *dst.add(i) = *src.add(i) };
-        i += 1;
     }
-    unsafe { *dst.add(i) = 0 };
-    // Count remaining src length
-    let mut total = i;
-    while unsafe { *src.add(total) } != 0 {
-        total += 1;
-    }
-    total
+    unsafe { *dst.add(copy_len) = 0 };
+    src_len
 }
 
 /// `wcstoimax` — convert wide string to intmax_t.

@@ -412,6 +412,25 @@ fn wcslcpy_copies_and_returns_src_len() {
 }
 
 #[test]
+fn wcslcpy_bounds_tracked_unterminated_source() {
+    unsafe {
+        let src = malloc_unterminated_wide(&[b'A' as u32, b'B' as u32, b'C' as u32]);
+        let mut dst = [0u32; 2];
+
+        let n = wcslcpy(
+            dst.as_mut_ptr().cast::<libc::wchar_t>(),
+            src.cast::<libc::wchar_t>(),
+            dst.len(),
+        );
+        assert_eq!(n, 3);
+        assert_eq!(dst[0], b'A' as u32);
+        assert_eq!(dst[1], 0);
+
+        free(src.cast());
+    }
+}
+
+#[test]
 fn wcslcat_appends_and_returns_total_len() {
     let suffix = wstr(b"world");
     let mut buf = [0u32; 10];
@@ -427,6 +446,28 @@ fn wcslcat_appends_and_returns_total_len() {
     };
     assert_eq!(n, 7); // 2 + 5
     assert_eq!(unsafe { wcslen(buf.as_ptr()) }, 7);
+}
+
+#[test]
+fn wcslcat_bounds_tracked_unterminated_source() {
+    unsafe {
+        let src = malloc_unterminated_wide(&[b'A' as u32, b'B' as u32, b'C' as u32]);
+        let mut dst = [0u32; 3];
+        dst[0] = b'X' as u32;
+        dst[1] = 0;
+
+        let n = wcslcat(
+            dst.as_mut_ptr().cast::<libc::wchar_t>(),
+            src.cast::<libc::wchar_t>(),
+            dst.len(),
+        );
+        assert_eq!(n, 4);
+        assert_eq!(dst[0], b'X' as u32);
+        assert_eq!(dst[1], b'A' as u32);
+        assert_eq!(dst[2], 0);
+
+        free(src.cast());
+    }
 }
 
 // ── wcstoimax / wcstoumax ───────────────────────────────────────────────────
