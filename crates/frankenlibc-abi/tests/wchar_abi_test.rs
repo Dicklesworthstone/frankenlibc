@@ -574,6 +574,41 @@ fn wctype_returns_zero_for_unknown() {
     assert_eq!(unsafe { wctype(c"bogus".as_ptr().cast()) }, 0);
 }
 
+#[test]
+fn wctype_and_wctrans_reject_unterminated_names() {
+    unsafe {
+        let unterminated_class = malloc(5).cast::<u8>();
+        assert!(!unterminated_class.is_null());
+        std::ptr::copy_nonoverlapping(b"alpha".as_ptr(), unterminated_class, 5);
+        let class_desc = wctype(unterminated_class);
+        free(unterminated_class.cast());
+        assert_eq!(class_desc, 0);
+
+        let unterminated_transform = malloc(7).cast::<u8>();
+        assert!(!unterminated_transform.is_null());
+        std::ptr::copy_nonoverlapping(b"toupper".as_ptr(), unterminated_transform, 7);
+        let transform_desc = wctrans_l(unterminated_transform, std::ptr::null_mut());
+        free(unterminated_transform.cast());
+        assert_eq!(transform_desc, 0);
+    }
+}
+
+#[test]
+fn wctrans_l_returns_transform_descriptors() {
+    let upper = unsafe { wctrans_l(c"toupper".as_ptr().cast(), std::ptr::null_mut()) };
+    let lower = unsafe { wctrans_l(c"tolower".as_ptr().cast(), std::ptr::null_mut()) };
+    assert_ne!(upper, 0);
+    assert_ne!(lower, 0);
+    assert_eq!(
+        unsafe { towctrans_l(b'a' as u32, upper, std::ptr::null_mut()) },
+        b'A' as u32
+    );
+    assert_eq!(
+        unsafe { towctrans_l(b'Z' as u32, lower, std::ptr::null_mut()) },
+        b'z' as u32
+    );
+}
+
 // ── towupper_l / towlower_l (null locale = C locale) ────────────────────────
 
 #[test]

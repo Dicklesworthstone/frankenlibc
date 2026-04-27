@@ -36,6 +36,21 @@ fn bytes_to_wchars(bytes: usize) -> usize {
     bytes / 4
 }
 
+unsafe fn bounded_cstr_bytes<'a>(ptr: *const u8) -> Option<&'a [u8]> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ptr is a caller-provided C string; known_remaining limits scans
+    // over tracked malloc-backed buffers before they can cross the allocation.
+    let (len, terminated) =
+        unsafe { scan_c_string(ptr.cast::<c_char>(), known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    // SAFETY: scan_c_string observed len readable bytes before the terminator.
+    Some(unsafe { core::slice::from_raw_parts(ptr, len) })
+}
+
 #[derive(Clone, Copy)]
 struct WideMemStreamSync {
     buf_loc: *mut *mut u32,
@@ -3705,12 +3720,10 @@ pub unsafe extern "C" fn wctype_l(name: *const u8, _locale: *mut std::ffi::c_voi
 /// `wctype` — get wide character class by name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wctype(name: *const u8) -> WctypeT {
-    if name.is_null() {
+    let Some(name) = (unsafe { bounded_cstr_bytes(name) }) else {
         return 0;
-    }
-    // SAFETY: name is a NUL-terminated C string from the caller.
-    let cstr = unsafe { std::ffi::CStr::from_ptr(name as *const i8) };
-    match cstr.to_bytes() {
+    };
+    match name {
         b"alnum" => 1,
         b"alpha" => 2,
         b"blank" => 3,
@@ -4428,11 +4441,10 @@ pub unsafe extern "C" fn iswxdigit_l(wc: u32, _l: *mut c_void) -> c_int {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wctrans_l(property: *const u8, _l: *mut c_void) -> WctransT {
-    if property.is_null() {
+    let Some(property) = (unsafe { bounded_cstr_bytes(property) }) else {
         return 0;
-    }
-    let s = unsafe { core::ffi::CStr::from_ptr(property as *const std::ffi::c_char) };
-    match s.to_bytes() {
+    };
+    match property {
         b"toupper" => 1,
         b"tolower" => 2,
         _ => 0,
