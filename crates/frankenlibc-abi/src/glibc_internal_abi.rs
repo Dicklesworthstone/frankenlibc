@@ -59,6 +59,34 @@ unsafe fn bounded_c_string_bytes(ptr: *const c_char, max_scan: usize) -> Option<
 }
 
 #[inline]
+unsafe fn bounded_c_string_len(ptr: *const c_char) -> usize {
+    let (len, _) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    len
+}
+
+#[inline]
+unsafe fn bounded_wide_string_len(ptr: *const WcharT) -> usize {
+    let bound = known_remaining(ptr as usize).map(|bytes| bytes / std::mem::size_of::<WcharT>());
+    match bound {
+        Some(limit) => {
+            for i in 0..limit {
+                if unsafe { *ptr.add(i) } == 0 {
+                    return i;
+                }
+            }
+            limit
+        }
+        None => {
+            let mut len = 0usize;
+            while unsafe { *ptr.add(len) } != 0 {
+                len += 1;
+            }
+            len
+        }
+    }
+}
+
+#[inline]
 unsafe fn dns_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     unsafe { bounded_c_string_bytes(ptr, DNS_CSTR_SCAN_LIMIT) }
 }
@@ -3730,12 +3758,7 @@ pub unsafe extern "C" fn __strlcat_chk(
             dlen += 1;
         }
     }
-    let mut slen = 0usize;
-    unsafe {
-        while *src.add(slen) != 0 {
-            slen += 1;
-        }
-    }
+    let slen = unsafe { bounded_c_string_len(src) };
     if dlen < size {
         let copy = std::cmp::min(slen, size - dlen - 1);
         unsafe {
@@ -3745,7 +3768,7 @@ pub unsafe extern "C" fn __strlcat_chk(
             *dest.add(dlen + copy) = 0;
         }
     }
-    dlen + slen
+    dlen.saturating_add(slen)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __strlcpy_chk(
@@ -3760,12 +3783,7 @@ pub unsafe extern "C" fn __strlcpy_chk(
         }
     }
     // Native strlcpy: copy src to dest up to size-1, nul-terminate
-    let mut slen = 0usize;
-    unsafe {
-        while *src.add(slen) != 0 {
-            slen += 1;
-        }
-    }
+    let slen = unsafe { bounded_c_string_len(src) };
     if size > 0 {
         let copy = std::cmp::min(slen, size - 1);
         unsafe {
@@ -3860,12 +3878,7 @@ pub unsafe extern "C" fn __wcslcat_chk(
             dlen += 1;
         }
     }
-    let mut slen = 0;
-    unsafe {
-        while *src.add(slen) != 0 {
-            slen += 1;
-        }
-    }
+    let slen = unsafe { bounded_wide_string_len(src) };
     if dlen < size {
         let copy = std::cmp::min(slen, size - dlen - 1);
         unsafe {
@@ -3875,7 +3888,7 @@ pub unsafe extern "C" fn __wcslcat_chk(
             *dest.add(dlen + copy) = 0;
         }
     }
-    dlen + slen
+    dlen.saturating_add(slen)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __wcslcpy_chk(
@@ -3889,12 +3902,7 @@ pub unsafe extern "C" fn __wcslcpy_chk(
             crate::stdlib_abi::abort();
         }
     }
-    let mut slen = 0;
-    unsafe {
-        while *src.add(slen) != 0 {
-            slen += 1;
-        }
-    }
+    let slen = unsafe { bounded_wide_string_len(src) };
     if size > 0 {
         let copy = std::cmp::min(slen, size - 1);
         unsafe {

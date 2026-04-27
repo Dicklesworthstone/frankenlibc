@@ -56,10 +56,14 @@ use frankenlibc_abi::glibc_internal_abi::{
     __resolv_context_get_preinit,
     __resolv_context_put,
     __shm_get_name,
+    __strlcat_chk,
+    __strlcpy_chk,
     __strtof128_internal,
     __twalk_r,
     __uflow,
     __underflow,
+    __wcslcat_chk,
+    __wcslcpy_chk,
     __wcstof128_internal,
     __woverflow,
     __wuflow,
@@ -585,6 +589,68 @@ unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
     unsafe { std::ptr::write_bytes(raw, 0x7f, usable.max(bytes.len())) };
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
     raw.cast()
+}
+
+unsafe fn malloc_unterminated_wide(wchars: &[libc::wchar_t]) -> *mut libc::wchar_t {
+    let bytes = std::mem::size_of_val(wchars);
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes) }.cast::<u8>();
+    assert!(!raw.is_null());
+    let usable = unsafe { frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast()) };
+    unsafe { std::ptr::write_bytes(raw, 0x7f, usable.max(bytes)) };
+    unsafe { std::ptr::copy_nonoverlapping(wchars.as_ptr(), raw.cast(), wchars.len()) };
+    raw.cast()
+}
+
+#[test]
+fn strl_chk_bounds_tracked_unterminated_source() {
+    unsafe {
+        let src = malloc_unterminated(b"ABC");
+        let mut copied = [0 as c_char; 2];
+        let copied_len = __strlcpy_chk(copied.as_mut_ptr(), src, copied.len(), copied.len());
+        assert_eq!(copied_len, 3);
+        assert_eq!(copied[0] as u8, b'A');
+        assert_eq!(copied[1], 0);
+
+        let mut appended = [0 as c_char; 3];
+        appended[0] = b'X' as c_char;
+        appended[1] = 0;
+        let appended_len =
+            __strlcat_chk(appended.as_mut_ptr(), src, appended.len(), appended.len());
+        assert_eq!(appended_len, 4);
+        assert_eq!(appended[0] as u8, b'X');
+        assert_eq!(appended[1] as u8, b'A');
+        assert_eq!(appended[2], 0);
+
+        frankenlibc_abi::malloc_abi::free(src.cast());
+    }
+}
+
+#[test]
+fn wcsl_chk_bounds_tracked_unterminated_source() {
+    unsafe {
+        let src = malloc_unterminated_wide(&[
+            b'A' as libc::wchar_t,
+            b'B' as libc::wchar_t,
+            b'C' as libc::wchar_t,
+        ]);
+        let mut copied = [0 as libc::wchar_t; 2];
+        let copied_len = __wcslcpy_chk(copied.as_mut_ptr(), src, copied.len(), copied.len());
+        assert_eq!(copied_len, 3);
+        assert_eq!(copied[0], b'A' as libc::wchar_t);
+        assert_eq!(copied[1], 0);
+
+        let mut appended = [0 as libc::wchar_t; 3];
+        appended[0] = b'X' as libc::wchar_t;
+        appended[1] = 0;
+        let appended_len =
+            __wcslcat_chk(appended.as_mut_ptr(), src, appended.len(), appended.len());
+        assert_eq!(appended_len, 4);
+        assert_eq!(appended[0], b'X' as libc::wchar_t);
+        assert_eq!(appended[1], b'A' as libc::wchar_t);
+        assert_eq!(appended[2], 0);
+
+        frankenlibc_abi::malloc_abi::free(src.cast());
+    }
 }
 
 #[test]
