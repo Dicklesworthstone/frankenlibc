@@ -12687,7 +12687,10 @@ pub unsafe extern "C" fn getgrouplist(
     if user.is_null() || groups.is_null() || ngroups.is_null() {
         return -1;
     }
-    let user_name = unsafe { std::ffi::CStr::from_ptr(user) }.to_bytes();
+    let Some(user_name) = (unsafe { read_c_string_bytes(user) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
     let max_groups = unsafe { *ngroups } as usize;
 
     let mut result: Vec<libc::gid_t> = Vec::with_capacity(32);
@@ -12711,7 +12714,7 @@ pub unsafe extern "C" fn getgrouplist(
             }
             for member in fields[3].split(|&b| b == b',') {
                 let member = member.strip_suffix(b"\r").unwrap_or(member);
-                if member == user_name && !result.contains(&gid) {
+                if member == user_name.as_slice() && !result.contains(&gid) {
                     result.push(gid);
                     break;
                 }
@@ -12739,7 +12742,10 @@ pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> 
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    let user_name = unsafe { std::ffi::CStr::from_ptr(user) }.to_bytes();
+    let Some(user_name) = (unsafe { read_c_string_bytes(user) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
 
     let mut groups: Vec<libc::gid_t> = Vec::with_capacity(32);
     groups.push(group);
@@ -12766,7 +12772,7 @@ pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> 
             // Check if user is in the member list
             for member in fields[3].split(|&b| b == b',') {
                 let member = member.strip_suffix(b"\r").unwrap_or(member);
-                if member == user_name && !groups.contains(&gid) {
+                if member == user_name.as_slice() && !groups.contains(&gid) {
                     groups.push(gid);
                     break;
                 }

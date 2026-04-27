@@ -1329,6 +1329,42 @@ fn fgetgrent_reads_multiple_entries() {
 }
 
 #[test]
+fn getgrouplist_rejects_tracked_unterminated_user() {
+    use frankenlibc_abi::unistd_abi::getgrouplist;
+
+    let raw_user = malloc_tracked_unterminated(b"frankenlibc-user");
+    let mut groups = [0 as libc::gid_t; 4];
+    let mut ngroups = groups.len() as c_int;
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = getgrouplist(raw_user, 0, groups.as_mut_ptr(), &mut ngroups);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_user.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn initgroups_rejects_tracked_unterminated_user() {
+    use frankenlibc_abi::unistd_abi::initgroups;
+
+    let raw_user = malloc_tracked_unterminated(b"frankenlibc-user");
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = initgroups(raw_user, 0);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_user.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn fgetpwent_r_skips_comments_and_blank_lines() {
     let path = temp_path("fgetpwent_r_skip");
     let path_str = path.as_c_str().to_str().unwrap();
