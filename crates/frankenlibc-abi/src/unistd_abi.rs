@@ -6213,7 +6213,10 @@ pub unsafe extern "C" fn wordexp(
         return WRDE_NOSPACE;
     }
 
-    let input = match unsafe { CStr::from_ptr(words) }.to_str() {
+    let Some(input_vec) = (unsafe { read_c_string_bytes(words) }) else {
+        return WRDE_SYNTAX;
+    };
+    let input = match std::str::from_utf8(&input_vec) {
         Ok(s) => s,
         Err(_) => return WRDE_SYNTAX,
     };

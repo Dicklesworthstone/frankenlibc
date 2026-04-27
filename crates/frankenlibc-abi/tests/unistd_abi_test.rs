@@ -933,6 +933,7 @@ type WordfreeFn = unsafe extern "C" fn(*mut c_void);
 
 const TEST_WRDE_NOCMD: c_int = 1 << 2;
 const TEST_WRDE_UNDEF: c_int = 1 << 5;
+const TEST_WRDE_SYNTAX: c_int = 5;
 
 #[repr(C)]
 struct WordexpBuf {
@@ -1031,6 +1032,28 @@ fn fgetpwent_reads_etc_passwd() {
     );
 
     unsafe { fclose(stream) };
+}
+
+#[test]
+fn wordexp_rejects_tracked_unterminated_input() {
+    let input = b"unterminated-wordexp-input";
+    let mut buf = WordexpBuf {
+        we_wordc: 0,
+        we_wordv: std::ptr::null_mut(),
+        we_offs: 0,
+    };
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(input.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(input.as_ptr(), raw, input.len());
+        let rc = abi_wordexp(raw.cast(), (&mut buf as *mut WordexpBuf).cast(), 0);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, TEST_WRDE_SYNTAX);
+        assert_eq!(buf.we_wordc, 0);
+        assert!(buf.we_wordv.is_null());
+    }
 }
 
 #[test]
