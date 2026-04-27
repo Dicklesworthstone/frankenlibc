@@ -7320,6 +7320,13 @@ fn sradixsort_preserves_input_order_among_collisions() {
 
 use libc::{intmax_t, uintmax_t};
 
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
+    raw.cast()
+}
+
 #[test]
 fn strtoi_in_range_returns_value_and_zero_status() {
     let s = c"42";
@@ -7447,6 +7454,22 @@ fn strtoi_partial_consumption_records_endptr() {
 }
 
 #[test]
+fn strtoi_rejects_tracked_unterminated_input() {
+    unsafe {
+        let raw = malloc_unterminated(b"42");
+        let mut endptr: *mut c_char = std::ptr::null_mut();
+        let mut rstatus: c_int = -1;
+
+        let v = strtoi(raw, &mut endptr, 10, 0, 100, &mut rstatus);
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+        assert_eq!(v, 0 as intmax_t);
+        assert_eq!(rstatus, libc::EINVAL);
+        assert_eq!(endptr, raw);
+    }
+}
+
+#[test]
 fn strtou_in_range_returns_value_and_zero_status() {
     let s = c"42";
     let mut rstatus: c_int = -1;
@@ -7509,6 +7532,22 @@ fn strtou_hex_in_range_works() {
     };
     assert_eq!(v, 0xff as uintmax_t);
     assert_eq!(rstatus, 0);
+}
+
+#[test]
+fn strtou_rejects_tracked_unterminated_input() {
+    unsafe {
+        let raw = malloc_unterminated(b"42");
+        let mut endptr: *mut c_char = std::ptr::null_mut();
+        let mut rstatus: c_int = -1;
+
+        let v = strtou(raw, &mut endptr, 10, 0, 100, &mut rstatus);
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+        assert_eq!(v, 0 as uintmax_t);
+        assert_eq!(rstatus, libc::EINVAL);
+        assert_eq!(endptr, raw);
+    }
 }
 
 #[test]

@@ -883,7 +883,16 @@ pub unsafe extern "C" fn strtoi(
         }
         return 0;
     }
-    let (len, _terminated) = unsafe { scan_c_string(nptr, None) };
+    let (len, terminated) = unsafe { scan_c_string(nptr, known_remaining(nptr as usize)) };
+    if !terminated {
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr as *mut c_char };
+        }
+        if !rstatus.is_null() {
+            unsafe { *rstatus = libc::EINVAL };
+        }
+        return 0;
+    }
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let (val, consumed, status) =
         frankenlibc_core::stdlib::conversion::strtoi_impl(slice, base, lo, hi);
@@ -919,7 +928,16 @@ pub unsafe extern "C" fn strtou(
         }
         return 0;
     }
-    let (len, _terminated) = unsafe { scan_c_string(nptr, None) };
+    let (len, terminated) = unsafe { scan_c_string(nptr, known_remaining(nptr as usize)) };
+    if !terminated {
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr as *mut c_char };
+        }
+        if !rstatus.is_null() {
+            unsafe { *rstatus = libc::EINVAL };
+        }
+        return 0;
+    }
     let slice = unsafe { std::slice::from_raw_parts(nptr as *const u8, len) };
     let (val, consumed, status) =
         frankenlibc_core::stdlib::conversion::strtou_impl(slice, base, lo, hi);
