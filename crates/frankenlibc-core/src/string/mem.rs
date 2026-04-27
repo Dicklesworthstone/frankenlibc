@@ -243,6 +243,18 @@ mod tests {
     }
 
     #[test]
+    fn test_memcmp_preserves_ordering_after_equal_prefix() {
+        assert_eq!(
+            memcmp(b"abcdefgh1", b"abcdefgh2", 9),
+            core::cmp::Ordering::Less
+        );
+        assert_eq!(
+            memcmp(b"abcdXfgh", b"abcdEfgh", 8),
+            core::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
     fn test_memchr_found() {
         assert_eq!(memchr(b"hello", b'l', 5), Some(2));
     }
