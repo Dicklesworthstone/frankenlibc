@@ -4,7 +4,38 @@
 //!
 //! Covers: getrlimit, setrlimit.
 
+use std::ffi::c_void;
+
 use frankenlibc_abi::resource_abi::{getrlimit, setrlimit};
+
+unsafe fn malloc_tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw, 0, len) };
+    raw.cast()
+}
+
+fn assert_known_short(raw: *const c_void, required: usize) {
+    let remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_ne!(
+        remaining,
+        usize::MAX,
+        "test allocation should be tracked by malloc metadata"
+    );
+    assert!(
+        remaining < required,
+        "test allocation should expose {remaining} tracked bytes, less than required {required}"
+    );
+}
+
+fn errno_value() -> i32 {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+unsafe fn free_tracked(raw: *mut c_void) {
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
+}
 
 // ---------------------------------------------------------------------------
 // getrlimit
@@ -34,6 +65,19 @@ fn getrlimit_stack() {
 fn getrlimit_null_fails() {
     let rc = unsafe { getrlimit(libc::RLIMIT_NOFILE as i32, std::ptr::null_mut()) };
     assert_eq!(rc, -1, "getrlimit with null ptr should fail");
+}
+
+#[test]
+fn getrlimit_rejects_tracked_short_rlimit() {
+    let required = std::mem::size_of::<libc::rlimit>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { getrlimit(libc::RLIMIT_NOFILE as i32, raw.cast()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +124,19 @@ fn setrlimit_lower_soft_limit() {
 fn setrlimit_null_fails() {
     let rc = unsafe { setrlimit(libc::RLIMIT_NOFILE as i32, std::ptr::null()) };
     assert_eq!(rc, -1, "setrlimit with null ptr should fail");
+}
+
+#[test]
+fn setrlimit_rejects_tracked_short_rlimit() {
+    let required = std::mem::size_of::<libc::rlimit>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { setrlimit(libc::RLIMIT_NOFILE as i32, raw.cast()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,15 @@ use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+
+#[inline]
+fn tracked_required_object_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null()
+        && known_remaining(ptr as usize)
+            .is_none_or(|remaining| core::mem::size_of::<T>() <= remaining)
+}
 
 #[inline]
 unsafe fn raw_prlimit64(
@@ -53,6 +61,11 @@ pub unsafe extern "C" fn getrlimit(resource: c_int, rlim: *mut libc::rlimit) -> 
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
+    if !tracked_required_object_fits(rlim.cast_const()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
 
     if !res_core::valid_resource(resource) {
         unsafe { set_abi_errno(errno::EINVAL) };
@@ -82,6 +95,11 @@ pub unsafe extern "C" fn setrlimit(resource: c_int, rlim: *const libc::rlimit) -
     }
 
     if rlim.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if !tracked_required_object_fits(rlim) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
