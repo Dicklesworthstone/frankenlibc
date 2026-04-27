@@ -12042,17 +12042,24 @@ pub unsafe extern "C" fn setmntent(filename: *const c_char, type_: *const c_char
     if filename.is_null() {
         return std::ptr::null_mut();
     }
-    let path = unsafe { std::ffi::CStr::from_ptr(filename) };
-    let path_str = match path.to_str() {
+    let Some(path_bytes) = (unsafe { read_c_string_bytes(filename) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
+    let path_str = match std::str::from_utf8(&path_bytes) {
         Ok(s) => s,
         Err(_) => return std::ptr::null_mut(),
     };
 
     // Determine open mode from the type string (fopen-style mode).
     let mode_bytes = if type_.is_null() {
-        b"r" as &[u8]
+        b"r".to_vec()
     } else {
-        unsafe { std::ffi::CStr::from_ptr(type_) }.to_bytes()
+        let Some(bytes) = (unsafe { read_c_string_bytes(type_) }) else {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return std::ptr::null_mut();
+        };
+        bytes
     };
 
     use std::fs::OpenOptions;
@@ -12152,9 +12159,15 @@ pub unsafe extern "C" fn hasmntopt(mnt: *const c_void, opt: *const c_char) -> *m
     if opts_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    let opts = unsafe { std::ffi::CStr::from_ptr(opts_ptr) }.to_bytes();
-    let needle = unsafe { std::ffi::CStr::from_ptr(opt) }.to_bytes();
-    match frankenlibc_core::mntent::has_mnt_opt(opts, needle) {
+    let Some(opts) = (unsafe { read_c_string_bytes(opts_ptr) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
+    let Some(needle) = (unsafe { read_c_string_bytes(opt) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
+    match frankenlibc_core::mntent::has_mnt_opt(&opts, &needle) {
         Some(off) => unsafe { opts_ptr.add(off) as *mut c_char },
         None => std::ptr::null_mut(),
     }
@@ -12264,12 +12277,28 @@ pub unsafe extern "C" fn addmntent(stream: *mut c_void, mnt: *const c_void) -> c
     if fsname.is_null() || dir.is_null() || mtype.is_null() || opts.is_null() {
         return 1;
     }
+    let Some(fsname_bytes) = (unsafe { read_c_string_bytes(fsname) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 1;
+    };
+    let Some(dir_bytes) = (unsafe { read_c_string_bytes(dir) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 1;
+    };
+    let Some(mtype_bytes) = (unsafe { read_c_string_bytes(mtype) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 1;
+    };
+    let Some(opts_bytes) = (unsafe { read_c_string_bytes(opts) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 1;
+    };
 
     let fields = frankenlibc_core::mntent::MntFields {
-        fsname: unsafe { std::ffi::CStr::from_ptr(fsname) }.to_bytes(),
-        dir: unsafe { std::ffi::CStr::from_ptr(dir) }.to_bytes(),
-        mtype: unsafe { std::ffi::CStr::from_ptr(mtype) }.to_bytes(),
-        opts: unsafe { std::ffi::CStr::from_ptr(opts) }.to_bytes(),
+        fsname: &fsname_bytes,
+        dir: &dir_bytes,
+        mtype: &mtype_bytes,
+        opts: &opts_bytes,
         freq,
         passno,
     };

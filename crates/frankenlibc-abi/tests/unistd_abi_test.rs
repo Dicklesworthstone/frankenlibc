@@ -856,6 +856,16 @@ unsafe extern "C" {
     fn endmntent(stream: *mut c_void) -> c_int;
 }
 
+#[repr(C)]
+struct TestMntEnt {
+    mnt_fsname: *mut c_char,
+    mnt_dir: *mut c_char,
+    mnt_type: *mut c_char,
+    mnt_opts: *mut c_char,
+    mnt_freq: c_int,
+    mnt_passno: c_int,
+}
+
 #[test]
 fn mntent_reads_proc_mounts() {
     let filename = b"/proc/mounts\0";
@@ -906,6 +916,98 @@ fn setmntent_nonexistent_returns_null() {
         )
     };
     assert!(stream.is_null());
+}
+
+#[test]
+fn setmntent_rejects_tracked_unterminated_filename_and_mode() {
+    use frankenlibc_abi::unistd_abi::setmntent;
+
+    unsafe {
+        let raw_filename = malloc_tracked_unterminated(b"/proc/mounts");
+        *__errno_location() = 0;
+        let stream = setmntent(raw_filename, c"r".as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_filename.cast());
+
+        assert!(stream.is_null());
+        assert_eq!(err, libc::EINVAL);
+
+        let raw_mode = malloc_tracked_unterminated(b"r");
+        *__errno_location() = 0;
+        let stream = setmntent(c"/proc/mounts".as_ptr(), raw_mode);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_mode.cast());
+
+        assert!(stream.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn hasmntopt_rejects_tracked_unterminated_options_and_needle() {
+    use frankenlibc_abi::unistd_abi::hasmntopt;
+
+    unsafe {
+        let raw_opts = malloc_tracked_unterminated(b"rw,noexec");
+        let ent = [
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            raw_opts.cast_const(),
+        ];
+        *__errno_location() = 0;
+        let result = hasmntopt(ent.as_ptr().cast(), c"noexec".as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_opts.cast());
+
+        assert!(result.is_null());
+        assert_eq!(err, libc::EINVAL);
+
+        let raw_needle = malloc_tracked_unterminated(b"noexec");
+        let ent = [
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            c"rw,noexec".as_ptr(),
+        ];
+        *__errno_location() = 0;
+        let result = hasmntopt(ent.as_ptr().cast(), raw_needle);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_needle.cast());
+
+        assert!(result.is_null());
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn addmntent_rejects_tracked_unterminated_fields() {
+    use frankenlibc_abi::unistd_abi::{addmntent, endmntent, setmntent};
+
+    unsafe {
+        let stream = setmntent(c"/dev/null".as_ptr(), c"w".as_ptr());
+        assert!(!stream.is_null());
+
+        let raw_fsname = malloc_tracked_unterminated(b"tmpfs");
+        let ent = TestMntEnt {
+            mnt_fsname: raw_fsname,
+            mnt_dir: c"/tmp".as_ptr() as *mut c_char,
+            mnt_type: c"tmpfs".as_ptr() as *mut c_char,
+            mnt_opts: c"rw".as_ptr() as *mut c_char,
+            mnt_freq: 0,
+            mnt_passno: 0,
+        };
+
+        *__errno_location() = 0;
+        let rc = addmntent(stream, (&ent as *const TestMntEnt).cast());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_fsname.cast());
+        let close_rc = endmntent(stream);
+
+        assert_eq!(rc, 1);
+        assert_eq!(err, libc::EINVAL);
+        assert_eq!(close_rc, 1);
+    }
 }
 
 // ---------------------------------------------------------------------------
