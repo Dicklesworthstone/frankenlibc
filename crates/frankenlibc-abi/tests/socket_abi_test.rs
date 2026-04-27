@@ -18,6 +18,20 @@ unsafe fn close_fd(fd: c_int) {
     let _ = raw_syscall::sys_close(fd);
 }
 
+fn tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) };
+    assert!(!raw.is_null());
+    unsafe {
+        std::ptr::write_bytes(raw.cast::<u8>(), 0, len);
+    }
+    raw
+}
+
+unsafe fn free_tracked(ptr: *mut c_void) {
+    unsafe { frankenlibc_abi::malloc_abi::free(ptr) };
+}
+
 // ---------------------------------------------------------------------------
 // socket creation
 // ---------------------------------------------------------------------------
@@ -80,6 +94,29 @@ fn bind_invalid_fd_sets_ebadf_errno() {
 
     let err = unsafe { *__errno_location() };
     assert_eq!(err, errno::EBADF);
+}
+
+#[test]
+fn bind_rejects_tracked_short_sockaddr() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0);
+
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        socket_abi::bind(
+            fd,
+            raw.cast::<libc::sockaddr>(),
+            std::mem::size_of::<libc::sockaddr_in>() as u32,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(fd);
+        free_tracked(raw);
+    }
 }
 
 #[test]
@@ -183,6 +220,19 @@ fn socketpair_null_sv_fails() {
     assert_eq!(rc, -1);
 }
 
+#[test]
+fn socketpair_rejects_tracked_short_fd_array() {
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+
+    let rc =
+        unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, raw.cast::<c_int>()) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe { free_tracked(raw) };
+}
+
 // ---------------------------------------------------------------------------
 // send / recv error paths
 // ---------------------------------------------------------------------------
@@ -205,6 +255,50 @@ fn recv_invalid_fd_sets_ebadf_errno() {
 
     let err = unsafe { *__errno_location() };
     assert_eq!(err, errno::EBADF);
+}
+
+#[test]
+fn send_rejects_tracked_short_buffer() {
+    let mut sv = [0 as c_int; 2];
+    let pair_rc =
+        unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+    assert_eq!(pair_rc, 0);
+
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { socket_abi::send(sv[0], raw.cast_const(), 2, 0) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+        free_tracked(raw);
+    }
+}
+
+#[test]
+fn recv_rejects_tracked_short_buffer() {
+    let mut sv = [0 as c_int; 2];
+    let pair_rc =
+        unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+    assert_eq!(pair_rc, 0);
+
+    let msg = b"xy";
+    let sent = unsafe { socket_abi::send(sv[0], msg.as_ptr().cast(), msg.len(), 0) };
+    assert_eq!(sent, msg.len() as isize);
+
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { socket_abi::recv(sv[1], raw, 2, 0) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+        free_tracked(raw);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +374,38 @@ fn getsockname_after_bind() {
     unsafe { close_fd(fd) };
 }
 
+#[test]
+fn getsockname_rejects_tracked_short_addr() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0);
+
+    let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    addr.sin_family = libc::AF_INET as libc::sa_family_t;
+    addr.sin_port = 0;
+    addr.sin_addr.s_addr = u32::from_ne_bytes([127, 0, 0, 1]);
+
+    let rc = unsafe {
+        socket_abi::bind(
+            fd,
+            &addr as *const libc::sockaddr_in as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as u32,
+        )
+    };
+    assert_eq!(rc, 0);
+
+    let raw = tracked_zeroed_bytes(1);
+    let mut addrlen = std::mem::size_of::<libc::sockaddr_in>() as u32;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { socket_abi::getsockname(fd, raw.cast::<libc::sockaddr>(), &mut addrlen) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(fd);
+        free_tracked(raw);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // setsockopt / getsockopt
 // ---------------------------------------------------------------------------
@@ -339,6 +465,50 @@ fn getsockopt_socket_type() {
     assert_eq!(sock_type, libc::SOCK_STREAM);
 
     unsafe { close_fd(fd) };
+}
+
+#[test]
+fn setsockopt_rejects_tracked_short_value() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0);
+
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        socket_abi::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_REUSEADDR,
+            raw.cast_const(),
+            std::mem::size_of::<c_int>() as u32,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(fd);
+        free_tracked(raw);
+    }
+}
+
+#[test]
+fn getsockopt_rejects_tracked_short_value() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+    assert!(fd >= 0);
+
+    let raw = tracked_zeroed_bytes(1);
+    let mut optlen = std::mem::size_of::<c_int>() as u32;
+    unsafe { *__errno_location() = 0 };
+    let rc =
+        unsafe { socket_abi::getsockopt(fd, libc::SOL_SOCKET, libc::SO_TYPE, raw, &mut optlen) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(fd);
+        free_tracked(raw);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -413,6 +583,33 @@ fn sendto_recvfrom_udp_loopback() {
     unsafe {
         close_fd(sender);
         close_fd(receiver);
+    }
+}
+
+#[test]
+fn sendto_rejects_tracked_short_dest_addr() {
+    let fd = unsafe { socket_abi::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+    assert!(fd >= 0);
+
+    let raw_addr = tracked_zeroed_bytes(1);
+    let msg = b"x";
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        socket_abi::sendto(
+            fd,
+            msg.as_ptr().cast(),
+            msg.len(),
+            0,
+            raw_addr.cast::<libc::sockaddr>(),
+            std::mem::size_of::<libc::sockaddr_in>() as u32,
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(fd);
+        free_tracked(raw_addr);
     }
 }
 
@@ -833,6 +1030,41 @@ fn recvfrom_null_addr() {
     }
 }
 
+#[test]
+fn recvfrom_rejects_tracked_short_buffer() {
+    let mut sv = [0 as c_int; 2];
+    let pair_rc =
+        unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, sv.as_mut_ptr()) };
+    assert_eq!(pair_rc, 0);
+
+    let msg = b"xy";
+    let sent = unsafe {
+        socket_abi::sendto(
+            sv[0],
+            msg.as_ptr().cast(),
+            msg.len(),
+            0,
+            std::ptr::null(),
+            0,
+        )
+    };
+    assert_eq!(sent, msg.len() as isize);
+
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe {
+        socket_abi::recvfrom(sv[1], raw, 2, 0, std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+        free_tracked(raw);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // sendmsg / recvmsg
 // ---------------------------------------------------------------------------
@@ -900,6 +1132,26 @@ fn sendmsg_invalid_fd_fails() {
 }
 
 #[test]
+fn sendmsg_rejects_tracked_short_msghdr() {
+    let mut sv = [0 as c_int; 2];
+    let pair_rc =
+        unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+    assert_eq!(pair_rc, 0);
+
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { socket_abi::sendmsg(sv[0], raw.cast::<libc::msghdr>(), 0) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+        free_tracked(raw);
+    }
+}
+
+#[test]
 fn recvmsg_invalid_fd_fails() {
     let mut buf = [0u8; 16];
     let mut iov = libc::iovec {
@@ -914,6 +1166,26 @@ fn recvmsg_invalid_fd_fails() {
     assert_eq!(rc, -1);
     let err = unsafe { *__errno_location() };
     assert_eq!(err, errno::EBADF);
+}
+
+#[test]
+fn recvmsg_rejects_tracked_short_msghdr() {
+    let mut sv = [0 as c_int; 2];
+    let pair_rc =
+        unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+    assert_eq!(pair_rc, 0);
+
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { socket_abi::recvmsg(sv[1], raw.cast::<libc::msghdr>(), libc::MSG_DONTWAIT) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+        free_tracked(raw);
+    }
 }
 
 #[test]
@@ -1169,6 +1441,28 @@ fn getpeereid_null_outputs_return_efault() {
     unsafe {
         close_fd(sv[0]);
         close_fd(sv[1]);
+    }
+}
+
+#[test]
+fn getpeereid_rejects_tracked_short_euid() {
+    let mut sv = [0i32; 2];
+    let rc =
+        unsafe { socket_abi::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()) };
+    assert_eq!(rc, 0);
+
+    let raw_uid = tracked_zeroed_bytes(1);
+    let mut peer_gid: libc::gid_t = libc::gid_t::MAX;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { socket_abi::getpeereid(sv[0], raw_uid.cast::<libc::uid_t>(), &mut peer_gid) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, errno::EFAULT);
+    assert_eq!(peer_gid, libc::gid_t::MAX);
+
+    unsafe {
+        close_fd(sv[0]);
+        close_fd(sv[1]);
+        free_tracked(raw_uid);
     }
 }
 

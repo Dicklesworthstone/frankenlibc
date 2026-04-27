@@ -12,7 +12,27 @@ use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+
+#[inline]
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
+
+#[inline]
+unsafe fn tracked_sockaddr_output_fits(addr: *mut libc::sockaddr, addrlen: *mut u32) -> bool {
+    if addr.is_null() {
+        return true;
+    }
+    if addrlen.is_null()
+        || !tracked_region_fits(addrlen.cast_const().cast(), std::mem::size_of::<u32>())
+    {
+        return false;
+    }
+    let requested = unsafe { *addrlen as usize };
+    tracked_region_fits(addr.cast_const().cast(), requested)
+}
 
 // ---------------------------------------------------------------------------
 // socket
@@ -78,7 +98,7 @@ pub unsafe extern "C" fn bind(sockfd: c_int, addr: *const libc::sockaddr, addrle
         return -1;
     }
 
-    if addr.is_null() {
+    if addr.is_null() || !tracked_region_fits(addr.cast(), addrlen as usize) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -139,6 +159,12 @@ pub unsafe extern "C" fn accept(
         return -1;
     }
 
+    if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
     let (rc, adverse) = match unsafe { raw_syscall::sys_accept(sockfd, addr as *mut u8, addrlen) } {
         Ok(fd) => (fd, false),
         Err(e) => {
@@ -174,7 +200,7 @@ pub unsafe extern "C" fn connect(
         return -1;
     }
 
-    if addr.is_null() {
+    if addr.is_null() || !tracked_region_fits(addr.cast(), addrlen as usize) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -221,7 +247,7 @@ pub unsafe extern "C" fn send(
         return -1;
     }
 
-    if buf.is_null() && len > 0 {
+    if (buf.is_null() && len > 0) || !tracked_region_fits(buf, len) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -269,7 +295,7 @@ pub unsafe extern "C" fn recv(sockfd: c_int, buf: *mut c_void, len: usize, flags
         return -1;
     }
 
-    if buf.is_null() && len > 0 {
+    if (buf.is_null() && len > 0) || !tracked_region_fits(buf.cast_const(), len) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -326,7 +352,11 @@ pub unsafe extern "C" fn sendto(
         return -1;
     }
 
-    if buf.is_null() && len > 0 {
+    if (buf.is_null() && len > 0)
+        || !tracked_region_fits(buf, len)
+        || (addrlen > 0
+            && (dest_addr.is_null() || !tracked_region_fits(dest_addr.cast(), addrlen as usize)))
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -383,7 +413,13 @@ pub unsafe extern "C" fn recvfrom(
         return -1;
     }
 
-    if buf.is_null() && len > 0 {
+    if (buf.is_null() && len > 0) || !tracked_region_fits(buf.cast_const(), len) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !unsafe { tracked_sockaddr_output_fits(src_addr, addrlen) } {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -482,6 +518,12 @@ pub unsafe extern "C" fn setsockopt(
         return -1;
     }
 
+    if (optval.is_null() && optlen > 0) || !tracked_region_fits(optval, optlen as usize) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
     let (rc, adverse) = match unsafe {
         raw_syscall::sys_setsockopt(sockfd, level, optname, optval as *const u8, optlen as usize)
     } {
@@ -511,6 +553,21 @@ pub unsafe extern "C" fn getsockopt(
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if optlen.is_null()
+        || !tracked_region_fits(optlen.cast_const().cast(), std::mem::size_of::<u32>())
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    let requested = unsafe { *optlen as usize };
+    if !optval.is_null() && !tracked_region_fits(optval.cast_const(), requested) {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -546,6 +603,12 @@ pub unsafe extern "C" fn getpeername(
         return -1;
     }
 
+    if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
     let (rc, adverse) =
         match unsafe { raw_syscall::sys_getpeername(sockfd, addr as *mut u8, addrlen) } {
             Ok(()) => (0, false),
@@ -572,6 +635,12 @@ pub unsafe extern "C" fn getsockname(
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -607,6 +676,12 @@ pub unsafe extern "C" fn socketpair(
     }
 
     if sv.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !tracked_region_fits(sv.cast_const().cast(), std::mem::size_of::<[c_int; 2]>()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -655,6 +730,12 @@ pub unsafe extern "C" fn sendmsg(sockfd: c_int, msg: *const libc::msghdr, flags:
         return -1;
     }
 
+    if !tracked_region_fits(msg.cast(), std::mem::size_of::<libc::msghdr>()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
     let (rc, adverse) = match unsafe { raw_syscall::sys_sendmsg(sockfd, msg as *const u8, flags) } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -680,6 +761,12 @@ pub unsafe extern "C" fn recvmsg(sockfd: c_int, msg: *mut libc::msghdr, flags: c
     }
 
     if msg.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !tracked_region_fits(msg.cast_const().cast(), std::mem::size_of::<libc::msghdr>()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
@@ -711,6 +798,12 @@ pub unsafe extern "C" fn accept4(
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
+    if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;
     }
@@ -804,8 +897,17 @@ pub unsafe extern "C" fn getpeereid(
         return -1;
     }
 
+    if !tracked_region_fits(euid.cast_const().cast(), std::mem::size_of::<libc::uid_t>())
+        || !tracked_region_fits(egid.cast_const().cast(), std::mem::size_of::<libc::gid_t>())
+    {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
+
     // SAFETY: both output pointers were checked for NULL above; the C caller
-    // contract requires writable uid_t/gid_t storage.
+    // contract requires writable uid_t/gid_t storage, and tracked short
+    // allocations were rejected before these writes.
     unsafe {
         *euid = cred.uid;
         *egid = cred.gid;
