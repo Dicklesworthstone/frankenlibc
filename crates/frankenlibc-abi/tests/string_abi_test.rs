@@ -1406,6 +1406,14 @@ fn argz_rejects_tracked_unterminated_inputs() {
         assert!(argz.is_null());
         assert_eq!(argz_len, 0);
 
+        let argv = [raw as *const c_char, std::ptr::null()];
+        assert_eq!(
+            argz_create(argv.as_ptr(), &mut argz, &mut argz_len),
+            libc::EINVAL
+        );
+        assert!(argz.is_null());
+        assert_eq!(argz_len, 0);
+
         assert_eq!(
             argz_create_sep(raw, b':' as c_int, &mut argz, &mut argz_len),
             libc::EINVAL
@@ -1440,6 +1448,163 @@ fn argz_rejects_tracked_unterminated_inputs() {
 
         frankenlibc_abi::malloc_abi::free(raw.cast());
         frankenlibc_abi::malloc_abi::free(argz.cast());
+    }
+}
+
+#[test]
+fn argz_delete_and_extract_bound_malformed_entries() {
+    let mut storage = *b"abc";
+    let mut argz = storage.as_mut_ptr().cast::<c_char>();
+    let mut argz_len = storage.len();
+    let mut argv = [c"stale".as_ptr().cast_mut(), std::ptr::null_mut()];
+
+    unsafe {
+        argz_extract(argz, argz_len, argv.as_mut_ptr());
+    }
+    assert!(argv[0].is_null());
+
+    unsafe {
+        argz_delete(&mut argz, &mut argz_len, argz);
+    }
+    assert_eq!(argz_len, storage.len());
+    assert_eq!(&storage, b"abc");
+}
+
+#[test]
+fn argz_add_and_append_ignore_stale_len_when_buffer_is_null() {
+    unsafe {
+        let mut argz = std::ptr::null_mut();
+        let mut argz_len = 1024usize;
+
+        assert_eq!(argz_add(&mut argz, &mut argz_len, c"one".as_ptr()), 0);
+        assert_eq!(argz_len, 4);
+        assert_eq!(collect_argz_entries(argz, argz_len), vec![b"one".to_vec()]);
+        frankenlibc_abi::malloc_abi::free(argz.cast());
+
+        argz = std::ptr::null_mut();
+        argz_len = 1024;
+        let entry = b"two\0";
+        assert_eq!(
+            argz_append(&mut argz, &mut argz_len, entry.as_ptr().cast(), entry.len()),
+            0
+        );
+        assert_eq!(argz_len, 4);
+        assert_eq!(collect_argz_entries(argz, argz_len), vec![b"two".to_vec()]);
+        frankenlibc_abi::malloc_abi::free(argz.cast());
+    }
+}
+
+#[test]
+fn envz_add_get_merge_and_strip_entries() {
+    unsafe {
+        let mut envz = std::ptr::null_mut();
+        let mut envz_len = 0usize;
+
+        assert_eq!(
+            envz_add(&mut envz, &mut envz_len, c"A".as_ptr(), c"1".as_ptr()),
+            0
+        );
+        assert_eq!(
+            envz_add(&mut envz, &mut envz_len, c"FLAG".as_ptr(), std::ptr::null()),
+            0
+        );
+
+        let value = envz_get(envz, envz_len, c"A".as_ptr());
+        assert!(!value.is_null());
+        assert_eq!(CStr::from_ptr(value).to_bytes(), b"1");
+        assert!(envz_get(envz, envz_len, c"FLAG".as_ptr()).is_null());
+
+        let envz2 = b"A=2\0B=3\0";
+        assert_eq!(
+            envz_merge(
+                &mut envz,
+                &mut envz_len,
+                envz2.as_ptr().cast(),
+                envz2.len(),
+                0,
+            ),
+            0
+        );
+        assert_eq!(
+            CStr::from_ptr(envz_get(envz, envz_len, c"A".as_ptr())).to_bytes(),
+            b"1"
+        );
+        assert_eq!(
+            CStr::from_ptr(envz_get(envz, envz_len, c"B".as_ptr())).to_bytes(),
+            b"3"
+        );
+
+        assert_eq!(
+            envz_merge(
+                &mut envz,
+                &mut envz_len,
+                envz2.as_ptr().cast(),
+                envz2.len(),
+                1,
+            ),
+            0
+        );
+        assert_eq!(
+            CStr::from_ptr(envz_get(envz, envz_len, c"A".as_ptr())).to_bytes(),
+            b"2"
+        );
+
+        envz_strip(&mut envz, &mut envz_len);
+        assert!(envz_entry(envz, envz_len, c"FLAG".as_ptr()).is_null());
+
+        frankenlibc_abi::malloc_abi::free(envz.cast());
+    }
+}
+
+#[test]
+fn envz_rejects_tracked_unterminated_name_and_value() {
+    unsafe {
+        let raw_name = malloc_unterminated(b"KEY");
+        let raw_value = malloc_unterminated(b"value");
+        let mut envz = std::ptr::null_mut();
+        let mut envz_len = 0usize;
+
+        assert_eq!(
+            envz_add(&mut envz, &mut envz_len, c"KEY".as_ptr(), c"valid".as_ptr(),),
+            0
+        );
+
+        assert!(envz_entry(envz, envz_len, raw_name).is_null());
+        assert!(envz_get(envz, envz_len, raw_name).is_null());
+        assert_eq!(
+            envz_add(&mut envz, &mut envz_len, raw_name, c"value".as_ptr()),
+            libc::EINVAL
+        );
+        assert_eq!(
+            envz_add(&mut envz, &mut envz_len, c"KEY".as_ptr(), raw_value),
+            libc::EINVAL
+        );
+
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+        frankenlibc_abi::malloc_abi::free(raw_value.cast());
+        frankenlibc_abi::malloc_abi::free(envz.cast());
+    }
+}
+
+#[test]
+fn envz_merge_rejects_malformed_envz2_entry() {
+    unsafe {
+        let mut envz = std::ptr::null_mut();
+        let mut envz_len = 0usize;
+        let envz2 = b"A=1";
+
+        assert_eq!(
+            envz_merge(
+                &mut envz,
+                &mut envz_len,
+                envz2.as_ptr().cast(),
+                envz2.len(),
+                1,
+            ),
+            libc::EINVAL
+        );
+        assert!(envz.is_null());
+        assert_eq!(envz_len, 0);
     }
 }
 

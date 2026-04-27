@@ -6,7 +6,7 @@
 //! 3. Delegates to `frankenlibc-core` safe implementations or inline unsafe primitives
 
 use std::cell::Cell;
-use std::ffi::{CStr, c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
+use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
 use std::sync::{
     Once,
     atomic::{AtomicU32, Ordering as AtomicOrdering},
@@ -6160,15 +6160,24 @@ pub unsafe extern "C" fn argz_create(
     }
 
     let mut total_len = 0usize;
-    let mut count = 0;
+    let mut entries = Vec::new();
     let mut i = 0;
     loop {
         let p = unsafe { *argv.add(i) };
         if p.is_null() {
             break;
         }
-        total_len += unsafe { crate::string_abi::strlen(p) } + 1;
-        count += 1;
+        let Some(bytes) = (unsafe { read_c_string_bytes(p) }) else {
+            return libc::EINVAL;
+        };
+        let Some(entry_len) = bytes.len().checked_add(1) else {
+            return libc::ENOMEM;
+        };
+        let Some(next_total_len) = total_len.checked_add(entry_len) else {
+            return libc::ENOMEM;
+        };
+        total_len = next_total_len;
+        entries.push(bytes);
         i += 1;
     }
 
@@ -6189,13 +6198,12 @@ pub unsafe extern "C" fn argz_create(
     }
 
     let mut offset = 0;
-    for j in 0..count {
-        let p = unsafe { *argv.add(j) };
-        let slen = unsafe { crate::string_abi::strlen(p) };
+    for bytes in entries {
         unsafe {
-            std::ptr::copy_nonoverlapping(p as *const u8, buf.add(offset) as *mut u8, slen + 1);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.add(offset) as *mut u8, bytes.len());
+            *buf.add(offset + bytes.len()) = 0;
         }
-        offset += slen + 1;
+        offset += bytes.len() + 1;
     }
 
     unsafe {
@@ -6355,7 +6363,12 @@ unsafe fn replace_owned_argz_buffer(
 }
 
 unsafe fn argz_add_bytes(argz: *mut *mut c_char, argz_len: *mut usize, bytes: &[u8]) -> c_int {
-    let old_len = unsafe { *argz_len };
+    let old_buf = unsafe { *argz };
+    let old_len = if old_buf.is_null() {
+        0
+    } else {
+        unsafe { *argz_len }
+    };
     let Some(entry_len) = bytes.len().checked_add(1) else {
         return libc::ENOMEM;
     };
@@ -6367,8 +6380,8 @@ unsafe fn argz_add_bytes(argz: *mut *mut c_char, argz_len: *mut usize, bytes: &[
         return libc::ENOMEM;
     }
     unsafe {
-        if old_len > 0 && !(*argz).is_null() {
-            std::ptr::copy_nonoverlapping(*argz as *const u8, new_buf as *mut u8, old_len);
+        if old_len > 0 {
+            std::ptr::copy_nonoverlapping(old_buf as *const u8, new_buf as *mut u8, old_len);
         }
         if !bytes.is_empty() {
             std::ptr::copy_nonoverlapping(
@@ -6381,6 +6394,17 @@ unsafe fn argz_add_bytes(argz: *mut *mut c_char, argz_len: *mut usize, bytes: &[
         replace_owned_argz_buffer(argz, argz_len, new_buf, new_len);
     }
     0
+}
+
+unsafe fn argz_entry_len_at(argz: *const c_char, argz_len: usize, pos: usize) -> Option<usize> {
+    if argz.is_null() || pos >= argz_len {
+        return None;
+    }
+    let (entry_len, terminated) = unsafe { scan_c_string(argz.add(pos), Some(argz_len - pos)) };
+    if !terminated {
+        return None;
+    }
+    Some(entry_len)
 }
 
 unsafe fn argz_entry_offset(
@@ -6461,15 +6485,22 @@ pub unsafe extern "C" fn argz_append(
     if buf.is_null() || buf_len == 0 {
         return 0;
     }
-    let old_len = unsafe { *argz_len };
-    let new_len = old_len + buf_len;
+    let old_buf = unsafe { *argz };
+    let old_len = if old_buf.is_null() {
+        0
+    } else {
+        unsafe { *argz_len }
+    };
+    let Some(new_len) = old_len.checked_add(buf_len) else {
+        return libc::ENOMEM;
+    };
     let new_buf = unsafe { libc::malloc(new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
     unsafe {
-        if old_len > 0 && !(*argz).is_null() {
-            std::ptr::copy_nonoverlapping(*argz as *const u8, new_buf as *mut u8, old_len);
+        if old_len > 0 {
+            std::ptr::copy_nonoverlapping(old_buf as *const u8, new_buf as *mut u8, old_len);
         }
         std::ptr::copy_nonoverlapping(buf as *const u8, new_buf.add(old_len) as *mut u8, buf_len);
         replace_owned_argz_buffer(argz, argz_len, new_buf, new_len);
@@ -6492,7 +6523,11 @@ pub unsafe extern "C" fn argz_delete(
     let Some(entry_offset) = (unsafe { argz_entry_offset(az, len, entry) }) else {
         return;
     };
-    let entry_len = unsafe { crate::string_abi::strlen(entry) } + 1; // include NUL
+    let (entry_len, terminated) = unsafe { scan_c_string(entry, Some(len - entry_offset)) };
+    if !terminated {
+        return;
+    }
+    let entry_len = entry_len + 1; // include NUL
     let remaining = len - entry_offset - entry_len;
     if remaining > 0 {
         unsafe {
@@ -6526,15 +6561,16 @@ pub unsafe extern "C" fn argz_extract(
     if argz.is_null() || argv.is_null() || argz_len == 0 {
         return;
     }
-    let mut idx = 0;
-    let mut entry: *const c_char = argz;
-    let end = unsafe { argz.add(argz_len) };
-    while entry < end {
-        unsafe { *argv.add(idx) = entry as *mut c_char };
+    let mut idx = 0usize;
+    let mut pos = 0usize;
+    while pos < argz_len {
+        let Some(entry_len) = (unsafe { argz_entry_len_at(argz, argz_len, pos) }) else {
+            unsafe { *argv.add(idx) = std::ptr::null_mut() };
+            return;
+        };
+        unsafe { *argv.add(idx) = argz.add(pos) as *mut c_char };
         idx += 1;
-        // Skip to next NUL
-        let slen = unsafe { crate::string_abi::strlen(entry) };
-        entry = unsafe { entry.add(slen + 1) };
+        pos += entry_len + 1;
     }
     unsafe { *argv.add(idx) = std::ptr::null_mut() };
 }
@@ -6697,21 +6733,25 @@ pub unsafe extern "C" fn envz_entry(
     if envz.is_null() || envz_len == 0 || name.is_null() {
         return std::ptr::null_mut();
     }
-    let name_cstr = unsafe { CStr::from_ptr(name) };
-    let name_bytes = name_cstr.to_bytes();
+    let Some(name_bytes) = (unsafe { read_c_string_bytes(name) }) else {
+        return std::ptr::null_mut();
+    };
 
     let mut pos = 0usize;
     while pos < envz_len {
-        let entry = unsafe { CStr::from_ptr(envz.add(pos)) };
-        let entry_bytes = entry.to_bytes();
+        let Some(entry_len) = (unsafe { argz_entry_len_at(envz, envz_len, pos) }) else {
+            return std::ptr::null_mut();
+        };
+        let entry_bytes =
+            unsafe { std::slice::from_raw_parts(envz.add(pos).cast::<u8>(), entry_len) };
         // Check if entry starts with name and is followed by '=' or NUL
         if entry_bytes.len() >= name_bytes.len()
-            && entry_bytes.starts_with(name_bytes)
+            && entry_bytes.starts_with(&name_bytes)
             && (entry_bytes.len() == name_bytes.len() || entry_bytes[name_bytes.len()] == b'=')
         {
             return unsafe { envz.add(pos) as *mut c_char };
         }
-        pos += entry_bytes.len() + 1;
+        pos += entry_len + 1;
     }
     std::ptr::null_mut()
 }
@@ -6727,8 +6767,13 @@ pub unsafe extern "C" fn envz_get(
     if entry.is_null() {
         return std::ptr::null();
     }
-    let entry_cstr = unsafe { CStr::from_ptr(entry) };
-    let entry_bytes = entry_cstr.to_bytes();
+    let Some(entry_offset) = (unsafe { argz_entry_offset(envz, envz_len, entry) }) else {
+        return std::ptr::null();
+    };
+    let Some(entry_len) = (unsafe { argz_entry_len_at(envz, envz_len, entry_offset) }) else {
+        return std::ptr::null();
+    };
+    let entry_bytes = unsafe { std::slice::from_raw_parts(entry.cast::<u8>(), entry_len) };
     if let Some(eq_pos) = entry_bytes.iter().position(|&b| b == b'=') {
         unsafe { entry.add(eq_pos + 1) as *const c_char }
     } else {
@@ -6747,23 +6792,49 @@ pub unsafe extern "C" fn envz_add(
     if envz.is_null() || envz_len.is_null() || name.is_null() {
         return libc::EINVAL;
     }
-    // Remove existing entry if present
-    unsafe { envz_remove(envz, envz_len, name) };
-
-    // Build "name=value" or just "name"
-    if value.is_null() {
-        unsafe { argz_add(envz, envz_len, name) }
+    let Some(name_bytes) = (unsafe { read_c_string_bytes(name) }) else {
+        return libc::EINVAL;
+    };
+    let value_bytes = if value.is_null() {
+        None
     } else {
-        let name_s = unsafe { CStr::from_ptr(name) }.to_bytes();
-        let val_s = unsafe { CStr::from_ptr(value) }.to_bytes();
-        let mut entry = Vec::with_capacity(name_s.len() + 1 + val_s.len() + 1);
-        entry.extend_from_slice(name_s);
-        entry.push(b'=');
-        entry.extend_from_slice(val_s);
-        entry.push(0);
-        let entry_cstr = std::ffi::CString::from_vec_with_nul(entry).unwrap_or_default();
-        unsafe { argz_add(envz, envz_len, entry_cstr.as_ptr()) }
+        let Some(bytes) = (unsafe { read_c_string_bytes(value) }) else {
+            return libc::EINVAL;
+        };
+        Some(bytes)
+    };
+
+    unsafe { envz_add_bytes(envz, envz_len, &name_bytes, value_bytes.as_deref()) }
+}
+
+unsafe fn envz_add_bytes(
+    envz: *mut *mut c_char,
+    envz_len: *mut usize,
+    name: &[u8],
+    value: Option<&[u8]>,
+) -> c_int {
+    let Some(mut capacity) = name.len().checked_add(value.map_or(0, |v| v.len())) else {
+        return libc::ENOMEM;
+    };
+    if value.is_some() {
+        let Some(next) = capacity.checked_add(1) else {
+            return libc::ENOMEM;
+        };
+        capacity = next;
     }
+
+    let mut name_cstr = Vec::with_capacity(name.len() + 1);
+    name_cstr.extend_from_slice(name);
+    name_cstr.push(0);
+    unsafe { envz_remove(envz, envz_len, name_cstr.as_ptr().cast()) };
+
+    let mut entry = Vec::with_capacity(capacity);
+    entry.extend_from_slice(name);
+    if let Some(value) = value {
+        entry.push(b'=');
+        entry.extend_from_slice(value);
+    }
+    unsafe { argz_add_bytes(envz, envz_len, &entry) }
 }
 
 /// `envz_merge` — merge envz2 into envz1.
@@ -6784,31 +6855,30 @@ pub unsafe extern "C" fn envz_merge(
 
     let mut pos = 0usize;
     while pos < envz2_len {
-        let entry = unsafe { CStr::from_ptr(envz2.add(pos)) };
-        let entry_bytes = entry.to_bytes();
+        let Some(entry_len) = (unsafe { argz_entry_len_at(envz2, envz2_len, pos) }) else {
+            return libc::EINVAL;
+        };
+        let entry_bytes =
+            unsafe { std::slice::from_raw_parts(envz2.add(pos).cast::<u8>(), entry_len) };
 
         // Parse name from entry
         let eq_pos = entry_bytes.iter().position(|&b| b == b'=');
         let name_end = eq_pos.unwrap_or(entry_bytes.len());
-        let name_cstr = std::ffi::CString::new(&entry_bytes[..name_end]).unwrap_or_default();
+        let name_bytes = &entry_bytes[..name_end];
 
-        let existing = unsafe { envz_entry(*envz, *envz_len, name_cstr.as_ptr()) };
+        let mut name_cstr = Vec::with_capacity(name_bytes.len() + 1);
+        name_cstr.extend_from_slice(name_bytes);
+        name_cstr.push(0);
+        let existing = unsafe { envz_entry(*envz, *envz_len, name_cstr.as_ptr().cast()) };
         if existing.is_null() || override_ != 0 {
-            let value = eq_pos.map(|p| unsafe { envz2.add(pos + p + 1) });
-            let rc = unsafe {
-                envz_add(
-                    envz,
-                    envz_len,
-                    name_cstr.as_ptr(),
-                    value.unwrap_or(std::ptr::null()),
-                )
-            };
+            let value = eq_pos.map(|p| &entry_bytes[p + 1..]);
+            let rc = unsafe { envz_add_bytes(envz, envz_len, name_bytes, value) };
             if rc != 0 {
                 return rc;
             }
         }
 
-        pos += entry_bytes.len() + 1;
+        pos += entry_len + 1;
     }
     0
 }
@@ -6838,16 +6908,22 @@ pub unsafe extern "C" fn envz_strip(envz: *mut *mut c_char, envz_len: *mut usize
     // Rebuild keeping only entries with '='
     let az = unsafe { *envz };
     let len = unsafe { *envz_len };
+    if az.is_null() || len == 0 {
+        return;
+    }
     let mut entries_to_remove: Vec<usize> = Vec::new();
 
     let mut pos = 0usize;
     while pos < len {
-        let entry = unsafe { CStr::from_ptr(az.add(pos)) };
-        let entry_bytes = entry.to_bytes();
+        let Some(entry_len) = (unsafe { argz_entry_len_at(az, len, pos) }) else {
+            return;
+        };
+        let entry_bytes =
+            unsafe { std::slice::from_raw_parts(az.add(pos).cast::<u8>(), entry_len) };
         if !entry_bytes.contains(&b'=') {
             entries_to_remove.push(pos);
         }
-        pos += entry_bytes.len() + 1;
+        pos += entry_len + 1;
     }
 
     // Remove from end to start to keep offsets valid
