@@ -78,6 +78,46 @@ unsafe fn scan_terminated_numeric_string(ptr: *const c_char) -> Option<usize> {
     terminated.then_some(len)
 }
 
+#[inline]
+unsafe fn scan_suboption_end(ptr: *mut c_char) -> Option<(*mut c_char, bool)> {
+    let bound = known_remaining(ptr as usize);
+    let mut len = 0usize;
+    loop {
+        if bound.is_some_and(|remaining| len >= remaining) {
+            return None;
+        }
+        let current = unsafe { ptr.add(len) };
+        let byte = unsafe { *current };
+        if byte == 0 {
+            return Some((current, false));
+        }
+        if byte == b',' as c_char {
+            return Some((current, true));
+        }
+        len += 1;
+    }
+}
+
+#[inline]
+unsafe fn candidate_matches_name(
+    candidate: *const c_char,
+    name: *const c_char,
+    name_len: usize,
+) -> bool {
+    if candidate.is_null() {
+        return false;
+    }
+    let (candidate_len, terminated) =
+        unsafe { scan_c_string(candidate, known_remaining(candidate as usize)) };
+    if !terminated || candidate_len != name_len {
+        return false;
+    }
+    let candidate_bytes =
+        unsafe { core::slice::from_raw_parts(candidate.cast::<u8>(), candidate_len) };
+    let name_bytes = unsafe { core::slice::from_raw_parts(name.cast::<u8>(), name_len) };
+    candidate_bytes == name_bytes
+}
+
 unsafe extern "C" {
     #[link_name = "__environ"]
     static mut HOST_ENVIRON: *mut *mut c_char;
@@ -3241,50 +3281,41 @@ pub unsafe extern "C" fn getsubopt(
     }
 
     let opt_ptr = unsafe { *optionp };
-    if opt_ptr.is_null() || unsafe { *opt_ptr } == 0 {
+    if opt_ptr.is_null() {
         unsafe { *valuep = ptr::null_mut() };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
         return -1;
     }
 
     // Find end of this suboption (comma or NUL).
-    let mut end = opt_ptr;
-    unsafe {
-        while *end != 0 && *end != b',' as c_char {
-            end = end.add(1);
+    let Some((end, at_comma)) = (unsafe { scan_suboption_end(opt_ptr) }) else {
+        unsafe {
+            *valuep = ptr::null_mut();
+            set_abi_errno(libc::EINVAL);
         }
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+        return -1;
+    };
+    if end == opt_ptr && !at_comma {
+        unsafe { *valuep = ptr::null_mut() };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
+        return -1;
     }
 
     // Find '=' for value separation.
-    let mut eq = opt_ptr;
-    let mut has_eq = false;
-    unsafe {
-        while eq < end {
-            if *eq == b'=' as c_char {
-                has_eq = true;
-                break;
-            }
-            eq = eq.add(1);
-        }
-    }
-
-    let name_end = if has_eq { eq } else { end };
-
-    let value_ptr = if has_eq {
-        unsafe { eq.add(1) }
+    let segment_len = unsafe { end.offset_from(opt_ptr) as usize };
+    let segment = unsafe { core::slice::from_raw_parts(opt_ptr.cast::<u8>(), segment_len) };
+    let eq_pos = segment.iter().position(|&byte| byte == b'=');
+    let name_len = eq_pos.unwrap_or(segment_len);
+    let value_ptr = if let Some(pos) = eq_pos {
+        unsafe { opt_ptr.add(pos + 1) }
     } else {
         ptr::null_mut()
     };
 
-    // Capture whether end is a comma BEFORE NUL-terminating (name_end may alias end).
-    let at_comma = unsafe { *end == b',' as c_char };
     if at_comma {
         unsafe { *end = 0 };
     }
-
-    // NUL-terminate the name portion temporarily if needed, then match.
-    let saved = unsafe { *name_end };
-    unsafe { *name_end = 0 };
 
     // Advance optionp past this suboption.
     unsafe {
@@ -3297,22 +3328,40 @@ pub unsafe extern "C" fn getsubopt(
 
     // Match against token list.
     let mut idx = 0i32;
-    let mut tok_ptr = tokens;
-    unsafe {
-        while !(*tok_ptr).is_null() {
-            if crate::string_abi::strcmp(opt_ptr, *tok_ptr) == 0 {
-                *name_end = saved;
-                *valuep = value_ptr;
-                runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
-                return idx;
+    let token_slots =
+        known_remaining(tokens as usize).map(|bytes| bytes / core::mem::size_of::<*mut c_char>());
+    let mut token_offset = 0usize;
+    loop {
+        if token_slots.is_some_and(|slots| token_offset >= slots) {
+            unsafe {
+                *valuep = ptr::null_mut();
+                set_abi_errno(libc::EINVAL);
             }
-            tok_ptr = tok_ptr.add(1);
-            idx += 1;
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+            return -1;
         }
+        let candidate = unsafe { *tokens.add(token_offset) };
+        if candidate.is_null() {
+            break;
+        }
+        if unsafe { candidate_matches_name(candidate.cast_const(), opt_ptr.cast_const(), name_len) }
+        {
+            unsafe { *valuep = value_ptr };
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
+            return idx;
+        }
+        if idx == i32::MAX {
+            unsafe {
+                *valuep = ptr::null_mut();
+                set_abi_errno(libc::EINVAL);
+            }
+            runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, true);
+            return -1;
+        }
+        token_offset += 1;
+        idx += 1;
     }
 
-    // Restore original char.
-    unsafe { *name_end = saved };
     unsafe { *valuep = opt_ptr };
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
     -1

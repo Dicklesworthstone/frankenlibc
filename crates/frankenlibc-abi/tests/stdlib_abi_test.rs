@@ -4024,6 +4024,29 @@ fn getsubopt_unknown_value_returns_entire_suboption() {
     }
 }
 
+#[test]
+fn getsubopt_rejects_tracked_unterminated_option() {
+    let tok_foo = CString::new("foo").unwrap();
+    let tokens_raw: [*mut libc::c_char; 2] =
+        [tok_foo.as_ptr() as *mut libc::c_char, ptr::null_mut()];
+
+    unsafe {
+        let raw = malloc_unterminated(b"foo=bar");
+        let mut opt_ptr = raw;
+        let mut valuep: *mut libc::c_char = ptr::null_mut();
+        *__errno_location() = 0;
+
+        let idx = getsubopt(&mut opt_ptr, tokens_raw.as_ptr(), &mut valuep);
+        let err = *__errno_location();
+
+        assert_eq!(idx, -1);
+        assert_eq!(err, libc::EINVAL);
+        assert_eq!(opt_ptr, raw);
+        assert!(valuep.is_null());
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
 // ===========================================================================
 // on_exit handler invocation via fork+exit
 // ===========================================================================
