@@ -145,17 +145,6 @@ pub(crate) fn with_environ_locked<R>(f: impl FnOnce(*mut *mut c_char) -> R) -> R
     f(envp)
 }
 
-#[inline]
-unsafe fn native_c_strlen(s: *const c_char) -> usize {
-    let mut len = 0usize;
-    unsafe {
-        while *s.add(len) != 0 {
-            len += 1;
-        }
-    }
-    len
-}
-
 /// Count entries in the current environ array (excluding NULL terminator).
 unsafe fn environ_len() -> usize {
     if unsafe { HOST_ENVIRON.is_null() } {
@@ -214,22 +203,21 @@ unsafe fn ensure_environ_owned() -> bool {
 
 /// Native setenv: scan environ for NAME=, replace or append.
 #[inline]
-unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int {
-    if name.is_null() || unsafe { *name == 0 } {
+unsafe fn native_setenv(
+    name: *const c_char,
+    name_len: usize,
+    value: *const c_char,
+    val_len: usize,
+    overwrite: c_int,
+) -> c_int {
+    if name.is_null() || value.is_null() || name_len == 0 {
         return -1;
     }
-    // Check name doesn't contain '='
-    let name_len = unsafe { native_c_strlen(name) };
     for i in 0..name_len {
         if unsafe { *name.add(i) } == b'=' as c_char {
             return -1;
         }
     }
-    let val_len = if value.is_null() {
-        0
-    } else {
-        unsafe { native_c_strlen(value) }
-    };
 
     let _lock = ENVIRON_LOCK.lock();
     let environ_owned = unsafe { ensure_environ_owned() };
@@ -1578,8 +1566,8 @@ pub unsafe extern "C" fn setenv(
         return -1;
     }
 
-    // SAFETY: validated NUL-terminated pointers.
-    let rc = unsafe { native_setenv(name, value, overwrite) };
+    // SAFETY: validated NUL-terminated pointers and their lengths.
+    let rc = unsafe { native_setenv(name, name_len, value, value_len, overwrite) };
     if rc != 0 {
         unsafe { set_abi_errno_if_clear(libc::EINVAL) };
     }
