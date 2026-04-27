@@ -2,7 +2,7 @@
   "version": 2,
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
-  "total_exported": 4109,
+  "total_exported": 4119,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
     "RawSyscall": "ABI entrypoint marshals arguments directly to Linux syscall instruction. No glibc call-through.",
@@ -2634,6 +2634,24 @@
       "default_stub": false
     },
     {
+      "symbol": "consttime_bcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "NetBSD constant-time byte comparison returning zero for equality and one for mismatch",
+      "hardened_semantics": "Delegates to timingsafe_bcmp; null pointer guards return mismatch for non-zero lengths",
+      "default_stub": false
+    },
+    {
+      "symbol": "consttime_memequal",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "NetBSD constant-time byte equality returning one for equality and zero for mismatch",
+      "hardened_semantics": "Delegates to timingsafe_bcmp; null pointer guards return non-equality for non-zero lengths",
+      "default_stub": false
+    },
+    {
       "symbol": "ctime",
       "status": "Implemented",
       "module": "time_abi",
@@ -3488,6 +3506,15 @@
       "perf_class": "strict_hotpath",
       "strict_semantics": "Delegates to bzero with black_box guarantee",
       "hardened_semantics": "Same as bzero hardened semantics",
+      "default_stub": false
+    },
+    {
+      "symbol": "explicit_memset",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "NetBSD non-elidable byte fill routed through FrankenLibC memset",
+      "hardened_semantics": "Same membrane-aware null/bounds behavior as memset with optimization barrier",
       "default_stub": false
     },
     {
@@ -4800,6 +4827,42 @@
       "perf_class": "hotpath",
       "strict_semantics": "Linux futex: fast userspace locking",
       "hardened_semantics": "Same as strict",
+      "default_stub": false
+    },
+    {
+      "symbol": "futex_waitv",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Linux futex_waitv raw syscall wrapper with POSIX errno propagation",
+      "hardened_semantics": "Same raw syscall path with null waiter guard",
+      "default_stub": false
+    },
+    {
+      "symbol": "futex_wake",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Linux futex2 futex_wake raw syscall wrapper",
+      "hardened_semantics": "Same raw syscall path with kernel errno propagation",
+      "default_stub": false
+    },
+    {
+      "symbol": "futex_wait",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Linux futex2 futex_wait raw syscall wrapper",
+      "hardened_semantics": "Same raw syscall path with kernel errno propagation",
+      "default_stub": false
+    },
+    {
+      "symbol": "futex_requeue",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "strict_semantics": "Linux futex2 futex_requeue raw syscall wrapper",
+      "hardened_semantics": "Same raw syscall path with kernel errno propagation",
       "default_stub": false
     },
     {
@@ -8061,6 +8124,15 @@
       "default_stub": false
     },
     {
+      "symbol": "memset_explicit",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "strict_semantics": "C23 alias of explicit_memset",
+      "hardened_semantics": "Same as explicit_memset",
+      "default_stub": false
+    },
+    {
       "symbol": "mincore",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -8937,6 +9009,15 @@
       "perf_class": "default",
       "strict_semantics": "SYS_pidfd_send_signal \u2014 signal via pidfd",
       "hardened_semantics": "SYS_pidfd_send_signal \u2014 signal via pidfd",
+      "default_stub": false
+    },
+    {
+      "symbol": "pidfile_signal",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "FreeBSD libutil pidfile_signal: locked pidfile detection, strict PID parsing, kill errno return",
+      "hardened_semantics": "Same deterministic errno-return contract with null path guard",
       "default_stub": false
     },
     {
@@ -10980,6 +11061,15 @@
       "perf_class": "default",
       "strict_semantics": "Overflow-checked nmemb*size then delegates to realloc semantics",
       "hardened_semantics": "Overflow-checked nmemb*size with ENOMEM on overflow; delegates to realloc path",
+      "default_stub": false
+    },
+    {
+      "symbol": "reallocarr",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "strict_semantics": "NetBSD reallocarr pointer-to-pointer API with overflow check, size-zero rejection, and errno return",
+      "hardened_semantics": "Same allocator path with unchanged pointer on failure",
       "default_stub": false
     },
     {

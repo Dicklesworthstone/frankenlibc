@@ -1,10 +1,10 @@
 {
   "census_version": 1,
-  "generated_utc": "2026-04-26T20:34:03Z",
+  "generated_utc": "2026-04-26T21:54:31Z",
   "workspace_root": "/data/projects/frankenlibc",
   "total_todo_occurrences": 31,
   "total_unique_stub_symbols": 0,
-  "total_abi_exports": 4222,
+  "total_abi_exports": 4270,
   "total_matrix_symbols": 4109,
   "stubs": [],
   "inconsistencies": [

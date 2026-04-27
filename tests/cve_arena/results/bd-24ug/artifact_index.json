@@ -1,8 +1,8 @@
 {
   "index_version": 1,
-  "run_id": "stdio-phase-20260426T203401Z-1345727",
+  "run_id": "stdio-phase-20260426T215430Z-2920073",
   "bead_id": "bd-24ug",
-  "generated_utc": "2026-04-26T20:34:01.774Z",
+  "generated_utc": "2026-04-26T21:54:30.143Z",
   "artifacts": [
     {
       "path": "tests/conformance/stdio_phase_strategy.v1.json",
@@ -21,14 +21,14 @@
     {
       "path": "target/conformance/stdio_phase_strategy.log.jsonl",
       "kind": "log",
-      "sha256": "da452df0662aaacf091aa96ee0d56efb0643aaf193282be13fa9c0c1b3c500c3",
+      "sha256": "0dbfc0791ee12799093d50641120d4ad1d54e69da2dfeff27148f6070fa72fed",
       "size_bytes": 687,
       "description": "bd-24ug stdio phase strategy verification artifact"
     },
     {
       "path": "tests/cve_arena/results/bd-24ug/trace.jsonl",
       "kind": "log",
-      "sha256": "da452df0662aaacf091aa96ee0d56efb0643aaf193282be13fa9c0c1b3c500c3",
+      "sha256": "0dbfc0791ee12799093d50641120d4ad1d54e69da2dfeff27148f6070fa72fed",
       "size_bytes": 687,
       "description": "bd-24ug stdio phase strategy verification artifact"
     }

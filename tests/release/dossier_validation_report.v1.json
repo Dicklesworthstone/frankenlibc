@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-26T20:33:22Z",
+  "generated_at": "2026-04-26T21:53:50Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "827896efe8a7758f9b356275fb8a1c14bdcbfc4353699f88bd6794c19277fd8d",
+      "sha256": "4d6fb8ac2589d2ddb6a78a7a138472c3a68219619cb3f16f3288df1cd1fc9232",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "938cf843052dd88c380efbafc2105b4d3b884a6cb7ad4f671bf8e7defafc60e0",
+      "sha256": "fd45d4cdf2b41602d9d603db88173a728e9bcfb434bb9285b5aa86b86c41a7b1",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "6418836f936800fa5703873875519e2480fca6ba52b0c31d841fcef9e20966fc",
+      "sha256": "7c5f0794c53d3097938ec105457aafa9509445be43a9bc95a409203d1b128963",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -230,7 +230,7 @@
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "827896efe8a7758f9b356275fb8a1c14bdcbfc4353699f88bd6794c19277fd8d",
+      "sha256": "4d6fb8ac2589d2ddb6a78a7a138472c3a68219619cb3f16f3288df1cd1fc9232",
       "size_bytes": 5609
     },
     "replacement_levels": {
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "938cf843052dd88c380efbafc2105b4d3b884a6cb7ad4f671bf8e7defafc60e0",
+      "sha256": "fd45d4cdf2b41602d9d603db88173a728e9bcfb434bb9285b5aa86b86c41a7b1",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "6418836f936800fa5703873875519e2480fca6ba52b0c31d841fcef9e20966fc",
+      "sha256": "7c5f0794c53d3097938ec105457aafa9509445be43a9bc95a409203d1b128963",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -288,89 +288,89 @@
     },
     "entries": [
       {
-        "id": "bd-jb7p1",
-        "title": "PORT: 18 GLIBC_PRIVATE __libc_/__res_/__open_catalog stubs",
+        "id": "bd-qn6q1",
+        "title": "PORT: 51 GLIBC_PRIVATE _thread_db_* libthread_db offset/size data symbols",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T20:24:11.271990741Z",
+        "closed_at": "2026-04-26T21:49:47.118366246Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 18 GLIBC_PRIVATE __libc_/__res_/__open_catalog stubs + 18 abi tests"
+        "close_reason": "shipped: 50 GLIBC_PRIVATE _thread_db_* zeroed placeholders + 7 abi tests; libthread_db introspects no thread layout and gracefully degrades"
       },
       {
-        "id": "bd-cz5v6",
-        "title": "PORT: 16 GLIBC_PRIVATE __libc_alloc_buffer/dynarray/scratch_buffer/early_init + 2 NSS parsers",
+        "id": "bd-pjnky",
+        "title": "PORT: 18 GLIBC_PRIVATE libnsl NIS+/yp internal helpers",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T20:12:56.831632686Z",
+        "closed_at": "2026-04-26T21:40:49.127558603Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 5 alloc_buffer + 5 dynarray (incl SIGABRT-verified at_failure) + 3 scratch_buffer + early_init + 2 NSS parsers + 7 abi tests"
+        "close_reason": "shipped: 18 libnsl GLIBC_PRIVATE NIS+/yp internal helper stubs + 18 abi tests"
       },
       {
-        "id": "bd-p3eqw",
-        "title": "PORT: 17 GLIBC_PRIVATE __nss_* + __internal_*netgrent stubs",
+        "id": "bd-v7fi8",
+        "title": "PORT: 25 libuuid functions (RFC 4122/v1/v3/v4/v5/v6/v7 UUID handling)",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T20:03:45.475155856Z",
+        "closed_at": "2026-04-26T21:32:55.568099726Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 17 GLIBC_PRIVATE __nss_* + __internal_*netgrent stubs (3 netgrent + 4 dispatcher + 5 data helpers + 3 typed lookup2 + 2 line readers) + 7 abi tests"
+        "close_reason": "withdrawn: project hooks gate libuuid out of scope (libuuid is util-linux's separate libuuid.so.1, not part of glibc's libc.so.6 \u2014 frankenlibc-abi only promises the libc surface). Keeping uuid_abi ou\u2026"
       },
       {
-        "id": "bd-2poiz",
-        "title": "PORT: 9 _nss_dns_* NSS plugin lookup stubs",
+        "id": "bd-sy6p6",
+        "title": "PORT: _Exit + 3 _Float128 libm classification helpers",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T19:53:34.537992736Z",
+        "closed_at": "2026-04-26T21:21:33.789421752Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 9 _nss_dns_* lookup stubs (getcanonname + 4 gethostbyname* + 2 gethostbyaddr* + 2 getnetby*) returning NSS_STATUS_NOTFOUND + ENOENT + HOST_NOT_FOUND via shared helper + 4 abi tests"
+        "close_reason": "shipped: _Exit + 3 _Float128 classification helpers landed (impl in 394edad8, tests in fc43485a)"
       },
       {
-        "id": "bd-2vvx3",
-        "title": "PORT: 10 _nss_files_* tail entries (init + initgroups_dyn + 8 parse_*)",
+        "id": "bd-rzecx",
+        "title": "PORT: 21 _nss_systemd_* NSS plugin entrypoints",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T19:46:00.566812724Z",
+        "closed_at": "2026-04-26T21:11:56.235959831Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 10 _nss_files_* tail stubs (init=SUCCESS; initgroups_dyn=NOTFOUND+ENOENT; 8 parse_*=0/skip) + 3 abi tests; nss_files_* parity now fully closed"
+        "close_reason": "shipped: 21 _nss_systemd_* stubs (incl per-thread block/is_blocked) + 8 abi tests"
       },
       {
-        "id": "bd-bxgwb",
-        "title": "PORT: 36 _nss_files_getXX_r NSS plugin lookup stubs",
+        "id": "bd-yz9cj",
+        "title": "PORT: 17 _nss_hesiod_* NSS plugin entrypoints",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T19:37:17.428005257Z",
+        "closed_at": "2026-04-26T21:03:52.631514181Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 36 _nss_files_getXX_r stubs with nss.h-compatible signatures, ENOENT/HOST_NOT_FOUND slots, and focused ABI tests covering every implemented lookup shape"
+        "close_reason": "shipped: 17 _nss_hesiod_* stubs + 7 abi tests"
       },
       {
-        "id": "bd-ukuxr",
-        "title": "PORT: 12 _nss_files_setXX NSS plugin stubs",
+        "id": "bd-ubjtz",
+        "title": "PORT: 15 _nss_compat_* NSS compat plugin entrypoints",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T19:25:42.477650471Z",
+        "closed_at": "2026-04-26T20:56:23.767513972Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 12 _nss_files_setXX stubs (1 no-arg + 10 stayopen + 1 setnetgrent) returning NSS_STATUS_SUCCESS via focused wrappers and ABI tests"
+        "close_reason": "shipped: 15 _nss_compat_* stubs + 6 abi tests"
       },
       {
-        "id": "bd-fsknj",
-        "title": "PORT: 12 _nss_files_endXX NSS plugin stubs",
+        "id": "bd-kapb7",
+        "title": "PORT: 11 GLIBC_PRIVATE internal data symbols + __libc_fcntl64",
         "issue_type": "feature",
         "priority": 2,
-        "closed_at": "2026-04-26T19:17:46.725874295Z",
+        "closed_at": "2026-04-26T20:48:06.947517743Z",
         "closed_by": "ubuntu",
         "labels": [],
-        "close_reason": "shipped: 12 _nss_files_endXX NSS plugin stubs returning NSS_STATUS_SUCCESS, including the nss.h-compatible _nss_files_endnetgrent(state) signature and ABI tests"
+        "close_reason": "shipped: 4 last-mile GLIBC_PRIVATE symbols (__libc_dlerror_result, _itoa_lower_digits, __libc_fcntl64, __libc_mallinfo) + 6 abi tests; the other 8 in the originally-scoped list were already implement\u2026"
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-jb7p1` PORT: 18 GLIBC_PRIVATE __libc_/__res_/__open_catalog stubs (feature, closed 2026-04-26T20:24:11.271990741Z)\n  shipped: 18 GLIBC_PRIVATE __libc_/__res_/__open_catalog stubs + 18 abi tests\n- `bd-cz5v6` PORT: 16 GLIBC_PRIVATE __libc_alloc_buffer/dynarray/scratch_buffer/early_init + 2 NSS parsers (feature, closed 2026-04-26T20:12:56.831632686Z)\n  shipped: 5 alloc_buffer + 5 dynarray (incl SIGABRT-verified at_failure) + 3 scratch_buffer + early_init + 2 NSS parsers + 7 abi tests\n- `bd-p3eqw` PORT: 17 GLIBC_PRIVATE __nss_* + __internal_*netgrent stubs (feature, closed 2026-04-26T20:03:45.475155856Z)\n  shipped: 17 GLIBC_PRIVATE __nss_* + __internal_*netgrent stubs (3 netgrent + 4 dispatcher + 5 data helpers + 3 typed lookup2 + 2 line readers) + 7 abi tests\n- `bd-2poiz` PORT: 9 _nss_dns_* NSS plugin lookup stubs (feature, closed 2026-04-26T19:53:34.537992736Z)\n  shipped: 9 _nss_dns_* lookup stubs (getcanonname + 4 gethostbyname* + 2 gethostbyaddr* + 2 getnetby*) returning NSS_STATUS_NOTFOUND + ENOENT + HOST_NOT_FOUND via shared helper + 4 abi tests\n- `bd-2vvx3` PORT: 10 _nss_files_* tail entries (init + initgroups_dyn + 8 parse_*) (feature, closed 2026-04-26T19:46:00.566812724Z)\n  shipped: 10 _nss_files_* tail stubs (init=SUCCESS; initgroups_dyn=NOTFOUND+ENOENT; 8 parse_*=0/skip) + 3 abi tests; nss_files_* parity now fully closed\n- `bd-bxgwb` PORT: 36 _nss_files_getXX_r NSS plugin lookup stubs (feature, closed 2026-04-26T19:37:17.428005257Z)\n  shipped: 36 _nss_files_getXX_r stubs with nss.h-compatible signatures, ENOENT/HOST_NOT_FOUND slots, and focused ABI tests covering every implemented lookup shape\n- `bd-ukuxr` PORT: 12 _nss_files_setXX NSS plugin stubs (feature, closed 2026-04-26T19:25:42.477650471Z)\n  shipped: 12 _nss_files_setXX stubs (1 no-arg + 10 stayopen + 1 setnetgrent) returning NSS_STATUS_SUCCESS via focused wrappers and ABI tests\n- `bd-fsknj` PORT: 12 _nss_files_endXX NSS plugin stubs (feature, closed 2026-04-26T19:17:46.725874295Z)\n  shipped: 12 _nss_files_endXX NSS plugin stubs returning NSS_STATUS_SUCCESS, including the nss.h-compatible _nss_files_endnetgrent(state) signature and ABI tests",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-qn6q1` PORT: 51 GLIBC_PRIVATE _thread_db_* libthread_db offset/size data symbols (feature, closed 2026-04-26T21:49:47.118366246Z)\n  shipped: 50 GLIBC_PRIVATE _thread_db_* zeroed placeholders + 7 abi tests; libthread_db introspects no thread layout and gracefully degrades\n- `bd-pjnky` PORT: 18 GLIBC_PRIVATE libnsl NIS+/yp internal helpers (feature, closed 2026-04-26T21:40:49.127558603Z)\n  shipped: 18 libnsl GLIBC_PRIVATE NIS+/yp internal helper stubs + 18 abi tests\n- `bd-v7fi8` PORT: 25 libuuid functions (RFC 4122/v1/v3/v4/v5/v6/v7 UUID handling) (feature, closed 2026-04-26T21:32:55.568099726Z)\n  withdrawn: project hooks gate libuuid out of scope (libuuid is util-linux's separate libuuid.so.1, not part of glibc's libc.so.6 \u2014 frankenlibc-abi only promises the libc surface). Keeping uuid_abi ou\u2026\n- `bd-sy6p6` PORT: _Exit + 3 _Float128 libm classification helpers (feature, closed 2026-04-26T21:21:33.789421752Z)\n  shipped: _Exit + 3 _Float128 classification helpers landed (impl in 394edad8, tests in fc43485a)\n- `bd-rzecx` PORT: 21 _nss_systemd_* NSS plugin entrypoints (feature, closed 2026-04-26T21:11:56.235959831Z)\n  shipped: 21 _nss_systemd_* stubs (incl per-thread block/is_blocked) + 8 abi tests\n- `bd-yz9cj` PORT: 17 _nss_hesiod_* NSS plugin entrypoints (feature, closed 2026-04-26T21:03:52.631514181Z)\n  shipped: 17 _nss_hesiod_* stubs + 7 abi tests\n- `bd-ubjtz` PORT: 15 _nss_compat_* NSS compat plugin entrypoints (feature, closed 2026-04-26T20:56:23.767513972Z)\n  shipped: 15 _nss_compat_* stubs + 6 abi tests\n- `bd-kapb7` PORT: 11 GLIBC_PRIVATE internal data symbols + __libc_fcntl64 (feature, closed 2026-04-26T20:48:06.947517743Z)\n  shipped: 4 last-mile GLIBC_PRIVATE symbols (__libc_dlerror_result, _itoa_lower_digits, __libc_fcntl64, __libc_mallinfo) + 6 abi tests; the other 8 in the originally-scoped list were already implement\u2026",
     "summary": {
-      "closed_total": 1384,
+      "closed_total": 1393,
       "selected": 8,
       "invalid_rows": 0
     }
