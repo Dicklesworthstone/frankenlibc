@@ -11,11 +11,13 @@ use std::time::Instant;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::startup_helpers::{
     AT_NULL, MAX_STARTUP_SCAN, SecureModeState, StartupCheckpoint, StartupInvariants,
     build_invariants, classify_secure_mode, normalize_argc, startup_path_respects_dag,
 };
+use crate::util::scan_c_string;
 
 type MainFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) -> c_int;
 type HookFn = unsafe extern "C" fn();
@@ -28,6 +30,8 @@ type HostStartMainFn = unsafe extern "C" fn(
     Option<HookFn>,
     *mut c_void,
 ) -> c_int;
+
+const PROGRAM_NAME_SCAN_LIMIT: usize = MAX_STARTUP_SCAN * 32;
 
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
@@ -58,6 +62,29 @@ pub static program_invocation_short_name: AtomicPtr<c_char> = AtomicPtr::new(std
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static __progname: AtomicPtr<c_char> = AtomicPtr::new(std::ptr::null_mut());
 
+#[inline]
+fn program_name_scan_bound(ptr: *const c_char) -> usize {
+    known_remaining(ptr as usize)
+        .map(|remaining| remaining.min(PROGRAM_NAME_SCAN_LIMIT))
+        .unwrap_or(PROGRAM_NAME_SCAN_LIMIT)
+}
+
+unsafe fn basename_within_c_string(ptr: *const c_char) -> Option<*mut c_char> {
+    let (len, terminated) = unsafe { scan_c_string(ptr, Some(program_name_scan_bound(ptr))) };
+    if !terminated {
+        return None;
+    }
+
+    // SAFETY: `scan_c_string` observed a terminator at `len`, so the preceding
+    // byte range is readable under the same bound.
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    let offset = bytes
+        .iter()
+        .rposition(|&byte| byte == b'/')
+        .map_or(0, |idx| idx.saturating_add(1));
+    Some(unsafe { (ptr as *mut c_char).add(offset) })
+}
+
 /// Set program name globals from argv[0] during startup.
 pub(crate) fn init_program_name(argv: *mut *mut c_char) {
     if argv.is_null() {
@@ -68,20 +95,12 @@ pub(crate) fn init_program_name(argv: *mut *mut c_char) {
     if argv0.is_null() {
         return;
     }
-    program_invocation_name.store(argv0, Ordering::Release);
 
-    // Find basename (last component after '/')
-    let mut base = argv0;
-    let mut p = argv0;
-    // SAFETY: scanning null-terminated C string from argv[0]
-    unsafe {
-        while *p != 0 {
-            if *p == b'/' as c_char {
-                base = p.add(1);
-            }
-            p = p.add(1);
-        }
-    }
+    let Some(base) = (unsafe { basename_within_c_string(argv0) }) else {
+        return;
+    };
+
+    program_invocation_name.store(argv0, Ordering::Release);
     program_invocation_short_name.store(base, Ordering::Release);
     __progname.store(base, Ordering::Release);
     // SAFETY: startup publishes caller-owned argv[0] as glibc-compatible
@@ -489,7 +508,8 @@ unsafe fn delegate_to_host_libc_start_main(
     }
 
     // SAFETY: symbol is expected to match HostStartMainFn ABI and signature.
-    let host_fn: HostStartMainFn = unsafe { std::mem::transmute(ptr) };
+    let host_fn: HostStartMainFn =
+        unsafe { std::mem::transmute::<*mut c_void, HostStartMainFn>(ptr) };
     // SAFETY: forwards original startup ABI arguments to host libc.
     Some(unsafe { host_fn(wrapped_main, argc, ubp_av, init, fini, rtld_fini, stack_end) })
 }
@@ -1137,19 +1157,9 @@ pub unsafe extern "C" fn setprogname(progname: *const c_char) {
         return;
     }
 
-    // Walk to the basename (last `/` + 1) without dereferencing the
-    // pointer beyond the C-string contract.
-    let mut base = progname as *mut c_char;
-    let mut p = progname;
-    // SAFETY: caller contract guarantees `progname` is a valid C string.
-    unsafe {
-        while *p != 0 {
-            if *p == b'/' as c_char {
-                base = (p as *mut c_char).add(1);
-            }
-            p = p.add(1);
-        }
-    }
+    let Some(base) = (unsafe { basename_within_c_string(progname) }) else {
+        return;
+    };
 
     program_invocation_short_name.store(base, Ordering::Release);
     __progname.store(base, Ordering::Release);

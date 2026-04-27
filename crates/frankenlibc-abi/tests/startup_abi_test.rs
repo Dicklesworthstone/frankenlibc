@@ -484,6 +484,48 @@ fn phase0_deep_path_extracts_basename() {
     assert_eq!(short.to_bytes(), b"prog");
 }
 
+#[test]
+fn phase0_skips_unterminated_program_name_globals() {
+    let _lock = STARTUP_TEST_LOCK.lock().unwrap();
+    program_invocation_name.store(ptr::null_mut(), Ordering::Release);
+    program_invocation_short_name.store(ptr::null_mut(), Ordering::Release);
+    __progname.store(ptr::null_mut(), Ordering::Release);
+
+    let raw = malloc_tracked_unterminated(b"/tmp/unterminated-phase0-progname");
+    let mut argv_env = vec![raw, ptr::null_mut(), ptr::null_mut()];
+    let mut auxv = vec![AT_NULL, 0usize];
+
+    let rc = unsafe {
+        __frankenlibc_startup_phase0(
+            Some(test_main),
+            1,
+            argv_env.as_mut_ptr(),
+            None,
+            None,
+            None,
+            auxv.as_mut_ptr().cast::<c_void>(),
+        )
+    };
+
+    assert_eq!(rc, 42, "phase0 should still invoke main");
+    assert!(
+        program_invocation_name.load(Ordering::Acquire).is_null(),
+        "unterminated argv[0] must not be published as program_invocation_name"
+    );
+    assert!(
+        program_invocation_short_name
+            .load(Ordering::Acquire)
+            .is_null(),
+        "unterminated argv[0] must not be published as short name"
+    );
+    assert!(
+        __progname.load(Ordering::Acquire).is_null(),
+        "unterminated argv[0] must not be published as __progname"
+    );
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
 // ---------------------------------------------------------------------------
 // __cxa_thread_atexit_impl — edge cases
 // ---------------------------------------------------------------------------
@@ -582,6 +624,17 @@ fn cstr_lifetime(s: &'static [u8]) -> *const c_char {
     s.as_ptr() as *const c_char
 }
 
+fn malloc_tracked_unterminated(bytes: &[u8]) -> *mut c_char {
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        let usable = frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast()).max(bytes.len());
+        std::ptr::write_bytes(raw, 0x7f, usable);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len());
+        raw.cast()
+    }
+}
+
 #[test]
 fn getprogname_returns_nonnull_even_when_unset() {
     let _g = STARTUP_TEST_LOCK.lock().unwrap();
@@ -656,6 +709,28 @@ fn setprogname_null_is_no_op() {
     let p = unsafe { getprogname() };
     let bytes = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
     assert_eq!(bytes, b"sentinel");
+}
+
+#[test]
+fn setprogname_ignores_tracked_unterminated_name() {
+    let _g = STARTUP_TEST_LOCK.lock().unwrap();
+    let buf: &'static [u8] = b"sentinel\0";
+    unsafe { setprogname(cstr_lifetime(buf)) };
+    let before = program_invocation_short_name.load(Ordering::Acquire);
+
+    let raw = malloc_tracked_unterminated(b"/tmp/unterminated-progname");
+    unsafe { setprogname(raw) };
+
+    let after = program_invocation_short_name.load(Ordering::Acquire);
+    assert_eq!(
+        before, after,
+        "unterminated setprogname input must not replace the cached pointer"
+    );
+    let p = unsafe { getprogname() };
+    let bytes = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
+    assert_eq!(bytes, b"sentinel");
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
 }
 
 #[test]
