@@ -92,6 +92,19 @@ unsafe fn assert_tracked_bytes_eq(raw: *const c_void, len: usize, expected: u8) 
     );
 }
 
+#[repr(align(8))]
+struct AlignedShadowStorage([u8; 256]);
+
+impl AlignedShadowStorage {
+    fn zeroed() -> Self {
+        Self([0; 256])
+    }
+
+    fn as_mut_void(&mut self) -> *mut c_void {
+        self.0.as_mut_ptr().cast()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // getpwnam
 // ---------------------------------------------------------------------------
@@ -713,40 +726,117 @@ fn getpwuid_checks_home_dir() {
 }
 
 // ---------------------------------------------------------------------------
-// shadow password stubs (getspnam, getspnam_r, getspent, getspent_r)
+// shadow password ABI (getspnam, getspnam_r, getspent, getspent_r)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn getspnam_returns_null_stub() {
+fn getspnam_returns_null_for_absent_user() {
     use frankenlibc_abi::pwd_abi::getspnam;
-    let name = CString::new("root").unwrap();
+    let name = CString::new("frankenlibc_shadow_absent_user_9f3b2a").unwrap();
     let sp = unsafe { getspnam(name.as_ptr()) };
-    assert!(sp.is_null(), "getspnam should return null (stub)");
+    assert!(sp.is_null(), "getspnam should return null for not found");
 }
 
 #[test]
-fn getspnam_r_returns_enoent_stub() {
+fn getspnam_r_returns_null_for_absent_user() {
     use frankenlibc_abi::pwd_abi::getspnam_r;
-    let name = CString::new("root").unwrap();
-    let mut spwd_storage = [0u8; 256];
+    let name = CString::new("frankenlibc_shadow_absent_user_9f3b2a").unwrap();
+    let mut spwd_storage = AlignedShadowStorage::zeroed();
     let mut buf = vec![0u8; 1024];
     let mut result: *mut c_void = ptr::null_mut();
 
     let rc = unsafe {
         getspnam_r(
             name.as_ptr(),
-            spwd_storage.as_mut_ptr() as *mut c_void,
+            spwd_storage.as_mut_void(),
             buf.as_mut_ptr() as *mut c_char,
             buf.len(),
             &mut result,
         )
     };
-    assert!(result.is_null(), "getspnam_r result should be null (stub)");
+    assert!(result.is_null(), "getspnam_r result should be null");
     // rc may be 0 (not found), ENOENT, or EACCES (no /etc/shadow access)
     assert!(
         rc == 0 || rc == libc::ENOENT || rc == libc::EACCES,
         "unexpected rc: {rc}"
     );
+}
+
+#[test]
+fn getspnam_r_rejects_tracked_short_result_slot_before_write() {
+    use frankenlibc_abi::pwd_abi::getspnam_r;
+    let name = CString::new("root").unwrap();
+    unsafe {
+        let mut spwd_storage = AlignedShadowStorage::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let raw_len = std::mem::size_of::<*mut c_void>() - 1;
+        let raw = tracked_zeroed_bytes(raw_len);
+        fill_tracked_bytes(raw, raw_len, 0xA5);
+        assert_known_short(raw, std::mem::size_of::<*mut c_void>());
+
+        let rc = getspnam_r(
+            name.as_ptr(),
+            spwd_storage.as_mut_void(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            raw.cast::<*mut c_void>(),
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert_tracked_bytes_eq(raw, raw_len, 0xA5);
+        free_tracked(raw);
+    }
+}
+
+#[test]
+fn getspnam_r_rejects_tracked_misaligned_result_slot_before_write() {
+    use frankenlibc_abi::pwd_abi::getspnam_r;
+    let name = CString::new("root").unwrap();
+    unsafe {
+        let mut spwd_storage = AlignedShadowStorage::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let raw_len = std::mem::size_of::<*mut c_void>() + 1;
+        let raw = tracked_zeroed_bytes(raw_len);
+        fill_tracked_bytes(raw, raw_len, 0xA5);
+        let result = raw.cast::<u8>().add(1).cast::<*mut c_void>();
+        assert_ne!((result as usize) % std::mem::align_of::<*mut c_void>(), 0);
+
+        let rc = getspnam_r(
+            name.as_ptr(),
+            spwd_storage.as_mut_void(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert_tracked_bytes_eq(raw, raw_len, 0xA5);
+        free_tracked(raw);
+    }
+}
+
+#[test]
+fn getspnam_r_clears_result_before_rejecting_tracked_short_spwd_slot() {
+    use frankenlibc_abi::pwd_abi::getspnam_r;
+    let name = CString::new("root").unwrap();
+    unsafe {
+        let raw = tracked_zeroed_bytes(std::mem::size_of::<*mut c_void>() - 1);
+        assert_known_short(raw, std::mem::size_of::<*mut c_void>());
+        let mut buf = vec![0u8; 1024];
+        let mut result = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+
+        let rc = getspnam_r(
+            name.as_ptr(),
+            raw,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+        free_tracked(raw);
+    }
 }
 
 #[test]
@@ -756,13 +846,13 @@ fn getspnam_r_rejects_unterminated_name() {
         let name = malloc(4).cast::<u8>();
         assert!(!name.is_null());
         std::ptr::copy_nonoverlapping(b"root".as_ptr(), name, 4);
-        let mut spwd_storage = [0u8; 256];
+        let mut spwd_storage = AlignedShadowStorage::zeroed();
         let mut buf = vec![0u8; 1024];
         let mut result: *mut c_void = ptr::null_mut();
 
         let rc = getspnam_r(
             name.cast(),
-            spwd_storage.as_mut_ptr() as *mut c_void,
+            spwd_storage.as_mut_void(),
             buf.as_mut_ptr() as *mut c_char,
             buf.len(),
             &mut result,
@@ -774,29 +864,101 @@ fn getspnam_r_rejects_unterminated_name() {
 }
 
 #[test]
-fn getspent_returns_null_stub() {
+fn getspent_returns_null_without_cache() {
     use frankenlibc_abi::pwd_abi::getspent;
     let sp = unsafe { getspent() };
-    assert!(sp.is_null(), "getspent should return null (stub)");
+    assert!(sp.is_null(), "getspent should return null without cache");
 }
 
 #[test]
-fn getspent_r_returns_enoent_stub() {
+fn getspent_r_returns_enoent_without_cache() {
     use frankenlibc_abi::pwd_abi::getspent_r;
-    let mut spwd_storage = [0u8; 256];
+    let mut spwd_storage = AlignedShadowStorage::zeroed();
     let mut buf = vec![0u8; 1024];
     let mut result: *mut c_void = ptr::null_mut();
 
     let rc = unsafe {
         getspent_r(
-            spwd_storage.as_mut_ptr() as *mut c_void,
+            spwd_storage.as_mut_void(),
             buf.as_mut_ptr() as *mut c_char,
             buf.len(),
             &mut result,
         )
     };
-    assert!(result.is_null(), "getspent_r result should be null (stub)");
+    assert!(result.is_null(), "getspent_r result should be null");
     assert!(rc == 0 || rc == libc::ENOENT, "unexpected rc: {rc}");
+}
+
+#[test]
+fn getspent_r_rejects_tracked_short_result_slot_before_write() {
+    use frankenlibc_abi::pwd_abi::getspent_r;
+    unsafe {
+        let mut spwd_storage = AlignedShadowStorage::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let raw_len = std::mem::size_of::<*mut c_void>() - 1;
+        let raw = tracked_zeroed_bytes(raw_len);
+        fill_tracked_bytes(raw, raw_len, 0xA5);
+        assert_known_short(raw, std::mem::size_of::<*mut c_void>());
+
+        let rc = getspent_r(
+            spwd_storage.as_mut_void(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            raw.cast::<*mut c_void>(),
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert_tracked_bytes_eq(raw, raw_len, 0xA5);
+        free_tracked(raw);
+    }
+}
+
+#[test]
+fn getspent_r_rejects_tracked_misaligned_result_slot_before_write() {
+    use frankenlibc_abi::pwd_abi::getspent_r;
+    unsafe {
+        let mut spwd_storage = AlignedShadowStorage::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let raw_len = std::mem::size_of::<*mut c_void>() + 1;
+        let raw = tracked_zeroed_bytes(raw_len);
+        fill_tracked_bytes(raw, raw_len, 0xA5);
+        let result = raw.cast::<u8>().add(1).cast::<*mut c_void>();
+        assert_ne!((result as usize) % std::mem::align_of::<*mut c_void>(), 0);
+
+        let rc = getspent_r(
+            spwd_storage.as_mut_void(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert_tracked_bytes_eq(raw, raw_len, 0xA5);
+        free_tracked(raw);
+    }
+}
+
+#[test]
+fn getspent_r_clears_result_before_rejecting_tracked_misaligned_spwd_slot() {
+    use frankenlibc_abi::pwd_abi::getspent_r;
+    unsafe {
+        let raw = tracked_zeroed_bytes(256);
+        let spbuf = raw.cast::<u8>().add(1).cast::<c_void>();
+        assert_ne!((spbuf as usize) % std::mem::align_of::<*mut c_void>(), 0);
+        let mut buf = vec![0u8; 1024];
+        let mut result = std::ptr::NonNull::<c_void>::dangling().as_ptr();
+
+        let rc = getspent_r(
+            spbuf,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+        free_tracked(raw);
+    }
 }
 
 // ---------------------------------------------------------------------------

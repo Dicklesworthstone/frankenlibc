@@ -845,7 +845,14 @@ pub unsafe extern "C" fn getspnam_r(
     if name.is_null() || spbuf.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
+    if !tracked_object_fits(result as *const *mut c_void) {
+        return libc::EINVAL;
+    }
+
     unsafe { *result = ptr::null_mut() };
+    if !tracked_object_fits(spbuf.cast::<SpwdEntry>()) {
+        return libc::EINVAL;
+    }
 
     let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
         return libc::EINVAL;
@@ -867,8 +874,14 @@ pub unsafe extern "C" fn getspnam_r(
         if let Some(colon) = line.find(':')
             && &line[..colon] == name_str
         {
-            let rc =
-                unsafe { fill_shadow_entry_caller(line, spbuf as *mut SpwdEntry, buf, buflen) };
+            let rc = unsafe {
+                fill_shadow_entry_caller(
+                    line,
+                    spbuf as *mut SpwdEntry,
+                    buf,
+                    effective_buffer_len(buf, buflen),
+                )
+            };
             if rc == 0 {
                 unsafe { *result = spbuf };
             }
@@ -940,7 +953,14 @@ pub unsafe extern "C" fn getspent_r(
     if spbuf.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
+    if !tracked_object_fits(result as *const *mut c_void) {
+        return libc::EINVAL;
+    }
+
     unsafe { *result = ptr::null_mut() };
+    if !tracked_object_fits(spbuf.cast::<SpwdEntry>()) {
+        return libc::EINVAL;
+    }
 
     SHADOW_CACHE.with(|cache| {
         let cache = cache.borrow();
@@ -952,8 +972,14 @@ pub unsafe extern "C" fn getspent_r(
             let line = &cache[*idx];
             *idx += 1;
 
-            let rc =
-                unsafe { fill_shadow_entry_caller(line, spbuf as *mut SpwdEntry, buf, buflen) };
+            let rc = unsafe {
+                fill_shadow_entry_caller(
+                    line,
+                    spbuf as *mut SpwdEntry,
+                    buf,
+                    effective_buffer_len(buf, buflen),
+                )
+            };
             if rc == libc::ERANGE {
                 // Rewind so caller can retry with a larger buffer.
                 *idx -= 1;
