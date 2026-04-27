@@ -7670,14 +7670,13 @@ pub unsafe extern "C" fn unvis(
 // ---------------------------------------------------------------------------
 
 /// Read the NUL-terminated `extra` argument shared by the svis(3)
-/// family. Returns an empty slice for NULL (caller's choice to skip
-/// extras) and never panics.
-unsafe fn extras_slice<'a>(extra: *const c_char) -> &'a [u8] {
+/// family. Returns an empty slice for NULL and `None` when a tracked
+/// non-NULL string has no terminator inside its allocation.
+unsafe fn extras_slice<'a>(extra: *const c_char) -> Option<&'a [u8]> {
     if extra.is_null() {
-        return &[];
+        return Some(&[]);
     }
-    let len = unsafe { libc::strlen(extra) };
-    unsafe { std::slice::from_raw_parts(extra as *const u8, len) }
+    unsafe { bounded_c_str_bytes(extra) }
 }
 
 /// NetBSD `svis(dst, c, flags, nextc, extra)` — sibling of [`vis`]
@@ -7701,7 +7700,9 @@ pub unsafe extern "C" fn svis(
     if dst.is_null() {
         return std::ptr::null_mut();
     }
-    let extras = unsafe { extras_slice(extra) };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return std::ptr::null_mut();
+    };
     let mut buf: Vec<u8> = Vec::with_capacity(8);
     frankenlibc_core::stdio::vis::encode_byte_with_extra(c as u8, flags as u32, extras, &mut buf);
     unsafe {
@@ -7731,7 +7732,9 @@ pub unsafe extern "C" fn snvis(
     if dst.is_null() || dlen == 0 {
         return std::ptr::null_mut();
     }
-    let extras = unsafe { extras_slice(extra) };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return std::ptr::null_mut();
+    };
     let mut buf: Vec<u8> = Vec::with_capacity(8);
     frankenlibc_core::stdio::vis::encode_byte_with_extra(c as u8, flags as u32, extras, &mut buf);
     if buf.len() + 1 > dlen {
@@ -7766,7 +7769,9 @@ pub unsafe extern "C" fn strsvis(
     let Some(src_slice) = (unsafe { bounded_c_str_bytes(src) }) else {
         return -1;
     };
-    let extras = unsafe { extras_slice(extra) };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
     let encoded =
         frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
     unsafe {
@@ -7797,7 +7802,9 @@ pub unsafe extern "C" fn strsnvis(
     let Some(src_slice) = (unsafe { bounded_c_str_bytes(src) }) else {
         return -1;
     };
-    let extras = unsafe { extras_slice(extra) };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
     let encoded =
         frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
     if encoded.len() + 1 > dlen {
@@ -7832,7 +7839,9 @@ pub unsafe extern "C" fn strsvisx(
         return -1;
     }
     let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
-    let extras = unsafe { extras_slice(extra) };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
     let encoded =
         frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
     unsafe {
@@ -7863,7 +7872,9 @@ pub unsafe extern "C" fn strsnvisx(
         return -1;
     }
     let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
-    let extras = unsafe { extras_slice(extra) };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
     let encoded =
         frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
     if encoded.len() + 1 > dlen {
@@ -8037,7 +8048,9 @@ pub unsafe extern "C" fn strsenvisx(
     }
     let merged_flags = (flags as u32) | vis_options_from_env();
     let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
-    let extras = unsafe { extras_slice(extra) };
+    let Some(extras) = (unsafe { extras_slice(extra) }) else {
+        return -1;
+    };
     let encoded =
         frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, merged_flags, extras);
     if encoded.len() + 1 > dlen {

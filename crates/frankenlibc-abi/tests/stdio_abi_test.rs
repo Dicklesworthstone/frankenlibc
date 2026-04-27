@@ -4688,6 +4688,18 @@ fn svis_null_dst_returns_null() {
 }
 
 #[test]
+fn svis_rejects_tracked_unterminated_extra() {
+    let extra = unsafe { tracked_bytes_without_nul(b"#") };
+    let mut buf = [0 as c_char; 8];
+
+    let end = unsafe { svis(buf.as_mut_ptr(), b'#' as c_int, 0, 0, extra.cast_const()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(extra.cast::<c_void>()) };
+
+    assert!(end.is_null());
+}
+
+#[test]
 fn snvis_returns_null_on_overflow() {
     let extra = c"#";
     let mut buf = [0 as c_char; 2];
@@ -4728,6 +4740,19 @@ fn strsvis_null_extras_matches_strvis() {
     let nb = unsafe { strvis(b.as_mut_ptr(), src.as_ptr(), 0) };
     assert_eq!(na, nb);
     assert_eq!(svisx_collect(&a, na), svisx_collect(&b, nb));
+}
+
+#[test]
+fn strsvis_rejects_tracked_unterminated_extra() {
+    let src = c"a#b";
+    let extra = unsafe { tracked_bytes_without_nul(b"#") };
+    let mut dst = [0 as c_char; 32];
+
+    let n = unsafe { strsvis(dst.as_mut_ptr(), src.as_ptr(), 0, extra.cast_const()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(extra.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
 }
 
 #[test]
@@ -5225,6 +5250,33 @@ fn strsenvisx_null_args_return_minus_one() {
         },
         -1
     );
+}
+
+#[test]
+fn strsenvisx_rejects_tracked_unterminated_extra() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(None);
+    let payload: &[u8] = b"a#";
+    let extra = unsafe { tracked_bytes_without_nul(b"#") };
+    let mut buf = [0 as c_char; 16];
+    let mut cerr: c_int = 7;
+
+    let n = unsafe {
+        strsenvisx(
+            buf.as_mut_ptr(),
+            buf.len(),
+            payload.as_ptr().cast::<c_char>(),
+            payload.len(),
+            0,
+            extra.cast_const(),
+            &mut cerr,
+        )
+    };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(extra.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+    assert_eq!(cerr, 7, "invalid extra should fail before writing cerr");
 }
 
 // ---------------------------------------------------------------------------
