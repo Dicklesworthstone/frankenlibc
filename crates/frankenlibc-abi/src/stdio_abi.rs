@@ -6219,7 +6219,12 @@ pub unsafe extern "C" fn fmemopen(
     }
 
     // Parse mode string.
-    let mode_bytes = unsafe { CStr::from_ptr(mode) }.to_bytes();
+    let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
+    if !mode_terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
     let Some(open_flags) = parse_mode(mode_bytes) else {
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
@@ -6370,8 +6375,13 @@ pub unsafe extern "C" fn fopencookie(
         return std::ptr::null_mut();
     }
 
-    // Parse mode string
-    let mode_bytes = unsafe { CStr::from_ptr(mode) }.to_bytes();
+    // Parse mode string.
+    let (mode_len, mode_terminated) = unsafe { scan_c_str_len(mode, None) };
+    if !mode_terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return std::ptr::null_mut();
+    }
+    let mode_bytes = unsafe { std::slice::from_raw_parts(mode.cast::<u8>(), mode_len) };
     let Some(open_flags) = parse_mode(mode_bytes) else {
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();

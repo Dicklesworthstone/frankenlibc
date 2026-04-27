@@ -443,6 +443,39 @@ fn fwrite_then_fread_round_trip_matches_bytes() {
 }
 
 #[test]
+fn fopencookie_rejects_tracked_unterminated_mode() {
+    let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
+    assert!(!mode.is_null());
+    unsafe { *mode = b'w' as c_char };
+    let funcs = CookieIoFuncs {
+        read: None,
+        write: None,
+        seek: None,
+        close: None,
+    };
+
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+    let stream = unsafe {
+        fopencookie(
+            std::ptr::null_mut(),
+            mode.cast_const(),
+            (&funcs as *const CookieIoFuncs).cast::<c_void>(),
+        )
+    };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(mode.cast::<c_void>()) };
+
+    assert!(
+        stream.is_null(),
+        "fopencookie should reject unterminated mode"
+    );
+    assert_eq!(err, libc::EINVAL, "unterminated mode should set EINVAL");
+}
+
+#[test]
 #[ignore = "requires LD_PRELOAD: glibc rejects NativeFile vtable in unit tests"]
 fn fopencookie_routes_io_callbacks_for_read_write_seek_close() {
     let cookie = Box::into_raw(Box::new(CookieState::default()));
@@ -2233,6 +2266,25 @@ fn fmemopen_write_creates_stream() {
         assert_eq!(unsafe { fclose(stream) }, 0);
         assert!(verify_native_file(stream).is_none());
     }
+}
+
+#[test]
+fn fmemopen_rejects_tracked_unterminated_mode() {
+    let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
+    assert!(!mode.is_null());
+    unsafe { *mode = b'w' as c_char };
+    let mut buf = [0u8; 8];
+
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+    let stream = unsafe { fmemopen(buf.as_mut_ptr().cast(), buf.len(), mode.cast_const()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(mode.cast::<c_void>()) };
+
+    assert!(stream.is_null(), "fmemopen should reject unterminated mode");
+    assert_eq!(err, libc::EINVAL, "unterminated mode should set EINVAL");
 }
 
 #[test]
