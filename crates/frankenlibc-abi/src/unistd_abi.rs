@@ -16268,14 +16268,17 @@ pub unsafe extern "C" fn getnetbyname(name: *const c_char) -> *mut c_void {
     if name.is_null() {
         return std::ptr::null_mut();
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
     let content = match std::fs::read(NETWORKS_PATH) {
         Ok(c) => c,
         Err(_) => return std::ptr::null_mut(),
     };
     for line in content.split(|&b| b == b'\n') {
         if let Some((pname, net)) = parse_networks_line(line)
-            && pname.eq_ignore_ascii_case(needle)
+            && pname.eq_ignore_ascii_case(&needle)
         {
             return NET_ITER.with(|cell| {
                 let state = unsafe { &mut *cell.get() };
@@ -16660,8 +16663,11 @@ pub unsafe extern "C" fn wctrans(property: *const c_char) -> WctransT {
     if property.is_null() {
         return 0;
     }
-    let s = unsafe { CStr::from_ptr(property) };
-    match s.to_bytes() {
+    let Some(property_bytes) = (unsafe { read_c_string_bytes(property) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 0;
+    };
+    match property_bytes.as_slice() {
         b"toupper" => 1,
         b"tolower" => 2,
         _ => 0,

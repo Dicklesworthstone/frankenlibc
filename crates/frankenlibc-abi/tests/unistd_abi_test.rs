@@ -84,17 +84,17 @@ use frankenlibc_abi::unistd_abi::{
     gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname, getaliasbyname_r,
     getaliasent, getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile,
     getfsspec, getgid, gethostbyname2, gethostbyname2_r, gethostent_r, gethostname, getnetbyaddr_r,
-    getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid, getppid, getprotobyname_r,
-    getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r, getttyent, getttynam,
-    getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64, gsignal,
-    isatty, link, logout, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd,
-    nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise, process_mrelease,
-    process_vm_readv, process_vm_writev, read, readlink, readpassphrase, rename, rmdir, sem_open,
-    sem_unlink, semctl, semop, setfsent, sethostent, setnetent, setnetgrent, setns, setproctitle,
-    setproctitle_init, setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset,
-    sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask,
-    uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp,
-    wordfree as abi_wordfree, write,
+    getnetbyname, getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid, getppid,
+    getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r,
+    getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64,
+    globfree64, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv,
+    msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise,
+    process_mrelease, process_vm_readv, process_vm_writev, read, readlink, readpassphrase, rename,
+    rmdir, sem_open, sem_unlink, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
+    setns, setproctitle, setproctitle_init, setprotoent, setservent, setttyent, setutent, shmdt,
+    sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf,
+    syslog, truncate, umask, uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname, wctrans,
+    wordexp as abi_wordexp, wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -4553,6 +4553,36 @@ fn getnet_r_wrappers_match_host_success_and_miss_shapes() {
         result.is_null(),
         "missing network address lookup should return rc=0 with NULL result"
     );
+}
+
+#[test]
+fn getnetbyname_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"loopback");
+
+    unsafe {
+        *__errno_location() = 0;
+        let result = getnetbyname(raw_name);
+        let err = *__errno_location();
+
+        assert!(result.is_null());
+        assert_eq!(err, libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+}
+
+#[test]
+fn wctrans_rejects_tracked_unterminated_property() {
+    let raw_property = malloc_tracked_unterminated(b"toupper");
+
+    unsafe {
+        *__errno_location() = 0;
+        let desc = wctrans(raw_property);
+        let err = *__errno_location();
+
+        assert_eq!(desc, 0);
+        assert_eq!(err, libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(raw_property.cast());
+    }
 }
 
 #[test]
