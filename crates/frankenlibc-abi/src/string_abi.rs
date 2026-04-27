@@ -1434,18 +1434,19 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
             return len;
         }
     }
-    if !runtime_policy::mode().heals_enabled() {
+
+    let rem = known_remaining(s as usize);
+    if !runtime_policy::mode().heals_enabled() && rem.is_none() {
         let dispatch =
             select_string_simd_dispatch(SimdStringOperation::Strlen, s as usize, s as usize, 64);
         return unsafe { raw_lane_strlen_bytes(s, dispatch.lane_bytes) };
     }
 
-    let rem = known_remaining(s as usize);
     let aligned = (s as usize) & 0x7 == 0;
     let recent_page = rem.is_some();
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
 
-    let (mode, decision) = runtime_policy::decide(
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
         0,
@@ -1464,9 +1465,7 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         return 0;
     }
 
-    if (mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)))
-        && let Some(limit) = rem
-    {
+    if let Some(limit) = rem {
         let dispatch = select_string_simd_dispatch(
             SimdStringOperation::Strlen,
             s as usize,

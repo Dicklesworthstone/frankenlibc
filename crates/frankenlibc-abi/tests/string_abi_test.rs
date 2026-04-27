@@ -317,6 +317,17 @@ fn strlen_measures_correctly() {
 }
 
 #[test]
+fn strlen_bounds_tracked_unterminated_input() {
+    unsafe {
+        let raw = malloc_unterminated(b"hello");
+
+        assert_eq!(strlen(raw), 5);
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
 fn strlen_dispatch_prefers_avx2_for_wide_strings() {
     with_simd_mask(string_simd_feature_mask_avx2_for_tests(), || {
         let buf = [b'x'; 96];
