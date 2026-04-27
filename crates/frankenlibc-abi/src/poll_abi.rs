@@ -4,7 +4,7 @@
 //! All functions route through the membrane RuntimeMathKernel under
 //! `ApiFamily::Poll`.
 
-use std::ffi::c_int;
+use std::ffi::{c_int, c_void};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::poll as poll_core;
@@ -13,7 +13,56 @@ use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+
+#[inline]
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    len == 0
+        || (!ptr.is_null()
+            && known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining))
+}
+
+#[inline]
+fn tracked_array_fits<T>(ptr: *const T, count: usize) -> bool {
+    core::mem::size_of::<T>()
+        .checked_mul(count)
+        .is_some_and(|bytes| tracked_region_fits(ptr.cast::<c_void>(), bytes))
+}
+
+#[inline]
+fn tracked_object_fits<T>(ptr: *const T) -> bool {
+    tracked_array_fits(ptr, 1)
+}
+
+#[inline]
+fn select_fd_set_bytes(nfds: c_int) -> Option<usize> {
+    if nfds <= 0 {
+        return Some(0);
+    }
+    let nfds = usize::try_from(nfds).ok()?;
+    let fd_mask_bits = core::mem::size_of::<libc::c_long>() * u8::BITS as usize;
+    nfds.div_ceil(fd_mask_bits)
+        .checked_mul(core::mem::size_of::<libc::c_long>())
+}
+
+#[inline]
+fn tracked_fd_set_fits(ptr: *const libc::fd_set, nfds: c_int) -> bool {
+    ptr.is_null()
+        || select_fd_set_bytes(nfds)
+            .is_some_and(|bytes| tracked_region_fits(ptr.cast::<c_void>(), bytes))
+}
+
+#[inline]
+fn tracked_optional_object_fits<T>(ptr: *const T) -> bool {
+    ptr.is_null() || tracked_object_fits(ptr)
+}
+
+#[inline]
+fn reject_efault() -> c_int {
+    unsafe { set_abi_errno(errno::EFAULT) };
+    -1
+}
 
 // ---------------------------------------------------------------------------
 // poll
@@ -46,6 +95,11 @@ pub unsafe extern "C" fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeou
     } else {
         nfds
     };
+
+    if !tracked_array_fits(fds, actual_nfds as usize) {
+        runtime_policy::observe(ApiFamily::Poll, decision.profile, 20, true);
+        return reject_efault();
+    }
 
     // SYS_poll doesn't exist on aarch64; use SYS_ppoll with timeout conversion.
     #[cfg(target_arch = "x86_64")]
@@ -126,6 +180,21 @@ pub unsafe extern "C" fn ppoll(
         nfds
     };
 
+    if !tracked_array_fits(fds, actual_nfds as usize)
+        || !tracked_optional_object_fits(timeout_ts)
+        || !tracked_region_fits(
+            sigmask.cast::<c_void>(),
+            if sigmask.is_null() {
+                0
+            } else {
+                core::mem::size_of::<libc::c_ulong>()
+            },
+        )
+    {
+        runtime_policy::observe(ApiFamily::Poll, decision.profile, 25, true);
+        return reject_efault();
+    }
+
     // Use SYS_ppoll with sigset size parameter.
     let sigset_size = core::mem::size_of::<libc::c_ulong>();
     let (rc, adverse) = match unsafe {
@@ -190,6 +259,15 @@ pub unsafe extern "C" fn select(
     } else {
         nfds
     };
+
+    if !tracked_fd_set_fits(readfds.cast_const(), actual_nfds)
+        || !tracked_fd_set_fits(writefds.cast_const(), actual_nfds)
+        || !tracked_fd_set_fits(exceptfds.cast_const(), actual_nfds)
+        || !tracked_optional_object_fits(timeout.cast_const())
+    {
+        runtime_policy::observe(ApiFamily::Poll, decision.profile, 25, true);
+        return reject_efault();
+    }
 
     // SYS_select doesn't exist on aarch64; use SYS_pselect6 with timeout conversion.
     #[cfg(target_arch = "x86_64")]
@@ -293,6 +371,23 @@ pub unsafe extern "C" fn pselect(
         nfds
     };
 
+    if !tracked_fd_set_fits(readfds.cast_const(), actual_nfds)
+        || !tracked_fd_set_fits(writefds.cast_const(), actual_nfds)
+        || !tracked_fd_set_fits(exceptfds.cast_const(), actual_nfds)
+        || !tracked_optional_object_fits(timeout)
+        || !tracked_region_fits(
+            sigmask.cast::<c_void>(),
+            if sigmask.is_null() {
+                0
+            } else {
+                core::mem::size_of::<libc::c_ulong>()
+            },
+        )
+    {
+        runtime_policy::observe(ApiFamily::Poll, decision.profile, 30, true);
+        return reject_efault();
+    }
+
     // pselect6 expects a struct { sigset_t*, size_t } as the last parameter.
     let sigset_size = core::mem::size_of::<libc::c_ulong>();
     let sig_data: [usize; 2] = [sigmask as usize, sigset_size];
@@ -368,6 +463,12 @@ pub unsafe extern "C" fn epoll_ctl(
     fd: c_int,
     event: *mut libc::epoll_event,
 ) -> c_int {
+    if matches!(op, libc::EPOLL_CTL_ADD | libc::EPOLL_CTL_MOD)
+        && !tracked_object_fits(event.cast_const())
+    {
+        return reject_efault();
+    }
+
     match unsafe { raw_syscall::sys_epoll_ctl(epfd, op, fd, event as *mut u8) } {
         Ok(()) => 0,
         Err(e) => {
@@ -396,6 +497,9 @@ pub unsafe extern "C" fn epoll_wait(
     if events.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
+    }
+    if !tracked_array_fits(events.cast_const(), maxevents as usize) {
+        return reject_efault();
     }
     match unsafe {
         raw_syscall::sys_epoll_pwait(
@@ -431,6 +535,18 @@ pub unsafe extern "C" fn epoll_pwait(
     if events.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
+    }
+    if !tracked_array_fits(events.cast_const(), maxevents as usize)
+        || !tracked_region_fits(
+            sigmask.cast::<c_void>(),
+            if sigmask.is_null() {
+                0
+            } else {
+                core::mem::size_of::<libc::c_ulong>()
+            },
+        )
+    {
+        return reject_efault();
     }
     match unsafe {
         raw_syscall::sys_epoll_pwait(
@@ -494,6 +610,9 @@ pub unsafe extern "C" fn timerfd_settime(
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
+    if !tracked_object_fits(new_value) || !tracked_optional_object_fits(old_value.cast_const()) {
+        return reject_efault();
+    }
     match unsafe {
         raw_syscall::sys_timerfd_settime(fd, flags, new_value as *const u8, old_value as *mut u8)
     } {
@@ -526,6 +645,10 @@ pub unsafe extern "C" fn timerfd_gettime(fd: c_int, curr_value: *mut libc::itime
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
         return -1;
+    }
+    if !tracked_object_fits(curr_value.cast_const()) {
+        runtime_policy::observe(ApiFamily::Time, decision.profile, 5, true);
+        return reject_efault();
     }
     match unsafe { raw_syscall::sys_timerfd_gettime(fd, curr_value as *mut u8) } {
         Ok(()) => {
