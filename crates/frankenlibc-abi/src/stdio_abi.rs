@@ -4526,11 +4526,18 @@ macro_rules! scanf_write_one {
 }
 
 /// Core scanf logic: parse format, scan input, return result and directives.
-pub(crate) fn scanf_core(input: &[u8], format: *const c_char) -> (ScanResult, Vec<ScanDirective>) {
-    let fmt_bytes = unsafe { CStr::from_ptr(format) }.to_bytes();
+pub(crate) fn scanf_core(
+    input: &[u8],
+    format: *const c_char,
+) -> Option<(ScanResult, Vec<ScanDirective>)> {
+    let (fmt_len, fmt_terminated) = unsafe { scan_c_str_len(format, None) };
+    if !fmt_terminated {
+        return None;
+    }
+    let fmt_bytes = unsafe { std::slice::from_raw_parts(format.cast::<u8>(), fmt_len) };
     let directives = parse_scanf_format(fmt_bytes);
     let result = scan_input(input, &directives);
-    (result, directives)
+    Some((result, directives))
 }
 
 /// Read stream content into a byte buffer for scanf parsing.
@@ -4572,8 +4579,16 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return -1;
     }
 
-    let input = unsafe { CStr::from_ptr(s) }.to_bytes();
-    let (result, directives) = scanf_core(input, format);
+    let (input_len, input_terminated) = unsafe { scan_c_str_len(s, None) };
+    if !input_terminated {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+    let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
+    let Some((result, directives)) = scanf_core(input, format) else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -4608,7 +4623,10 @@ pub unsafe extern "C" fn fscanf(
         return libc::EOF;
     }
 
-    let (result, directives) = scanf_core(&input_buf, format);
+    let Some((result, directives)) = scanf_core(&input_buf, format) else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -4640,7 +4658,10 @@ pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
         return libc::EOF;
     }
 
-    let (result, directives) = scanf_core(&input_buf, format);
+    let Some((result, directives)) = scanf_core(&input_buf, format) else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -4673,8 +4694,16 @@ pub unsafe extern "C" fn vsscanf(
         return -1;
     }
 
-    let input = unsafe { CStr::from_ptr(s) }.to_bytes();
-    let (result, directives) = scanf_core(input, format);
+    let (input_len, input_terminated) = unsafe { scan_c_str_len(s, None) };
+    if !input_terminated {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    }
+    let input = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), input_len) };
+    let Some((result, directives)) = scanf_core(input, format) else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
@@ -4725,7 +4754,10 @@ pub unsafe extern "C" fn vfscanf(
         return libc::EOF;
     }
 
-    let (result, directives) = scanf_core(&input_buf, format);
+    let Some((result, directives)) = scanf_core(&input_buf, format) else {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);

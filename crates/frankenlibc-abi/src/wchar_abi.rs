@@ -3004,7 +3004,9 @@ pub unsafe extern "C" fn swscanf(
     let input = unsafe { wide_input_to_narrow(s) };
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
-    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+    let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3022,7 +3024,9 @@ pub unsafe extern "C" fn wscanf(format: *const libc::wchar_t, mut args: ...) -> 
     let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin_stream_id(), 4096);
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
-    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+    let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3045,7 +3049,9 @@ pub unsafe extern "C" fn fwscanf(
     let input = super::stdio_abi::read_stream_for_scanf(id, 4096);
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
-    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+    let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3067,7 +3073,9 @@ pub unsafe extern "C" fn vswscanf(
     let input = unsafe { wide_input_to_narrow(s) };
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
-    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+    let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3085,7 +3093,9 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
     let input = super::stdio_abi::read_stream_for_scanf(super::stdio_abi::stdin_stream_id(), 4096);
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
-    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+    let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;
@@ -3108,7 +3118,9 @@ pub unsafe extern "C" fn vfwscanf(
     let input = super::stdio_abi::read_stream_for_scanf(id, 4096);
     let fmt_narrow = unsafe { wide_to_narrow(format) };
     let fmt_cstr = std::ffi::CString::new(fmt_narrow).unwrap_or_default();
-    let (result, directives) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr());
+    let Some((result, directives)) = super::stdio_abi::scanf_core(&input, fmt_cstr.as_ptr()) else {
+        return libc::EOF;
+    };
 
     if result.input_failure && result.count == 0 {
         return libc::EOF;

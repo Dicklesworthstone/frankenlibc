@@ -1922,6 +1922,42 @@ fn sscanf_returns_eof_on_empty_input() {
     assert!(n <= 0, "sscanf on empty input should return 0 or EOF");
 }
 
+#[test]
+fn sscanf_rejects_tracked_unterminated_input() {
+    let input = unsafe { frankenlibc_abi::malloc_abi::malloc(2).cast::<c_char>() };
+    assert!(!input.is_null());
+    unsafe {
+        *input.add(0) = b'4' as c_char;
+        *input.add(1) = b'2' as c_char;
+    }
+    let mut num: c_int = -1;
+
+    let n = unsafe { sscanf(input.cast_const(), c"%d".as_ptr(), &mut num) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(input.cast::<c_void>()) };
+
+    assert_eq!(n, libc::EOF);
+    assert_eq!(num, -1, "unterminated input must not write outputs");
+}
+
+#[test]
+fn sscanf_rejects_tracked_unterminated_format() {
+    let format = unsafe { frankenlibc_abi::malloc_abi::malloc(2).cast::<c_char>() };
+    assert!(!format.is_null());
+    unsafe {
+        *format.add(0) = b'%' as c_char;
+        *format.add(1) = b'd' as c_char;
+    }
+    let mut num: c_int = -1;
+
+    let n = unsafe { sscanf(c"42".as_ptr(), format.cast_const(), &mut num) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(format.cast::<c_void>()) };
+
+    assert_eq!(n, libc::EOF);
+    assert_eq!(num, -1, "unterminated format must not write outputs");
+}
+
 // ===========================================================================
 // mktemp
 // ===========================================================================
