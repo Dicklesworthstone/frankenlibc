@@ -81,6 +81,14 @@ static SCHED_AFFINITY_TEST_GUARD: Mutex<()> = Mutex::new(());
 
 const FSCONFIG_SET_FLAG_CMD: libc::c_uint = 0;
 
+unsafe fn malloc_tracked_i32s(values: &[i32]) -> *mut i32 {
+    let byte_len = std::mem::size_of_val(values);
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(byte_len) }.cast::<i32>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), raw, values.len()) };
+    raw
+}
+
 fn unique_shm_name(prefix: &str) -> CString {
     let n = SHM_NAME_NONCE.fetch_add(1, Ordering::Relaxed);
     CString::new(format!("/{prefix}-{}-{n}", std::process::id())).expect("valid shm name")
@@ -112,14 +120,14 @@ fn open_test_timer() -> Option<*mut libc::c_void> {
 
     // SAFETY: read errno after call.
     let err = unsafe { *__errno_location() };
-    if matches!(
-        err,
-        libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ENOTSUP
-    ) {
-        return None;
-    }
-
-    panic!("timer_create failed unexpectedly with errno={err}");
+    assert!(
+        matches!(
+            err,
+            libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ENOTSUP
+        ),
+        "timer_create failed unexpectedly with errno={err}"
+    );
+    None
 }
 
 #[test]
@@ -2980,10 +2988,8 @@ fn msgsysv_roundtrip_and_cleanup() {
     if msqid < 0 {
         // SAFETY: read thread-local errno after syscall failure.
         let err = unsafe { *__errno_location() };
-        if err == libc::ENOSYS {
-            return;
-        }
-        panic!("msgget failed with errno={err}");
+        assert_eq!(err, libc::ENOSYS, "msgget failed with errno={err}");
+        return;
     }
 
     let payload = b"sysv-msg";
@@ -3098,10 +3104,8 @@ fn shm_sysv_roundtrip_and_cleanup() {
     if shmid < 0 {
         // SAFETY: read thread-local errno after syscall failure.
         let err = unsafe { *__errno_location() };
-        if err == libc::ENOSYS {
-            return;
-        }
-        panic!("shmget failed with errno={err}");
+        assert_eq!(err, libc::ENOSYS, "shmget failed with errno={err}");
+        return;
     }
 
     // SAFETY: attach newly created shared-memory segment.
@@ -3159,10 +3163,8 @@ fn sem_sysv_roundtrip_and_cleanup() {
     if semid < 0 {
         // SAFETY: read thread-local errno after syscall failure.
         let err = unsafe { *__errno_location() };
-        if err == libc::ENOSYS {
-            return;
-        }
-        panic!("semget failed with errno={err}");
+        assert_eq!(err, libc::ENOSYS, "semget failed with errno={err}");
+        return;
     }
 
     // SAFETY: SETVAL command with explicit value argument.
@@ -3266,10 +3268,11 @@ fn shm_open_and_unlink_roundtrip() {
     if fd < 0 {
         // SAFETY: read thread-local errno after syscall failure.
         let err = unsafe { *__errno_location() };
-        if matches!(err, libc::ENOENT | libc::ENOSYS) {
-            return;
-        }
-        panic!("shm_open failed with errno={err}");
+        assert!(
+            matches!(err, libc::ENOENT | libc::ENOSYS),
+            "shm_open failed with errno={err}"
+        );
+        return;
     }
 
     // SAFETY: close descriptor opened above.
@@ -3361,14 +3364,14 @@ fn open_test_mq(tag: &str) -> Option<(libc::c_int, CString)> {
 
     // SAFETY: read thread-local errno after failed open.
     let err = unsafe { *__errno_location() };
-    if matches!(
-        err,
-        libc::ENOSYS | libc::ENODEV | libc::ENOENT | libc::ENOTSUP | libc::EACCES | libc::EPERM
-    ) {
-        return None;
-    }
-
-    panic!("mq_open failed unexpectedly with errno={err}");
+    assert!(
+        matches!(
+            err,
+            libc::ENOSYS | libc::ENODEV | libc::ENOENT | libc::ENOTSUP | libc::EACCES | libc::EPERM
+        ),
+        "mq_open failed unexpectedly with errno={err}"
+    );
+    None
 }
 
 #[test]
@@ -3737,6 +3740,39 @@ fn qsort_r_sorts_integers() {
         );
     }
     assert_eq!(arr, [1, 2, 3, 4, 5, 6, 7, 8]);
+}
+
+#[test]
+fn qsort_rejects_tracked_base_shorter_than_claimed_count() {
+    let data = unsafe { malloc_tracked_i32s(&[2, 1]) };
+    unsafe {
+        frankenlibc_abi::stdlib_abi::qsort(
+            data.cast(),
+            3,
+            std::mem::size_of::<i32>(),
+            Some(cmp_i32),
+        );
+    }
+    assert_eq!(unsafe { *data.add(0) }, 2);
+    assert_eq!(unsafe { *data.add(1) }, 1);
+    unsafe { frankenlibc_abi::malloc_abi::free(data.cast()) };
+}
+
+#[test]
+fn qsort_r_rejects_tracked_base_shorter_than_claimed_count() {
+    let data = unsafe { malloc_tracked_i32s(&[2, 1]) };
+    unsafe {
+        qsort_r(
+            data.cast(),
+            3,
+            std::mem::size_of::<i32>(),
+            Some(cmp_int_with_ctx),
+            ptr::null_mut(),
+        );
+    }
+    assert_eq!(unsafe { *data.add(0) }, 2);
+    assert_eq!(unsafe { *data.add(1) }, 1);
+    unsafe { frankenlibc_abi::malloc_abi::free(data.cast()) };
 }
 
 // ===========================================================================
@@ -7458,6 +7494,18 @@ fn mergesort_zero_size_returns_einval() {
 }
 
 #[test]
+fn mergesort_rejects_tracked_base_shorter_than_claimed_count() {
+    let data = unsafe { malloc_tracked_i32s(&[2, 1]) };
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { mergesort(data.cast(), 3, std::mem::size_of::<i32>(), Some(cmp_i32)) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+    assert_eq!(unsafe { *data.add(0) }, 2);
+    assert_eq!(unsafe { *data.add(1) }, 1);
+    unsafe { frankenlibc_abi::malloc_abi::free(data.cast()) };
+}
+
+#[test]
 fn heapsort_sorts_random_input() {
     let mut data = [3i32, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
     let rc = unsafe {
@@ -7470,6 +7518,18 @@ fn heapsort_sorts_random_input() {
     };
     assert_eq!(rc, 0);
     assert_eq!(data, [1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 9]);
+}
+
+#[test]
+fn heapsort_rejects_tracked_base_shorter_than_claimed_count() {
+    let data = unsafe { malloc_tracked_i32s(&[2, 1]) };
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { heapsort(data.cast(), 3, std::mem::size_of::<i32>(), Some(cmp_i32)) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+    assert_eq!(unsafe { *data.add(0) }, 2);
+    assert_eq!(unsafe { *data.add(1) }, 1);
+    unsafe { frankenlibc_abi::malloc_abi::free(data.cast()) };
 }
 
 #[test]
@@ -8452,6 +8512,61 @@ fn bsearch_r_zero_size_or_count_returns_null() {
         }
         .is_null()
     );
+}
+
+#[test]
+fn bsearch_rejects_tracked_base_shorter_than_claimed_count() {
+    let data = unsafe { malloc_tracked_i32s(&[1, 3]) };
+    let key: i32 = 3;
+    let result = unsafe {
+        frankenlibc_abi::stdlib_abi::bsearch(
+            (&key as *const i32).cast(),
+            data.cast(),
+            3,
+            std::mem::size_of::<i32>(),
+            Some(cmp_i32),
+        )
+    };
+    assert!(result.is_null());
+    unsafe { frankenlibc_abi::malloc_abi::free(data.cast()) };
+}
+
+#[test]
+fn bsearch_rejects_tracked_key_shorter_than_width() {
+    let arr: [i32; 3] = [1, 3, 5];
+    let key = unsafe { frankenlibc_abi::malloc_abi::malloc(1) }.cast::<u8>();
+    assert!(!key.is_null());
+    unsafe { *key = 3 };
+
+    let result = unsafe {
+        frankenlibc_abi::stdlib_abi::bsearch(
+            key.cast(),
+            arr.as_ptr().cast(),
+            arr.len(),
+            std::mem::size_of::<i32>(),
+            Some(cmp_i32),
+        )
+    };
+    assert!(result.is_null());
+    unsafe { frankenlibc_abi::malloc_abi::free(key.cast()) };
+}
+
+#[test]
+fn bsearch_r_rejects_tracked_base_shorter_than_claimed_count() {
+    let data = unsafe { malloc_tracked_i32s(&[1, 3]) };
+    let key: i32 = 3;
+    let result = unsafe {
+        bsearch_r(
+            (&key as *const i32).cast(),
+            data.cast(),
+            3,
+            std::mem::size_of::<i32>(),
+            Some(bsearch_r_cmp_int),
+            std::ptr::null_mut(),
+        )
+    };
+    assert!(result.is_null());
+    unsafe { frankenlibc_abi::malloc_abi::free(data.cast()) };
 }
 
 // ---------------------------------------------------------------------------

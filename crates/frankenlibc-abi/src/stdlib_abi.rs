@@ -1079,6 +1079,13 @@ pub unsafe extern "C" fn atexit(func: Option<extern "C" fn()>) -> c_int {
 // qsort
 // ---------------------------------------------------------------------------
 
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    match known_remaining(ptr as usize) {
+        Some(remaining) => len <= remaining,
+        None => true,
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn qsort(
     base: *mut c_void,
@@ -1089,8 +1096,10 @@ pub unsafe extern "C" fn qsort(
     if base.is_null() || nmemb == 0 || size == 0 {
         return;
     }
-    let total_bytes = nmemb.checked_mul(size).unwrap_or(0);
-    if total_bytes == 0 {
+    let Some(total_bytes) = nmemb.checked_mul(size) else {
+        return;
+    };
+    if !tracked_region_fits(base.cast_const(), total_bytes) {
         return;
     }
 
@@ -1170,6 +1179,10 @@ pub unsafe extern "C" fn mergesort(
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
+    if !tracked_region_fits(base.cast_const(), total_bytes) {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
     let wrapper = |a: &[u8], b: &[u8]| -> i32 {
         unsafe { compar_fn(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void) }
     };
@@ -1213,6 +1226,10 @@ pub unsafe extern "C" fn heapsort(
         }
     };
     if base.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    if !tracked_region_fits(base.cast_const(), total_bytes) {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
@@ -1344,7 +1361,12 @@ pub unsafe extern "C" fn bsearch(
     if key.is_null() || base.is_null() || nmemb == 0 || size == 0 {
         return ptr::null_mut();
     }
-    let total_bytes = nmemb.checked_mul(size).unwrap_or(0);
+    let Some(total_bytes) = nmemb.checked_mul(size) else {
+        return ptr::null_mut();
+    };
+    if !tracked_region_fits(base, total_bytes) || !tracked_region_fits(key, size) {
+        return ptr::null_mut();
+    }
 
     // Validate base
     let (_, decision) = runtime_policy::decide(
@@ -2877,30 +2899,26 @@ pub unsafe extern "C" fn qsort_r(
     compar: Option<unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int>,
     arg: *mut c_void,
 ) {
-    let (_, decision) = runtime_policy::decide(
-        ApiFamily::Stdlib,
-        base as usize,
-        nmemb.saturating_mul(size),
-        true,
-        base.is_null() || compar.is_none(),
-        0,
-    );
+    let Some(cmp_fn) = compar else {
+        return;
+    };
+    if base.is_null() || nmemb == 0 || size == 0 {
+        return;
+    }
+    let Some(total) = nmemb.checked_mul(size) else {
+        return;
+    };
+    if !tracked_region_fits(base.cast_const(), total) {
+        return;
+    }
+
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Stdlib, base as usize, total, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 12, true);
         return;
     }
 
-    let Some(cmp_fn) = compar else {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
-        return;
-    };
-
-    if base.is_null() || nmemb == 0 || size == 0 {
-        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
-        return;
-    }
-
-    let total = nmemb.saturating_mul(size);
     let slice = unsafe { std::slice::from_raw_parts_mut(base as *mut u8, total) };
 
     frankenlibc_core::stdlib::qsort(slice, size, |a, b| unsafe {
@@ -2947,6 +2965,12 @@ pub unsafe extern "C" fn bsearch_r(
     let Some(cmp_fn) = compar else {
         return ptr::null_mut();
     };
+    let Some(total) = nmemb.checked_mul(size) else {
+        return ptr::null_mut();
+    };
+    if !tracked_region_fits(base, total) || !tracked_region_fits(key, size) {
+        return ptr::null_mut();
+    }
 
     let mut low: usize = 0;
     let mut high: usize = nmemb;
