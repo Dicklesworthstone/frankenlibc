@@ -100,6 +100,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     printf_size,
     printf_size_info,
     putgrent,
+    putpwent,
     rcmd,
     rcmd_af,
     register_printf_function,
@@ -2419,6 +2420,44 @@ fn putgrent_rejects_tracked_unterminated_member_list() {
         let err = *__errno_location();
         let close_rc = frankenlibc_abi::stdio_abi::fclose(stream);
         frankenlibc_abi::malloc_abi::free(members.cast());
+        if !stream_buf.is_null() {
+            frankenlibc_abi::malloc_abi::free(stream_buf.cast());
+        }
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+        assert_eq!(close_rc, 0);
+    }
+}
+
+#[test]
+fn putpwent_rejects_tracked_unterminated_passwd_fields() {
+    let raw_name = unsafe { malloc_unterminated(b"unterminated-user") };
+    let mut stream_buf: *mut c_char = std::ptr::null_mut();
+    let mut stream_len: usize = 0;
+    let stream =
+        unsafe { frankenlibc_abi::stdio_abi::open_memstream(&mut stream_buf, &mut stream_len) };
+    if stream.is_null() {
+        unsafe { frankenlibc_abi::malloc_abi::free(raw_name.cast()) };
+        return;
+    }
+
+    let entry = libc::passwd {
+        pw_name: raw_name,
+        pw_passwd: std::ptr::null_mut(),
+        pw_uid: 1000,
+        pw_gid: 1000,
+        pw_gecos: std::ptr::null_mut(),
+        pw_dir: std::ptr::null_mut(),
+        pw_shell: std::ptr::null_mut(),
+    };
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = putpwent(&entry as *const libc::passwd as *const _, stream);
+        let err = *__errno_location();
+        let close_rc = frankenlibc_abi::stdio_abi::fclose(stream);
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
         if !stream_buf.is_null() {
             frankenlibc_abi::malloc_abi::free(stream_buf.cast());
         }

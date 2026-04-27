@@ -37,6 +37,7 @@ const INET_TEXT_SCAN_LIMIT: usize = 128;
 const NSAP_TEXT_SCAN_LIMIT: usize = 512;
 const GROUP_FIELD_SCAN_LIMIT: usize = 8192;
 const GROUP_MEMBER_POINTER_SCAN_LIMIT: usize = 16_384;
+const PASSWD_FIELD_SCAN_LIMIT: usize = 8192;
 
 #[inline]
 unsafe fn bounded_c_string_bytes(ptr: *const c_char, max_scan: usize) -> Option<Vec<u8>> {
@@ -5511,30 +5512,45 @@ pub unsafe extern "C" fn putpwent(pw: *const c_void, fp: *mut c_void) -> c_int {
         return -1;
     }
     let p = pw as *const libc::passwd;
-    let cstr_or_empty = |ptr: *const c_char, fallback: &'static [u8]| -> &[u8] {
+    let cstr_or_fallback = |ptr: *const c_char, fallback: &'static [u8]| -> Option<Vec<u8>> {
         if ptr.is_null() {
-            fallback
+            Some(fallback.to_vec())
         } else {
-            unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes()
+            unsafe { bounded_c_string_bytes(ptr, PASSWD_FIELD_SCAN_LIMIT) }
         }
     };
-    let name = cstr_or_empty(unsafe { (*p).pw_name }, b"");
-    let passwd = cstr_or_empty(unsafe { (*p).pw_passwd }, b"x");
-    let gecos = cstr_or_empty(unsafe { (*p).pw_gecos }, b"");
-    let dir = cstr_or_empty(unsafe { (*p).pw_dir }, b"");
-    let shell = cstr_or_empty(unsafe { (*p).pw_shell }, b"");
+    let Some(name) = cstr_or_fallback(unsafe { (*p).pw_name }, b"") else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    let Some(passwd) = cstr_or_fallback(unsafe { (*p).pw_passwd }, b"x") else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    let Some(gecos) = cstr_or_fallback(unsafe { (*p).pw_gecos }, b"") else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    let Some(dir) = cstr_or_fallback(unsafe { (*p).pw_dir }, b"") else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    let Some(shell) = cstr_or_fallback(unsafe { (*p).pw_shell }, b"") else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
 
     let mut line =
         Vec::with_capacity(64 + name.len() + passwd.len() + gecos.len() + dir.len() + shell.len());
     frankenlibc_core::pwd::format_passwd_line(
         frankenlibc_core::pwd::PasswdLineFields {
-            name,
-            passwd,
+            name: &name,
+            passwd: &passwd,
             uid: unsafe { (*p).pw_uid },
             gid: unsafe { (*p).pw_gid },
-            gecos,
-            dir,
-            shell,
+            gecos: &gecos,
+            dir: &dir,
+            shell: &shell,
         },
         &mut line,
     );
