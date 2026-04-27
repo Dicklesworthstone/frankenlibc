@@ -793,22 +793,28 @@ pub unsafe extern "C" fn wcswcs(big: *const WcharT, little: *const WcharT) -> *m
     if big.is_null() || little.is_null() {
         return std::ptr::null_mut();
     }
-    // Check if needle is empty
-    if unsafe { *little } == 0 {
+    let (needle_len, needle_terminated) = unsafe { bounded_wide_string_scan(little) };
+    if !needle_terminated {
+        return std::ptr::null_mut();
+    }
+    if needle_len == 0 {
         return big as *mut WcharT;
     }
-    let mut h = big;
-    while unsafe { *h } != 0 {
-        let mut hi = h;
-        let mut ni = little;
-        while unsafe { *ni } != 0 && unsafe { *hi } == unsafe { *ni } {
-            hi = unsafe { hi.add(1) };
-            ni = unsafe { ni.add(1) };
+
+    let (hay_len, _) = unsafe { bounded_wide_string_scan(big) };
+    if hay_len < needle_len {
+        return std::ptr::null_mut();
+    }
+
+    let last_start = hay_len - needle_len;
+    for h in 0..=last_start {
+        let mut n = 0usize;
+        while n < needle_len && unsafe { *big.add(h + n) } == unsafe { *little.add(n) } {
+            n += 1;
         }
-        if unsafe { *ni } == 0 {
-            return h as *mut WcharT;
+        if n == needle_len {
+            return unsafe { big.add(h) as *mut WcharT };
         }
-        h = unsafe { h.add(1) };
     }
     std::ptr::null_mut()
 }

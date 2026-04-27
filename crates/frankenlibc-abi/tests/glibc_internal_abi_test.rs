@@ -131,6 +131,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     ruserok_af,
     ruserpass,
     sgetspent_r,
+    wcswcs,
     xprt_register,
     xprt_unregister,
 };
@@ -665,6 +666,48 @@ fn wcpcpy_chk_copies_and_returns_end_pointer() {
     let end = unsafe { __wcpcpy_chk(dst.as_mut_ptr(), src.as_ptr(), dst.len()) };
     assert_eq!(dst, src);
     assert_eq!(end, unsafe { dst.as_mut_ptr().add(2) });
+}
+
+#[test]
+fn wcswcs_finds_substring() {
+    let hay = [
+        b'A' as libc::wchar_t,
+        b'B' as libc::wchar_t,
+        b'C' as libc::wchar_t,
+        0 as libc::wchar_t,
+    ];
+    let needle = [
+        b'B' as libc::wchar_t,
+        b'C' as libc::wchar_t,
+        0 as libc::wchar_t,
+    ];
+    let found = unsafe { wcswcs(hay.as_ptr(), needle.as_ptr()) };
+    assert_eq!(found, unsafe { hay.as_ptr().add(1) as *mut libc::wchar_t });
+}
+
+#[test]
+fn wcswcs_bounds_tracked_unterminated_inputs() {
+    unsafe {
+        let hay = malloc_unterminated_wide(&[
+            b'A' as libc::wchar_t,
+            b'B' as libc::wchar_t,
+            b'C' as libc::wchar_t,
+        ]);
+        let missing = [b'Z' as libc::wchar_t, 0 as libc::wchar_t];
+        assert!(wcswcs(hay, missing.as_ptr()).is_null());
+
+        let terminated_hay = [
+            b'A' as libc::wchar_t,
+            b'B' as libc::wchar_t,
+            b'C' as libc::wchar_t,
+            0 as libc::wchar_t,
+        ];
+        let unterminated_needle = malloc_unterminated_wide(&[b'B' as libc::wchar_t]);
+        assert!(wcswcs(terminated_hay.as_ptr(), unterminated_needle).is_null());
+
+        frankenlibc_abi::malloc_abi::free(hay.cast());
+        frankenlibc_abi::malloc_abi::free(unterminated_needle.cast());
+    }
 }
 
 #[test]
