@@ -24,6 +24,14 @@ use crate::util::scan_c_string;
 type VdsoClockGettimeFn = unsafe extern "C" fn(c_int, *mut libc::timespec) -> c_int;
 type VdsoGettimeofdayFn = unsafe extern "C" fn(*mut libc::timeval, *mut libc::timezone) -> c_int;
 
+const ASCTIME_R_BUF_BYTES: usize = 26;
+const TIME_T_BYTES: usize = core::mem::size_of::<i64>();
+const TM_BYTES: usize = core::mem::size_of::<libc::tm>();
+
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
+
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VdsoCallOutcome {
@@ -35,9 +43,9 @@ pub enum VdsoCallOutcome {
 #[derive(Debug, Clone, Copy, Default)]
 struct VdsoSymbols {
     mapping_present: bool,
-    handle: usize,
-    clock_gettime: usize,
-    gettimeofday: usize,
+    handle_opened: bool,
+    clock_gettime: Option<VdsoClockGettimeFn>,
+    gettimeofday: Option<VdsoGettimeofdayFn>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -83,7 +91,7 @@ fn classify_vdso_return(rc: c_int) -> VdsoCallOutcome {
 #[doc(hidden)]
 pub fn __frankenlibc_vdso_symbol_version_name() -> &'static str {
     let bytes = vdso_symbol_version_bytes();
-    std::str::from_utf8(&bytes[..bytes.len() - 1]).expect("vDSO version string must be utf-8")
+    std::str::from_utf8(&bytes[..bytes.len() - 1]).unwrap_or("LINUX_2.6")
 }
 
 #[doc(hidden)]
@@ -113,9 +121,9 @@ pub fn vdso_fastpath_snapshot() -> VdsoFastpathSnapshot {
     let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
     VdsoFastpathSnapshot {
         mapping_present: symbols.mapping_present,
-        handle_opened: symbols.handle != 0,
-        clock_gettime_available: symbols.clock_gettime != 0,
-        gettimeofday_available: symbols.gettimeofday != 0,
+        handle_opened: symbols.handle_opened,
+        clock_gettime_available: symbols.clock_gettime.is_some(),
+        gettimeofday_available: symbols.gettimeofday.is_some(),
         clock_gettime_hits: VDSO_CLOCK_GETTIME_HITS.load(Ordering::Relaxed),
         gettimeofday_hits: VDSO_GETTIMEOFDAY_HITS.load(Ordering::Relaxed),
     }
@@ -154,10 +162,7 @@ unsafe fn raw_clock_gettime_syscall(clock_id: c_int, tp: *mut libc::timespec) ->
 unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
     if vdso_clock_supported(clock_id) && vdso_resolution_enabled() {
         let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
-        if symbols.clock_gettime != 0 {
-            // SAFETY: cached address is resolved from the vDSO with the expected ABI.
-            let vdso_clock_gettime: VdsoClockGettimeFn =
-                unsafe { core::mem::transmute(symbols.clock_gettime) };
+        if let Some(vdso_clock_gettime) = symbols.clock_gettime {
             let rc = unsafe { vdso_clock_gettime(clock_id, tp) };
             match classify_vdso_return(rc) {
                 VdsoCallOutcome::Success => {
@@ -180,10 +185,7 @@ unsafe fn raw_clock_gettime(clock_id: c_int, tp: *mut libc::timespec) -> c_int {
 unsafe fn raw_gettimeofday(tv: *mut libc::timeval) -> c_int {
     if vdso_resolution_enabled() {
         let symbols = *VDSO_SYMBOLS.get_or_init(resolve_vdso_symbols);
-        if symbols.gettimeofday != 0 {
-            // SAFETY: cached address is resolved from the vDSO with the expected ABI.
-            let vdso_gettimeofday: VdsoGettimeofdayFn =
-                unsafe { core::mem::transmute(symbols.gettimeofday) };
+        if let Some(vdso_gettimeofday) = symbols.gettimeofday {
             let rc = unsafe { vdso_gettimeofday(tv, std::ptr::null_mut()) };
             match classify_vdso_return(rc) {
                 VdsoCallOutcome::Success => {
@@ -569,12 +571,16 @@ pub unsafe extern "C" fn asctime_r(
     tm: *const libc::tm,
     buf: *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if tm.is_null() || buf.is_null() {
+    if tm.is_null()
+        || buf.is_null()
+        || !tracked_region_fits(tm.cast(), TM_BYTES)
+        || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES)
+    {
         return std::ptr::null_mut();
     }
 
     let bd = unsafe { read_tm(tm) };
-    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, 26) };
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, ASCTIME_R_BUF_BYTES) };
     let n = time_core::format_asctime(&bd, dst);
     if n == 0 {
         return std::ptr::null_mut();
@@ -594,13 +600,17 @@ pub unsafe extern "C" fn ctime_r(
     timer: *const i64,
     buf: *mut std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    if timer.is_null() || buf.is_null() {
+    if timer.is_null()
+        || buf.is_null()
+        || !tracked_region_fits(timer.cast(), TIME_T_BYTES)
+        || !tracked_region_fits(buf.cast(), ASCTIME_R_BUF_BYTES)
+    {
         return std::ptr::null_mut();
     }
 
     let epoch = unsafe { *timer };
     let bd = time_core::epoch_to_broken_down(epoch);
-    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, 26) };
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, ASCTIME_R_BUF_BYTES) };
     let n = time_core::format_asctime(&bd, dst);
     if n == 0 {
         return std::ptr::null_mut();

@@ -299,15 +299,11 @@ fn vdso_classify_fail_errno_is_always_positive() {
         if rc == -libc::ENOSYS {
             continue;
         }
-        match time_abi::__frankenlibc_classify_vdso_return(rc) {
-            time_abi::VdsoCallOutcome::Fail(e) => {
-                assert!(
-                    e > 0,
-                    "Fail({e}) from rc={rc} — errno must be strictly positive"
-                );
-            }
-            other => panic!("rc={rc} expected Fail(_), got {other:?}"),
-        }
+        let observed = time_abi::__frankenlibc_classify_vdso_return(rc);
+        assert!(
+            matches!(observed, time_abi::VdsoCallOutcome::Fail(e) if e > 0),
+            "rc={rc} expected Fail(e) with positive errno, got {observed:?}"
+        );
     }
 }
 
@@ -499,6 +495,66 @@ fn ctime_r_formats_current_time() {
     );
 }
 
+#[test]
+fn asctime_r_rejects_tracked_short_tm() {
+    unsafe {
+        let raw_tm = malloc_tracked_bytes(4).cast::<libc::tm>();
+        let mut buf = [0x55_u8; 26];
+
+        let result = time_abi::asctime_r(raw_tm, buf.as_mut_ptr().cast::<c_char>());
+
+        assert!(result.is_null());
+        assert_eq!(buf, [0x55_u8; 26]);
+        frankenlibc_abi::malloc_abi::free(raw_tm.cast());
+    }
+}
+
+#[test]
+fn asctime_r_rejects_tracked_short_output_buffer() {
+    unsafe {
+        let epoch: i64 = 0;
+        let mut tm: libc::tm = std::mem::zeroed();
+        time_abi::gmtime_r(&epoch, &mut tm);
+        let raw_buf = malloc_tracked_bytes(8);
+
+        let result = time_abi::asctime_r(&tm, raw_buf);
+
+        assert!(result.is_null());
+        let observed = std::slice::from_raw_parts(raw_buf.cast::<u8>(), 8);
+        assert_eq!(observed, [0x55_u8; 8]);
+        frankenlibc_abi::malloc_abi::free(raw_buf.cast());
+    }
+}
+
+#[test]
+fn ctime_r_rejects_tracked_short_timer() {
+    unsafe {
+        let raw_timer = malloc_tracked_bytes(4).cast::<i64>();
+        let mut buf = [0x55_u8; 26];
+
+        let result = time_abi::ctime_r(raw_timer, buf.as_mut_ptr().cast::<c_char>());
+
+        assert!(result.is_null());
+        assert_eq!(buf, [0x55_u8; 26]);
+        frankenlibc_abi::malloc_abi::free(raw_timer.cast());
+    }
+}
+
+#[test]
+fn ctime_r_rejects_tracked_short_output_buffer() {
+    unsafe {
+        let now = time_abi::time(std::ptr::null_mut());
+        let raw_buf = malloc_tracked_bytes(8);
+
+        let result = time_abi::ctime_r(&now, raw_buf);
+
+        assert!(result.is_null());
+        let observed = std::slice::from_raw_parts(raw_buf.cast::<u8>(), 8);
+        assert_eq!(observed, [0x55_u8; 8]);
+        frankenlibc_abi::malloc_abi::free(raw_buf.cast());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // strftime
 // ---------------------------------------------------------------------------
@@ -550,6 +606,13 @@ unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
     let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
     assert!(!raw.is_null());
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
+    raw.cast()
+}
+
+unsafe fn malloc_tracked_bytes(len: usize) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw, 0x55, len) };
     raw.cast()
 }
 
