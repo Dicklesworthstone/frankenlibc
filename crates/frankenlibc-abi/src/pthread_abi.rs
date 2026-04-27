@@ -7,7 +7,7 @@
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::ffi::{CStr, c_int, c_void};
+use std::ffi::{c_int, c_void};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -4412,7 +4412,7 @@ fn thread_comm_path(tid: i32) -> String {
     format!("/proc/self/task/{tid}/comm")
 }
 
-fn set_other_thread_name_via_procfs(tid: i32, name: &CStr) -> c_int {
+fn set_other_thread_name_via_procfs(tid: i32, name: &[u8]) -> c_int {
     if tid <= 0 {
         return libc::ESRCH;
     }
@@ -4421,7 +4421,7 @@ fn set_other_thread_name_via_procfs(tid: i32, name: &CStr) -> c_int {
         Ok(file) => file,
         Err(err) => return thread_name_error_from_io(&err),
     };
-    if let Err(err) = file.write_all(name.to_bytes()) {
+    if let Err(err) = file.write_all(name) {
         return thread_name_error_from_io(&err);
     }
     0
@@ -4481,9 +4481,9 @@ pub unsafe extern "C" fn pthread_setname_np(
         let Some(tid) = resolve_thread_tid(_thread) else {
             return libc::ESRCH;
         };
-        // SAFETY: We already validated name is terminated (line 4644-4647).
-        let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
-        return set_other_thread_name_via_procfs(tid, name_cstr);
+        // SAFETY: scan_c_string observed `len` readable bytes before the terminator.
+        let name_bytes = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), len) };
+        return set_other_thread_name_via_procfs(tid, name_bytes);
     }
     // SAFETY: prctl(PR_SET_NAME) sets the calling thread's name.
     match raw_syscall::sys_prctl(PR_SET_NAME, name as usize, 0, 0, 0) {
