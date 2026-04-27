@@ -327,9 +327,9 @@ unsafe fn native_setenv(name: *const c_char, value: *const c_char, overwrite: c_
 
 /// Native unsetenv: scan and remove from environ.
 #[inline]
-unsafe fn native_unsetenv(name: *const c_char) -> c_int {
+unsafe fn native_unsetenv(name: *const c_char, name_len: usize) -> c_int {
     let _lock = ENVIRON_LOCK.lock();
-    unsafe { remove_from_environ(name) }
+    unsafe { remove_from_environ(name, name_len) }
 }
 
 /// Native putenv: store the string directly in environ (no copy).
@@ -349,7 +349,7 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
         None => {
             // No '=': unset the variable (glibc behavior)
             let _lock = ENVIRON_LOCK.lock();
-            return unsafe { remove_from_environ(string) };
+            return unsafe { remove_from_environ(string, len) };
         }
     };
     let name_len = eq_pos;
@@ -408,15 +408,10 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
 }
 
 /// Remove an env var by directly manipulating the environ array.
-unsafe fn remove_from_environ(name: *const c_char) -> c_int {
+unsafe fn remove_from_environ(name: *const c_char, nlen: usize) -> c_int {
     unsafe {
         if HOST_ENVIRON.is_null() || name.is_null() {
             return 0;
-        }
-        // Find name length
-        let mut nlen = 0usize;
-        while *name.add(nlen) != 0 {
-            nlen += 1;
         }
         let mut read = HOST_ENVIRON;
         let mut write = HOST_ENVIRON;
@@ -1642,7 +1637,7 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
     }
 
     // SAFETY: validated NUL-terminated pointer.
-    let rc = unsafe { native_unsetenv(name) };
+    let rc = unsafe { native_unsetenv(name, name_len) };
     if rc != 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
     }
