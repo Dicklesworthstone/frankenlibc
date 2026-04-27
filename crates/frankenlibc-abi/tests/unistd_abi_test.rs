@@ -80,12 +80,12 @@ use frankenlibc_abi::unistd_abi::{
     getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64, gsignal,
     isatty, link, logout, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd,
     nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise, process_mrelease,
-    process_vm_readv, process_vm_writev, read, readlink, readpassphrase, rename, rmdir, semctl,
-    semop, setfsent, sethostent, setnetent, setnetgrent, setns, setproctitle, setproctitle_init,
-    setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec,
-    ssignal, stat, strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink,
-    unshare, updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree,
-    write,
+    process_vm_readv, process_vm_writev, read, readlink, readpassphrase, rename, rmdir, sem_open,
+    sem_unlink, semctl, semop, setfsent, sethostent, setnetent, setnetgrent, setns, setproctitle,
+    setproctitle_init, setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset,
+    sigstack, sigvec, ssignal, stat, strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask,
+    uname, unlink, unshare, updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp,
+    wordfree as abi_wordfree, write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -1932,6 +1932,32 @@ fn abi_argp_parse_nonempty_argp_remains_explicitly_unsupported() {
 // ---------------------------------------------------------------------------
 // SysV IPC surface tests
 // ---------------------------------------------------------------------------
+
+#[test]
+fn named_semaphore_rejects_tracked_unterminated_name() {
+    let name = b"/frankenlibc_sem_unterminated";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(name.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(name.as_ptr(), raw, name.len());
+
+        *__errno_location() = 0;
+        let opened = sem_open(raw.cast(), libc::O_RDONLY);
+        let open_errno = errno_value();
+
+        *__errno_location() = 0;
+        let unlinked = sem_unlink(raw.cast());
+        let unlink_errno = errno_value();
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(opened, usize::MAX as *mut c_void);
+        assert_eq!(open_errno, libc::EINVAL);
+        assert_eq!(unlinked, -1);
+        assert_eq!(unlink_errno, libc::EINVAL);
+    }
+}
 
 #[test]
 fn shmdt_null_pointer_fails_with_einval_like_host() {

@@ -3280,6 +3280,32 @@ fn shm_open_rejects_invalid_names() {
     assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
+#[test]
+fn shm_open_and_unlink_reject_tracked_unterminated_names() {
+    let name = b"/frankenlibc_shm_unterminated";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(name.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(name.as_ptr(), raw, name.len());
+
+        *__errno_location() = 0;
+        let open_rc = shm_open(raw.cast(), libc::O_RDONLY, 0);
+        let open_errno = *__errno_location();
+
+        *__errno_location() = 0;
+        let unlink_rc = shm_unlink(raw.cast());
+        let unlink_errno = *__errno_location();
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(open_rc, -1);
+        assert_eq!(open_errno, libc::EINVAL);
+        assert_eq!(unlink_rc, -1);
+        assert_eq!(unlink_errno, libc::EINVAL);
+    }
+}
+
 fn open_test_mq(tag: &str) -> Option<(libc::c_int, CString)> {
     let name = unique_mq_name(tag);
     let mut attr: libc::mq_attr = unsafe { std::mem::zeroed() };

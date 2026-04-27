@@ -4053,8 +4053,9 @@ unsafe fn resolve_shm_object_path(name: *const c_char) -> Result<CString, c_int>
     if name.is_null() {
         return Err(errno::EINVAL);
     }
-    let c_name = unsafe { CStr::from_ptr(name) };
-    let name_bytes = c_name.to_bytes();
+    let Some(name_bytes) = (unsafe { read_c_string_bytes(name) }) else {
+        return Err(errno::EINVAL);
+    };
 
     if name_bytes.len() < 2 || name_bytes[0] != b'/' {
         return Err(errno::EINVAL);
@@ -4237,8 +4238,9 @@ unsafe fn resolve_sem_path(name: *const c_char) -> Result<CString, c_int> {
     if name.is_null() {
         return Err(errno::EINVAL);
     }
-    let c_name = unsafe { CStr::from_ptr(name) };
-    let name_bytes = c_name.to_bytes();
+    let Some(name_bytes) = (unsafe { read_c_string_bytes(name) }) else {
+        return Err(errno::EINVAL);
+    };
 
     // Must start with '/' and have at least one char after it.
     if name_bytes.len() < 2 || name_bytes[0] != b'/' {
