@@ -23468,10 +23468,34 @@ static PROCTITLE_STATE: _ProcTitleMutex<Option<ProcTitleStorage>> = _ProcTitleMu
 
 const PR_SET_NAME_FOR_TITLE: c_int = 15;
 const PROCTITLE_PROGNAME_SCAN_LIMIT: usize = libc::PATH_MAX as usize;
+const PROCTITLE_INIT_STRING_SCAN_LIMIT: usize = 2 * 1024 * 1024;
+const PROCTITLE_INIT_ARGV_LIMIT: isize = 16_384;
+const PROCTITLE_INIT_ENVP_LIMIT: isize = 16_384;
 
 fn clear_proctitle_state() {
     let mut guard = PROCTITLE_STATE.lock().unwrap_or_else(|p| p.into_inner());
     *guard = None;
+}
+
+#[inline]
+unsafe fn proctitle_string_end(ptr: *mut c_char) -> Option<*mut c_char> {
+    if ptr.is_null() {
+        return None;
+    }
+    let bound = known_remaining(ptr as usize).unwrap_or(PROCTITLE_INIT_STRING_SCAN_LIMIT);
+    let (len, terminated) = unsafe { scan_c_string(ptr, Some(bound)) };
+    terminated.then(|| unsafe { ptr.add(len) })
+}
+
+#[inline]
+fn proctitle_vector_slots(ptr: *mut *mut c_char, fallback_limit: isize) -> Option<isize> {
+    if ptr.is_null() {
+        return None;
+    }
+    let tracked_slots = known_remaining(ptr as usize)
+        .map(|bytes| bytes / std::mem::size_of::<*mut c_char>())
+        .and_then(|slots| isize::try_from(slots).ok());
+    Some(tracked_slots.unwrap_or(fallback_limit).min(fallback_limit))
 }
 
 /// FreeBSD `setproctitle_init(argc, argv, envp)` — capture the
@@ -23494,42 +23518,53 @@ pub unsafe extern "C" fn setproctitle_init(
         clear_proctitle_state();
         return;
     }
-    // SAFETY: argv came from crt0; argv[0] points to the start of
-    // the contiguous string region.
+    let Some(argv_slots) = proctitle_vector_slots(argv, PROCTITLE_INIT_ARGV_LIMIT) else {
+        clear_proctitle_state();
+        return;
+    };
+    if (argc as isize) > argv_slots {
+        clear_proctitle_state();
+        return;
+    }
     let argv0 = unsafe { *argv };
     if argv0.is_null() {
         clear_proctitle_state();
         return;
     }
     let mut end: *mut c_char = argv0;
-    // SAFETY: walk each argv[i] / envp[i] string to its terminating
-    // NUL; the kernel guarantees these strings live in a contiguous
-    // region directly above argv0.
     unsafe {
         for i in 0..(argc as isize) {
             let s = *argv.offset(i);
             if s.is_null() {
                 break;
             }
-            let mut p = s;
-            while *p != 0 {
-                p = p.add(1);
-            }
+            let Some(p) = proctitle_string_end(s) else {
+                clear_proctitle_state();
+                return;
+            };
             if (p as usize) > (end as usize) {
                 end = p;
             }
         }
         if !envp.is_null() {
+            let Some(envp_slots) = proctitle_vector_slots(envp, PROCTITLE_INIT_ENVP_LIMIT) else {
+                clear_proctitle_state();
+                return;
+            };
             let mut i: isize = 0;
             loop {
+                if i >= envp_slots {
+                    clear_proctitle_state();
+                    return;
+                }
                 let s = *envp.offset(i);
                 if s.is_null() {
                     break;
                 }
-                let mut p = s;
-                while *p != 0 {
-                    p = p.add(1);
-                }
+                let Some(p) = proctitle_string_end(s) else {
+                    clear_proctitle_state();
+                    return;
+                };
                 if (p as usize) > (end as usize) {
                     end = p;
                 }

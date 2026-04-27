@@ -72,6 +72,22 @@ fn malloc_tracked_unterminated(bytes: &[u8]) -> *mut c_char {
     }
 }
 
+fn malloc_tracked_pointer_vector(values: &[*mut c_char]) -> *mut *mut c_char {
+    assert!(!values.is_empty());
+    unsafe {
+        let byte_len = std::mem::size_of_val(values);
+        let raw = frankenlibc_abi::malloc_abi::malloc(byte_len).cast::<*mut c_char>();
+        assert!(!raw.is_null());
+        let usable = frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast()).max(byte_len);
+        let usable_slots = usable / std::mem::size_of::<*mut c_char>();
+        for i in 0..usable_slots {
+            *raw.add(i) = values[values.len() - 1];
+        }
+        std::ptr::copy_nonoverlapping(values.as_ptr(), raw, values.len());
+        raw
+    }
+}
+
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::glibc_internal_abi::__sysv_signal;
 use frankenlibc_abi::glibc_internal_abi::getdate_err;
@@ -6745,6 +6761,75 @@ fn setproctitle_rejects_tracked_unterminated_format() {
     let raw = backing[0].as_ptr();
     let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
     assert_eq!(s, b"originalname");
+}
+
+#[test]
+fn setproctitle_init_rejects_tracked_unterminated_argv_entry() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    unsafe { setproctitle_init(0, std::ptr::null_mut(), std::ptr::null_mut()) };
+
+    let raw_arg = malloc_tracked_unterminated(b"bad");
+    let mut argv = vec![raw_arg, std::ptr::null_mut()];
+    unsafe {
+        setproctitle_init(1, argv.as_mut_ptr(), std::ptr::null_mut());
+        setproctitle(c"-changed".as_ptr());
+    }
+
+    let raw_bytes = unsafe { std::slice::from_raw_parts(raw_arg.cast::<u8>(), 3) };
+    assert_eq!(raw_bytes, b"bad");
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_arg.cast()) };
+}
+
+#[test]
+fn setproctitle_init_rejects_tracked_unterminated_envp_entry() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, mut envp, backing) = build_synthetic_argv("originalname", 64);
+    let raw_env = malloc_tracked_unterminated(b"BAD_ENV=value");
+    envp[0] = raw_env;
+
+    unsafe {
+        setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr());
+        setproctitle(c"-changed".as_ptr());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"originalname");
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_env.cast()) };
+}
+
+#[test]
+fn setproctitle_init_rejects_tracked_short_argv_vector() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (argv, _envp, backing) = build_synthetic_argv("originalname", 64);
+    let tracked_argv = malloc_tracked_pointer_vector(&[argv[0]]);
+
+    unsafe {
+        setproctitle_init(4096, tracked_argv, std::ptr::null_mut());
+        setproctitle(c"-changed".as_ptr());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"originalname");
+    unsafe { frankenlibc_abi::malloc_abi::free(tracked_argv.cast()) };
+}
+
+#[test]
+fn setproctitle_init_rejects_tracked_envp_vector_without_null() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, _envp, backing) = build_synthetic_argv("originalname", 64);
+    let tracked_envp = malloc_tracked_pointer_vector(&[argv[0]]);
+
+    unsafe {
+        setproctitle_init(1, argv.as_mut_ptr(), tracked_envp);
+        setproctitle(c"-changed".as_ptr());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"originalname");
+    unsafe { frankenlibc_abi::malloc_abi::free(tracked_envp.cast()) };
 }
 
 // ===========================================================================
