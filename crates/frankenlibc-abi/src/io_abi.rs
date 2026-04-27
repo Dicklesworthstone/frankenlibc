@@ -10,7 +10,39 @@ use frankenlibc_core::syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+
+#[inline]
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
+
+#[inline]
+unsafe fn tracked_iovecs_fit(iov: *const libc::iovec, count: usize) -> bool {
+    let Some(iov_bytes) = count.checked_mul(std::mem::size_of::<libc::iovec>()) else {
+        return false;
+    };
+    let Some(remaining) = known_remaining(iov as usize) else {
+        return true;
+    };
+    if iov_bytes > remaining {
+        return false;
+    }
+
+    // SAFETY: caller already rejected null/zero counts, and tracked iovec
+    // arrays must fit the descriptor bytes before we inspect each entry.
+    let entries = unsafe { std::slice::from_raw_parts(iov, count) };
+    entries.iter().all(|entry| {
+        (entry.iov_len == 0 || !entry.iov_base.is_null())
+            && tracked_region_fits(entry.iov_base.cast_const(), entry.iov_len)
+    })
+}
+
+#[inline]
+fn tracked_optional_i64_fits(ptr: *mut i64) -> bool {
+    ptr.is_null() || tracked_region_fits(ptr.cast_const().cast(), std::mem::size_of::<i64>())
+}
 
 // ---------------------------------------------------------------------------
 // dup
@@ -99,6 +131,15 @@ pub unsafe extern "C" fn pipe(pipefd: *mut c_int) -> c_int {
         return -1;
     }
 
+    if !tracked_region_fits(
+        pipefd.cast_const().cast(),
+        std::mem::size_of::<[c_int; 2]>(),
+    ) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+
     let rc = match unsafe { syscall::sys_pipe2(pipefd, 0) } {
         Ok(()) => 0,
         Err(e) => {
@@ -166,6 +207,14 @@ pub unsafe extern "C" fn pipe2(pipefd: *mut c_int, flags: c_int) -> c_int {
         return -1;
     }
     if pipefd.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+        return -1;
+    }
+    if !tracked_region_fits(
+        pipefd.cast_const().cast(),
+        std::mem::size_of::<[c_int; 2]>(),
+    ) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
@@ -276,7 +325,7 @@ pub unsafe extern "C" fn pread(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    if buf.is_null() && count > 0 {
+    if (buf.is_null() && count > 0) || !tracked_region_fits(buf.cast_const(), count) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -309,7 +358,7 @@ pub unsafe extern "C" fn pwrite(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    if buf.is_null() && count > 0 {
+    if (buf.is_null() && count > 0) || !tracked_region_fits(buf, count) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
@@ -345,6 +394,11 @@ pub unsafe extern "C" fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
+    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
     match unsafe { syscall::sys_readv(fd, iov as *const u8, iovcnt) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
@@ -373,6 +427,11 @@ pub unsafe extern "C" fn writev(
     }
     if iov.is_null() || iovcnt <= 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -466,6 +525,11 @@ pub unsafe extern "C" fn sendfile(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
+    if !tracked_optional_i64_fits(offset) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
     match unsafe { syscall::sys_sendfile(out_fd, in_fd, offset, count) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
@@ -496,6 +560,12 @@ pub unsafe extern "C" fn copy_file_range(
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    if !tracked_optional_i64_fits(off_in) || !tracked_optional_i64_fits(off_out) {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -539,6 +609,17 @@ pub unsafe extern "C" fn preadv(
         return -1;
     }
 
+    if iov.is_null() || iovcnt <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
     match unsafe { syscall::sys_preadv(fd, iov as *const u8, iovcnt, offset) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
@@ -564,6 +645,17 @@ pub unsafe extern "C" fn pwritev(
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    if iov.is_null() || iovcnt <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -604,6 +696,17 @@ pub unsafe extern "C" fn preadv2(
         return -1;
     }
 
+    if iov.is_null() || iovcnt <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
     match unsafe { syscall::sys_preadv2(fd, iov as *const u8, iovcnt, offset, flags) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
@@ -630,6 +733,17 @@ pub unsafe extern "C" fn pwritev2(
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+
+    if iov.is_null() || iovcnt <= 0 {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -664,6 +778,11 @@ pub unsafe extern "C" fn splice(
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd_in as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if !tracked_optional_i64_fits(off_in) || !tracked_optional_i64_fits(off_out) {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
@@ -719,6 +838,11 @@ pub unsafe extern "C" fn vmsplice(
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, nr_segs, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
+        runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+        return -1;
+    }
+    if nr_segs > 0 && (iov.is_null() || !unsafe { tracked_iovecs_fit(iov, nr_segs) }) {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }

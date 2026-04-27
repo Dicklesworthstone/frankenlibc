@@ -2,12 +2,13 @@
 
 //! Integration tests for POSIX I/O ABI entrypoints.
 
-use std::ffi::{c_int, c_uint};
+use std::ffi::{c_int, c_uint, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::io_abi::{
     __dup3, __pipe2, __pread, __pwrite, __readv, __writev, copy_file_range, dup, dup2, dup3, fcntl,
-    memfd_create, pipe, pipe2, pread, pwrite, readv, sendfile, splice, writev,
+    memfd_create, pipe, pipe2, pread, preadv, pwrite, pwritev, readv, sendfile, splice, writev,
 };
 use frankenlibc_abi::unistd_abi::close;
 
@@ -41,6 +42,26 @@ fn temp_memfd(content: &[u8]) -> c_int {
     assert_eq!(written, content.len() as isize);
     unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
     fd
+}
+
+fn tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) };
+    assert!(!raw.is_null());
+    unsafe {
+        std::ptr::write_bytes(raw.cast::<u8>(), 0, len);
+    }
+    raw
+}
+
+unsafe fn free_tracked(ptr: *mut c_void) {
+    unsafe { frankenlibc_abi::malloc_abi::free(ptr) };
+}
+
+fn tracked_iovec(entry: libc::iovec) -> *mut libc::iovec {
+    let raw = tracked_zeroed_bytes(std::mem::size_of::<libc::iovec>()).cast::<libc::iovec>();
+    unsafe { raw.write(entry) };
+    raw
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +163,30 @@ fn pipe2_cloexec() {
 fn pipe_null_fails() {
     let rc = unsafe { pipe(std::ptr::null_mut()) };
     assert_eq!(rc, -1, "pipe(NULL) should fail");
+}
+
+#[test]
+fn pipe_rejects_tracked_short_fd_array() {
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+
+    let rc = unsafe { pipe(raw.cast::<c_int>()) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn pipe2_rejects_tracked_short_fd_array() {
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+
+    let rc = unsafe { pipe2(raw.cast::<c_int>(), 0) };
+    assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +311,38 @@ fn pread_bad_fd() {
     assert_eq!(n, -1, "pread on bad fd should return -1");
 }
 
+#[test]
+fn pread_rejects_tracked_short_buffer() {
+    let fd = temp_memfd(b"xy");
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+
+    let n = unsafe { pread(fd, raw, 2, 0) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(fd);
+        free_tracked(raw);
+    }
+}
+
+#[test]
+fn pwrite_rejects_tracked_short_buffer() {
+    let fd = temp_memfd(b"");
+    let raw = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+
+    let n = unsafe { pwrite(fd, raw.cast_const(), 2, 0) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(fd);
+        free_tracked(raw);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // readv / writev
 // ---------------------------------------------------------------------------
@@ -327,6 +404,127 @@ fn writev_single_buffer() {
 
     unsafe { close(rfd) };
     unsafe { close(wfd) };
+}
+
+#[test]
+fn readv_rejects_tracked_short_iovec_array() {
+    let (rfd, wfd) = temp_pipe();
+    unsafe { libc::write(wfd, b"x".as_ptr().cast(), 1) };
+
+    let raw_iov = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+    let n = unsafe { readv(rfd, raw_iov.cast::<libc::iovec>(), 1) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(rfd);
+        close(wfd);
+        free_tracked(raw_iov);
+    }
+}
+
+#[test]
+fn writev_rejects_tracked_short_iovec_array() {
+    let fd = temp_memfd(b"");
+    let raw_iov = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+
+    let n = unsafe { writev(fd, raw_iov.cast::<libc::iovec>(), 1) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(fd);
+        free_tracked(raw_iov);
+    }
+}
+
+#[test]
+fn readv_rejects_tracked_short_iov_base() {
+    let (rfd, wfd) = temp_pipe();
+    unsafe { libc::write(wfd, b"xy".as_ptr().cast(), 2) };
+
+    let raw_buf = tracked_zeroed_bytes(1);
+    let raw_iov = tracked_iovec(libc::iovec {
+        iov_base: raw_buf,
+        iov_len: 2,
+    });
+    unsafe { *__errno_location() = 0 };
+
+    let n = unsafe { readv(rfd, raw_iov.cast_const(), 1) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(rfd);
+        close(wfd);
+        free_tracked(raw_iov.cast());
+        free_tracked(raw_buf);
+    }
+}
+
+#[test]
+fn writev_rejects_tracked_short_iov_base() {
+    let fd = temp_memfd(b"");
+    let raw_buf = tracked_zeroed_bytes(1);
+    let raw_iov = tracked_iovec(libc::iovec {
+        iov_base: raw_buf,
+        iov_len: 2,
+    });
+    unsafe { *__errno_location() = 0 };
+
+    let n = unsafe { writev(fd, raw_iov.cast_const(), 1) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(fd);
+        free_tracked(raw_iov.cast());
+        free_tracked(raw_buf);
+    }
+}
+
+#[test]
+fn preadv_rejects_tracked_short_iov_base() {
+    let fd = temp_memfd(b"xy");
+    let raw_buf = tracked_zeroed_bytes(1);
+    let raw_iov = tracked_iovec(libc::iovec {
+        iov_base: raw_buf,
+        iov_len: 2,
+    });
+    unsafe { *__errno_location() = 0 };
+
+    let n = unsafe { preadv(fd, raw_iov.cast_const(), 1, 0) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(fd);
+        free_tracked(raw_iov.cast());
+        free_tracked(raw_buf);
+    }
+}
+
+#[test]
+fn pwritev_rejects_tracked_short_iov_base() {
+    let fd = temp_memfd(b"");
+    let raw_buf = tracked_zeroed_bytes(1);
+    let raw_iov = tracked_iovec(libc::iovec {
+        iov_base: raw_buf,
+        iov_len: 2,
+    });
+    unsafe { *__errno_location() = 0 };
+
+    let n = unsafe { pwritev(fd, raw_iov.cast_const(), 1, 0) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(fd);
+        free_tracked(raw_iov.cast());
+        free_tracked(raw_buf);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +617,24 @@ fn sendfile_partial() {
     unsafe { close(out_fd) };
 }
 
+#[test]
+fn sendfile_rejects_tracked_short_offset() {
+    let in_fd = temp_memfd(b"xy");
+    let out_fd = temp_memfd(b"");
+    let raw_offset = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+
+    let n = unsafe { sendfile(out_fd, in_fd, raw_offset.cast::<i64>(), 1) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(in_fd);
+        close(out_fd);
+        free_tracked(raw_offset);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // copy_file_range
 // ---------------------------------------------------------------------------
@@ -442,6 +658,25 @@ fn copy_file_range_basic() {
 
     unsafe { close(in_fd) };
     unsafe { close(out_fd) };
+}
+
+#[test]
+fn copy_file_range_rejects_tracked_short_offsets() {
+    let in_fd = temp_memfd(b"xy");
+    let out_fd = temp_memfd(b"");
+    let raw_off_in = tracked_zeroed_bytes(1);
+    let mut off_out: i64 = 0;
+    unsafe { *__errno_location() = 0 };
+
+    let n = unsafe { copy_file_range(in_fd, raw_off_in.cast::<i64>(), out_fd, &mut off_out, 1, 0) };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(in_fd);
+        close(out_fd);
+        free_tracked(raw_off_in);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +715,36 @@ fn splice_pipe_to_pipe() {
     unsafe { close(wfd1) };
     unsafe { close(rfd2) };
     unsafe { close(wfd2) };
+}
+
+#[test]
+fn splice_rejects_tracked_short_offsets() {
+    let (rfd1, wfd1) = temp_pipe();
+    let (rfd2, wfd2) = temp_pipe();
+    unsafe { libc::write(wfd1, b"x".as_ptr().cast(), 1) };
+
+    let raw_off_in = tracked_zeroed_bytes(1);
+    unsafe { *__errno_location() = 0 };
+    let n = unsafe {
+        splice(
+            rfd1,
+            raw_off_in.cast::<i64>(),
+            wfd2,
+            std::ptr::null_mut(),
+            1,
+            0,
+        )
+    };
+    assert_eq!(n, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+
+    unsafe {
+        close(rfd1);
+        close(wfd1);
+        close(rfd2);
+        close(wfd2);
+        free_tracked(raw_off_in);
+    }
 }
 
 // ---------------------------------------------------------------------------
