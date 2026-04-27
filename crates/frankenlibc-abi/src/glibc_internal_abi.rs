@@ -35,6 +35,8 @@ const HOSTID_PATH: &[u8] = b"/etc/hostid\0";
 const DNS_CSTR_SCAN_LIMIT: usize = frankenlibc_core::resolv::dns_name::NS_MAXDNAME;
 const INET_TEXT_SCAN_LIMIT: usize = 128;
 const NSAP_TEXT_SCAN_LIMIT: usize = 512;
+const GROUP_FIELD_SCAN_LIMIT: usize = 8192;
+const GROUP_MEMBER_POINTER_SCAN_LIMIT: usize = 16_384;
 
 #[inline]
 unsafe fn bounded_c_string_bytes(ptr: *const c_char, max_scan: usize) -> Option<Vec<u8>> {
@@ -5423,25 +5425,54 @@ pub unsafe extern "C" fn putgrent(grp: *const c_void, fp: *mut c_void) -> c_int 
         return -1;
     }
     let g = grp as *const libc::group;
-    let name = unsafe { std::ffi::CStr::from_ptr((*g).gr_name) }.to_bytes();
+    let Some(name) = (unsafe { bounded_c_string_bytes((*g).gr_name, GROUP_FIELD_SCAN_LIMIT) })
+    else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
     let passwd = if unsafe { (*g).gr_passwd }.is_null() {
-        b"x" as &[u8]
+        b"x".to_vec()
+    } else if let Some(bytes) =
+        unsafe { bounded_c_string_bytes((*g).gr_passwd, GROUP_FIELD_SCAN_LIMIT) }
+    {
+        bytes
     } else {
-        unsafe { std::ffi::CStr::from_ptr((*g).gr_passwd) }.to_bytes()
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
     };
     let gid = unsafe { (*g).gr_gid };
 
-    let mut members: Vec<&[u8]> = Vec::new();
+    let mut member_storage: Vec<Vec<u8>> = Vec::new();
     let mut mem_ptr = unsafe { (*g).gr_mem };
     if !mem_ptr.is_null() {
-        while !unsafe { *mem_ptr }.is_null() {
-            members.push(unsafe { std::ffi::CStr::from_ptr(*mem_ptr) }.to_bytes());
+        let tracked_slots = known_remaining(mem_ptr as usize)
+            .map(|remaining| remaining / std::mem::size_of::<*mut c_char>());
+        let max_slots = tracked_slots.unwrap_or(GROUP_MEMBER_POINTER_SCAN_LIMIT);
+        let mut found_terminator = false;
+        for _ in 0..max_slots {
+            let member_ptr = unsafe { *mem_ptr };
+            if member_ptr.is_null() {
+                found_terminator = true;
+                break;
+            }
+            let Some(member) =
+                (unsafe { bounded_c_string_bytes(member_ptr, GROUP_FIELD_SCAN_LIMIT) })
+            else {
+                unsafe { set_abi_errno(libc::EINVAL) };
+                return -1;
+            };
+            member_storage.push(member);
             mem_ptr = unsafe { mem_ptr.add(1) };
+        }
+        if !found_terminator {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return -1;
         }
     }
 
+    let members: Vec<&[u8]> = member_storage.iter().map(Vec::as_slice).collect();
     let mut line = Vec::with_capacity(64 + name.len() + passwd.len());
-    frankenlibc_core::grp::format_group_line(name, passwd, gid, &members, &mut line);
+    frankenlibc_core::grp::format_group_line(&name, &passwd, gid, &members, &mut line);
     let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), fp) };
     if written == line.len() { 0 } else { -1 }
 }

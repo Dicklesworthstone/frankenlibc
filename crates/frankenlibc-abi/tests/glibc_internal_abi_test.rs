@@ -99,6 +99,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     parse_printf_format,
     printf_size,
     printf_size_info,
+    putgrent,
     rcmd,
     rcmd_af,
     register_printf_function,
@@ -577,6 +578,8 @@ fn make_wire_name(dotted: &str) -> Vec<u8> {
 unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
     let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
     assert!(!raw.is_null());
+    let usable = unsafe { frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast()) };
+    unsafe { std::ptr::write_bytes(raw, 0x7f, usable.max(bytes.len())) };
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
     raw.cast()
 }
@@ -2345,6 +2348,85 @@ fn copy_grp_erange_on_small_buffer() {
         )
     };
     assert_eq!(ret, libc::ERANGE, "should fail with ERANGE on tiny buffer");
+}
+
+#[test]
+fn putgrent_rejects_tracked_unterminated_group_fields() {
+    let raw_name = unsafe { malloc_unterminated(b"unterminated-group") };
+    let mut stream_buf: *mut c_char = std::ptr::null_mut();
+    let mut stream_len: usize = 0;
+    let stream =
+        unsafe { frankenlibc_abi::stdio_abi::open_memstream(&mut stream_buf, &mut stream_len) };
+    if stream.is_null() {
+        unsafe { frankenlibc_abi::malloc_abi::free(raw_name.cast()) };
+        return;
+    }
+
+    let mut members: [*mut c_char; 1] = [std::ptr::null_mut()];
+    let entry = libc::group {
+        gr_name: raw_name,
+        gr_passwd: std::ptr::null_mut(),
+        gr_gid: 42,
+        gr_mem: members.as_mut_ptr(),
+    };
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = putgrent(&entry as *const libc::group as *const _, stream);
+        let err = *__errno_location();
+        let close_rc = frankenlibc_abi::stdio_abi::fclose(stream);
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+        if !stream_buf.is_null() {
+            frankenlibc_abi::malloc_abi::free(stream_buf.cast());
+        }
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+        assert_eq!(close_rc, 0);
+    }
+}
+
+#[test]
+fn putgrent_rejects_tracked_unterminated_member_list() {
+    let name = CString::new("testgrp").unwrap();
+    let member = CString::new("alice").unwrap();
+    let members = unsafe {
+        frankenlibc_abi::malloc_abi::malloc(std::mem::size_of::<*mut c_char>())
+            .cast::<*mut c_char>()
+    };
+    assert!(!members.is_null());
+    unsafe { *members = member.as_ptr() as *mut c_char };
+
+    let mut stream_buf: *mut c_char = std::ptr::null_mut();
+    let mut stream_len: usize = 0;
+    let stream =
+        unsafe { frankenlibc_abi::stdio_abi::open_memstream(&mut stream_buf, &mut stream_len) };
+    if stream.is_null() {
+        unsafe { frankenlibc_abi::malloc_abi::free(members.cast()) };
+        return;
+    }
+
+    let entry = libc::group {
+        gr_name: name.as_ptr() as *mut c_char,
+        gr_passwd: std::ptr::null_mut(),
+        gr_gid: 42,
+        gr_mem: members,
+    };
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = putgrent(&entry as *const libc::group as *const _, stream);
+        let err = *__errno_location();
+        let close_rc = frankenlibc_abi::stdio_abi::fclose(stream);
+        frankenlibc_abi::malloc_abi::free(members.cast());
+        if !stream_buf.is_null() {
+            frankenlibc_abi::malloc_abi::free(stream_buf.cast());
+        }
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+        assert_eq!(close_rc, 0);
+    }
 }
 
 #[test]
