@@ -8106,7 +8106,9 @@ pub unsafe extern "C" fn snprintb(
     if fmt.is_null() {
         return -1;
     }
-    let fmt_bytes = unsafe { CStr::from_ptr(fmt) }.to_bytes();
+    let Some(fmt_bytes) = (unsafe { bounded_c_str_bytes(fmt) }) else {
+        return -1;
+    };
     let rendered = frankenlibc_core::stdio::snprintb::format_snprintb(fmt_bytes, val);
     unsafe { snprintb_write_bounded(buf, bufsize, &rendered) }
 }
@@ -8131,7 +8133,9 @@ pub unsafe extern "C" fn snprintb_m(
     if fmt.is_null() {
         return -1;
     }
-    let fmt_bytes = unsafe { CStr::from_ptr(fmt) }.to_bytes();
+    let Some(fmt_bytes) = (unsafe { bounded_c_str_bytes(fmt) }) else {
+        return -1;
+    };
     let rendered =
         frankenlibc_core::stdio::snprintb::format_snprintb_m(fmt_bytes, val, max_per_line);
     unsafe { snprintb_write_bounded(buf, bufsize, &rendered) }

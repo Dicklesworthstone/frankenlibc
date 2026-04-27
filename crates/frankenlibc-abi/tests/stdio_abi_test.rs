@@ -5349,6 +5349,18 @@ fn snprintb_null_fmt_returns_minus_one() {
 }
 
 #[test]
+fn snprintb_rejects_tracked_unterminated_fmt() {
+    let fmt = unsafe { tracked_bytes_without_nul(b"\x10\x01FOO") };
+    let mut buf = [0xeeu8 as c_char; 16];
+
+    let n = unsafe { snprintb(buf.as_mut_ptr(), buf.len(), fmt.cast_const(), 1) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(fmt.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+}
+
+#[test]
 fn snprintb_unknown_base_returns_zero_length() {
     let mut buf = [0xeeu8 as c_char; 8];
     // First byte 0x01 is neither octal nor hex base.
@@ -5387,6 +5399,18 @@ fn snprintb_m_splits_long_lines() {
 fn snprintb_m_null_fmt_returns_minus_one() {
     let mut buf = [0 as c_char; 16];
     let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), std::ptr::null(), 0, 8) };
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn snprintb_m_rejects_tracked_unterminated_fmt() {
+    let fmt = unsafe { tracked_bytes_without_nul(b"\x10\x01FOO\x02BAR") };
+    let mut buf = [0xeeu8 as c_char; 32];
+
+    let n = unsafe { snprintb_m(buf.as_mut_ptr(), buf.len(), fmt.cast_const(), 3, 8) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(fmt.cast::<c_void>()) };
+
     assert_eq!(n, -1);
 }
 
