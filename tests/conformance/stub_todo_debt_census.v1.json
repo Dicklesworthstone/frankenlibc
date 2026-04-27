@@ -5,9 +5,9 @@
   "description": "Unified stub/TODO debt census combining exported taxonomy status with critical non-exported source debt and deterministic risk ranking.",
   "source": {
     "support_matrix_path": "support_matrix.json",
-    "support_matrix_sha256": "898a4d4535c7f9f6359747030437936cf1d2c585040440a3b3d6f18ea942959b",
+    "support_matrix_sha256": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
     "replacement_profile_path": "tests/conformance/replacement_profile.json",
-    "replacement_profile_sha256": "0906bdf60021a01756305161d24f500ad5aa04718131056031db0dd153cfbfb8",
+    "replacement_profile_sha256": "4a933d2583b39328cb6193242a79529ff236fe9635a8979e2c872feaae849480",
     "scan_roots": [
       "crates/frankenlibc-core/src",
       "crates/frankenlibc-abi/src"
@@ -20,16 +20,16 @@
   },
   "exported_taxonomy_view": {
     "declared_summary": {
-      "total": 4109,
-      "implemented": 3699,
-      "raw_syscall": 410,
+      "total": 4119,
+      "implemented": 3705,
+      "raw_syscall": 414,
       "wraps_host_libc": 0,
       "glibc_call_through": 0,
       "stub": 0
     },
     "derived_summary": {
-      "Implemented": 3699,
-      "RawSyscall": 410,
+      "Implemented": 3705,
+      "RawSyscall": 414,
       "WrapsHostLibc": 0,
       "GlibcCallThrough": 0,
       "Stub": 0,
@@ -39,14 +39,14 @@
       {
         "status": "Implemented",
         "declared": 0,
-        "derived": 3699,
-        "delta_derived_minus_declared": 3699
+        "derived": 3705,
+        "delta_derived_minus_declared": 3705
       },
       {
         "status": "RawSyscall",
         "declared": 0,
-        "derived": 410,
-        "delta_derived_minus_declared": 410
+        "derived": 414,
+        "delta_derived_minus_declared": 414
       },
       {
         "status": "WrapsHostLibc",
@@ -73,8 +73,8 @@
         "delta_derived_minus_declared": 0
       }
     ],
-    "total_exported_declared": 4109,
-    "total_exported_derived": 4109,
+    "total_exported_declared": 4119,
+    "total_exported_derived": 4119,
     "stub_symbols": [],
     "non_implemented_exported_symbols": []
   },
@@ -193,14 +193,14 @@
       {
         "status": "Implemented",
         "declared": 0,
-        "derived": 3699,
-        "delta_derived_minus_declared": 3699
+        "derived": 3705,
+        "delta_derived_minus_declared": 3705
       },
       {
         "status": "RawSyscall",
         "declared": 0,
-        "derived": 410,
-        "delta_derived_minus_declared": 410
+        "derived": 414,
+        "delta_derived_minus_declared": 414
       }
     ],
     "ambiguity_resolved": true,

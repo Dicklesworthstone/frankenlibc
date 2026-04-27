@@ -3,15 +3,15 @@
   "bead": "bd-2tq.4",
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "summary": {
-    "total_exported": 4109,
-    "tracked_symbols": 4109,
+    "total_exported": 4119,
+    "tracked_symbols": 4119,
     "total_obligations": 268,
     "covered_obligations": 268,
     "mapped_without_execution": 0,
     "obligations_with_execution_failures": 0,
     "error_condition_obligations": 62,
     "async_concurrency_obligations": 52,
-    "symbols_missing_any_mapping": 3904,
+    "symbols_missing_any_mapping": 3914,
     "symbols_missing_execution_evidence": 0,
     "symbols_missing_error_conditions": 152,
     "symbols_missing_async_concurrency": 0
@@ -24490,6 +24490,30 @@
       ]
     },
     {
+      "symbol": "consttime_bcmp",
+      "symbol_family": "string",
+      "owner": "string_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "consttime_memequal",
+      "symbol_family": "string",
+      "owner": "string_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "copy_file_range",
       "symbol_family": "io",
       "owner": "io_abi",
@@ -27879,6 +27903,18 @@
     },
     {
       "symbol": "explicit_bzero",
+      "symbol_family": "string",
+      "owner": "string_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "explicit_memset",
       "symbol_family": "string",
       "owner": "string_abi",
       "support_status": "Implemented",
@@ -32656,6 +32692,54 @@
     },
     {
       "symbol": "futex",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "futex_requeue",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "futex_wait",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "futex_waitv",
+      "symbol_family": "unistd",
+      "owner": "unistd_abi",
+      "support_status": "RawSyscall",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "futex_wake",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
       "support_status": "RawSyscall",
@@ -40326,6 +40410,18 @@
       ]
     },
     {
+      "symbol": "memset_explicit",
+      "symbol_family": "string",
+      "owner": "string_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
       "symbol": "mincore",
       "symbol_family": "unistd",
       "owner": "unistd_abi",
@@ -42866,6 +42962,18 @@
       "symbol": "pidfd_spawnp",
       "symbol_family": "glibc_internal",
       "owner": "glibc_internal_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
+      ]
+    },
+    {
+      "symbol": "pidfile_signal",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
       "support_status": "Implemented",
       "mapped_posix_refs": [],
       "test_refs": [],
@@ -46351,6 +46459,18 @@
       ],
       "gap_reasons": [
         "missing_error_condition_obligation"
+      ]
+    },
+    {
+      "symbol": "reallocarr",
+      "symbol_family": "stdlib",
+      "owner": "stdlib_abi",
+      "support_status": "Implemented",
+      "mapped_posix_refs": [],
+      "test_refs": [],
+      "gap_reasons": [
+        "missing_test_mapping",
+        "missing_posix_traceability"
       ]
     },
     {

@@ -1,16 +1,16 @@
 {
   "schema_version": "v1",
   "bead": "bd-2hh.1",
-  "generated_at": "2026-04-26T21:51:05Z",
+  "generated_at": "2026-04-27T03:19:57Z",
   "summary": {
     "total_fixture_files": 56,
     "total_fixture_cases": 1244,
     "unique_symbols_in_fixtures": 384,
-    "implemented_symbols": 4109,
+    "implemented_symbols": 4119,
     "symbols_with_fixtures": 366,
     "symbols_at_threshold": 8,
-    "symbols_below_threshold": 4101,
-    "symbols_with_zero_fixtures": 3743,
+    "symbols_below_threshold": 4111,
+    "symbols_with_zero_fixtures": 3753,
     "coverage_pct": 8.9,
     "min_coverage_pct": 5.0,
     "threshold_pct": 0.2,
@@ -326,20 +326,20 @@
     },
     {
       "module": "stdlib_abi",
-      "total_symbols": 152,
+      "total_symbols": 154,
       "covered_symbols": 16,
       "at_threshold": 1,
       "total_cases": 52,
-      "coverage_pct": 10.5,
-      "threshold_pct": 0.7
+      "coverage_pct": 10.4,
+      "threshold_pct": 0.6
     },
     {
       "module": "string_abi",
-      "total_symbols": 142,
+      "total_symbols": 146,
       "covered_symbols": 25,
       "at_threshold": 2,
       "total_cases": 94,
-      "coverage_pct": 17.6,
+      "coverage_pct": 17.1,
       "threshold_pct": 1.4
     },
     {
@@ -362,7 +362,7 @@
     },
     {
       "module": "unistd_abi",
-      "total_symbols": 738,
+      "total_symbols": 742,
       "covered_symbols": 31,
       "at_threshold": 0,
       "total_cases": 60,
@@ -10637,6 +10637,22 @@
       "gap": 10
     },
     {
+      "symbol": "consttime_bcmp",
+      "module": "string_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "consttime_memequal",
+      "module": "string_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "copy_file_range",
       "module": "io_abi",
       "status": "RawSyscall",
@@ -12878,6 +12894,14 @@
     },
     {
       "symbol": "explicit_bzero",
+      "module": "string_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "explicit_memset",
       "module": "string_abi",
       "status": "Implemented",
       "fixture_cases": 0,
@@ -15990,6 +16014,38 @@
     },
     {
       "symbol": "futex",
+      "module": "unistd_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "futex_requeue",
+      "module": "unistd_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "futex_wait",
+      "module": "unistd_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "futex_waitv",
+      "module": "unistd_abi",
+      "status": "RawSyscall",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "futex_wake",
       "module": "unistd_abi",
       "status": "RawSyscall",
       "fixture_cases": 0,
@@ -20925,6 +20981,14 @@
       "gap": 6
     },
     {
+      "symbol": "memset_explicit",
+      "module": "string_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
       "symbol": "mincore",
       "module": "unistd_abi",
       "status": "RawSyscall",
@@ -22631,6 +22695,14 @@
     {
       "symbol": "pidfd_spawnp",
       "module": "glibc_internal_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
+    },
+    {
+      "symbol": "pidfile_signal",
+      "module": "stdlib_abi",
       "status": "Implemented",
       "fixture_cases": 0,
       "meets_threshold": false,
@@ -25043,6 +25115,14 @@
       "fixture_cases": 1,
       "meets_threshold": false,
       "gap": 9
+    },
+    {
+      "symbol": "reallocarr",
+      "module": "stdlib_abi",
+      "status": "Implemented",
+      "fixture_cases": 0,
+      "meets_threshold": false,
+      "gap": 10
     },
     {
       "symbol": "reallocarray",

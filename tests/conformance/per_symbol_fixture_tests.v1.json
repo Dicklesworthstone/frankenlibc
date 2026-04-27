@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-04-26T20:08:26Z",
-  "report_hash": "7f8efde2812fe70b",
+  "generated_at": "2026-04-27T02:42:48Z",
+  "report_hash": "23b0a0ec818b7e3a",
   "summary": {
-    "total_symbols": 4109,
+    "total_symbols": 4119,
     "symbols_with_fixtures": 366,
-    "symbols_without_fixtures": 3743,
+    "symbols_without_fixtures": 3753,
     "fixture_coverage_pct": 8.9,
-    "implemented_coverage_pct": 8.4,
+    "implemented_coverage_pct": 8.3,
     "total_fixture_files": 56,
     "total_cases": 1239,
     "total_format_issues": 0,
     "symbols_with_edge_cases": 282,
     "symbols_with_errno_checks": 363,
-    "total_quality_issues": 3635,
-    "uncovered_action_count": 3743
+    "total_quality_issues": 3641,
+    "uncovered_action_count": 3753
   },
   "fixture_file_analyses": [
     {
@@ -19936,6 +19936,36 @@
       "quality_issues": []
     },
     {
+      "symbol": "consttime_bcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "consttime_memequal",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "copy_file_range",
       "status": "RawSyscall",
       "module": "io_abi",
@@ -24182,6 +24212,21 @@
     },
     {
       "symbol": "explicit_bzero",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "explicit_memset",
       "status": "Implemented",
       "module": "string_abi",
       "perf_class": "strict_hotpath",
@@ -30088,6 +30133,58 @@
     },
     {
       "symbol": "futex",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "futex_requeue",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "futex_wait",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "futex_waitv",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "perf_class": "hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": []
+    },
+    {
+      "symbol": "futex_wake",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "perf_class": "hotpath",
@@ -39575,6 +39672,21 @@
       "quality_issues": []
     },
     {
+      "symbol": "memset_explicit",
+      "status": "Implemented",
+      "module": "string_abi",
+      "perf_class": "strict_hotpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
       "symbol": "mincore",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -42750,6 +42862,21 @@
       "status": "Implemented",
       "module": "glibc_internal_abi",
       "perf_class": "",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
+      ]
+    },
+    {
+      "symbol": "pidfile_signal",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
       "has_fixtures": false,
       "case_count": 0,
       "fixture_files": [],
@@ -47372,6 +47499,21 @@
       "quality_issues": [
         "fewer than 2 test cases",
         "missing dual-mode coverage"
+      ]
+    },
+    {
+      "symbol": "reallocarr",
+      "status": "Implemented",
+      "module": "stdlib_abi",
+      "perf_class": "coldpath",
+      "has_fixtures": false,
+      "case_count": 0,
+      "fixture_files": [],
+      "modes_tested": [],
+      "edge_cases_covered": [],
+      "has_errno_check": false,
+      "quality_issues": [
+        "implemented symbol has no fixtures"
       ]
     },
     {
@@ -71902,6 +72044,20 @@
       "priority": "normal"
     },
     {
+      "symbol": "consttime_bcmp",
+      "status": "Implemented",
+      "module": "string_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
+      "symbol": "consttime_memequal",
+      "status": "Implemented",
+      "module": "string_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
       "symbol": "copy_file_range",
       "status": "RawSyscall",
       "module": "io_abi",
@@ -73758,6 +73914,13 @@
     },
     {
       "symbol": "explicit_bzero",
+      "status": "Implemented",
+      "module": "string_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
+      "symbol": "explicit_memset",
       "status": "Implemented",
       "module": "string_abi",
       "action": "create fixture cases",
@@ -76327,6 +76490,34 @@
     },
     {
       "symbol": "futex",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "futex_requeue",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "futex_wait",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "futex_waitv",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "futex_wake",
       "status": "RawSyscall",
       "module": "unistd_abi",
       "action": "create fixture cases",
@@ -80204,6 +80395,13 @@
       "priority": "high"
     },
     {
+      "symbol": "memset_explicit",
+      "status": "Implemented",
+      "module": "string_abi",
+      "action": "create fixture cases",
+      "priority": "high"
+    },
+    {
       "symbol": "mincore",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -81621,6 +81819,13 @@
       "symbol": "pidfd_spawnp",
       "status": "Implemented",
       "module": "glibc_internal_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "pidfile_signal",
+      "status": "Implemented",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -83483,6 +83688,13 @@
       "symbol": "readv",
       "status": "RawSyscall",
       "module": "io_abi",
+      "action": "create fixture cases",
+      "priority": "normal"
+    },
+    {
+      "symbol": "reallocarr",
+      "status": "Implemented",
+      "module": "stdlib_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

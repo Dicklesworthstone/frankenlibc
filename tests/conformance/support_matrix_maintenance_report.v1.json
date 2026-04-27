@@ -1,30 +1,30 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-26T21:46:06Z",
+  "generated_at": "2026-04-27T02:39:09Z",
   "summary": {
-    "total_symbols": 4109,
-    "status_validated": 4109,
+    "total_symbols": 4119,
+    "status_validated": 4119,
     "status_invalid": 0,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
     "fixture_linked": 366,
-    "fixture_unlinked": 3743,
+    "fixture_unlinked": 3753,
     "fixture_coverage_pct": 8.9,
     "total_warnings": 162
   },
   "coverage_dashboard": {
-    "total_symbols": 4109,
+    "total_symbols": 4119,
     "status_counts": {
-      "Implemented": 3699,
-      "RawSyscall": 410,
+      "Implemented": 3705,
+      "RawSyscall": 414,
       "WrapsHostLibc": 0,
       "GlibcCallThrough": 0,
       "Stub": 0
     },
     "status_share_pct": {
-      "Implemented": 90.0,
-      "RawSyscall": 10.0,
+      "Implemented": 89.9,
+      "RawSyscall": 10.1,
       "WrapsHostLibc": 0.0,
       "GlibcCallThrough": 0.0,
       "Stub": 0.0
@@ -32,21 +32,32 @@
     "native_coverage_pct": 100.0
   },
   "trend": {
-    "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
+    "baseline_report_path": "tests/conformance/support_matrix_maintenance_report.v1.json",
     "baseline_loaded": true,
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 0,
-      "RawSyscall": 0,
+      "Implemented": 6,
+      "RawSyscall": 4,
       "Stub": 0,
       "WrapsHostLibc": 0
     },
     "native_coverage_pct_delta": 0.0,
     "reclassified_symbol_count": 0,
-    "new_symbol_count": 0,
+    "new_symbol_count": 10,
     "removed_symbol_count": 0,
-    "new_symbols": [],
+    "new_symbols": [
+      "consttime_bcmp",
+      "consttime_memequal",
+      "explicit_memset",
+      "futex_requeue",
+      "futex_wait",
+      "futex_waitv",
+      "futex_wake",
+      "memset_explicit",
+      "pidfile_signal",
+      "reallocarr"
+    ],
     "removed_symbols": []
   },
   "policy_checks": {
@@ -65,11 +76,11 @@
   },
   "status_distribution": {
     "Implemented": {
-      "count": 3699,
+      "count": 3705,
       "fixture_linked": 309
     },
     "RawSyscall": {
-      "count": 410,
+      "count": 414,
       "fixture_linked": 57
     }
   },
@@ -245,14 +256,14 @@
       "coverage_pct": 23.0
     },
     "stdlib_abi": {
-      "total": 152,
+      "total": 154,
       "linked": 16,
-      "coverage_pct": 10.5
+      "coverage_pct": 10.4
     },
     "string_abi": {
-      "total": 142,
+      "total": 146,
       "linked": 25,
-      "coverage_pct": 17.6
+      "coverage_pct": 17.1
     },
     "termios_abi": {
       "total": 10,
@@ -265,7 +276,7 @@
       "coverage_pct": 15.4
     },
     "unistd_abi": {
-      "total": 738,
+      "total": 742,
       "linked": 31,
       "coverage_pct": 4.2
     },
@@ -1558,6 +1569,8 @@
     "conjf64x": "Implemented",
     "conjl": "Implemented",
     "connect": "RawSyscall",
+    "consttime_bcmp": "Implemented",
+    "consttime_memequal": "Implemented",
     "copy_file_range": "RawSyscall",
     "copysign": "Implemented",
     "copysignf": "Implemented",
@@ -1839,6 +1852,7 @@
     "expf64x": "Implemented",
     "expl": "Implemented",
     "explicit_bzero": "Implemented",
+    "explicit_memset": "Implemented",
     "expm1": "Implemented",
     "expm1f": "Implemented",
     "expm1f128": "Implemented",
@@ -2228,6 +2242,10 @@
     "ftw64": "Implemented",
     "funlockfile": "Implemented",
     "futex": "RawSyscall",
+    "futex_requeue": "RawSyscall",
+    "futex_wait": "RawSyscall",
+    "futex_waitv": "RawSyscall",
+    "futex_wake": "RawSyscall",
     "futimens": "Implemented",
     "futimes": "Implemented",
     "futimesat": "Implemented",
@@ -2844,6 +2862,7 @@
     "mempcpy": "Implemented",
     "memrchr": "Implemented",
     "memset": "Implemented",
+    "memset_explicit": "Implemented",
     "mincore": "RawSyscall",
     "mkdir": "RawSyscall",
     "mkdirat": "RawSyscall",
@@ -3058,6 +3077,7 @@
     "pidfd_send_signal": "RawSyscall",
     "pidfd_spawn": "Implemented",
     "pidfd_spawnp": "Implemented",
+    "pidfile_signal": "Implemented",
     "pipe": "RawSyscall",
     "pipe2": "RawSyscall",
     "pivot_root": "RawSyscall",
@@ -3359,6 +3379,7 @@
     "readlinkat": "RawSyscall",
     "readv": "RawSyscall",
     "realloc": "Implemented",
+    "reallocarr": "Implemented",
     "reallocarray": "Implemented",
     "realpath": "Implemented",
     "reboot": "RawSyscall",
@@ -10390,6 +10411,8 @@
     "xcrypt_gensalt_r",
     "xcrypt_r",
     "ctermid",
+    "consttime_bcmp",
+    "consttime_memequal",
     "ctime",
     "ctime_r",
     "cuserid",
@@ -10478,6 +10501,7 @@
     "exp2f",
     "expf",
     "explicit_bzero",
+    "explicit_memset",
     "expm1",
     "expm1f",
     "fabsf",
@@ -10610,6 +10634,10 @@
     "ftw64",
     "funlockfile",
     "futex",
+    "futex_waitv",
+    "futex_wake",
+    "futex_wait",
+    "futex_requeue",
     "futimens",
     "fwprintf",
     "fwrite_unlocked",
@@ -10925,6 +10953,7 @@
     "memfrob",
     "memmem",
     "mempcpy",
+    "memset_explicit",
     "mincore",
     "mkdir",
     "mkdirat",
@@ -11017,6 +11046,7 @@
     "pidfd_getfd",
     "pidfd_open",
     "pidfd_send_signal",
+    "pidfile_signal",
     "pipe2",
     "pivot_root",
     "pkey_alloc",
@@ -11218,6 +11248,7 @@
     "readlinkat",
     "readv",
     "reallocarray",
+    "reallocarr",
     "recallocarray",
     "realpath",
     "reboot",

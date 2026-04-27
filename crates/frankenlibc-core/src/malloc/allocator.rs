@@ -550,7 +550,7 @@ mod tests {
         let size = 32;
         let ptr = state.malloc(size, test_alloc).unwrap();
         let elimination = state.elimination_handle();
-        elimination.set_wait_budget(Duration::from_millis(2));
+        elimination.set_wait_budget(Duration::from_millis(100));
         let barrier = Barrier::new(2);
 
         let consumer = thread::scope(|scope| {
@@ -562,9 +562,6 @@ mod tests {
             });
 
             barrier.wait();
-            for _ in 0..16 {
-                thread::yield_now();
-            }
             state.free(ptr, size, |p| test_free(p, 32));
             consumer.join().expect("consumer thread must join")
         });

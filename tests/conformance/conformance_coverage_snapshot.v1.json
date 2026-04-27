@@ -1,9 +1,9 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-04-26T21:51:05Z",
+  "generated_at": "2026-04-27T03:19:57Z",
   "summary": {
-    "total_symbols": 4109,
+    "total_symbols": 4119,
     "symbols_with_fixtures": 366,
     "coverage_pct": 9,
     "total_fixture_files": 56,
@@ -182,14 +182,14 @@
       "pct": 23
     },
     "stdlib_abi": {
-      "total": 152,
+      "total": 154,
       "covered": 16,
-      "pct": 11
+      "pct": 10
     },
     "string_abi": {
-      "total": 142,
+      "total": 146,
       "covered": 25,
-      "pct": 18
+      "pct": 17
     },
     "termios_abi": {
       "total": 10,
@@ -202,7 +202,7 @@
       "pct": 15
     },
     "unistd_abi": {
-      "total": 738,
+      "total": 742,
       "covered": 31,
       "pct": 4
     },

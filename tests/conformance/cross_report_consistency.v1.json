@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-2vv.11",
-  "generated_at": "2026-04-26T21:51:49Z",
+  "generated_at": "2026-04-27T03:20:46Z",
   "consistency_hash": "550ecae0f61e58af",
   "summary": {
     "overall_verdict": "pass",
@@ -40,7 +40,7 @@
       "severity": "info",
       "report_pair": "all",
       "verdict": "pass",
-      "description": "All reports agree on 4109 symbols"
+      "description": "All reports agree on 4119 symbols"
     },
     {
       "rule": "status_distribution",
@@ -75,7 +75,7 @@
       "report_pair": "support_matrix vs replacement_profile",
       "affected_symbols": [],
       "verdict": "drift",
-      "description": "Module total_call_throughs: support_matrix has 0 callthrough, profile census claims 80"
+      "description": "Module total_call_throughs: support_matrix has 0 callthrough, profile census claims 84"
     },
     {
       "rule": "no_unknown_status",

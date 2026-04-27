@@ -64,10 +64,10 @@
     }
   ],
   "current_assessment": {
-    "total_symbols": 4109,
-    "strict_hotpath_count": 148,
+    "total_symbols": 4119,
+    "strict_hotpath_count": 152,
     "hardened_hotpath_count": 0,
-    "coldpath_count": 2154,
+    "coldpath_count": 2156,
     "strict_hotpath_by_module": {
       "c11threads_abi": 6,
       "ctype_abi": 14,
@@ -77,12 +77,12 @@
       "resolv_abi": 1,
       "stdio_abi": 11,
       "stdlib_abi": 6,
-      "string_abi": 55,
+      "string_abi": 59,
       "time_abi": 1,
       "wchar_abi": 22
     },
     "strict_hotpath_by_status": {
-      "Implemented": 148
+      "Implemented": 152
     },
     "benchmark_coverage": {
       "internal_benches": [
@@ -183,7 +183,22 @@
         "status": "Implemented"
       },
       {
+        "symbol": "consttime_bcmp",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "consttime_memequal",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
         "symbol": "explicit_bzero",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "explicit_memset",
         "module": "string_abi",
         "status": "Implemented"
       },
@@ -374,6 +389,11 @@
       },
       {
         "symbol": "memset",
+        "module": "string_abi",
+        "status": "Implemented"
+      },
+      {
+        "symbol": "memset_explicit",
         "module": "string_abi",
         "status": "Implemented"
       },

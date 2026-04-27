@@ -33003,20 +33003,20 @@
     }
   ],
   "summary": {
-    "total": 4109,
-    "implemented": 3699,
-    "raw_syscall": 410,
+    "total": 4119,
+    "implemented": 3705,
+    "raw_syscall": 414,
     "wraps_host_libc": 0,
     "glibc_call_through": 0,
     "stub": 0
   },
-  "implemented": 3699,
-  "raw_syscall": 410,
+  "implemented": 3705,
+  "raw_syscall": 414,
   "glibc_call_through": 0,
   "stub": 0,
   "counts": {
-    "implemented": 3699,
-    "raw_syscall": 410,
+    "implemented": 3705,
+    "raw_syscall": 414,
     "glibc_call_through": 0,
     "stub": 0
   }

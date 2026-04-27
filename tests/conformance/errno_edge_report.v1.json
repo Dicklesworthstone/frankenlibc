@@ -3,7 +3,7 @@
   "bead": "bd-2tq.5",
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "summary": {
-    "tracked_symbols": 4109,
+    "tracked_symbols": 4119,
     "total_edge_cases": 1633,
     "errno_cases": 177,
     "covered_edge_cases": 1633,

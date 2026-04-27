@@ -1,15 +1,15 @@
 {
   "schema_version": "v1",
   "bead": "bd-1qfc",
-  "generated_at": "2026-04-26T21:52:51Z",
+  "generated_at": "2026-04-27T03:22:38Z",
   "summary": {
     "total_suites_in_spec": 4,
     "suites_with_bench_files": 4,
     "suites_enforced_in_gate": 2,
     "suites_with_full_baselines": 2,
     "baseline_slot_fill_pct": 28.6,
-    "hotpath_symbol_coverage_pct": 58.1,
-    "total_hotpath_symbols": 148,
+    "hotpath_symbol_coverage_pct": 59.2,
+    "total_hotpath_symbols": 152,
     "extra_bench_files_beyond_spec": 8,
     "total_issues": 0,
     "total_warnings": 0
@@ -112,10 +112,10 @@
     "issues": []
   },
   "hotpath_symbol_coverage": {
-    "total_hotpath_symbols": 148,
-    "covered_by_bench_suite": 86,
+    "total_hotpath_symbols": 152,
+    "covered_by_bench_suite": 90,
     "not_covered": 62,
-    "coverage_pct": 58.1,
+    "coverage_pct": 59.2,
     "uncovered_modules": [
       "c11threads_abi",
       "ctype_abi",

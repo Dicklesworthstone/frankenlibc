@@ -1,32 +1,32 @@
 {
   "schema_version": "v1",
   "bead": "bd-2vv.9",
-  "generated_at": "2026-04-26T21:59:37Z",
-  "universe_hash": "fd7ef249d97fb028",
+  "generated_at": "2026-04-27T03:29:31Z",
+  "universe_hash": "9d7216618d74b05c",
   "summary": {
-    "total_symbols": 4109,
-    "unique_symbols": 4109,
+    "total_symbols": 4119,
+    "unique_symbols": 4119,
     "duplicates": 0,
     "families": 29,
     "classifications": {
-      "native": 3699,
-      "syscall-passthrough": 410
+      "native": 3705,
+      "syscall-passthrough": 414
     },
     "confidence_levels": {
-      "high": 3699,
-      "medium": 410
+      "high": 3705,
+      "medium": 414
     },
     "perf_classes": {
       "O1": 455,
       "cold": 42,
-      "coldpath": 2154,
+      "coldpath": 2156,
       "default": 155,
       "fast": 69,
       "hot": 2,
-      "hotpath": 83,
+      "hotpath": 87,
       "native": 1,
       "strict_fast": 4,
-      "strict_hotpath": 148,
+      "strict_hotpath": 152,
       "strict_slow": 5,
       "syscall": 48,
       "syscall_veneer": 63,
@@ -34,7 +34,7 @@
       "zero_cost": 875
     },
     "unknown_action_count": 1054,
-    "native_implementation_pct": 90.0
+    "native_implementation_pct": 89.9
   },
   "normalized_symbols": [
     {
@@ -21688,6 +21688,38 @@
       "issues": []
     },
     {
+      "symbol": "consttime_bcmp",
+      "module": "string_abi",
+      "family": "string",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "classification": "native",
+      "confidence": "high",
+      "runtime_impact": 5,
+      "replacement_complexity": "low",
+      "priority_score": 490,
+      "default_stub": false,
+      "strict_semantics": "NetBSD constant-time byte comparison returning zero for equality and one for mismatch",
+      "hardened_semantics": "Delegates to timingsafe_bcmp; null pointer guards return mismatch for non-zero lengths",
+      "issues": []
+    },
+    {
+      "symbol": "consttime_memequal",
+      "module": "string_abi",
+      "family": "string",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "classification": "native",
+      "confidence": "high",
+      "runtime_impact": 5,
+      "replacement_complexity": "low",
+      "priority_score": 490,
+      "default_stub": false,
+      "strict_semantics": "NetBSD constant-time byte equality returning one for equality and zero for mismatch",
+      "hardened_semantics": "Delegates to timingsafe_bcmp; null pointer guards return non-equality for non-zero lengths",
+      "issues": []
+    },
+    {
       "symbol": "copy_file_range",
       "module": "io_abi",
       "family": "io",
@@ -26213,6 +26245,22 @@
       "default_stub": false,
       "strict_semantics": "Delegates to bzero with black_box guarantee",
       "hardened_semantics": "Same as bzero hardened semantics",
+      "issues": []
+    },
+    {
+      "symbol": "explicit_memset",
+      "module": "string_abi",
+      "family": "string",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "classification": "native",
+      "confidence": "high",
+      "runtime_impact": 5,
+      "replacement_complexity": "low",
+      "priority_score": 490,
+      "default_stub": false,
+      "strict_semantics": "NetBSD non-elidable byte fill routed through FrankenLibC memset",
+      "hardened_semantics": "Same membrane-aware null/bounds behavior as memset with optimization barrier",
       "issues": []
     },
     {
@@ -32471,6 +32519,70 @@
       "default_stub": false,
       "strict_semantics": "Linux futex: fast userspace locking",
       "hardened_semantics": "Same as strict",
+      "issues": []
+    },
+    {
+      "symbol": "futex_requeue",
+      "module": "unistd_abi",
+      "family": "unistd",
+      "status": "RawSyscall",
+      "perf_class": "hotpath",
+      "classification": "syscall-passthrough",
+      "confidence": "medium",
+      "runtime_impact": 5,
+      "replacement_complexity": "medium",
+      "priority_score": 480,
+      "default_stub": false,
+      "strict_semantics": "Linux futex2 futex_requeue raw syscall wrapper",
+      "hardened_semantics": "Same raw syscall path with kernel errno propagation",
+      "issues": []
+    },
+    {
+      "symbol": "futex_wait",
+      "module": "unistd_abi",
+      "family": "unistd",
+      "status": "RawSyscall",
+      "perf_class": "hotpath",
+      "classification": "syscall-passthrough",
+      "confidence": "medium",
+      "runtime_impact": 5,
+      "replacement_complexity": "medium",
+      "priority_score": 480,
+      "default_stub": false,
+      "strict_semantics": "Linux futex2 futex_wait raw syscall wrapper",
+      "hardened_semantics": "Same raw syscall path with kernel errno propagation",
+      "issues": []
+    },
+    {
+      "symbol": "futex_waitv",
+      "module": "unistd_abi",
+      "family": "unistd",
+      "status": "RawSyscall",
+      "perf_class": "hotpath",
+      "classification": "syscall-passthrough",
+      "confidence": "medium",
+      "runtime_impact": 5,
+      "replacement_complexity": "medium",
+      "priority_score": 480,
+      "default_stub": false,
+      "strict_semantics": "Linux futex_waitv raw syscall wrapper with POSIX errno propagation",
+      "hardened_semantics": "Same raw syscall path with null waiter guard",
+      "issues": []
+    },
+    {
+      "symbol": "futex_wake",
+      "module": "unistd_abi",
+      "family": "unistd",
+      "status": "RawSyscall",
+      "perf_class": "hotpath",
+      "classification": "syscall-passthrough",
+      "confidence": "medium",
+      "runtime_impact": 5,
+      "replacement_complexity": "medium",
+      "priority_score": 480,
+      "default_stub": false,
+      "strict_semantics": "Linux futex2 futex_wake raw syscall wrapper",
+      "hardened_semantics": "Same raw syscall path with kernel errno propagation",
       "issues": []
     },
     {
@@ -42500,6 +42612,22 @@
       "issues": []
     },
     {
+      "symbol": "memset_explicit",
+      "module": "string_abi",
+      "family": "string",
+      "status": "Implemented",
+      "perf_class": "strict_hotpath",
+      "classification": "native",
+      "confidence": "high",
+      "runtime_impact": 5,
+      "replacement_complexity": "low",
+      "priority_score": 490,
+      "default_stub": false,
+      "strict_semantics": "C23 alias of explicit_memset",
+      "hardened_semantics": "Same as explicit_memset",
+      "issues": []
+    },
+    {
       "symbol": "mincore",
       "module": "unistd_abi",
       "family": "unistd",
@@ -45992,6 +46120,22 @@
       "issues": [
         "unmapped module: glibc_internal_abi"
       ]
+    },
+    {
+      "symbol": "pidfile_signal",
+      "module": "stdlib_abi",
+      "family": "stdlib",
+      "status": "Implemented",
+      "perf_class": "coldpath",
+      "classification": "native",
+      "confidence": "high",
+      "runtime_impact": 1,
+      "replacement_complexity": "medium",
+      "priority_score": 80,
+      "default_stub": false,
+      "strict_semantics": "FreeBSD libutil pidfile_signal: locked pidfile detection, strict PID parsing, kill errno return",
+      "hardened_semantics": "Same deterministic errno-return contract with null path guard",
+      "issues": []
     },
     {
       "symbol": "pipe",
@@ -50875,6 +51019,22 @@
       "default_stub": false,
       "strict_semantics": "Safe Rust arena allocator; null on failure; double-free silently ignored",
       "hardened_semantics": "Arena with healing: foreign-ptr realloc as malloc, double-free logged as HealingAction",
+      "issues": []
+    },
+    {
+      "symbol": "reallocarr",
+      "module": "stdlib_abi",
+      "family": "stdlib",
+      "status": "Implemented",
+      "perf_class": "coldpath",
+      "classification": "native",
+      "confidence": "high",
+      "runtime_impact": 1,
+      "replacement_complexity": "medium",
+      "priority_score": 80,
+      "default_stub": false,
+      "strict_semantics": "NetBSD reallocarr pointer-to-pointer API with overflow check, size-zero rejection, and errno return",
+      "hardened_semantics": "Same allocator path with unchanged pointer on failure",
       "issues": []
     },
     {
@@ -69887,8 +70047,8 @@
       ]
     },
     "stdlib": {
-      "total": 152,
-      "native": 152,
+      "total": 154,
+      "native": 154,
       "native_pct": 100.0,
       "symbols": [
         "__assert",
@@ -69987,6 +70147,7 @@
         "nrand48",
         "nrand48_r",
         "on_exit",
+        "pidfile_signal",
         "putenv",
         "qecvt",
         "qecvt_r",
@@ -70000,6 +70161,7 @@
         "rand_r",
         "random",
         "random_r",
+        "reallocarr",
         "reallocarray",
         "realpath",
         "recallocarray",
@@ -70046,8 +70208,8 @@
       ]
     },
     "string": {
-      "total": 142,
-      "native": 141,
+      "total": 146,
+      "native": 145,
       "native_pct": 99.3,
       "symbols": [
         "__memcmpeq",
@@ -70112,6 +70274,8 @@
         "bcmp",
         "bcopy",
         "bzero",
+        "consttime_bcmp",
+        "consttime_memequal",
         "envz_add",
         "envz_entry",
         "envz_get",
@@ -70119,6 +70283,7 @@
         "envz_remove",
         "envz_strip",
         "explicit_bzero",
+        "explicit_memset",
         "fnmatch",
         "glob",
         "globfree",
@@ -70132,6 +70297,7 @@
         "mempcpy",
         "memrchr",
         "memset",
+        "memset_explicit",
         "psignal",
         "rawmemchr",
         "re_compile_fastmap",
@@ -70245,9 +70411,9 @@
       ]
     },
     "unistd": {
-      "total": 738,
+      "total": 742,
       "native": 478,
-      "native_pct": 64.8,
+      "native_pct": 64.4,
       "symbols": [
         "_Exit",
         "_Fork",
@@ -70428,6 +70594,10 @@
         "ftw",
         "ftw64",
         "futex",
+        "futex_requeue",
+        "futex_wait",
+        "futex_waitv",
+        "futex_wake",
         "gai_cancel",
         "gai_error",
         "gai_suspend",
