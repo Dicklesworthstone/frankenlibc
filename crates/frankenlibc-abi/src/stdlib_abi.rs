@@ -4684,7 +4684,15 @@ pub unsafe extern "C" fn basename(path: *mut std::ffi::c_char) -> *mut std::ffi:
     if path.is_null() {
         return return_dot();
     }
-    let (len, _terminated) = unsafe { scan_c_string(path as *const std::ffi::c_char, None) };
+    let (len, terminated) = unsafe {
+        scan_c_string(
+            path as *const std::ffi::c_char,
+            known_remaining(path as usize),
+        )
+    };
+    if !terminated {
+        return return_dot();
+    }
     if len == 0 {
         return return_dot();
     }
@@ -4718,7 +4726,15 @@ pub unsafe extern "C" fn dirname(path: *mut std::ffi::c_char) -> *mut std::ffi::
     if path.is_null() {
         return return_dot();
     }
-    let (len, _terminated) = unsafe { scan_c_string(path as *const std::ffi::c_char, None) };
+    let (len, terminated) = unsafe {
+        scan_c_string(
+            path as *const std::ffi::c_char,
+            known_remaining(path as usize),
+        )
+    };
+    if !terminated {
+        return return_dot();
+    }
     if len == 0 {
         return return_dot();
     }

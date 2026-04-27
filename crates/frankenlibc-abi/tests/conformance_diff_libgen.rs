@@ -87,6 +87,13 @@ fn run_dirname_fl(path: &str) -> String {
     unsafe { CStr::from_ptr(r).to_string_lossy().into_owned() }
 }
 
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
+    raw.cast()
+}
+
 #[test]
 fn diff_basename_paths() {
     let mut divs = Vec::new();
@@ -142,6 +149,18 @@ fn basename_null_does_not_crash() {
 }
 
 #[test]
+fn basename_rejects_tracked_unterminated_path() {
+    unsafe {
+        let raw = malloc_unterminated(b"usr/lib");
+        let result = fl::basename(raw);
+        assert!(!result.is_null());
+        let rendered = CStr::from_ptr(result).to_bytes().to_vec();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+        assert_eq!(rendered, b".");
+    }
+}
+
+#[test]
 fn diff_dirname_paths() {
     let mut divs = Vec::new();
     let cases: &[&str] = &[
@@ -193,6 +212,18 @@ fn dirname_long_path_does_not_use_fixed_buffer() {
         run_dirname(&path),
         "dirname should handle long caller buffers without fixed internal truncation or panic"
     );
+}
+
+#[test]
+fn dirname_rejects_tracked_unterminated_path() {
+    unsafe {
+        let raw = malloc_unterminated(b"usr/lib");
+        let result = fl::dirname(raw);
+        assert!(!result.is_null());
+        let rendered = CStr::from_ptr(result).to_bytes().to_vec();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+        assert_eq!(rendered, b".");
+    }
 }
 
 #[test]
