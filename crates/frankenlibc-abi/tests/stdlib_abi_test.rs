@@ -6842,6 +6842,20 @@ fn setmode_null_input_returns_null_with_einval() {
 }
 
 #[test]
+fn setmode_rejects_tracked_unterminated_mode() {
+    unsafe {
+        let raw = malloc_unterminated(b"u+x");
+        *__errno_location() = 0;
+
+        let bbox = setmode(raw);
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+        assert!(bbox.is_null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+    }
+}
+
+#[test]
 fn getmode_null_bbox_returns_input_unchanged() {
     let m = unsafe { getmode(ptr::null(), 0o644) };
     assert_eq!(m, 0o644);

@@ -5681,9 +5681,11 @@ pub unsafe extern "C" fn setmode(mode_str: *const c_char) -> *mut c_void {
         unsafe { set_abi_errno(libc::EINVAL) };
         return ptr::null_mut();
     }
-    // SAFETY: caller-supplied NUL-terminated C string.
-    let bytes = unsafe { CStr::from_ptr(mode_str) }.to_bytes();
-    let ops = match core_sm::parse(bytes) {
+    let Some(bytes) = (unsafe { read_bounded_cstr_bytes(mode_str) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return ptr::null_mut();
+    };
+    let ops = match core_sm::parse(&bytes) {
         Some(v) => v,
         None => {
             unsafe { set_abi_errno(libc::EINVAL) };
