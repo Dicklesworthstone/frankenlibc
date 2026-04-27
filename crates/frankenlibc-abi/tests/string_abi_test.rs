@@ -1227,6 +1227,13 @@ fn collect_argz_entries(argz: *mut c_char, argz_len: usize) -> Vec<Vec<u8>> {
     entries
 }
 
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
+    raw.cast()
+}
+
 #[test]
 fn argz_replace_updates_replace_count_and_contents() {
     let mut argz = std::ptr::null_mut();
@@ -1384,6 +1391,54 @@ fn argz_add_sep_discards_empty_segments_and_keeps_terminal_empty() {
     assert_eq!(argz_len, 10);
 
     unsafe {
+        frankenlibc_abi::malloc_abi::free(argz.cast());
+    }
+}
+
+#[test]
+fn argz_rejects_tracked_unterminated_inputs() {
+    unsafe {
+        let raw = malloc_unterminated(b"one:two");
+        let mut argz = std::ptr::null_mut();
+        let mut argz_len = 0usize;
+
+        assert_eq!(argz_add(&mut argz, &mut argz_len, raw), libc::EINVAL);
+        assert!(argz.is_null());
+        assert_eq!(argz_len, 0);
+
+        assert_eq!(
+            argz_create_sep(raw, b':' as c_int, &mut argz, &mut argz_len),
+            libc::EINVAL
+        );
+        assert!(argz.is_null());
+        assert_eq!(argz_len, 0);
+
+        assert_eq!(
+            argz_add_sep(&mut argz, &mut argz_len, raw, b':' as c_int),
+            libc::EINVAL
+        );
+        assert!(argz.is_null());
+        assert_eq!(argz_len, 0);
+
+        assert_eq!(argz_add(&mut argz, &mut argz_len, c"head".as_ptr()), 0);
+        let before = argz;
+        assert_eq!(
+            argz_insert(&mut argz, &mut argz_len, before, raw),
+            libc::EINVAL
+        );
+        let mut replacements = 0;
+        assert_eq!(
+            argz_replace(
+                &mut argz,
+                &mut argz_len,
+                c"head".as_ptr(),
+                raw,
+                &mut replacements,
+            ),
+            libc::EINVAL
+        );
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
         frankenlibc_abi::malloc_abi::free(argz.cast());
     }
 }
