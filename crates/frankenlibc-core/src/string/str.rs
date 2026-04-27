@@ -355,11 +355,19 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
 ///
 /// Equivalent to C `strpbrk`. Returns the index of the first match, or `None`.
 pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
-    let s_len = strlen(s);
     let accept_len = strlen(accept);
     let accept_set = &accept[..accept_len];
 
-    s[..s_len].iter().position(|b| accept_set.contains(b))
+    for (i, &byte) in s.iter().enumerate() {
+        if byte == 0 {
+            return None;
+        }
+        if accept_set.contains(&byte) {
+            return Some(i);
+        }
+    }
+
+    None
 }
 
 /// Case-insensitive version of `strstr`. Finds the first occurrence of
@@ -690,6 +698,26 @@ mod tests {
     #[test]
     fn test_strcspn_empty_reject_returns_strlen() {
         assert_eq!(strcspn(b"abc\0", b"\0"), 3);
+    }
+
+    #[test]
+    fn test_strpbrk_basic() {
+        assert_eq!(strpbrk(b"abc123\0", b"13\0"), Some(3));
+    }
+
+    #[test]
+    fn test_strpbrk_stops_at_terminator() {
+        assert_eq!(strpbrk(b"abc\0Z", b"Z\0"), None);
+    }
+
+    #[test]
+    fn test_strpbrk_accept_absent_without_terminator_returns_none() {
+        assert_eq!(strpbrk(b"unterminated", b"Z\0"), None);
+    }
+
+    #[test]
+    fn test_strpbrk_empty_accept_returns_none() {
+        assert_eq!(strpbrk(b"abc\0", b"\0"), None);
     }
 
     #[test]
