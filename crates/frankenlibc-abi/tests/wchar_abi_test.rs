@@ -48,6 +48,17 @@ fn wcslen_empty_string() {
     assert_eq!(unsafe { wcslen(s.as_ptr()) }, 0);
 }
 
+#[test]
+fn wcslen_bounds_tracked_unterminated_input() {
+    unsafe {
+        let src = malloc_unterminated_wide(&[b'A' as u32, b'B' as u32, b'C' as u32]);
+
+        assert_eq!(wcslen(src), 3);
+
+        free(src.cast());
+    }
+}
+
 // ── wcscpy / wcsncpy ───────────────────────────────────────────────────────
 
 #[test]

@@ -181,12 +181,13 @@ pub unsafe extern "C" fn wcslen(s: *const u32) -> usize {
         return 0;
     }
 
-    let (mode, decision) = runtime_policy::decide(
+    let known = known_remaining(s as usize);
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
         0,
         false,
-        known_remaining(s as usize).is_none(),
+        known.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -194,9 +195,7 @@ pub unsafe extern "C" fn wcslen(s: *const u32) -> usize {
         return 0;
     }
 
-    if (mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)))
-        && let Some(bytes_rem) = known_remaining(s as usize)
-    {
+    if let Some(bytes_rem) = known {
         let limit = bytes_to_wchars(bytes_rem);
         // SAFETY: bounded scan within known allocation extent.
         unsafe {
@@ -226,7 +225,7 @@ pub unsafe extern "C" fn wcslen(s: *const u32) -> usize {
         return limit;
     }
 
-    // SAFETY: strict mode preserves libc-like raw scan semantics.
+    // SAFETY: untracked strict-mode strings preserve libc-like raw scan semantics.
     unsafe {
         let mut len = 0usize;
         while *s.add(len) != 0 {
