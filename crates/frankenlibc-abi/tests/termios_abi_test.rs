@@ -6,7 +6,38 @@
 //! Terminal I/O tests (tcgetattr, tcsetattr, etc.) require a real TTY
 //! and are tested only when /dev/ptmx is available.
 
+use std::ffi::c_void;
+
 use frankenlibc_abi::termios_abi::{cfgetispeed, cfgetospeed, cfsetispeed, cfsetospeed};
+
+unsafe fn malloc_tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw, 0, len) };
+    raw.cast()
+}
+
+fn assert_known_short(raw: *const c_void, required: usize) {
+    let remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_ne!(
+        remaining,
+        usize::MAX,
+        "test allocation should be tracked by malloc metadata"
+    );
+    assert!(
+        remaining < required,
+        "test allocation should expose {remaining} tracked bytes, less than required {required}"
+    );
+}
+
+fn errno_value() -> i32 {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+unsafe fn free_tracked(raw: *mut c_void) {
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
+}
 
 // ---------------------------------------------------------------------------
 // cfgetispeed / cfgetospeed
@@ -38,6 +69,30 @@ fn cfgetispeed_null_returns_zero() {
 fn cfgetospeed_null_returns_zero() {
     let speed = unsafe { cfgetospeed(std::ptr::null()) };
     assert_eq!(speed, 0, "cfgetospeed(null) should return 0");
+}
+
+#[test]
+fn cfgetispeed_rejects_tracked_short_termios() {
+    let required = std::mem::size_of::<libc::termios>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let speed = unsafe { cfgetispeed(raw.cast()) };
+
+    assert_eq!(speed, 0);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn cfgetospeed_rejects_tracked_short_termios() {
+    let required = std::mem::size_of::<libc::termios>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let speed = unsafe { cfgetospeed(raw.cast()) };
+
+    assert_eq!(speed, 0);
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +127,32 @@ fn cfsetispeed_null_fails() {
 fn cfsetospeed_null_fails() {
     let rc = unsafe { cfsetospeed(std::ptr::null_mut(), libc::B9600) };
     assert_eq!(rc, -1, "cfsetospeed(null) should fail");
+}
+
+#[test]
+fn cfsetispeed_rejects_tracked_short_termios() {
+    let required = std::mem::size_of::<libc::termios>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { cfsetispeed(raw.cast(), libc::B9600) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn cfsetospeed_rejects_tracked_short_termios() {
+    let required = std::mem::size_of::<libc::termios>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { cfsetospeed(raw.cast(), libc::B9600) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
 
 #[test]
@@ -132,6 +213,21 @@ fn tcgetattr_null_termios_fails() {
 }
 
 #[test]
+fn tcgetattr_rejects_tracked_short_termios() {
+    use frankenlibc_abi::termios_abi::tcgetattr;
+
+    let required = std::mem::size_of::<libc::termios>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { tcgetattr(-1, raw.cast()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
 fn tcsetattr_roundtrip_on_pty() {
     use frankenlibc_abi::termios_abi::{tcgetattr, tcsetattr};
     if let Some(fd) = open_pty_master() {
@@ -155,6 +251,21 @@ fn tcsetattr_null_termios_fails() {
         assert_eq!(rc, -1, "tcsetattr with null termios should fail");
         unsafe { frankenlibc_abi::unistd_abi::close(fd) };
     }
+}
+
+#[test]
+fn tcsetattr_rejects_tracked_short_termios() {
+    use frankenlibc_abi::termios_abi::tcsetattr;
+
+    let required = std::mem::size_of::<libc::termios>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    let rc = unsafe { tcsetattr(-1, libc::TCSANOW, raw.cast()) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
 
 // ---------------------------------------------------------------------------

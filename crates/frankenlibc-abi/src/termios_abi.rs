@@ -19,6 +19,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use frankenlibc_membrane::util::now_utc_iso_like;
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -254,6 +255,13 @@ const TERMINAL_SIGNATURE_DECISION_PATH: &str = "termios->rough_path_signature";
 static TERMINAL_SIGNATURE_LOG_SEQ: AtomicU64 = AtomicU64::new(0);
 static TERMINAL_SIGNATURE_LOGS: LazyLock<Mutex<VecDeque<String>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
+
+#[inline]
+fn tracked_object_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null()
+        && known_remaining(ptr as usize)
+            .is_none_or(|remaining| core::mem::size_of::<T>() <= remaining)
+}
 
 fn runtime_mode_label() -> &'static str {
     match runtime_policy::mode() {
@@ -603,6 +611,19 @@ fn rough_path_observation(report: TerminalTransitionReport) -> [f64; 4] {
     ]
 }
 
+fn untracked_terminal_summary(report: TerminalTransitionReport) -> TerminalTrackerSummary {
+    let mut sequence_signature = TerminalSequenceSignature::default();
+    sequence_signature.observe(report);
+    TerminalTrackerSummary {
+        current: report.current,
+        rough_path_state: RoughPathState::Calibrating,
+        anomaly_score: if report.is_legal { 0.0 } else { 1.0 },
+        illegal_transition_count: u64::from(!report.is_legal),
+        sequence_signature,
+        is_legal: report.is_legal,
+    }
+}
+
 fn observe_fd_transition(
     symbol: &'static str,
     fd: c_int,
@@ -612,14 +633,13 @@ fn observe_fd_transition(
 ) -> TerminalTrackerSummary {
     let started = Instant::now();
     let report = analyze_transition(before, after, optional_actions);
-    let summary = {
-        let mut trackers = FD_SIGNATURE_TRACKERS
-            .lock()
-            .expect("termios fd signature tracker mutex poisoned");
+    let summary = if let Ok(mut trackers) = FD_SIGNATURE_TRACKERS.lock() {
         trackers
             .entry(fd)
             .or_insert_with(TerminalSignatureTracker::new)
             .observe(report)
+    } else {
+        untracked_terminal_summary(report)
     };
     let latency_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
     log_terminal_signature_observation(symbol, Some(fd), None, report, summary, latency_ns);
@@ -635,14 +655,13 @@ fn observe_ptr_transition(
 ) -> TerminalTrackerSummary {
     let started = Instant::now();
     let report = analyze_transition(before, after, optional_actions);
-    let summary = {
-        let mut trackers = PTR_SIGNATURE_TRACKERS
-            .lock()
-            .expect("termios pointer signature tracker mutex poisoned");
+    let summary = if let Ok(mut trackers) = PTR_SIGNATURE_TRACKERS.lock() {
         trackers
             .entry(ptr_key)
             .or_insert_with(TerminalSignatureTracker::new)
             .observe(report)
+    } else {
+        untracked_terminal_summary(report)
     };
     let latency_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
     log_terminal_signature_observation(symbol, None, Some(ptr_key), report, summary, latency_ns);
@@ -663,6 +682,11 @@ pub unsafe extern "C" fn tcgetattr(fd: c_int, termios_p: *mut libc::termios) -> 
     }
 
     if termios_p.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
+        return -1;
+    }
+    if !tracked_object_fits(termios_p.cast_const()) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
@@ -703,6 +727,11 @@ pub unsafe extern "C" fn tcsetattr(
     }
 
     if termios_p.is_null() {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
+        return -1;
+    }
+    if !tracked_object_fits(termios_p) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
@@ -759,6 +788,9 @@ pub unsafe extern "C" fn cfgetispeed(termios_p: *const libc::termios) -> u32 {
     if termios_p.is_null() {
         return 0;
     }
+    if !tracked_object_fits(termios_p) {
+        return 0;
+    }
     unsafe { (*termios_p).c_ispeed }
 }
 
@@ -785,6 +817,10 @@ pub unsafe extern "C" fn cfgetospeed(termios_p: *const libc::termios) -> u32 {
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return 0;
     }
+    if !tracked_object_fits(termios_p) {
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
+        return 0;
+    }
     let result = unsafe { (*termios_p).c_ospeed };
     runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, false);
     result
@@ -798,6 +834,10 @@ pub unsafe extern "C" fn cfgetospeed(termios_p: *const libc::termios) -> u32 {
 pub unsafe extern "C" fn cfsetispeed(termios_p: *mut libc::termios, speed: u32) -> c_int {
     if termios_p.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    if !tracked_object_fits(termios_p.cast_const()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
     let before = unsafe { std::ptr::read(termios_p) };
@@ -844,6 +884,11 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
 
     if termios_p.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
+        return -1;
+    }
+    if !tracked_object_fits(termios_p.cast_const()) {
+        unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
