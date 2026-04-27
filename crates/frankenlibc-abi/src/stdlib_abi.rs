@@ -5319,12 +5319,15 @@ pub unsafe extern "C" fn humanize_number(
     // SAFETY: buf is valid for `len` writable bytes per the caller.
     let buf_slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, len) };
 
-    let suffix_bytes: &[u8] = if suffix.is_null() {
-        &[]
+    let suffix_owned = if suffix.is_null() {
+        None
     } else {
-        // SAFETY: caller-supplied NUL-terminated C string.
-        unsafe { CStr::from_ptr(suffix) }.to_bytes()
+        let Some(bytes) = (unsafe { read_bounded_cstr_bytes(suffix) }) else {
+            return -1;
+        };
+        Some(bytes)
     };
+    let suffix_bytes = suffix_owned.as_deref().unwrap_or(&[]);
 
     let core_flags = core_hn::HumanizeFlags(flags as u32 & 0x1f);
 
@@ -5369,11 +5372,14 @@ pub unsafe extern "C" fn fmtcheck(
         return default_fmt;
     }
 
-    // SAFETY: caller-supplied NUL-terminated C strings.
-    let user_bytes = unsafe { CStr::from_ptr(user) }.to_bytes();
-    let default_bytes = unsafe { CStr::from_ptr(default_fmt) }.to_bytes();
+    let Some(user_bytes) = (unsafe { read_bounded_cstr_bytes(user) }) else {
+        return default_fmt;
+    };
+    let Some(default_bytes) = (unsafe { read_bounded_cstr_bytes(default_fmt) }) else {
+        return default_fmt;
+    };
 
-    if core_fc::compatible(user_bytes, default_bytes) {
+    if core_fc::compatible(&user_bytes, &default_bytes) {
         user
     } else {
         default_fmt

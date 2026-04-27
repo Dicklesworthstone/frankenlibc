@@ -6481,6 +6481,26 @@ fn humanize_suffix_is_appended_after_prefix() {
     assert_eq!(hn_string(&buf, n), "4 KiB/s");
 }
 
+#[test]
+fn humanize_rejects_tracked_unterminated_suffix() {
+    unsafe {
+        let suffix = malloc_unterminated(b"/s");
+        let mut buf = [0u8; 32];
+
+        let n = humanize_number(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            4096,
+            suffix,
+            HN_AUTOSCALE,
+            HN_IEC_PREFIXES | HN_B,
+        );
+
+        frankenlibc_abi::malloc_abi::free(suffix.cast());
+        assert_eq!(n, -1);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // fmtcheck (NetBSD/FreeBSD libutil printf-format compatibility check)
 // ---------------------------------------------------------------------------
@@ -6556,6 +6576,33 @@ fn fmtcheck_null_default_returns_default() {
         p.is_null(),
         "NULL default → return NULL even if user is set"
     );
+}
+
+#[test]
+fn fmtcheck_rejects_tracked_unterminated_user() {
+    unsafe {
+        let user = malloc_unterminated(b"%d");
+        let default_fmt = c"%d";
+
+        let p = fmtcheck(user, default_fmt.as_ptr());
+
+        frankenlibc_abi::malloc_abi::free(user.cast());
+        assert_eq!(p, default_fmt.as_ptr() as *const c_char);
+    }
+}
+
+#[test]
+fn fmtcheck_rejects_tracked_unterminated_default() {
+    unsafe {
+        let user = c"%d";
+        let default_fmt = malloc_unterminated(b"%d");
+        let expected = default_fmt.cast_const();
+
+        let p = fmtcheck(user.as_ptr(), default_fmt);
+
+        frankenlibc_abi::malloc_abi::free(default_fmt.cast());
+        assert_eq!(p, expected);
+    }
 }
 
 #[test]
