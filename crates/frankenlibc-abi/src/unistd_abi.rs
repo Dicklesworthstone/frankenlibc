@@ -18052,6 +18052,13 @@ pub unsafe extern "C" fn gethostbyname2_r(
     {
         return libc::EINVAL;
     }
+    let Some(requested_name_bytes) = (unsafe { read_c_string_bytes(name) }) else {
+        unsafe {
+            *result = std::ptr::null_mut();
+            *h_errnop = 1; // HOST_NOT_FOUND
+        }
+        return 0;
+    };
     // Use getaddrinfo under the hood
     let hints = libc::addrinfo {
         ai_flags: libc::AI_CANONNAME,
@@ -18077,9 +18084,10 @@ pub unsafe extern "C" fn gethostbyname2_r(
         let ai = unsafe { &*res };
         let addr_len: usize = if ai.ai_family == libc::AF_INET { 4 } else { 16 };
         let name_bytes = if !ai.ai_canonname.is_null() {
-            unsafe { CStr::from_ptr(ai.ai_canonname) }.to_bytes()
+            unsafe { read_c_string_bytes(ai.ai_canonname) }
+                .unwrap_or_else(|| requested_name_bytes.clone())
         } else {
-            unsafe { CStr::from_ptr(name) }.to_bytes()
+            requested_name_bytes
         };
         let ptr_size = core::mem::size_of::<*mut c_char>();
         let addr_align = if ai.ai_family == libc::AF_INET {

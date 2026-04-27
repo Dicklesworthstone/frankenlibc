@@ -5037,6 +5037,34 @@ fn gethostbyname2_r_missing_host_returns_zero_with_null_result() {
 }
 
 #[test]
+fn gethostbyname2_r_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"localhost");
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0i8; 1024];
+    let mut result: *mut libc::hostent = std::ptr::dangling_mut::<libc::hostent>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostbyname2_r(
+            raw_name,
+            libc::AF_INET6,
+            (&mut hostent as *mut libc::hostent).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+
+    assert_eq!(rc, 0);
+    assert!(result.is_null());
+    assert_eq!(h_errno, 1);
+}
+
+#[test]
 fn gethostbyname2_r_ipv6_localhost_packs_result_into_caller_buffer() {
     let name = CString::new("localhost").unwrap();
     let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
