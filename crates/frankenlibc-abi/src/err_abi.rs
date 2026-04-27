@@ -6,12 +6,14 @@
 //! - `err`/`verr`: like warn + exit(eval)
 //! - `errx`/`verrx`: like warnx + exit(eval)
 
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_void};
 
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
 
 use crate::malloc_abi::known_remaining;
 use crate::util::scan_c_string;
+
+const MAX_PUBLISHED_PROGNAME_BYTES: usize = 4096;
 
 /// Read a caller-supplied err(3) format string without walking past tracked
 /// allocations that never reached a NUL terminator.
@@ -46,9 +48,12 @@ fn get_progname() -> Vec<u8> {
     let published = crate::startup_abi::program_invocation_short_name
         .load(std::sync::atomic::Ordering::Acquire);
     if !published.is_null() {
-        // SAFETY: startup publishes `argv[0]` storage for process lifetime.
-        let bytes = unsafe { CStr::from_ptr(published) }.to_bytes();
-        if !bytes.is_empty() {
+        // Startup publishes `argv[0]` storage for process lifetime, but still
+        // cap the scan so a bad embedder cannot make diagnostics walk memory.
+        let (len, terminated) =
+            unsafe { scan_c_string(published, Some(MAX_PUBLISHED_PROGNAME_BYTES)) };
+        if terminated && len > 0 {
+            let bytes = unsafe { core::slice::from_raw_parts(published.cast::<u8>(), len) };
             return bytes.to_vec();
         }
     }
@@ -162,13 +167,7 @@ fn vformat_and_write_with_code(fmt: *const c_char, ap: *mut c_void, code: c_int)
 
 /// Convert errno to a human-readable byte string.
 fn strerror_bytes(errnum: c_int) -> &'static [u8] {
-    let ptr = unsafe { crate::string_abi::strerror(errnum) };
-    if ptr.is_null() {
-        return b"Unknown error";
-    }
-    // SAFETY: strerror returns a valid C string from static storage.
-    let cstr = unsafe { std::ffi::CStr::from_ptr(ptr) };
-    cstr.to_bytes()
+    frankenlibc_core::errno::strerror_message(errnum).as_bytes()
 }
 
 // ---------------------------------------------------------------------------
@@ -477,7 +476,7 @@ static ERR_EXIT_HOOK: std::sync::Mutex<Option<ErrExitHook>> = std::sync::Mutex::
 /// fatal path) — we don't impose any constraint on its return
 /// behavior.
 fn invoke_exit_hook(eval: c_int) {
-    let hook = { *ERR_EXIT_HOOK.lock().unwrap() };
+    let hook = { *ERR_EXIT_HOOK.lock().unwrap_or_else(|e| e.into_inner()) };
     if let Some(f) = hook {
         unsafe { f(eval) };
     }
@@ -505,7 +504,7 @@ fn invoke_exit_hook(eval: c_int) {
 /// constraints).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn err_set_exit(func: Option<ErrExitHook>) -> Option<ErrExitHook> {
-    let mut cell = ERR_EXIT_HOOK.lock().unwrap();
+    let mut cell = ERR_EXIT_HOOK.lock().unwrap_or_else(|e| e.into_inner());
     let prev = *cell;
     *cell = func;
     prev
