@@ -7,13 +7,13 @@
 //!
 //! Uses the "root" group (gid=0) which exists on all Linux systems.
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::grp_abi::*;
-use frankenlibc_abi::malloc_abi::{free, malloc};
+use frankenlibc_abi::malloc_abi::{free, malloc, malloc_known_remaining_for_tests};
 use frankenlibc_core::errno;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -36,9 +36,46 @@ fn with_group_path(path: &std::path::Path, f: impl FnOnce()) {
     unsafe { std::env::remove_var("FRANKENLIBC_GROUP_PATH") };
 }
 
+fn with_group_file(content: &[u8], f: impl FnOnce()) {
+    let _guard = GROUP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = temp_group_path();
+    std::fs::write(&path, content).expect("write temp group");
+    // SAFETY: Serialized by GROUP_ENV_LOCK.
+    unsafe { std::env::set_var("FRANKENLIBC_GROUP_PATH", &path) };
+    f();
+    // SAFETY: Serialized by GROUP_ENV_LOCK.
+    unsafe { std::env::remove_var("FRANKENLIBC_GROUP_PATH") };
+    let _ = std::fs::remove_file(&path);
+}
+
 fn with_group_lock<T>(f: impl FnOnce() -> T) -> T {
     let _guard = GROUP_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     f()
+}
+
+unsafe fn tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    let raw = unsafe { malloc(len) };
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw.cast::<u8>(), 0, len) };
+    raw
+}
+
+fn assert_known_short(raw: *const c_void, required: usize) {
+    let remaining = malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_ne!(
+        remaining,
+        usize::MAX,
+        "test allocation should be tracked by malloc metadata"
+    );
+    assert!(
+        remaining < required,
+        "test allocation should expose {remaining} tracked bytes, less than required {required}"
+    );
+}
+
+unsafe fn free_tracked(raw: *mut c_void) {
+    unsafe { free(raw) };
 }
 
 // ===========================================================================
@@ -263,6 +300,50 @@ fn getgrnam_r_small_buffer() {
 }
 
 #[test]
+fn getgrnam_r_rejects_tracked_buffer_shorter_than_claimed() {
+    with_group_file(GROUP_FIXTURE, || unsafe {
+        let name = CString::new("root").unwrap();
+        let mut grp: libc::group = std::mem::zeroed();
+        let raw = tracked_zeroed_bytes(2);
+        assert_known_short(raw, 3);
+        let mut result: *mut libc::group = std::ptr::null_mut();
+
+        let rc = getgrnam_r(
+            name.as_ptr(),
+            &mut grp,
+            raw.cast::<c_char>(),
+            1024,
+            &mut result,
+        );
+
+        assert_eq!(rc, libc::ERANGE);
+        assert!(result.is_null());
+        free_tracked(raw);
+    });
+}
+
+#[test]
+fn getgrgid_r_rejects_tracked_short_result_slot_before_write() {
+    with_group_file(GROUP_FIXTURE, || unsafe {
+        let mut grp: libc::group = std::mem::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let raw = tracked_zeroed_bytes(std::mem::size_of::<*mut libc::group>() - 1);
+        assert_known_short(raw, std::mem::size_of::<*mut libc::group>());
+
+        let rc = getgrgid_r(
+            0,
+            &mut grp,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            raw.cast::<*mut libc::group>(),
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        free_tracked(raw);
+    });
+}
+
+#[test]
 fn getgrnam_r_missing_backend_returns_errno() {
     let missing = temp_group_path();
     with_group_path(&missing, || {
@@ -307,6 +388,36 @@ fn getgrent_r_basic() {
             !name.to_str().unwrap().is_empty(),
             "group name should not be empty"
         );
+
+        unsafe { endgrent() };
+    });
+}
+
+#[test]
+fn getgrent_r_erange_does_not_advance_cursor() {
+    with_group_file(GROUP_FIXTURE, || {
+        unsafe { setgrent() };
+
+        let mut grp: libc::group = unsafe { std::mem::zeroed() };
+        let mut tiny = [0u8; 1];
+        let mut result: *mut libc::group = std::ptr::null_mut();
+        let rc = unsafe { getgrent_r(&mut grp, tiny.as_mut_ptr().cast(), tiny.len(), &mut result) };
+        assert_eq!(rc, libc::ERANGE);
+        assert!(result.is_null());
+
+        let mut retry_buf = vec![0u8; 1024];
+        let rc = unsafe {
+            getgrent_r(
+                &mut grp,
+                retry_buf.as_mut_ptr().cast(),
+                retry_buf.len(),
+                &mut result,
+            )
+        };
+        assert_eq!(rc, 0);
+        assert!(!result.is_null());
+        let name = unsafe { CStr::from_ptr(grp.gr_name) };
+        assert_eq!(name.to_bytes(), b"root");
 
         unsafe { endgrent() };
     });

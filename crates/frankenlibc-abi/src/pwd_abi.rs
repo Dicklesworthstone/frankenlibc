@@ -37,6 +37,29 @@ unsafe fn bounded_cstr_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
     Some(unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) })
 }
 
+fn tracked_object_fits<T>(ptr: *const T) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| remaining >= std::mem::size_of::<T>())
+}
+
+fn effective_buffer_len(ptr: *const c_char, requested: libc::size_t) -> libc::size_t {
+    known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
+}
+
+fn passwd_buffer_needed(entry: &frankenlibc_core::pwd::Passwd) -> Option<usize> {
+    entry
+        .pw_name
+        .len()
+        .checked_add(1)?
+        .checked_add(entry.pw_passwd.len())?
+        .checked_add(1)?
+        .checked_add(entry.pw_gecos.len())?
+        .checked_add(1)?
+        .checked_add(entry.pw_dir.len())?
+        .checked_add(1)?
+        .checked_add(entry.pw_shell.len())?
+        .checked_add(1)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileFingerprint {
     len: u64,
@@ -431,6 +454,11 @@ pub unsafe extern "C" fn getpwnam_r(
     if name.is_null() || pwd.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
+    if !tracked_object_fits(pwd as *const libc::passwd)
+        || !tracked_object_fits(result as *const *mut libc::passwd)
+    {
+        return libc::EINVAL;
+    }
 
     // SAFETY: result is non-null.
     unsafe { *result = ptr::null_mut() };
@@ -459,7 +487,7 @@ pub unsafe extern "C" fn getpwnam_r(
         }
     };
 
-    let rc = unsafe { fill_passwd_r(&entry, pwd, buf, buflen, result) };
+    let rc = unsafe { fill_passwd_r(&entry, pwd, buf, effective_buffer_len(buf, buflen), result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -474,6 +502,11 @@ pub unsafe extern "C" fn getpwuid_r(
     result: *mut *mut libc::passwd,
 ) -> c_int {
     if pwd.is_null() || buf.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    if !tracked_object_fits(pwd as *const libc::passwd)
+        || !tracked_object_fits(result as *const *mut libc::passwd)
+    {
         return libc::EINVAL;
     }
 
@@ -498,7 +531,7 @@ pub unsafe extern "C" fn getpwuid_r(
         }
     };
 
-    let rc = unsafe { fill_passwd_r(&entry, pwd, buf, buflen, result) };
+    let rc = unsafe { fill_passwd_r(&entry, pwd, buf, effective_buffer_len(buf, buflen), result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -507,8 +540,8 @@ pub unsafe extern "C" fn getpwuid_r(
 ///
 /// # Safety
 ///
-/// `pwd`, `buf`, `result` must be valid writable pointers. `buflen` must
-/// reflect the actual size of the `buf` allocation.
+/// `pwd`, `buf`, `result` must be valid writable pointers. `buflen` must be
+/// capped to the actual writable size of `buf`.
 unsafe fn fill_passwd_r(
     entry: &frankenlibc_core::pwd::Passwd,
     pwd: *mut libc::passwd,
@@ -517,16 +550,9 @@ unsafe fn fill_passwd_r(
     result: *mut *mut libc::passwd,
 ) -> c_int {
     // Calculate needed buffer: name\0passwd\0gecos\0dir\0shell\0
-    let needed = entry.pw_name.len()
-        + 1
-        + entry.pw_passwd.len()
-        + 1
-        + entry.pw_gecos.len()
-        + 1
-        + entry.pw_dir.len()
-        + 1
-        + entry.pw_shell.len()
-        + 1;
+    let Some(needed) = passwd_buffer_needed(entry) else {
+        return libc::ERANGE;
+    };
 
     if buflen < needed {
         return libc::ERANGE;
@@ -616,6 +642,11 @@ pub unsafe extern "C" fn getpwent_r(
     if pwd.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
+    if !tracked_object_fits(pwd as *const libc::passwd)
+        || !tracked_object_fits(result as *const *mut libc::passwd)
+    {
+        return libc::EINVAL;
+    }
 
     unsafe { *result = ptr::null_mut() };
 
@@ -637,8 +668,12 @@ pub unsafe extern "C" fn getpwent_r(
         }
 
         let entry = storage.entries[storage.iter_idx].clone();
-        storage.iter_idx += 1;
-        unsafe { fill_passwd_r(&entry, pwd, buf, buflen, result) }
+        let rc =
+            unsafe { fill_passwd_r(&entry, pwd, buf, effective_buffer_len(buf, buflen), result) };
+        if rc == 0 {
+            storage.iter_idx += 1;
+        }
+        rc
     })
 }
 

@@ -37,6 +37,28 @@ unsafe fn bounded_cstr_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
     Some(unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) })
 }
 
+fn tracked_object_fits<T>(ptr: *const T) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| remaining >= std::mem::size_of::<T>())
+}
+
+fn effective_buffer_len(ptr: *const c_char, requested: libc::size_t) -> libc::size_t {
+    known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
+}
+
+fn group_string_space(entry: &frankenlibc_core::grp::Group) -> Option<usize> {
+    let mut needed = entry.gr_name.len().checked_add(1)?;
+    needed = needed.checked_add(entry.gr_passwd.len())?.checked_add(1)?;
+    for member in &entry.gr_mem {
+        needed = needed.checked_add(member.len())?.checked_add(1)?;
+    }
+    Some(needed)
+}
+
+fn align_up(value: usize, align: usize) -> Option<usize> {
+    debug_assert!(align.is_power_of_two());
+    value.checked_add(align - 1).map(|v| v & !(align - 1))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileFingerprint {
     len: u64,
@@ -436,6 +458,11 @@ pub unsafe extern "C" fn getgrnam_r(
     if name.is_null() || grp.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
+    if !tracked_object_fits(grp as *const libc::group)
+        || !tracked_object_fits(result as *const *mut libc::group)
+    {
+        return libc::EINVAL;
+    }
 
     // SAFETY: result is non-null.
     unsafe { *result = ptr::null_mut() };
@@ -463,7 +490,7 @@ pub unsafe extern "C" fn getgrnam_r(
         }
     };
 
-    let rc = unsafe { fill_group_r(&entry, grp, buf, buflen, result) };
+    let rc = unsafe { fill_group_r(&entry, grp, buf, effective_buffer_len(buf, buflen), result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -478,6 +505,11 @@ pub unsafe extern "C" fn getgrgid_r(
     result: *mut *mut libc::group,
 ) -> c_int {
     if grp.is_null() || buf.is_null() || result.is_null() {
+        return libc::EINVAL;
+    }
+    if !tracked_object_fits(grp as *const libc::group)
+        || !tracked_object_fits(result as *const *mut libc::group)
+    {
         return libc::EINVAL;
     }
 
@@ -502,7 +534,7 @@ pub unsafe extern "C" fn getgrgid_r(
         }
     };
 
-    let rc = unsafe { fill_group_r(&entry, grp, buf, buflen, result) };
+    let rc = unsafe { fill_group_r(&entry, grp, buf, effective_buffer_len(buf, buflen), result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -513,8 +545,8 @@ pub unsafe extern "C" fn getgrgid_r(
 ///
 /// # Safety
 ///
-/// `grp`, `buf`, `result` must be valid writable pointers. `buflen` must
-/// reflect the actual size of the `buf` allocation.
+/// `grp`, `buf`, `result` must be valid writable pointers. `buflen` must be
+/// capped to the actual writable size of `buf`.
 unsafe fn fill_group_r(
     entry: &frankenlibc_core::grp::Group,
     grp: *mut libc::group,
@@ -523,21 +555,27 @@ unsafe fn fill_group_r(
     result: *mut *mut libc::group,
 ) -> c_int {
     // Calculate needed string space
-    let str_needed = entry.gr_name.len()
-        + 1
-        + entry.gr_passwd.len()
-        + 1
-        + entry.gr_mem.iter().map(|m| m.len() + 1).sum::<usize>();
+    let Some(str_needed) = group_string_space(entry) else {
+        return libc::ERANGE;
+    };
 
     // Pointer array needs (n_members + 1) * sizeof(*mut c_char), aligned
-    let n_ptrs = entry.gr_mem.len() + 1;
+    let Some(n_ptrs) = entry.gr_mem.len().checked_add(1) else {
+        return libc::ERANGE;
+    };
     let ptr_size = std::mem::size_of::<*mut c_char>();
     let ptr_align = std::mem::align_of::<*mut c_char>();
 
     // Align the pointer array start
-    let str_end = str_needed;
-    let ptr_start = (str_end + ptr_align - 1) & !(ptr_align - 1);
-    let total_needed = ptr_start + n_ptrs * ptr_size;
+    let Some(ptr_start) = align_up(str_needed, ptr_align) else {
+        return libc::ERANGE;
+    };
+    let Some(ptr_bytes) = n_ptrs.checked_mul(ptr_size) else {
+        return libc::ERANGE;
+    };
+    let Some(total_needed) = ptr_start.checked_add(ptr_bytes) else {
+        return libc::ERANGE;
+    };
 
     if buflen < total_needed {
         return libc::ERANGE;
@@ -607,6 +645,11 @@ pub unsafe extern "C" fn getgrent_r(
     if grp.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
+    if !tracked_object_fits(grp as *const libc::group)
+        || !tracked_object_fits(result as *const *mut libc::group)
+    {
+        return libc::EINVAL;
+    }
 
     unsafe { *result = ptr::null_mut() };
 
@@ -628,8 +671,12 @@ pub unsafe extern "C" fn getgrent_r(
         }
 
         let entry = storage.entries[storage.iter_idx].clone();
-        storage.iter_idx += 1;
-        unsafe { fill_group_r(&entry, grp, buf, buflen, result) }
+        let rc =
+            unsafe { fill_group_r(&entry, grp, buf, effective_buffer_len(buf, buflen), result) };
+        if rc == 0 {
+            storage.iter_idx += 1;
+        }
+        rc
     })
 }
 

@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::errno_abi::__errno_location;
-use frankenlibc_abi::malloc_abi::{free, malloc};
+use frankenlibc_abi::malloc_abi::{free, malloc, malloc_known_remaining_for_tests};
 use frankenlibc_abi::pwd_abi::{
     endpwent, getpwent, getpwnam, getpwnam_r, getpwuid, getpwuid_r, setpwent,
 };
@@ -54,6 +54,31 @@ fn with_passwd_path(path: &std::path::Path, f: impl FnOnce()) {
 
 const FIXTURE: &[u8] =
     b"root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000:Alice:/home/alice:/bin/sh\nbob:x:1001:1001:Bob:/home/bob:/bin/zsh\n";
+
+unsafe fn tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    let raw = unsafe { malloc(len) };
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw.cast::<u8>(), 0, len) };
+    raw
+}
+
+fn assert_known_short(raw: *const c_void, required: usize) {
+    let remaining = malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_ne!(
+        remaining,
+        usize::MAX,
+        "test allocation should be tracked by malloc metadata"
+    );
+    assert!(
+        remaining < required,
+        "test allocation should expose {remaining} tracked bytes, less than required {required}"
+    );
+}
+
+unsafe fn free_tracked(raw: *mut c_void) {
+    unsafe { free(raw) };
+}
 
 // ---------------------------------------------------------------------------
 // getpwnam
@@ -262,6 +287,50 @@ fn getpwnam_r_rejects_unterminated_name() {
 }
 
 #[test]
+fn getpwnam_r_rejects_tracked_buffer_shorter_than_claimed() {
+    with_passwd_file(FIXTURE, || unsafe {
+        let name = CString::new("root").unwrap();
+        let mut pwd: libc::passwd = std::mem::zeroed();
+        let raw = tracked_zeroed_bytes(2);
+        assert_known_short(raw, 3);
+        let mut result: *mut libc::passwd = ptr::null_mut();
+
+        let rc = getpwnam_r(
+            name.as_ptr(),
+            &mut pwd,
+            raw.cast::<c_char>(),
+            1024,
+            &mut result,
+        );
+
+        assert_eq!(rc, libc::ERANGE);
+        assert!(result.is_null());
+        free_tracked(raw);
+    });
+}
+
+#[test]
+fn getpwuid_r_rejects_tracked_short_result_slot_before_write() {
+    with_passwd_file(FIXTURE, || unsafe {
+        let mut pwd: libc::passwd = std::mem::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let raw = tracked_zeroed_bytes(std::mem::size_of::<*mut libc::passwd>() - 1);
+        assert_known_short(raw, std::mem::size_of::<*mut libc::passwd>());
+
+        let rc = getpwuid_r(
+            0,
+            &mut pwd,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            raw.cast::<*mut libc::passwd>(),
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        free_tracked(raw);
+    });
+}
+
+#[test]
 fn getpwnam_r_missing_backend_returns_errno() {
     let missing = temp_passwd_path();
     with_passwd_path(&missing, || {
@@ -435,6 +504,45 @@ fn getpwent_r_null_args() {
 
     let rc = unsafe { getpwent_r(ptr::null_mut(), ptr::null_mut(), 0, ptr::null_mut()) };
     assert_eq!(rc, libc::EINVAL, "null args should return EINVAL");
+}
+
+#[test]
+fn getpwent_r_erange_does_not_advance_cursor() {
+    use frankenlibc_abi::pwd_abi::getpwent_r;
+
+    with_passwd_file(FIXTURE, || {
+        unsafe { setpwent() };
+
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut tiny = [0u8; 1];
+        let mut result: *mut libc::passwd = ptr::null_mut();
+        let rc = unsafe {
+            getpwent_r(
+                &mut pwd,
+                tiny.as_mut_ptr() as *mut c_char,
+                tiny.len(),
+                &mut result,
+            )
+        };
+        assert_eq!(rc, libc::ERANGE);
+        assert!(result.is_null());
+
+        let mut retry_buf = vec![0u8; 1024];
+        let rc = unsafe {
+            getpwent_r(
+                &mut pwd,
+                retry_buf.as_mut_ptr() as *mut c_char,
+                retry_buf.len(),
+                &mut result,
+            )
+        };
+        assert_eq!(rc, 0);
+        assert!(!result.is_null());
+        let name = unsafe { CStr::from_ptr(pwd.pw_name) };
+        assert_eq!(name.to_bytes(), b"root");
+
+        unsafe { endpwent() };
+    });
 }
 
 // ---------------------------------------------------------------------------
