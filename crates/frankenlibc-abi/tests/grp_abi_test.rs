@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::grp_abi::*;
+use frankenlibc_abi::malloc_abi::{free, malloc};
 use frankenlibc_core::errno;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -92,6 +93,18 @@ fn getgrnam_null_returns_null() {
     with_group_lock(|| {
         let grp = unsafe { getgrnam(std::ptr::null()) };
         assert!(grp.is_null());
+    });
+}
+
+#[test]
+fn getgrnam_rejects_unterminated_name() {
+    with_group_lock(|| unsafe {
+        let name = malloc(4).cast::<u8>();
+        assert!(!name.is_null());
+        std::ptr::copy_nonoverlapping(b"root".as_ptr(), name, 4);
+        let grp = getgrnam(name.cast());
+        free(name.cast());
+        assert!(grp.is_null(), "unterminated getgrnam name should fail");
     });
 }
 
@@ -384,6 +397,29 @@ fn getgrnam_r_null_name_returns_not_found() {
         };
         // Should handle null name gracefully
         assert!(result.is_null() || rc != 0);
+    });
+}
+
+#[test]
+fn getgrnam_r_rejects_unterminated_name() {
+    with_group_lock(|| unsafe {
+        let name = malloc(4).cast::<u8>();
+        assert!(!name.is_null());
+        std::ptr::copy_nonoverlapping(b"root".as_ptr(), name, 4);
+        let mut grp: libc::group = std::mem::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let mut result: *mut libc::group = std::ptr::null_mut();
+
+        let rc = getgrnam_r(
+            name.cast(),
+            &mut grp,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        );
+        free(name.cast());
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
     });
 }
 

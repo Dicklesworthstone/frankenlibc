@@ -16,10 +16,26 @@ use frankenlibc_core::errno;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::scan_c_string;
 
 const GROUP_PATH: &str = "/etc/group";
 const GROUP_PATH_ENV: &str = "FRANKENLIBC_GROUP_PATH";
+
+unsafe fn bounded_cstr_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ptr is a caller-provided C string; known_remaining bounds scans
+    // over tracked malloc-backed buffers before they can cross allocation end.
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    // SAFETY: scan_c_string observed len readable bytes before the terminator.
+    Some(unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileFingerprint {
@@ -321,9 +337,11 @@ pub unsafe extern "C" fn getgrnam(name: *const c_char) -> *mut libc::group {
         return ptr::null_mut();
     }
 
-    // SAFETY: name is non-null.
-    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
-    let result = do_getgrnam(name_cstr.to_bytes());
+    let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    };
+    let result = do_getgrnam(name_bytes);
     if result.is_null()
         && let Some(err) = group_backend_io_error()
     {
@@ -429,9 +447,11 @@ pub unsafe extern "C" fn getgrnam_r(
         return libc::EACCES;
     }
 
-    // SAFETY: name is non-null.
-    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
-    let entry = match lookup_group_by_name(name_cstr.to_bytes()) {
+    let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return libc::EINVAL;
+    };
+    let entry = match lookup_group_by_name(name_bytes) {
         Some(e) => e,
         None => {
             if let Some(err) = group_backend_io_error() {
