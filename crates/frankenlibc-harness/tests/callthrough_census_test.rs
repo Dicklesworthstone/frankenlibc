@@ -11,6 +11,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -22,9 +23,89 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn unique_temp_path(name: &str) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("frankenlibc-{name}-{stamp}-{}", std::process::id()))
+}
+
 fn load_json(path: &Path) -> serde_json::Value {
     let content = std::fs::read_to_string(path).expect("json should be readable");
     serde_json::from_str(&content).expect("json should parse")
+}
+
+#[test]
+fn generator_accepts_snake_case_support_summary_for_callthrough_count() {
+    let root = workspace_root();
+    let generator = root.join("scripts/generate_callthrough_census.py");
+    let support_path = unique_temp_path("callthrough-support.json");
+    let output_path = unique_temp_path("callthrough-census.json");
+
+    let support = serde_json::json!({
+        "total_exported": 1,
+        "summary": {
+            "total": 1,
+            "implemented": 0,
+            "raw_syscall": 0,
+            "wraps_host_libc": 0,
+            "glibc_call_through": 1,
+            "stub": 0
+        },
+        "symbols": [
+            {
+                "symbol": "dlopen",
+                "module": "dlfcn_abi",
+                "status": "GlibcCallThrough",
+                "perf_class": "strict_hotpath"
+            }
+        ]
+    });
+    std::fs::write(
+        &support_path,
+        serde_json::to_string_pretty(&support).expect("support fixture should serialize"),
+    )
+    .expect("support fixture should be writable");
+
+    let output = Command::new("python3")
+        .arg(&generator)
+        .arg("--support-matrix")
+        .arg(&support_path)
+        .arg("--output")
+        .arg(&output_path)
+        .current_dir(&root)
+        .output()
+        .expect("failed to run callthrough census generator");
+    assert!(
+        output.status.success(),
+        "generator should accept snake_case support summary\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let generated = load_json(&output_path);
+    assert_eq!(generated["source"]["status_summary_callthrough"], 1);
+    assert_eq!(generated["source"]["derived_callthrough_symbols"], 1);
+    assert_eq!(generated["source"]["summary_delta"], 0);
+    assert_eq!(generated["summary"]["symbol_count"], 1);
+
+    let check = Command::new("python3")
+        .arg(&generator)
+        .arg("--support-matrix")
+        .arg(&support_path)
+        .arg("--output")
+        .arg(&output_path)
+        .arg("--check")
+        .current_dir(&root)
+        .output()
+        .expect("failed to run callthrough census generator check");
+    assert!(
+        check.status.success(),
+        "generator check should pass for snake_case support summary\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
 }
 
 #[test]

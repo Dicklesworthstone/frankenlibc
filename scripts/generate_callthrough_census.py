@@ -11,8 +11,13 @@ import argparse
 import hashlib
 import json
 from collections import Counter, defaultdict
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
+
+SUPPORT_STATUS_SUMMARY_KEYS = {
+    "GlibcCallThrough": "glibc_call_through",
+}
 
 RUNTIME_IMPACT_WEIGHTS = {
     "strict_hotpath": 5,
@@ -71,11 +76,22 @@ def priority_score(perf_class: str, complexity: str) -> int:
 
 
 def _load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        decoder = json.JSONDecoder()
+        return decoder.decode(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"failed to read JSON file {path}: {exc}") from exc
+    except JSONDecodeError as exc:
+        raise SystemExit(f"failed to parse JSON file {path}: {exc}") from exc
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def support_status_count(summary: dict[str, Any], status: str) -> int:
+    alias = SUPPORT_STATUS_SUMMARY_KEYS[status]
+    return int(summary.get(status, summary.get(alias, 0)))
 
 
 def _wave(
@@ -283,7 +299,7 @@ def build_payload(support_matrix_path: Path) -> dict[str, Any]:
     waves = build_decommission_waves(symbol_rows)
 
     summary_counts = matrix.get("summary", {})
-    status_summary_callthrough = int(summary_counts.get("GlibcCallThrough", 0))
+    status_summary_callthrough = support_status_count(summary_counts, "GlibcCallThrough")
     symbol_count = len(symbol_rows)
     strict_hotpath_count = sum(1 for row in symbol_rows if row["perf_class"] == "strict_hotpath")
     coldpath_count = sum(1 for row in symbol_rows if row["perf_class"] == "coldpath")
