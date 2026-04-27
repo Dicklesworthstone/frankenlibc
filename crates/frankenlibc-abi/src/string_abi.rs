@@ -761,6 +761,15 @@ unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     Some(bytes.to_vec())
 }
 
+unsafe fn read_c_string_bytes_with_nul(ptr: *const c_char) -> Option<Vec<u8>> {
+    let bytes = unsafe { read_c_string_bytes(ptr) }?;
+    let capacity = bytes.len().checked_add(1)?;
+    let mut with_nul = Vec::with_capacity(capacity);
+    with_nul.extend_from_slice(&bytes);
+    with_nul.push(0);
+    Some(with_nul)
+}
+
 // ---------------------------------------------------------------------------
 // memcpy
 // ---------------------------------------------------------------------------
@@ -5125,11 +5134,11 @@ pub unsafe extern "C" fn regcomp(
     };
     unsafe { regex_release_buffer(layout) };
 
-    // Read pattern as byte slice
-    let pat = unsafe { std::ffi::CStr::from_ptr(pattern) };
-    let pat_bytes = pat.to_bytes_with_nul();
+    let Some(pat_bytes) = (unsafe { read_c_string_bytes_with_nul(pattern) }) else {
+        return regex::REG_BADPAT;
+    };
 
-    match regex::regex_compile(pat_bytes, cflags) {
+    match regex::regex_compile(&pat_bytes, cflags) {
         Ok(compiled) => {
             let re_nsub = compiled.num_regs().saturating_sub(1);
             let raw_ptr = Box::into_raw(compiled);
@@ -5176,18 +5185,19 @@ pub unsafe extern "C" fn regexec(
     let Some(compiled) = (unsafe { regex_compiled_from_buffer(preg) }) else {
         return regex::REG_BADPAT;
     };
-    let input = unsafe { std::ffi::CStr::from_ptr(string) };
-    let input_bytes = input.to_bytes_with_nul();
+    let Some(input_bytes) = (unsafe { read_c_string_bytes_with_nul(string) }) else {
+        return regex::REG_NOMATCH;
+    };
 
     if nmatch == 0 || pmatch.is_null() {
         // No submatch extraction needed
         let mut dummy = [regex::RegMatch::default(); 1];
-        regex::regex_exec(compiled, input_bytes, &mut dummy, eflags)
+        regex::regex_exec(compiled, &input_bytes, &mut dummy, eflags)
     } else {
         // Map pmatch to our RegMatch slice
         let pmatch_slice =
             unsafe { core::slice::from_raw_parts_mut(pmatch as *mut regex::RegMatch, nmatch) };
-        regex::regex_exec(compiled, input_bytes, pmatch_slice, eflags)
+        regex::regex_exec(compiled, &input_bytes, pmatch_slice, eflags)
     }
 }
 
@@ -5243,11 +5253,14 @@ pub unsafe extern "C" fn fnmatch(
     if pattern.is_null() || string.is_null() {
         return FNM_NOMATCH;
     }
-    // Adapt NUL-terminated C strings to byte slices.
-    let pat_bytes = unsafe { core::ffi::CStr::from_ptr(pattern) }.to_bytes();
-    let str_bytes = unsafe { core::ffi::CStr::from_ptr(string) }.to_bytes();
+    let Some(pat_bytes) = (unsafe { read_c_string_bytes(pattern) }) else {
+        return FNM_NOMATCH;
+    };
+    let Some(str_bytes) = (unsafe { read_c_string_bytes(string) }) else {
+        return FNM_NOMATCH;
+    };
     let core_flags = frankenlibc_core::string::fnmatch::FnmatchFlags::from_bits(flags as u32);
-    if frankenlibc_core::string::fnmatch::fnmatch_match(pat_bytes, str_bytes, core_flags) {
+    if frankenlibc_core::string::fnmatch::fnmatch_match(&pat_bytes, &str_bytes, core_flags) {
         0
     } else {
         FNM_NOMATCH
@@ -5288,7 +5301,9 @@ pub unsafe extern "C" fn glob(
         return glob_core::GLOB_NOMATCH;
     }
 
-    let pat_bytes = unsafe { std::ffi::CStr::from_ptr(pattern) }.to_bytes_with_nul();
+    let Some(pat_bytes) = (unsafe { read_c_string_bytes_with_nul(pattern) }) else {
+        return glob_core::GLOB_NOMATCH;
+    };
 
     let append = flags & glob_core::GLOB_APPEND != 0;
 
@@ -5313,7 +5328,7 @@ pub unsafe extern "C" fn glob(
     };
 
     // Run the glob engine.
-    let result = glob_core::glob_expand(pat_bytes, flags);
+    let result = glob_core::glob_expand(&pat_bytes, flags);
 
     match result {
         Ok(res) => {
@@ -5764,12 +5779,14 @@ pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
 
     // Build message: "s: signal_name\n" or "signal_name\n"
     let mut msg = Vec::with_capacity(256);
-    if !s.is_null() {
-        let prefix = unsafe { std::ffi::CStr::from_ptr(s) }.to_bytes();
-        if !prefix.is_empty() {
-            msg.extend_from_slice(prefix);
-            msg.extend_from_slice(b": ");
-        }
+    let prefix = if s.is_null() {
+        None
+    } else {
+        unsafe { read_c_string_bytes(s) }
+    };
+    if let Some(prefix) = prefix.filter(|prefix| !prefix.is_empty()) {
+        msg.extend_from_slice(&prefix);
+        msg.extend_from_slice(b": ");
     }
     msg.extend_from_slice(name);
     msg.push(b'\n');
@@ -6058,9 +6075,11 @@ pub unsafe extern "C" fn strfromd(
     if format.is_null() {
         return -1;
     }
+    let Some(fmt_bytes) = (unsafe { read_c_string_bytes(format) }) else {
+        return -1;
+    };
     // Parse format: must be "%[.<precision>]{f,e,g,a}" (C23 subset)
-    let fmt = unsafe { std::ffi::CStr::from_ptr(format) };
-    let fmt_str = match fmt.to_str() {
+    let fmt_str = match std::str::from_utf8(&fmt_bytes) {
         Ok(s) => s,
         Err(_) => return -1,
     };

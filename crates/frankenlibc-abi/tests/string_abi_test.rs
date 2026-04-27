@@ -1217,6 +1217,18 @@ fn strfromf_and_strfroml_delegate_to_shared_formatter() {
     );
 }
 
+#[test]
+fn strfromd_rejects_tracked_unterminated_format() {
+    unsafe {
+        let raw = malloc_unterminated(b"%.2f");
+        let mut buf = [0_i8; 32];
+
+        assert_eq!(strfromd(buf.as_mut_ptr(), buf.len(), raw, 12.345), -1);
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
 fn collect_argz_entries(argz: *mut c_char, argz_len: usize) -> Vec<Vec<u8>> {
     let mut entries = Vec::new();
     let mut entry = unsafe { argz_next(argz, argz_len, std::ptr::null()) };
@@ -1654,6 +1666,13 @@ struct LegacyReRegisters {
     end: *mut c_int,
 }
 
+#[repr(C)]
+struct PublicGlobT {
+    gl_pathc: usize,
+    gl_pathv: *mut *mut c_char,
+    gl_offs: usize,
+}
+
 impl Default for PublicRegexBuffer {
     fn default() -> Self {
         Self {
@@ -1673,6 +1692,57 @@ impl Default for PublicRegexBuffer {
 #[test]
 fn public_regex_buffer_matches_glibc_size() {
     assert_eq!(std::mem::size_of::<PublicRegexBuffer>(), 64);
+}
+
+#[test]
+fn pattern_adapters_reject_tracked_unterminated_c_strings() {
+    let _guard = legacy_regex_test_guard();
+    unsafe {
+        let raw = malloc_unterminated(b"a*");
+        let mut regex_buffer = PublicRegexBuffer::default();
+
+        assert_ne!(
+            regcomp((&mut regex_buffer as *mut PublicRegexBuffer).cast(), raw, 0,),
+            0
+        );
+        assert!(regex_buffer.buffer.is_null());
+
+        assert_eq!(fnmatch(raw, c"abc".as_ptr(), 0), libc::FNM_NOMATCH);
+        assert_eq!(fnmatch(c"a*".as_ptr(), raw, 0), libc::FNM_NOMATCH);
+
+        let mut glob_buffer = PublicGlobT {
+            gl_pathc: 0,
+            gl_pathv: std::ptr::null_mut(),
+            gl_offs: 0,
+        };
+        assert_ne!(
+            glob(raw, 0, None, (&mut glob_buffer as *mut PublicGlobT).cast(),),
+            0
+        );
+        assert!(glob_buffer.gl_pathv.is_null());
+
+        assert_eq!(
+            regcomp(
+                (&mut regex_buffer as *mut PublicRegexBuffer).cast(),
+                c"a.*".as_ptr(),
+                0,
+            ),
+            0
+        );
+        assert_ne!(
+            regexec(
+                (&regex_buffer as *const PublicRegexBuffer).cast(),
+                raw,
+                0,
+                std::ptr::null_mut(),
+                0,
+            ),
+            0
+        );
+
+        regfree((&mut regex_buffer as *mut PublicRegexBuffer).cast());
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
 }
 
 const RE_BACKSLASH_ESCAPE_IN_LISTS: u64 = 1;
