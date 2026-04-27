@@ -53,6 +53,19 @@ unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     Some(bytes.to_vec())
 }
 
+#[inline]
+fn packed_entry_cstr_bytes(storage: &[u8], ptr: *const c_char) -> Option<&[u8]> {
+    if ptr.is_null() {
+        return None;
+    }
+    let base = storage.as_ptr() as usize;
+    let raw = ptr as usize;
+    let offset = raw.checked_sub(base)?;
+    let tail = storage.get(offset..)?;
+    let len = tail.iter().position(|&byte| byte == 0)?;
+    Some(&tail[..len])
+}
+
 /// Query the system page size via AT_PAGESZ from /proc/self/auxv, cached.
 /// Falls back to 4096 (x86_64 default) if the query fails.
 fn runtime_page_size() -> usize {
@@ -21727,11 +21740,10 @@ pub unsafe extern "C" fn getfsfile(file: *const c_char) -> *mut c_void {
             }
             // fs_file is at offset 1 * sizeof(pointer)
             let file_ptr = unsafe { *((ent as *const *const c_char).add(1)) };
-            if !file_ptr.is_null() {
-                let entry_file = unsafe { std::ffi::CStr::from_ptr(file_ptr) }.to_bytes();
-                if entry_file == needle.as_slice() {
-                    return ent;
-                }
+            if let Some(entry_file) = packed_entry_cstr_bytes(&state.entry_buf, file_ptr)
+                && entry_file == needle.as_slice()
+            {
+                return ent;
             }
         }
     })
@@ -21761,11 +21773,10 @@ pub unsafe extern "C" fn getfsspec(spec: *const c_char) -> *mut c_void {
             }
             // fs_spec is at offset 0
             let spec_ptr = unsafe { *(ent as *const *const c_char) };
-            if !spec_ptr.is_null() {
-                let entry_spec = unsafe { std::ffi::CStr::from_ptr(spec_ptr) }.to_bytes();
-                if entry_spec == needle.as_slice() {
-                    return ent;
-                }
+            if let Some(entry_spec) = packed_entry_cstr_bytes(&state.entry_buf, spec_ptr)
+                && entry_spec == needle.as_slice()
+            {
+                return ent;
             }
         }
     })
@@ -21953,11 +21964,10 @@ pub unsafe extern "C" fn getttynam(name: *const c_char) -> *mut c_void {
                 return std::ptr::null_mut();
             }
             let name_ptr = unsafe { *(ent as *const *const c_char) };
-            if !name_ptr.is_null() {
-                let entry_name = unsafe { std::ffi::CStr::from_ptr(name_ptr) }.to_bytes();
-                if entry_name == needle.as_slice() {
-                    return ent;
-                }
+            if let Some(entry_name) = packed_entry_cstr_bytes(&state.entry_buf, name_ptr)
+                && entry_name == needle.as_slice()
+            {
+                return ent;
             }
         }
     })
