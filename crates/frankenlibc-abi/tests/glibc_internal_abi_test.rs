@@ -62,6 +62,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     __twalk_r,
     __uflow,
     __underflow,
+    __wcpcpy_chk,
     __wcslcat_chk,
     __wcslcpy_chk,
     __wcstof128_internal,
@@ -651,6 +652,19 @@ fn wcsl_chk_bounds_tracked_unterminated_source() {
 
         frankenlibc_abi::malloc_abi::free(src.cast());
     }
+}
+
+#[test]
+fn wcpcpy_chk_copies_and_returns_end_pointer() {
+    let src = [
+        b'A' as libc::wchar_t,
+        b'B' as libc::wchar_t,
+        0 as libc::wchar_t,
+    ];
+    let mut dst = [0 as libc::wchar_t; 3];
+    let end = unsafe { __wcpcpy_chk(dst.as_mut_ptr(), src.as_ptr(), dst.len()) };
+    assert_eq!(dst, src);
+    assert_eq!(end, unsafe { dst.as_mut_ptr().add(2) });
 }
 
 #[test]

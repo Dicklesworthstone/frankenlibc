@@ -65,25 +65,31 @@ unsafe fn bounded_c_string_len(ptr: *const c_char) -> usize {
 }
 
 #[inline]
-unsafe fn bounded_wide_string_len(ptr: *const WcharT) -> usize {
+unsafe fn bounded_wide_string_scan(ptr: *const WcharT) -> (usize, bool) {
     let bound = known_remaining(ptr as usize).map(|bytes| bytes / std::mem::size_of::<WcharT>());
     match bound {
         Some(limit) => {
             for i in 0..limit {
                 if unsafe { *ptr.add(i) } == 0 {
-                    return i;
+                    return (i, true);
                 }
             }
-            limit
+            (limit, false)
         }
         None => {
             let mut len = 0usize;
             while unsafe { *ptr.add(len) } != 0 {
                 len += 1;
             }
-            len
+            (len, true)
         }
     }
+}
+
+#[inline]
+unsafe fn bounded_wide_string_len(ptr: *const WcharT) -> usize {
+    let (len, _) = unsafe { bounded_wide_string_scan(ptr) };
+    len
 }
 
 #[inline]
@@ -3801,20 +3807,24 @@ pub unsafe extern "C" fn __wcpcpy_chk(
     src: *const WcharT,
     destlen: SizeT,
 ) -> *mut WcharT {
-    // Count src len
-    let mut len = 0usize;
-    unsafe {
-        while *src.add(len) != 0 {
-            len += 1;
+    let (len, terminated) = unsafe { bounded_wide_string_scan(src) };
+    if !terminated {
+        unsafe {
+            crate::stdlib_abi::abort();
         }
     }
-    if len + 1 > destlen {
+    let Some(copy_units) = len.checked_add(1) else {
+        unsafe {
+            crate::stdlib_abi::abort();
+        }
+    };
+    if copy_units > destlen {
         unsafe {
             crate::stdlib_abi::abort();
         }
     }
     unsafe {
-        std::ptr::copy_nonoverlapping(src, dest, len + 1);
+        std::ptr::copy_nonoverlapping(src, dest, copy_units);
     }
     unsafe { dest.add(len) }
 }
