@@ -251,12 +251,14 @@ pub unsafe extern "C" fn wcscpy(dst: *mut u32, src: *const u32) -> *mut u32 {
         return dst;
     }
 
-    let (mode, decision) = runtime_policy::decide(
+    let dst_bound = known_remaining(dst as usize).map(bytes_to_wchars);
+    let src_bound = known_remaining(src as usize).map(bytes_to_wchars);
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
         0,
         true,
-        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        dst_bound.is_none() && src_bound.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -264,23 +266,14 @@ pub unsafe extern "C" fn wcscpy(dst: *mut u32, src: *const u32) -> *mut u32 {
         return std::ptr::null_mut();
     }
 
-    let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    let src_bound = if repair {
-        known_remaining(src as usize).map(bytes_to_wchars)
-    } else {
-        None
-    };
-    let dst_bound = if repair {
-        known_remaining(dst as usize).map(bytes_to_wchars)
-    } else {
-        None
-    };
+    let bounded = dst_bound.is_some() || src_bound.is_some();
 
-    // SAFETY: strict mode follows libc semantics; hardened mode bounds reads/writes.
+    // SAFETY: known allocations are read/written only within their live extent;
+    // untracked strict-mode strings preserve raw libc copy semantics.
     let (copied_len, adverse) = unsafe {
-        let (src_len, src_terminated) = scan_w_string(src, src_bound);
-        let requested = src_len.saturating_add(1);
-        if repair {
+        if bounded {
+            let (src_len, src_terminated) = scan_w_string(src, src_bound);
+            let requested = src_len.saturating_add(1);
             match dst_bound {
                 Some(0) => {
                     record_truncation(requested, 0);
@@ -300,14 +293,25 @@ pub unsafe extern "C" fn wcscpy(dst: *mut u32, src: *const u32) -> *mut u32 {
                     (copy_payload.saturating_add(1), truncated)
                 }
                 None => {
-                    let mut i = 0usize;
-                    loop {
-                        let ch = *src.add(i);
-                        *dst.add(i) = ch;
-                        if ch == 0 {
-                            break (i.saturating_add(1), false);
+                    if src_bound.is_some() {
+                        if src_len > 0 {
+                            std::ptr::copy_nonoverlapping(src, dst, src_len);
                         }
-                        i += 1;
+                        *dst.add(src_len) = 0;
+                        if !src_terminated {
+                            record_truncation(requested, src_len);
+                        }
+                        (requested, !src_terminated)
+                    } else {
+                        let mut i = 0usize;
+                        loop {
+                            let ch = *src.add(i);
+                            *dst.add(i) = ch;
+                            if ch == 0 {
+                                break (i.saturating_add(1), false);
+                            }
+                            i += 1;
+                        }
                     }
                 }
             }

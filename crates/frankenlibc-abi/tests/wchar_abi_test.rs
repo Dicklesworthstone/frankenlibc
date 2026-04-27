@@ -74,6 +74,25 @@ fn wcscpy_copies_full_string() {
 }
 
 #[test]
+fn wcscpy_bounds_tracked_unterminated_source() {
+    unsafe {
+        let src = malloc_unterminated_wide(&[b'A' as u32, b'B' as u32, b'C' as u32]);
+        let mut dst = [0xFFFFu32; 5];
+
+        let ret = wcscpy(dst.as_mut_ptr(), src);
+
+        assert_eq!(ret, dst.as_mut_ptr());
+        assert_eq!(dst[0], b'A' as u32);
+        assert_eq!(dst[1], b'B' as u32);
+        assert_eq!(dst[2], b'C' as u32);
+        assert_eq!(dst[3], 0);
+        assert_eq!(dst[4], 0xFFFF);
+
+        free(src.cast());
+    }
+}
+
+#[test]
 fn wcsncpy_pads_with_nul() {
     let src = wstr(b"hi");
     let mut dst = [0xFFu32; 6];
