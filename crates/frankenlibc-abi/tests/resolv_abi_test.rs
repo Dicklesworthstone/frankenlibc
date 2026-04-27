@@ -2467,6 +2467,30 @@ fn ns_sprintrrf_returns_minus_one_on_buffer_overflow() {
 }
 
 #[test]
+fn ns_sprintrrf_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = malloc_unterminated(b"foo.com");
+    let mut buf = [0u8; 64];
+    let n = unsafe {
+        ns_sprintrrf(
+            std::ptr::null(),
+            0,
+            cname.as_ptr(),
+            1,
+            1,
+            3600,
+            [127u8, 0, 0, 1].as_ptr(),
+            4,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+        )
+    };
+    assert_eq!(n, -1);
+}
+
+#[test]
 fn ns_sprintrrf_rejects_malformed_a_rdata() {
     // A record requires exactly 4 bytes; passing 3 is malformed.
     let s = sprintrrf_to_str(&[], "foo.com", 1, 1 /*A*/, 3600, &[1, 2, 3], 64);
@@ -2743,6 +2767,13 @@ fn bd_dcfj5_dn_count_labels_counts_dots() {
     // Trailing dot represents the root, not an extra label.
     assert_eq!(unsafe { __dn_count_labels(nfqdn.as_ptr()) }, 3);
     assert_eq!(unsafe { __dn_count_labels(std::ptr::null()) }, -1);
+}
+
+#[test]
+fn bd_dcfj5_dn_count_labels_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::resolv_abi::__dn_count_labels;
+    let name = malloc_unterminated(b"example.com");
+    assert_eq!(unsafe { __dn_count_labels(name.as_ptr()) }, -1);
 }
 
 #[test]

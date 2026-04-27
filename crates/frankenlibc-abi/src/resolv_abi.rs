@@ -3476,7 +3476,9 @@ pub unsafe extern "C" fn ns_sprintrrf(
     if buf.is_null() || name.is_null() || buflen == 0 {
         return -1;
     }
-    let name_bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+    let Some(name_bytes) = (unsafe { required_cstr_bytes(name) }) else {
+        return -1;
+    };
     let name_str = String::from_utf8_lossy(name_bytes);
 
     let mut out = String::new();
@@ -3906,10 +3908,9 @@ pub unsafe extern "C" fn __res_queriesmatch(
 /// `name` may be NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __dn_count_labels(name: *const c_char) -> c_int {
-    if name.is_null() {
+    let Some(s) = (unsafe { required_cstr_bytes(name) }) else {
         return -1;
-    }
-    let s = unsafe { CStr::from_ptr(name) }.to_bytes();
+    };
     if s.is_empty() {
         return 0;
     }
