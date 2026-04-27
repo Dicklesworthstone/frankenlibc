@@ -21938,10 +21938,15 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
     if string.is_null() || result.is_null() {
         return 8; // invalid input
     }
-    // Check that input string is non-empty
-    if unsafe { *string == 0 } {
+    let Some(input_bytes) = (unsafe { read_c_string_bytes(string) }) else {
+        return 8;
+    };
+    if input_bytes.is_empty() {
         return 8;
     }
+    let mut input = Vec::with_capacity(input_bytes.len() + 1);
+    input.extend_from_slice(&input_bytes);
+    input.push(0);
 
     // Read DATEMSK environment variable
     let datemsk_ptr = unsafe { crate::stdlib_abi::getenv(c"DATEMSK".as_ptr()) };
@@ -21989,7 +21994,11 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
         unsafe { std::ptr::write_bytes(result as *mut u8, 0, core::mem::size_of::<libc::tm>()) };
 
         let remainder = unsafe {
-            crate::time_abi::strptime(string, template.as_ptr() as *const c_char, result)
+            crate::time_abi::strptime(
+                input.as_ptr().cast::<c_char>(),
+                template.as_ptr() as *const c_char,
+                result,
+            )
         };
         if !remainder.is_null() {
             // Check that strptime consumed the entire input string (or only trailing whitespace)

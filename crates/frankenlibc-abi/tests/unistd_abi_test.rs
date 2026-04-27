@@ -4863,6 +4863,24 @@ fn getdate_and_getdate_r_follow_host_datemsk_contract() {
 }
 
 #[test]
+fn getdate_and_getdate_r_reject_tracked_unterminated_input() {
+    let raw_date = malloc_tracked_unterminated(b"1970-01-01 00:00:00");
+
+    unsafe {
+        getdate_err = -1;
+        let parsed = getdate(raw_date);
+        assert!(parsed.is_null());
+        assert_eq!(std::ptr::addr_of!(getdate_err).read(), 8);
+
+        let mut out: libc::tm = std::mem::zeroed();
+        let rc = getdate_r(raw_date, (&mut out as *mut libc::tm).cast());
+        assert_eq!(rc, 8);
+
+        frankenlibc_abi::malloc_abi::free(raw_date.cast());
+    }
+}
+
+#[test]
 fn gethostbyname2_supports_ipv6_localhost() {
     unsafe { *__h_errno_location() = -1 };
     let name = CString::new("localhost").unwrap();
