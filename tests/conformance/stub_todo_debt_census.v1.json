@@ -38,15 +38,15 @@
     "summary_delta": [
       {
         "status": "Implemented",
-        "declared": 0,
+        "declared": 3705,
         "derived": 3705,
-        "delta_derived_minus_declared": 3705
+        "delta_derived_minus_declared": 0
       },
       {
         "status": "RawSyscall",
-        "declared": 0,
+        "declared": 414,
         "derived": 414,
-        "delta_derived_minus_declared": 414
+        "delta_derived_minus_declared": 0
       },
       {
         "status": "WrapsHostLibc",
@@ -189,20 +189,7 @@
     "critical_exported_shadow_symbols": [],
     "replacement_blocker_symbols": [],
     "interpose_unapproved_callthrough_symbols": [],
-    "matrix_summary_deltas": [
-      {
-        "status": "Implemented",
-        "declared": 0,
-        "derived": 3705,
-        "delta_derived_minus_declared": 3705
-      },
-      {
-        "status": "RawSyscall",
-        "declared": 0,
-        "derived": 414,
-        "delta_derived_minus_declared": 414
-      }
-    ],
+    "matrix_summary_deltas": [],
     "ambiguity_resolved": true,
     "notes": [
       "Exported status and source debt are reported in separate sections to avoid blind spots.",
@@ -217,6 +204,6 @@
     "replacement_blocker_count": 0,
     "interpose_unapproved_callthrough_count": 0,
     "critical_non_exported_share_pct": 0.0,
-    "nonzero_matrix_delta_count": 2
+    "nonzero_matrix_delta_count": 0
   }
 }

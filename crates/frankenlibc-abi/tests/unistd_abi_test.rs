@@ -12,8 +12,8 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::process::ExitStatusExt;
-use std::sync::Mutex;
 use std::sync::atomic::AtomicI32;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Serializes all gai_*/getaddrinfo_a tests in this binary.
@@ -27,6 +27,39 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// `synchronous_gai_wrappers_match_host_degenerate_contracts` ~25%
 /// of stress runs at --test-threads=16.
 static GAI_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Serializes tests that read or mutate the process cwd.
+///
+/// cwd is process-global, so chdir/fchdir tests can race with getcwd
+/// assertions when this test binary runs with multiple test threads.
+static CWD_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+struct CwdRestore {
+    fd: c_int,
+}
+
+impl CwdRestore {
+    fn capture() -> Self {
+        // SAFETY: c"." is a static NUL-terminated path and open only returns an fd.
+        let fd = unsafe { libc::open(c".".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
+        assert!(fd >= 0, "failed to open current directory for cwd restore");
+        Self { fd }
+    }
+}
+
+impl Drop for CwdRestore {
+    fn drop(&mut self) {
+        // SAFETY: fd was returned by open in capture; best-effort restoration/close in Drop.
+        unsafe {
+            let _ = libc::fchdir(self.fd);
+            let _ = libc::close(self.fd);
+        }
+    }
+}
+
+fn cwd_test_lock() -> MutexGuard<'static, ()> {
+    CWD_TEST_LOCK.lock().unwrap_or_else(|err| err.into_inner())
+}
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::glibc_internal_abi::__sysv_signal;
@@ -3705,6 +3738,7 @@ fn getegid_returns_valid_gid() {
 
 #[test]
 fn getcwd_returns_current_directory() {
+    let _cwd_lock = cwd_test_lock();
     let mut buf = [0i8; 4096];
     let ptr = unsafe { getcwd(buf.as_mut_ptr(), buf.len()) };
     assert!(!ptr.is_null());
@@ -3714,6 +3748,7 @@ fn getcwd_returns_current_directory() {
 
 #[test]
 fn getcwd_null_buffer_allocates() {
+    let _cwd_lock = cwd_test_lock();
     let ptr = unsafe { getcwd(std::ptr::null_mut(), 0) };
     if !ptr.is_null() {
         let cwd = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy();
@@ -3724,6 +3759,8 @@ fn getcwd_null_buffer_allocates() {
 
 #[test]
 fn chdir_and_fchdir_round_trip() {
+    let _cwd_lock = cwd_test_lock();
+    let _cwd_restore = CwdRestore::capture();
     let mut orig = [0i8; 4096];
     let p = unsafe { getcwd(orig.as_mut_ptr(), orig.len()) };
     assert!(!p.is_null());
@@ -6017,6 +6054,8 @@ fn under_access_missing_path_returns_minus_one() {
 #[test]
 fn under_chdir_to_tmp_succeeds() {
     use frankenlibc_abi::unistd_abi::{__chdir, getcwd};
+    let _cwd_lock = cwd_test_lock();
+    let _cwd_restore = CwdRestore::capture();
     // Save and restore cwd to avoid disturbing other tests.
     let mut saved = [0 as c_char; 4096];
     let p_saved = unsafe { getcwd(saved.as_mut_ptr(), saved.len()) };
@@ -6032,6 +6071,8 @@ fn under_chdir_to_tmp_succeeds() {
 #[test]
 fn under_fchdir_round_trip() {
     use frankenlibc_abi::unistd_abi::{__fchdir, getcwd};
+    let _cwd_lock = cwd_test_lock();
+    let _cwd_restore = CwdRestore::capture();
     let saved_fd = unsafe { libc::open(c".".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
     assert!(saved_fd >= 0);
     // Open /tmp as a directory fd, fchdir to it, then back.
@@ -6103,6 +6144,7 @@ fn under_unlink_link_symlink_rename_round_trip() {
 #[test]
 fn under_getcwd_matches_getcwd() {
     use frankenlibc_abi::unistd_abi::{__getcwd, getcwd};
+    let _cwd_lock = cwd_test_lock();
     let mut a = [0 as c_char; 4096];
     let mut b = [0 as c_char; 4096];
     let p_a = unsafe { getcwd(a.as_mut_ptr(), a.len()) };

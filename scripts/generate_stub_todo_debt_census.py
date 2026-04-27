@@ -13,7 +13,8 @@ import argparse
 import hashlib
 import json
 import re
-from collections import Counter, defaultdict
+from collections import Counter
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,15 @@ STATUS_ORDER = [
     "Stub",
     "DefaultStub",
 ]
+
+SUMMARY_STATUS_ALIASES = {
+    "Implemented": "implemented",
+    "RawSyscall": "raw_syscall",
+    "WrapsHostLibc": "wraps_host_libc",
+    "GlibcCallThrough": "glibc_call_through",
+    "Stub": "stub",
+    "DefaultStub": "default_stub",
+}
 
 FAMILY_WEIGHTS = {
     "threading": 42,
@@ -83,7 +93,11 @@ CRITICAL_FAMILY_BY_SYMBOL = {
 
 
 def _load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        decoder = json.JSONDecoder()
+        return decoder.decode(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as err:
+        raise SystemExit(f"failed to parse JSON file {path}: {err}") from err
 
 
 def _sha256(path: Path) -> str:
@@ -362,7 +376,10 @@ def build_exported_view(matrix: dict[str, Any]) -> dict[str, Any]:
     derived_summary = {status: int(derived_counter.get(status, 0)) for status in STATUS_ORDER}
     delta_rows = []
     for status in STATUS_ORDER:
-        declared = int(declared_summary.get(status, 0))
+        summary_alias = SUMMARY_STATUS_ALIASES[status]
+        declared = int(
+            declared_summary.get(status, declared_summary.get(summary_alias, 0))
+        )
         derived = int(derived_summary.get(status, 0))
         delta_rows.append(
             {

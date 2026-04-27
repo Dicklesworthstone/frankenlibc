@@ -140,6 +140,21 @@ ranking = artifact.get("risk_ranked_debt", [])
 if not isinstance(ranking, list):
     raise SystemExit("FAIL: artifact risk_ranked_debt must be array")
 
+reconciliation = artifact.get("reconciliation", {})
+matrix_summary_deltas = reconciliation.get("matrix_summary_deltas", [])
+if not isinstance(matrix_summary_deltas, list):
+    raise SystemExit("FAIL: artifact reconciliation.matrix_summary_deltas must be array")
+reported_delta_count = artifact.get("summary", {}).get("nonzero_matrix_delta_count")
+if reported_delta_count != len(matrix_summary_deltas):
+    raise SystemExit(
+        "FAIL: artifact summary.nonzero_matrix_delta_count must match matrix_summary_deltas length"
+    )
+if matrix_summary_deltas:
+    raise SystemExit(
+        "FAIL: support matrix declared summary disagrees with derived symbol counts: "
+        + json.dumps(matrix_summary_deltas, sort_keys=True)
+    )
+
 forbidden_tiers = set(policy_obj.get("forbidden_without_waiver", {}).get("risk_tiers", []))
 if not forbidden_tiers:
     forbidden_tiers = {"critical", "high"}

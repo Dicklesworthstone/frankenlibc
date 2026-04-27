@@ -19,7 +19,7 @@
     },
     "stub_todo_debt_census": {
       "path": "tests/conformance/stub_todo_debt_census.v1.json",
-      "sha256": "4ae2962fe811c2cbf5a104d7ab9c32a93d57a24a7df728f8fa0fc857e9255df3"
+      "sha256": "346e777b2c8a5d7105d8e8c770922905d6825b5735954e6f03acebf5d3fe4bc5"
     },
     "stub_regression_waiver_policy": {
       "path": "tests/conformance/stub_regression_waiver_policy.v1.json",
