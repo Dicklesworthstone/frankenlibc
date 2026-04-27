@@ -1365,6 +1365,42 @@ fn initgroups_rejects_tracked_unterminated_user() {
 }
 
 #[test]
+fn res_query_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::unistd_abi::res_query;
+
+    let raw_name = malloc_tracked_unterminated(b"example.com");
+    let mut answer = [0u8; 512];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = res_query(raw_name, 1, 1, answer.as_mut_ptr(), answer.len() as c_int);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn res_search_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::unistd_abi::res_search;
+
+    let raw_name = malloc_tracked_unterminated(b"example.com");
+    let mut answer = [0u8; 512];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = res_search(raw_name, 1, 1, answer.as_mut_ptr(), answer.len() as c_int);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn fgetpwent_r_skips_comments_and_blank_lines() {
     let path = temp_path("fgetpwent_r_skip");
     let path_str = path.as_c_str().to_str().unwrap();

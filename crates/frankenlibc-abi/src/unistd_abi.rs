@@ -12518,8 +12518,11 @@ pub unsafe extern "C" fn res_query(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let name = unsafe { CStr::from_ptr(dname) };
-    unsafe { dns_query_raw(name.to_bytes(), class, type_, answer, anslen) }
+    let Some(name_bytes) = (unsafe { read_c_string_bytes(dname) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    };
+    unsafe { dns_query_raw(&name_bytes, class, type_, answer, anslen) }
 }
 
 /// `res_search` — send a DNS query using the search domain list.
@@ -12538,9 +12541,11 @@ pub unsafe extern "C" fn res_search(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let name = unsafe { CStr::from_ptr(dname) };
-    let name_bytes = name.to_bytes();
-    let name_str = match std::str::from_utf8(name_bytes) {
+    let Some(name_bytes) = (unsafe { read_c_string_bytes(dname) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    };
+    let name_str = match std::str::from_utf8(&name_bytes) {
         Ok(s) => s,
         Err(_) => {
             unsafe { set_abi_errno(errno::EINVAL) };
@@ -12552,7 +12557,7 @@ pub unsafe extern "C" fn res_search(
 
     // If the name has enough dots, try it as absolute first.
     if config.should_try_absolute_first(name_str) {
-        let rc = unsafe { dns_query_raw(name_bytes, class, type_, answer, anslen) };
+        let rc = unsafe { dns_query_raw(&name_bytes, class, type_, answer, anslen) };
         if rc > 0 {
             return rc;
         }
@@ -12561,7 +12566,7 @@ pub unsafe extern "C" fn res_search(
     // Try appending each search domain.
     for domain in &config.search {
         let mut fqdn = Vec::with_capacity(name_bytes.len() + 1 + domain.len());
-        fqdn.extend_from_slice(name_bytes);
+        fqdn.extend_from_slice(&name_bytes);
         if !name_bytes.ends_with(b".") {
             fqdn.push(b'.');
         }
@@ -12575,7 +12580,7 @@ pub unsafe extern "C" fn res_search(
 
     // If we haven't tried absolute yet, try now as last resort.
     if !config.should_try_absolute_first(name_str) {
-        let rc = unsafe { dns_query_raw(name_bytes, class, type_, answer, anslen) };
+        let rc = unsafe { dns_query_raw(&name_bytes, class, type_, answer, anslen) };
         if rc > 0 {
             return rc;
         }
