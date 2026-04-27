@@ -23391,13 +23391,14 @@ pub unsafe extern "C" fn setproctitle(fmt: *const c_char, mut args: ...) {
     let title_bytes: Vec<u8> = if fmt.is_null() {
         Vec::new()
     } else {
-        // SAFETY: caller-supplied valid C format string.
-        let fmt_bytes = unsafe { CStr::from_ptr(fmt) }.to_bytes();
+        let Some(fmt_bytes) = (unsafe { read_c_string_bytes(fmt) }) else {
+            return;
+        };
         let suppress_prefix = fmt_bytes.first() == Some(&b'-');
         let render_fmt = if suppress_prefix {
             &fmt_bytes[1..]
         } else {
-            fmt_bytes
+            &fmt_bytes
         };
 
         use frankenlibc_core::stdio::printf::parse_format_string;

@@ -6438,6 +6438,23 @@ fn setproctitle_without_init_is_no_op() {
     unsafe { setproctitle(fmt.as_ptr()) };
 }
 
+#[test]
+fn setproctitle_rejects_tracked_unterminated_format() {
+    let _guard = SETPROCTITLE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let (mut argv, mut envp, backing) = build_synthetic_argv("originalname", 64);
+    unsafe { setproctitle_init(1, argv.as_mut_ptr(), envp.as_mut_ptr()) };
+
+    let raw_fmt = malloc_tracked_unterminated(b"-should-not-render-%d");
+    unsafe {
+        setproctitle(raw_fmt, 123i32);
+        frankenlibc_abi::malloc_abi::free(raw_fmt.cast());
+    }
+
+    let raw = backing[0].as_ptr();
+    let s = unsafe { std::ffi::CStr::from_ptr(raw as *const c_char) }.to_bytes();
+    assert_eq!(s, b"originalname");
+}
+
 // ===========================================================================
 // makedev / major / minor (glibc dev_t packing)
 // ===========================================================================
