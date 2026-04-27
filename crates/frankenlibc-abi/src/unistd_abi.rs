@@ -2676,9 +2676,11 @@ pub unsafe extern "C" fn bsd_getopt(
     let stripped = if options.is_null() {
         options
     } else {
-        // SAFETY: caller-supplied NUL-terminated C string.
-        let first = unsafe { *options };
-        if first == b'+' as c_char || first == b'-' as c_char {
+        let Some(option_bytes) = (unsafe { read_c_string_bytes(options) }) else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        };
+        if matches!(option_bytes.first(), Some(b'+' | b'-')) {
             // SAFETY: skipping past the prefix into the same string;
             // the underlying buffer is at least one byte longer than
             // a non-empty C string, and the resulting pointer is

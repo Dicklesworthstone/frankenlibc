@@ -6069,6 +6069,28 @@ fn bsd_getopt_null_optstring_returns_minus_one() {
 }
 
 #[test]
+fn bsd_getopt_rejects_tracked_unterminated_prefixed_optstring() {
+    let _guard = BSD_GETOPT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    reset_getopt_state_for_test();
+    let raw_optstring = malloc_tracked_unterminated(b"+a");
+    let argv: [*mut c_char; 3] = [
+        c"prog".as_ptr() as *mut c_char,
+        c"-a".as_ptr() as *mut c_char,
+        std::ptr::null_mut(),
+    ];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = bsd_getopt(2, argv.as_ptr(), raw_optstring);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_optstring.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn bsd_getopt_double_prefix_only_strips_one() {
     // libbsd strips at most one prefix char. "++a" → after stripping
     // '+', optstring is "+a", which then itself starts with '+' as
