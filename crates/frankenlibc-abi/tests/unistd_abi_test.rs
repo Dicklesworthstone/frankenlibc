@@ -6458,6 +6458,47 @@ fn under_strerror_l_matches_strerror_l() {
 }
 
 // ===========================================================================
+// __xpg_basename / strfry bounded C-string scans
+// ===========================================================================
+
+#[test]
+fn xpg_basename_rejects_tracked_unterminated_path() {
+    use frankenlibc_abi::unistd_abi::__xpg_basename;
+
+    let raw = malloc_tracked_unterminated(b"/tmp/frankenlibc-basename");
+
+    unsafe {
+        *__errno_location() = 0;
+        let result = __xpg_basename(raw);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(CStr::from_ptr(result).to_bytes(), b".");
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn strfry_rejects_tracked_unterminated_string() {
+    use frankenlibc_abi::unistd_abi::strfry;
+
+    let input = b"abcdef";
+    let raw = malloc_tracked_unterminated(input);
+
+    unsafe {
+        *__errno_location() = 0;
+        let result = strfry(raw);
+        let err = *__errno_location();
+        let observed = std::slice::from_raw_parts(raw.cast::<u8>(), input.len()).to_vec();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(result, raw);
+        assert_eq!(observed, input);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+// ===========================================================================
 // __cxa_pure_virtual (Itanium C++ ABI pure-virtual stub)
 // ===========================================================================
 

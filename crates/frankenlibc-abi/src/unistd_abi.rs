@@ -13993,14 +13993,17 @@ pub unsafe extern "C" fn __strerror_l(errnum: c_int, locale: *mut c_void) -> *mu
 /// XSI `__xpg_basename` — POSIX basename (modifies input).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __xpg_basename(path: *mut c_char) -> *mut c_char {
+    static DOT: &[u8] = b".\0";
+    static SLASH: &[u8] = b"/\0";
+
     if path.is_null() {
-        static DOT: &[u8] = b".\0";
         return DOT.as_ptr() as *mut c_char;
     }
-    let s = unsafe { CStr::from_ptr(path) };
-    let bytes = s.to_bytes();
+    let Some(bytes) = (unsafe { read_c_string_bytes(path) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return DOT.as_ptr() as *mut c_char;
+    };
     if bytes.is_empty() {
-        static DOT: &[u8] = b".\0";
         return DOT.as_ptr() as *mut c_char;
     }
     let mut end = bytes.len();
@@ -14008,7 +14011,6 @@ pub unsafe extern "C" fn __xpg_basename(path: *mut c_char) -> *mut c_char {
         end -= 1;
     }
     if end == 0 {
-        static SLASH: &[u8] = b"/\0";
         return SLASH.as_ptr() as *mut c_char;
     }
     let start = match bytes[..end].iter().rposition(|&b| b == b'/') {
@@ -14042,8 +14044,11 @@ pub unsafe extern "C" fn strfry(string: *mut c_char) -> *mut c_char {
     if string.is_null() {
         return string;
     }
-    let s = unsafe { CStr::from_ptr(string) };
-    let len = s.to_bytes().len();
+    let Some(bytes) = (unsafe { read_c_string_bytes(string) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return string;
+    };
+    let len = bytes.len();
     if len <= 1 {
         return string;
     }
