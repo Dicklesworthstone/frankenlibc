@@ -5902,6 +5902,28 @@ fn readpassphrase_bufsiz_zero_returns_null() {
 }
 
 #[test]
+fn readpassphrase_rejects_tracked_unterminated_prompt() {
+    let raw_prompt = malloc_tracked_unterminated(b"password: ");
+    let mut buf = [0i8; 16];
+
+    run_with_piped_stdin(b"secret\n", || unsafe {
+        *__errno_location() = 0;
+        let p = readpassphrase(
+            raw_prompt,
+            buf.as_mut_ptr(),
+            buf.len(),
+            RPP_STDIN | RPP_ECHO_ON,
+        );
+        let err = *__errno_location();
+
+        assert!(p.is_null());
+        assert_eq!(err, libc::EINVAL);
+    });
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_prompt.cast()) };
+}
+
+#[test]
 fn readpassphrase_reads_line_via_stdin() {
     let mut buf = [0i8; 32];
     run_with_piped_stdin(b"secret123\n", || {

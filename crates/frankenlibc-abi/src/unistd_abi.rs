@@ -13009,8 +13009,11 @@ pub unsafe extern "C" fn getpass(prompt: *const c_char) -> *mut c_char {
 
     // Write prompt
     if !prompt.is_null() {
-        let prompt_cstr = unsafe { std::ffi::CStr::from_ptr(prompt) };
-        let prompt_bytes = prompt_cstr.to_bytes();
+        let Some(prompt_bytes) = (unsafe { read_c_string_bytes(prompt) }) else {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            let _ = syscall::sys_close(fd);
+            return std::ptr::null_mut();
+        };
         let _ = unsafe { syscall::sys_write(fd, prompt_bytes.as_ptr(), prompt_bytes.len()) };
     }
 
@@ -13137,8 +13140,13 @@ pub unsafe extern "C" fn readpassphrase(
 
     // Write the prompt to the write fd.
     if !prompt.is_null() {
-        let prompt_cstr = unsafe { std::ffi::CStr::from_ptr(prompt) };
-        let prompt_bytes = prompt_cstr.to_bytes();
+        let Some(prompt_bytes) = (unsafe { read_c_string_bytes(prompt) }) else {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            if owns_fd {
+                let _ = syscall::sys_close(read_fd);
+            }
+            return std::ptr::null_mut();
+        };
         let _ = unsafe { syscall::sys_write(write_fd, prompt_bytes.as_ptr(), prompt_bytes.len()) };
     }
 
