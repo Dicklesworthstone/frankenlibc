@@ -54,9 +54,11 @@ fn group_string_space(entry: &frankenlibc_core::grp::Group) -> Option<usize> {
     Some(needed)
 }
 
-fn align_up(value: usize, align: usize) -> Option<usize> {
+fn aligned_offset_from(base: *const c_char, offset: usize, align: usize) -> Option<usize> {
     debug_assert!(align.is_power_of_two());
-    value.checked_add(align - 1).map(|v| v & !(align - 1))
+    let addr = (base as usize).checked_add(offset)?;
+    let padding = addr.wrapping_neg() & (align - 1);
+    offset.checked_add(padding)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -458,14 +460,15 @@ pub unsafe extern "C" fn getgrnam_r(
     if name.is_null() || grp.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
-    if !tracked_object_fits(grp as *const libc::group)
-        || !tracked_object_fits(result as *const *mut libc::group)
-    {
+    if !tracked_object_fits(result as *const *mut libc::group) {
         return libc::EINVAL;
     }
 
     // SAFETY: result is non-null.
     unsafe { *result = ptr::null_mut() };
+    if !tracked_object_fits(grp as *const libc::group) {
+        return libc::EINVAL;
+    }
 
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Resolver, name as usize, 0, false, false, 0);
@@ -507,14 +510,15 @@ pub unsafe extern "C" fn getgrgid_r(
     if grp.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
-    if !tracked_object_fits(grp as *const libc::group)
-        || !tracked_object_fits(result as *const *mut libc::group)
-    {
+    if !tracked_object_fits(result as *const *mut libc::group) {
         return libc::EINVAL;
     }
 
     // SAFETY: result is non-null.
     unsafe { *result = ptr::null_mut() };
+    if !tracked_object_fits(grp as *const libc::group) {
+        return libc::EINVAL;
+    }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Resolver, 0, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -566,8 +570,11 @@ unsafe fn fill_group_r(
     let ptr_size = std::mem::size_of::<*mut c_char>();
     let ptr_align = std::mem::align_of::<*mut c_char>();
 
-    // Align the pointer array start
-    let Some(ptr_start) = align_up(str_needed, ptr_align) else {
+    let base = buf;
+
+    // Align the pointer array address, not just the offset, because callers
+    // may pass an interior byte pointer as their scratch buffer.
+    let Some(ptr_start) = aligned_offset_from(base, str_needed, ptr_align) else {
         return libc::ERANGE;
     };
     let Some(ptr_bytes) = n_ptrs.checked_mul(ptr_size) else {
@@ -581,7 +588,6 @@ unsafe fn fill_group_r(
         return libc::ERANGE;
     }
 
-    let base = buf;
     let mut off = 0usize;
 
     // SAFETY: all writes are within [buf, buf+buflen) since total_needed <= buflen.
@@ -645,13 +651,14 @@ pub unsafe extern "C" fn getgrent_r(
     if grp.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
-    if !tracked_object_fits(grp as *const libc::group)
-        || !tracked_object_fits(result as *const *mut libc::group)
-    {
+    if !tracked_object_fits(result as *const *mut libc::group) {
         return libc::EINVAL;
     }
 
     unsafe { *result = ptr::null_mut() };
+    if !tracked_object_fits(grp as *const libc::group) {
+        return libc::EINVAL;
+    }
 
     GRP_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();

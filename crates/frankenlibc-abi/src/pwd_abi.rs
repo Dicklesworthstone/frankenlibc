@@ -454,14 +454,15 @@ pub unsafe extern "C" fn getpwnam_r(
     if name.is_null() || pwd.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
-    if !tracked_object_fits(pwd as *const libc::passwd)
-        || !tracked_object_fits(result as *const *mut libc::passwd)
-    {
+    if !tracked_object_fits(result as *const *mut libc::passwd) {
         return libc::EINVAL;
     }
 
     // SAFETY: result is non-null.
     unsafe { *result = ptr::null_mut() };
+    if !tracked_object_fits(pwd as *const libc::passwd) {
+        return libc::EINVAL;
+    }
 
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Resolver, name as usize, 0, false, false, 0);
@@ -504,14 +505,15 @@ pub unsafe extern "C" fn getpwuid_r(
     if pwd.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
-    if !tracked_object_fits(pwd as *const libc::passwd)
-        || !tracked_object_fits(result as *const *mut libc::passwd)
-    {
+    if !tracked_object_fits(result as *const *mut libc::passwd) {
         return libc::EINVAL;
     }
 
     // SAFETY: result is non-null.
     unsafe { *result = ptr::null_mut() };
+    if !tracked_object_fits(pwd as *const libc::passwd) {
+        return libc::EINVAL;
+    }
 
     let (_, decision) = runtime_policy::decide(ApiFamily::Resolver, 0, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -642,13 +644,14 @@ pub unsafe extern "C" fn getpwent_r(
     if pwd.is_null() || buf.is_null() || result.is_null() {
         return libc::EINVAL;
     }
-    if !tracked_object_fits(pwd as *const libc::passwd)
-        || !tracked_object_fits(result as *const *mut libc::passwd)
-    {
+    if !tracked_object_fits(result as *const *mut libc::passwd) {
         return libc::EINVAL;
     }
 
     unsafe { *result = ptr::null_mut() };
+    if !tracked_object_fits(pwd as *const libc::passwd) {
+        return libc::EINVAL;
+    }
 
     PWD_TLS.with(|cell| {
         let mut storage = cell.borrow_mut();

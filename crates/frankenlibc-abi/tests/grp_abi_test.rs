@@ -344,6 +344,28 @@ fn getgrgid_r_rejects_tracked_short_result_slot_before_write() {
 }
 
 #[test]
+fn getgrgid_r_clears_result_before_rejecting_tracked_short_group_slot() {
+    with_group_file(GROUP_FIXTURE, || unsafe {
+        let raw = tracked_zeroed_bytes(std::mem::size_of::<libc::group>() - 1);
+        assert_known_short(raw, std::mem::size_of::<libc::group>());
+        let mut buf = vec![0u8; 1024];
+        let mut result = std::ptr::NonNull::<libc::group>::dangling().as_ptr();
+
+        let rc = getgrgid_r(
+            0,
+            raw.cast::<libc::group>(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+        free_tracked(raw);
+    });
+}
+
+#[test]
 fn getgrnam_r_missing_backend_returns_errno() {
     let missing = temp_group_path();
     with_group_path(&missing, || {
@@ -420,6 +442,30 @@ fn getgrent_r_erange_does_not_advance_cursor() {
         assert_eq!(name.to_bytes(), b"root");
 
         unsafe { endgrent() };
+    });
+}
+
+#[test]
+fn getgrnam_r_aligns_member_pointer_array_for_misaligned_buffer() {
+    with_group_file(GROUP_FIXTURE, || unsafe {
+        let name = CString::new("root").unwrap();
+        let mut grp: libc::group = std::mem::zeroed();
+        let raw = tracked_zeroed_bytes(1025);
+        let misaligned = raw.cast::<u8>().add(1).cast::<c_char>();
+        let mut result: *mut libc::group = std::ptr::null_mut();
+
+        let rc = getgrnam_r(name.as_ptr(), &mut grp, misaligned, 1024, &mut result);
+
+        assert_eq!(rc, 0);
+        assert!(!result.is_null());
+        assert_eq!(
+            (grp.gr_mem as usize) % std::mem::align_of::<*mut c_char>(),
+            0
+        );
+        let first_member = *grp.gr_mem;
+        assert!(!first_member.is_null());
+        assert_eq!(CStr::from_ptr(first_member).to_bytes(), b"root");
+        free_tracked(raw);
     });
 }
 

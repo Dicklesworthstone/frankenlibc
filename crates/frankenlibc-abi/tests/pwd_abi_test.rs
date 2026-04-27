@@ -331,6 +331,28 @@ fn getpwuid_r_rejects_tracked_short_result_slot_before_write() {
 }
 
 #[test]
+fn getpwuid_r_clears_result_before_rejecting_tracked_short_passwd_slot() {
+    with_passwd_file(FIXTURE, || unsafe {
+        let raw = tracked_zeroed_bytes(std::mem::size_of::<libc::passwd>() - 1);
+        assert_known_short(raw, std::mem::size_of::<libc::passwd>());
+        let mut buf = vec![0u8; 1024];
+        let mut result = std::ptr::NonNull::<libc::passwd>::dangling().as_ptr();
+
+        let rc = getpwuid_r(
+            0,
+            raw.cast::<libc::passwd>(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+        free_tracked(raw);
+    });
+}
+
+#[test]
 fn getpwnam_r_missing_backend_returns_errno() {
     let missing = temp_passwd_path();
     with_passwd_path(&missing, || {
