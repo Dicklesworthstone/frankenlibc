@@ -17,6 +17,14 @@ unsafe fn malloc_tracked_unterminated(bytes: &[u8]) -> *mut c_char {
     raw.cast()
 }
 
+unsafe fn malloc_tracked_i32s(values: &[i32]) -> *mut i32 {
+    let byte_len = std::mem::size_of_val(values);
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(byte_len) }.cast::<i32>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), raw, values.len()) };
+    raw
+}
+
 #[repr(C)]
 struct HsearchDataView {
     table: *mut c_void,
@@ -452,6 +460,77 @@ fn lfind_null_safety() {
         )
     };
     assert!(result.is_null());
+}
+
+#[test]
+fn lfind_rejects_tracked_base_shorter_than_claimed_count() {
+    let base = unsafe { malloc_tracked_i32s(&[10, 20]) };
+    let mut nel: usize = 3;
+    let key: i32 = 30;
+
+    let result = unsafe {
+        lfind(
+            &key as *const i32 as *const c_void,
+            base as *const c_void,
+            &mut nel,
+            std::mem::size_of::<i32>(),
+            int_array_compare,
+        )
+    };
+
+    assert!(result.is_null());
+    assert_eq!(nel, 3);
+    unsafe { frankenlibc_abi::malloc_abi::free(base.cast()) };
+}
+
+#[test]
+fn lsearch_rejects_tracked_append_without_capacity() {
+    let base = unsafe { malloc_tracked_i32s(&[10, 20]) };
+    let mut nel: usize = 2;
+    let key: i32 = 30;
+
+    let result = unsafe {
+        lsearch(
+            &key as *const i32 as *const c_void,
+            base.cast(),
+            &mut nel,
+            std::mem::size_of::<i32>(),
+            int_array_compare,
+        )
+    };
+
+    assert!(result.is_null());
+    assert_eq!(nel, 2);
+    assert_eq!(unsafe { *base.add(0) }, 10);
+    assert_eq!(unsafe { *base.add(1) }, 20);
+    unsafe { frankenlibc_abi::malloc_abi::free(base.cast()) };
+}
+
+#[test]
+fn lsearch_rejects_tracked_key_shorter_than_width() {
+    let base = unsafe { malloc_tracked_i32s(&[10, 20, 0]) };
+    let short_key = unsafe { frankenlibc_abi::malloc_abi::malloc(1) }.cast::<u8>();
+    assert!(!short_key.is_null());
+    unsafe { *short_key = 30 };
+    let mut nel: usize = 2;
+
+    let result = unsafe {
+        lsearch(
+            short_key.cast(),
+            base.cast(),
+            &mut nel,
+            std::mem::size_of::<i32>(),
+            int_array_compare,
+        )
+    };
+
+    assert!(result.is_null());
+    assert_eq!(nel, 2);
+    assert_eq!(unsafe { *base.add(2) }, 0);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(short_key.cast());
+        frankenlibc_abi::malloc_abi::free(base.cast());
+    }
 }
 
 // ===========================================================================

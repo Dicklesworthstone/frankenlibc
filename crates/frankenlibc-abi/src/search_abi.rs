@@ -465,6 +465,13 @@ pub unsafe extern "C" fn tdestroy(
 // Linear search: lfind, lsearch
 // ---------------------------------------------------------------------------
 
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    match crate::malloc_abi::known_remaining(ptr as usize) {
+        Some(remaining) => len <= remaining,
+        None => true,
+    }
+}
+
 /// POSIX `lfind` — linear search (find only, no insert).
 ///
 /// Delegates the array scan to frankenlibc-core::search::lfind_index;
@@ -486,6 +493,9 @@ pub unsafe extern "C" fn lfind(
         Some(n) => n,
         None => return std::ptr::null_mut(),
     };
+    if !tracked_region_fits(base, total) || !tracked_region_fits(key, width) {
+        return std::ptr::null_mut();
+    }
     let buf: &[u8] = unsafe { std::slice::from_raw_parts(base as *const u8, total) };
     let matches = |rec: &[u8], _i: usize| -> bool {
         let r = unsafe { compar(key, rec.as_ptr() as *const c_void) };
@@ -514,6 +524,9 @@ pub unsafe extern "C" fn lsearch(
         Some(n) => n,
         None => return std::ptr::null_mut(),
     };
+    if !tracked_region_fits(base.cast_const(), total) || !tracked_region_fits(key, width) {
+        return std::ptr::null_mut();
+    }
     let buf: &[u8] = unsafe { std::slice::from_raw_parts(base as *const u8, total) };
     let matches = |rec: &[u8], _i: usize| -> bool {
         let r = unsafe { compar(key, rec.as_ptr() as *const c_void) };
@@ -524,6 +537,13 @@ pub unsafe extern "C" fn lsearch(
             (base as *mut u8).add(idx * width) as *mut c_void
         },
         frankenlibc_core::search::SearchOrAppend::AppendAt(idx) => {
+            let append_total = match idx.checked_add(1).and_then(|n| n.checked_mul(width)) {
+                Some(n) => n,
+                None => return std::ptr::null_mut(),
+            };
+            if !tracked_region_fits(base.cast_const(), append_total) {
+                return std::ptr::null_mut();
+            }
             let dest = unsafe { (base as *mut u8).add(idx * width) };
             unsafe {
                 std::ptr::copy_nonoverlapping(key as *const u8, dest, width);
