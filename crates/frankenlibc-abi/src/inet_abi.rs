@@ -22,6 +22,18 @@ const SOCK_CLOEXEC: i32 = 0x80000;
 const SIOCGIFINDEX: usize = 0x8933;
 const SIOCGIFNAME: usize = 0x8910;
 
+#[inline]
+fn is_aligned_for<T>(ptr: *const c_void) -> bool {
+    (ptr as usize).is_multiple_of(std::mem::align_of::<T>())
+}
+
+fn aligned_buffer_offset(base: *const c_char, min_offset: usize, align: usize) -> Option<usize> {
+    let addr = (base as usize).checked_add(min_offset)?;
+    let rem = addr % align;
+    let padding = if rem == 0 { 0 } else { align - rem };
+    min_offset.checked_add(padding)
+}
+
 /// Read a user-supplied C string pointer with a known-region bound so a
 /// non-NUL-terminated argument cannot walk arbitrary process memory through
 /// `CStr::from_ptr`. Returns `None` for null or unterminated input.
@@ -289,8 +301,6 @@ pub unsafe extern "C" fn inet_addr(cp: *const c_char) -> u32 {
 // Network interface name/index — native via ioctl
 // ---------------------------------------------------------------------------
 
-use std::ffi::CStr;
-
 /// Compact ifreq-compatible struct for SIOCGIFINDEX / SIOCGIFNAME ioctls.
 /// Layout: ifr_name[16] + ifr_ifindex(i32) + padding.
 #[repr(C)]
@@ -507,12 +517,20 @@ pub unsafe extern "C" fn getservbyname_r(
         return libc::EINVAL;
     }
     unsafe { *result = std::ptr::null_mut() };
+    if !is_aligned_for::<libc::servent>(result_buf) {
+        return libc::EINVAL;
+    }
 
-    let name_cstr = unsafe { CStr::from_ptr(name) };
+    let Some(name_bytes) = (unsafe { read_bounded_cstr(name) }) else {
+        return libc::EINVAL;
+    };
     let proto_filter = if proto.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
+        let Some(proto_bytes) = (unsafe { read_bounded_cstr(proto) }) else {
+            return libc::EINVAL;
+        };
+        Some(proto_bytes)
     };
 
     let content = match std::fs::read("/etc/services") {
@@ -523,15 +541,15 @@ pub unsafe extern "C" fn getservbyname_r(
     // Find the matching service entry
     let entry = content.split(|&b| b == b'\n').find_map(|line| {
         let entry = frankenlibc_core::resolv::parse_services_line(line)?;
-        if !entry.name.eq_ignore_ascii_case(name_cstr.to_bytes())
+        if !entry.name.eq_ignore_ascii_case(name_bytes.as_slice())
             && !entry
                 .aliases
                 .iter()
-                .any(|alias| alias.eq_ignore_ascii_case(name_cstr.to_bytes()))
+                .any(|alias| alias.eq_ignore_ascii_case(name_bytes.as_slice()))
         {
             return None;
         }
-        if let Some(pf) = proto_filter
+        if let Some(pf) = proto_filter.as_deref()
             && !entry.protocol.eq_ignore_ascii_case(pf)
         {
             return None;
@@ -547,8 +565,19 @@ pub unsafe extern "C" fn getservbyname_r(
     // Write name + proto into caller's buffer
     let name_len = svc_name.len() + 1; // +NUL
     let proto_len = svc_proto.len() + 1;
+    let aliases_offset = match aligned_buffer_offset(
+        buf,
+        name_len + proto_len,
+        std::mem::align_of::<*mut c_char>(),
+    ) {
+        Some(offset) => offset,
+        None => return libc::ERANGE,
+    };
     let aliases_size = std::mem::size_of::<*mut c_char>();
-    let needed = name_len + proto_len + aliases_size;
+    let needed = match aliases_offset.checked_add(aliases_size) {
+        Some(needed) => needed,
+        None => return libc::ERANGE,
+    };
     if needed > buflen {
         return libc::ERANGE;
     }
@@ -569,13 +598,13 @@ pub unsafe extern "C" fn getservbyname_r(
         *proto_ptr.add(svc_proto.len()) = 0;
     }
 
-    let aliases_ptr = unsafe { buf.add(name_len + proto_len) as *mut *mut c_char };
+    let aliases_ptr = unsafe { buf.add(aliases_offset) as *mut *mut c_char };
     unsafe { *aliases_ptr = std::ptr::null_mut() };
 
     let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };
     servent.s_name = name_ptr;
     servent.s_aliases = aliases_ptr;
-    servent.s_port = (port as c_int).to_be();
+    servent.s_port = port.to_be() as c_int;
     servent.s_proto = proto_ptr;
 
     unsafe { *result = result_buf };
@@ -599,12 +628,18 @@ pub unsafe extern "C" fn getservbyport_r(
         return libc::EINVAL;
     }
     unsafe { *result = std::ptr::null_mut() };
+    if !is_aligned_for::<libc::servent>(result_buf) {
+        return libc::EINVAL;
+    }
 
     let port_host = u16::from_be(port as u16);
     let proto_filter = if proto.is_null() {
         None
     } else {
-        Some(unsafe { CStr::from_ptr(proto) }.to_bytes())
+        let Some(proto_bytes) = (unsafe { read_bounded_cstr(proto) }) else {
+            return libc::EINVAL;
+        };
+        Some(proto_bytes)
     };
 
     let content = match std::fs::read("/etc/services") {
@@ -617,7 +652,7 @@ pub unsafe extern "C" fn getservbyport_r(
         if entry.port != port_host {
             return None;
         }
-        if let Some(pf) = proto_filter
+        if let Some(pf) = proto_filter.as_deref()
             && !entry.protocol.eq_ignore_ascii_case(pf)
         {
             return None;
@@ -632,8 +667,19 @@ pub unsafe extern "C" fn getservbyport_r(
 
     let name_len = svc_name.len() + 1;
     let proto_len = svc_proto.len() + 1;
+    let aliases_offset = match aligned_buffer_offset(
+        buf,
+        name_len + proto_len,
+        std::mem::align_of::<*mut c_char>(),
+    ) {
+        Some(offset) => offset,
+        None => return libc::ERANGE,
+    };
     let aliases_size = std::mem::size_of::<*mut c_char>();
-    let needed = name_len + proto_len + aliases_size;
+    let needed = match aliases_offset.checked_add(aliases_size) {
+        Some(needed) => needed,
+        None => return libc::ERANGE,
+    };
     if needed > buflen {
         return libc::ERANGE;
     }
@@ -654,7 +700,7 @@ pub unsafe extern "C" fn getservbyport_r(
         *proto_ptr.add(svc_proto.len()) = 0;
     }
 
-    let aliases_ptr = unsafe { buf.add(name_len + proto_len) as *mut *mut c_char };
+    let aliases_ptr = unsafe { buf.add(aliases_offset) as *mut *mut c_char };
     unsafe { *aliases_ptr = std::ptr::null_mut() };
 
     let servent = unsafe { &mut *result_buf.cast::<libc::servent>() };

@@ -9,6 +9,9 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
 use frankenlibc_abi::errno_abi::{__errno_location, set_abi_errno};
+use frankenlibc_abi::inet_abi::{
+    getservbyname_r as abi_getservbyname_r, getservbyport_r as abi_getservbyport_r,
+};
 
 unsafe extern "C" {
     fn htons(hostshort: u16) -> u16;
@@ -24,22 +27,6 @@ unsafe extern "C" {
     fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_char) -> *mut c_char;
     fn if_nameindex() -> *mut c_void;
     fn if_freenameindex(ptr: *mut c_void);
-    fn getservbyname_r(
-        name: *const c_char,
-        proto: *const c_char,
-        result_buf: *mut c_void,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut c_void,
-    ) -> c_int;
-    fn getservbyport_r(
-        port: c_int,
-        proto: *const c_char,
-        result_buf: *mut c_void,
-        buf: *mut c_char,
-        buflen: usize,
-        result: *mut *mut c_void,
-    ) -> c_int;
 }
 
 const AF_INET: c_int = 2;
@@ -730,11 +717,29 @@ fn if_nameindex_returns_at_least_lo() {
 // ---------------------------------------------------------------------------
 
 /// Helper: allocate a servent result buffer and string buffer for getservby*_r.
-fn servent_buffers() -> (Vec<u8>, Vec<u8>) {
-    // libc::servent is ~32 bytes on x86_64
-    let result_buf = vec![0u8; 64];
+fn servent_buffers() -> ([std::mem::MaybeUninit<libc::servent>; 1], Vec<u8>) {
+    let result_buf = [std::mem::MaybeUninit::<libc::servent>::uninit()];
     let buf = vec![0u8; 256];
     (result_buf, buf)
+}
+
+fn tracked_unterminated_c_bytes(bytes: &[u8]) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) };
+    assert!(!raw.is_null());
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw.cast::<u8>(), bytes.len());
+    }
+    raw.cast::<c_char>()
+}
+
+fn misaligned_servent_result_ptr(storage: &mut [u8]) -> *mut c_void {
+    let align = std::mem::align_of::<libc::servent>();
+    let one = storage.as_mut_ptr().wrapping_add(1);
+    if !(one as usize).is_multiple_of(align) {
+        one.cast::<c_void>()
+    } else {
+        storage.as_mut_ptr().wrapping_add(2).cast::<c_void>()
+    }
 }
 
 #[test]
@@ -745,7 +750,7 @@ fn getservbyname_r_finds_ssh() {
     let mut result: *mut c_void = std::ptr::null_mut();
 
     let rc = unsafe {
-        getservbyname_r(
+        abi_getservbyname_r(
             name.as_ptr(),
             proto.as_ptr(),
             result_buf.as_mut_ptr().cast(),
@@ -773,7 +778,7 @@ fn getservbyname_r_finds_http() {
     let mut result: *mut c_void = std::ptr::null_mut();
 
     let rc = unsafe {
-        getservbyname_r(
+        abi_getservbyname_r(
             name.as_ptr(),
             proto.as_ptr(),
             result_buf.as_mut_ptr().cast(),
@@ -797,7 +802,7 @@ fn getservbyname_r_no_proto_filter() {
     let mut result: *mut c_void = std::ptr::null_mut();
 
     let rc = unsafe {
-        getservbyname_r(
+        abi_getservbyname_r(
             name.as_ptr(),
             std::ptr::null(),
             result_buf.as_mut_ptr().cast(),
@@ -818,7 +823,7 @@ fn getservbyname_r_nonexistent_service() {
     let mut result: *mut c_void = std::ptr::null_mut();
 
     let rc = unsafe {
-        getservbyname_r(
+        abi_getservbyname_r(
             name.as_ptr(),
             proto.as_ptr(),
             result_buf.as_mut_ptr().cast(),
@@ -843,7 +848,7 @@ fn getservbyname_r_alias_resolves_to_canonical_entry() {
     let mut result: *mut c_void = std::ptr::null_mut();
 
     let rc = unsafe {
-        getservbyname_r(
+        abi_getservbyname_r(
             alias.as_ptr(),
             proto.as_ptr(),
             result_buf.as_mut_ptr().cast(),
@@ -864,12 +869,12 @@ fn getservbyname_r_alias_resolves_to_canonical_entry() {
 fn getservbyname_r_tiny_buffer() {
     let name = CString::new("ssh").unwrap();
     let proto = CString::new("tcp").unwrap();
-    let mut result_buf = vec![0u8; 64];
+    let (mut result_buf, _) = servent_buffers();
     let mut buf = vec![0u8; 2]; // Too small
     let mut result: *mut c_void = std::ptr::null_mut();
 
     let rc = unsafe {
-        getservbyname_r(
+        abi_getservbyname_r(
             name.as_ptr(),
             proto.as_ptr(),
             result_buf.as_mut_ptr().cast(),
@@ -879,6 +884,74 @@ fn getservbyname_r_tiny_buffer() {
         )
     };
     assert_eq!(rc, libc::ERANGE, "tiny buffer should return ERANGE");
+}
+
+#[test]
+fn getservbyname_r_rejects_tracked_unterminated_name() {
+    let name = tracked_unterminated_c_bytes(b"ssh");
+    let (mut result_buf, mut buf) = servent_buffers();
+    let mut result: *mut c_void = std::ptr::null_mut();
+
+    let rc = unsafe {
+        abi_getservbyname_r(
+            name,
+            std::ptr::null(),
+            result_buf.as_mut_ptr().cast(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+
+    unsafe { frankenlibc_abi::malloc_abi::free(name.cast::<c_void>()) };
+}
+
+#[test]
+fn getservbyname_r_rejects_tracked_unterminated_proto() {
+    let name = CString::new("ssh").unwrap();
+    let proto = tracked_unterminated_c_bytes(b"tcp");
+    let (mut result_buf, mut buf) = servent_buffers();
+    let mut result: *mut c_void = std::ptr::null_mut();
+
+    let rc = unsafe {
+        abi_getservbyname_r(
+            name.as_ptr(),
+            proto,
+            result_buf.as_mut_ptr().cast(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+
+    unsafe { frankenlibc_abi::malloc_abi::free(proto.cast::<c_void>()) };
+}
+
+#[test]
+fn getservbyname_r_rejects_misaligned_result_buf() {
+    let name = CString::new("ssh").unwrap();
+    let mut result_storage =
+        vec![0u8; std::mem::size_of::<libc::servent>() + std::mem::align_of::<libc::servent>()];
+    let result_buf = misaligned_servent_result_ptr(&mut result_storage);
+    let mut buf = vec![0u8; 256];
+    let mut result: *mut c_void = std::ptr::null_mut();
+
+    let rc = unsafe {
+        abi_getservbyname_r(
+            name.as_ptr(),
+            std::ptr::null(),
+            result_buf,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
 }
 
 // ---------------------------------------------------------------------------
@@ -893,7 +966,7 @@ fn getservbyport_r_finds_port_22() {
     let mut result: *mut c_void = std::ptr::null_mut();
 
     let rc = unsafe {
-        getservbyport_r(
+        abi_getservbyport_r(
             port_net,
             proto.as_ptr(),
             result_buf.as_mut_ptr().cast(),
@@ -918,7 +991,7 @@ fn getservbyport_r_finds_port_80() {
     let mut result: *mut c_void = std::ptr::null_mut();
 
     let rc = unsafe {
-        getservbyport_r(
+        abi_getservbyport_r(
             port_net as c_int,
             proto.as_ptr(),
             result_buf.as_mut_ptr().cast(),
@@ -943,7 +1016,7 @@ fn getservbyport_r_nonexistent_port() {
     let mut result: *mut c_void = std::ptr::null_mut();
 
     let rc = unsafe {
-        getservbyport_r(
+        abi_getservbyport_r(
             port_net,
             proto.as_ptr(),
             result_buf.as_mut_ptr().cast(),
@@ -957,4 +1030,49 @@ fn getservbyport_r_nonexistent_port() {
         rc != 0 || result.is_null(),
         "nonexistent port should not succeed"
     );
+}
+
+#[test]
+fn getservbyport_r_rejects_tracked_unterminated_proto() {
+    let proto = tracked_unterminated_c_bytes(b"tcp");
+    let port_net = (22u16).to_be() as c_int;
+    let (mut result_buf, mut buf) = servent_buffers();
+    let mut result: *mut c_void = std::ptr::null_mut();
+
+    let rc = unsafe {
+        abi_getservbyport_r(
+            port_net,
+            proto,
+            result_buf.as_mut_ptr().cast(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+
+    unsafe { frankenlibc_abi::malloc_abi::free(proto.cast::<c_void>()) };
+}
+
+#[test]
+fn getservbyport_r_rejects_misaligned_result_buf() {
+    let mut result_storage =
+        vec![0u8; std::mem::size_of::<libc::servent>() + std::mem::align_of::<libc::servent>()];
+    let result_buf = misaligned_servent_result_ptr(&mut result_storage);
+    let mut buf = vec![0u8; 256];
+    let mut result: *mut c_void = std::ptr::null_mut();
+
+    let rc = unsafe {
+        abi_getservbyport_r(
+            (22u16).to_be() as c_int,
+            std::ptr::null(),
+            result_buf,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
 }
