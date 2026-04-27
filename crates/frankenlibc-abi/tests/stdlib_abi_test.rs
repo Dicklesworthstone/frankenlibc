@@ -6762,6 +6762,39 @@ fn sl_find_null_needle_returns_null() {
 }
 
 #[test]
+fn sl_find_rejects_tracked_unterminated_needle() {
+    unsafe {
+        let sl = sl_init();
+        let entry = c"alpha";
+        sl_add(sl, entry.as_ptr() as *mut c_char);
+        let needle = malloc_unterminated(b"alpha");
+
+        let found = sl_find(sl, needle);
+
+        frankenlibc_abi::malloc_abi::free(needle.cast());
+        assert!(found.is_null());
+        sl_free(sl, 0);
+    }
+}
+
+#[test]
+fn sl_find_skips_tracked_unterminated_entry() {
+    unsafe {
+        let sl = sl_init();
+        let malformed = malloc_unterminated(b"alpha");
+        let valid = c"alpha";
+        sl_add(sl, malformed);
+        sl_add(sl, valid.as_ptr() as *mut c_char);
+
+        let found = sl_find(sl, valid.as_ptr());
+
+        frankenlibc_abi::malloc_abi::free(malformed.cast());
+        assert_eq!(found as *const c_char, valid.as_ptr());
+        sl_free(sl, 0);
+    }
+}
+
+#[test]
 fn sl_free_with_all_releases_each_string() {
     let sl = unsafe { sl_init() };
     let names = ["one", "two", "three"];

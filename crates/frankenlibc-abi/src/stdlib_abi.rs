@@ -5587,8 +5587,9 @@ pub unsafe extern "C" fn sl_find(sl: *mut StringList, name: *const c_char) -> *m
     if sl.is_null() || name.is_null() {
         return ptr::null_mut();
     }
-    // SAFETY: caller-supplied valid C string.
-    let needle = unsafe { CStr::from_ptr(name) }.to_bytes();
+    let Some(needle) = (unsafe { read_bounded_cstr_bytes(name) }) else {
+        return ptr::null_mut();
+    };
     // SAFETY: sl came from sl_init; sl_str has sl_cur valid char* slots.
     unsafe {
         let arr = (*sl).sl_str;
@@ -5597,7 +5598,10 @@ pub unsafe extern "C" fn sl_find(sl: *mut StringList, name: *const c_char) -> *m
         while i < cur {
             let entry = *arr.add(i);
             if !entry.is_null() {
-                let e_bytes = CStr::from_ptr(entry).to_bytes();
+                let Some(e_bytes) = read_bounded_cstr_bytes(entry) else {
+                    i += 1;
+                    continue;
+                };
                 if e_bytes == needle {
                     return entry;
                 }
