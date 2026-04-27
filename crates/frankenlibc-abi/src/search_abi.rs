@@ -70,28 +70,43 @@ impl Default for HashData {
 unsafe impl Send for HashKey {}
 unsafe impl Send for HashData {}
 
-fn hash_key_djb2(k: &HashKey) -> u64 {
-    if k.0.is_null() {
-        return 0;
+unsafe fn hash_key_len(ptr: *mut c_char) -> Option<usize> {
+    if ptr.is_null() {
+        return None;
     }
+    let (len, terminated) = unsafe { crate::util::scan_c_string(ptr.cast_const(), None) };
+    terminated.then_some(len)
+}
+
+fn hash_key_valid(ptr: *mut c_char) -> bool {
+    unsafe { hash_key_len(ptr).is_some() }
+}
+
+fn hash_key_djb2(k: &HashKey) -> u64 {
+    let Some(len) = (unsafe { hash_key_len(k.0) }) else {
+        return 0;
+    };
     let mut h = frankenlibc_core::search::hash::djb2_seed();
-    let mut p = k.0 as *const u8;
-    loop {
-        let c = unsafe { *p };
-        if c == 0 {
-            break;
-        }
+    let bytes = unsafe { std::slice::from_raw_parts(k.0.cast::<u8>(), len) };
+    for &c in bytes {
         h = frankenlibc_core::search::hash::djb2_step(h, c);
-        p = unsafe { p.add(1) };
     }
     h
 }
 
 fn hash_keys_equal(a: &HashKey, b: &HashKey) -> bool {
-    if a.0.is_null() || b.0.is_null() {
+    let Some(a_len) = (unsafe { hash_key_len(a.0) }) else {
         return a.0 == b.0;
+    };
+    let Some(b_len) = (unsafe { hash_key_len(b.0) }) else {
+        return false;
+    };
+    if a_len != b_len {
+        return false;
     }
-    unsafe { crate::string_abi::strcmp(a.0, b.0) == 0 }
+    let a_bytes = unsafe { std::slice::from_raw_parts(a.0.cast::<u8>(), a_len) };
+    let b_bytes = unsafe { std::slice::from_raw_parts(b.0.cast::<u8>(), b_len) };
+    a_bytes == b_bytes
 }
 
 type HashTable = LinearProbeTable<HashKey, HashData>;
@@ -109,6 +124,10 @@ pub unsafe extern "C" fn hcreate(nel: usize) -> c_int {
 /// POSIX `hsearch` — search or insert into the global hash table.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hsearch(item: Entry, action: Action) -> *mut Entry {
+    if !hash_key_valid(item.key) {
+        return std::ptr::null_mut();
+    }
+
     let mut guard = GLOBAL_HTAB.lock().unwrap_or_else(|e| e.into_inner());
     let ht = match guard.as_mut() {
         Some(ht) => ht,
@@ -174,6 +193,10 @@ pub unsafe extern "C" fn hsearch_r(
     htab: *mut HsearchData,
 ) -> c_int {
     if htab.is_null() || retval.is_null() {
+        return 0;
+    }
+    if !hash_key_valid(item.key) {
+        unsafe { *retval = std::ptr::null_mut() };
         return 0;
     }
     let htab_ref = unsafe { &mut *htab };

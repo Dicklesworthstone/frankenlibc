@@ -6,9 +6,16 @@
 //! binary trees (tsearch/tfind/tdelete/twalk), linear search (lfind/lsearch),
 //! and linked lists (insque/remque).
 
-use std::ffi::{CString, c_int, c_void};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 use frankenlibc_abi::search_abi::*;
+
+unsafe fn malloc_tracked_unterminated(bytes: &[u8]) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
+    raw.cast()
+}
 
 #[repr(C)]
 struct HsearchDataView {
@@ -95,6 +102,24 @@ fn hash_global_api() {
 
     unsafe { hdestroy() };
 
+    // --- tracked unterminated keys must not be hashed past their allocation ---
+    unsafe { hcreate(16) };
+
+    let raw_key = unsafe { malloc_tracked_unterminated(b"unterminated-key") };
+    let item = Entry {
+        key: raw_key,
+        data: 123usize as *mut c_void,
+    };
+    let inserted = unsafe { hsearch(item, Action::ENTER) };
+    assert!(
+        inserted.is_null(),
+        "ENTER with an unterminated tracked key should fail"
+    );
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_key.cast());
+        hdestroy();
+    }
+
     // --- duplicate ENTER: inserting an existing key returns the original entry ---
     unsafe { hcreate(16) };
 
@@ -171,6 +196,28 @@ fn hash_reentrant_null_safety() {
 
     unsafe { hdestroy_r(std::ptr::null_mut()) };
     // Should not crash
+}
+
+#[test]
+fn hsearch_r_rejects_tracked_unterminated_key() {
+    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { hcreate_r(16, &mut htab) }, 1);
+
+    let raw_key = unsafe { malloc_tracked_unterminated(b"unterminated-rkey") };
+    let item = Entry {
+        key: raw_key,
+        data: 321usize as *mut c_void,
+    };
+    let mut result: *mut Entry = std::ptr::null_mut();
+    let rc = unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) };
+
+    assert_eq!(rc, 0);
+    assert!(result.is_null());
+
+    unsafe {
+        hdestroy_r(&mut htab);
+        frankenlibc_abi::malloc_abi::free(raw_key.cast());
+    }
 }
 
 // ===========================================================================
