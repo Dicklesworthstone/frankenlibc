@@ -19666,12 +19666,15 @@ pub unsafe extern "C" fn getrpcbyname(name: *const c_char) -> *mut c_void {
     if name.is_null() {
         return std::ptr::null_mut();
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return std::ptr::null_mut();
+    };
     let contents = match std::fs::read("/etc/rpc") {
         Ok(c) => c,
         Err(_) => return std::ptr::null_mut(),
     };
-    match frankenlibc_core::rpc::lookup_rpc_by_name(&contents, needle) {
+    match frankenlibc_core::rpc::lookup_rpc_by_name(&contents, &needle) {
         Some(entry) => fill_rpc_tls_from_entry(&entry),
         None => std::ptr::null_mut(),
     }
@@ -19688,7 +19691,28 @@ pub unsafe extern "C" fn getrpcbyname_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    let ptr = unsafe { getrpcbyname(name) };
+    if !result.is_null() {
+        unsafe { *result = std::ptr::null_mut() };
+    }
+    if name.is_null() {
+        return unsafe { fill_rpcent_result(std::ptr::null(), result_buf, buffer, buflen, result) };
+    }
+    let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return libc::EINVAL;
+    };
+    let contents = match std::fs::read("/etc/rpc") {
+        Ok(c) => c,
+        Err(_) => {
+            return unsafe {
+                fill_rpcent_result(std::ptr::null(), result_buf, buffer, buflen, result)
+            };
+        }
+    };
+    let ptr = match frankenlibc_core::rpc::lookup_rpc_by_name(&contents, &needle) {
+        Some(entry) => fill_rpc_tls_from_entry(&entry),
+        None => std::ptr::null_mut(),
+    };
     unsafe { fill_rpcent_result(ptr.cast(), result_buf, buffer, buflen, result) }
 }
 

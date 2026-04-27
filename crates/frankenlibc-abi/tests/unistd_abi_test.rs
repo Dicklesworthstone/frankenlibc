@@ -65,6 +65,8 @@ fn malloc_tracked_unterminated(bytes: &[u8]) -> *mut c_char {
     unsafe {
         let raw = frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<u8>();
         assert!(!raw.is_null());
+        let usable = frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast()).max(bytes.len());
+        std::ptr::write_bytes(raw, 0x7f, usable);
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len());
         raw.cast()
     }
@@ -5004,6 +5006,35 @@ fn alias_lookup_rejects_tracked_unterminated_name() {
             buf.as_mut_ptr(),
             buf.len(),
             &mut result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+}
+
+#[test]
+fn rpc_lookup_rejects_tracked_unterminated_name() {
+    let raw_name = malloc_tracked_unterminated(b"portmapper");
+
+    unsafe {
+        *__errno_location() = 0;
+        let plain = frankenlibc_abi::unistd_abi::getrpcbyname(raw_name).cast::<RpcEnt>();
+        let plain_err = *__errno_location();
+        assert!(plain.is_null());
+        assert_eq!(plain_err, libc::EINVAL);
+
+        let mut rpc: RpcEnt = std::mem::zeroed();
+        let mut buf = [0i8; 1024];
+        let mut result = std::ptr::dangling_mut::<RpcEnt>();
+        let rc = frankenlibc_abi::unistd_abi::getrpcbyname_r(
+            raw_name,
+            (&mut rpc as *mut RpcEnt).cast(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            (&mut result as *mut *mut RpcEnt).cast(),
         );
 
         assert_eq!(rc, libc::EINVAL);
