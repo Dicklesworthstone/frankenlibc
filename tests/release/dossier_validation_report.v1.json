@@ -1,7 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-5fw.3",
-  "generated_at": "2026-04-26T21:53:50Z",
+  "generated_at": "2026-04-27T03:58:37Z",
   "status": "pass",
   "verdict": "PASS",
   "summary": {
@@ -27,8 +27,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "898a4d4535c7f9f6359747030437936cf1d2c585040440a3b3d6f18ea942959b",
-      "size_bytes": 989941,
+      "sha256": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
+      "size_bytes": 993484,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -39,8 +39,8 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "93f4f689f07f04d2bf682273ee2b4b7f08f6cc65249140487604e466bcced298",
-      "size_bytes": 252,
+      "sha256": "2e826b4b558da12478339671787d5491f7198371ec3c573d362c634416ba66b3",
+      "size_bytes": 253,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -63,7 +63,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "d20cc7eeb873579096895896d9ba7fc7427ce3a7b553a7b302664d9ea1a27610",
+      "sha256": "fb1e60d2f5a0641ffcf2d23f4dd2615cae63c82a651cc392d172df33c8c3a671",
       "size_bytes": 819,
       "status": "VALID",
       "schema_valid": true,
@@ -75,7 +75,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "4d6fb8ac2589d2ddb6a78a7a138472c3a68219619cb3f16f3288df1cd1fc9232",
+      "sha256": "3f706d1cc148bc9c52ff4be404f31113519c1e1f3d306b1ccbf80baec2d23981",
       "size_bytes": 5609,
       "status": "VALID",
       "schema_valid": true,
@@ -87,7 +87,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "fd1eb169dfe1c82b3146e21936d02722b4bb7539a1b8fcb9105ad34d73d13cf5",
+      "sha256": "7af8bf39d6c9f8d66b2e20c3f9feaf73f45af0dc1c6bbe343061a938214f0699",
       "size_bytes": 11583,
       "status": "VALID",
       "schema_valid": true,
@@ -123,7 +123,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "fd45d4cdf2b41602d9d603db88173a728e9bcfb434bb9285b5aa86b86c41a7b1",
+      "sha256": "71f693eabf6d298f56553829e8b727f3273bad84388254890527078e3513ad92",
       "size_bytes": 35306,
       "status": "VALID",
       "schema_valid": true,
@@ -135,7 +135,7 @@
       "kind": "report",
       "required": true,
       "critical": true,
-      "sha256": "7c5f0794c53d3097938ec105457aafa9509445be43a9bc95a409203d1b128963",
+      "sha256": "5111d2674690b6685c21b14c65272b710d5612f355d4a7516f68228b557e7f59",
       "size_bytes": 23809,
       "status": "VALID",
       "schema_valid": true,
@@ -171,8 +171,8 @@
       "kind": "report",
       "required": true,
       "critical": false,
-      "sha256": "be36174e8931afaf0d81ae8e0d208d40ce9a5bddb85ae3c0b13822180039df59",
-      "size_bytes": 1839360,
+      "sha256": "37d9c49c21f8eb0c5872d1aa799b27460dbf5584880c9852866f810617e735ed",
+      "size_bytes": 1843746,
       "status": "VALID",
       "schema_valid": true,
       "findings": []
@@ -210,13 +210,13 @@
   "integrity_index": {
     "support_matrix": {
       "path": "support_matrix.json",
-      "sha256": "898a4d4535c7f9f6359747030437936cf1d2c585040440a3b3d6f18ea942959b",
-      "size_bytes": 989941
+      "sha256": "65294199716c64a0b5be4f6f90627d97794022e1bec749570d292e54d8f00b1d",
+      "size_bytes": 993484
     },
     "reality_report": {
       "path": "tests/conformance/reality_report.v1.json",
-      "sha256": "93f4f689f07f04d2bf682273ee2b4b7f08f6cc65249140487604e466bcced298",
-      "size_bytes": 252
+      "sha256": "2e826b4b558da12478339671787d5491f7198371ec3c573d362c634416ba66b3",
+      "size_bytes": 253
     },
     "conformance_coverage": {
       "path": "tests/conformance/conformance_coverage_baseline.v1.json",
@@ -225,17 +225,17 @@
     },
     "claim_reconciliation": {
       "path": "tests/conformance/claim_reconciliation_report.v1.json",
-      "sha256": "d20cc7eeb873579096895896d9ba7fc7427ce3a7b553a7b302664d9ea1a27610",
+      "sha256": "fb1e60d2f5a0641ffcf2d23f4dd2615cae63c82a651cc392d172df33c8c3a671",
       "size_bytes": 819
     },
     "closure_sweep": {
       "path": "tests/conformance/closure_sweep_report.v1.json",
-      "sha256": "4d6fb8ac2589d2ddb6a78a7a138472c3a68219619cb3f16f3288df1cd1fc9232",
+      "sha256": "3f706d1cc148bc9c52ff4be404f31113519c1e1f3d306b1ccbf80baec2d23981",
       "size_bytes": 5609
     },
     "replacement_levels": {
       "path": "tests/conformance/replacement_levels.json",
-      "sha256": "fd1eb169dfe1c82b3146e21936d02722b4bb7539a1b8fcb9105ad34d73d13cf5",
+      "sha256": "7af8bf39d6c9f8d66b2e20c3f9feaf73f45af0dc1c6bbe343061a938214f0699",
       "size_bytes": 11583
     },
     "opportunity_matrix": {
@@ -250,12 +250,12 @@
     },
     "controller_ablation": {
       "path": "tests/runtime_math/controller_ablation_report.v1.json",
-      "sha256": "fd45d4cdf2b41602d9d603db88173a728e9bcfb434bb9285b5aa86b86c41a7b1",
+      "sha256": "71f693eabf6d298f56553829e8b727f3273bad84388254890527078e3513ad92",
       "size_bytes": 35306
     },
     "admission_gate": {
       "path": "tests/runtime_math/admission_gate_report.v1.json",
-      "sha256": "7c5f0794c53d3097938ec105457aafa9509445be43a9bc95a409203d1b128963",
+      "sha256": "5111d2674690b6685c21b14c65272b710d5612f355d4a7516f68228b557e7f59",
       "size_bytes": 23809
     },
     "production_kernel_manifest": {
@@ -270,8 +270,8 @@
     },
     "symbol_fixture_coverage": {
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "sha256": "be36174e8931afaf0d81ae8e0d208d40ce9a5bddb85ae3c0b13822180039df59",
-      "size_bytes": 1839360
+      "sha256": "37d9c49c21f8eb0c5872d1aa799b27460dbf5584880c9852866f810617e735ed",
+      "size_bytes": 1843746
     },
     "closure_contract": {
       "path": "tests/conformance/closure_contract.v1.json",
@@ -287,6 +287,56 @@
       "limit": 8
     },
     "entries": [
+      {
+        "id": "bd-rex8a",
+        "title": "PORT: 5 fts64_* LFS-aliases (open/close/read/children/set)",
+        "issue_type": "feature",
+        "priority": 2,
+        "closed_at": "2026-04-26T23:04:47.796944630Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "withdrawn: fts64_open/close/read/children/set are already implemented at unistd_abi.rs lines 20055-20086 (forwarding to fts_*); my probe was checking the wrong symbol set"
+      },
+      {
+        "id": "bd-jt6vm",
+        "title": "PORT: 4 BSD compatibility helpers (explicit_memset + reallocarr + consttime_bcmp + pidfile_signal)",
+        "issue_type": "feature",
+        "priority": 2,
+        "closed_at": "2026-04-26T22:54:06.170153360Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "shipped: 4 BSD compat helpers (explicit_memset, reallocarr, consttime_bcmp, pidfile_signal) + 10 abi tests"
+      },
+      {
+        "id": "bd-0ar9l",
+        "title": "PORT: 3 Linux 6.7+ futex2 syscall wrappers (futex_wake/wait/requeue)",
+        "issue_type": "feature",
+        "priority": 2,
+        "closed_at": "2026-04-26T22:35:24.207196861Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "shipped: 3 futex2 syscall wrappers (futex_wake/wait/requeue) + 3 abi tests"
+      },
+      {
+        "id": "bd-idcx7",
+        "title": "PORT: 7 Linux 6.13+ syscall wrappers (xattr-at family + open_tree_attr + file_getattr/setattr)",
+        "issue_type": "feature",
+        "priority": 2,
+        "closed_at": "2026-04-26T22:26:35.418588568Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "shipped: 7 Linux 6.13+ syscall wrappers (setxattrat/getxattrat/listxattrat/removexattrat/open_tree_attr/file_getattr/file_setattr) + 8 abi tests verifying kernel reach"
+      },
+      {
+        "id": "bd-dcfj5",
+        "title": "PORT: 37 libresolv helpers (byte-order, p_/fp_ debug, HOSTALIASES, LOC, sym_, /etc/hosts iter)",
+        "issue_type": "feature",
+        "priority": 2,
+        "closed_at": "2026-04-26T22:10:30.480959059Z",
+        "closed_by": "ubuntu",
+        "labels": [],
+        "close_reason": "shipped: 37 libresolv last-mile helpers (byte-order, p_/fp_ debug, HOSTALIASES, LOC, sym_, /etc/hosts iter) + 13 abi tests"
+      },
       {
         "id": "bd-qn6q1",
         "title": "PORT: 51 GLIBC_PRIVATE _thread_db_* libthread_db offset/size data symbols",
@@ -316,61 +366,11 @@
         "closed_by": "ubuntu",
         "labels": [],
         "close_reason": "withdrawn: project hooks gate libuuid out of scope (libuuid is util-linux's separate libuuid.so.1, not part of glibc's libc.so.6 \u2014 frankenlibc-abi only promises the libc surface). Keeping uuid_abi ou\u2026"
-      },
-      {
-        "id": "bd-sy6p6",
-        "title": "PORT: _Exit + 3 _Float128 libm classification helpers",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T21:21:33.789421752Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: _Exit + 3 _Float128 classification helpers landed (impl in 394edad8, tests in fc43485a)"
-      },
-      {
-        "id": "bd-rzecx",
-        "title": "PORT: 21 _nss_systemd_* NSS plugin entrypoints",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T21:11:56.235959831Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 21 _nss_systemd_* stubs (incl per-thread block/is_blocked) + 8 abi tests"
-      },
-      {
-        "id": "bd-yz9cj",
-        "title": "PORT: 17 _nss_hesiod_* NSS plugin entrypoints",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T21:03:52.631514181Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 17 _nss_hesiod_* stubs + 7 abi tests"
-      },
-      {
-        "id": "bd-ubjtz",
-        "title": "PORT: 15 _nss_compat_* NSS compat plugin entrypoints",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T20:56:23.767513972Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 15 _nss_compat_* stubs + 6 abi tests"
-      },
-      {
-        "id": "bd-kapb7",
-        "title": "PORT: 11 GLIBC_PRIVATE internal data symbols + __libc_fcntl64",
-        "issue_type": "feature",
-        "priority": 2,
-        "closed_at": "2026-04-26T20:48:06.947517743Z",
-        "closed_by": "ubuntu",
-        "labels": [],
-        "close_reason": "shipped: 4 last-mile GLIBC_PRIVATE symbols (__libc_dlerror_result, _itoa_lower_digits, __libc_fcntl64, __libc_mallinfo) + 6 abi tests; the other 8 in the originally-scoped list were already implement\u2026"
       }
     ],
-    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-qn6q1` PORT: 51 GLIBC_PRIVATE _thread_db_* libthread_db offset/size data symbols (feature, closed 2026-04-26T21:49:47.118366246Z)\n  shipped: 50 GLIBC_PRIVATE _thread_db_* zeroed placeholders + 7 abi tests; libthread_db introspects no thread layout and gracefully degrades\n- `bd-pjnky` PORT: 18 GLIBC_PRIVATE libnsl NIS+/yp internal helpers (feature, closed 2026-04-26T21:40:49.127558603Z)\n  shipped: 18 libnsl GLIBC_PRIVATE NIS+/yp internal helper stubs + 18 abi tests\n- `bd-v7fi8` PORT: 25 libuuid functions (RFC 4122/v1/v3/v4/v5/v6/v7 UUID handling) (feature, closed 2026-04-26T21:32:55.568099726Z)\n  withdrawn: project hooks gate libuuid out of scope (libuuid is util-linux's separate libuuid.so.1, not part of glibc's libc.so.6 \u2014 frankenlibc-abi only promises the libc surface). Keeping uuid_abi ou\u2026\n- `bd-sy6p6` PORT: _Exit + 3 _Float128 libm classification helpers (feature, closed 2026-04-26T21:21:33.789421752Z)\n  shipped: _Exit + 3 _Float128 classification helpers landed (impl in 394edad8, tests in fc43485a)\n- `bd-rzecx` PORT: 21 _nss_systemd_* NSS plugin entrypoints (feature, closed 2026-04-26T21:11:56.235959831Z)\n  shipped: 21 _nss_systemd_* stubs (incl per-thread block/is_blocked) + 8 abi tests\n- `bd-yz9cj` PORT: 17 _nss_hesiod_* NSS plugin entrypoints (feature, closed 2026-04-26T21:03:52.631514181Z)\n  shipped: 17 _nss_hesiod_* stubs + 7 abi tests\n- `bd-ubjtz` PORT: 15 _nss_compat_* NSS compat plugin entrypoints (feature, closed 2026-04-26T20:56:23.767513972Z)\n  shipped: 15 _nss_compat_* stubs + 6 abi tests\n- `bd-kapb7` PORT: 11 GLIBC_PRIVATE internal data symbols + __libc_fcntl64 (feature, closed 2026-04-26T20:48:06.947517743Z)\n  shipped: 4 last-mile GLIBC_PRIVATE symbols (__libc_dlerror_result, _itoa_lower_digits, __libc_fcntl64, __libc_mallinfo) + 6 abi tests; the other 8 in the originally-scoped list were already implement\u2026",
+    "release_notes_markdown": "## Release Notes Candidates\n\n- `bd-rex8a` PORT: 5 fts64_* LFS-aliases (open/close/read/children/set) (feature, closed 2026-04-26T23:04:47.796944630Z)\n  withdrawn: fts64_open/close/read/children/set are already implemented at unistd_abi.rs lines 20055-20086 (forwarding to fts_*); my probe was checking the wrong symbol set\n- `bd-jt6vm` PORT: 4 BSD compatibility helpers (explicit_memset + reallocarr + consttime_bcmp + pidfile_signal) (feature, closed 2026-04-26T22:54:06.170153360Z)\n  shipped: 4 BSD compat helpers (explicit_memset, reallocarr, consttime_bcmp, pidfile_signal) + 10 abi tests\n- `bd-0ar9l` PORT: 3 Linux 6.7+ futex2 syscall wrappers (futex_wake/wait/requeue) (feature, closed 2026-04-26T22:35:24.207196861Z)\n  shipped: 3 futex2 syscall wrappers (futex_wake/wait/requeue) + 3 abi tests\n- `bd-idcx7` PORT: 7 Linux 6.13+ syscall wrappers (xattr-at family + open_tree_attr + file_getattr/setattr) (feature, closed 2026-04-26T22:26:35.418588568Z)\n  shipped: 7 Linux 6.13+ syscall wrappers (setxattrat/getxattrat/listxattrat/removexattrat/open_tree_attr/file_getattr/file_setattr) + 8 abi tests verifying kernel reach\n- `bd-dcfj5` PORT: 37 libresolv helpers (byte-order, p_/fp_ debug, HOSTALIASES, LOC, sym_, /etc/hosts iter) (feature, closed 2026-04-26T22:10:30.480959059Z)\n  shipped: 37 libresolv last-mile helpers (byte-order, p_/fp_ debug, HOSTALIASES, LOC, sym_, /etc/hosts iter) + 13 abi tests\n- `bd-qn6q1` PORT: 51 GLIBC_PRIVATE _thread_db_* libthread_db offset/size data symbols (feature, closed 2026-04-26T21:49:47.118366246Z)\n  shipped: 50 GLIBC_PRIVATE _thread_db_* zeroed placeholders + 7 abi tests; libthread_db introspects no thread layout and gracefully degrades\n- `bd-pjnky` PORT: 18 GLIBC_PRIVATE libnsl NIS+/yp internal helpers (feature, closed 2026-04-26T21:40:49.127558603Z)\n  shipped: 18 libnsl GLIBC_PRIVATE NIS+/yp internal helper stubs + 18 abi tests\n- `bd-v7fi8` PORT: 25 libuuid functions (RFC 4122/v1/v3/v4/v5/v6/v7 UUID handling) (feature, closed 2026-04-26T21:32:55.568099726Z)\n  withdrawn: project hooks gate libuuid out of scope (libuuid is util-linux's separate libuuid.so.1, not part of glibc's libc.so.6 \u2014 frankenlibc-abi only promises the libc surface). Keeping uuid_abi ou\u2026",
     "summary": {
-      "closed_total": 1393,
+      "closed_total": 1398,
       "selected": 8,
       "invalid_rows": 0
     }
