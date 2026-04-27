@@ -3701,11 +3701,14 @@ pub unsafe extern "C" fn ftw(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let path_bytes = unsafe { std::ffi::CStr::from_ptr(dirpath) }.to_bytes();
+    let Some(path_bytes) = (unsafe { read_c_string_bytes(dirpath) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    };
 
     let fs = AbiFs;
     let r = frankenlibc_core::ftw::walk_tree(
-        path_bytes,
+        &path_bytes,
         &fs,
         frankenlibc_core::ftw::WalkFlags::NONE,
         |p, st, t, _level, _base| {
@@ -3752,12 +3755,15 @@ pub unsafe extern "C" fn nftw(
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
-    let path_bytes = unsafe { std::ffi::CStr::from_ptr(dirpath) }.to_bytes();
+    let Some(path_bytes) = (unsafe { read_c_string_bytes(dirpath) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    };
 
     let fs = AbiFs;
     let core_flags = frankenlibc_core::ftw::WalkFlags::from_bits(flags as u32);
     let r =
-        frankenlibc_core::ftw::walk_tree(path_bytes, &fs, core_flags, |p, st, t, level, base| {
+        frankenlibc_core::ftw::walk_tree(&path_bytes, &fs, core_flags, |p, st, t, level, base| {
             let mut buf = p.to_vec();
             buf.push(0);
             let mut info = FtwInfo {

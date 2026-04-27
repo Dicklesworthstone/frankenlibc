@@ -71,20 +71,21 @@ use frankenlibc_abi::unistd_abi::{
     chown, close, closelog, creat, eaccess, endaliasent, ether_line, euidaccess, faccessat, fchmod,
     fchown, fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, flopen, flopenat,
     fstat, fsync, ftruncate, fts_children as abi_fts_children, fts_close as abi_fts_close,
-    fts_open as abi_fts_open, fts_read as abi_fts_read, fts_set as abi_fts_set, gai_cancel,
-    gai_error, gai_suspend, getaddrinfo_a, getaliasbyname, getaliasbyname_r, getaliasent,
-    getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile, getfsspec,
-    getgid, gethostbyname2, gethostbyname2_r, gethostent_r, gethostname, getnetbyaddr_r,
+    fts_open as abi_fts_open, fts_read as abi_fts_read, fts_set as abi_fts_set, ftw as abi_ftw,
+    gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname, getaliasbyname_r,
+    getaliasent, getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile,
+    getfsspec, getgid, gethostbyname2, gethostbyname2_r, gethostent_r, gethostname, getnetbyaddr_r,
     getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid, getppid, getprotobyname_r,
     getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r, getttyent, getttynam,
     getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64, globfree64, gsignal,
-    isatty, link, logout, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd, open,
-    openlog, pathconf, pidfd_getfd, process_madvise, process_mrelease, process_vm_readv,
-    process_vm_writev, read, readlink, readpassphrase, rename, rmdir, semctl, semop, setfsent,
-    sethostent, setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent,
-    setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat,
-    strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
-    updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
+    isatty, link, logout, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv, msgsnd,
+    nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise, process_mrelease,
+    process_vm_readv, process_vm_writev, read, readlink, readpassphrase, rename, rmdir, semctl,
+    semop, setfsent, sethostent, setnetent, setnetgrent, setns, setproctitle, setproctitle_init,
+    setprotoent, setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec,
+    ssignal, stat, strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink,
+    unshare, updwtmp, updwtmpx, usleep, utmpname, wordexp as abi_wordexp, wordfree as abi_wordfree,
+    write,
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
@@ -716,6 +717,24 @@ fn ftw_nonexistent_dir_returns_zero() {
     // glibc may return -1 for stat failure or call callback with FTW_NS; either is valid
 }
 
+#[test]
+fn abi_ftw_rejects_tracked_unterminated_dirpath() {
+    let path = b"/tmp/frankenlibc-ftw-unterminated";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(path.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(path.as_ptr(), raw, path.len());
+        *__errno_location() = 0;
+        let rc = abi_ftw(raw.cast(), Some(ftw_counter), 16);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
 static NFTW_COUNT: AtomicUsize = AtomicUsize::new(0);
 static NFTW_MAX_LEVEL: AtomicUsize = AtomicUsize::new(0);
 
@@ -761,6 +780,24 @@ fn nftw_walks_with_info() {
     );
 
     let _ = std::fs::remove_dir_all(&tmpdir);
+}
+
+#[test]
+fn abi_nftw_rejects_tracked_unterminated_dirpath() {
+    let path = b"/tmp/frankenlibc-nftw-unterminated";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(path.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(path.as_ptr(), raw, path.len());
+        *__errno_location() = 0;
+        let rc = abi_nftw(raw.cast(), Some(nftw_counter), 16, 0);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
 }
 
 #[test]
