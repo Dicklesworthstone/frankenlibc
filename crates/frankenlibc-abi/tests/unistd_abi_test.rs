@@ -61,6 +61,15 @@ fn cwd_test_lock() -> MutexGuard<'static, ()> {
     CWD_TEST_LOCK.lock().unwrap_or_else(|err| err.into_inner())
 }
 
+fn malloc_tracked_unterminated(bytes: &[u8]) -> *mut c_char {
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len());
+        raw.cast()
+    }
+}
+
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::glibc_internal_abi::__sysv_signal;
 use frankenlibc_abi::glibc_internal_abi::getdate_err;
@@ -4020,6 +4029,39 @@ where
     assert_eq!(rc, 0, "failed to restore default utmp path");
     unsafe { setutent() };
     let _ = std::fs::remove_file(path.to_str().unwrap());
+}
+
+#[test]
+fn tempnam_falls_back_for_tracked_unterminated_dir_and_prefix() {
+    use frankenlibc_abi::unistd_abi::tempnam;
+
+    unsafe {
+        let raw_dir = malloc_tracked_unterminated(b"/tmp/frankenlibc-tempnam-dir");
+        *__errno_location() = 0;
+        let p = tempnam(raw_dir, c"abc".as_ptr());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_dir.cast());
+
+        assert!(!p.is_null());
+        let bytes = CStr::from_ptr(p).to_bytes().to_vec();
+        libc::free(p.cast());
+        assert!(bytes.starts_with(b"/tmp/abc"), "got {bytes:?}");
+        assert_eq!(err, libc::EINVAL);
+    }
+
+    unsafe {
+        let raw_pfx = malloc_tracked_unterminated(b"prefix-without-nul");
+        *__errno_location() = 0;
+        let p = tempnam(std::ptr::null(), raw_pfx);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_pfx.cast());
+
+        assert!(!p.is_null());
+        let bytes = CStr::from_ptr(p).to_bytes().to_vec();
+        libc::free(p.cast());
+        assert!(bytes.starts_with(b"/tmp/tmp"), "got {bytes:?}");
+        assert_eq!(err, libc::EINVAL);
+    }
 }
 
 #[test]
@@ -9352,7 +9394,7 @@ fn nis_sperror_r_null_buf_returns_einval() {
 #[test]
 fn nis_sperror_rejects_tracked_unterminated_label() {
     use frankenlibc_abi::unistd_abi::{nis_sperror, nis_sperror_r};
-    let raw = nis_malloc_unterminated(b"unterminated-nis-label");
+    let raw = malloc_tracked_unterminated(b"unterminated-nis-label");
 
     unsafe {
         *__errno_location() = 0;
@@ -9397,15 +9439,6 @@ fn nis_lerror_is_a_no_op() {
 
 fn nis_helpers_cstr_to_string(p: *const c_char) -> String {
     unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
-}
-
-fn nis_malloc_unterminated(bytes: &[u8]) -> *mut c_char {
-    unsafe {
-        let raw = frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<u8>();
-        assert!(!raw.is_null());
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len());
-        raw.cast()
-    }
 }
 
 #[test]
@@ -9516,7 +9549,7 @@ fn nis_name_helpers_reject_tracked_unterminated_inputs() {
         nis_dir_cmp, nis_domain_of, nis_domain_of_r, nis_leaf_of, nis_leaf_of_r, nis_name_of,
         nis_name_of_r,
     };
-    let raw = nis_malloc_unterminated(b"host.subdom.dom.");
+    let raw = malloc_tracked_unterminated(b"host.subdom.dom.");
     let valid = CString::new("host.subdom.dom.").unwrap();
 
     unsafe {

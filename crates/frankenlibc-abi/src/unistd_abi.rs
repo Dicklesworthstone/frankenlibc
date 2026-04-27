@@ -14159,24 +14159,41 @@ pub unsafe extern "C" fn sockatmark(sockfd: c_int) -> c_int {
 /// POSIX `tempnam` — create a unique temporary file name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut c_char {
-    let dir_str = if dir.is_null() {
-        "/tmp"
+    let dir_bytes = if dir.is_null() {
+        std::borrow::Cow::Borrowed(b"/tmp".as_slice())
     } else {
-        unsafe { CStr::from_ptr(dir) }.to_str().unwrap_or("/tmp")
+        match unsafe { read_c_string_bytes(dir) } {
+            Some(bytes) => std::borrow::Cow::Owned(bytes),
+            None => {
+                unsafe { set_abi_errno(libc::EINVAL) };
+                std::borrow::Cow::Borrowed(b"/tmp".as_slice())
+            }
+        }
     };
-    let pfx_str = if pfx.is_null() {
-        "tmp"
+    let pfx_bytes = if pfx.is_null() {
+        std::borrow::Cow::Borrowed(b"tmp".as_slice())
     } else {
-        match unsafe { CStr::from_ptr(pfx) }.to_str() {
-            Ok(s) => &s[..s.len().min(5)],
-            Err(_) => "tmp",
+        match unsafe { read_c_string_bytes(pfx) } {
+            Some(bytes) => std::borrow::Cow::Owned(bytes),
+            None => {
+                unsafe { set_abi_errno(libc::EINVAL) };
+                std::borrow::Cow::Borrowed(b"tmp".as_slice())
+            }
         }
     };
 
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let cnt = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let pid = syscall::sys_getpid() as u32;
-    let name = format!("{dir_str}/{pfx_str}{pid:x}{cnt:x}");
+    let pfx_len = pfx_bytes.len().min(5);
+    let mut name = Vec::with_capacity(dir_bytes.len() + 1 + pfx_len + 32);
+    name.extend_from_slice(&dir_bytes);
+    name.push(b'/');
+    name.extend_from_slice(&pfx_bytes[..pfx_len]);
+    {
+        use std::io::Write;
+        let _ = write!(name, "{pid:x}{cnt:x}");
+    }
 
     // POSIX tempnam(3) — caller frees with free(). Use libc::malloc so
     // alloc/free is consistent in both LD_PRELOAD and non-preload builds
