@@ -2467,6 +2467,25 @@ fn ether_r_variants_validate_inputs() {
 }
 
 #[test]
+fn ether_aton_rejects_tracked_unterminated_input() {
+    let text = b"00:11:22:33:44:55";
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(text.len()) };
+    assert!(!raw.is_null());
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(text.as_ptr(), raw.cast::<u8>(), text.len());
+    }
+
+    let parsed = unsafe { ether_aton(raw.cast::<c_char>()) };
+    assert!(
+        parsed.is_null(),
+        "tracked unterminated ether_aton input must not be scanned past allocation"
+    );
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
+}
+
+#[test]
 fn hstrerror_reports_known_and_unknown_codes() {
     // SAFETY: hstrerror returns stable pointers to static NUL-terminated messages.
     let known = unsafe { hstrerror(1) };

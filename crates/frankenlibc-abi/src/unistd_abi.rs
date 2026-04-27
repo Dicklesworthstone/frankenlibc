@@ -16,6 +16,7 @@ use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::scan_c_string;
 
 #[repr(C)]
 struct RpcEnt {
@@ -37,6 +38,19 @@ fn last_host_errno(default_errno: c_int) -> c_int {
 fn current_abi_errno() -> c_int {
     // SAFETY: __errno_location returns valid thread-local errno storage.
     unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) }
+}
+
+#[inline]
+unsafe fn read_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    Some(bytes.to_vec())
 }
 
 /// Query the system page size via AT_PAGESZ from /proc/self/auxv, cached.
@@ -11199,8 +11213,10 @@ unsafe fn parse_ether_addr(asc: *const c_char, out: *mut EtherAddrBytes) -> bool
     if asc.is_null() || out.is_null() {
         return false;
     }
-    let bytes = unsafe { CStr::from_ptr(asc) }.to_bytes();
-    match frankenlibc_core::ether::parse_ether_addr(bytes) {
+    let Some(bytes) = (unsafe { read_c_string_bytes(asc) }) else {
+        return false;
+    };
+    match frankenlibc_core::ether::parse_ether_addr(&bytes) {
         Some(octet) => {
             unsafe { (*out).octet = octet };
             true
@@ -17711,8 +17727,10 @@ pub unsafe extern "C" fn ether_line(
     if line.is_null() || addr.is_null() || hostname.is_null() {
         return -1;
     }
-    let s = unsafe { std::ffi::CStr::from_ptr(line) }.to_bytes();
-    let Some((octet, host)) = frankenlibc_core::ether::parse_ether_line(s) else {
+    let Some(s) = (unsafe { read_c_string_bytes(line) }) else {
+        return -1;
+    };
+    let Some((octet, host)) = frankenlibc_core::ether::parse_ether_line(&s) else {
         return -1;
     };
     unsafe {
@@ -17793,7 +17811,9 @@ pub unsafe extern "C" fn ether_hostton(hostname: *const c_char, addr: *mut c_voi
     if hostname.is_null() || addr.is_null() {
         return -1;
     }
-    let needle = unsafe { std::ffi::CStr::from_ptr(hostname) }.to_bytes();
+    let Some(needle) = (unsafe { read_c_string_bytes(hostname) }) else {
+        return -1;
+    };
     let mut reader = std::io::BufReader::new(match std::fs::File::open(ETHERS_PATH) {
         Ok(f) => f,
         Err(_) => return -1,
@@ -17829,7 +17849,7 @@ pub unsafe extern "C" fn ether_hostton(hostname: *const c_char, addr: *mut c_voi
         };
         if rc == 0 {
             let hlen = host_buf.iter().position(|&b| b == 0).unwrap_or(0);
-            if &host_buf[..hlen] == needle {
+            if &host_buf[..hlen] == needle.as_slice() {
                 unsafe {
                     *(addr as *mut EtherAddrBytes) = parsed_addr;
                 }

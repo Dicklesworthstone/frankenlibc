@@ -4432,6 +4432,33 @@ fn ether_line_parses_valid_ethers_entry() {
 }
 
 #[test]
+fn ether_line_rejects_tracked_unterminated_input() {
+    let text = b"08:00:20:00:61:cb printer";
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(text.len()) };
+    assert!(!raw.is_null());
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(text.as_ptr(), raw.cast::<u8>(), text.len());
+    }
+
+    let mut addr = [0u8; 6];
+    let mut hostname = [0 as c_char; 64];
+    let rc = unsafe {
+        ether_line(
+            raw.cast::<c_char>(),
+            addr.as_mut_ptr().cast(),
+            hostname.as_mut_ptr(),
+        )
+    };
+    assert_eq!(
+        rc, -1,
+        "tracked unterminated ether_line input must not be scanned past allocation"
+    );
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
+}
+
+#[test]
 fn setnetgrent_missing_group_matches_host_miss_shape() {
     let missing = CString::new("frankenlibc-no-such-netgroup").unwrap();
     let rc = unsafe { setnetgrent(missing.as_ptr()) };
