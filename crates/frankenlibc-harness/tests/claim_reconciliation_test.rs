@@ -113,11 +113,26 @@ fn claim_reconciliation_detects_readme_drift_and_routes_owner() {
     let repo_root = workspace_root();
     let script = repo_root.join("scripts/claim_reconciliation.py");
     let readme_src = repo_root.join("README.md");
+    let support_matrix = repo_root.join("support_matrix.json");
     let mutated_readme_path = unique_temp_path("claim-reconciliation-readme.md");
+
+    let support: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&support_matrix).expect("support_matrix.json should exist"),
+    )
+    .expect("support_matrix.json should parse");
+    let total_exported = support["total_exported"]
+        .as_u64()
+        .expect("support_matrix total_exported should be numeric");
+    let total_claim = format!("total_exported={total_exported}");
 
     let mutated_readme = std::fs::read_to_string(&readme_src)
         .expect("README.md should exist")
-        .replace("total_exported=4109", "total_exported=1");
+        .replace(&total_claim, "total_exported=1");
+    assert_ne!(
+        mutated_readme,
+        std::fs::read_to_string(&readme_src).expect("README.md should still be readable"),
+        "README mutation fixture must replace the current total_exported claim"
+    );
     std::fs::write(&mutated_readme_path, mutated_readme).expect("failed to write mutated README");
 
     let output = Command::new("python3")
