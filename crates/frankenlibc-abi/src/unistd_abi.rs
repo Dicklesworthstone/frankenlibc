@@ -213,12 +213,13 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc
         return unsafe { sys_read_fd(fd, buf, count) };
     }
 
+    let initial_remaining = known_remaining(buf as usize);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         buf as usize,
         count,
         true,
-        known_remaining(buf as usize).is_none(),
+        initial_remaining.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -234,7 +235,7 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    if !tracked_region_fits(buf as usize, count) {
+    if initial_remaining.is_some_and(|remaining| count > remaining) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(
             ApiFamily::Stdio,
@@ -274,12 +275,13 @@ pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: usize) -> l
         return unsafe { sys_write_fd(fd, buf, count) };
     }
 
+    let initial_remaining = known_remaining(buf as usize);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         buf as usize,
         count,
         false,
-        known_remaining(buf as usize).is_none(),
+        initial_remaining.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -295,7 +297,7 @@ pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: usize) -> l
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    if !tracked_region_fits(buf as usize, count) {
+    if initial_remaining.is_some_and(|remaining| count > remaining) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(
             ApiFamily::Stdio,
