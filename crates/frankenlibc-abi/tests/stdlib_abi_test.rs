@@ -7878,20 +7878,54 @@ fn bd_jt6vm_reallocarr_null_ptr_returns_einval() {
 }
 
 #[test]
-fn bd_jt6vm_pidfile_signal_missing_path_returns_minus_one() {
+fn bd_jt6vm_reallocarr_zero_size_returns_einval_without_modifying_ptr() {
+    use frankenlibc_abi::stdlib_abi::reallocarr;
+    let mut p = 0x1234usize as *mut std::ffi::c_void;
+    let rc = unsafe { reallocarr(&mut p, 1, 0) };
+    assert_eq!(rc, libc::EINVAL);
+    assert_eq!(p, 0x1234usize as *mut std::ffi::c_void);
+}
+
+#[test]
+fn bd_jt6vm_pidfile_signal_missing_path_returns_enoent() {
     use frankenlibc_abi::stdlib_abi::pidfile_signal;
     use std::ffi::CString;
     let path = CString::new("/no/such/pidfile_signal_test").unwrap();
     let mut other: libc::pid_t = -1;
+    unsafe { *__errno_location() = 0 };
     let rc = unsafe { pidfile_signal(path.as_ptr(), 0, &mut other) };
-    assert_eq!(rc, -1);
+    assert_eq!(rc, libc::ENOENT);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENOENT);
+    assert_eq!(other, -1);
+}
+
+#[test]
+fn bd_jt6vm_pidfile_signal_unlocked_pidfile_returns_enoent() {
+    use frankenlibc_abi::stdlib_abi::pidfile_signal;
+    use std::ffi::CString;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc_pidfile_signal_unlocked_{}_{}.pid",
+        std::process::id(),
+        nonce
+    ));
+    std::fs::write(&path, std::process::id().to_string()).unwrap();
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mut other: libc::pid_t = -1;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { pidfile_signal(cpath.as_ptr(), 0, &mut other) };
+    assert_eq!(rc, libc::ENOENT);
+    assert_eq!(other, -1);
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
 fn bd_jt6vm_pidfile_signal_self_with_signal_zero_succeeds() {
     use frankenlibc_abi::stdlib_abi::pidfile_signal;
     use std::ffi::CString;
-    use std::io::Write;
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -7901,14 +7935,48 @@ fn bd_jt6vm_pidfile_signal_self_with_signal_zero_succeeds() {
         std::process::id(),
         nonce
     ));
-    {
-        let mut f = std::fs::File::create(&path).unwrap();
-        writeln!(f, "{}", std::process::id()).unwrap();
-    }
+    let file = std::fs::File::create(&path).unwrap();
+    std::fs::write(&path, std::process::id().to_string()).unwrap();
+    assert_eq!(
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
     let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
     let mut other: libc::pid_t = -1;
+    unsafe { *__errno_location() = 0 };
     let rc = unsafe { pidfile_signal(cpath.as_ptr(), 0, &mut other) };
     assert_eq!(rc, 0, "pidfile_signal(self, 0) should succeed");
     assert_eq!(other, std::process::id() as libc::pid_t);
+    drop(file);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn bd_jt6vm_pidfile_signal_locked_malformed_pid_returns_einval() {
+    use frankenlibc_abi::stdlib_abi::pidfile_signal;
+    use std::ffi::CString;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "frankenlibc_pidfile_signal_bad_{}_{}.pid",
+        std::process::id(),
+        nonce
+    ));
+    let file = std::fs::File::create(&path).unwrap();
+    std::fs::write(&path, format!("{}\n", std::process::id())).unwrap();
+    assert_eq!(
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mut other: libc::pid_t = -1;
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { pidfile_signal(cpath.as_ptr(), 0, &mut other) };
+    assert_eq!(rc, libc::EINVAL);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+    assert_eq!(other, -1);
+    drop(file);
     let _ = std::fs::remove_file(&path);
 }

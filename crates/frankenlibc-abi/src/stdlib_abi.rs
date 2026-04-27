@@ -2278,9 +2278,11 @@ pub unsafe extern "C" fn reallocarray(ptr: *mut c_void, nmemb: usize, size: usiz
 /// NetBSD `reallocarr(**ptr, num, size) -> int` — reallocarray-like
 /// with overflow check. On success writes the new pointer through
 /// `*ptr` and returns 0; on failure returns a positive errno value
-/// (EINVAL/ENOMEM) without setting the global errno or modifying
-/// `*ptr`. Distinct from POSIX `reallocarray` which returns the new
-/// pointer or NULL via the global errno.
+/// (EINVAL/EOVERFLOW/ENOMEM) without setting the global errno or
+/// modifying `*ptr`. `size == 0` is invalid; `num == 0` frees the
+/// existing allocation and stores NULL. Distinct from POSIX
+/// `reallocarray` which returns the new pointer or NULL via the global
+/// errno.
 ///
 /// # Safety
 ///
@@ -2292,13 +2294,16 @@ pub unsafe extern "C" fn reallocarr(ptr: *mut *mut c_void, num: usize, size: usi
     if ptr.is_null() {
         return libc::EINVAL;
     }
+    if size == 0 {
+        return libc::EINVAL;
+    }
     let total = match num.checked_mul(size) {
         Some(t) => t,
         None => return libc::EOVERFLOW,
     };
     if total == 0 {
-        // NetBSD reallocarr(0,_) frees the existing allocation and
-        // sets *ptr to NULL.
+        // NetBSD reallocarr(ptr, 0, size) frees the existing allocation
+        // and sets *ptr to NULL when size is non-zero.
         let cur = unsafe { *ptr };
         if !cur.is_null() {
             unsafe { crate::malloc_abi::free(cur) };
@@ -5794,9 +5799,20 @@ pub unsafe extern "C" fn pidfile_open(
         if err == libc::EAGAIN || err == libc::EWOULDBLOCK {
             // Lock contention: read the locker's pid from the file
             // contents and surface it through *otherpid.
-            unsafe { *crate::errno_abi::__errno_location() = libc::EEXIST };
-            if !otherpid.is_null() {
-                unsafe { *otherpid = read_pid_from_path(path) };
+            if otherpid.is_null() {
+                unsafe { set_abi_errno(libc::EEXIST) };
+            } else {
+                match unsafe { read_pid_from_path(path) } {
+                    Ok(pid) => {
+                        unsafe { *otherpid = pid };
+                        unsafe { set_abi_errno(libc::EEXIST) };
+                    }
+                    Err(libc::EAGAIN) => {
+                        unsafe { *otherpid = -1 };
+                        unsafe { set_abi_errno(libc::EEXIST) };
+                    }
+                    Err(read_err) => unsafe { set_abi_errno(read_err) },
+                }
             }
         }
         return ptr::null_mut();
@@ -5846,7 +5862,8 @@ pub unsafe extern "C" fn pidfile_write(pfh: *mut PidFh) -> c_int {
         return -1;
     }
 
-    // Render the pid + trailing newline.
+    // FreeBSD pidfile_write renders only decimal PID bytes; pidfile_read
+    // treats trailing junk (including a newline) as malformed.
     let pid = unsafe { crate::unistd_abi::getpid() };
     let mut buf = [0u8; 24];
     let n = render_pid_decimal(pid as i64, &mut buf);
@@ -5937,8 +5954,8 @@ pub unsafe extern "C" fn pidfile_fileno(pfh: *const PidFh) -> c_int {
 /// FreeBSD `pidfile_signal(*path, sig, **otherpid) -> int` — open
 /// the pidfile at `path`, read the recorded pid, and send `sig` to
 /// it. On success returns 0; if `otherpid` is non-NULL also writes
-/// the pid through it. Returns -1 with errno on failure (file not
-/// readable, malformed contents, kill(2) failure).
+/// the pid through it. Returns an errno value on failure (missing or
+/// unlocked pidfile, malformed contents, kill(2) failure).
 ///
 /// # Safety
 ///
@@ -5952,44 +5969,86 @@ pub unsafe extern "C" fn pidfile_signal(
 ) -> c_int {
     if path.is_null() {
         unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
+        return libc::EFAULT;
     }
-    let pid = unsafe { read_pid_from_path(path) };
+    let probe_fd = unsafe {
+        crate::unistd_abi::flopen(path, libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK, 0)
+    };
+    if probe_fd >= 0 {
+        unsafe { crate::unistd_abi::close(probe_fd) };
+        unsafe { set_abi_errno(libc::ENOENT) };
+        return libc::ENOENT;
+    }
+
+    let open_errno = unsafe { *crate::errno_abi::__errno_location() };
+    if open_errno != libc::EAGAIN && open_errno != libc::EWOULDBLOCK {
+        return open_errno;
+    }
+
+    let pid = match unsafe { read_pid_from_path(path) } {
+        Ok(pid) => pid,
+        Err(err) => {
+            unsafe { set_abi_errno(err) };
+            return err;
+        }
+    };
     if pid <= 0 {
-        unsafe { set_abi_errno(libc::ESRCH) };
-        return -1;
+        unsafe { set_abi_errno(libc::EDOM) };
+        return libc::EDOM;
     }
+
+    let rc = unsafe { crate::signal_abi::kill(pid, sig) };
+    let err = if rc == 0 {
+        0
+    } else {
+        unsafe { *crate::errno_abi::__errno_location() }
+    };
     if !otherpid.is_null() {
         unsafe { *otherpid = pid };
     }
-    let rc = unsafe { libc::kill(pid, sig) };
-    if rc < 0 {
-        unsafe { set_abi_errno(*libc::__errno_location()) };
-        return -1;
-    }
-    0
+    err
 }
 
-unsafe fn read_pid_from_path(path: *const c_char) -> libc::pid_t {
-    // SAFETY: caller-supplied valid C string.
-    let fd = unsafe { libc::open(path, libc::O_RDONLY) };
-    if fd < 0 {
-        return -1;
+unsafe fn read_pid_from_path(path: *const c_char) -> Result<libc::pid_t, c_int> {
+    let fd = unsafe {
+        raw_syscall::sys_openat(
+            libc::AT_FDCWD,
+            path.cast::<u8>(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+            0,
+        )
     }
-    let mut buf = [0u8; 32];
-    let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
-    unsafe { libc::close(fd) };
-    if n <= 0 {
-        return -1;
+    .map_err(|err| err as c_int)?;
+
+    let mut buf = [0u8; 16];
+    let n = match unsafe { raw_syscall::sys_read(fd, buf.as_mut_ptr(), buf.len() - 1) } {
+        Ok(n) => n,
+        Err(err) => {
+            let _ = raw_syscall::sys_close(fd);
+            return Err(err as c_int);
+        }
+    };
+    let _ = raw_syscall::sys_close(fd);
+    if n == 0 {
+        return Err(libc::EAGAIN);
     }
-    parse_decimal_pid(&buf[..n as usize]).unwrap_or(-1)
+
+    parse_decimal_pid(&buf[..n]).ok_or(libc::EINVAL)
 }
 
 fn parse_decimal_pid(input: &[u8]) -> Option<libc::pid_t> {
     let mut i = 0usize;
-    while i < input.len() && (input[i] == b' ' || input[i] == b'\t') {
+    while i < input.len() && input[i].is_ascii_whitespace() {
         i += 1;
     }
+    let negative = if i < input.len() && (input[i] == b'+' || input[i] == b'-') {
+        let is_negative = input[i] == b'-';
+        i += 1;
+        is_negative
+    } else {
+        false
+    };
+
     let start = i;
     let mut value: i64 = 0;
     while i < input.len() && input[i].is_ascii_digit() {
@@ -5998,10 +6057,15 @@ fn parse_decimal_pid(input: &[u8]) -> Option<libc::pid_t> {
             .checked_add((input[i] - b'0') as i64)?;
         i += 1;
     }
-    if i == start {
+    if i == start || i != input.len() {
         return None;
     }
-    if value < 0 || value > i32::MAX as i64 {
+    let value = if negative {
+        value.checked_neg()?
+    } else {
+        value
+    };
+    if value < i32::MIN as i64 || value > i32::MAX as i64 {
         return None;
     }
     Some(value as libc::pid_t)
@@ -6024,10 +6088,6 @@ fn render_pid_decimal(pid: i64, out: &mut [u8]) -> usize {
     let mut o = 0usize;
     for i in 0..len {
         out[o] = tmp[len - 1 - i];
-        o += 1;
-    }
-    if o < out.len() {
-        out[o] = b'\n';
         o += 1;
     }
     o
