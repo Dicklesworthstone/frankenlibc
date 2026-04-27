@@ -7,8 +7,7 @@
 
 use std::cell::Cell;
 use std::ffi::{
-    CStr, c_char, c_double, c_int, c_long, c_longlong, c_uchar, c_uint, c_ulong, c_ulonglong,
-    c_void,
+    c_char, c_double, c_int, c_long, c_longlong, c_uchar, c_uint, c_ulong, c_ulonglong, c_void,
 };
 use std::ptr;
 
@@ -1479,7 +1478,10 @@ pub unsafe extern "C" fn getenv_r(name: *const c_char, buf: *mut c_char, buflen:
         unsafe { set_abi_errno(libc::ENOENT) };
         return -1;
     }
-    let value_bytes = unsafe { CStr::from_ptr(value) }.to_bytes();
+    let Some(value_bytes) = (unsafe { read_bounded_cstr_bytes(value) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
     if value_bytes.len() + 1 > buflen {
         unsafe { set_abi_errno(libc::ERANGE) };
         return -1;
@@ -2557,48 +2559,27 @@ pub unsafe extern "C" fn clearenv() -> c_int {
         return -1;
     }
 
-    let mut names = Vec::<Vec<u8>>::new();
-    // Take ENVIRON_LOCK around the snapshot walk so a concurrent setenv that
-    // host_passthrough_realloc()s HOST_ENVIRON cannot UAF the cursor here.
-    // (REVIEW round 3, same class as the native_getenv fix.)
+    let mut cleared = false;
     {
         let _lock = ENVIRON_LOCK.lock();
-        // SAFETY: HOST_ENVIRON is owned by libc; we only read and copy entry names.
+        // SAFETY: HOST_ENVIRON is the process environment array. Holding
+        // ENVIRON_LOCK makes the array stable while we replace its first slot
+        // with the terminating NULL entry.
         unsafe {
-            let mut cursor = HOST_ENVIRON;
-            if !cursor.is_null() {
-                while !(*cursor).is_null() {
-                    let entry = std::ffi::CStr::from_ptr(*cursor).to_bytes();
-                    if let Some(eq_pos) = entry.iter().position(|&b| b == b'=') {
-                        let name = &entry[..eq_pos];
-                        if frankenlibc_core::stdlib::valid_env_name(name) {
-                            let mut owned = Vec::with_capacity(name.len() + 1);
-                            owned.extend_from_slice(name);
-                            owned.push(0);
-                            names.push(owned);
-                        }
-                    }
-                    cursor = cursor.add(1);
-                }
+            if !HOST_ENVIRON.is_null() {
+                *HOST_ENVIRON = ptr::null_mut();
+                cleared = true;
             }
-        }
-    }
-
-    let mut had_error = false;
-    for name in &names {
-        // SAFETY: names are copied from environ keys and explicitly NUL-terminated.
-        if unsafe { native_unsetenv(name.as_ptr() as *const c_char) } != 0 {
-            had_error = true;
         }
     }
 
     runtime_policy::observe(
         ApiFamily::Stdlib,
         decision.profile,
-        runtime_policy::scaled_cost(8, names.len()),
-        had_error,
+        runtime_policy::scaled_cost(4, usize::from(cleared)),
+        false,
     );
-    if had_error { -1 } else { 0 }
+    0
 }
 
 // ===========================================================================
@@ -5013,12 +4994,12 @@ pub unsafe extern "C" fn getbsize(headerlenp: *mut c_int, blocksizep: *mut c_lon
     let env_ptr = unsafe { native_getenv(b"BLOCKSIZE") };
     let preference = if env_ptr.is_null() {
         core_gb::BlocksizePreference::default_512()
-    } else {
-        // SAFETY: getenv returns a NUL-terminated string from process env.
-        let bytes = unsafe { std::ffi::CStr::from_ptr(env_ptr) }.to_bytes();
-        let resolution = core_gb::resolve_preference_with_diagnostic(bytes);
+    } else if let Some(bytes) = unsafe { read_bounded_cstr_bytes(env_ptr) } {
+        let resolution = core_gb::resolve_preference_with_diagnostic(&bytes);
         emit_getbsize_diagnostic(resolution.diagnostic, env_ptr);
         resolution.preference
+    } else {
+        core_gb::BlocksizePreference::default_512()
     };
 
     let (ptr, header_len, blocksize) = publish_getbsize_header(preference);

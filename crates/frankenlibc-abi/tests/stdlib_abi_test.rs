@@ -5925,6 +5925,31 @@ fn getbsize_clamps_out_of_range_values() {
     }
 }
 
+#[test]
+fn getbsize_uses_default_for_tracked_unterminated_blocksize_value() {
+    let _guard = getbsize_env_lock();
+    let assignment = b"BLOCKSIZE=1024\0";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(assignment.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(assignment.as_ptr(), raw, assignment.len());
+        assert_eq!(putenv(raw.cast()), 0);
+
+        *raw.add(assignment.len() - 1) = b'X';
+        let mut header_len = 0;
+        let mut blocksize = 0;
+        let ptr = getbsize(&mut header_len, &mut blocksize);
+        assert!(!ptr.is_null());
+        assert_eq!(header_len, 10);
+        assert_eq!(blocksize, 512);
+
+        *raw.add(assignment.len() - 1) = 0;
+        assert_eq!(unsetenv(c"BLOCKSIZE".as_ptr()), 0);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
 fn getbsize_env_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
     match LOCK.get_or_init(|| Mutex::new(())).lock() {
@@ -8005,9 +8030,16 @@ fn strspct_negative_with_precision() {
 /// runs don't observe each other's setenv mutations.
 static GETENV_R_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+fn getenv_r_lock() -> std::sync::MutexGuard<'static, ()> {
+    match GETENV_R_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 #[test]
 fn getenv_r_returns_zero_and_copies_value() {
-    let _g = GETENV_R_LOCK.lock().unwrap();
+    let _g = getenv_r_lock();
     let key = c"FRANKENLIBC_GETENV_R_TEST";
     let value = c"hello-from-getenv_r";
     unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) };
@@ -8023,7 +8055,7 @@ fn getenv_r_returns_zero_and_copies_value() {
 
 #[test]
 fn getenv_r_missing_variable_sets_enoent() {
-    let _g = GETENV_R_LOCK.lock().unwrap();
+    let _g = getenv_r_lock();
     let key = c"FRANKENLIBC_GETENV_R_MISSING_XYZZY";
     unsafe { libc::unsetenv(key.as_ptr()) };
     unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
@@ -8038,7 +8070,7 @@ fn getenv_r_missing_variable_sets_enoent() {
 
 #[test]
 fn getenv_r_undersized_buffer_sets_erange() {
-    let _g = GETENV_R_LOCK.lock().unwrap();
+    let _g = getenv_r_lock();
     let key = c"FRANKENLIBC_GETENV_R_BIG";
     let value = c"abcdefghijklmnopqrstuvwxyz"; // 26 bytes + NUL
     unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) };
@@ -8057,7 +8089,7 @@ fn getenv_r_undersized_buffer_sets_erange() {
 
 #[test]
 fn getenv_r_exact_room_succeeds() {
-    let _g = GETENV_R_LOCK.lock().unwrap();
+    let _g = getenv_r_lock();
     let key = c"FRANKENLIBC_GETENV_R_EXACT";
     let value = c"five!"; // 5 bytes + NUL = 6
     unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) };
@@ -8096,7 +8128,7 @@ fn getenv_r_null_buf_sets_einval() {
 
 #[test]
 fn getenv_r_zero_buflen_with_set_value_returns_erange() {
-    let _g = GETENV_R_LOCK.lock().unwrap();
+    let _g = getenv_r_lock();
     let key = c"FRANKENLIBC_GETENV_R_ZEROBUF";
     let value = c"x";
     unsafe { libc::setenv(key.as_ptr(), value.as_ptr(), 1) };
@@ -8111,6 +8143,34 @@ fn getenv_r_zero_buflen_with_set_value_returns_erange() {
     );
 
     unsafe { libc::unsetenv(key.as_ptr()) };
+}
+
+#[test]
+fn getenv_r_rejects_tracked_unterminated_value_from_putenv() {
+    let _g = getenv_r_lock();
+    let key = c"FRANKENLIBC_GETENV_R_UNTERMINATED";
+    let assignment = b"FRANKENLIBC_GETENV_R_UNTERMINATED=value\0";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(assignment.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(assignment.as_ptr(), raw, assignment.len());
+        assert_eq!(putenv(raw.cast()), 0);
+
+        *raw.add(assignment.len() - 1) = b'X';
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+        let mut buf = [0 as c_char; 32];
+        let r = getenv_r(key.as_ptr(), buf.as_mut_ptr(), buf.len());
+        assert_eq!(r, -1);
+        assert_eq!(
+            *frankenlibc_abi::errno_abi::__errno_location(),
+            libc::EINVAL
+        );
+
+        *raw.add(assignment.len() - 1) = 0;
+        assert_eq!(unsetenv(key.as_ptr()), 0);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
 }
 
 // ---------------------------------------------------------------------------
