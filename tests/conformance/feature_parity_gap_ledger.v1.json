@@ -3,8 +3,8 @@
   "deltas": [
     {
       "actual": {
-        "sum_counts_equals_total": false,
-        "support_count_sum": 0,
+        "sum_counts_equals_total": true,
+        "support_count_sum": 4119,
         "support_total_exported": 4119,
         "symbols_count_equals_total": true
       },
@@ -19,7 +19,7 @@
           "path": "support_matrix.json"
         }
       ],
-      "status": "drift"
+      "status": "ok"
     },
     {
       "actual": {
@@ -35,8 +35,8 @@
       "expected": {
         "support_counts": {
           "glibc_call_through": 0,
-          "implemented": 0,
-          "raw_syscall": 0,
+          "implemented": 3705,
+          "raw_syscall": 414,
           "stub": 0
         },
         "support_total": 4119
@@ -50,7 +50,7 @@
           "path": "tests/conformance/reality_report.v1.json"
         }
       ],
-      "status": "drift"
+      "status": "ok"
     },
     {
       "actual": {
@@ -89,7 +89,7 @@
       },
       "delta_id": "macro.fp-macro-targets-3a739065b069",
       "expected": {
-        "status": "IN_PROGRESS"
+        "status": "DONE"
       },
       "message": "derived from support_matrix classification coverage",
       "provenance": [
@@ -99,7 +99,7 @@
         }
       ],
       "row_id": "fp-macro-targets-3a739065b069",
-      "status": "drift"
+      "status": "ok"
     },
     {
       "actual": {
@@ -1330,46 +1330,6 @@
       },
       "section": "gap_summary",
       "status": "IN_PROGRESS"
-    },
-    {
-      "delta_id": "machine.support_classification_complete",
-      "gap_id": "gap-machine-support-classification-complete",
-      "kind": "machine_delta_drift",
-      "message": "support_matrix classification completeness",
-      "provenance": [
-        {
-          "path": "support_matrix.json"
-        }
-      ],
-      "status": "drift"
-    },
-    {
-      "delta_id": "machine.support_vs_reality",
-      "gap_id": "gap-machine-support-vs-reality",
-      "kind": "machine_delta_drift",
-      "message": "support_matrix and reality_report should agree",
-      "provenance": [
-        {
-          "path": "support_matrix.json"
-        },
-        {
-          "path": "tests/conformance/reality_report.v1.json"
-        }
-      ],
-      "status": "drift"
-    },
-    {
-      "delta_id": "macro.fp-macro-targets-3a739065b069",
-      "gap_id": "gap-macro-fp-macro-targets-3a739065b069",
-      "kind": "machine_delta_drift",
-      "message": "derived from support_matrix classification coverage",
-      "provenance": [
-        {
-          "line": 37,
-          "path": "FEATURE_PARITY.md"
-        }
-      ],
-      "status": "drift"
     },
     {
       "delta_id": "macro.fp-macro-targets-fa7a23e18f01",
@@ -3930,8 +3890,8 @@
   "status_transitions": [],
   "summary": {
     "delta_count": 5,
-    "drift_delta_count": 4,
-    "gap_count": 114,
+    "drift_delta_count": 1,
+    "gap_count": 111,
     "parse_error_count": 0,
     "row_count": 170,
     "status_counts": {

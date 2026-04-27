@@ -11,6 +11,7 @@ import sys
 import unittest
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,12 @@ STATUS_IN_PROGRESS = "IN_PROGRESS"
 STATUS_PLANNED = "PLANNED"
 STATUS_UNKNOWN = "UNKNOWN"
 ALLOWED_STATUSES = {STATUS_DONE, STATUS_IN_PROGRESS, STATUS_PLANNED, STATUS_UNKNOWN}
+SUPPORT_STATUS_SUMMARY_KEYS = {
+    "Implemented": "implemented",
+    "RawSyscall": "raw_syscall",
+    "GlibcCallThrough": "glibc_call_through",
+    "Stub": "stub",
+}
 
 SECTION_HEADERS: dict[str, tuple[str, list[str], int, int]] = {
     # section_key: (heading, column_names, key_column_index, status_column_index)
@@ -51,6 +58,19 @@ class ParseError:
 
 def canonical_json(value: dict[str, Any]) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
+def load_json_file(path: Path) -> dict[str, Any]:
+    try:
+        decoder = json.JSONDecoder()
+        payload = decoder.decode(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SystemExit(f"failed to read JSON file {path}: {exc}") from exc
+    except JSONDecodeError as exc:
+        raise SystemExit(f"failed to parse JSON file {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"JSON file {path} must contain an object")
+    return payload
 
 
 def normalize_key(value: str) -> str:
@@ -288,6 +308,20 @@ def flatten_rows(sections: dict[str, list[dict[str, Any]]]) -> list[dict[str, An
     return merged
 
 
+def support_status_count(summary: dict[str, Any], status: str) -> int:
+    alias = SUPPORT_STATUS_SUMMARY_KEYS[status]
+    return int(summary.get(status, summary.get(alias, 0)))
+
+
+def support_status_counts(summary: dict[str, Any]) -> dict[str, int]:
+    return {
+        "implemented": support_status_count(summary, "Implemented"),
+        "raw_syscall": support_status_count(summary, "RawSyscall"),
+        "glibc_call_through": support_status_count(summary, "GlibcCallThrough"),
+        "stub": support_status_count(summary, "Stub"),
+    }
+
+
 def machine_deltas(
     support_matrix: dict[str, Any],
     reality_report: dict[str, Any],
@@ -297,12 +331,7 @@ def machine_deltas(
 
     summary = support_matrix.get("summary", {})
     support_total = int(support_matrix.get("total_exported", 0))
-    support_counts = {
-        "implemented": int(summary.get("Implemented", 0)),
-        "raw_syscall": int(summary.get("RawSyscall", 0)),
-        "glibc_call_through": int(summary.get("GlibcCallThrough", 0)),
-        "stub": int(summary.get("Stub", 0)),
-    }
+    support_counts = support_status_counts(summary)
     support_sum = sum(support_counts.values())
     support_ok = support_sum == support_total and len(support_matrix.get("symbols", [])) == support_total
     deltas.append(
@@ -382,10 +411,10 @@ def macro_delta_rows(
     callthrough = int(reality_counts.get("glibc_call_through", 0))
     stubs = int(reality_counts.get("stub", 0))
     support_classification_done = (
-        int(summary.get("Implemented", 0))
-        + int(summary.get("RawSyscall", 0))
-        + int(summary.get("GlibcCallThrough", 0))
-        + int(summary.get("Stub", 0))
+        support_status_count(summary, "Implemented")
+        + support_status_count(summary, "RawSyscall")
+        + support_status_count(summary, "GlibcCallThrough")
+        + support_status_count(summary, "Stub")
         == support_total
     )
 
@@ -430,9 +459,9 @@ def build_gap_ledger(
     previous_output: dict[str, Any] | None,
 ) -> dict[str, Any]:
     sections, parse_errors = parse_feature_parity(feature_parity_path)
-    support = json.loads(support_matrix_path.read_text(encoding="utf-8"))
-    reality = json.loads(reality_report_path.read_text(encoding="utf-8"))
-    replacement = json.loads(replacement_levels_path.read_text(encoding="utf-8"))
+    support = load_json_file(support_matrix_path)
+    reality = load_json_file(reality_report_path)
+    replacement = load_json_file(replacement_levels_path)
 
     rows = flatten_rows(sections)
     base_deltas = machine_deltas(support, reality, replacement)
@@ -522,6 +551,44 @@ def build_gap_ledger(
 
 
 class ParserUnitTests(unittest.TestCase):
+    def test_support_summary_accepts_snake_case_keys(self) -> None:
+        summary = {
+            "implemented": 2,
+            "raw_syscall": 3,
+            "glibc_call_through": 5,
+            "stub": 7,
+        }
+        self.assertEqual(
+            support_status_counts(summary),
+            {
+                "implemented": 2,
+                "raw_syscall": 3,
+                "glibc_call_through": 5,
+                "stub": 7,
+            },
+        )
+
+    def test_support_summary_prefers_camel_case_keys(self) -> None:
+        summary = {
+            "Implemented": 11,
+            "implemented": 2,
+            "RawSyscall": 13,
+            "raw_syscall": 3,
+            "GlibcCallThrough": 17,
+            "glibc_call_through": 5,
+            "Stub": 19,
+            "stub": 7,
+        }
+        self.assertEqual(
+            support_status_counts(summary),
+            {
+                "implemented": 11,
+                "raw_syscall": 13,
+                "glibc_call_through": 17,
+                "stub": 19,
+            },
+        )
+
     def test_malformed_row_is_reported(self) -> None:
         lines = [
             "## Macro Coverage Targets",
@@ -634,8 +701,8 @@ def main() -> int:
     previous_output: dict[str, Any] | None = None
     if args.output.exists():
         try:
-            previous_output = json.loads(args.output.read_text(encoding="utf-8"))
-        except Exception:
+            previous_output = load_json_file(args.output)
+        except SystemExit:
             previous_output = None
 
     ledger = build_gap_ledger(

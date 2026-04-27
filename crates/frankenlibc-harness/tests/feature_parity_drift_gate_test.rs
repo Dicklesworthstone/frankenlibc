@@ -22,7 +22,7 @@ fn unique_temp_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("frankenlibc-{name}-{stamp}-{}", std::process::id()))
 }
 
-fn parse_event_line(stdout: &str) -> serde_json::Value {
+fn parse_event_line(stdout: &str) -> Option<serde_json::Value> {
     for line in stdout.lines().rev() {
         let trimmed = line.trim();
         if !trimmed.starts_with('{') {
@@ -32,10 +32,10 @@ fn parse_event_line(stdout: &str) -> serde_json::Value {
             && value.get("trace_id").is_some()
             && value.get("artifact_refs").is_some()
         {
-            return value;
+            return Some(value);
         }
     }
-    panic!("structured event line not found in stdout:\n{stdout}");
+    None
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn gate_passes_and_emits_required_diagnostic_schema() {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let event = parse_event_line(&stdout);
+    let event = parse_event_line(&stdout).expect("structured event line not found in stdout");
     for key in [
         "trace_id",
         "mode",
@@ -118,7 +118,7 @@ fn gate_fails_when_unresolved_drift_loses_owner() {
         }
         let mut row: serde_json::Value =
             serde_json::from_str(raw).expect("issues.jsonl line must be valid JSON");
-        if row["id"].as_str() == Some("bd-w2c3.10.1") {
+        if row["id"].as_str() == Some("bd-w2c3.1.2") {
             row["status"] = serde_json::Value::String("orphaned".to_string());
         }
         lines_out.push(serde_json::to_string(&row).unwrap());
@@ -162,14 +162,14 @@ fn gate_fails_when_unresolved_drift_loses_owner() {
         .expect("diagnostics must be an array");
     assert!(
         diagnostics.iter().any(|row| {
-            row["owner_bead"].as_str() == Some("bd-w2c3.10.1")
+            row["owner_bead"].as_str() == Some("bd-w2c3.1.2")
                 && row["status"].as_str() == Some("fail")
         }),
-        "expected at least one failed diagnostic for closed owner bead bd-w2c3.10.1"
+        "expected at least one failed diagnostic for orphaned owner bead bd-w2c3.1.2"
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let event = parse_event_line(&stdout);
+    let event = parse_event_line(&stdout).expect("structured event line not found in stdout");
     assert_eq!(
         event["errno"].as_i64(),
         Some(1),

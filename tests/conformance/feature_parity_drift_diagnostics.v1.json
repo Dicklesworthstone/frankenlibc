@@ -4,46 +4,6 @@
     {
       "expected_vs_actual": {
         "actual": {
-          "sum_counts_equals_total": false,
-          "support_count_sum": 0,
-          "support_total_exported": 4119,
-          "symbols_count_equals_total": true
-        },
-        "expected": {
-          "sum_counts_equals_total": true,
-          "symbols_count_equals_total": true
-        }
-      },
-      "gap_id": "gap-machine-support-classification-complete",
-      "kind": "machine_delta_drift",
-      "message": "support_matrix classification completeness",
-      "owner_bead": "bd-w2c3.1.2",
-      "owner_status": "closed",
-      "ownership_ok": true,
-      "source_file": "support_matrix.json",
-      "status": "tracked"
-    },
-    {
-      "expected_vs_actual": {
-        "actual": {
-          "status": "DONE"
-        },
-        "expected": {
-          "status": "IN_PROGRESS"
-        }
-      },
-      "gap_id": "gap-macro-fp-macro-targets-3a739065b069",
-      "kind": "machine_delta_drift",
-      "message": "derived from support_matrix classification coverage",
-      "owner_bead": "bd-w2c3.1.2",
-      "owner_status": "closed",
-      "ownership_ok": true,
-      "source_file": "FEATURE_PARITY.md",
-      "status": "tracked"
-    },
-    {
-      "expected_vs_actual": {
-        "actual": {
           "status": "IN_PROGRESS"
         },
         "expected": {
@@ -57,36 +17,6 @@
       "owner_status": "closed",
       "ownership_ok": true,
       "source_file": "FEATURE_PARITY.md",
-      "status": "tracked"
-    },
-    {
-      "expected_vs_actual": {
-        "actual": {
-          "reality_counts": {
-            "glibc_call_through": 0,
-            "implemented": 3705,
-            "raw_syscall": 414,
-            "stub": 0
-          },
-          "reality_total": 4119
-        },
-        "expected": {
-          "support_counts": {
-            "glibc_call_through": 0,
-            "implemented": 0,
-            "raw_syscall": 0,
-            "stub": 0
-          },
-          "support_total": 4119
-        }
-      },
-      "gap_id": "gap-machine-support-vs-reality",
-      "kind": "stale_count_drift",
-      "message": "support_matrix and reality_report should agree",
-      "owner_bead": "bd-w2c3.10.1",
-      "owner_status": "closed",
-      "ownership_ok": true,
-      "source_file": "support_matrix.json",
       "status": "tracked"
     },
     {
@@ -2078,13 +2008,12 @@
     "issues": "/data/projects/frankenlibc/.beads/issues.jsonl"
   },
   "summary": {
-    "diagnostic_count": 114,
+    "diagnostic_count": 111,
     "fail_count": 0,
     "kind_counts": {
-      "machine_delta_drift": 3,
-      "stale_count_drift": 1,
+      "machine_delta_drift": 1,
       "status_drift": 110
     },
-    "tracked_count": 114
+    "tracked_count": 111
   }
 }
