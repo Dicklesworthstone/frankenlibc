@@ -208,12 +208,17 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc
         return -1;
     }
 
+    let initial_remaining = known_remaining(buf as usize);
+    if initial_remaining.is_some_and(|remaining| count > remaining) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
     // Fast path during early startup: bypass membrane, do raw syscall.
     if runtime_policy::bootstrap_passthrough_active() {
         return unsafe { sys_read_fd(fd, buf, count) };
     }
 
-    let initial_remaining = known_remaining(buf as usize);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         buf as usize,
@@ -235,17 +240,6 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    if initial_remaining.is_some_and(|remaining| count > remaining) {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(
-            ApiFamily::Stdio,
-            decision.profile,
-            runtime_policy::scaled_cost(8, count),
-            true,
-        );
-        return -1;
-    }
-
     let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
     // SAFETY: syscall wrapper expects raw fd/buffer/count.
     let rc = unsafe { sys_read_fd(fd, buf, effective_count) };
@@ -270,12 +264,17 @@ pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: usize) -> l
         return -1;
     }
 
+    let initial_remaining = known_remaining(buf as usize);
+    if initial_remaining.is_some_and(|remaining| count > remaining) {
+        unsafe { set_abi_errno(errno::EFAULT) };
+        return -1;
+    }
+
     // Fast path during early startup: bypass membrane, do raw syscall.
     if runtime_policy::bootstrap_passthrough_active() {
         return unsafe { sys_write_fd(fd, buf, count) };
     }
 
-    let initial_remaining = known_remaining(buf as usize);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         buf as usize,
@@ -297,17 +296,6 @@ pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: usize) -> l
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    if initial_remaining.is_some_and(|remaining| count > remaining) {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(
-            ApiFamily::Stdio,
-            decision.profile,
-            runtime_policy::scaled_cost(8, count),
-            true,
-        );
-        return -1;
-    }
-
     let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
     // SAFETY: syscall wrapper expects raw fd/buffer/count.
     let rc = unsafe { sys_write_fd(fd, buf, effective_count) };
