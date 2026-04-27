@@ -574,6 +574,13 @@ fn make_wire_name(dotted: &str) -> Vec<u8> {
     out
 }
 
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
+    raw.cast()
+}
+
 #[test]
 fn ns_name_pton_encodes_domain_to_wire() {
     let name = CString::new("example.com").unwrap();
@@ -602,6 +609,41 @@ fn ns_name_pton_handles_root_domain() {
 fn ns_name_pton_null_returns_error() {
     let ret = unsafe { ns_name_pton(ptr::null(), ptr::null_mut(), 0) };
     assert_eq!(ret, -1);
+}
+
+#[test]
+fn resolver_name_functions_reject_tracked_unterminated_names() {
+    let name = b"unterminated.example";
+
+    unsafe {
+        let raw = malloc_unterminated(name);
+        assert_eq!(res_hnok(raw), 0);
+        assert_eq!(res_dnok(raw), 0);
+        assert_eq!(res_mailok(raw), 0);
+
+        let mut wire = [0u8; 64];
+        assert_eq!(ns_name_pton(raw, wire.as_mut_ptr().cast(), wire.len()), -1);
+        assert_eq!(__ns_name_pton(raw, wire.as_mut_ptr(), wire.len()), -1);
+
+        let mut packet = [0u8; 512];
+        *__errno_location() = 0;
+        let query_len = __res_mkquery(
+            0,
+            raw,
+            1,
+            1,
+            ptr::null(),
+            0,
+            ptr::null(),
+            packet.as_mut_ptr().cast(),
+            packet.len() as i32,
+        );
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(query_len, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
 }
 
 #[test]
@@ -2675,6 +2717,26 @@ fn test_idna_to_dns_null_result_ptr() {
     let name = std::ffi::CString::new("test.com").unwrap();
     let rc = unsafe { __idna_to_dns_encoding(name.as_ptr(), std::ptr::null_mut()) };
     assert_eq!(rc, libc::EAI_FAIL);
+}
+
+#[test]
+fn test_idna_rejects_tracked_unterminated_names() {
+    let name = b"m\xc3\xbcnchen.de";
+
+    unsafe {
+        let raw = malloc_unterminated(name);
+        let mut encoded: *mut std::ffi::c_char = std::ptr::null_mut();
+        let encode_rc = __idna_to_dns_encoding(raw, &mut encoded);
+        assert_eq!(encode_rc, libc::EAI_FAIL);
+        assert!(encoded.is_null());
+
+        let mut decoded: *mut std::ffi::c_char = std::ptr::null_mut();
+        let decode_rc = __idna_from_dns_encoding(raw, &mut decoded);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(decode_rc, libc::EAI_FAIL);
+        assert!(decoded.is_null());
+    }
 }
 
 #[test]

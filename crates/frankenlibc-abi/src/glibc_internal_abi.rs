@@ -16,6 +16,8 @@
 use std::ffi::{c_char, c_int, c_void};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
+use crate::util::scan_c_string;
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
@@ -30,6 +32,29 @@ const GCONV_OK: c_int = 0;
 const GCONV_NOCONV: c_int = -1;
 const ICONV_ERROR_VALUE: usize = usize::MAX;
 const HOSTID_PATH: &[u8] = b"/etc/hostid\0";
+const DNS_CSTR_SCAN_LIMIT: usize = frankenlibc_core::resolv::dns_name::NS_MAXDNAME;
+
+#[inline]
+unsafe fn bounded_c_string_bytes(ptr: *const c_char, max_scan: usize) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let bound = match known_remaining(ptr as usize) {
+        Some(remaining) => remaining.min(max_scan),
+        None => max_scan,
+    };
+    let (len, terminated) = unsafe { scan_c_string(ptr, Some(bound)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    Some(bytes.to_vec())
+}
+
+#[inline]
+unsafe fn dns_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
+    unsafe { bounded_c_string_bytes(ptr, DNS_CSTR_SCAN_LIMIT) }
+}
 
 // ==========================================================================
 // Native math helpers
@@ -806,8 +831,11 @@ pub unsafe extern "C" fn __res_mkquery(
     if op != 0 || dname.is_null() || buf.is_null() || buflen < 12 {
         return -1;
     }
-    let name = unsafe { std::ffi::CStr::from_ptr(dname) };
-    let qname = frankenlibc_core::resolv::dns::encode_domain_name(name.to_bytes());
+    let Some(name_bytes) = (unsafe { dns_c_string_bytes(dname) }) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    let qname = frankenlibc_core::resolv::dns::encode_domain_name(&name_bytes);
     let needed = 12 + qname.len() + 4; // header + qname + qtype + qclass
     if (buflen as usize) < needed {
         return -1;
@@ -945,25 +973,49 @@ pub unsafe extern "C" fn __res_querydomain(
     if name.is_null() {
         return -1;
     }
+    let Some(name_bytes) = (unsafe { dns_c_string_bytes(name) }) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
     // If domain is NULL or empty, just query the name directly.
     if domain.is_null() {
-        return unsafe { super::unistd_abi::res_query(name, class, typ, answer.cast(), anslen) };
+        let mut query_name = name_bytes;
+        query_name.push(0);
+        return unsafe {
+            super::unistd_abi::res_query(
+                query_name.as_ptr().cast(),
+                class,
+                typ,
+                answer.cast(),
+                anslen,
+            )
+        };
     }
-    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
-    let domain_cstr = unsafe { std::ffi::CStr::from_ptr(domain) };
-    let name_bytes = name_cstr.to_bytes();
-    let domain_bytes = domain_cstr.to_bytes();
+    let Some(domain_bytes) = (unsafe { dns_c_string_bytes(domain) }) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
     if domain_bytes.is_empty() {
-        return unsafe { super::unistd_abi::res_query(name, class, typ, answer.cast(), anslen) };
+        let mut query_name = name_bytes;
+        query_name.push(0);
+        return unsafe {
+            super::unistd_abi::res_query(
+                query_name.as_ptr().cast(),
+                class,
+                typ,
+                answer.cast(),
+                anslen,
+            )
+        };
     }
 
     // Build "name.domain\0"
     let mut fqdn = Vec::with_capacity(name_bytes.len() + 1 + domain_bytes.len() + 1);
-    fqdn.extend_from_slice(name_bytes);
+    fqdn.extend_from_slice(&name_bytes);
     if !name_bytes.ends_with(b".") {
         fqdn.push(b'.');
     }
-    fqdn.extend_from_slice(domain_bytes);
+    fqdn.extend_from_slice(&domain_bytes);
     fqdn.push(0); // NUL terminate
 
     unsafe {
@@ -1101,16 +1153,11 @@ pub unsafe extern "C" fn __res_state() -> *mut c_void {
 // res_hnok: hostname — letters, digits, hyphens only (RFC 952)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_hnok(dn: *const c_char) -> c_int {
-    if dn.is_null() {
+    let Some(bytes) = (unsafe { dns_c_string_bytes(dn) }) else {
         return 0;
-    }
-    let mut p = dn as *const u8;
+    };
     let mut len: usize = 0;
-    loop {
-        let c = unsafe { *p };
-        if c == 0 {
-            break;
-        }
+    for &c in &bytes {
         if c == b'.' {
             if len == 0 {
                 return 0; // Empty label
@@ -1124,7 +1171,6 @@ pub unsafe extern "C" fn res_hnok(dn: *const c_char) -> c_int {
         } else {
             return 0; // Invalid character for hostname
         }
-        p = unsafe { p.add(1) };
     }
     1
 }
@@ -1132,16 +1178,11 @@ pub unsafe extern "C" fn res_hnok(dn: *const c_char) -> c_int {
 // res_dnok: domain name — like hostname but allows underscores
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn res_dnok(dn: *const c_char) -> c_int {
-    if dn.is_null() {
+    let Some(bytes) = (unsafe { dns_c_string_bytes(dn) }) else {
         return 0;
-    }
-    let mut p = dn as *const u8;
+    };
     let mut len: usize = 0;
-    loop {
-        let c = unsafe { *p };
-        if c == 0 {
-            break;
-        }
+    for &c in &bytes {
         if c == b'.' {
             if len == 0 {
                 return 0;
@@ -1155,7 +1196,6 @@ pub unsafe extern "C" fn res_dnok(dn: *const c_char) -> c_int {
         } else {
             return 0;
         }
-        p = unsafe { p.add(1) };
     }
     1
 }
@@ -1165,17 +1205,12 @@ pub unsafe extern "C" fn res_dnok(dn: *const c_char) -> c_int {
 pub unsafe extern "C" fn res_mailok(dn: *const c_char) -> c_int {
     // For mail, the first label (mailbox) is more permissive,
     // remaining labels follow hostname rules
-    if dn.is_null() {
+    let Some(bytes) = (unsafe { dns_c_string_bytes(dn) }) else {
         return 0;
-    }
-    let mut p = dn as *const u8;
+    };
     let mut len: usize = 0;
     let mut first_label = true;
-    loop {
-        let c = unsafe { *p };
-        if c == 0 {
-            break;
-        }
+    for &c in &bytes {
         if c == b'.' {
             if len == 0 {
                 return 0;
@@ -1200,7 +1235,6 @@ pub unsafe extern "C" fn res_mailok(dn: *const c_char) -> c_int {
         } else {
             return 0;
         }
-        p = unsafe { p.add(1) };
     }
     1
 }
@@ -1552,9 +1586,12 @@ pub unsafe extern "C" fn ns_name_pton(
     if src.is_null() || dst.is_null() || dstsiz == 0 {
         return -1;
     }
-    let name_bytes = unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes();
+    let Some(name_bytes) = (unsafe { dns_c_string_bytes(src) }) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
     let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dstsiz) };
-    match frankenlibc_core::resolv::dns_name::name_pton(name_bytes, out) {
+    match frankenlibc_core::resolv::dns_name::name_pton(&name_bytes, out) {
         Ok(n) => n as c_int,
         Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
             unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
@@ -7609,7 +7646,11 @@ pub unsafe extern "C" fn __idna_to_dns_encoding(
         return libc::EAI_FAIL;
     }
 
-    let name_str = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+    let name_bytes = match unsafe { dns_c_string_bytes(name) } {
+        Some(bytes) => bytes,
+        None => return libc::EAI_FAIL,
+    };
+    let name_str = match std::str::from_utf8(&name_bytes) {
         Ok(s) => s,
         Err(_) => return libc::EAI_FAIL,
     };
@@ -7680,7 +7721,11 @@ pub unsafe extern "C" fn __idna_from_dns_encoding(
         return libc::EAI_FAIL;
     }
 
-    let name_str = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+    let name_bytes = match unsafe { dns_c_string_bytes(name) } {
+        Some(bytes) => bytes,
+        None => return libc::EAI_FAIL,
+    };
+    let name_str = match std::str::from_utf8(&name_bytes) {
         Ok(s) => s,
         Err(_) => return libc::EAI_FAIL,
     };
@@ -7782,9 +7827,12 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    let name_bytes = unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes();
+    let Some(name_bytes) = (unsafe { dns_c_string_bytes(src) }) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
     let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
-    match frankenlibc_core::resolv::dns_name::name_pton(name_bytes, out) {
+    match frankenlibc_core::resolv::dns_name::name_pton(&name_bytes, out) {
         Ok(_) => {
             if name_bytes.last() == Some(&b'.') {
                 1
