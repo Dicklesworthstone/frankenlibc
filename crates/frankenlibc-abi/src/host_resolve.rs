@@ -4,7 +4,6 @@
 //! using only raw syscalls and pointer math. Zero libc calls, zero recursion.
 #![allow(dead_code)]
 
-use std::ffi::CStr;
 use std::ffi::{c_char, c_int, c_void};
 use std::mem::MaybeUninit;
 use std::sync::OnceLock;
@@ -36,6 +35,7 @@ static HOST_DL_ITERATE_PHDR: AtomicUsize = AtomicUsize::new(0);
 static HOST_DLADDR: AtomicUsize = AtomicUsize::new(0);
 static RESOLVED: AtomicUsize = AtomicUsize::new(0);
 static HOST_IMAGE: OnceLock<LoadedGlibcImage> = OnceLock::new();
+const DLPI_NAME_SCAN_LIMIT: usize = 512;
 
 #[inline]
 pub(crate) unsafe fn host_dlvsym_next_raw(
@@ -77,6 +77,19 @@ unsafe fn raw_fstat(fd: i32, stat: *mut libc::stat) -> i32 {
         .unwrap_or(-1)
 }
 
+unsafe fn bounded_c_string_len(ptr: *const c_char, limit: usize) -> Option<usize> {
+    if ptr.is_null() {
+        return None;
+    }
+    (0..limit).find(|&len| unsafe { *ptr.add(len) } == 0)
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
 #[repr(C)]
 struct DlIterateTarget {
     base: usize,
@@ -96,19 +109,20 @@ unsafe extern "C" fn find_glibc_base_cb(
     if info.dlpi_name.is_null() {
         return 0;
     }
-    // SAFETY: dlpi_name is a valid NUL-terminated C string for this callback invocation.
-    let Ok(name) = unsafe { CStr::from_ptr(info.dlpi_name) }.to_str() else {
+    // SAFETY: dlpi_name is provided by dl_iterate_phdr for this callback invocation.
+    let Some(name_len) = (unsafe { bounded_c_string_len(info.dlpi_name, DLPI_NAME_SCAN_LIMIT) })
+    else {
         return 0;
     };
-    if !name.contains("libc.so") {
+    let name_bytes = unsafe { std::slice::from_raw_parts(info.dlpi_name.cast::<u8>(), name_len) };
+    if !contains_bytes(name_bytes, b"libc.so") {
         return 0;
     }
     // SAFETY: data points to our stack-owned DlIterateTarget for the duration of dl_iterate_phdr.
     let target = unsafe { &mut *(data as *mut DlIterateTarget) };
     target.base = info.dlpi_addr as usize;
-    let bytes = name.as_bytes();
-    let len = bytes.len().min(target.path.len().saturating_sub(1));
-    target.path[..len].copy_from_slice(&bytes[..len]);
+    let len = name_bytes.len().min(target.path.len().saturating_sub(1));
+    target.path[..len].copy_from_slice(&name_bytes[..len]);
     target.path[len] = 0;
     1
 }
@@ -599,5 +613,36 @@ pub(crate) fn host_errno(default_errno: c_int) -> c_int {
     } else {
         // SAFETY: non-null pointer returned by host `__errno_location` is readable.
         unsafe { *ptr }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::c_char;
+
+    use super::{bounded_c_string_len, contains_bytes};
+
+    #[test]
+    fn bounded_c_string_len_accepts_terminated_input() {
+        let input = b"/lib/x86_64-linux-gnu/libc.so.6\0ignored";
+
+        let len = unsafe { bounded_c_string_len(input.as_ptr().cast::<c_char>(), input.len()) };
+
+        assert_eq!(len, Some(b"/lib/x86_64-linux-gnu/libc.so.6".len()));
+    }
+
+    #[test]
+    fn bounded_c_string_len_rejects_unterminated_input() {
+        let input = b"/lib/libc.so.6";
+
+        let len = unsafe { bounded_c_string_len(input.as_ptr().cast::<c_char>(), input.len()) };
+
+        assert_eq!(len, None);
+    }
+
+    #[test]
+    fn contains_bytes_finds_libc_marker_without_utf8() {
+        assert!(contains_bytes(b"/tmp/\xfflibc.so.6", b"libc.so"));
+        assert!(!contains_bytes(b"/tmp/libpthread.so.0", b"libc.so"));
     }
 }
