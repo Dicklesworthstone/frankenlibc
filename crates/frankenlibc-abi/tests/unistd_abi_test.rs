@@ -11748,6 +11748,40 @@ fn md5_file_hashes_disk_contents() {
 }
 
 #[test]
+fn md5_file_hashes_non_utf8_unix_path() {
+    use frankenlibc_abi::unistd_abi::{MD5File, MD5FileChunk};
+    use std::io::Write;
+    use std::os::unix::ffi::OsStringExt;
+
+    let mut path_bytes = std::env::temp_dir().as_os_str().as_bytes().to_vec();
+    path_bytes.push(b'/');
+    path_bytes.extend_from_slice(format!("frankenlibc_md5_{}_", std::process::id()).as_bytes());
+    path_bytes.push(0xff);
+    path_bytes.extend_from_slice(b".bin");
+
+    let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(path_bytes.clone()));
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"abc").unwrap();
+    }
+
+    let cpath = CString::new(path_bytes).unwrap();
+    let mut file_buf = [0i8; 33];
+    let p = unsafe { MD5File(cpath.as_ptr(), file_buf.as_mut_ptr()) };
+    assert_eq!(p, file_buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(file_buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+
+    let mut chunk_buf = [0i8; 33];
+    let p = unsafe { MD5FileChunk(cpath.as_ptr(), chunk_buf.as_mut_ptr(), 0, 3) };
+    assert_eq!(p, chunk_buf.as_mut_ptr());
+    let s = unsafe { CStr::from_ptr(chunk_buf.as_ptr()) }.to_bytes();
+    assert_eq!(s, MD5_ABC_HEX);
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn md5_file_chunk_hashes_window() {
     use frankenlibc_abi::unistd_abi::MD5FileChunk;
     use std::io::Write;
@@ -11763,6 +11797,29 @@ fn md5_file_chunk_hashes_window() {
     let s = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
     assert_eq!(s, MD5_ABC_HEX);
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn md5_file_rejects_tracked_unterminated_paths() {
+    use frankenlibc_abi::unistd_abi::{MD5File, MD5FileChunk};
+    let raw_path = malloc_tracked_unterminated(b"/tmp/frankenlibc-md5");
+    let mut buf = [0i8; 33];
+
+    unsafe {
+        *__errno_location() = 0;
+        let p = MD5File(raw_path, buf.as_mut_ptr());
+        let file_err = *__errno_location();
+        assert!(p.is_null());
+        assert_eq!(file_err, libc::EINVAL);
+
+        *__errno_location() = 0;
+        let p = MD5FileChunk(raw_path, buf.as_mut_ptr(), 0, -1);
+        let chunk_err = *__errno_location();
+        assert!(p.is_null());
+        assert_eq!(chunk_err, libc::EINVAL);
+
+        frankenlibc_abi::malloc_abi::free(raw_path.cast());
+    }
 }
 
 #[test]

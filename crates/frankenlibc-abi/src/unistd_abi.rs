@@ -23783,10 +23783,12 @@ pub unsafe extern "C" fn MD5File(filename: *const c_char, buf: *mut c_char) -> *
     if filename.is_null() {
         return core::ptr::null_mut();
     }
-    let path_bytes = unsafe { CStr::from_ptr(filename) }.to_bytes();
-    let path = std::path::Path::new(std::ffi::OsStr::new(unsafe {
-        core::str::from_utf8_unchecked(path_bytes)
-    }));
+    let Some(path_bytes) = (unsafe { read_c_string_bytes(filename) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    };
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&path_bytes));
     let digest = match md5_hash_path_range(path, 0, None) {
         Some(d) => d,
         None => return core::ptr::null_mut(),
@@ -23808,10 +23810,12 @@ pub unsafe extern "C" fn MD5FileChunk(
     if filename.is_null() || off < 0 {
         return core::ptr::null_mut();
     }
-    let path_bytes = unsafe { CStr::from_ptr(filename) }.to_bytes();
-    let path = std::path::Path::new(std::ffi::OsStr::new(unsafe {
-        core::str::from_utf8_unchecked(path_bytes)
-    }));
+    let Some(path_bytes) = (unsafe { read_c_string_bytes(filename) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return core::ptr::null_mut();
+    };
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&path_bytes));
     let bound = if len < 0 { None } else { Some(len as u64) };
     let digest = match md5_hash_path_range(path, off as u64, bound) {
         Some(d) => d,
