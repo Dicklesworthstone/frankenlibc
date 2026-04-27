@@ -14,11 +14,14 @@
 //! parsed. ELF32, big-endian, and non-ELF files cause -1 to be
 //! returned, matching libbsd's behavior on unsupported formats.
 
-use std::ffi::{CStr, OsStr, c_char, c_int, c_ulong};
+use std::ffi::{OsStr, c_char, c_int, c_ulong};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+
+use crate::malloc_abi::known_remaining;
+use crate::util::scan_c_string;
 
 /// C-compatible `struct nlist` matching libbsd's `<nlist.h>` on
 /// x86_64 Linux. The first field models the
@@ -42,6 +45,21 @@ const SHT_SYMTAB: u32 = 2;
 const EHDR64_SIZE: usize = 64;
 const SHDR64_SIZE: usize = 64;
 const SYM64_SIZE: usize = 24;
+
+unsafe fn read_bounded_cstr(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ptr is a caller-supplied C string pointer; known_remaining
+    // bounds tracked malloc-backed storage so scans cannot cross allocation.
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    // SAFETY: scan_c_string observed a terminator after len readable bytes.
+    let bytes = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    Some(bytes.to_vec())
+}
 
 struct Ehdr64 {
     shoff: u64,
@@ -210,12 +228,13 @@ fn lookup_in_symtab(parsed: &ParsedSymtab, name: &[u8]) -> Option<Sym64> {
 /// pointer or NULL/empty as the array terminator.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nlist(filename: *const c_char, nl: *mut CNlist) -> c_int {
-    if filename.is_null() || nl.is_null() {
+    if nl.is_null() {
         return -1;
     }
-    // SAFETY: caller-supplied NUL-terminated path.
-    let path_bytes = unsafe { CStr::from_ptr(filename) }.to_bytes();
-    let path = Path::new(OsStr::from_bytes(path_bytes));
+    let Some(path_bytes) = (unsafe { read_bounded_cstr(filename) }) else {
+        return -1;
+    };
+    let path = Path::new(OsStr::from_bytes(&path_bytes));
 
     let parsed = match load_symtab(path) {
         Some(p) => p,
@@ -233,13 +252,14 @@ pub unsafe extern "C" fn nlist(filename: *const c_char, nl: *mut CNlist) -> c_in
         if n_name.is_null() {
             break;
         }
-        // SAFETY: caller-supplied NUL-terminated symbol name pointer.
-        let name_bytes = unsafe { CStr::from_ptr(n_name) }.to_bytes();
+        let Some(name_bytes) = (unsafe { read_bounded_cstr(n_name) }) else {
+            return -1;
+        };
         if name_bytes.is_empty() {
             break;
         }
 
-        if let Some(sym) = lookup_in_symtab(&parsed, name_bytes) {
+        if let Some(sym) = lookup_in_symtab(&parsed, &name_bytes) {
             // SAFETY: writable caller-supplied entry.
             unsafe {
                 (*entry_ptr).n_type = sym.st_info;
