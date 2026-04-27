@@ -17,6 +17,32 @@ const FE_TONEAREST: i32 = 0x0000;
 const FE_DOWNWARD: i32 = 0x0400;
 const FE_UPWARD: i32 = 0x0800;
 const FE_TOWARDZERO: i32 = 0x0c00;
+const GLIBC_X86_64_FENV_BYTES: usize = 32;
+
+unsafe fn malloc_tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw, 0, len) };
+    raw.cast()
+}
+
+fn assert_known_short(raw: *const c_void, required: usize) {
+    let remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_ne!(
+        remaining,
+        usize::MAX,
+        "test allocation should be tracked by malloc metadata"
+    );
+    assert!(
+        remaining < required,
+        "test allocation should expose {remaining} tracked bytes, less than required {required}"
+    );
+}
+
+unsafe fn free_tracked(raw: *mut c_void) {
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
+}
 
 struct RoundingGuard {
     saved_mode: i32,
@@ -115,6 +141,33 @@ fn null_pointer_contracts_are_enforced_for_pointer_outputs() {
         assert_eq!(fesetexceptflag(std::ptr::null::<u16>(), FE_ALL_EXCEPT), -1);
         assert_eq!(fegetenv(std::ptr::null_mut()), -1);
         assert_eq!(feholdexcept(std::ptr::null_mut()), -1);
+    }
+}
+
+#[test]
+fn exception_flag_access_rejects_tracked_short_buffers() {
+    let required = std::mem::size_of::<u16>();
+    let raw = unsafe { malloc_tracked_zeroed_bytes(required - 1) };
+    assert_known_short(raw, required);
+
+    unsafe {
+        assert_eq!(fegetexceptflag(raw.cast(), FE_ALL_EXCEPT), -1);
+        assert_eq!(fesetexceptflag(raw.cast(), FE_ALL_EXCEPT), -1);
+        free_tracked(raw);
+    }
+}
+
+#[test]
+fn environment_access_rejects_tracked_short_buffers() {
+    let raw = unsafe { malloc_tracked_zeroed_bytes(GLIBC_X86_64_FENV_BYTES - 1) };
+    assert_known_short(raw, GLIBC_X86_64_FENV_BYTES);
+
+    unsafe {
+        assert_eq!(fegetenv(raw), -1);
+        assert_eq!(fesetenv(raw.cast_const()), -1);
+        assert_eq!(feholdexcept(raw), -1);
+        assert_eq!(feupdateenv(raw.cast_const()), -1);
+        free_tracked(raw);
     }
 }
 

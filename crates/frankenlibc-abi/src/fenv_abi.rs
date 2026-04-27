@@ -6,6 +6,8 @@
 
 use std::ffi::{c_int, c_void};
 
+use crate::malloc_abi::known_remaining;
+
 // ---------------------------------------------------------------------------
 // x86_64 FPU constants
 // ---------------------------------------------------------------------------
@@ -50,6 +52,28 @@ struct FenvT {
     data_off: u32,  // 20: data offset
     ds_pad: u32,    // 24: data segment + padding
     mxcsr: u32,     // 28: SSE control/status register
+}
+
+#[inline]
+fn tracked_object_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null()
+        && known_remaining(ptr as usize)
+            .is_none_or(|remaining| core::mem::size_of::<T>() <= remaining)
+}
+
+#[inline]
+fn tracked_fenv_fits(ptr: *const c_void) -> bool {
+    !ptr.is_null()
+        && known_remaining(ptr as usize)
+            .is_none_or(|remaining| core::mem::size_of::<FenvT>() <= remaining)
+}
+
+fn zeroed_fenv() -> FenvT {
+    let env = core::mem::MaybeUninit::<FenvT>::zeroed();
+    // SAFETY: FenvT is a repr(C), integer-only mirror of glibc x86_64 fenv_t.
+    // Every bit pattern is valid for its fields, and callers use this as a
+    // scratch record before overwriting the hardware-owned environment slots.
+    unsafe { env.assume_init() }
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +211,7 @@ pub unsafe extern "C" fn feclearexcept(excepts: c_int) -> c_int {
     }
     unsafe {
         // Clear x87 status word bits via fnstenv/modify/fldenv
-        let mut env = core::mem::zeroed::<FenvT>();
+        let mut env = zeroed_fenv();
         store_x87_env(&mut env);
         env.sw &= !(mask as u16);
         load_x87_env(&env);
@@ -234,6 +258,9 @@ pub unsafe extern "C" fn fegetexceptflag(flagp: *mut u16, excepts: c_int) -> c_i
     if flagp.is_null() {
         return -1;
     }
+    if !tracked_object_fits(flagp.cast_const()) {
+        return -1;
+    }
     let mask = (excepts as u32) & HW_ALL_EXCEPT;
     unsafe {
         let sw = read_x87_sw() as u32;
@@ -249,11 +276,14 @@ pub unsafe extern "C" fn fesetexceptflag(flagp: *const u16, excepts: c_int) -> c
     if flagp.is_null() {
         return -1;
     }
+    if !tracked_object_fits(flagp) {
+        return -1;
+    }
     let mask = (excepts as u32) & HW_ALL_EXCEPT;
     let flags = unsafe { *flagp } as u32 & mask;
     unsafe {
         // Update x87 status via fnstenv/modify/fldenv
-        let mut env = core::mem::zeroed::<FenvT>();
+        let mut env = zeroed_fenv();
         store_x87_env(&mut env);
         env.sw = (env.sw & !(mask as u16)) | (flags as u16);
         load_x87_env(&env);
@@ -274,6 +304,9 @@ pub unsafe extern "C" fn fesetexceptflag(flagp: *const u16, excepts: c_int) -> c
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fegetenv(envp: *mut c_void) -> c_int {
     if envp.is_null() {
+        return -1;
+    }
+    if !tracked_fenv_fits(envp.cast_const()) {
         return -1;
     }
     let envp = envp.cast::<FenvT>();
@@ -304,6 +337,9 @@ pub unsafe extern "C" fn fesetenv(envp: *const c_void) -> c_int {
     if envp.is_null() {
         return -1;
     }
+    if !tracked_fenv_fits(envp) {
+        return -1;
+    }
     let envp = envp.cast::<FenvT>();
     unsafe {
         load_x87_env(envp);
@@ -317,6 +353,9 @@ pub unsafe extern "C" fn fesetenv(envp: *const c_void) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn feholdexcept(envp: *mut c_void) -> c_int {
     if envp.is_null() {
+        return -1;
+    }
+    if !tracked_fenv_fits(envp.cast_const()) {
         return -1;
     }
     let envp = envp.cast::<FenvT>();
