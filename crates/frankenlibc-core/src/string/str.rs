@@ -182,11 +182,16 @@ pub fn strncat(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 /// or `None` if not found before the NUL terminator. If `c` is `0`, returns
 /// the index of the NUL terminator.
 pub fn strchr(s: &[u8], c: u8) -> Option<usize> {
-    let len = strlen(s);
-    if c == 0 {
-        return Some(len);
+    for (i, &byte) in s.iter().enumerate() {
+        if byte == c {
+            return Some(i);
+        }
+        if byte == 0 {
+            return None;
+        }
     }
-    s[..len].iter().position(|&b| b == c)
+
+    if c == 0 { Some(s.len()) } else { None }
 }
 
 /// Locates `c` in `s`, returning either the match index or the terminating NUL index.
@@ -611,6 +616,17 @@ mod tests {
     #[test]
     fn test_strchr_nul() {
         assert_eq!(strchr(b"hello\0", 0), Some(5));
+    }
+
+    #[test]
+    fn test_strchr_stops_at_terminator() {
+        assert_eq!(strchr(b"hi\0hidden", b'h'), Some(0));
+        assert_eq!(strchr(b"hi\0hidden", b'd'), None);
+    }
+
+    #[test]
+    fn test_strchr_nul_without_terminator_returns_len() {
+        assert_eq!(strchr(b"unterminated", 0), Some(12));
     }
 
     #[test]
