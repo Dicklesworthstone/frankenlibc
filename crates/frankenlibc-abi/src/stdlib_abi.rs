@@ -304,8 +304,12 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
     if string.is_null() {
         return -1;
     }
-    let s = unsafe { std::ffi::CStr::from_ptr(string) };
-    let bytes = s.to_bytes();
+    let (len, terminated) = unsafe { scan_c_string(string, known_remaining(string as usize)) };
+    if !terminated {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(string.cast::<u8>(), len) };
     let eq_pos = match bytes.iter().position(|&b| b == b'=') {
         Some(p) => p,
         None => {
@@ -1350,7 +1354,7 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
         return unsafe { native_getenv(name_slice) };
     }
 
-    let (mode, decision) = runtime_policy::decide(
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         name as usize,
         0,
@@ -1363,12 +1367,7 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
         return ptr::null_mut();
     }
 
-    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(name as usize)
-    } else {
-        None
-    };
-
+    let bound = known_remaining(name as usize);
     let (len, terminated) = unsafe { scan_c_string(name, bound) };
     if !terminated {
         // Unterminated names are always rejected to avoid passing non-C strings to libc.
@@ -1480,7 +1479,7 @@ pub unsafe extern "C" fn setenv(
         return -1;
     }
 
-    let (mode, decision) = runtime_policy::decide(
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         name as usize,
         0,
@@ -1494,12 +1493,7 @@ pub unsafe extern "C" fn setenv(
         return -1;
     }
 
-    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(name as usize)
-    } else {
-        None
-    };
-
+    let bound = known_remaining(name as usize);
     let (name_len, name_terminated) = unsafe { scan_c_string(name, bound) };
     if !name_terminated {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
@@ -1521,11 +1515,7 @@ pub unsafe extern "C" fn setenv(
         return -1;
     }
 
-    let value_bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(value as usize)
-    } else {
-        None
-    };
+    let value_bound = known_remaining(value as usize);
     let (value_len, value_terminated) = unsafe { scan_c_string(value, value_bound) };
     if !value_terminated {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
@@ -1568,7 +1558,7 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
         return -1;
     }
 
-    let (mode, decision) = runtime_policy::decide(
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         name as usize,
         0,
@@ -1582,12 +1572,7 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
         return -1;
     }
 
-    let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(name as usize)
-    } else {
-        None
-    };
-
+    let bound = known_remaining(name as usize);
     let (name_len, name_terminated) = unsafe { scan_c_string(name, bound) };
     if !name_terminated {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
@@ -2083,7 +2068,7 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
         return -1;
     }
 
-    let (mode, decision) = runtime_policy::decide(
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         string as usize,
         0,
@@ -2097,13 +2082,7 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
         return -1;
     }
 
-    let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    let bound = if repair {
-        known_remaining(string as usize)
-    } else {
-        None
-    };
-
+    let bound = known_remaining(string as usize);
     // Find '=' to split name and value.
     let (len, terminated) = unsafe { scan_c_string(string, bound) };
     if !terminated {

@@ -12,9 +12,9 @@ use frankenlibc_abi::stdlib_abi::{
     erand48, expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs,
     get_nprocs_conf, get_phys_pages, getbsize, getenv, getenv_r, getsubopt, humanize_number,
     initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48,
-    on_exit, qsort_r, random, reallocarray, reallocf, recallocarray, seed48, setenv, setstate,
-    srand48, srandom, strpct, strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq,
-    strtou, strtoull, strtouq, system, unsetenv,
+    on_exit, putenv, qsort_r, random, reallocarray, reallocf, recallocarray, seed48, setenv,
+    setstate, srand48, srandom, strpct, strspct, strtod, strtof, strtoi, strtold, strtoll,
+    strtonum, strtoq, strtou, strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -652,6 +652,79 @@ fn clearenv_removes_newly_set_variable() {
 
     // SAFETY: pointer is a valid NUL-terminated C string.
     assert!(unsafe { getenv(name.as_ptr()) }.is_null());
+}
+
+#[test]
+fn setenv_rejects_unterminated_name_and_value() {
+    let valid_name = c"FRANKENLIBC_SETENV_UNTERMINATED_VALUE";
+    let value = c"present";
+
+    unsafe {
+        let unterminated_name = b"FRANKENLIBC_SETENV_UNTERMINATED";
+        let raw_name = frankenlibc_abi::malloc_abi::malloc(unterminated_name.len()).cast::<u8>();
+        assert!(!raw_name.is_null());
+        std::ptr::copy_nonoverlapping(
+            unterminated_name.as_ptr(),
+            raw_name,
+            unterminated_name.len(),
+        );
+        *__errno_location() = 0;
+        let name_rc = setenv(raw_name.cast(), value.as_ptr(), 1);
+        let name_errno = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+        assert_eq!(name_rc, -1);
+        assert_eq!(name_errno, libc::EINVAL);
+
+        let raw_value = frankenlibc_abi::malloc_abi::malloc(5).cast::<u8>();
+        assert!(!raw_value.is_null());
+        std::ptr::copy_nonoverlapping(b"value".as_ptr(), raw_value, 5);
+        *__errno_location() = 0;
+        let value_rc = setenv(valid_name.as_ptr(), raw_value.cast(), 1);
+        let value_errno = *__errno_location();
+        let _ = unsetenv(valid_name.as_ptr());
+        frankenlibc_abi::malloc_abi::free(raw_value.cast());
+        assert_eq!(value_rc, -1);
+        assert_eq!(value_errno, libc::EINVAL);
+    }
+}
+
+#[test]
+fn unsetenv_rejects_unterminated_name() {
+    unsafe {
+        let unterminated_name = b"FRANKENLIBC_UNSET_UNTERMINATED";
+        let raw_name = frankenlibc_abi::malloc_abi::malloc(unterminated_name.len()).cast::<u8>();
+        assert!(!raw_name.is_null());
+        std::ptr::copy_nonoverlapping(
+            unterminated_name.as_ptr(),
+            raw_name,
+            unterminated_name.len(),
+        );
+        *__errno_location() = 0;
+        let rc = unsetenv(raw_name.cast());
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn putenv_rejects_unterminated_assignment() {
+    let cleanup_name = c"FRANKENLIBC_PUTENV_UNTERMINATED";
+    let assignment = b"FRANKENLIBC_PUTENV_UNTERMINATED=value";
+
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(assignment.len()).cast::<u8>();
+        assert!(!raw.is_null());
+        std::ptr::copy_nonoverlapping(assignment.as_ptr(), raw, assignment.len());
+        *__errno_location() = 0;
+        let rc = putenv(raw.cast());
+        let err = *__errno_location();
+        let _ = unsetenv(cleanup_name.as_ptr());
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
 }
 
 #[test]
