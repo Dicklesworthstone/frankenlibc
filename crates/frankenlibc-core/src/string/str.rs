@@ -193,7 +193,12 @@ pub fn strchr(s: &[u8], c: u8) -> Option<usize> {
 ///
 /// Equivalent to GNU C `strchrnul`.
 pub fn strchrnul(s: &[u8], c: u8) -> usize {
-    strchr(s, c).unwrap_or_else(|| strlen(s))
+    for (i, &byte) in s.iter().enumerate() {
+        if byte == c || byte == 0 {
+            return i;
+        }
+    }
+    s.len()
 }
 
 /// Locates the last occurrence of `c` in the NUL-terminated string `s`.

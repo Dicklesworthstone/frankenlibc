@@ -5,7 +5,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use frankenlibc_core::string::{memcmp, memcpy, strcmp, strlen};
+use frankenlibc_core::string::{memcmp, memcpy, strchrnul, strcmp, strlen};
 
 #[derive(Default)]
 struct BenchStats {
@@ -201,12 +201,44 @@ fn bench_strcmp(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_strchrnul_absent(c: &mut Criterion) {
+    let sizes: &[usize] = &[16, 64, 256, 1024, 4096];
+    let mode = mode_label();
+    let mut group = c.benchmark_group("strchrnul_absent");
+
+    for &size in sizes {
+        let mut s = vec![b'A'; size];
+        let bench_label = format!("strchrnul_absent_{size}");
+        s.push(0);
+        group.throughput(Throughput::Bytes(size as u64));
+
+        for _ in 0..10_000 {
+            black_box(strchrnul(&s, b'Z'));
+        }
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_with_input(BenchmarkId::new(mode, size), &size, |b, _| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(strchrnul(&s, b'Z'));
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        stats.borrow().report(mode, &bench_label);
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = benches;
     config = Criterion::default()
         .warm_up_time(Duration::from_millis(1))
         .measurement_time(Duration::from_secs(2))
         .sample_size(100);
-    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp
+    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp, bench_strchrnul_absent
 );
 criterion_main!(benches);
