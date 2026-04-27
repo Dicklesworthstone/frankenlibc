@@ -110,6 +110,10 @@ const SERVICES_PATH_ENV: &str = "FRANKENLIBC_SERVICES_PATH";
 const PROC_NET_ROUTE_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_ROUTE_PATH";
 const PROC_NET_IF_INET6_PATH_ENV: &str = "FRANKENLIBC_PROC_NET_IF_INET6_PATH";
 
+fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
+    known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileFingerprint {
     len: u64,
@@ -1696,7 +1700,8 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
         return libc::EACCES;
     }
 
-    if addr.is_null() || af != libc::AF_INET || (len as usize) < 4 {
+    if addr.is_null() || af != libc::AF_INET || (len as usize) < 4 || !tracked_region_fits(addr, 4)
+    {
         unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
         return libc::EINVAL;
@@ -1769,9 +1774,13 @@ pub unsafe extern "C" fn gethostbyaddr(
         return ptr::null_mut();
     }
 
-    // Only support AF_INET for reverse lookup
+    // Only support AF_INET for reverse lookup.
     if af != libc::AF_INET || (len as usize) < 4 {
         unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return ptr::null_mut();
+    }
+    if !tracked_region_fits(addr, 4) {
+        unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
         return ptr::null_mut();
     }
 
@@ -2123,7 +2132,7 @@ pub unsafe extern "C" fn __h_errno_location() -> *mut c_int {
 /// `src` must point to at least 2 readable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_get16(src: *const u8) -> u16 {
-    if src.is_null() {
+    if src.is_null() || !tracked_region_fits(src.cast(), 2) {
         return 0;
     }
     // SAFETY: caller-supplied 2-byte buffer.
@@ -2140,7 +2149,7 @@ pub unsafe extern "C" fn ns_get16(src: *const u8) -> u16 {
 /// `src` must point to at least 4 readable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_get32(src: *const u8) -> u32 {
-    if src.is_null() {
+    if src.is_null() || !tracked_region_fits(src.cast(), 4) {
         return 0;
     }
     // SAFETY: caller-supplied 4-byte buffer.
@@ -2156,7 +2165,7 @@ pub unsafe extern "C" fn ns_get32(src: *const u8) -> u32 {
 /// `dst` must point to at least 2 writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_put16(value: u16, dst: *mut u8) {
-    if dst.is_null() {
+    if dst.is_null() || !tracked_region_fits(dst.cast(), 2) {
         return;
     }
     // SAFETY: caller-supplied 2-byte buffer.
@@ -2174,7 +2183,7 @@ pub unsafe extern "C" fn ns_put16(value: u16, dst: *mut u8) {
 /// `dst` must point to at least 4 writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_put32(value: u32, dst: *mut u8) {
-    if dst.is_null() {
+    if dst.is_null() || !tracked_region_fits(dst.cast(), 4) {
         return;
     }
     let bytes = value.to_be_bytes();
@@ -3597,7 +3606,7 @@ pub unsafe extern "C" fn __ns_get32(src: *const u8) -> u32 {
 /// `src` must point to at least 2 readable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _getshort(src: *const u8) -> u16 {
-    if src.is_null() {
+    if src.is_null() || !tracked_region_fits(src.cast(), 2) {
         return 0;
     }
     let s = unsafe { core::slice::from_raw_parts(src, 2) };
@@ -3610,7 +3619,7 @@ pub unsafe extern "C" fn _getshort(src: *const u8) -> u16 {
 /// `src` must point to at least 4 readable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _getlong(src: *const u8) -> u32 {
-    if src.is_null() {
+    if src.is_null() || !tracked_region_fits(src.cast(), 4) {
         return 0;
     }
     let s = unsafe { core::slice::from_raw_parts(src, 4) };
@@ -3623,7 +3632,7 @@ pub unsafe extern "C" fn _getlong(src: *const u8) -> u32 {
 /// `dst` must point to at least 2 writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __putshort(value: u16, dst: *mut u8) {
-    if dst.is_null() {
+    if dst.is_null() || !tracked_region_fits(dst.cast(), 2) {
         return;
     }
     let bytes = value.to_be_bytes();
@@ -3636,7 +3645,7 @@ pub unsafe extern "C" fn __putshort(value: u16, dst: *mut u8) {
 /// `dst` must point to at least 4 writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __putlong(value: u32, dst: *mut u8) {
-    if dst.is_null() {
+    if dst.is_null() || !tracked_region_fits(dst.cast(), 4) {
         return;
     }
     let bytes = value.to_be_bytes();

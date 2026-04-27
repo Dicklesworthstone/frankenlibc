@@ -198,6 +198,50 @@ fn malloc_unterminated(bytes: &[u8]) -> MallocCBuffer {
     }
 }
 
+struct MallocBytes {
+    ptr: *mut u8,
+    len: usize,
+}
+
+impl MallocBytes {
+    fn as_ptr(&self) -> *const u8 {
+        self.ptr.cast_const()
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl Drop for MallocBytes {
+    fn drop(&mut self) {
+        unsafe { malloc_abi::free(self.ptr.cast::<c_void>()) };
+    }
+}
+
+fn malloc_bytes(bytes: &[u8]) -> MallocBytes {
+    assert!(!bytes.is_empty(), "tracked byte fixture must be non-empty");
+    let ptr = unsafe { malloc_abi::malloc(bytes.len()) }.cast::<u8>();
+    assert!(!ptr.is_null(), "malloc-backed byte fixture should allocate");
+    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
+    MallocBytes {
+        ptr,
+        len: bytes.len(),
+    }
+}
+
+fn malloc_filled_bytes(len: usize, value: u8) -> MallocBytes {
+    assert!(len > 0, "tracked byte fixture must be non-empty");
+    let ptr = unsafe { malloc_abi::malloc(len) }.cast::<u8>();
+    assert!(!ptr.is_null(), "malloc-backed byte fixture should allocate");
+    unsafe { ptr::write_bytes(ptr, value, len) };
+    MallocBytes { ptr, len }
+}
+
 // ===========================================================================
 // gethostbyname
 // ===========================================================================
@@ -405,6 +449,32 @@ fn gethostbyaddr_r_rejects_misaligned_result_buf() {
         assert!(result_ptr.is_null());
         assert_eq!(h_errno, NO_RECOVERY_ERRNO);
     });
+}
+
+#[test]
+fn gethostbyaddr_r_rejects_tracked_short_addr_even_when_len_claims_ipv4() {
+    let addr = malloc_bytes(&[10, 0]);
+    let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+    let mut scratch = [0i8; 256];
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    let mut h_errno = 0;
+
+    let rc = unsafe {
+        inet_abi::gethostbyaddr_r(
+            addr.as_ptr().cast::<c_void>(),
+            4,
+            libc::AF_INET,
+            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result_ptr.is_null());
+    assert_eq!(h_errno, NO_RECOVERY_ERRNO);
 }
 
 #[test]
@@ -1052,6 +1122,23 @@ fn gethostbyaddr_short_len_returns_null() {
 }
 
 #[test]
+fn gethostbyaddr_rejects_tracked_short_addr_even_when_len_claims_ipv4() {
+    let addr = malloc_bytes(&[127, 0]);
+    unsafe {
+        *resolv_abi::__h_errno_location() = 0;
+    }
+
+    let ptr =
+        unsafe { resolv_abi::gethostbyaddr(addr.as_ptr().cast::<c_void>(), 4, libc::AF_INET) };
+
+    assert!(ptr.is_null());
+    assert_eq!(
+        unsafe { *resolv_abi::__h_errno_location() },
+        NO_RECOVERY_ERRNO
+    );
+}
+
+#[test]
 fn gethostbyaddr_unsupported_af_sets_thread_local_h_errno() {
     let addr: [u8; 4] = [127, 0, 0, 1];
     unsafe {
@@ -1463,6 +1550,23 @@ fn ns_get32_reads_big_endian() {
 }
 
 #[test]
+fn ns_get_helpers_reject_tracked_short_buffers() {
+    use frankenlibc_abi::resolv_abi::{
+        __ns_get16, __ns_get32, _getlong, _getshort, ns_get16, ns_get32,
+    };
+
+    let short16 = malloc_bytes(&[0x12]);
+    let short32 = malloc_bytes(&[0xDE, 0xAD, 0xBE]);
+
+    assert_eq!(unsafe { ns_get16(short16.as_ptr()) }, 0);
+    assert_eq!(unsafe { __ns_get16(short16.as_ptr()) }, 0);
+    assert_eq!(unsafe { _getshort(short16.as_ptr()) }, 0);
+    assert_eq!(unsafe { ns_get32(short32.as_ptr()) }, 0);
+    assert_eq!(unsafe { __ns_get32(short32.as_ptr()) }, 0);
+    assert_eq!(unsafe { _getlong(short32.as_ptr()) }, 0);
+}
+
+#[test]
 fn ns_put16_writes_big_endian() {
     use frankenlibc_abi::resolv_abi::ns_put16;
     let mut buf = [0u8; 2];
@@ -1479,6 +1583,24 @@ fn ns_put32_writes_big_endian() {
     let mut buf = [0u8; 4];
     unsafe { ns_put32(0xCAFE_BABE, buf.as_mut_ptr()) };
     assert_eq!(buf, [0xCA, 0xFE, 0xBA, 0xBE]);
+}
+
+#[test]
+fn ns_put_helpers_reject_tracked_short_buffers() {
+    use frankenlibc_abi::resolv_abi::{__putlong, __putshort, ns_put16, ns_put32};
+
+    let mut short16 = malloc_filled_bytes(1, 0x55);
+    let mut short32 = malloc_filled_bytes(3, 0x66);
+
+    unsafe { ns_put16(0x1234, short16.as_mut_ptr()) };
+    assert_eq!(short16.as_slice(), [0x55]);
+    unsafe { __putshort(0xABCD, short16.as_mut_ptr()) };
+    assert_eq!(short16.as_slice(), [0x55]);
+
+    unsafe { ns_put32(0xCAFE_BABE, short32.as_mut_ptr()) };
+    assert_eq!(short32.as_slice(), [0x66, 0x66, 0x66]);
+    unsafe { __putlong(0xDEAD_BEEF, short32.as_mut_ptr()) };
+    assert_eq!(short32.as_slice(), [0x66, 0x66, 0x66]);
 }
 
 #[test]
