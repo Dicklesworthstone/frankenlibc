@@ -4574,30 +4574,49 @@ pub unsafe extern "C" fn lcong48_r(param: *mut u16, data: *mut c_void) -> c_int 
 // Reentrant System V random (_r variants)
 // ===========================================================================
 
+const RANDOM_R_BUF_BYTES: usize = core::mem::size_of::<u32>();
+const RANDOM_R_RESULT_BYTES: usize = core::mem::size_of::<i32>();
+
+fn random_r_buf_fits(buf: *const c_void) -> bool {
+    tracked_region_fits(buf, RANDOM_R_BUF_BYTES)
+}
+
+fn random_r_result_fits(result: *const i32) -> bool {
+    tracked_region_fits(result.cast(), RANDOM_R_RESULT_BYTES)
+}
+
+fn random_statebuf_too_short_if_tracked(statebuf: *const c_char) -> bool {
+    known_remaining(statebuf as usize).is_some_and(|remaining| remaining < RANDOM_STATE_MIN_BYTES)
+}
+
 /// `random_r` — thread-safe random using caller-supplied state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn random_r(buf: *mut c_void, result: *mut i32) -> c_int {
-    if buf.is_null() || result.is_null() {
+    if buf.is_null()
+        || result.is_null()
+        || !random_r_buf_fits(buf.cast_const())
+        || !random_r_result_fits(result.cast_const())
+    {
         return libc::EINVAL;
     }
     // Simple LCG using the random_data struct
     let state = buf as *mut u32;
-    let val = unsafe { *state };
+    let val = unsafe { ptr::read_unaligned(state.cast_const()) };
     let next = val.wrapping_mul(1103515245).wrapping_add(12345);
     unsafe {
-        *state = next;
-        *result = (next >> 1) as i32;
+        ptr::write_unaligned(state, next);
+        ptr::write_unaligned(result, (next >> 1) as i32);
     }
     0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn srandom_r(seed: c_uint, buf: *mut c_void) -> c_int {
-    if buf.is_null() {
+    if buf.is_null() || !random_r_buf_fits(buf.cast_const()) {
         return libc::EINVAL;
     }
     let state = buf as *mut u32;
-    unsafe { *state = seed };
+    unsafe { ptr::write_unaligned(state, seed) };
     0
 }
 
@@ -4608,17 +4627,26 @@ pub unsafe extern "C" fn initstate_r(
     statelen: usize,
     buf: *mut c_void,
 ) -> c_int {
-    if statebuf.is_null() || buf.is_null() || statelen < 8 {
+    if statebuf.is_null()
+        || buf.is_null()
+        || statelen < RANDOM_STATE_MIN_BYTES
+        || !tracked_region_fits(statebuf.cast_const().cast(), statelen)
+        || !random_r_buf_fits(buf.cast_const())
+    {
         return libc::EINVAL;
     }
     let state = buf as *mut u32;
-    unsafe { *state = seed };
+    unsafe { ptr::write_unaligned(state, seed) };
     0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setstate_r(statebuf: *mut c_char, buf: *mut c_void) -> c_int {
-    if statebuf.is_null() || buf.is_null() {
+    if statebuf.is_null()
+        || buf.is_null()
+        || random_statebuf_too_short_if_tracked(statebuf.cast_const())
+        || !random_r_buf_fits(buf.cast_const())
+    {
         return libc::EINVAL;
     }
     0

@@ -11,11 +11,12 @@ use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atof, atoll, bsearch_r, clearenv, confstr, dehumanize_number, drand48,
     drand48_r, ecvt, erand48, erand48_r, error_at_line, expand_number, fcvt, fmtcheck, freezero,
     gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv,
-    getenv_r, getsubopt, humanize_number, initstate, jrand48, l64a, lcong48, lcong48_r, lrand48,
-    lrand48_r, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, putenv, qsort_r, random,
-    reallocarray, reallocf, recallocarray, seed48, seed48_r, setenv, setstate, srand48, srand48_r,
-    srandom, strpct, strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou,
-    strtoull, strtouq, system, unsetenv,
+    getenv_r, getsubopt, humanize_number, initstate, initstate_r, jrand48, l64a, lcong48,
+    lcong48_r, lrand48, lrand48_r, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit,
+    putenv, qsort_r, random, random_r, reallocarray, reallocf, recallocarray, seed48, seed48_r,
+    setenv, setstate, setstate_r, srand48, srand48_r, srandom, srandom_r, strpct, strspct, strtod,
+    strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq, system,
+    unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -3958,6 +3959,93 @@ fn setstate_rejects_tracked_too_short_state() {
         assert!(result.is_null());
         assert_eq!(*__errno_location(), libc::EINVAL);
         frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
+fn random_r_accepts_valid_tracked_state_and_result() {
+    let buf = unsafe { malloc_tracked_bytes(std::mem::size_of::<u32>()) };
+    let result = unsafe { malloc_tracked_bytes(std::mem::size_of::<i32>()) }.cast::<i32>();
+    unsafe {
+        assert_eq!(srandom_r(123, buf.cast()), 0);
+        assert_eq!(random_r(buf.cast(), result), 0);
+        assert!(*result >= 0);
+        frankenlibc_abi::malloc_abi::free(result.cast());
+        frankenlibc_abi::malloc_abi::free(buf.cast());
+    }
+}
+
+#[test]
+fn random_r_rejects_tracked_short_state() {
+    let buf = unsafe { malloc_tracked_bytes(2) };
+    let mut result = 0;
+    unsafe {
+        assert_eq!(random_r(buf.cast(), &mut result), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(buf.cast());
+    }
+}
+
+#[test]
+fn random_r_rejects_tracked_short_result() {
+    let buf = unsafe { malloc_tracked_bytes(std::mem::size_of::<u32>()) };
+    let result = unsafe { malloc_tracked_bytes(2) }.cast::<i32>();
+    unsafe {
+        assert_eq!(srandom_r(123, buf.cast()), 0);
+        assert_eq!(random_r(buf.cast(), result), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(result.cast());
+        frankenlibc_abi::malloc_abi::free(buf.cast());
+    }
+}
+
+#[test]
+fn srandom_r_rejects_tracked_short_state() {
+    let buf = unsafe { malloc_tracked_bytes(2) };
+    unsafe {
+        assert_eq!(srandom_r(123, buf.cast()), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(buf.cast());
+    }
+}
+
+#[test]
+fn initstate_r_rejects_tracked_statebuf_shorter_than_statelen() {
+    let statebuf = unsafe { malloc_tracked_bytes(8) };
+    let buf = unsafe { malloc_tracked_bytes(std::mem::size_of::<u32>()) };
+    unsafe {
+        assert_eq!(
+            initstate_r(123, statebuf.cast(), 32, buf.cast()),
+            libc::EINVAL
+        );
+        frankenlibc_abi::malloc_abi::free(buf.cast());
+        frankenlibc_abi::malloc_abi::free(statebuf.cast());
+    }
+}
+
+#[test]
+fn initstate_r_rejects_tracked_short_random_data() {
+    let mut statebuf = [0u8; 32];
+    let buf = unsafe { malloc_tracked_bytes(2) };
+    unsafe {
+        assert_eq!(
+            initstate_r(
+                123,
+                statebuf.as_mut_ptr().cast(),
+                statebuf.len(),
+                buf.cast()
+            ),
+            libc::EINVAL
+        );
+        frankenlibc_abi::malloc_abi::free(buf.cast());
+    }
+}
+
+#[test]
+fn setstate_r_rejects_tracked_too_short_statebuf() {
+    let statebuf = unsafe { malloc_tracked_bytes(4) };
+    let buf = unsafe { malloc_tracked_bytes(std::mem::size_of::<u32>()) };
+    unsafe {
+        assert_eq!(setstate_r(statebuf.cast(), buf.cast()), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(buf.cast());
+        frankenlibc_abi::malloc_abi::free(statebuf.cast());
     }
 }
 
