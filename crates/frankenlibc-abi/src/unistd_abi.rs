@@ -18184,21 +18184,28 @@ pub unsafe extern "C" fn putspent(sp: *const libc::spwd, stream: *mut libc::FILE
         return -1;
     }
     let spw = unsafe { &*sp };
-    let cstr_or_empty = |ptr: *mut c_char| -> &[u8] {
-        if ptr.is_null() {
-            b""
-        } else {
-            unsafe { std::ffi::CStr::from_ptr(ptr) }.to_bytes()
+    let name = match unsafe { read_optional_c_string_bytes(spw.sp_namp) } {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return -1;
         }
     };
-    let name = cstr_or_empty(spw.sp_namp);
-    let passwd = cstr_or_empty(spw.sp_pwdp);
+    let passwd = match unsafe { read_optional_c_string_bytes(spw.sp_pwdp) } {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            return -1;
+        }
+    };
 
     let mut line = Vec::with_capacity(96 + name.len() + passwd.len());
     frankenlibc_core::pwd::shadow::format_shadow_line(
         frankenlibc_core::pwd::shadow::ShadowLineFields {
-            name,
-            passwd,
+            name: &name,
+            passwd: &passwd,
             lstchg: spw.sp_lstchg,
             min: spw.sp_min,
             max: spw.sp_max,
@@ -18267,19 +18274,44 @@ pub unsafe extern "C" fn fmtmsg(
     tag: *const c_char,
 ) -> c_int {
     if frankenlibc_core::fmtmsg::should_print(classification) {
-        let cstr_or_empty = |p: *const c_char| -> &[u8] {
-            if p.is_null() {
-                b""
-            } else {
-                unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes()
+        let label_bytes = match unsafe { read_optional_c_string_bytes(label) } {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                return -1;
+            }
+        };
+        let text_bytes = match unsafe { read_optional_c_string_bytes(text) } {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                return -1;
+            }
+        };
+        let action_bytes = match unsafe { read_optional_c_string_bytes(action) } {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                return -1;
+            }
+        };
+        let tag_bytes = match unsafe { read_optional_c_string_bytes(tag) } {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                return -1;
             }
         };
         let out = frankenlibc_core::fmtmsg::format_fmtmsg_message(
-            cstr_or_empty(label),
+            &label_bytes,
             severity,
-            cstr_or_empty(text),
-            cstr_or_empty(action),
-            cstr_or_empty(tag),
+            &text_bytes,
+            &action_bytes,
+            &tag_bytes,
         );
         unsafe { sys_write_fd(libc::STDERR_FILENO, out.as_ptr().cast(), out.len()) };
     }

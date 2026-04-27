@@ -81,7 +81,7 @@ use frankenlibc_abi::unistd_abi::{
     FTSENT as AbiFtsEnt, access, aio_suspend, alarm, arc4random_buf, bsd_getopt, chdir, chmod,
     chown, close, closelog, creat, eaccess, endaliasent, ether_line, euidaccess, faccessat, fchmod,
     fchown, fdatasync, fgetgrent_r, fgetpwent_r, fgetspent, fgetspent_r, flock, flopen, flopenat,
-    fstat, fsync, ftruncate, fts_children as abi_fts_children, fts_close as abi_fts_close,
+    fmtmsg, fstat, fsync, ftruncate, fts_children as abi_fts_children, fts_close as abi_fts_close,
     fts_open as abi_fts_open, fts_read as abi_fts_read, fts_set as abi_fts_set, ftw as abi_ftw,
     gai_cancel, gai_error, gai_suspend, getaddrinfo_a, getaliasbyname, getaliasbyname_r,
     getaliasent, getaliasent_r, getcwd, getdate, getdate_r, getegid, geteuid, getfsent, getfsfile,
@@ -91,11 +91,11 @@ use frankenlibc_abi::unistd_abi::{
     getservent_r, getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline,
     getutline_r, glob64, globfree64, gsignal, isatty, link, logout, logwtmp, lseek, lstat, mkdir,
     mkfifo, mount_setattr, msgrcv, msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd,
-    process_madvise, process_mrelease, process_vm_readv, process_vm_writev, read, readlink,
-    readpassphrase, rename, rmdir, sem_open, sem_unlink, semctl, semop, setfsent, sethostent,
-    setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent, setservent,
-    setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat, strfmon,
-    strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
+    process_madvise, process_mrelease, process_vm_readv, process_vm_writev, putspent, read,
+    readlink, readpassphrase, rename, rmdir, sem_open, sem_unlink, semctl, semop, setfsent,
+    sethostent, setnetent, setnetgrent, setns, setproctitle, setproctitle_init, setprotoent,
+    setservent, setttyent, setutent, shmdt, sigpause, sigset, sigstack, sigvec, ssignal, stat,
+    strfmon, strfmon_l, symlink, sysconf, syslog, truncate, umask, uname, unlink, unshare, updwtmp,
     updwtmpx, usleep, utmpname, wctrans, wordexp as abi_wordexp, wordfree as abi_wordfree, write,
 };
 
@@ -1555,6 +1555,55 @@ fn fgetspent_skips_comments_and_blank_lines() {
 
     unsafe { fclose(stream) };
     std::fs::remove_file(path_str).unwrap();
+}
+
+#[test]
+fn putspent_rejects_tracked_unterminated_shadow_name() {
+    let raw_name = malloc_tracked_unterminated(b"root");
+    let mut ptr: *mut c_char = std::ptr::null_mut();
+    let mut size: usize = 0;
+    let stream = unsafe { frankenlibc_abi::stdio_abi::open_memstream(&mut ptr, &mut size) };
+    if stream.is_null() {
+        unsafe { frankenlibc_abi::malloc_abi::free(raw_name.cast()) };
+        return;
+    }
+
+    let mut entry: libc::spwd = unsafe { std::mem::zeroed() };
+    entry.sp_namp = raw_name;
+    entry.sp_pwdp = c"*".as_ptr() as *mut c_char;
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = putspent(&entry, stream.cast());
+        let err = *__errno_location();
+        let close_rc = frankenlibc_abi::stdio_abi::fclose(stream);
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+        assert_eq!(close_rc, 0);
+    }
+}
+
+#[test]
+fn fmtmsg_rejects_tracked_unterminated_label() {
+    let raw_label = malloc_tracked_unterminated(b"tool:label");
+    unsafe {
+        *__errno_location() = 0;
+        let rc = fmtmsg(
+            0x100,
+            raw_label,
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+        );
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_label.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
 }
 
 #[test]
