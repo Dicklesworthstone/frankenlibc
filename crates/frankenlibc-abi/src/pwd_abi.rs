@@ -16,10 +16,26 @@ use frankenlibc_core::errno;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
+use crate::util::scan_c_string;
 
 const PASSWD_PATH: &str = "/etc/passwd";
 const PASSWD_PATH_ENV: &str = "FRANKENLIBC_PASSWD_PATH";
+
+unsafe fn bounded_cstr_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ptr is a caller-provided C string; known_remaining bounds scans
+    // over tracked malloc-backed buffers before they can cross allocation end.
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    // SAFETY: scan_c_string observed len readable bytes before the terminator.
+    Some(unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileFingerprint {
@@ -312,9 +328,11 @@ pub unsafe extern "C" fn getpwnam(name: *const c_char) -> *mut libc::passwd {
         return ptr::null_mut();
     }
 
-    // SAFETY: name is non-null; compute length to build a byte slice.
-    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
-    let result = do_getpwnam(name_cstr.to_bytes());
+    let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return ptr::null_mut();
+    };
+    let result = do_getpwnam(name_bytes);
     if result.is_null()
         && let Some(err) = passwd_backend_io_error()
     {
@@ -424,9 +442,10 @@ pub unsafe extern "C" fn getpwnam_r(
         return libc::EACCES;
     }
 
-    // SAFETY: name is non-null.
-    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
-    let name_bytes = name_cstr.to_bytes();
+    let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
+        return libc::EINVAL;
+    };
 
     let entry = match lookup_passwd_by_name(name_bytes) {
         Some(e) => e,
@@ -735,8 +754,10 @@ pub unsafe extern "C" fn getspnam(name: *const c_char) -> *mut c_void {
     if name.is_null() {
         return ptr::null_mut();
     }
-    let name_str = unsafe { std::ffi::CStr::from_ptr(name) };
-    let name_str = match name_str.to_str() {
+    let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
+        return ptr::null_mut();
+    };
+    let name_str = match std::str::from_utf8(name_bytes) {
         Ok(s) => s,
         Err(_) => return ptr::null_mut(),
     };
@@ -786,8 +807,10 @@ pub unsafe extern "C" fn getspnam_r(
     }
     unsafe { *result = ptr::null_mut() };
 
-    let name_str = unsafe { std::ffi::CStr::from_ptr(name) };
-    let name_str = match name_str.to_str() {
+    let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
+        return libc::EINVAL;
+    };
+    let name_str = match std::str::from_utf8(name_bytes) {
         Ok(s) => s,
         Err(_) => return libc::EINVAL,
     };
@@ -1147,12 +1170,14 @@ pub unsafe extern "C" fn getsgnam(name: *const c_char) -> *mut c_void {
     if name.is_null() {
         return ptr::null_mut();
     }
-    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
+    let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
+        return ptr::null_mut();
+    };
     let content = match read_gshadow_file() {
         Some(c) => c,
         None => return ptr::null_mut(),
     };
-    match lookup_gshadow_by_name(&content, name_cstr.to_bytes()) {
+    match lookup_gshadow_by_name(&content, name_bytes) {
         Some(entry) => gshadow_to_static_sgrp(&entry),
         None => ptr::null_mut(),
     }
@@ -1172,12 +1197,14 @@ pub unsafe extern "C" fn getsgnam_r(
     if name.is_null() {
         return libc::EINVAL;
     }
-    let name_cstr = unsafe { std::ffi::CStr::from_ptr(name) };
+    let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
+        return libc::EINVAL;
+    };
     let content = match read_gshadow_file() {
         Some(c) => c,
         None => return libc::ENOENT,
     };
-    match lookup_gshadow_by_name(&content, name_cstr.to_bytes()) {
+    match lookup_gshadow_by_name(&content, name_bytes) {
         Some(entry) => {
             let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
             if sgrp.is_null() {
@@ -1219,8 +1246,10 @@ pub unsafe extern "C" fn sgetsgent(string: *const c_char) -> *mut c_void {
     if string.is_null() {
         return ptr::null_mut();
     }
-    let cstr = unsafe { std::ffi::CStr::from_ptr(string) };
-    match parse_gshadow_line(cstr.to_bytes()) {
+    let Some(line_bytes) = (unsafe { bounded_cstr_bytes(string) }) else {
+        return ptr::null_mut();
+    };
+    match parse_gshadow_line(line_bytes) {
         Some(entry) => gshadow_to_static_sgrp(&entry),
         None => ptr::null_mut(),
     }
@@ -1240,8 +1269,10 @@ pub unsafe extern "C" fn sgetsgent_r(
     if string.is_null() {
         return libc::EINVAL;
     }
-    let cstr = unsafe { std::ffi::CStr::from_ptr(string) };
-    match parse_gshadow_line(cstr.to_bytes()) {
+    let Some(line_bytes) = (unsafe { bounded_cstr_bytes(string) }) else {
+        return libc::EINVAL;
+    };
+    match parse_gshadow_line(line_bytes) {
         Some(entry) => {
             let sgrp = unsafe { pack_gshadow_into_buf(&entry, buffer as *mut u8, buflen) };
             if sgrp.is_null() {

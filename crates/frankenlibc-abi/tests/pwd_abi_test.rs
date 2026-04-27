@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::errno_abi::__errno_location;
+use frankenlibc_abi::malloc_abi::{free, malloc};
 use frankenlibc_abi::pwd_abi::{
     endpwent, getpwent, getpwnam, getpwnam_r, getpwuid, getpwuid_r, setpwent,
 };
@@ -101,6 +102,18 @@ fn getpwnam_not_found() {
 fn getpwnam_null_returns_null() {
     let pw = unsafe { getpwnam(ptr::null()) };
     assert!(pw.is_null());
+}
+
+#[test]
+fn getpwnam_rejects_unterminated_name() {
+    with_passwd_file(FIXTURE, || unsafe {
+        let name = malloc(4).cast::<u8>();
+        assert!(!name.is_null());
+        std::ptr::copy_nonoverlapping(b"root".as_ptr(), name, 4);
+        let pw = getpwnam(name.cast());
+        free(name.cast());
+        assert!(pw.is_null(), "unterminated getpwnam name should fail");
+    });
 }
 
 #[test]
@@ -223,6 +236,29 @@ fn getpwnam_r_null_args_returns_einval() {
         )
     };
     assert_eq!(rc, libc::EINVAL);
+}
+
+#[test]
+fn getpwnam_r_rejects_unterminated_name() {
+    with_passwd_file(FIXTURE, || unsafe {
+        let name = malloc(5).cast::<u8>();
+        assert!(!name.is_null());
+        std::ptr::copy_nonoverlapping(b"alice".as_ptr(), name, 5);
+        let mut pwd: libc::passwd = std::mem::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let mut result: *mut libc::passwd = ptr::null_mut();
+
+        let rc = getpwnam_r(
+            name.cast(),
+            &mut pwd,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut result,
+        );
+        free(name.cast());
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+    });
 }
 
 #[test]
@@ -518,6 +554,30 @@ fn getspnam_r_returns_enoent_stub() {
 }
 
 #[test]
+fn getspnam_r_rejects_unterminated_name() {
+    use frankenlibc_abi::pwd_abi::getspnam_r;
+    unsafe {
+        let name = malloc(4).cast::<u8>();
+        assert!(!name.is_null());
+        std::ptr::copy_nonoverlapping(b"root".as_ptr(), name, 4);
+        let mut spwd_storage = [0u8; 256];
+        let mut buf = vec![0u8; 1024];
+        let mut result: *mut c_void = ptr::null_mut();
+
+        let rc = getspnam_r(
+            name.cast(),
+            spwd_storage.as_mut_ptr() as *mut c_void,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut result,
+        );
+        free(name.cast());
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+    }
+}
+
+#[test]
 fn getspent_returns_null_stub() {
     use frankenlibc_abi::pwd_abi::getspent;
     let sp = unsafe { getspent() };
@@ -648,6 +708,31 @@ fn sgetsgent_r_null_returns_error() {
     };
     assert!(result_ptr.is_null());
     assert_ne!(rc, 0, "sgetsgent_r with null string should fail");
+}
+
+#[test]
+fn sgetsgent_r_rejects_unterminated_string() {
+    use frankenlibc_abi::pwd_abi::sgetsgent_r;
+    unsafe {
+        let line = b"wheel:!:root";
+        let unterminated = malloc(line.len()).cast::<u8>();
+        assert!(!unterminated.is_null());
+        std::ptr::copy_nonoverlapping(line.as_ptr(), unterminated, line.len());
+        let mut sgrp_storage = [0u8; 128];
+        let mut buf = vec![0u8; 512];
+        let mut result_ptr: *mut u8 = ptr::null_mut();
+
+        let rc = sgetsgent_r(
+            unterminated.cast(),
+            sgrp_storage.as_mut_ptr() as *mut _,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut result_ptr as *mut *mut u8 as *mut *mut _,
+        );
+        free(unterminated.cast());
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result_ptr.is_null());
+    }
 }
 
 #[test]
