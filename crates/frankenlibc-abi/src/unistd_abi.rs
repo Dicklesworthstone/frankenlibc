@@ -84,6 +84,11 @@ fn bounded_nul_len_with_nul(bytes: &[u8]) -> Option<usize> {
     bytes.iter().position(|&byte| byte == 0).map(|len| len + 1)
 }
 
+#[inline]
+fn tracked_region_fits(addr: usize, len: usize) -> bool {
+    known_remaining(addr).is_none_or(|remaining| len <= remaining)
+}
+
 /// Query the system page size via AT_PAGESZ from /proc/self/auxv, cached.
 /// Falls back to 4096 (x86_64 default) if the query fails.
 fn runtime_page_size() -> usize {
@@ -23124,8 +23129,10 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
 // Async DNS (getaddrinfo_a family)
 // ===========================================================================
 
+const GAICB_ZERO_PROBE_BYTES: usize = 4 * std::mem::size_of::<*const c_void>();
+
 unsafe fn is_zeroed_gaicb_request(req: *mut c_void) -> bool {
-    if req.is_null() {
+    if req.is_null() || !tracked_region_fits(req as usize, GAICB_ZERO_PROBE_BYTES) {
         return false;
     }
     // SAFETY: `req` is a caller-provided pointer. We only read the first four
@@ -23159,8 +23166,19 @@ pub unsafe extern "C" fn getaddrinfo_a(
     // FrankenLibC intentionally treats that shape as unsupported and returns
     // `EAI_SYSTEM`/`ENOSYS` instead of mirroring host UB at the ABI boundary.
     if !list.is_null() {
+        let Some(list_bytes) = (nitems as usize).checked_mul(std::mem::size_of::<*mut c_void>())
+        else {
+            unsafe { set_abi_errno(libc::ENOSYS) };
+            return libc::EAI_SYSTEM;
+        };
+        if !tracked_region_fits(list as usize, list_bytes) {
+            unsafe { set_abi_errno(libc::ENOSYS) };
+            return libc::EAI_SYSTEM;
+        }
         // SAFETY: `list` is a C pointer to `nitems` request slots provided by the
         // caller. We only create a shared slice after validating `nitems > 0`,
+        // the multiplication above did not overflow, tracked allocations have
+        // enough remaining bytes for all slots,
         // and we only inspect `gaicb`-shaped entries enough to recognize the
         // host-glibc degenerate success path where every request slot is either
         // NULL or points at a zeroed request descriptor.

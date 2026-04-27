@@ -88,6 +88,16 @@ fn malloc_tracked_pointer_vector(values: &[*mut c_char]) -> *mut *mut c_char {
     }
 }
 
+fn malloc_tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(len);
+        assert!(!raw.is_null());
+        std::ptr::write_bytes(raw.cast::<u8>(), 0, len);
+        raw
+    }
+}
+
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::glibc_internal_abi::__sysv_signal;
 use frankenlibc_abi::glibc_internal_abi::getdate_err;
@@ -3451,6 +3461,51 @@ fn getaddrinfo_a_non_null_requests_still_fall_back_to_eai_system() {
 }
 
 #[test]
+fn getaddrinfo_a_rejects_tracked_short_request_list() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tracked_requests = malloc_tracked_pointer_vector(&[std::ptr::null_mut()]);
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_WAIT,
+            tracked_requests.cast::<*mut c_void>(),
+            2,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(tracked_requests.cast());
+    }
+}
+
+#[test]
+fn getaddrinfo_a_rejects_tracked_short_zeroed_request_descriptor() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let raw_req = malloc_tracked_zeroed_bytes(std::mem::size_of::<*const c_void>());
+    let mut requests = [raw_req];
+    unsafe {
+        *__errno_location() = 0;
+    }
+    let rc = unsafe {
+        getaddrinfo_a(
+            GAI_WAIT,
+            requests.as_mut_ptr(),
+            requests.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_req);
+    }
+}
+
+#[test]
 fn gai_cancel_reports_all_done_for_synchronous_stub_handles() {
     let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
@@ -3505,6 +3560,20 @@ fn gai_error_zeroed_gaicb_reports_success_without_touching_errno() {
     let request_ptr = (&mut request as *mut GaicbShape).cast::<c_void>();
     assert_eq!(unsafe { gai_error(request_ptr) }, 0);
     assert_eq!(errno_value(), libc::E2BIG);
+}
+
+#[test]
+fn gai_error_rejects_tracked_short_zeroed_request_descriptor() {
+    let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let raw_req = malloc_tracked_zeroed_bytes(std::mem::size_of::<*const c_void>());
+    unsafe {
+        *__errno_location() = 0;
+    }
+    assert_eq!(unsafe { gai_error(raw_req) }, libc::EAI_SYSTEM);
+    assert_eq!(errno_value(), libc::ENOSYS);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_req);
+    }
 }
 
 #[test]
