@@ -1985,6 +1985,24 @@ fn popen_rejects_invalid_modes() {
     }
 }
 
+#[test]
+fn popen_rejects_tracked_unterminated_mode() {
+    let mode = unsafe { frankenlibc_abi::malloc_abi::malloc(1).cast::<c_char>() };
+    assert!(!mode.is_null());
+    unsafe { *mode = b'r' as c_char };
+
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+    }
+    let stream = unsafe { popen(c"echo hello".as_ptr(), mode.cast_const()) };
+    let err = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(mode.cast::<c_void>()) };
+
+    assert!(stream.is_null(), "popen should reject unterminated mode");
+    assert_eq!(err, libc::EINVAL, "unterminated mode should set EINVAL");
+}
+
 // ---------------------------------------------------------------------------
 // perror
 // ---------------------------------------------------------------------------

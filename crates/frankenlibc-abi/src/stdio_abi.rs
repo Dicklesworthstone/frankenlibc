@@ -5584,7 +5584,13 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
         return std::ptr::null_mut();
     }
 
-    let mode_bytes = unsafe { std::ffi::CStr::from_ptr(typ) }.to_bytes();
+    let (mode_len, mode_terminated) = unsafe { scan_c_str_len(typ, None) };
+    if !mode_terminated {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
+        return std::ptr::null_mut();
+    }
+    let mode_bytes = unsafe { std::slice::from_raw_parts(typ.cast::<u8>(), mode_len) };
     if mode_bytes.is_empty() {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 50, true);
