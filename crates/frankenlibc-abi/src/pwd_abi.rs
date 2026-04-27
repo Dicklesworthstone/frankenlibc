@@ -38,7 +38,9 @@ unsafe fn bounded_cstr_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
 }
 
 fn tracked_object_fits<T>(ptr: *const T) -> bool {
-    known_remaining(ptr as usize).is_none_or(|remaining| remaining >= std::mem::size_of::<T>())
+    (ptr as usize) & (std::mem::align_of::<T>() - 1) == 0
+        && known_remaining(ptr as usize)
+            .is_none_or(|remaining| remaining >= std::mem::size_of::<T>())
 }
 
 fn effective_buffer_len(ptr: *const c_char, requested: libc::size_t) -> libc::size_t {

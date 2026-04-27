@@ -331,6 +331,31 @@ fn getpwuid_r_rejects_tracked_short_result_slot_before_write() {
 }
 
 #[test]
+fn getpwuid_r_rejects_tracked_misaligned_result_slot_before_write() {
+    with_passwd_file(FIXTURE, || unsafe {
+        let mut pwd: libc::passwd = std::mem::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let raw = tracked_zeroed_bytes(std::mem::size_of::<*mut libc::passwd>() + 1);
+        let result = raw.cast::<u8>().add(1).cast::<*mut libc::passwd>();
+        assert_ne!(
+            (result as usize) % std::mem::align_of::<*mut libc::passwd>(),
+            0
+        );
+
+        let rc = getpwuid_r(
+            0,
+            &mut pwd,
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        free_tracked(raw);
+    });
+}
+
+#[test]
 fn getpwuid_r_clears_result_before_rejecting_tracked_short_passwd_slot() {
     with_passwd_file(FIXTURE, || unsafe {
         let raw = tracked_zeroed_bytes(std::mem::size_of::<libc::passwd>() - 1);
@@ -341,6 +366,29 @@ fn getpwuid_r_clears_result_before_rejecting_tracked_short_passwd_slot() {
         let rc = getpwuid_r(
             0,
             raw.cast::<libc::passwd>(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            &mut result,
+        );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+        free_tracked(raw);
+    });
+}
+
+#[test]
+fn getpwuid_r_clears_result_before_rejecting_tracked_misaligned_passwd_slot() {
+    with_passwd_file(FIXTURE, || unsafe {
+        let raw = tracked_zeroed_bytes(std::mem::size_of::<libc::passwd>() + 1);
+        let pwd = raw.cast::<u8>().add(1).cast::<libc::passwd>();
+        assert_ne!((pwd as usize) % std::mem::align_of::<libc::passwd>(), 0);
+        let mut buf = vec![0u8; 1024];
+        let mut result = std::ptr::NonNull::<libc::passwd>::dangling().as_ptr();
+
+        let rc = getpwuid_r(
+            0,
+            pwd,
             buf.as_mut_ptr() as *mut c_char,
             buf.len(),
             &mut result,

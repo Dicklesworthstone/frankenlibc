@@ -344,6 +344,25 @@ fn getgrgid_r_rejects_tracked_short_result_slot_before_write() {
 }
 
 #[test]
+fn getgrgid_r_rejects_tracked_misaligned_result_slot_before_write() {
+    with_group_file(GROUP_FIXTURE, || unsafe {
+        let mut grp: libc::group = std::mem::zeroed();
+        let mut buf = vec![0u8; 1024];
+        let raw = tracked_zeroed_bytes(std::mem::size_of::<*mut libc::group>() + 1);
+        let result = raw.cast::<u8>().add(1).cast::<*mut libc::group>();
+        assert_ne!(
+            (result as usize) % std::mem::align_of::<*mut libc::group>(),
+            0
+        );
+
+        let rc = getgrgid_r(0, &mut grp, buf.as_mut_ptr().cast(), buf.len(), result);
+
+        assert_eq!(rc, libc::EINVAL);
+        free_tracked(raw);
+    });
+}
+
+#[test]
 fn getgrgid_r_clears_result_before_rejecting_tracked_short_group_slot() {
     with_group_file(GROUP_FIXTURE, || unsafe {
         let raw = tracked_zeroed_bytes(std::mem::size_of::<libc::group>() - 1);
@@ -358,6 +377,23 @@ fn getgrgid_r_clears_result_before_rejecting_tracked_short_group_slot() {
             buf.len(),
             &mut result,
         );
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
+        free_tracked(raw);
+    });
+}
+
+#[test]
+fn getgrgid_r_clears_result_before_rejecting_tracked_misaligned_group_slot() {
+    with_group_file(GROUP_FIXTURE, || unsafe {
+        let raw = tracked_zeroed_bytes(std::mem::size_of::<libc::group>() + 1);
+        let grp = raw.cast::<u8>().add(1).cast::<libc::group>();
+        assert_ne!((grp as usize) % std::mem::align_of::<libc::group>(), 0);
+        let mut buf = vec![0u8; 1024];
+        let mut result = std::ptr::NonNull::<libc::group>::dangling().as_ptr();
+
+        let rc = getgrgid_r(0, grp, buf.as_mut_ptr().cast(), buf.len(), &mut result);
 
         assert_eq!(rc, libc::EINVAL);
         assert!(result.is_null());
