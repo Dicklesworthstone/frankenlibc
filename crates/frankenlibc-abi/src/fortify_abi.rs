@@ -9,8 +9,81 @@ use std::os::raw::c_long;
 
 use frankenlibc_core::syscall as raw_syscall;
 
+use crate::malloc_abi::known_remaining;
+
 type WcharT = c_int; // wchar_t is int32 on Linux/x86_64
 type NfdsT = u64; // nfds_t on x86_64
+const WCHAR_SIZE: usize = core::mem::size_of::<WcharT>();
+
+#[inline]
+fn wide_units_from_bytes(bytes: usize) -> usize {
+    bytes / WCHAR_SIZE
+}
+
+#[inline]
+fn checked_wide_bytes(units: usize) -> usize {
+    let Some(bytes) = units.checked_mul(WCHAR_SIZE) else {
+        unsafe { __chk_fail() }
+    };
+    bytes
+}
+
+#[inline]
+fn checked_wide_add(lhs: usize, rhs: usize) -> usize {
+    let Some(sum) = lhs.checked_add(rhs) else {
+        unsafe { __chk_fail() }
+    };
+    sum
+}
+
+unsafe fn scan_wide_len(ptr: *const WcharT, max_units: Option<usize>) -> (usize, bool) {
+    let alloc_units = known_remaining(ptr as usize).map(wide_units_from_bytes);
+    let limit = match (max_units, alloc_units) {
+        (Some(max), Some(alloc)) => Some(max.min(alloc)),
+        (Some(max), None) => Some(max),
+        (None, Some(alloc)) => Some(alloc),
+        (None, None) => None,
+    };
+    match limit {
+        Some(limit) => {
+            for i in 0..limit {
+                if unsafe { *ptr.add(i) } == 0 {
+                    return (i, true);
+                }
+            }
+            (limit, false)
+        }
+        None => {
+            let mut len = 0usize;
+            while unsafe { *ptr.add(len) } != 0 {
+                len += 1;
+            }
+            (len, true)
+        }
+    }
+}
+
+unsafe fn checked_wide_len(ptr: *const WcharT, max_units: Option<usize>) -> usize {
+    let (len, terminated) = unsafe { scan_wide_len(ptr, max_units) };
+    if !terminated {
+        unsafe { __chk_fail() }
+    }
+    len
+}
+
+unsafe fn checked_wide_nlen(ptr: *const WcharT, n: usize) -> usize {
+    let alloc_units = known_remaining(ptr as usize).map(wide_units_from_bytes);
+    let limit = alloc_units.map(|units| units.min(n)).unwrap_or(n);
+    for i in 0..limit {
+        if unsafe { *ptr.add(i) } == 0 {
+            return i;
+        }
+    }
+    if limit < n {
+        unsafe { __chk_fail() }
+    }
+    n
+}
 
 // Functions not in the Rust `libc` crate but available in glibc.
 unsafe extern "C" {
@@ -690,14 +763,14 @@ pub unsafe extern "C" fn __wcscpy_chk(
     src: *const WcharT,
     destlen: usize,
 ) -> *mut WcharT {
-    let mut len = 0;
-    while unsafe { *src.add(len) } != 0 {
-        len += 1;
-    }
-    if destlen != usize::MAX && (len + 1) * 4 > destlen {
+    let max_units = (destlen != usize::MAX).then(|| wide_units_from_bytes(destlen));
+    let len = unsafe { checked_wide_len(src, max_units) };
+    let copy_units = checked_wide_add(len, 1);
+    let copy_bytes = checked_wide_bytes(copy_units);
+    if destlen != usize::MAX && copy_bytes > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), (len + 1) * 4) };
+    unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), copy_bytes) };
     dest
 }
 
@@ -708,12 +781,21 @@ pub unsafe extern "C" fn __wcsncpy_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    if destlen != usize::MAX && n * 4 > destlen {
+    let copy_bytes = checked_wide_bytes(n);
+    if destlen != usize::MAX && copy_bytes > destlen {
         unsafe { __chk_fail() }
     }
     let mut i = 0;
-    while i < n && unsafe { *src.add(i) } != 0 {
-        unsafe { *dest.add(i) = *src.add(i) };
+    let src_units = known_remaining(src as usize).map(wide_units_from_bytes);
+    while i < n {
+        if src_units.is_some_and(|units| i >= units) {
+            unsafe { __chk_fail() }
+        }
+        let ch = unsafe { *src.add(i) };
+        if ch == 0 {
+            break;
+        }
+        unsafe { *dest.add(i) = ch };
         i += 1;
     }
     while i < n {
@@ -729,18 +811,17 @@ pub unsafe extern "C" fn __wcscat_chk(
     src: *const WcharT,
     destlen: usize,
 ) -> *mut WcharT {
-    let mut dlen = 0;
-    while unsafe { *dest.add(dlen) } != 0 {
-        dlen += 1;
-    }
-    let mut slen = 0;
-    while unsafe { *src.add(slen) } != 0 {
-        slen += 1;
-    }
-    if destlen != usize::MAX && (dlen + slen + 1) * 4 > destlen {
+    let dest_units = (destlen != usize::MAX).then(|| wide_units_from_bytes(destlen));
+    let dlen = unsafe { checked_wide_len(dest.cast_const(), dest_units) };
+    let src_limit = dest_units.map(|units| units.saturating_sub(dlen));
+    let slen = unsafe { checked_wide_len(src, src_limit) };
+    let total_units = checked_wide_add(checked_wide_add(dlen, slen), 1);
+    let total_bytes = checked_wide_bytes(total_units);
+    if destlen != usize::MAX && total_bytes > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { crate::string_abi::memcpy(dest.add(dlen).cast(), src.cast(), (slen + 1) * 4) };
+    let copy_bytes = checked_wide_bytes(checked_wide_add(slen, 1));
+    unsafe { crate::string_abi::memcpy(dest.add(dlen).cast(), src.cast(), copy_bytes) };
     dest
 }
 
@@ -751,15 +832,21 @@ pub unsafe extern "C" fn __wcsncat_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    let mut dlen = 0;
-    while unsafe { *dest.add(dlen) } != 0 {
-        dlen += 1;
-    }
-    let mut slen = 0;
-    while slen < n && unsafe { *src.add(slen) } != 0 {
-        slen += 1;
-    }
-    if destlen != usize::MAX && (dlen + slen + 1) * 4 > destlen {
+    let dest_units = (destlen != usize::MAX).then(|| wide_units_from_bytes(destlen));
+    let dlen = unsafe { checked_wide_len(dest.cast_const(), dest_units) };
+    let src_scan_units = if let Some(units) = dest_units {
+        let used_units = checked_wide_add(dlen, 1);
+        let Some(remaining_units) = units.checked_sub(used_units) else {
+            unsafe { __chk_fail() }
+        };
+        n.min(checked_wide_add(remaining_units, 1))
+    } else {
+        n
+    };
+    let slen = unsafe { checked_wide_nlen(src, src_scan_units) };
+    let total_units = checked_wide_add(checked_wide_add(dlen, slen), 1);
+    let total_bytes = checked_wide_bytes(total_units);
+    if destlen != usize::MAX && total_bytes > destlen {
         unsafe { __chk_fail() }
     }
     for i in 0..slen {
@@ -776,10 +863,11 @@ pub unsafe extern "C" fn __wmemcpy_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    if destlen != usize::MAX && n * 4 > destlen {
+    let bytes = checked_wide_bytes(n);
+    if destlen != usize::MAX && bytes > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), n * 4) };
+    unsafe { crate::string_abi::memcpy(dest.cast(), src.cast(), bytes) };
     dest
 }
 
@@ -790,10 +878,11 @@ pub unsafe extern "C" fn __wmemmove_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    if destlen != usize::MAX && n * 4 > destlen {
+    let bytes = checked_wide_bytes(n);
+    if destlen != usize::MAX && bytes > destlen {
         unsafe { __chk_fail() }
     }
-    unsafe { crate::string_abi::memmove(dest.cast(), src.cast(), n * 4) };
+    unsafe { crate::string_abi::memmove(dest.cast(), src.cast(), bytes) };
     dest
 }
 
@@ -804,7 +893,8 @@ pub unsafe extern "C" fn __wmemset_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    if destlen != usize::MAX && n * 4 > destlen {
+    let bytes = checked_wide_bytes(n);
+    if destlen != usize::MAX && bytes > destlen {
         unsafe { __chk_fail() }
     }
     for i in 0..n {
@@ -891,7 +981,12 @@ pub unsafe extern "C" fn __fgetws_chk(
     n: c_int,
     stream: *mut c_void,
 ) -> *mut WcharT {
-    if buflen != usize::MAX && (n as usize) * 4 > buflen {
+    let requested = if n <= 0 {
+        0
+    } else {
+        checked_wide_bytes(n as usize)
+    };
+    if buflen != usize::MAX && requested > buflen {
         unsafe { __chk_fail() }
     }
     unsafe { fgetws(buf, n, stream) }
@@ -904,7 +999,12 @@ pub unsafe extern "C" fn __fgetws_unlocked_chk(
     n: c_int,
     stream: *mut c_void,
 ) -> *mut WcharT {
-    if buflen != usize::MAX && (n as usize) * 4 > buflen {
+    let requested = if n <= 0 {
+        0
+    } else {
+        checked_wide_bytes(n as usize)
+    };
+    if buflen != usize::MAX && requested > buflen {
         unsafe { __chk_fail() }
     }
     unsafe { fgetws(buf, n, stream) }
@@ -919,7 +1019,8 @@ pub unsafe extern "C" fn __mbstowcs_chk(
     n: usize,
     destlen: usize,
 ) -> usize {
-    if destlen != usize::MAX && n * 4 > destlen {
+    let bytes = checked_wide_bytes(n);
+    if destlen != usize::MAX && bytes > destlen {
         unsafe { __chk_fail() }
     }
     unsafe { mbstowcs(dest, src, n) }
@@ -946,7 +1047,8 @@ pub unsafe extern "C" fn __mbsrtowcs_chk(
     ps: *mut c_void,
     destlen: usize,
 ) -> usize {
-    if destlen != usize::MAX && n * 4 > destlen {
+    let bytes = checked_wide_bytes(n);
+    if destlen != usize::MAX && bytes > destlen {
         unsafe { __chk_fail() }
     }
     unsafe { mbsrtowcs(dest, src, n, ps) }
@@ -975,7 +1077,8 @@ pub unsafe extern "C" fn __mbsnrtowcs_chk(
     ps: *mut c_void,
     destlen: usize,
 ) -> usize {
-    if destlen != usize::MAX && n * 4 > destlen {
+    let bytes = checked_wide_bytes(n);
+    if destlen != usize::MAX && bytes > destlen {
         unsafe { __chk_fail() }
     }
     unsafe { mbsnrtowcs(dest, src, nms, n, ps) }
