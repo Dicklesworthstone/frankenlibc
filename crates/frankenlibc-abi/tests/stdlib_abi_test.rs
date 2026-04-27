@@ -9,12 +9,12 @@ use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atoll, bsearch_r, clearenv, confstr, dehumanize_number, drand48, ecvt,
-    erand48, expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs,
-    get_nprocs_conf, get_phys_pages, getbsize, getenv, getenv_r, getsubopt, humanize_number,
-    initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps, mrand48, nrand48,
-    on_exit, putenv, qsort_r, random, reallocarray, reallocf, recallocarray, seed48, setenv,
-    setstate, srand48, srandom, strpct, strspct, strtod, strtof, strtoi, strtold, strtoll,
-    strtonum, strtoq, strtou, strtoull, strtouq, system, unsetenv,
+    erand48, error_at_line, expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages,
+    get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv, getenv_r, getsubopt,
+    humanize_number, initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps,
+    mrand48, nrand48, on_exit, putenv, qsort_r, random, reallocarray, reallocf, recallocarray,
+    seed48, setenv, setstate, srand48, srandom, strpct, strspct, strtod, strtof, strtoi, strtold,
+    strtoll, strtonum, strtoq, strtou, strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -3613,6 +3613,90 @@ fn l64a_a64l_roundtrip() {
             let decoded = a64l(encoded);
             assert_eq!(decoded as i64, val, "roundtrip failed for {val}");
         }
+    }
+}
+
+#[test]
+fn error_at_line_ignores_tracked_unterminated_filename_in_child()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = b"TRACKED_UNTERMINATED_ERROR_FILENAME";
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("error_at_line_tracked_unterminated_filename_child_process")
+        .arg("--nocapture")
+        .env("FLC_ERROR_AT_LINE_UNTERMINATED_FILENAME_CHILD", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "child exited with {:?}",
+        output.status
+    );
+    assert!(
+        !output
+            .stderr
+            .windows(payload.len())
+            .any(|window| window == payload),
+        "unterminated tracked filename leaked into stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn error_at_line_tracked_unterminated_filename_child_process() {
+    if std::env::var_os("FLC_ERROR_AT_LINE_UNTERMINATED_FILENAME_CHILD").is_none() {
+        return;
+    }
+
+    let filename = unsafe { malloc_unterminated(b"TRACKED_UNTERMINATED_ERROR_FILENAME") };
+    unsafe {
+        error_at_line(0, 0, filename.cast_const(), 77, c"safe message".as_ptr());
+        frankenlibc_abi::malloc_abi::free(filename.cast());
+    }
+}
+
+#[test]
+fn error_at_line_ignores_tracked_unterminated_fmt_in_child()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = b"TRACKED_UNTERMINATED_ERROR_FMT";
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--ignored")
+        .arg("--exact")
+        .arg("error_at_line_tracked_unterminated_fmt_child_process")
+        .arg("--nocapture")
+        .env("FLC_ERROR_AT_LINE_UNTERMINATED_FMT_CHILD", "1")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "child exited with {:?}",
+        output.status
+    );
+    assert!(
+        !output
+            .stderr
+            .windows(payload.len())
+            .any(|window| window == payload),
+        "unterminated tracked format leaked into stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn error_at_line_tracked_unterminated_fmt_child_process() {
+    if std::env::var_os("FLC_ERROR_AT_LINE_UNTERMINATED_FMT_CHILD").is_none() {
+        return;
+    }
+
+    let fmt = unsafe { malloc_unterminated(b"TRACKED_UNTERMINATED_ERROR_FMT") };
+    unsafe {
+        error_at_line(0, 0, c"safe-file.rs".as_ptr(), 88, fmt.cast_const());
+        frankenlibc_abi::malloc_abi::free(fmt.cast());
     }
 }
 

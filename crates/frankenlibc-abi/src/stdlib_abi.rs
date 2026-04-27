@@ -3547,45 +3547,44 @@ pub unsafe extern "C" fn error_at_line(
 
     let mut stderr = std::io::stderr().lock();
 
-    let progname = unsafe {
+    let progname = {
         let p = get_program_short_name();
         if !p.is_null() {
-            CStr::from_ptr(p).to_str().unwrap_or("unknown")
+            unsafe { read_bounded_cstr_bytes(p) }
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .unwrap_or_else(|| "unknown".to_string())
         } else {
-            "unknown"
+            "unknown".to_string()
         }
     };
 
     let _ = write!(stderr, "{progname}:");
 
-    if !filename.is_null() {
-        let fname = unsafe { CStr::from_ptr(filename) };
-        if let Ok(f) = fname.to_str() {
-            let _ = write!(stderr, "{f}:{linenum}: ");
-        }
+    if !filename.is_null()
+        && let Some(filename_bytes) = unsafe { read_bounded_cstr_bytes(filename) }
+        && let Ok(f) = std::str::from_utf8(&filename_bytes)
+    {
+        let _ = write!(stderr, "{f}:{linenum}: ");
     }
 
-    if !fmt.is_null() {
-        let fmt_str = unsafe { CStr::from_ptr(fmt) };
-        if let Ok(f) = fmt_str.to_str() {
-            let msg = unsafe {
-                crate::stdio_abi::vprintf_extract_and_render(
-                    f,
-                    (&mut args) as *mut _ as *mut c_void,
-                )
-            };
-            let _ = write!(stderr, "{msg}");
-        }
+    if !fmt.is_null()
+        && let Some(fmt_bytes) = unsafe { read_bounded_cstr_bytes(fmt) }
+        && let Ok(f) = std::str::from_utf8(&fmt_bytes)
+    {
+        let msg = unsafe {
+            crate::stdio_abi::vprintf_extract_and_render(f, (&mut args) as *mut _ as *mut c_void)
+        };
+        let _ = write!(stderr, "{msg}");
     }
 
     if errnum != 0 {
-        let err_msg = unsafe {
-            let p = crate::string_abi::strerror(errnum);
-            if !p.is_null() {
-                CStr::from_ptr(p).to_str().unwrap_or("Unknown error")
-            } else {
-                "Unknown error"
-            }
+        let p = unsafe { crate::string_abi::strerror(errnum) };
+        let err_msg = if !p.is_null() {
+            unsafe { read_bounded_cstr_bytes(p) }
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .unwrap_or_else(|| "Unknown error".to_string())
+        } else {
+            "Unknown error".to_string()
         };
         let _ = write!(stderr, ": {err_msg}");
     }
