@@ -3,7 +3,7 @@
 ## Current Reality
 
 Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).
-Reality snapshot: total_exported=4109, implemented=3699, raw_syscall=410, glibc_call_through=0, stub=0.
+Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, glibc_call_through=0, stub=0.
 Counts below reflect that generated snapshot and will change as matrix drift fixes land.
 Regenerate deterministically with:
 
@@ -13,9 +13,9 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
   --output tests/conformance/reality_report.v1.json
 ```
 
-Current exported ABI surface is **4109 symbols**, classified as:
-- `Implemented`: 3699
-- `RawSyscall`: 410
+Current exported ABI surface is **4119 symbols**, classified as:
+- `Implemented`: 3705
+- `RawSyscall`: 414
 - `WrapsHostLibc`: 0
 - `GlibcCallThrough`: 0
 - `Stub`: 0
