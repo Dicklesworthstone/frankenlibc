@@ -9,12 +9,13 @@ use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atof, atoll, bsearch_r, clearenv, confstr, dehumanize_number, drand48,
-    ecvt, erand48, error_at_line, expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages,
-    get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv, getenv_r, getsubopt,
-    humanize_number, initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps,
-    mrand48, nrand48, on_exit, putenv, qsort_r, random, reallocarray, reallocf, recallocarray,
-    seed48, setenv, setstate, srand48, srandom, strpct, strspct, strtod, strtof, strtoi, strtold,
-    strtoll, strtonum, strtoq, strtou, strtoull, strtouq, system, unsetenv,
+    drand48_r, ecvt, erand48, erand48_r, error_at_line, expand_number, fcvt, fmtcheck, freezero,
+    gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv,
+    getenv_r, getsubopt, humanize_number, initstate, jrand48, l64a, lcong48, lcong48_r, lrand48,
+    lrand48_r, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit, putenv, qsort_r, random,
+    reallocarray, reallocf, recallocarray, seed48, seed48_r, setenv, setstate, srand48, srand48_r,
+    srandom, strpct, strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou,
+    strtoull, strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -3729,6 +3730,144 @@ fn lcong48_rejects_tracked_short_params_without_reconfiguring() {
         lcong48(raw);
         assert_eq!(drand48(), expected);
         frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
+fn drand48_r_accepts_valid_tracked_data_and_result() {
+    let data = unsafe { malloc_tracked_bytes(24) };
+    let result = unsafe { malloc_tracked_bytes(std::mem::size_of::<libc::c_double>()) }
+        .cast::<libc::c_double>();
+    unsafe {
+        assert_eq!(srand48_r(1, data.cast()), 0);
+        assert_eq!(drand48_r(data.cast(), result), 0);
+        let observed = *result;
+        assert!(
+            (0.0..1.0).contains(&observed),
+            "drand48_r out of range: {observed}"
+        );
+        frankenlibc_abi::malloc_abi::free(result.cast());
+        frankenlibc_abi::malloc_abi::free(data.cast());
+    }
+}
+
+#[test]
+fn srand48_r_matches_global_first_outputs() {
+    let _lock = drand48_lock();
+    let data = unsafe { malloc_tracked_bytes(24) };
+    unsafe {
+        srand48(42);
+        let expected_double = drand48();
+        assert_eq!(srand48_r(42, data.cast()), 0);
+        let mut observed_double = 0.0;
+        assert_eq!(drand48_r(data.cast(), &mut observed_double), 0);
+        assert_eq!(observed_double, expected_double);
+
+        srand48(42);
+        let expected_long = lrand48();
+        assert_eq!(srand48_r(42, data.cast()), 0);
+        let mut observed_long = 0;
+        assert_eq!(lrand48_r(data.cast(), &mut observed_long), 0);
+        assert_eq!(observed_long, expected_long);
+
+        frankenlibc_abi::malloc_abi::free(data.cast());
+    }
+}
+
+#[test]
+fn lcong48_r_honors_custom_params() {
+    let data = unsafe { malloc_tracked_bytes(24) };
+    let mut params = [0u16, 0, 0, 1, 0, 0, 1];
+    let mut result = 0.0;
+    unsafe {
+        assert_eq!(lcong48_r(params.as_mut_ptr(), data.cast()), 0);
+        assert_eq!(drand48_r(data.cast(), &mut result), 0);
+        let expected = 1.0 / ((1u64 << 48) as f64);
+        assert!(
+            (result - expected).abs() < f64::EPSILON,
+            "lcong48_r custom result: {result}"
+        );
+        frankenlibc_abi::malloc_abi::free(data.cast());
+    }
+}
+
+#[test]
+fn drand48_r_rejects_tracked_short_data() {
+    let data = unsafe { malloc_tracked_bytes(2) };
+    let mut result = 0.0;
+    unsafe {
+        assert_eq!(drand48_r(data.cast(), &mut result), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(data.cast());
+    }
+}
+
+#[test]
+fn drand48_r_rejects_tracked_short_result() {
+    let data = unsafe { malloc_tracked_bytes(24) };
+    let result = unsafe { malloc_tracked_bytes(4) }.cast::<libc::c_double>();
+    unsafe {
+        assert_eq!(srand48_r(1, data.cast()), 0);
+        assert_eq!(drand48_r(data.cast(), result), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(result.cast());
+        frankenlibc_abi::malloc_abi::free(data.cast());
+    }
+}
+
+#[test]
+fn lrand48_r_rejects_tracked_short_result() {
+    let data = unsafe { malloc_tracked_bytes(24) };
+    let result = unsafe { malloc_tracked_bytes(2) }.cast::<libc::c_long>();
+    unsafe {
+        assert_eq!(srand48_r(1, data.cast()), 0);
+        assert_eq!(lrand48_r(data.cast(), result), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(result.cast());
+        frankenlibc_abi::malloc_abi::free(data.cast());
+    }
+}
+
+#[test]
+fn erand48_r_rejects_tracked_short_state() {
+    let state = unsafe { malloc_tracked_bytes(2) }.cast::<u16>();
+    let data = unsafe { malloc_tracked_bytes(24) };
+    let mut result = 0.0;
+    unsafe {
+        *state = 0x1234;
+        assert_eq!(erand48_r(state, data.cast(), &mut result), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(data.cast());
+        frankenlibc_abi::malloc_abi::free(state.cast());
+    }
+}
+
+#[test]
+fn srand48_r_rejects_tracked_short_data() {
+    let data = unsafe { malloc_tracked_bytes(2) };
+    unsafe {
+        assert_eq!(srand48_r(1, data.cast()), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(data.cast());
+    }
+}
+
+#[test]
+fn seed48_r_rejects_tracked_short_seed() {
+    let seed = unsafe { malloc_tracked_bytes(2) }.cast::<u16>();
+    let data = unsafe { malloc_tracked_bytes(24) };
+    unsafe {
+        *seed = 0x1234;
+        assert_eq!(seed48_r(seed, data.cast()), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(data.cast());
+        frankenlibc_abi::malloc_abi::free(seed.cast());
+    }
+}
+
+#[test]
+fn lcong48_r_rejects_tracked_short_params() {
+    let params = unsafe { malloc_tracked_bytes(2) }.cast::<u16>();
+    let data = unsafe { malloc_tracked_bytes(24) };
+    unsafe {
+        *params = 0x1234;
+        assert_eq!(lcong48_r(params, data.cast()), libc::EINVAL);
+        frankenlibc_abi::malloc_abi::free(data.cast());
+        frankenlibc_abi::malloc_abi::free(params.cast());
     }
 }
 

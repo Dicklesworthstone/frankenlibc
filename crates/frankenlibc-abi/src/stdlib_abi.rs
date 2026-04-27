@@ -4284,44 +4284,116 @@ pub unsafe extern "C" fn gnu_get_libc_release() -> *const c_char {
 
 const DRAND48_A: u64 = 0x5DEECE66D;
 const DRAND48_C: u16 = 0xB;
+const DRAND48_MASK: u64 = 0xFFFF_FFFF_FFFF;
+const DRAND48_DATA_BYTES: usize = 24;
+const DRAND48_C_OFFSET: usize = 12;
+const DRAND48_INIT_OFFSET: usize = 14;
+const DRAND48_A_OFFSET: usize = 16;
+const DRAND48_INIT_MARKER: u16 = 1;
 
-unsafe fn drand48_step(data: *mut c_void) {
-    let x = data as *mut u16;
-    // Read current state x[0..3]
-    let x0 = unsafe { *x } as u64;
-    let x1 = unsafe { *x.add(1) } as u64;
-    let x2 = unsafe { *x.add(2) } as u64;
-    let xi = x0 | (x1 << 16) | (x2 << 32);
-    let next = xi.wrapping_mul(DRAND48_A).wrapping_add(DRAND48_C as u64) & 0xFFFF_FFFF_FFFF;
+fn rand48_data_fits(data: *const c_void) -> bool {
+    tracked_region_fits(data, DRAND48_DATA_BYTES)
+}
+
+fn rand48_result_fits<T>(result: *const T) -> bool {
+    tracked_region_fits(result.cast(), core::mem::size_of::<T>())
+}
+
+unsafe fn rand48_read_u16(data: *const c_void, byte_offset: usize) -> u16 {
+    let ptr = unsafe { (data as *const u8).add(byte_offset).cast::<u16>() };
+    unsafe { ptr::read_unaligned(ptr) }
+}
+
+unsafe fn rand48_write_u16(data: *mut c_void, byte_offset: usize, value: u16) {
+    let ptr = unsafe { (data as *mut u8).add(byte_offset).cast::<u16>() };
+    unsafe { ptr::write_unaligned(ptr, value) };
+}
+
+unsafe fn rand48_read_u64(data: *const c_void, byte_offset: usize) -> u64 {
+    let ptr = unsafe { (data as *const u8).add(byte_offset).cast::<u64>() };
+    unsafe { ptr::read_unaligned(ptr) }
+}
+
+unsafe fn rand48_write_u64(data: *mut c_void, byte_offset: usize, value: u64) {
+    let ptr = unsafe { (data as *mut u8).add(byte_offset).cast::<u64>() };
+    unsafe { ptr::write_unaligned(ptr, value) };
+}
+
+unsafe fn rand48_read_word(ptr: *const u16, index: usize) -> u16 {
+    unsafe { ptr::read_unaligned(ptr.add(index)) }
+}
+
+unsafe fn rand48_write_word(ptr: *mut u16, index: usize, value: u16) {
+    unsafe { ptr::write_unaligned(ptr.add(index), value) };
+}
+
+unsafe fn rand48_state(data: *const c_void) -> u64 {
+    let x0 = unsafe { rand48_read_u16(data, 0) } as u64;
+    let x1 = unsafe { rand48_read_u16(data, 2) } as u64;
+    let x2 = unsafe { rand48_read_u16(data, 4) } as u64;
+    x0 | (x1 << 16) | (x2 << 32)
+}
+
+unsafe fn rand48_write_state(data: *mut c_void, state: u64) {
     unsafe {
-        *x = (next & 0xFFFF) as u16;
-        *x.add(1) = ((next >> 16) & 0xFFFF) as u16;
-        *x.add(2) = ((next >> 32) & 0xFFFF) as u16;
+        rand48_write_u16(data, 0, (state & 0xFFFF) as u16);
+        rand48_write_u16(data, 2, ((state >> 16) & 0xFFFF) as u16);
+        rand48_write_u16(data, 4, ((state >> 32) & 0xFFFF) as u16);
     }
 }
 
+unsafe fn rand48_params(data: *const c_void) -> (u64, u16) {
+    let initialized = unsafe { rand48_read_u16(data, DRAND48_INIT_OFFSET) };
+    if initialized == DRAND48_INIT_MARKER {
+        let a = unsafe { rand48_read_u64(data, DRAND48_A_OFFSET) } & DRAND48_MASK;
+        let c = unsafe { rand48_read_u16(data, DRAND48_C_OFFSET) };
+        (a, c)
+    } else {
+        (DRAND48_A, DRAND48_C)
+    }
+}
+
+unsafe fn rand48_write_params(data: *mut c_void, a: u64, c: u16) {
+    unsafe {
+        rand48_write_u16(data, DRAND48_C_OFFSET, c);
+        rand48_write_u16(data, DRAND48_INIT_OFFSET, DRAND48_INIT_MARKER);
+        rand48_write_u64(data, DRAND48_A_OFFSET, a & DRAND48_MASK);
+    }
+}
+
+unsafe fn drand48_step(data: *mut c_void) {
+    let xi = unsafe { rand48_state(data.cast_const()) };
+    let (a, c) = unsafe { rand48_params(data.cast_const()) };
+    let next = xi.wrapping_mul(a).wrapping_add(c as u64) & DRAND48_MASK;
+    unsafe { rand48_write_state(data, next) };
+}
+
 unsafe fn drand48_result_double(data: *const c_void) -> f64 {
-    let x = data as *const u16;
-    let x1 = unsafe { *x.add(1) } as u64;
-    let x2 = unsafe { *x.add(2) } as u64;
-    let combined = (x2 << 16) | x1;
-    combined as f64 / (1u64 << 32) as f64
+    let state = unsafe { rand48_state(data) };
+    state as f64 / (1u64 << 48) as f64
+}
+
+unsafe fn drand48_result_lrand(data: *const c_void) -> c_long {
+    let state = unsafe { rand48_state(data) };
+    (state >> 17) as c_long
 }
 
 unsafe fn drand48_result_long(data: *const c_void) -> c_long {
-    let x = data as *const u16;
-    let x1 = unsafe { *x.add(1) } as u32;
-    let x2 = unsafe { *x.add(2) } as u32;
-    ((x2 << 16) | x1) as i32 as c_long
+    let state = unsafe { rand48_state(data) };
+    ((state >> 16) as i32) as c_long
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn drand48_r(data: *mut c_void, result: *mut c_double) -> c_int {
-    if data.is_null() || result.is_null() {
+    if data.is_null()
+        || result.is_null()
+        || !rand48_data_fits(data.cast_const())
+        || !rand48_result_fits(result.cast_const())
+    {
         return libc::EINVAL;
     }
     unsafe { drand48_step(data) };
-    unsafe { *result = drand48_result_double(data) };
+    unsafe { ptr::write_unaligned(result, drand48_result_double(data)) };
     0
 }
 
@@ -4331,32 +4403,41 @@ pub unsafe extern "C" fn erand48_r(
     data: *mut c_void,
     result: *mut c_double,
 ) -> c_int {
-    if xsubi.is_null() || data.is_null() || result.is_null() {
+    if xsubi.is_null()
+        || data.is_null()
+        || result.is_null()
+        || !tracked_region_fits(xsubi.cast(), RAND48_STATE_BYTES)
+        || !rand48_data_fits(data.cast_const())
+        || !rand48_result_fits(result.cast_const())
+    {
         return libc::EINVAL;
     }
     // Copy xsubi into data state, step, copy back
     let dp = data as *mut u16;
     unsafe {
-        *dp = *xsubi;
-        *dp.add(1) = *xsubi.add(1);
-        *dp.add(2) = *xsubi.add(2);
+        rand48_write_word(dp, 0, rand48_read_word(xsubi.cast_const(), 0));
+        rand48_write_word(dp, 1, rand48_read_word(xsubi.cast_const(), 1));
+        rand48_write_word(dp, 2, rand48_read_word(xsubi.cast_const(), 2));
         drand48_step(data);
-        *xsubi = *dp;
-        *xsubi.add(1) = *dp.add(1);
-        *xsubi.add(2) = *dp.add(2);
-        *result = drand48_result_double(data);
+        rand48_write_word(xsubi, 0, rand48_read_word(dp.cast_const(), 0));
+        rand48_write_word(xsubi, 1, rand48_read_word(dp.cast_const(), 1));
+        rand48_write_word(xsubi, 2, rand48_read_word(dp.cast_const(), 2));
+        ptr::write_unaligned(result, drand48_result_double(data));
     }
     0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lrand48_r(data: *mut c_void, result: *mut c_long) -> c_int {
-    if data.is_null() || result.is_null() {
+    if data.is_null()
+        || result.is_null()
+        || !rand48_data_fits(data.cast_const())
+        || !rand48_result_fits(result.cast_const())
+    {
         return libc::EINVAL;
     }
     unsafe { drand48_step(data) };
-    let v = unsafe { drand48_result_long(data) };
-    unsafe { *result = v & 0x7FFFFFFF };
+    unsafe { ptr::write_unaligned(result, drand48_result_lrand(data)) };
     0
 }
 
@@ -4366,30 +4447,40 @@ pub unsafe extern "C" fn nrand48_r(
     data: *mut c_void,
     result: *mut c_long,
 ) -> c_int {
-    if xsubi.is_null() || data.is_null() || result.is_null() {
+    if xsubi.is_null()
+        || data.is_null()
+        || result.is_null()
+        || !tracked_region_fits(xsubi.cast(), RAND48_STATE_BYTES)
+        || !rand48_data_fits(data.cast_const())
+        || !rand48_result_fits(result.cast_const())
+    {
         return libc::EINVAL;
     }
     let dp = data as *mut u16;
     unsafe {
-        *dp = *xsubi;
-        *dp.add(1) = *xsubi.add(1);
-        *dp.add(2) = *xsubi.add(2);
+        rand48_write_word(dp, 0, rand48_read_word(xsubi.cast_const(), 0));
+        rand48_write_word(dp, 1, rand48_read_word(xsubi.cast_const(), 1));
+        rand48_write_word(dp, 2, rand48_read_word(xsubi.cast_const(), 2));
         drand48_step(data);
-        *xsubi = *dp;
-        *xsubi.add(1) = *dp.add(1);
-        *xsubi.add(2) = *dp.add(2);
-        *result = drand48_result_long(data) & 0x7FFFFFFF;
+        rand48_write_word(xsubi, 0, rand48_read_word(dp.cast_const(), 0));
+        rand48_write_word(xsubi, 1, rand48_read_word(dp.cast_const(), 1));
+        rand48_write_word(xsubi, 2, rand48_read_word(dp.cast_const(), 2));
+        ptr::write_unaligned(result, drand48_result_lrand(data));
     }
     0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mrand48_r(data: *mut c_void, result: *mut c_long) -> c_int {
-    if data.is_null() || result.is_null() {
+    if data.is_null()
+        || result.is_null()
+        || !rand48_data_fits(data.cast_const())
+        || !rand48_result_fits(result.cast_const())
+    {
         return libc::EINVAL;
     }
     unsafe { drand48_step(data) };
-    unsafe { *result = drand48_result_long(data) };
+    unsafe { ptr::write_unaligned(result, drand48_result_long(data)) };
     0
 }
 
@@ -4399,67 +4490,82 @@ pub unsafe extern "C" fn jrand48_r(
     data: *mut c_void,
     result: *mut c_long,
 ) -> c_int {
-    if xsubi.is_null() || data.is_null() || result.is_null() {
+    if xsubi.is_null()
+        || data.is_null()
+        || result.is_null()
+        || !tracked_region_fits(xsubi.cast(), RAND48_STATE_BYTES)
+        || !rand48_data_fits(data.cast_const())
+        || !rand48_result_fits(result.cast_const())
+    {
         return libc::EINVAL;
     }
     let dp = data as *mut u16;
     unsafe {
-        *dp = *xsubi;
-        *dp.add(1) = *xsubi.add(1);
-        *dp.add(2) = *xsubi.add(2);
+        rand48_write_word(dp, 0, rand48_read_word(xsubi.cast_const(), 0));
+        rand48_write_word(dp, 1, rand48_read_word(xsubi.cast_const(), 1));
+        rand48_write_word(dp, 2, rand48_read_word(xsubi.cast_const(), 2));
         drand48_step(data);
-        *xsubi = *dp;
-        *xsubi.add(1) = *dp.add(1);
-        *xsubi.add(2) = *dp.add(2);
-        *result = drand48_result_long(data);
+        rand48_write_word(xsubi, 0, rand48_read_word(dp.cast_const(), 0));
+        rand48_write_word(xsubi, 1, rand48_read_word(dp.cast_const(), 1));
+        rand48_write_word(xsubi, 2, rand48_read_word(dp.cast_const(), 2));
+        ptr::write_unaligned(result, drand48_result_long(data));
     }
     0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn srand48_r(seedval: c_long, data: *mut c_void) -> c_int {
-    if data.is_null() {
+    if data.is_null() || !rand48_data_fits(data.cast_const()) {
         return libc::EINVAL;
     }
     let dp = data as *mut u16;
     unsafe {
-        *dp = 0x330E; // default low bits
-        *dp.add(1) = (seedval & 0xFFFF) as u16;
-        *dp.add(2) = ((seedval >> 16) & 0xFFFF) as u16;
+        rand48_write_word(dp, 0, 0x330E);
+        rand48_write_word(dp, 1, (seedval & 0xFFFF) as u16);
+        rand48_write_word(dp, 2, ((seedval >> 16) & 0xFFFF) as u16);
+        rand48_write_params(data, DRAND48_A, DRAND48_C);
     }
     0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn seed48_r(seed16v: *mut u16, data: *mut c_void) -> c_int {
-    if seed16v.is_null() || data.is_null() {
+    if seed16v.is_null()
+        || data.is_null()
+        || !tracked_region_fits(seed16v.cast(), RAND48_STATE_BYTES)
+        || !rand48_data_fits(data.cast_const())
+    {
         return libc::EINVAL;
     }
     let dp = data as *mut u16;
     unsafe {
-        *dp = *seed16v;
-        *dp.add(1) = *seed16v.add(1);
-        *dp.add(2) = *seed16v.add(2);
+        rand48_write_word(dp, 0, rand48_read_word(seed16v.cast_const(), 0));
+        rand48_write_word(dp, 1, rand48_read_word(seed16v.cast_const(), 1));
+        rand48_write_word(dp, 2, rand48_read_word(seed16v.cast_const(), 2));
+        rand48_write_params(data, DRAND48_A, DRAND48_C);
     }
     0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lcong48_r(param: *mut u16, data: *mut c_void) -> c_int {
-    if param.is_null() || data.is_null() {
+    if param.is_null()
+        || data.is_null()
+        || !tracked_region_fits(param.cast(), RAND48_PARAM_BYTES)
+        || !rand48_data_fits(data.cast_const())
+    {
         return libc::EINVAL;
     }
     let dp = data as *mut u16;
     unsafe {
-        *dp = *param;
-        *dp.add(1) = *param.add(1);
-        *dp.add(2) = *param.add(2);
-        // param[3..5] = a, param[6] = c → stored at offsets 16 (a) and 12 (c)
-        let c_ptr = (data as *mut u8).add(12) as *mut u16;
-        *c_ptr = *param.add(6);
-        let a_ptr = (data as *mut u8).add(16) as *mut u64;
-        *a_ptr =
-            *param.add(3) as u64 | ((*param.add(4) as u64) << 16) | ((*param.add(5) as u64) << 32);
+        rand48_write_word(dp, 0, rand48_read_word(param.cast_const(), 0));
+        rand48_write_word(dp, 1, rand48_read_word(param.cast_const(), 1));
+        rand48_write_word(dp, 2, rand48_read_word(param.cast_const(), 2));
+        let a = rand48_read_word(param.cast_const(), 3) as u64
+            | ((rand48_read_word(param.cast_const(), 4) as u64) << 16)
+            | ((rand48_read_word(param.cast_const(), 5) as u64) << 32);
+        let c = rand48_read_word(param.cast_const(), 6);
+        rand48_write_params(data, a, c);
     }
     0
 }
