@@ -22900,31 +22900,61 @@ pub unsafe extern "C" fn logout(line: *const c_char) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host: *const c_char) {
     let mut entry: libc::utmpx = unsafe { std::mem::zeroed() };
+    let line_bytes = if line.is_null() {
+        None
+    } else {
+        match unsafe { read_c_string_bytes(line) } {
+            Some(bytes) => Some(bytes),
+            None => {
+                unsafe { set_abi_errno(libc::EINVAL) };
+                return;
+            }
+        }
+    };
+    let name_bytes = if name.is_null() {
+        None
+    } else {
+        match unsafe { read_c_string_bytes(name) } {
+            Some(bytes) => Some(bytes),
+            None => {
+                unsafe { set_abi_errno(libc::EINVAL) };
+                return;
+            }
+        }
+    };
+    let host_bytes = if host.is_null() {
+        None
+    } else {
+        match unsafe { read_c_string_bytes(host) } {
+            Some(bytes) => Some(bytes),
+            None => {
+                unsafe { set_abi_errno(libc::EINVAL) };
+                return;
+            }
+        }
+    };
 
     // If name is non-empty, this is a login (USER_PROCESS), else logout (DEAD_PROCESS)
-    let has_name = !name.is_null() && unsafe { *name != 0 };
+    let has_name = name_bytes.as_ref().is_some_and(|bytes| !bytes.is_empty());
     entry.ut_type = if has_name { 7 } else { 8 }; // USER_PROCESS or DEAD_PROCESS
     entry.ut_pid = syscall::sys_getpid();
 
     // Copy line
-    if !line.is_null() {
-        let s = unsafe { std::ffi::CStr::from_ptr(line) }.to_bytes();
+    if let Some(s) = line_bytes.as_deref() {
         let n = s.len().min(31);
         for (i, &b) in s[..n].iter().enumerate() {
             entry.ut_line[i] = b as c_char;
         }
     }
     // Copy name
-    if !name.is_null() {
-        let s = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+    if let Some(s) = name_bytes.as_deref() {
         let n = s.len().min(31);
         for (i, &b) in s[..n].iter().enumerate() {
             entry.ut_user[i] = b as c_char;
         }
     }
     // Copy host
-    if !host.is_null() {
-        let s = unsafe { std::ffi::CStr::from_ptr(host) }.to_bytes();
+    if let Some(s) = host_bytes.as_deref() {
         let n = s.len().min(255);
         for (i, &b) in s[..n].iter().enumerate() {
             entry.ut_host[i] = b as c_char;

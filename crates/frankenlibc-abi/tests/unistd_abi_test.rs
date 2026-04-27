@@ -89,8 +89,8 @@ use frankenlibc_abi::unistd_abi::{
     getnetbyname, getnetbyname_r, getnetent_r, getnetgrent, getnetgrent_r, getpid, getppid,
     getprotobyname_r, getprotobynumber_r, getprotoent, getprotoent_r, getservent, getservent_r,
     getttyent, getttynam, getuid, getutent_r, getutid, getutid_r, getutline, getutline_r, glob64,
-    globfree64, gsignal, isatty, link, logout, lseek, lstat, mkdir, mkfifo, mount_setattr, msgrcv,
-    msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise,
+    globfree64, gsignal, isatty, link, logout, logwtmp, lseek, lstat, mkdir, mkfifo, mount_setattr,
+    msgrcv, msgsnd, nftw as abi_nftw, open, openlog, pathconf, pidfd_getfd, process_madvise,
     process_mrelease, process_vm_readv, process_vm_writev, read, readlink, readpassphrase, rename,
     rmdir, sem_open, sem_unlink, semctl, semop, setfsent, sethostent, setnetent, setnetgrent,
     setns, setproctitle, setproctitle_init, setprotoent, setservent, setttyent, setutent, shmdt,
@@ -1764,6 +1764,31 @@ fn logout_rejects_tracked_unterminated_line() {
 
         assert_eq!(rc, 0);
         assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
+fn logwtmp_rejects_tracked_unterminated_fields() {
+    let raw_line = malloc_tracked_unterminated(b"tty-franken");
+    let raw_name = malloc_tracked_unterminated(b"alice");
+    let raw_host = malloc_tracked_unterminated(b"example.test");
+
+    unsafe {
+        *__errno_location() = 0;
+        logwtmp(raw_line, std::ptr::null(), std::ptr::null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        logwtmp(c"tty-franken".as_ptr(), raw_name, std::ptr::null());
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        *__errno_location() = 0;
+        logwtmp(c"tty-franken".as_ptr(), c"alice".as_ptr(), raw_host);
+        assert_eq!(*__errno_location(), libc::EINVAL);
+
+        frankenlibc_abi::malloc_abi::free(raw_line.cast());
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+        frankenlibc_abi::malloc_abi::free(raw_host.cast());
     }
 }
 
