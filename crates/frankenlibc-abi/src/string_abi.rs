@@ -2638,12 +2638,14 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
         return haystack as *mut c_char;
     }
 
-    let (mode, decision) = runtime_policy::decide(
+    let hay_known = known_remaining(haystack as usize);
+    let needle_known = known_remaining(needle as usize);
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         haystack as usize,
         0,
         false,
-        known_remaining(haystack as usize).is_none() && known_remaining(needle as usize).is_none(),
+        hay_known.is_none() && needle_known.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -2657,19 +2659,11 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
         return std::ptr::null_mut();
     }
 
-    let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    let hay_bound = if repair {
-        known_remaining(haystack as usize)
-    } else {
-        None
-    };
-    let needle_bound = if repair {
-        known_remaining(needle as usize)
-    } else {
-        None
-    };
+    let hay_bound = hay_known;
+    let needle_bound = needle_known;
 
-    // SAFETY: strict mode preserves raw strstr behavior; hardened mode bounds scan.
+    // SAFETY: known allocations are scanned only within their live extent;
+    // untracked strict-mode strings preserve raw libc scan semantics.
     let (out, adverse, work) = unsafe {
         let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
         let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
@@ -2995,7 +2989,7 @@ pub unsafe extern "C" fn strtok_r(
 
         match frankenlibc_core::string::strtok::strtok_r(s_slice, delim_slice, 0) {
             Some((start, _len, next_offset)) => {
-                let token = current.add(start);
+                let token = current.add(start); // ubs:ignore - substring pointer, not a secret
                 *saveptr = current.add(next_offset);
 
                 runtime_policy::observe(
@@ -3908,12 +3902,14 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
         return haystack as *mut c_char;
     }
 
-    let (mode, decision) = runtime_policy::decide(
+    let hay_known = known_remaining(haystack as usize);
+    let needle_known = known_remaining(needle as usize);
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         haystack as usize,
         0,
         false,
-        known_remaining(haystack as usize).is_none() && known_remaining(needle as usize).is_none(),
+        hay_known.is_none() && needle_known.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -3927,20 +3923,12 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
         return std::ptr::null_mut();
     }
 
-    let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    let hay_bound = if repair {
-        known_remaining(haystack as usize)
-    } else {
-        None
-    };
-    let needle_bound = if repair {
-        known_remaining(needle as usize)
-    } else {
-        None
-    };
+    let hay_bound = hay_known;
+    let needle_bound = needle_known;
 
-    // SAFETY: bounded scan.
-    let (out, span) = unsafe {
+    // SAFETY: known allocations are scanned only within their live extent;
+    // untracked strict-mode strings preserve raw libc scan semantics.
+    let (out, span, adverse) = unsafe {
         let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
         let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
         let h_slice_len = if hay_terminated { hay_len + 1 } else { hay_len };
@@ -3952,8 +3940,16 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
         let h_slice = std::slice::from_raw_parts(haystack.cast::<u8>(), h_slice_len);
         let n_slice = std::slice::from_raw_parts(needle.cast::<u8>(), n_slice_len);
         match frankenlibc_core::string::str::strcasestr(h_slice, n_slice) {
-            Some(idx) => (haystack.add(idx) as *mut c_char, hay_len),
-            None => (std::ptr::null_mut(), hay_len),
+            Some(idx) => (
+                haystack.add(idx) as *mut c_char,
+                hay_len,
+                !hay_terminated || !needle_terminated,
+            ),
+            None => (
+                std::ptr::null_mut(),
+                hay_len,
+                !hay_terminated || !needle_terminated,
+            ),
         }
     };
 
@@ -3967,7 +3963,7 @@ pub unsafe extern "C" fn strcasestr(haystack: *const c_char, needle: *const c_ch
         ApiFamily::StringMemory,
         decision.profile,
         runtime_policy::scaled_cost(10, span),
-        hay_bound.is_some() || needle_bound.is_some(),
+        adverse,
     );
     out
 }

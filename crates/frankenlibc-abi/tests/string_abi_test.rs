@@ -540,11 +540,37 @@ fn strstr_not_found_returns_null() {
 }
 
 #[test]
+fn strstr_bounds_tracked_unterminated_haystack() {
+    unsafe {
+        let hay = malloc_unterminated(b"hello world");
+        let ptr = strstr(hay, c"world".as_ptr());
+
+        assert!(!ptr.is_null());
+        assert_eq!(ptr.offset_from(hay), 6);
+
+        frankenlibc_abi::malloc_abi::free(hay.cast());
+    }
+}
+
+#[test]
 fn strcasestr_case_insensitive() {
     let ptr = unsafe { strcasestr(c"Hello World".as_ptr(), c"world".as_ptr()) };
     assert!(!ptr.is_null());
     let offset = unsafe { ptr.offset_from(c"Hello World".as_ptr()) };
     assert_eq!(offset, 6);
+}
+
+#[test]
+fn strcasestr_bounds_tracked_unterminated_haystack() {
+    unsafe {
+        let hay = malloc_unterminated(b"Hello World");
+        let ptr = strcasestr(hay, c"world".as_ptr());
+
+        assert!(!ptr.is_null());
+        assert_eq!(ptr.offset_from(hay), 6);
+
+        frankenlibc_abi::malloc_abi::free(hay.cast());
+    }
 }
 
 // ===========================================================================
