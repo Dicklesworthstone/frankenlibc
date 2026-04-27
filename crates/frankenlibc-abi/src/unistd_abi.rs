@@ -79,6 +79,11 @@ fn packed_entry_cstr_bytes(storage: &[u8], ptr: *const c_char) -> Option<&[u8]> 
     Some(&tail[..len])
 }
 
+#[inline]
+fn bounded_nul_len_with_nul(bytes: &[u8]) -> Option<usize> {
+    bytes.iter().position(|&byte| byte == 0).map(|len| len + 1)
+}
+
 /// Query the system page size via AT_PAGESZ from /proc/self/auxv, cached.
 /// Falls back to 4096 (x86_64 default) if the query fails.
 fn runtime_page_size() -> usize {
@@ -3700,8 +3705,14 @@ impl frankenlibc_core::ftw::FsOps for AbiFs {
             if entry.is_null() {
                 break;
             }
-            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) };
-            let name_bytes = name.to_bytes();
+            let name_storage = unsafe { &(*entry).d_name };
+            let name_len = name_storage
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(name_storage.len());
+            let name_bytes = unsafe {
+                core::slice::from_raw_parts(name_storage.as_ptr().cast::<u8>(), name_len)
+            };
             if name_bytes == b"." || name_bytes == b".." {
                 continue;
             }
@@ -6774,6 +6785,11 @@ pub unsafe extern "C" fn openpty(
         let _ = syscall::sys_close(master);
         return -1;
     }
+    let Some(slave_name_len) = bounded_nul_len_with_nul(&slave_name) else {
+        unsafe { set_abi_errno(errno::EIO) };
+        let _ = syscall::sys_close(master);
+        return -1;
+    };
 
     // Open slave
     let slave = match unsafe {
@@ -6813,11 +6829,12 @@ pub unsafe extern "C" fn openpty(
 
     // Copy slave name if buffer provided
     if !name.is_null() {
-        let len = unsafe { std::ffi::CStr::from_ptr(slave_name.as_ptr().cast()) }
-            .to_bytes_with_nul()
-            .len();
         unsafe {
-            std::ptr::copy_nonoverlapping(slave_name.as_ptr().cast::<c_char>(), name, len);
+            std::ptr::copy_nonoverlapping(
+                slave_name.as_ptr().cast::<c_char>(),
+                name,
+                slave_name_len,
+            );
         }
     }
 
@@ -7127,21 +7144,30 @@ const CRYPT_OUTPUT_SIZE: usize = 384;
 /// optional rounds= + base64 random + terminating NUL).
 const CRYPT_GENSALT_OUTPUT_SIZE: usize = 192;
 
-/// Copy a NUL-terminated source string into a writable byte slice;
-/// returns Some(strlen-without-NUL) on success, None if dst is too
-/// small.
+/// Copy a bounded C string into a writable byte slice; returns
+/// Some(strlen-without-NUL) on success, None if the source is
+/// unterminated within `src_limit` or the destination is too small.
 #[inline]
-fn copy_cstr_into(src: &CStr, dst_ptr: *mut c_char, dst_len: usize) -> Option<usize> {
-    let bytes = src.to_bytes();
-    if bytes.len() + 1 > dst_len {
+unsafe fn copy_bounded_cstr_into(
+    src: *const c_char,
+    src_limit: usize,
+    dst_ptr: *mut c_char,
+    dst_len: usize,
+) -> Option<usize> {
+    if src.is_null() || dst_ptr.is_null() || src_limit == 0 {
         return None;
     }
-    // SAFETY: caller validated dst_ptr/dst_len; bytes.len()+1 <= dst_len.
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, dst_ptr, bytes.len());
-        *dst_ptr.add(bytes.len()) = 0;
+    let (len, terminated) = unsafe { scan_c_string(src, Some(src_limit)) };
+    if !terminated || len + 1 > dst_len {
+        return None;
     }
-    Some(bytes.len())
+    let bytes = unsafe { core::slice::from_raw_parts(src.cast::<u8>(), len) };
+    // SAFETY: caller validated dst_ptr/dst_len; len+1 <= dst_len.
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), dst_ptr, len);
+        *dst_ptr.add(len) = 0;
+    }
+    Some(len)
 }
 
 /// libcrypt `crypt_r(key, salt, *data) -> *mut c_char` —
@@ -7170,11 +7196,10 @@ pub unsafe extern "C" fn crypt_r(
     if result.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: result points to NUL-terminated static thread-local
-    // crypt buffer.
-    let cstr = unsafe { CStr::from_ptr(result) };
     let dst = data as *mut c_char;
-    if copy_cstr_into(cstr, dst, CRYPT_OUTPUT_SIZE).is_none() {
+    if unsafe { copy_bounded_cstr_into(result, CRYPT_OUTPUT_SIZE, dst, CRYPT_OUTPUT_SIZE) }
+        .is_none()
+    {
         unsafe { set_abi_errno(errno::ERANGE) };
         return core::ptr::null_mut();
     }
@@ -7203,10 +7228,8 @@ pub unsafe extern "C" fn crypt_rn(
     if result.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: result is NUL-terminated.
-    let cstr = unsafe { CStr::from_ptr(result) };
     let dst = data as *mut c_char;
-    if copy_cstr_into(cstr, dst, size as usize).is_none() {
+    if unsafe { copy_bounded_cstr_into(result, CRYPT_OUTPUT_SIZE, dst, size as usize) }.is_none() {
         unsafe { set_abi_errno(errno::ERANGE) };
         return core::ptr::null_mut();
     }

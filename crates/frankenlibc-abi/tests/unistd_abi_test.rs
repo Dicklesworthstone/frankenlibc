@@ -9141,6 +9141,38 @@ fn rt_tgsigqueueinfo_null_uinfo_returns_efault() {
     assert_eq!(errno, libc::EFAULT);
 }
 
+#[test]
+fn openpty_copies_nul_terminated_slave_name() {
+    use frankenlibc_abi::unistd_abi::openpty;
+
+    let mut master: c_int = -1;
+    let mut slave: c_int = -1;
+    let mut name = [0 as c_char; 128];
+
+    let rc = unsafe {
+        openpty(
+            &mut master,
+            &mut slave,
+            name.as_mut_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if rc < 0 {
+        return;
+    }
+
+    assert!(
+        matches!(name.iter().position(|&byte| byte == 0), Some(nul) if nul > 0),
+        "openpty should copy a non-empty NUL-terminated slave name"
+    );
+
+    unsafe {
+        let _ = libc::close(master);
+        let _ = libc::close(slave);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // libcrypt aliases + DES no-ops + crypt_preferred_method + crypt_checksalt
 // ---------------------------------------------------------------------------
