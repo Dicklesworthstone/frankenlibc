@@ -7234,6 +7234,14 @@ pub unsafe extern "C" fn fparseln(
 // strvis / strnvis / strunvis / strnunvis (NetBSD vis(3) family)
 // ---------------------------------------------------------------------------
 
+unsafe fn bounded_c_str_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
+    let (len, terminated) = unsafe { scan_c_str_len(ptr, None) };
+    if !terminated {
+        return None;
+    }
+    Some(unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) })
+}
+
 /// NetBSD `strvis(dst, src, flags)` — encode `src` into `dst` per
 /// the vis(3) byte transformation. Returns the number of bytes
 /// written excluding the trailing NUL.
@@ -7247,7 +7255,9 @@ pub unsafe extern "C" fn strvis(dst: *mut c_char, src: *const c_char, flags: c_i
     if dst.is_null() || src.is_null() {
         return -1;
     }
-    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
     let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
     unsafe {
         std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
@@ -7273,7 +7283,9 @@ pub unsafe extern "C" fn strnvis(
     if dst.is_null() || src.is_null() || dlen == 0 {
         return -1;
     }
-    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
     let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
     if encoded.len() < dlen {
         unsafe {
@@ -7304,7 +7316,9 @@ pub unsafe extern "C" fn strunvis(dst: *mut c_char, src: *const c_char) -> c_int
     if dst.is_null() || src.is_null() {
         return -1;
     }
-    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
     let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
         Some(v) => v,
         None => return -1,
@@ -7328,7 +7342,9 @@ pub unsafe extern "C" fn strnunvis(dst: *mut c_char, dlen: usize, src: *const c_
     if dst.is_null() || src.is_null() || dlen == 0 {
         return -1;
     }
-    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
     let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
         Some(v) => v,
         None => return -1,
@@ -7504,7 +7520,9 @@ pub unsafe extern "C" fn strunvisx(dst: *mut c_char, src: *const c_char, _flags:
     if dst.is_null() || src.is_null() {
         return -1;
     }
-    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
     let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
         Some(v) => v,
         None => return -1,
@@ -7533,7 +7551,9 @@ pub unsafe extern "C" fn strnunvisx(
     if dst.is_null() || src.is_null() || dlen == 0 {
         return -1;
     }
-    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
     let decoded = match frankenlibc_core::stdio::vis::strunvis_to_vec(bytes) {
         Some(v) => v,
         None => return -1,
@@ -7743,8 +7763,9 @@ pub unsafe extern "C" fn strsvis(
     if dst.is_null() || src.is_null() {
         return -1;
     }
-    let src_len = unsafe { libc::strlen(src) };
-    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, src_len) };
+    let Some(src_slice) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
     let extras = unsafe { extras_slice(extra) };
     let encoded =
         frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
@@ -7773,8 +7794,9 @@ pub unsafe extern "C" fn strsnvis(
     if dst.is_null() || src.is_null() || dlen == 0 {
         return -1;
     }
-    let src_len = unsafe { libc::strlen(src) };
-    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, src_len) };
+    let Some(src_slice) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
     let extras = unsafe { extras_slice(extra) };
     let encoded =
         frankenlibc_core::stdio::vis::strvis_to_vec_with_extra(src_slice, flags as u32, extras);
@@ -7878,7 +7900,9 @@ pub unsafe extern "C" fn stravis(
     if outp.is_null() || src.is_null() {
         return -1;
     }
-    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes();
+    let Some(bytes) = (unsafe { bounded_c_str_bytes(src) }) else {
+        return -1;
+    };
     let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(bytes, flags as u32);
     let needed = encoded.len() + 1;
     let buf = unsafe { crate::malloc_abi::malloc(needed) } as *mut c_char;

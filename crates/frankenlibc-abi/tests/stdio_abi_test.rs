@@ -4036,6 +4036,13 @@ fn vis_string(buf: &[c_char], n: c_int) -> Vec<u8> {
     buf[..n as usize].iter().map(|&c| c as u8).collect()
 }
 
+unsafe fn tracked_bytes_without_nul(bytes: &[u8]) -> *mut c_char {
+    let ptr = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()).cast::<c_char>() };
+    assert!(!ptr.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len()) };
+    ptr
+}
+
 #[test]
 fn strvis_encodes_printable_unchanged() {
     let src = c"hello";
@@ -4148,6 +4155,43 @@ fn strunvis_null_args_return_minus_one() {
     let mut buf = vis_buf::<8>();
     assert_eq!(unsafe { strunvis(std::ptr::null_mut(), src.as_ptr()) }, -1);
     assert_eq!(unsafe { strunvis(buf.as_mut_ptr(), std::ptr::null()) }, -1);
+}
+
+#[test]
+fn strvis_rejects_tracked_unterminated_src() {
+    let src = unsafe { tracked_bytes_without_nul(b"abc") };
+    let mut buf = vis_buf::<16>();
+
+    let n = unsafe { strvis(buf.as_mut_ptr(), src.cast_const(), 0) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(src.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strunvis_rejects_tracked_unterminated_src() {
+    let src = unsafe { tracked_bytes_without_nul(b"\\^A") };
+    let mut buf = vis_buf::<16>();
+
+    let n = unsafe { strunvis(buf.as_mut_ptr(), src.cast_const()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(src.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+}
+
+#[test]
+fn strsvis_rejects_tracked_unterminated_src() {
+    let src = unsafe { tracked_bytes_without_nul(b"a#b") };
+    let extra = c"#";
+    let mut buf = vis_buf::<16>();
+
+    let n = unsafe { strsvis(buf.as_mut_ptr(), src.cast_const(), 0, extra.as_ptr()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(src.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
 }
 
 // ---------------------------------------------------------------------------
@@ -4882,6 +4926,19 @@ fn stravis_null_src_returns_minus_one() {
     let mut outp: *mut c_char = std::ptr::null_mut();
     let n = unsafe { stravis(&mut outp, std::ptr::null(), 0) };
     assert_eq!(n, -1);
+}
+
+#[test]
+fn stravis_rejects_tracked_unterminated_src() {
+    let src = unsafe { tracked_bytes_without_nul(b"abc") };
+    let mut outp: *mut c_char = std::ptr::null_mut();
+
+    let n = unsafe { stravis(&mut outp, src.cast_const(), 0) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(src.cast::<c_void>()) };
+
+    assert_eq!(n, -1);
+    assert!(outp.is_null());
 }
 
 // ---------------------------------------------------------------------------
