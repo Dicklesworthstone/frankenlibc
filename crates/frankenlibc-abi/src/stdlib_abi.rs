@@ -35,6 +35,7 @@ unsafe fn set_abi_errno_if_clear(err: c_int) {
 
 const MAX_EXPLICIT_BZERO_LEN: usize = isize::MAX as usize;
 const ENV_NAME_SCAN_LIMIT: usize = 131_072;
+const NUMERIC_STRING_SCAN_LIMIT: usize = 131_072;
 
 #[inline]
 fn bounded_zero_len(ptr: *mut c_void, requested: usize) -> Option<usize> {
@@ -62,6 +63,19 @@ fn env_name_scan_bound(ptr: *const c_char) -> usize {
     known_remaining(ptr as usize)
         .map(|remaining| remaining.min(ENV_NAME_SCAN_LIMIT))
         .unwrap_or(ENV_NAME_SCAN_LIMIT)
+}
+
+#[inline]
+fn numeric_string_scan_bound(ptr: *const c_char) -> usize {
+    known_remaining(ptr as usize)
+        .map(|remaining| remaining.min(NUMERIC_STRING_SCAN_LIMIT))
+        .unwrap_or(NUMERIC_STRING_SCAN_LIMIT)
+}
+
+#[inline]
+unsafe fn scan_terminated_numeric_string(ptr: *const c_char) -> Option<usize> {
+    let (len, terminated) = unsafe { scan_c_string(ptr, Some(numeric_string_scan_bound(ptr))) };
+    terminated.then_some(len)
 }
 
 unsafe extern "C" {
@@ -1800,13 +1814,10 @@ pub unsafe extern "C" fn atof(nptr: *const c_char) -> f64 {
         return 0.0;
     }
 
-    // SAFETY: caller guarantees nptr is valid NUL-terminated.
-    let mut len = 0usize;
-    unsafe {
-        while *nptr.add(len) != 0 {
-            len += 1;
-        }
-    }
+    let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        return 0.0;
+    };
     let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
     let result = frankenlibc_core::stdlib::atof(slice);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, false);
@@ -1844,13 +1855,13 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         return 0.0;
     }
 
-    // SAFETY: caller guarantees nptr is valid NUL-terminated.
-    let mut len = 0usize;
-    unsafe {
-        while *nptr.add(len) != 0 {
-            len += 1;
+    let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr as *mut c_char };
         }
-    }
+        return 0.0;
+    };
     let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
     let (val, consumed) = frankenlibc_core::stdlib::strtod(slice);
     if !endptr.is_null() {
@@ -1970,12 +1981,13 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
         return 0.0;
     }
 
-    let mut len = 0usize;
-    unsafe {
-        while *nptr.add(len) != 0 {
-            len += 1;
+    let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 5, true);
+        if !endptr.is_null() {
+            unsafe { *endptr = nptr as *mut c_char };
         }
-    }
+        return 0.0;
+    };
     let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
     let (wide, consumed) = frankenlibc_core::stdlib::strtod(slice);
     let value = wide as f32;

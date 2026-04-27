@@ -8,8 +8,8 @@ use std::os::unix::ffi::OsStrExt;
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
-    a64l, at_quick_exit, atoll, bsearch_r, clearenv, confstr, dehumanize_number, drand48, ecvt,
-    erand48, error_at_line, expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages,
+    a64l, at_quick_exit, atof, atoll, bsearch_r, clearenv, confstr, dehumanize_number, drand48,
+    ecvt, erand48, error_at_line, expand_number, fcvt, fmtcheck, freezero, gcvt, get_avphys_pages,
     get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv, getenv_r, getsubopt,
     humanize_number, initstate, jrand48, l64a, lcong48, lrand48, mkostemp, mkostemps, mkstemps,
     mrand48, nrand48, on_exit, putenv, qsort_r, random, reallocarray, reallocf, recallocarray,
@@ -635,6 +635,27 @@ fn strtof_sets_float_range_erange() {
     let literal_inf = unsafe { strtof(c"inf".as_ptr(), &mut endptr) };
     assert!(literal_inf.is_infinite());
     assert_eq!(unsafe { *__errno_location() }, 0);
+}
+
+#[test]
+fn floating_conversions_reject_tracked_unterminated_inputs() {
+    unsafe {
+        let atof_raw = malloc_unterminated(b"12.5");
+        assert_eq!(atof(atof_raw), 0.0);
+        frankenlibc_abi::malloc_abi::free(atof_raw.cast());
+
+        let strtod_raw = malloc_unterminated(b"12.5");
+        let mut strtod_end: *mut c_char = ptr::null_mut();
+        assert_eq!(strtod(strtod_raw, &mut strtod_end), 0.0);
+        assert_eq!(strtod_end, strtod_raw);
+        frankenlibc_abi::malloc_abi::free(strtod_raw.cast());
+
+        let strtof_raw = malloc_unterminated(b"12.5");
+        let mut strtof_end: *mut c_char = ptr::null_mut();
+        assert_eq!(strtof(strtof_raw, &mut strtof_end), 0.0);
+        assert_eq!(strtof_end, strtof_raw);
+        frankenlibc_abi::malloc_abi::free(strtof_raw.cast());
+    }
 }
 
 #[test]
@@ -7719,6 +7740,9 @@ use libc::{intmax_t, uintmax_t};
 unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
     let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
     assert!(!raw.is_null());
+    let usable =
+        unsafe { frankenlibc_abi::malloc_abi::malloc_usable_size(raw.cast()) }.max(bytes.len());
+    unsafe { std::ptr::write_bytes(raw, 0x7f, usable) };
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), raw, bytes.len()) };
     raw.cast()
 }
