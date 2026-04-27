@@ -22042,6 +22042,8 @@ pub unsafe extern "C" fn getttynam(name: *const c_char) -> *mut c_void {
 // getdate / timelocal
 // ===========================================================================
 
+const DATEMSK_PATH_SCAN_LIMIT: usize = libc::PATH_MAX as usize;
+
 // Thread-local static tm for the non-reentrant `getdate`.
 std::thread_local! {
     static GETDATE_TM: std::cell::UnsafeCell<libc::tm> =
@@ -22073,14 +22075,24 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
     let mut input = Vec::with_capacity(input_bytes.len() + 1);
     input.extend_from_slice(&input_bytes);
     input.push(0);
+    let input_base = input.as_ptr() as usize;
+    let Some(input_end) = input_base.checked_add(input_bytes.len()) else {
+        return 8;
+    };
 
     // Read DATEMSK environment variable
     let datemsk_ptr = unsafe { crate::stdlib_abi::getenv(c"DATEMSK".as_ptr()) };
     if datemsk_ptr.is_null() || unsafe { *datemsk_ptr == 0 } {
         return 1; // DATEMSK not set
     }
-    let datemsk = unsafe { std::ffi::CStr::from_ptr(datemsk_ptr) };
-    let datemsk_path = match datemsk.to_str() {
+    let (datemsk_len, datemsk_terminated) =
+        unsafe { scan_c_string(datemsk_ptr, Some(DATEMSK_PATH_SCAN_LIMIT)) };
+    if !datemsk_terminated {
+        return 2;
+    }
+    let datemsk_bytes =
+        unsafe { std::slice::from_raw_parts(datemsk_ptr.cast::<u8>(), datemsk_len) };
+    let datemsk_path = match std::str::from_utf8(datemsk_bytes) {
         Ok(s) => s,
         Err(_) => return 2,
     };
@@ -22128,9 +22140,13 @@ unsafe fn getdate_core(string: *const c_char, result: *mut libc::tm) -> c_int {
         };
         if !remainder.is_null() {
             // Check that strptime consumed the entire input string (or only trailing whitespace)
-            let rest = unsafe { std::ffi::CStr::from_ptr(remainder) }.to_bytes();
-            if rest.iter().all(|&b| b == b' ' || b == b'\t') {
-                return 0; // success
+            let rest_addr = remainder as usize;
+            if (input_base..=input_end).contains(&rest_addr) {
+                let offset = rest_addr - input_base;
+                let rest = &input[offset..input_bytes.len()];
+                if rest.iter().all(|&b| b == b' ' || b == b'\t') {
+                    return 0; // success
+                }
             }
         }
     }

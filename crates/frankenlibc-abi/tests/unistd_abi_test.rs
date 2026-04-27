@@ -4937,7 +4937,7 @@ fn getdate_and_getdate_r_follow_host_datemsk_contract() {
         libc::setenv(c"DATEMSK".as_ptr(), datemsk_value.as_ptr(), 1);
     }
 
-    let date = CString::new("1970-01-01 00:00:00").unwrap();
+    let date = CString::new("1970-01-01 00:00:00  ").unwrap();
     unsafe { getdate_err = -1 };
     let parsed = unsafe { getdate(date.as_ptr()) as *mut libc::tm };
     assert!(
