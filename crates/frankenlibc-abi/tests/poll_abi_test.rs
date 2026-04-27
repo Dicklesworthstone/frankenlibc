@@ -796,6 +796,35 @@ fn pselect_with_null_sigmask() {
 }
 
 #[test]
+fn pselect_rejects_tracked_short_sigmask() {
+    use frankenlibc_abi::poll_abi::pselect;
+
+    let required = std::mem::size_of::<libc::c_ulong>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    assert_known_short(raw, required);
+    clear_errno();
+
+    let rc = unsafe {
+        pselect(
+            0,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            &ts,
+            raw.cast::<libc::sigset_t>(),
+        )
+    };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), errno::EFAULT);
+    free_tracked(raw);
+}
+
+#[test]
 fn pselect_write_fd_ready() {
     use frankenlibc_abi::poll_abi::pselect;
     let (r, w) = pipe_pair();
