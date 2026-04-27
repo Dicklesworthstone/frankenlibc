@@ -19,6 +19,8 @@ use std::sync::{Mutex, OnceLock};
 
 #[cfg(any(debug_assertions, test))]
 use crate::errno_abi::set_abi_errno;
+#[cfg(all(debug_assertions, not(test)))]
+use crate::malloc_abi::known_remaining;
 #[cfg(any(debug_assertions, test))]
 use crate::runtime_policy;
 #[cfg(any(debug_assertions, test))]
@@ -31,6 +33,9 @@ use frankenlibc_core::setjmp::{
 use frankenlibc_membrane::config::SafetyLevel;
 #[cfg(any(debug_assertions, test))]
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+
+#[cfg(any(debug_assertions, test))]
+const PHASE1_JMPBUF_BYTES: usize = 128;
 
 #[cfg(any(debug_assertions, test))]
 #[derive(Debug, Clone)]
@@ -63,9 +68,20 @@ fn phase1_error_errno(err: Phase1JumpError) -> c_int {
     }
 }
 
+#[cfg(all(debug_assertions, not(test)))]
+fn tracked_phase1_jmpbuf_fits(env_addr: usize) -> bool {
+    env_addr != 0
+        && known_remaining(env_addr).is_none_or(|remaining| PHASE1_JMPBUF_BYTES <= remaining)
+}
+
+#[cfg(test)]
+fn tracked_phase1_jmpbuf_fits(env_addr: usize) -> bool {
+    env_addr != 0
+}
+
 #[cfg(any(debug_assertions, test))]
 fn capture_env(env_addr: usize, mode: SafetyLevel, savemask: bool) -> Result<c_int, c_int> {
-    if env_addr == 0 {
+    if !tracked_phase1_jmpbuf_fits(env_addr) {
         return Err(errno::EFAULT);
     }
 
@@ -90,14 +106,18 @@ fn capture_env(env_addr: usize, mode: SafetyLevel, savemask: bool) -> Result<c_i
 
 #[cfg(any(debug_assertions, test))]
 fn restore_env(env_addr: usize, val: c_int, mode: SafetyLevel) -> Result<(i32, bool), c_int> {
-    if env_addr == 0 {
+    if !tracked_phase1_jmpbuf_fits(env_addr) {
         return Err(errno::EFAULT);
     }
 
     // Load the jump buffer from C memory to check for tampering or copying.
-    let mut mem_bytes = [0u8; 128]; // JMPBUF_REGISTER_COUNT * 8
+    let mut mem_bytes = [0u8; PHASE1_JMPBUF_BYTES];
     unsafe {
-        std::ptr::copy_nonoverlapping(env_addr as *const u8, mem_bytes.as_mut_ptr(), 128);
+        std::ptr::copy_nonoverlapping(
+            env_addr as *const u8,
+            mem_bytes.as_mut_ptr(),
+            PHASE1_JMPBUF_BYTES,
+        );
     }
     let entry = {
         let guard = registry().lock().unwrap_or_else(|e| e.into_inner());

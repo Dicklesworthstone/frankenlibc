@@ -12,8 +12,42 @@
 //! The real verification for this surface lives in the C-based LD_PRELOAD
 //! smoke script invoked below.
 
+use std::ffi::c_void;
 use std::path::PathBuf;
 use std::process::Command;
+
+use frankenlibc_abi::setjmp_abi::{_setjmp, setjmp, sigsetjmp};
+
+const PHASE1_JMPBUF_BYTES: usize = 128;
+
+unsafe fn malloc_tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) }.cast::<u8>();
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw, 0, len) };
+    raw.cast()
+}
+
+fn assert_known_short(raw: *const c_void, required: usize) {
+    let remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_ne!(
+        remaining,
+        usize::MAX,
+        "test allocation should be tracked by malloc metadata"
+    );
+    assert!(
+        remaining < required,
+        "test allocation should expose {remaining} tracked bytes, less than required {required}"
+    );
+}
+
+fn errno_value() -> i32 {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
+unsafe fn free_tracked(raw: *mut c_void) {
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
+}
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -22,6 +56,42 @@ fn workspace_root() -> PathBuf {
         .parent()
         .expect("workspace root should exist")
         .to_path_buf()
+}
+
+#[test]
+fn setjmp_rejects_tracked_short_jump_buffer() {
+    let raw = unsafe { malloc_tracked_zeroed_bytes(PHASE1_JMPBUF_BYTES - 1) };
+    assert_known_short(raw, PHASE1_JMPBUF_BYTES);
+
+    let rc = unsafe { setjmp(raw) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn underscored_setjmp_rejects_tracked_short_jump_buffer() {
+    let raw = unsafe { malloc_tracked_zeroed_bytes(PHASE1_JMPBUF_BYTES - 1) };
+    assert_known_short(raw, PHASE1_JMPBUF_BYTES);
+
+    let rc = unsafe { _setjmp(raw) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
+}
+
+#[test]
+fn sigsetjmp_rejects_tracked_short_jump_buffer() {
+    let raw = unsafe { malloc_tracked_zeroed_bytes(PHASE1_JMPBUF_BYTES - 1) };
+    assert_known_short(raw, PHASE1_JMPBUF_BYTES);
+
+    let rc = unsafe { sigsetjmp(raw, 1) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    unsafe { free_tracked(raw) };
 }
 
 #[test]
