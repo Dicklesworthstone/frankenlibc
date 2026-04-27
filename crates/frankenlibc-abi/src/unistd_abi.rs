@@ -22843,14 +22843,16 @@ pub unsafe extern "C" fn logout(line: *const c_char) -> c_int {
     if line.is_null() {
         return 0;
     }
+    let Some(line_bytes) = (unsafe { read_c_string_bytes(line) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 0;
+    };
     // Rewind utmp
     unsafe { setutxent() };
     // Scan for matching entry
     let mut search: libc::utmpx = unsafe { std::mem::zeroed() };
     search.ut_type = 7; // USER_PROCESS
     // Copy line into ut_line (max 32 bytes on Linux)
-    let line_cstr = unsafe { std::ffi::CStr::from_ptr(line) };
-    let line_bytes = line_cstr.to_bytes();
     let copy_len = line_bytes.len().min(31);
     for (i, &b) in line_bytes[..copy_len].iter().enumerate() {
         search.ut_line[i] = b as c_char;

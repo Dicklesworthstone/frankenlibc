@@ -1753,6 +1753,21 @@ fn logout_matches_host_missing_line_shape() {
 }
 
 #[test]
+fn logout_rejects_tracked_unterminated_line() {
+    let raw_line = malloc_tracked_unterminated(b"frankenlibc-no-such-line");
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = logout(raw_line);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_line.cast());
+
+        assert_eq!(rc, 0);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn updwtmp_and_updwtmpx_match_host_file_effects() {
     type HostUpdwtmpFn = unsafe extern "C" fn(*const c_char, *const c_void);
     type HostUpdwtmpxFn = unsafe extern "C" fn(*const c_char, *const c_void);
