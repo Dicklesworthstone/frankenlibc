@@ -5873,6 +5873,22 @@ fn strtonum_null_nptr_returns_zero_with_invalid() {
 }
 
 #[test]
+fn strtonum_rejects_tracked_unterminated_input() {
+    unsafe {
+        let raw = malloc_unterminated(b"42");
+        let mut errstr: *const c_char = ptr::null();
+
+        let v = strtonum(raw, 0, 100, &mut errstr);
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+        assert_eq!(v, 0);
+        assert!(!errstr.is_null());
+        let msg = std::ffi::CStr::from_ptr(errstr).to_bytes();
+        assert_eq!(msg, b"invalid");
+    }
+}
+
+#[test]
 fn strtonum_full_i64_range() {
     let s = c"9223372036854775807";
     let mut errstr: *const c_char = ptr::null();
@@ -6043,6 +6059,21 @@ fn dehumanize_null_size_pointer_sets_einval() {
 }
 
 #[test]
+fn dehumanize_rejects_tracked_unterminated_input() {
+    unsafe {
+        let raw = malloc_unterminated(b"42K");
+        let mut size: i64 = -1;
+        *__errno_location() = 0;
+
+        let rc = dehumanize_number(raw, &mut size);
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+        assert_eq!(rc, -1);
+        assert_eq!(*__errno_location(), libc::EINVAL);
+    }
+}
+
+#[test]
 fn dehumanize_empty_string_sets_einval() {
     let s = c"";
     let mut size: i64 = 0;
@@ -6176,6 +6207,21 @@ fn expand_null_num_pointer_is_einval() {
     let rc = unsafe { expand_number(s.as_ptr(), ptr::null_mut()) };
     assert_eq!(rc, -1);
     assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
+}
+
+#[test]
+fn expand_rejects_tracked_unterminated_input() {
+    unsafe {
+        let raw = malloc_unterminated(b"42K");
+        let mut num: u64 = 0;
+        *__errno_location() = 0;
+
+        let rc = expand_number(raw, &mut num);
+
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+        assert_eq!(rc, -1);
+        assert_eq!(*__errno_location(), libc::EINVAL);
+    }
 }
 
 #[test]

@@ -44,6 +44,19 @@ fn bounded_zero_len(ptr: *mut c_void, requested: usize) -> Option<usize> {
     (len <= MAX_EXPLICIT_BZERO_LEN).then_some(len)
 }
 
+#[inline]
+unsafe fn read_bounded_cstr_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let (len, terminated) = unsafe { scan_c_string(ptr, known_remaining(ptr as usize)) };
+    if !terminated {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) };
+    Some(bytes.to_vec())
+}
+
 unsafe extern "C" {
     #[link_name = "__environ"]
     static mut HOST_ENVIRON: *mut *mut c_char;
@@ -5073,10 +5086,14 @@ pub unsafe extern "C" fn strtonum(
         return 0;
     }
 
-    // SAFETY: nptr is a valid NUL-terminated C string per the caller.
-    let bytes = unsafe { CStr::from_ptr(nptr) }.to_bytes();
+    let Some(bytes) = (unsafe { read_bounded_cstr_bytes(nptr) }) else {
+        if !errstr.is_null() {
+            unsafe { *errstr = ERR_INVALID.as_ptr() as *const c_char };
+        }
+        return 0;
+    };
 
-    match core_st::parse(bytes, minval, maxval) {
+    match core_st::parse(&bytes, minval, maxval) {
         Ok(v) => {
             if !errstr.is_null() {
                 // SAFETY: caller-supplied writable slot.
@@ -5172,10 +5189,12 @@ pub unsafe extern "C" fn dehumanize_number(str_ptr: *const c_char, size: *mut i6
         return -1;
     }
 
-    // SAFETY: caller-supplied NUL-terminated C string.
-    let bytes = unsafe { CStr::from_ptr(str_ptr) }.to_bytes();
+    let Some(bytes) = (unsafe { read_bounded_cstr_bytes(str_ptr) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
 
-    match core_dh::parse(bytes) {
+    match core_dh::parse(&bytes) {
         Ok(v) => {
             // SAFETY: caller-supplied writable slot.
             unsafe { *size = v };
@@ -5224,10 +5243,12 @@ pub unsafe extern "C" fn expand_number(buf: *const c_char, num: *mut u64) -> c_i
         return -1;
     }
 
-    // SAFETY: caller-supplied NUL-terminated C string.
-    let bytes = unsafe { CStr::from_ptr(buf) }.to_bytes();
+    let Some(bytes) = (unsafe { read_bounded_cstr_bytes(buf) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
 
-    match core_ex::parse(bytes) {
+    match core_ex::parse(&bytes) {
         Ok(v) => {
             // SAFETY: caller-supplied writable slot.
             unsafe { *num = v };
