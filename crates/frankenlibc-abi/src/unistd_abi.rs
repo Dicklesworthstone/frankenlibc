@@ -11443,8 +11443,8 @@ fn hstrerror_message_ptr(err: c_int) -> *const c_char {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn herror(s: *const c_char) {
-    // SAFETY: message pointer is always valid and NUL-terminated.
-    let msg = unsafe { CStr::from_ptr(hstrerror_message_ptr(current_h_errno())) };
+    let msg =
+        frankenlibc_core::resolv::messages::hstrerror_text(unsafe { current_h_errno() }).as_bytes();
     let prefix = if s.is_null() {
         None
     } else {
@@ -11455,15 +11455,14 @@ pub unsafe extern "C" fn herror(s: *const c_char) {
         Some(bytes)
     };
 
-    let mut line =
-        Vec::with_capacity(msg.to_bytes().len() + 2 + prefix.as_ref().map_or(0, |p| p.len() + 2));
+    let mut line = Vec::with_capacity(msg.len() + 2 + prefix.as_ref().map_or(0, |p| p.len() + 2));
     if let Some(prefix) = prefix
         && !prefix.is_empty()
     {
         line.extend_from_slice(&prefix);
         line.extend_from_slice(b": ");
     }
-    line.extend_from_slice(msg.to_bytes());
+    line.extend_from_slice(msg);
     line.push(b'\n');
 
     // SAFETY: write helper accepts raw pointer/len and reports failures via errno.
