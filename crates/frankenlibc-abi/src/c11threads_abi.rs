@@ -8,6 +8,8 @@ use std::ffi::c_void;
 
 use frankenlibc_core::syscall as raw_syscall;
 
+use crate::malloc_abi::known_remaining;
+
 // ---------------------------------------------------------------------------
 // C11 thread return codes
 // ---------------------------------------------------------------------------
@@ -55,6 +57,18 @@ fn pthread_rc_to_thrd(rc: c_int) -> c_int {
         libc::ENOMEM => THRD_NOMEM,
         _ => THRD_ERROR,
     }
+}
+
+#[inline]
+fn tracked_required_object_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null()
+        && known_remaining(ptr as usize)
+            .is_none_or(|remaining| core::mem::size_of::<T>() <= remaining)
+}
+
+#[inline]
+fn tracked_optional_object_fits<T>(ptr: *const T) -> bool {
+    ptr.is_null() || tracked_required_object_fits(ptr)
 }
 
 // ===========================================================================
@@ -171,7 +185,7 @@ pub unsafe extern "C" fn thrd_sleep(
     duration: *const libc::timespec,
     remaining: *mut libc::timespec,
 ) -> c_int {
-    if duration.is_null() {
+    if !tracked_required_object_fits(duration) || !tracked_optional_object_fits(remaining) {
         return -2;
     }
     match unsafe { raw_syscall::sys_nanosleep(duration as *const u8, remaining as *mut u8) } {

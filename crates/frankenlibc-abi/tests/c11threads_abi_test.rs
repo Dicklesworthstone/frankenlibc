@@ -19,6 +19,29 @@ const THRD_SUCCESS: c_int = 0;
 
 static C11_THREAD_SELF_SNAPSHOT: AtomicUsize = AtomicUsize::new(0);
 
+fn tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    unsafe {
+        let raw = frankenlibc_abi::malloc_abi::malloc(len);
+        assert!(!raw.is_null());
+        std::ptr::write_bytes(raw.cast::<u8>(), 0, len);
+        raw
+    }
+}
+
+fn free_tracked(raw: *mut c_void) {
+    unsafe { frankenlibc_abi::malloc_abi::free(raw) };
+}
+
+fn assert_known_short(raw: *const c_void, required: usize) {
+    let remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert!(
+        remaining < required,
+        "test allocation should be tracked shorter than {required}; got {remaining}"
+    );
+}
+
 // ===========================================================================
 // thrd_* tests
 // ===========================================================================
@@ -494,6 +517,18 @@ fn test_thrd_sleep_with_remaining() {
     }
 }
 
+#[test]
+fn test_thrd_sleep_rejects_tracked_short_duration() {
+    let required = std::mem::size_of::<libc::timespec>();
+    let raw = tracked_zeroed_bytes(required - 1);
+    assert_known_short(raw, required);
+
+    let rc = unsafe { thrd_sleep(raw.cast::<libc::timespec>(), std::ptr::null_mut()) };
+
+    assert_eq!(rc, -2);
+    free_tracked(raw);
+}
+
 // ===========================================================================
 // tss_* — additional scenarios
 // ===========================================================================
@@ -653,8 +688,11 @@ fn test_call_once_multi_threaded() {
         })
         .collect();
 
-    for h in handles {
-        h.join().unwrap();
+    for handle in handles {
+        assert!(
+            handle.join().is_ok(),
+            "call_once worker thread should not panic"
+        );
     }
     assert_eq!(
         MULTI_ONCE_COUNTER.load(Ordering::SeqCst),
