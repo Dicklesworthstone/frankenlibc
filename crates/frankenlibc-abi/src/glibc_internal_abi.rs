@@ -38,6 +38,7 @@ const NSAP_TEXT_SCAN_LIMIT: usize = 512;
 const GROUP_FIELD_SCAN_LIMIT: usize = 8192;
 const GROUP_MEMBER_POINTER_SCAN_LIMIT: usize = 16_384;
 const PASSWD_FIELD_SCAN_LIMIT: usize = 8192;
+const SHADOW_LINE_SCAN_LIMIT: usize = 8192;
 
 #[inline]
 unsafe fn bounded_c_string_bytes(ptr: *const c_char, max_scan: usize) -> Option<Vec<u8>> {
@@ -6275,8 +6276,10 @@ pub unsafe extern "C" fn sgetspent_r(
         return libc::EINVAL;
     }
     unsafe { *(spbufp as *mut *mut libc::spwd) = std::ptr::null_mut() };
-    let line = unsafe { std::ffi::CStr::from_ptr(s) }.to_bytes();
-    let line_str = match std::str::from_utf8(line) {
+    let Some(line) = (unsafe { bounded_c_string_bytes(s, SHADOW_LINE_SCAN_LIMIT) }) else {
+        return libc::EINVAL;
+    };
+    let line_str = match std::str::from_utf8(&line) {
         Ok(s) => s,
         Err(_) => return libc::EINVAL,
     };

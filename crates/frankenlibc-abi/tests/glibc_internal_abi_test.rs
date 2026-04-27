@@ -124,6 +124,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     ruserok,
     ruserok_af,
     ruserpass,
+    sgetspent_r,
     xprt_register,
     xprt_unregister,
 };
@@ -2465,6 +2466,28 @@ fn putpwent_rejects_tracked_unterminated_passwd_fields() {
         assert_eq!(rc, -1);
         assert_eq!(err, libc::EINVAL);
         assert_eq!(close_rc, 0);
+    }
+}
+
+#[test]
+fn sgetspent_r_rejects_tracked_unterminated_shadow_line() {
+    let raw_line = unsafe { malloc_unterminated(b"root:*:1::::::") };
+    let mut spbuf: libc::spwd = unsafe { std::mem::zeroed() };
+    let mut storage = [0 as c_char; 64];
+    let mut result: *mut std::ffi::c_void = std::ptr::null_mut();
+
+    unsafe {
+        let rc = sgetspent_r(
+            raw_line,
+            &mut spbuf as *mut libc::spwd as *mut std::ffi::c_void,
+            storage.as_mut_ptr(),
+            storage.len(),
+            &mut result,
+        );
+        frankenlibc_abi::malloc_abi::free(raw_line.cast());
+
+        assert_eq!(rc, libc::EINVAL);
+        assert!(result.is_null());
     }
 }
 
