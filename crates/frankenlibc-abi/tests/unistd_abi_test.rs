@@ -4032,6 +4032,21 @@ where
 }
 
 #[test]
+fn utmpname_rejects_tracked_unterminated_path() {
+    let raw = malloc_tracked_unterminated(b"/tmp/frankenlibc-utmp-unterminated");
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = utmpname(raw);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn tempnam_falls_back_for_tracked_unterminated_dir_and_prefix() {
     use frankenlibc_abi::unistd_abi::tempnam;
 

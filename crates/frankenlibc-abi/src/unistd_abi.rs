@@ -10117,8 +10117,11 @@ pub unsafe extern "C" fn utmpname(file: *const c_char) -> c_int {
     if file.is_null() {
         return -1;
     }
-    let path = unsafe { CStr::from_ptr(file) };
-    let path_str = path.to_str().unwrap_or(UTMP_DEFAULT_PATH);
+    let Some(path_bytes) = (unsafe { read_c_string_bytes(file) }) else {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    let path_str = std::str::from_utf8(&path_bytes).unwrap_or(UTMP_DEFAULT_PATH);
     UTMP_TLS.with(|cell| cell.borrow_mut().set_path(path_str));
     0
 }
