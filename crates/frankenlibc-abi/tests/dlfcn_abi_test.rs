@@ -415,6 +415,29 @@ fn dlsym_and_dlvsym_reject_unterminated_names_in_bootstrap_passthrough() {
 }
 
 #[test]
+fn dlopen_rejects_unterminated_name_in_bootstrap_passthrough() {
+    let _guard = TEST_GUARD.lock().unwrap();
+    unsafe {
+        let unterminated_name = malloc(7).cast::<u8>();
+        assert!(!unterminated_name.is_null());
+        std::ptr::copy_nonoverlapping(b"libc.so".as_ptr(), unterminated_name, 7);
+
+        let handle = dlopen(unterminated_name.cast(), libc::RTLD_NOW | libc::RTLD_NOLOAD);
+        if !handle.is_null() {
+            let _ = dlclose(handle);
+        }
+        let rejected = handle.is_null();
+        let err_ptr = dlerror();
+        free(unterminated_name.cast());
+        assert!(
+            rejected,
+            "dlopen should reject an unterminated filename buffer"
+        );
+        assert!(!err_ptr.is_null());
+    }
+}
+
+#[test]
 fn dlopen_empty_string_returns_null_or_main() {
     let _guard = TEST_GUARD.lock().unwrap();
     let name = CString::new("").unwrap();

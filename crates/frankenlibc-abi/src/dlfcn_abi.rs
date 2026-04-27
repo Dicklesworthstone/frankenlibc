@@ -5,7 +5,7 @@
 //! deterministic resolver for the exported FrankenLibC surface instead of
 //! delegating back into the host loader.
 
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_void};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -81,6 +81,22 @@ fn library_alias_matches(name: &[u8]) -> bool {
         name,
         b"libc.so" | b"libc.so.6" | b"libfrankenlibc.so" | b"libfrankenlibc.so.0"
     )
+}
+
+unsafe fn bounded_cstr_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ptr is a caller-supplied C string pointer; known_remaining
+    // bounds tracked malloc-backed storage before the scan can cross it.
+    let (len, terminated) = unsafe {
+        crate::util::scan_c_string(ptr, crate::malloc_abi::known_remaining(ptr as usize))
+    };
+    if !terminated {
+        return None;
+    }
+    // SAFETY: scan_c_string observed len readable bytes before the terminator.
+    Some(unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) })
 }
 
 fn version_supported(version: &[u8]) -> bool {
@@ -206,7 +222,10 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
             set_dlerror(dlfcn_core::ERR_INVALID_FLAGS);
             return std::ptr::null_mut();
         }
-        let name = unsafe { CStr::from_ptr(filename) }.to_bytes();
+        let Some(name) = (unsafe { bounded_cstr_bytes(filename) }) else {
+            set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+            return std::ptr::null_mut();
+        };
         if name.is_empty()
             || ((flags & dlfcn_core::RTLD_NOLOAD) != 0 && library_alias_matches(name))
         {
@@ -236,24 +255,16 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
         runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
         return std::ptr::null_mut();
     }
-    let (name_len, terminated) = unsafe {
-        crate::util::scan_c_string(
-            filename,
-            crate::malloc_abi::known_remaining(filename as usize),
-        )
+    let name_bytes = if filename.is_null() {
+        b"".as_slice()
+    } else {
+        let Some(bytes) = (unsafe { bounded_cstr_bytes(filename) }) else {
+            set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+            runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
+            return std::ptr::null_mut();
+        };
+        bytes
     };
-    // Reject non-NUL-terminated filenames in EVERY mode. The original guard
-    // only fired when `mode.heals_enabled()` was true (hardened mode), so a
-    // strict-mode caller with an unterminated pointer fell through to the
-    // CStr::from_ptr / host_dlopen sites below and walked arbitrary process
-    // memory. (REVIEW round 4: same defense class as bd-z4k96.)
-    let _ = mode;
-    if !terminated {
-        set_dlerror(dlfcn_core::ERR_NOT_FOUND);
-        runtime_policy::observe(ApiFamily::Loader, decision.profile, 5, true);
-        return std::ptr::null_mut();
-    }
-    let name_bytes = unsafe { std::slice::from_raw_parts(filename as *const u8, name_len) };
     if !dlfcn_core::valid_flags(flags) {
         if mode.heals_enabled() {
             // Hardened mode: default to RTLD_NOW | RTLD_LOCAL.
