@@ -3779,6 +3779,24 @@ fn libc_fatal_null_message_still_aborts_with_fallback() {
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
 }
 
+#[test]
+fn libc_fatal_unterminated_message_still_aborts_with_fallback() {
+    let raw_message = unsafe { malloc_unterminated(b"unterminated fatal message") };
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0, "fork failed");
+    if pid == 0 {
+        unsafe { __libc_fatal(raw_message) };
+    }
+    let mut status: c_int = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_message.cast());
+    }
+    assert_eq!(waited, pid);
+    assert!(libc::WIFSIGNALED(status));
+    assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
+}
+
 // ---------------------------------------------------------------------------
 // __libc_csu_init / __libc_csu_fini (glibc startup stub no-ops)
 // ---------------------------------------------------------------------------

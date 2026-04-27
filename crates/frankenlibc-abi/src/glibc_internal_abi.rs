@@ -39,6 +39,7 @@ const GROUP_FIELD_SCAN_LIMIT: usize = 8192;
 const GROUP_MEMBER_POINTER_SCAN_LIMIT: usize = 16_384;
 const PASSWD_FIELD_SCAN_LIMIT: usize = 8192;
 const SHADOW_LINE_SCAN_LIMIT: usize = 8192;
+const FATAL_MESSAGE_SCAN_LIMIT: usize = 8192;
 
 #[inline]
 unsafe fn bounded_c_string_bytes(ptr: *const c_char, max_scan: usize) -> Option<Vec<u8>> {
@@ -9160,17 +9161,18 @@ pub unsafe extern "C" fn __libc_csu_fini() {
 ///
 /// # Safety
 ///
-/// `message`, when non-NULL, must be a NUL-terminated byte string.
+/// `message`, when non-NULL, is scanned under the membrane-owned allocation
+/// bounds and a fixed limit before the process aborts.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
-    if message.is_null() {
-        let fallback: &[u8] = b"fatal: unknown error\n";
-        unsafe {
-            libc::write(2, fallback.as_ptr() as *const c_void, fallback.len());
-            libc::abort();
-        }
-    }
-    let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+    let bytes: std::borrow::Cow<'static, [u8]> = if message.is_null() {
+        std::borrow::Cow::Borrowed(b"fatal: unknown error\n")
+    } else if let Some(bytes) = unsafe { bounded_c_string_bytes(message, FATAL_MESSAGE_SCAN_LIMIT) }
+    {
+        std::borrow::Cow::Owned(bytes)
+    } else {
+        std::borrow::Cow::Borrowed(b"fatal: invalid diagnostic\n")
+    };
     unsafe {
         libc::write(2, bytes.as_ptr() as *const c_void, bytes.len());
         // Ensure a trailing newline so the diagnostic isn't merged
