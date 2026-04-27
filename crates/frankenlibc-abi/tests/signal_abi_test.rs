@@ -276,6 +276,10 @@ fn sigabbrev_np_known_signals() {
     check(libc::SIGPIPE, b"PIPE");
     check(libc::SIGUSR1, b"USR1");
     check(libc::SIGUSR2, b"USR2");
+    check(libc::SIGVTALRM, b"VTALRM");
+    check(libc::SIGPROF, b"PROF");
+    check(libc::SIGWINCH, b"WINCH");
+    check(libc::SIGSYS, b"SYS");
 }
 
 #[test]

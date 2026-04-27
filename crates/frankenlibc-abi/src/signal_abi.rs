@@ -20,8 +20,55 @@ use crate::runtime_policy;
 
 const MAX_TRACKED_SIGNAL: usize = 128;
 const HJI_WARMUP_OBSERVATIONS: usize = 64;
+const SIGNAL_ABBREVS: [&[u8]; 32] = [
+    b"0\0",      // 0
+    b"HUP\0",    // 1
+    b"INT\0",    // 2
+    b"QUIT\0",   // 3
+    b"ILL\0",    // 4
+    b"TRAP\0",   // 5
+    b"ABRT\0",   // 6
+    b"BUS\0",    // 7
+    b"FPE\0",    // 8
+    b"KILL\0",   // 9
+    b"USR1\0",   // 10
+    b"SEGV\0",   // 11
+    b"USR2\0",   // 12
+    b"PIPE\0",   // 13
+    b"ALRM\0",   // 14
+    b"TERM\0",   // 15
+    b"STKFLT\0", // 16
+    b"CHLD\0",   // 17
+    b"CONT\0",   // 18
+    b"STOP\0",   // 19
+    b"TSTP\0",   // 20
+    b"TTIN\0",   // 21
+    b"TTOU\0",   // 22
+    b"URG\0",    // 23
+    b"XCPU\0",   // 24
+    b"XFSZ\0",   // 25
+    b"VTALRM\0", // 26
+    b"PROF\0",   // 27
+    b"WINCH\0",  // 28
+    b"IO\0",     // 29
+    b"PWR\0",    // 30
+    b"SYS\0",    // 31
+];
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const SA_RESTORER_FLAG: c_int = 0x04000000;
+
+fn sigabbrev_bytes(sig: c_int) -> Option<&'static [u8]> {
+    if sig < 0 {
+        return None;
+    }
+    SIGNAL_ABBREVS.get(sig as usize).copied()
+}
+
+fn sigabbrev_str(sig: c_int) -> Option<&'static str> {
+    let bytes = sigabbrev_bytes(sig)?;
+    let text = bytes.strip_suffix(b"\0")?;
+    std::str::from_utf8(text).ok()
+}
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[repr(C)]
@@ -1371,14 +1418,7 @@ pub unsafe extern "C" fn psiginfo(info: *const libc::siginfo_t, msg: *const std:
         return;
     }
     let sig = unsafe { (*info).si_signo };
-    let abbrev = unsafe { sigabbrev_np(sig) };
-    let desc = if abbrev.is_null() {
-        "Unknown signal"
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(abbrev) }
-            .to_str()
-            .unwrap_or("Unknown signal")
-    };
+    let desc = sigabbrev_str(sig).unwrap_or("Unknown signal");
     if !msg.is_null() {
         let (msg_len, terminated) = unsafe {
             crate::util::scan_c_string(msg, crate::malloc_abi::known_remaining(msg as usize))
@@ -1405,45 +1445,7 @@ pub unsafe extern "C" fn psiginfo(info: *const libc::siginfo_t, msg: *const std:
 /// `sigabbrev_np` — return abbreviated signal name (GNU extension).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sigabbrev_np(sig: c_int) -> *const std::ffi::c_char {
-    // Return signal abbreviation without "SIG" prefix
-    static NAMES: &[&[u8]] = &[
-        b"0\0",      // 0
-        b"HUP\0",    // 1
-        b"INT\0",    // 2
-        b"QUIT\0",   // 3
-        b"ILL\0",    // 4
-        b"TRAP\0",   // 5
-        b"ABRT\0",   // 6
-        b"BUS\0",    // 7
-        b"FPE\0",    // 8
-        b"KILL\0",   // 9
-        b"USR1\0",   // 10
-        b"SEGV\0",   // 11
-        b"USR2\0",   // 12
-        b"PIPE\0",   // 13
-        b"ALRM\0",   // 14
-        b"TERM\0",   // 15
-        b"STKFLT\0", // 16
-        b"CHLD\0",   // 17
-        b"CONT\0",   // 18
-        b"STOP\0",   // 19
-        b"TSTP\0",   // 20
-        b"TTIN\0",   // 21
-        b"TTOU\0",   // 22
-        b"URG\0",    // 23
-        b"XCPU\0",   // 24
-        b"XFSZ\0",   // 25
-        b"VTALRM\0", // 26
-        b"PROF\0",   // 27
-        b"WINCH\0",  // 28
-        b"IO\0",     // 29
-        b"PWR\0",    // 30
-        b"SYS\0",    // 31
-    ];
-    if sig < 0 || sig as usize >= NAMES.len() {
-        return std::ptr::null();
-    }
-    NAMES[sig as usize].as_ptr().cast()
+    sigabbrev_bytes(sig).map_or(std::ptr::null(), |bytes| bytes.as_ptr().cast())
 }
 
 /// `sigdescr_np` — return signal description string (GNU extension).
