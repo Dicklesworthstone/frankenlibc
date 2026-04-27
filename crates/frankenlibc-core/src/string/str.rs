@@ -211,11 +211,26 @@ pub fn strchrnul(s: &[u8], c: u8) -> usize {
 /// Equivalent to C `strrchr`. Returns the index of the last byte equal to `c`,
 /// or `None` if not found.
 pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
-    let len = strlen(s);
     if c == 0 {
-        return Some(len);
+        for (i, &byte) in s.iter().enumerate() {
+            if byte == 0 {
+                return Some(i);
+            }
+        }
+        return Some(s.len());
     }
-    s[..len].iter().rposition(|&b| b == c)
+
+    let mut last = None;
+    for (i, &byte) in s.iter().enumerate() {
+        if byte == 0 {
+            return last;
+        }
+        if byte == c {
+            last = Some(i);
+        }
+    }
+
+    last
 }
 
 /// Finds the first occurrence of the NUL-terminated substring `needle` in
@@ -642,6 +657,17 @@ mod tests {
     #[test]
     fn test_strrchr_found() {
         assert_eq!(strrchr(b"hello\0", b'l'), Some(3));
+    }
+
+    #[test]
+    fn test_strrchr_stops_at_terminator() {
+        assert_eq!(strrchr(b"abca\0a", b'a'), Some(3));
+        assert_eq!(strrchr(b"abca\0z", b'z'), None);
+    }
+
+    #[test]
+    fn test_strrchr_nul_without_terminator_returns_len() {
+        assert_eq!(strrchr(b"unterminated", 0), Some(12));
     }
 
     #[test]
