@@ -1403,6 +1403,30 @@ fn res_search_rejects_tracked_unterminated_name() {
 }
 
 #[test]
+fn dn_comp_rejects_tracked_unterminated_name() {
+    use frankenlibc_abi::unistd_abi::dn_comp;
+
+    let raw_name = malloc_tracked_unterminated(b"example.com");
+    let mut out = [0u8; 256];
+
+    unsafe {
+        *__errno_location() = 0;
+        let rc = dn_comp(
+            raw_name,
+            out.as_mut_ptr(),
+            out.len() as c_int,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+
+        assert_eq!(rc, -1);
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn fgetpwent_r_skips_comments_and_blank_lines() {
     let path = temp_path("fgetpwent_r_skip");
     let path_str = path.as_c_str().to_str().unwrap();

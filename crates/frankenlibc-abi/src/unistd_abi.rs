@@ -18820,8 +18820,11 @@ pub unsafe extern "C" fn dn_comp(
     if exp_dn.is_null() || comp_dn.is_null() || length < 1 {
         return -1;
     }
-    let name = unsafe { std::ffi::CStr::from_ptr(exp_dn) };
-    let name_bytes = name.to_bytes();
+    let Some(name_bytes) = (unsafe { read_c_string_bytes(exp_dn) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    };
+    let name_bytes = name_bytes.as_slice();
     let out = unsafe { std::slice::from_raw_parts_mut(comp_dn, length as usize) };
 
     // Handle root domain ("" or ".").
