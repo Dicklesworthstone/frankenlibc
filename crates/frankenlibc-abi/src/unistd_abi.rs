@@ -11391,18 +11391,20 @@ pub unsafe extern "C" fn herror(s: *const c_char) {
     let prefix = if s.is_null() {
         None
     } else {
-        // SAFETY: non-null `s` must point to a NUL-terminated string by C contract.
-        Some(unsafe { CStr::from_ptr(s) })
+        let Some(bytes) = (unsafe { read_c_string_bytes(s) }) else {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return;
+        };
+        Some(bytes)
     };
 
     let mut line =
-        Vec::with_capacity(msg.to_bytes().len() + 2 + prefix.map_or(0, |p| p.to_bytes().len() + 2));
-    if let Some(prefix) = prefix {
-        let bytes = prefix.to_bytes();
-        if !bytes.is_empty() {
-            line.extend_from_slice(bytes);
-            line.extend_from_slice(b": ");
-        }
+        Vec::with_capacity(msg.to_bytes().len() + 2 + prefix.as_ref().map_or(0, |p| p.len() + 2));
+    if let Some(prefix) = prefix
+        && !prefix.is_empty()
+    {
+        line.extend_from_slice(&prefix);
+        line.extend_from_slice(b": ");
     }
     line.extend_from_slice(msg.to_bytes());
     line.push(b'\n');

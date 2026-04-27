@@ -1427,6 +1427,22 @@ fn dn_comp_rejects_tracked_unterminated_name() {
 }
 
 #[test]
+fn herror_rejects_tracked_unterminated_prefix() {
+    use frankenlibc_abi::unistd_abi::herror;
+
+    let raw_prefix = malloc_tracked_unterminated(b"resolver-prefix");
+
+    unsafe {
+        *__errno_location() = 0;
+        herror(raw_prefix);
+        let err = *__errno_location();
+        frankenlibc_abi::malloc_abi::free(raw_prefix.cast());
+
+        assert_eq!(err, libc::EINVAL);
+    }
+}
+
+#[test]
 fn fgetpwent_r_skips_comments_and_blank_lines() {
     let path = temp_path("fgetpwent_r_skip");
     let path_str = path.as_c_str().to_str().unwrap();
