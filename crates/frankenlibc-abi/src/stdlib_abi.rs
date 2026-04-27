@@ -5783,11 +5783,8 @@ pub struct PidFh {
 const PIDFILE_DEFAULT_MODE: libc::mode_t = 0o600;
 
 unsafe fn copy_c_string(src: *const c_char) -> Option<*mut c_char> {
-    if src.is_null() {
-        return None;
-    }
-    // SAFETY: caller-supplied valid C string.
-    let bytes = unsafe { CStr::from_ptr(src) }.to_bytes_with_nul();
+    let mut bytes = unsafe { read_bounded_cstr_bytes(src) }?;
+    bytes.push(0);
     let buf = unsafe { crate::malloc_abi::malloc(bytes.len()) } as *mut c_char;
     if buf.is_null() {
         return None;
@@ -5823,6 +5820,13 @@ pub unsafe extern "C" fn pidfile_open(
         unsafe { set_abi_errno(libc::EFAULT) };
         return ptr::null_mut();
     }
+    let Some(mut path_bytes) = (unsafe { read_bounded_cstr_bytes(path) }) else {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return ptr::null_mut();
+    };
+    path_bytes.push(0);
+    let path_ptr = path_bytes.as_ptr().cast::<c_char>();
+
     let real_mode = if mode == 0 {
         PIDFILE_DEFAULT_MODE
     } else {
@@ -5834,7 +5838,7 @@ pub unsafe extern "C" fn pidfile_open(
     const LIBBSD_O_EXLOCK: c_int = 0x20;
     let fd = unsafe {
         crate::unistd_abi::flopen(
-            path,
+            path_ptr,
             libc::O_CREAT | libc::O_RDWR | LIBBSD_O_EXLOCK | libc::O_NONBLOCK,
             real_mode,
         )
@@ -5847,7 +5851,7 @@ pub unsafe extern "C" fn pidfile_open(
             if otherpid.is_null() {
                 unsafe { set_abi_errno(libc::EEXIST) };
             } else {
-                match unsafe { read_pid_from_path(path) } {
+                match unsafe { read_pid_from_path(path_ptr) } {
                     Ok(pid) => {
                         unsafe { *otherpid = pid };
                         unsafe { set_abi_errno(libc::EEXIST) };
@@ -5864,7 +5868,7 @@ pub unsafe extern "C" fn pidfile_open(
     }
 
     // Allocate the opaque pidfh struct + dup the path.
-    let path_copy = match unsafe { copy_c_string(path) } {
+    let path_copy = match unsafe { copy_c_string(path_ptr) } {
         Some(p) => p,
         None => {
             unsafe { crate::unistd_abi::close(fd) };
@@ -6016,8 +6020,19 @@ pub unsafe extern "C" fn pidfile_signal(
         unsafe { set_abi_errno(libc::EFAULT) };
         return libc::EFAULT;
     }
+    let Some(mut path_bytes) = (unsafe { read_bounded_cstr_bytes(path) }) else {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return libc::EFAULT;
+    };
+    path_bytes.push(0);
+    let path_ptr = path_bytes.as_ptr().cast::<c_char>();
+
     let probe_fd = unsafe {
-        crate::unistd_abi::flopen(path, libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK, 0)
+        crate::unistd_abi::flopen(
+            path_ptr,
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK,
+            0,
+        )
     };
     if probe_fd >= 0 {
         unsafe { crate::unistd_abi::close(probe_fd) };
@@ -6030,7 +6045,7 @@ pub unsafe extern "C" fn pidfile_signal(
         return open_errno;
     }
 
-    let pid = match unsafe { read_pid_from_path(path) } {
+    let pid = match unsafe { read_pid_from_path(path_ptr) } {
         Ok(pid) => pid,
         Err(err) => {
             unsafe { set_abi_errno(err) };
@@ -6055,10 +6070,14 @@ pub unsafe extern "C" fn pidfile_signal(
 }
 
 unsafe fn read_pid_from_path(path: *const c_char) -> Result<libc::pid_t, c_int> {
+    let Some(mut path_bytes) = (unsafe { read_bounded_cstr_bytes(path) }) else {
+        return Err(libc::EFAULT);
+    };
+    path_bytes.push(0);
     let fd = unsafe {
         raw_syscall::sys_openat(
             libc::AT_FDCWD,
-            path.cast::<u8>(),
+            path_bytes.as_ptr(),
             libc::O_RDONLY | libc::O_CLOEXEC,
             0,
         )

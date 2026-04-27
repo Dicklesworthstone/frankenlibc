@@ -6798,7 +6798,8 @@ fn fmtcheck_pointer_distinct_from_string() {
 
 use frankenlibc_abi::stdlib_abi::{
     getmode, heapsort, mergesort, pidfile_close, pidfile_fileno, pidfile_open, pidfile_remove,
-    pidfile_write, radixsort, setmode, sl_add, sl_find, sl_free, sl_init, sradixsort,
+    pidfile_signal, pidfile_write, radixsort, setmode, sl_add, sl_find, sl_free, sl_init,
+    sradixsort,
 };
 
 #[test]
@@ -7198,6 +7199,20 @@ fn pidfile_open_null_path_returns_null_efault() {
     let pfh = unsafe { pidfile_open(ptr::null(), 0, ptr::null_mut()) };
     assert!(pfh.is_null());
     assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+}
+
+#[test]
+fn pidfile_open_rejects_tracked_unterminated_path() {
+    let path = pidfile_temp_path("unterminated-open");
+    let raw = unsafe { malloc_unterminated(path.as_os_str().as_bytes()) };
+
+    unsafe { *__errno_location() = 0 };
+    let pfh = unsafe { pidfile_open(raw.cast_const(), 0, ptr::null_mut()) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+    assert!(pfh.is_null());
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+    assert!(!path.exists());
 }
 
 #[test]
@@ -8321,7 +8336,6 @@ fn bd_jt6vm_reallocarr_zero_size_returns_einval_without_modifying_ptr() {
 
 #[test]
 fn bd_jt6vm_pidfile_signal_missing_path_returns_enoent() {
-    use frankenlibc_abi::stdlib_abi::pidfile_signal;
     use std::ffi::CString;
     let path = CString::new("/no/such/pidfile_signal_test").unwrap();
     let mut other: libc::pid_t = -1;
@@ -8333,8 +8347,23 @@ fn bd_jt6vm_pidfile_signal_missing_path_returns_enoent() {
 }
 
 #[test]
+fn bd_jt6vm_pidfile_signal_rejects_tracked_unterminated_path() {
+    let path = pidfile_temp_path("unterminated-signal");
+    let raw = unsafe { malloc_unterminated(path.as_os_str().as_bytes()) };
+    let mut other: libc::pid_t = -1;
+
+    unsafe { *__errno_location() = 0 };
+    let rc = unsafe { pidfile_signal(raw.cast_const(), 0, &mut other) };
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+    assert_eq!(rc, libc::EFAULT);
+    assert_eq!(unsafe { *__errno_location() }, libc::EFAULT);
+    assert_eq!(other, -1);
+    assert!(!path.exists());
+}
+
+#[test]
 fn bd_jt6vm_pidfile_signal_unlocked_pidfile_returns_enoent() {
-    use frankenlibc_abi::stdlib_abi::pidfile_signal;
     use std::ffi::CString;
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
