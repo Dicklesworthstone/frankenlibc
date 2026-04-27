@@ -2078,9 +2078,53 @@ fn popen_rejects_tracked_unterminated_mode() {
 
 #[test]
 fn perror_does_not_crash_with_null_or_empty() {
+    let _guard = STDOUT_REDIRECT_LOCK
+        .lock()
+        .expect("stdio redirect lock should not be poisoned");
+
     // perror writes to stderr; we just verify it doesn't crash
     unsafe { perror(std::ptr::null()) };
     unsafe { perror(c"test_prefix".as_ptr()) };
+}
+
+#[test]
+fn perror_ignores_tracked_unterminated_prefix() {
+    let _guard = STDOUT_REDIRECT_LOCK
+        .lock()
+        .expect("stdio redirect lock should not be poisoned");
+
+    let mut pipe_fds = [0; 2];
+    assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+
+    let saved_stderr = unsafe { libc::dup(libc::STDERR_FILENO) };
+    assert!(saved_stderr >= 0);
+    assert_eq!(
+        unsafe { libc::dup2(pipe_fds[1], libc::STDERR_FILENO) },
+        libc::STDERR_FILENO
+    );
+
+    let prefix = unsafe { tracked_bytes_without_nul(b"unterminated_prefix") };
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = libc::EINVAL;
+        perror(prefix.cast_const());
+        frankenlibc_abi::malloc_abi::free(prefix.cast::<c_void>());
+        libc::dup2(saved_stderr, libc::STDERR_FILENO);
+        libc::close(saved_stderr);
+        libc::close(pipe_fds[1]);
+    }
+
+    let mut captured = Vec::new();
+    let mut buf = [0u8; 128];
+    loop {
+        let n = unsafe { libc::read(pipe_fds[0], buf.as_mut_ptr().cast(), buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        captured.extend_from_slice(&buf[..n as usize]);
+    }
+    unsafe { libc::close(pipe_fds[0]) };
+
+    assert_eq!(captured, b"Invalid argument\n");
 }
 
 // ---------------------------------------------------------------------------

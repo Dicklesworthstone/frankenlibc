@@ -2894,7 +2894,7 @@ pub unsafe extern "C" fn perror(s: *const c_char) {
     };
 
     if !s.is_null() {
-        let prefix = unsafe { CStr::from_ptr(s) }.to_bytes();
+        let prefix = unsafe { bounded_c_str_bytes(s) }.unwrap_or(&[]);
         if !prefix.is_empty() {
             let _ =
                 unsafe { sys_write_fd(libc::STDERR_FILENO, prefix.as_ptr().cast(), prefix.len()) };
