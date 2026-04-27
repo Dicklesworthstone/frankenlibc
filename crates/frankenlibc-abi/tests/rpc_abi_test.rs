@@ -5,12 +5,20 @@
 //! Tests cover: DES crypto stubs, thread-local RPC state, key server stubs,
 //! netname conversion functions, RPC error strings, and utility functions.
 
-use std::ffi::{CStr, CString, c_char, c_int};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
+use frankenlibc_abi::malloc_abi::{free, malloc};
 use frankenlibc_abi::rpc_abi::*;
 
 // ---- DES crypto error code ----
 const DESERR_NOHWDEVICE: c_int = 4;
+
+unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
+    let ptr = unsafe { malloc(bytes.len()).cast::<c_char>() };
+    assert!(!ptr.is_null());
+    unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len()) };
+    ptr
+}
 
 // ===========================================================================
 // DES crypto stubs
@@ -274,6 +282,19 @@ fn clnt_perrno_does_not_crash() {
     unsafe { clnt_perrno(0) };
     unsafe { clnt_perrno(5) };
     unsafe { clnt_perrno(999) };
+}
+
+#[test]
+fn clnt_spcreateerror_ignores_tracked_unterminated_prefix() {
+    let prefix = unsafe { malloc_unterminated(b"rpc_prefix") };
+
+    let msg = unsafe { clnt_spcreateerror(prefix.cast_const()) };
+
+    unsafe { free(prefix.cast::<c_void>()) };
+
+    assert!(!msg.is_null());
+    let rendered = unsafe { CStr::from_ptr(msg) }.to_bytes();
+    assert_eq!(rendered, b": Success");
 }
 
 // ===========================================================================

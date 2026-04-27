@@ -2363,13 +2363,9 @@ std::thread_local! {
 /// ABI boundary function. `s` must be a valid C string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_spcreateerror(s: *const c_char) -> *mut c_char {
-    let prefix = if s.is_null() {
-        ""
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(s) }
-            .to_str()
-            .unwrap_or("")
-    };
+    let prefix = unsafe { read_bounded_cstr(s) }
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_default();
     // Read cf_stat from thread-local rpc_createerr (first 4 bytes = clnt_stat enum)
     let createerr = unsafe { __rpc_thread_createerr() };
     let cf_stat = if createerr.is_null() {
