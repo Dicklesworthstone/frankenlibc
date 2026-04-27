@@ -339,14 +339,16 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
 ///
 /// Equivalent to C `strcspn`.
 pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
-    let s_len = strlen(s);
     let reject_len = strlen(reject);
     let reject_set = &reject[..reject_len];
 
-    s[..s_len]
-        .iter()
-        .position(|b| reject_set.contains(b))
-        .unwrap_or(s_len)
+    for (i, &byte) in s.iter().enumerate() {
+        if byte == 0 || reject_set.contains(&byte) {
+            return i;
+        }
+    }
+
+    s.len()
 }
 
 /// Locates the first occurrence of any byte from `accept` in `s`.
@@ -668,6 +670,26 @@ mod tests {
     #[test]
     fn test_strrchr_nul_without_terminator_returns_len() {
         assert_eq!(strrchr(b"unterminated", 0), Some(12));
+    }
+
+    #[test]
+    fn test_strcspn_basic() {
+        assert_eq!(strcspn(b"abc123\0", b"123\0"), 3);
+    }
+
+    #[test]
+    fn test_strcspn_stops_at_terminator() {
+        assert_eq!(strcspn(b"abc\0Z", b"Z\0"), 3);
+    }
+
+    #[test]
+    fn test_strcspn_reject_absent_without_terminator_returns_len() {
+        assert_eq!(strcspn(b"unterminated", b"Z\0"), 12);
+    }
+
+    #[test]
+    fn test_strcspn_empty_reject_returns_strlen() {
+        assert_eq!(strcspn(b"abc\0", b"\0"), 3);
     }
 
     #[test]
