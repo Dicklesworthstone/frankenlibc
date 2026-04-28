@@ -426,6 +426,22 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
 /// Equivalent to C `strpbrk`. Returns the index of the first match, or `None`.
 pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
     let accept_len = strlen(accept);
+    if accept_len == 0 {
+        return None;
+    }
+    if accept_len == 1 {
+        let accepted = accept[0];
+        for (i, &byte) in s.iter().enumerate() {
+            if byte == 0 {
+                return None;
+            }
+            if byte == accepted {
+                return Some(i);
+            }
+        }
+        return None;
+    }
+
     let accept_set = &accept[..accept_len];
 
     for (i, &byte) in s.iter().enumerate() {
@@ -820,6 +836,11 @@ mod tests {
     #[test]
     fn test_strpbrk_basic() {
         assert_eq!(strpbrk(b"abc123\0", b"13\0"), Some(3));
+    }
+
+    #[test]
+    fn test_strpbrk_single_accept_match_without_terminator() {
+        assert_eq!(strpbrk(b"abcZdef", b"Z\0"), Some(3));
     }
 
     #[test]
