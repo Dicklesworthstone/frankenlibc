@@ -397,6 +397,19 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
 /// Equivalent to C `strcspn`.
 pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
     let reject_len = strlen(reject);
+    if reject_len == 0 {
+        return strlen(s);
+    }
+    if reject_len == 1 {
+        let rejected = reject[0];
+        for (i, &byte) in s.iter().enumerate() {
+            if byte == 0 || byte == rejected {
+                return i;
+            }
+        }
+        return s.len();
+    }
+
     let reject_set = &reject[..reject_len];
 
     for (i, &byte) in s.iter().enumerate() {
@@ -782,6 +795,11 @@ mod tests {
     #[test]
     fn test_strcspn_basic() {
         assert_eq!(strcspn(b"abc123\0", b"123\0"), 3);
+    }
+
+    #[test]
+    fn test_strcspn_single_reject_match_without_terminator() {
+        assert_eq!(strcspn(b"abcZdef", b"Z\0"), 3);
     }
 
     #[test]
