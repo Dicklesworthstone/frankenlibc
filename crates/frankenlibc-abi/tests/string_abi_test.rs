@@ -936,6 +936,36 @@ fn strsignal_returns_message() {
     assert!(!s.to_bytes().is_empty());
 }
 
+#[test]
+fn strsignal_realtime_signals_match_glibc_offsets() {
+    let check = |sig, expected: &[u8]| {
+        let msg = unsafe { strsignal(sig) };
+        assert!(!msg.is_null());
+        let s = unsafe { CStr::from_ptr(msg) };
+        assert_eq!(s.to_bytes(), expected, "strsignal({sig})");
+    };
+
+    check(34, b"Real-time signal 0");
+    check(35, b"Real-time signal 1");
+    check(64, b"Real-time signal 30");
+}
+
+#[test]
+fn strsignal_unknown_signals_include_number() {
+    let check = |sig, expected: &[u8]| {
+        let msg = unsafe { strsignal(sig) };
+        assert!(!msg.is_null());
+        let s = unsafe { CStr::from_ptr(msg) };
+        assert_eq!(s.to_bytes(), expected, "strsignal({sig})");
+    };
+
+    check(-1, b"Unknown signal -1");
+    check(0, b"Unknown signal 0");
+    check(32, b"Unknown signal 32");
+    check(33, b"Unknown signal 33");
+    check(65, b"Unknown signal 65");
+}
+
 // ===========================================================================
 // strcoll / strxfrm
 // ===========================================================================

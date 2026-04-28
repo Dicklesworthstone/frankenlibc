@@ -7,6 +7,7 @@
 
 use std::cell::Cell;
 use std::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong, c_void};
+use std::fmt::Write as _;
 use std::sync::{
     Once,
     atomic::{AtomicU32, Ordering as AtomicOrdering},
@@ -5483,6 +5484,9 @@ std::thread_local! {
     static STRSIGNAL_BUF: std::cell::RefCell<[u8; 64]> = const { std::cell::RefCell::new([0u8; 64]) };
 }
 
+const GLIBC_SIGRTMIN: c_int = 34;
+const GLIBC_SIGRTMAX: c_int = 64;
+
 /// POSIX `strsignal` — returns a string describing a signal number.
 ///
 /// Returns a thread-local buffer with the signal description.
@@ -5490,7 +5494,17 @@ std::thread_local! {
 pub unsafe extern "C" fn strsignal(sig: c_int) -> *mut c_char {
     STRSIGNAL_BUF.with(|cell| {
         let mut buf = cell.borrow_mut();
-        let name = signal_name(sig);
+        let mut formatted = String::new();
+        let name = if (1..=31).contains(&sig) {
+            signal_name(sig)
+        } else {
+            if (GLIBC_SIGRTMIN..=GLIBC_SIGRTMAX).contains(&sig) {
+                let _ = write!(&mut formatted, "Real-time signal {}", sig - GLIBC_SIGRTMIN);
+            } else {
+                let _ = write!(&mut formatted, "Unknown signal {sig}");
+            }
+            formatted.as_bytes()
+        };
         let len = name.len().min(buf.len() - 1);
         buf[..len].copy_from_slice(&name[..len]);
         buf[len] = 0;

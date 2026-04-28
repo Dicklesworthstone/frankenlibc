@@ -330,11 +330,7 @@ fn sigdescr_np_invalid_returns_null() {
 #[test]
 fn sigrtmin_returns_valid_value() {
     let rtmin = unsafe { __libc_current_sigrtmin() };
-    // On Linux, SIGRTMIN after NPTL reservation is typically 34 or 35
-    assert!(
-        (32..=40).contains(&rtmin),
-        "SIGRTMIN should be in [32,40], got {rtmin}"
-    );
+    assert_eq!(rtmin, 34, "SIGRTMIN on x86_64 glibc/Linux should be 34");
 }
 
 #[test]

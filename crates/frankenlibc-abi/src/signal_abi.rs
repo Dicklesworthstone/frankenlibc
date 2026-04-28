@@ -1611,8 +1611,8 @@ pub unsafe extern "C" fn sigisemptyset(set: *const libc::sigset_t) -> c_int {
 /// `__libc_current_sigrtmin` — return minimum real-time signal number.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_current_sigrtmin() -> c_int {
-    // Linux reserves SIGRTMIN+0..+2 for NPTL; usable range starts at SIGRTMIN+3 = 35.
-    35
+    // glibc on Linux/x86_64 exposes SIGRTMIN as 34 after reserving 32 and 33.
+    34
 }
 
 /// `__libc_current_sigrtmax` — return maximum real-time signal number.
