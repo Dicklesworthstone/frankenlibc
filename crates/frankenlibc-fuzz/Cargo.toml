@@ -295,4 +295,9 @@ name = "fuzz_punycode"
 path = "fuzz_targets/fuzz_punycode.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_fnmatch"
+path = "fuzz_targets/fuzz_fnmatch.rs"
+doc = false
+
 [workspace]
