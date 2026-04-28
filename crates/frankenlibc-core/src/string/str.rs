@@ -324,14 +324,16 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 ///
 /// Equivalent to C `strspn`.
 pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
-    let s_len = strlen(s);
     let accept_len = strlen(accept);
     let accept_set = &accept[..accept_len];
 
-    s[..s_len]
-        .iter()
-        .position(|b| !accept_set.contains(b))
-        .unwrap_or(s_len)
+    for (i, &byte) in s.iter().enumerate() {
+        if byte == 0 || !accept_set.contains(&byte) {
+            return i;
+        }
+    }
+
+    s.len()
 }
 
 /// Returns the length of the initial segment of `s` consisting entirely of
@@ -678,6 +680,27 @@ mod tests {
     #[test]
     fn test_strrchr_nul_without_terminator_returns_len() {
         assert_eq!(strrchr(b"unterminated", 0), Some(12));
+    }
+
+    #[test]
+    fn test_strspn_basic() {
+        assert_eq!(strspn(b"abc123\0", b"abc\0"), 3);
+    }
+
+    #[test]
+    fn test_strspn_stops_at_terminator() {
+        assert_eq!(strspn(b"abc\0Z", b"abcZ\0"), 3);
+    }
+
+    #[test]
+    fn test_strspn_full_without_terminator_returns_len() {
+        assert_eq!(strspn(b"unterminated", b"untermiad\0"), 12);
+    }
+
+    #[test]
+    fn test_strspn_empty_accept_returns_zero() {
+        assert_eq!(strspn(b"abc\0", b"\0"), 0);
+        assert_eq!(strspn(b"\0", b"\0"), 0);
     }
 
     #[test]
