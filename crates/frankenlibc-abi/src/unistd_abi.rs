@@ -6921,10 +6921,16 @@ pub unsafe extern "C" fn forkpty(
     crate::pthread_abi::run_atfork_prepare();
     let _pipeline_guard =
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    // Mirror fork()'s ENVIRON_LOCK acquisition: the forkpty child does not exec,
+    // so any held environ lock from another parent thread becomes a stuck lock
+    // in the child address space. Acquiring here forces serialization with any
+    // in-flight setenv before the clone.
+    let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
 
     let pid = match syscall::sys_clone_fork(libc::SIGCHLD as usize) {
         Ok(p) => p,
         Err(_) => {
+            drop(_environ_guard);
             drop(_pipeline_guard);
             let _ = syscall::sys_close(master);
             let _ = syscall::sys_close(slave);
@@ -6932,6 +6938,7 @@ pub unsafe extern "C" fn forkpty(
         }
     };
 
+    drop(_environ_guard);
     drop(_pipeline_guard);
 
     if pid == 0 {
