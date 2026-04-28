@@ -7904,49 +7904,20 @@ pub unsafe extern "C" fn strnstr(
         return std::ptr::null_mut();
     }
 
-    // Bound the haystack scan at min(n, strlen(haystack)) so we never
-    // read past the caller-provided window even if the caller passed a
-    // non-NUL-terminated buffer with n covering only the valid region.
-    // SAFETY: haystack is a valid C string per caller contract.
-    let hay_len = unsafe { core_strnlen(haystack, n) };
+    // SAFETY: per BSD strnstr contract, the caller guarantees haystack
+    // either contains a NUL within the first n bytes OR is valid for n
+    // bytes of read; the bound applies whichever happens first. The
+    // core `strnstr` walks a single pass that short-circuits on NUL and
+    // is itself bounded by `min(n, slice.len())`, so giving it a slice
+    // of length `n` lets the inner loop do the strnlen and the search
+    // together — what the bd-ef934 perf slice was about.
+    let hay_slice = unsafe { std::slice::from_raw_parts(haystack as *const u8, n) };
     let needle_len = unsafe { strlen(needle) };
-
-    // SAFETY: hay_len is the in-bounds length we just measured.
-    let hay_slice = unsafe { std::slice::from_raw_parts(haystack as *const u8, hay_len) };
     // SAFETY: needle_len is the strlen we just measured.
     let needle_slice = unsafe { std::slice::from_raw_parts(needle as *const u8, needle_len) };
 
-    if needle_len == 0 {
-        return haystack as *mut c_char;
-    }
-    if needle_len > hay_len {
-        return std::ptr::null_mut();
-    }
-
-    match hay_slice
-        .windows(needle_len)
-        .position(|w| w == needle_slice)
-    {
+    match frankenlibc_core::string::strnstr(hay_slice, needle_slice, n) {
         Some(off) => unsafe { haystack.add(off) as *mut c_char },
         None => std::ptr::null_mut(),
     }
-}
-
-/// Helper: scan `s` for a NUL terminator, returning the count of bytes
-/// before it; if no NUL is found in the first `maxlen` bytes, returns
-/// `maxlen`. Equivalent to glibc `strnlen` minus the membrane wrapper.
-///
-/// # Safety
-///
-/// Caller must ensure `s` is valid for at least `maxlen` bytes.
-unsafe fn core_strnlen(s: *const c_char, maxlen: usize) -> usize {
-    let mut i = 0usize;
-    while i < maxlen {
-        // SAFETY: caller contract guarantees `s` is valid for `maxlen` bytes.
-        if unsafe { *s.add(i) } == 0 {
-            return i;
-        }
-        i += 1;
-    }
-    maxlen
 }
