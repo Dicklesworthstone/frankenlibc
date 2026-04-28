@@ -3026,16 +3026,14 @@ pub unsafe extern "C" fn __flbf(fp: *mut c_void) -> c_int {
     let _ = fp;
     0 // not line-buffered by default
 }
-// __fork: native — forward to raw syscall
+// __fork: glibc-internal alias of fork() — must run pthread_atfork handlers,
+// the membrane pipeline atfork_prepare guard, and acquire ENVIRON_LOCK before
+// the clone, identical to the public `fork` entry point. Forwarding to
+// `process_abi::fork` keeps the two symbols on a single prep path. (Same
+// hazard class as bd-sq7ae and the round-4 fork() ENVIRON_LOCK fix.)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fork() -> c_int {
-    match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
-        Ok(pid) => pid,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::process_abi::fork() as c_int }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fpending(fp: *mut c_void) -> SizeT {
