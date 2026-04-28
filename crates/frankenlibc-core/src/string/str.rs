@@ -433,22 +433,44 @@ pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
 /// Equivalent to GNU `strcasestr`. Returns the byte index where `needle` starts,
 /// or `None` if not found.
 pub fn strcasestr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    let h_len = strlen(haystack);
     let n_len = strlen(needle);
 
     if n_len == 0 {
         return Some(0);
     }
-    if n_len > h_len {
-        return None;
+
+    let needle = &needle[..n_len];
+    let first = needle[0].to_ascii_lowercase();
+
+    for i in 0..haystack.len() {
+        let byte = haystack[i];
+        if byte == 0 {
+            return None;
+        }
+        if byte.to_ascii_lowercase() != first {
+            continue;
+        }
+        if i + n_len > haystack.len() {
+            return None;
+        }
+
+        let mut matched = true;
+        for j in 1..n_len {
+            let candidate = haystack[i + j];
+            if candidate == 0 {
+                return None;
+            }
+            if !candidate.eq_ignore_ascii_case(&needle[j]) {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return Some(i);
+        }
     }
 
-    let haystack = &haystack[..h_len];
-    let needle = &needle[..n_len];
-
-    haystack
-        .windows(n_len)
-        .position(|window| window.eq_ignore_ascii_case(needle))
+    None
 }
 
 /// Duplicates a NUL-terminated string into a new `Vec<u8>`.
@@ -933,6 +955,21 @@ mod tests {
     #[test]
     fn test_strcasestr_exact_match() {
         assert_eq!(strcasestr(b"ABC\0", b"abc\0"), Some(0));
+    }
+
+    #[test]
+    fn test_strcasestr_stops_at_terminator() {
+        assert_eq!(strcasestr(b"a\0BC\0", b"bc\0"), None);
+    }
+
+    #[test]
+    fn test_strcasestr_unterminated_haystack_match() {
+        assert_eq!(strcasestr(b"aBC", b"bc\0"), Some(1));
+    }
+
+    #[test]
+    fn test_strcasestr_unterminated_haystack_short_candidate() {
+        assert_eq!(strcasestr(b"aB", b"bc\0"), None);
     }
 
     #[test]
