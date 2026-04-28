@@ -5487,6 +5487,29 @@ std::thread_local! {
 const GLIBC_SIGRTMIN: c_int = 34;
 const GLIBC_SIGRTMAX: c_int = 64;
 
+/// Render the strsignal/psignal description for `sig` into `dst`.
+///
+/// Single source of truth so `strsignal` and `psignal` always agree —
+/// glibc backs both off a single description table; diverging here
+/// means a tool that compares `strsignal(N)` to a captured psignal(N)
+/// stderr line sees inconsistent text on real-time and unknown signals.
+///
+/// Exposed for integration tests so the strsignal/psignal description
+/// contract can be asserted without capturing stderr.
+pub fn signal_description_into(sig: c_int, dst: &mut Vec<u8>) {
+    if (1..=31).contains(&sig) {
+        dst.extend_from_slice(signal_name(sig));
+        return;
+    }
+    let mut formatted = String::new();
+    if (GLIBC_SIGRTMIN..=GLIBC_SIGRTMAX).contains(&sig) {
+        let _ = write!(&mut formatted, "Real-time signal {}", sig - GLIBC_SIGRTMIN);
+    } else {
+        let _ = write!(&mut formatted, "Unknown signal {sig}");
+    }
+    dst.extend_from_slice(formatted.as_bytes());
+}
+
 /// POSIX `strsignal` — returns a string describing a signal number.
 ///
 /// Returns a thread-local buffer with the signal description.
@@ -5494,17 +5517,8 @@ const GLIBC_SIGRTMAX: c_int = 64;
 pub unsafe extern "C" fn strsignal(sig: c_int) -> *mut c_char {
     STRSIGNAL_BUF.with(|cell| {
         let mut buf = cell.borrow_mut();
-        let mut formatted = String::new();
-        let name = if (1..=31).contains(&sig) {
-            signal_name(sig)
-        } else {
-            if (GLIBC_SIGRTMIN..=GLIBC_SIGRTMAX).contains(&sig) {
-                let _ = write!(&mut formatted, "Real-time signal {}", sig - GLIBC_SIGRTMIN);
-            } else {
-                let _ = write!(&mut formatted, "Unknown signal {sig}");
-            }
-            formatted.as_bytes()
-        };
+        let mut name = Vec::with_capacity(buf.len());
+        signal_description_into(sig, &mut name);
         let len = name.len().min(buf.len() - 1);
         buf[..len].copy_from_slice(&name[..len]);
         buf[len] = 0;
@@ -5782,10 +5796,13 @@ pub static sys_signame: SysSigList = SysSigList([
 ]);
 
 /// POSIX `psignal` — print a signal description to stderr.
+///
+/// Goes through `signal_description_into` for the same labeling as
+/// `strsignal` — glibc backs both off a single description table, so a
+/// user comparing `strsignal(34)` to a captured `psignal(34, ...)` line
+/// sees consistent text on real-time and unknown signals.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
-    let name = signal_name(sig);
-
     // Build message: "s: signal_name\n" or "signal_name\n"
     let mut msg = Vec::with_capacity(256);
     let prefix = if s.is_null() {
@@ -5797,7 +5814,7 @@ pub unsafe extern "C" fn psignal(sig: c_int, s: *const c_char) {
         msg.extend_from_slice(&prefix);
         msg.extend_from_slice(b": ");
     }
-    msg.extend_from_slice(name);
+    signal_description_into(sig, &mut msg);
     msg.push(b'\n');
 
     // Write to stderr via native raw syscall (bd-h5x)

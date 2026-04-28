@@ -966,6 +966,37 @@ fn strsignal_unknown_signals_include_number() {
     check(65, b"Unknown signal 65");
 }
 
+#[test]
+fn psignal_description_matches_strsignal() {
+    // psignal must use the same description table as strsignal so users
+    // comparing the two never see divergent text. This was a real
+    // regression: strsignal got real-time + unknown labeling in
+    // 466a9df1 but psignal kept calling signal_name directly, so
+    // psignal(34, ...) printed "Unknown signal" while strsignal(34)
+    // returned "Real-time signal 0".
+    use frankenlibc_abi::string_abi::signal_description_into;
+
+    let mut got = Vec::new();
+    let cases: &[(libc::c_int, &[u8])] = &[
+        (1, b"Hangup"),
+        (15, b"Terminated"),
+        (31, b"Bad system call"),
+        (34, b"Real-time signal 0"),
+        (35, b"Real-time signal 1"),
+        (64, b"Real-time signal 30"),
+        (-1, b"Unknown signal -1"),
+        (0, b"Unknown signal 0"),
+        (32, b"Unknown signal 32"),
+        (33, b"Unknown signal 33"),
+        (65, b"Unknown signal 65"),
+    ];
+    for &(sig, expected) in cases {
+        got.clear();
+        signal_description_into(sig, &mut got);
+        assert_eq!(got, expected, "signal_description_into({sig})");
+    }
+}
+
 // ===========================================================================
 // strcoll / strxfrm
 // ===========================================================================
