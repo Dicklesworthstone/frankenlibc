@@ -931,8 +931,11 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'm' => {
-                    // Month [01,12]
+                    // Month [01,12] — glibc rejects out-of-range numeric values.
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                        if !(1..=12).contains(&val) {
+                            return std::ptr::null_mut();
+                        }
                         unsafe { (*tm).tm_mon = val - 1 };
                         si = new_si;
                     } else {
@@ -940,9 +943,13 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'd' | b'e' => {
-                    // Day of month [01,31] (%e allows leading space)
+                    // Day of month [01,31] (%e allows leading space).
+                    // glibc rejects out-of-range numeric values.
                     si = skip_ws(input, si);
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                        if !(1..=31).contains(&val) {
+                            return std::ptr::null_mut();
+                        }
                         unsafe { (*tm).tm_mday = val };
                         si = new_si;
                     } else {
@@ -950,8 +957,11 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'H' => {
-                    // Hour (24-hour) [00,23]
+                    // Hour (24-hour) [00,23] — glibc rejects 24..=99.
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                        if !(0..=23).contains(&val) {
+                            return std::ptr::null_mut();
+                        }
                         unsafe { (*tm).tm_hour = val };
                         si = new_si;
                     } else {
@@ -959,8 +969,15 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'I' => {
-                    // Hour (12-hour) [01,12]
+                    // Hour (12-hour) [01,12]. glibc rejects 0 and 13..=99.
+                    // We store `val % 12` so the AM/PM post-processing can
+                    // simply add 12 for PM and leave AM unchanged: that
+                    // gives 12 AM → 0 (midnight) and 12 PM → 12 (noon)
+                    // without a special case at finalization.
                     if let Some((val, new_si)) = parse_digits(input, si, 2) {
+                        if !(1..=12).contains(&val) {
+                            return std::ptr::null_mut();
+                        }
                         unsafe { (*tm).tm_hour = val % 12 };
                         si = new_si;
                     } else {
@@ -998,8 +1015,11 @@ pub unsafe extern "C" fn strptime(
                     }
                 }
                 b'j' => {
-                    // Day of year [001,366]
+                    // Day of year [001,366] — glibc rejects 000 and 367..=999.
                     if let Some((val, new_si)) = parse_digits(input, si, 3) {
+                        if !(1..=366).contains(&val) {
+                            return std::ptr::null_mut();
+                        }
                         unsafe { (*tm).tm_yday = val - 1 };
                         si = new_si;
                     } else {

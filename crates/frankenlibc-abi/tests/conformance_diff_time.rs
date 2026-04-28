@@ -355,6 +355,273 @@ fn diff_strftime_cases() {
 }
 
 // ===========================================================================
+// strptime — parse formatted time string into broken-down time
+// ===========================================================================
+//
+// strptime is the inverse of strftime. Our impl in time_abi.rs::strptime
+// supports a documented subset of glibc specifiers (Y/C/y/m/d/e/H/I/p/M/
+// S/j/b/B/h/a/A/n/t/%/D/T/R/F).
+//
+// Only fields a given format actually writes are comparable across impls,
+// so each case names the fields to assert. tm_wday, tm_yday, and
+// tm_isdst are computed differently across impls (some derive them
+// from %Y%m%d, some don't) and are intentionally excluded — the
+// strftime/timegm/mktime surfaces already pin those.
+//
+// Cases focus on:
+//   * each supported single specifier with at least one boundary value
+//   * 12-hour / AM-PM interaction (%I + %p)
+//   * %C + %y century-stitching path
+//   * composite shortcuts (%D, %T, %R, %F)
+//   * literal text and whitespace specifiers (%n, %t)
+//   * a handful of intentional failures (trailing %, bad month, empty)
+
+const TM_FIELD_SEC: u32 = 1 << 0;
+const TM_FIELD_MIN: u32 = 1 << 1;
+const TM_FIELD_HOUR: u32 = 1 << 2;
+const TM_FIELD_MDAY: u32 = 1 << 3;
+const TM_FIELD_MON: u32 = 1 << 4;
+const TM_FIELD_YEAR: u32 = 1 << 5;
+
+struct StrptimeCase {
+    fmt: &'static [u8],
+    input: &'static [u8],
+    /// Fields the format is supposed to write — only these are
+    /// compared between impls. 0 means "don't compare any field;
+    /// just check return-pointer behavior."
+    fields: u32,
+    /// True when both impls must reject the input (returning NULL).
+    expect_failure: bool,
+}
+
+const STRPTIME_CASES: &[StrptimeCase] = &[
+    // --- %Y / %C / %y year handling ---
+    StrptimeCase { fmt: b"%Y", input: b"2024", fields: TM_FIELD_YEAR, expect_failure: false },
+    StrptimeCase { fmt: b"%Y", input: b"1970", fields: TM_FIELD_YEAR, expect_failure: false },
+    StrptimeCase { fmt: b"%Y", input: b"9999", fields: TM_FIELD_YEAR, expect_failure: false },
+    StrptimeCase { fmt: b"%y", input: b"00",   fields: TM_FIELD_YEAR, expect_failure: false },
+    StrptimeCase { fmt: b"%y", input: b"68",   fields: TM_FIELD_YEAR, expect_failure: false },
+    StrptimeCase { fmt: b"%y", input: b"69",   fields: TM_FIELD_YEAR, expect_failure: false },
+    StrptimeCase { fmt: b"%y", input: b"99",   fields: TM_FIELD_YEAR, expect_failure: false },
+    StrptimeCase { fmt: b"%C%y", input: b"2024", fields: TM_FIELD_YEAR, expect_failure: false },
+    StrptimeCase { fmt: b"%C%y", input: b"1969", fields: TM_FIELD_YEAR, expect_failure: false },
+
+    // --- %m month numeric ---
+    StrptimeCase { fmt: b"%m", input: b"01", fields: TM_FIELD_MON, expect_failure: false },
+    StrptimeCase { fmt: b"%m", input: b"12", fields: TM_FIELD_MON, expect_failure: false },
+    StrptimeCase { fmt: b"%m", input: b"06", fields: TM_FIELD_MON, expect_failure: false },
+
+    // --- %B / %b / %h month name ---
+    StrptimeCase { fmt: b"%B", input: b"January",   fields: TM_FIELD_MON, expect_failure: false },
+    StrptimeCase { fmt: b"%B", input: b"December",  fields: TM_FIELD_MON, expect_failure: false },
+    StrptimeCase { fmt: b"%B", input: b"february",  fields: TM_FIELD_MON, expect_failure: false }, // case-insensitive
+    StrptimeCase { fmt: b"%b", input: b"Jan",       fields: TM_FIELD_MON, expect_failure: false },
+    StrptimeCase { fmt: b"%b", input: b"Dec",       fields: TM_FIELD_MON, expect_failure: false },
+    StrptimeCase { fmt: b"%h", input: b"Jul",       fields: TM_FIELD_MON, expect_failure: false },
+
+    // --- %d / %e day-of-month ---
+    StrptimeCase { fmt: b"%d", input: b"01", fields: TM_FIELD_MDAY, expect_failure: false },
+    StrptimeCase { fmt: b"%d", input: b"15", fields: TM_FIELD_MDAY, expect_failure: false },
+    StrptimeCase { fmt: b"%d", input: b"31", fields: TM_FIELD_MDAY, expect_failure: false },
+    StrptimeCase { fmt: b"%e", input: b" 1", fields: TM_FIELD_MDAY, expect_failure: false },
+    StrptimeCase { fmt: b"%e", input: b"31", fields: TM_FIELD_MDAY, expect_failure: false },
+
+    // --- %H 24-hour ---
+    StrptimeCase { fmt: b"%H", input: b"00", fields: TM_FIELD_HOUR, expect_failure: false },
+    StrptimeCase { fmt: b"%H", input: b"12", fields: TM_FIELD_HOUR, expect_failure: false },
+    StrptimeCase { fmt: b"%H", input: b"23", fields: TM_FIELD_HOUR, expect_failure: false },
+
+    // --- %I + %p 12-hour conversion ---
+    StrptimeCase { fmt: b"%I:%M %p", input: b"12:34 AM", fields: TM_FIELD_HOUR | TM_FIELD_MIN, expect_failure: false },
+    StrptimeCase { fmt: b"%I:%M %p", input: b"12:34 PM", fields: TM_FIELD_HOUR | TM_FIELD_MIN, expect_failure: false },
+    StrptimeCase { fmt: b"%I:%M %p", input: b"01:00 AM", fields: TM_FIELD_HOUR | TM_FIELD_MIN, expect_failure: false },
+    StrptimeCase { fmt: b"%I:%M %p", input: b"11:59 PM", fields: TM_FIELD_HOUR | TM_FIELD_MIN, expect_failure: false },
+
+    // --- %M / %S ---
+    StrptimeCase { fmt: b"%M", input: b"00", fields: TM_FIELD_MIN, expect_failure: false },
+    StrptimeCase { fmt: b"%M", input: b"59", fields: TM_FIELD_MIN, expect_failure: false },
+    StrptimeCase { fmt: b"%S", input: b"00", fields: TM_FIELD_SEC, expect_failure: false },
+    StrptimeCase { fmt: b"%S", input: b"59", fields: TM_FIELD_SEC, expect_failure: false },
+
+    // --- composite specifiers ---
+    StrptimeCase {
+        fmt: b"%D",
+        input: b"01/15/24",
+        fields: TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%T",
+        input: b"12:34:56",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%R",
+        input: b"08:15",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%F",
+        input: b"2024-01-15",
+        fields: TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+
+    // --- whitespace and literal directives ---
+    StrptimeCase {
+        fmt: b"%Y%n%m",
+        input: b"2024 03",
+        fields: TM_FIELD_MON | TM_FIELD_YEAR,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%H%t%M",
+        input: b"12\t34",
+        fields: TM_FIELD_HOUR | TM_FIELD_MIN,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%Y-%m-%d %H:%M:%S",
+        input: b"2024-12-31 23:59:59",
+        fields: TM_FIELD_YEAR | TM_FIELD_MON | TM_FIELD_MDAY | TM_FIELD_HOUR | TM_FIELD_MIN | TM_FIELD_SEC,
+        expect_failure: false,
+    },
+    StrptimeCase {
+        fmt: b"%%Y",
+        input: b"%Y",
+        fields: 0,
+        expect_failure: false,
+    },
+
+    // --- failure paths: both impls must reject ---
+    StrptimeCase { fmt: b"%Y", input: b"abc",   fields: 0, expect_failure: true },
+    StrptimeCase { fmt: b"%m", input: b"00",    fields: 0, expect_failure: true }, // 00 is invalid; 1..=12
+    StrptimeCase { fmt: b"%m", input: b"13",    fields: 0, expect_failure: true },
+    StrptimeCase { fmt: b"%d", input: b"00",    fields: 0, expect_failure: true }, // 00 is invalid; 1..=31
+    StrptimeCase { fmt: b"%d", input: b"32",    fields: 0, expect_failure: true },
+    StrptimeCase { fmt: b"%H", input: b"24",    fields: 0, expect_failure: true }, // 0..=23 only
+    StrptimeCase { fmt: b"%I", input: b"00",    fields: 0, expect_failure: true }, // 1..=12 only
+    StrptimeCase { fmt: b"%I", input: b"13",    fields: 0, expect_failure: true },
+    StrptimeCase { fmt: b"%j", input: b"000",   fields: 0, expect_failure: true }, // 1..=366
+    StrptimeCase { fmt: b"%j", input: b"367",   fields: 0, expect_failure: true },
+    StrptimeCase { fmt: b"%b", input: b"Foo",   fields: 0, expect_failure: true }, // not a month
+    StrptimeCase { fmt: b"%p", input: b"XM",    fields: 0, expect_failure: true }, // neither AM nor PM
+    StrptimeCase { fmt: b"%Y", input: b"",      fields: 0, expect_failure: true }, // empty
+];
+
+// glibc strptime has divergent quirks we intentionally do NOT pin here:
+//   * %M "60" — glibc does greedy-with-backoff (reads "6", off=1, min=6);
+//     our parser reads up to 2 digits unconditionally. Matching the
+//     backoff behavior would require a new parse_digits_bounded variant.
+//   * %S "61" — glibc accepts up to 61 (leap-of-leap second);
+//     our parser also accepts so this happens to agree, but the
+//     contract is asymmetric with %M.
+// Both belong in a follow-up parser-rewrite slice rather than this
+// initial conformance harness.
+
+fn collect_field_diffs(case: &str, fl: &libc::tm, lc: &libc::tm, fields: u32) -> Vec<Divergence> {
+    let mut out = Vec::new();
+    let pairs: &[(u32, &str, i32, i32)] = &[
+        (TM_FIELD_SEC,  "tm_sec",  fl.tm_sec,  lc.tm_sec),
+        (TM_FIELD_MIN,  "tm_min",  fl.tm_min,  lc.tm_min),
+        (TM_FIELD_HOUR, "tm_hour", fl.tm_hour, lc.tm_hour),
+        (TM_FIELD_MDAY, "tm_mday", fl.tm_mday, lc.tm_mday),
+        (TM_FIELD_MON,  "tm_mon",  fl.tm_mon,  lc.tm_mon),
+        (TM_FIELD_YEAR, "tm_year", fl.tm_year, lc.tm_year),
+    ];
+    for &(mask, field, fv, lv) in pairs {
+        if fields & mask != 0 && fv != lv {
+            out.push(Divergence {
+                function: "strptime",
+                case: case.to_string(),
+                field,
+                frankenlibc: fv.to_string(),
+                glibc: lv.to_string(),
+            });
+        }
+    }
+    out
+}
+
+#[test]
+fn diff_strptime_cases() {
+    let mut divs = Vec::new();
+    with_utc(|| {
+        for case in STRPTIME_CASES {
+            // Both implementations need NUL-terminated C strings.
+            let mut fmt_z = case.fmt.to_vec();
+            fmt_z.push(0);
+            let mut input_z = case.input.to_vec();
+            input_z.push(0);
+            let fmt_p = fmt_z.as_ptr() as *const c_char;
+            let input_p = input_z.as_ptr() as *const c_char;
+
+            let mut fl_tm = empty_tm();
+            let mut lc_tm = empty_tm();
+            // SAFETY: input/fmt pointers are NUL-terminated for the call's
+            // duration; tm pointers are exclusive locals.
+            let fl_end = unsafe { fl::strptime(input_p, fmt_p, &mut fl_tm) };
+            let lc_end = unsafe { libc::strptime(input_p, fmt_p, &mut lc_tm) };
+            let label = format!(
+                "fmt={:?}, input={:?}",
+                String::from_utf8_lossy(case.fmt),
+                String::from_utf8_lossy(case.input),
+            );
+
+            // 1. Failure parity: both must agree on whether parsing succeeded.
+            let fl_ok = !fl_end.is_null();
+            let lc_ok = !lc_end.is_null();
+            if fl_ok != lc_ok {
+                divs.push(Divergence {
+                    function: "strptime",
+                    case: label.clone(),
+                    field: "return_null",
+                    frankenlibc: if fl_ok { "ok".into() } else { "null".into() },
+                    glibc: if lc_ok { "ok".into() } else { "null".into() },
+                });
+                continue;
+            }
+            if case.expect_failure {
+                if fl_ok {
+                    divs.push(Divergence {
+                        function: "strptime",
+                        case: label.clone(),
+                        field: "expected_failure",
+                        frankenlibc: "ok".into(),
+                        glibc: "ok".into(),
+                    });
+                }
+                continue;
+            }
+
+            // 2. Both succeeded: compare end-of-parse offset and the
+            //    fields the format was supposed to write.
+            // SAFETY: input_p is the base of the buffer both impls walked.
+            let fl_off = unsafe { fl_end.offset_from(input_p) };
+            let lc_off = unsafe { lc_end.offset_from(input_p) };
+            if fl_off != lc_off {
+                divs.push(Divergence {
+                    function: "strptime",
+                    case: label.clone(),
+                    field: "end_offset",
+                    frankenlibc: fl_off.to_string(),
+                    glibc: lc_off.to_string(),
+                });
+            }
+
+            divs.extend(collect_field_diffs(&label, &fl_tm, &lc_tm, case.fields));
+        }
+    });
+    assert!(
+        divs.is_empty(),
+        "strptime divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
@@ -362,9 +629,10 @@ fn diff_strftime_cases() {
 fn time_diff_coverage_report() {
     let total = GMTIME_EPOCHS.len() * 3                            // gmtime_r + timegm + mktime
         + 7                                                          // difftime cases
-        + GMTIME_EPOCHS.len() * STRFTIME_FORMATS.len(); // strftime
+        + GMTIME_EPOCHS.len() * STRFTIME_FORMATS.len()             // strftime
+        + STRPTIME_CASES.len();                                    // strptime
     eprintln!(
-        "{{\"family\":\"time.h\",\"reference\":\"glibc\",\"functions\":5,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"time.h\",\"reference\":\"glibc\",\"functions\":6,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
