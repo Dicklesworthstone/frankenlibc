@@ -292,13 +292,44 @@ pub fn strnstr(haystack: &[u8], needle: &[u8], n: usize) -> Option<usize> {
     if n_len == 0 {
         return Some(0);
     }
-    let h_len = strlen(haystack).min(n);
-    if n_len > h_len {
+
+    let limit = n.min(haystack.len());
+    if n_len > limit {
         return None;
     }
-    let haystack = &haystack[..h_len];
+
     let needle = &needle[..n_len];
-    haystack.windows(n_len).position(|window| window == needle)
+    let first = needle[0];
+
+    for i in 0..limit {
+        let byte = haystack[i];
+        if byte == 0 {
+            return None;
+        }
+        if byte != first {
+            continue;
+        }
+        if i + n_len > limit {
+            return None;
+        }
+
+        let mut matched = true;
+        for j in 1..n_len {
+            let candidate = haystack[i + j];
+            if candidate == 0 {
+                return None;
+            }
+            if candidate != needle[j] {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return Some(i);
+        }
+    }
+
+    None
 }
 
 /// Case-insensitive comparison of two NUL-terminated byte strings.
@@ -851,6 +882,16 @@ mod tests {
         // NUL inside the bound truncates the search region — strstr
         // semantics inherited.
         assert_eq!(strnstr(b"abc\0def\0", b"def\0", 100), None);
+    }
+
+    #[test]
+    fn test_strnstr_ignores_match_after_bound_without_terminator() {
+        assert_eq!(strnstr(b"aaaaZQ", b"ZQ\0", 4), None);
+    }
+
+    #[test]
+    fn test_strnstr_unterminated_haystack_match_within_bound() {
+        assert_eq!(strnstr(b"xabcGARBAGE", b"abc\0", 4), Some(1));
     }
 
     #[test]
