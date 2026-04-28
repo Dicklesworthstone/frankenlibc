@@ -14,6 +14,7 @@
 //! - `strchr / strrchr / strchrnul / strstr / strpbrk / memchr / memrchr`
 //!   compare offset-from-base (or "no match" sentinel).
 //! - `strspn / strcspn / strnlen` compare returned length.
+//! - `memmem` compares bounded byte-substring match offsets.
 //! - `memcmp` compares the sign of the returned int (POSIX requires
 //!   only the sign, not the magnitude, to be portable).
 //!
@@ -23,6 +24,16 @@
 use std::ffi::{c_char, c_int, c_void};
 
 use frankenlibc_abi::string_abi as fl;
+
+unsafe extern "C" {
+    #[link_name = "memmem"]
+    fn libc_memmem(
+        haystack: *const c_void,
+        haystack_len: usize,
+        needle: *const c_void,
+        needle_len: usize,
+    ) -> *mut c_void;
+}
 
 #[derive(Debug)]
 struct Divergence {
@@ -62,6 +73,17 @@ fn render_offset(o: Option<isize>) -> String {
     match o {
         Some(off) => format!("offset={off}"),
         None => "NULL".into(),
+    }
+}
+
+fn offset_void_or_none(base: *const u8, ret: *const c_void) -> Option<isize> {
+    if ret.is_null() {
+        None
+    } else {
+        // SAFETY: every caller compares return pointers from byte-search
+        // functions against the same allocation passed as that function's
+        // haystack/input buffer.
+        Some(unsafe { (ret as *const u8).offset_from(base) })
     }
 }
 
@@ -352,16 +374,8 @@ fn diff_memchr_cases() {
         let p = s.as_ptr() as *const c_void;
         let fl_r = unsafe { fl::memchr(p, *c, *n) };
         let lc_r = unsafe { libc::memchr(p, *c, *n) };
-        let fo = if fl_r.is_null() {
-            None
-        } else {
-            Some(unsafe { (fl_r as *const u8).offset_from(s.as_ptr()) })
-        };
-        let lo = if lc_r.is_null() {
-            None
-        } else {
-            Some(unsafe { (lc_r as *const u8).offset_from(s.as_ptr()) })
-        };
+        let fo = offset_void_or_none(s.as_ptr(), fl_r);
+        let lo = offset_void_or_none(s.as_ptr(), lc_r);
         if fo != lo {
             divs.push(Divergence {
                 function: "memchr",
@@ -374,6 +388,31 @@ fn diff_memchr_cases() {
     assert!(
         divs.is_empty(),
         "memchr divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_memrchr_cases() {
+    let mut divs = Vec::new();
+    for (s, c, n) in MEMCHR_CASES {
+        let p = s.as_ptr() as *const c_void;
+        let fl_r = unsafe { fl::memrchr(p, *c, *n) };
+        let lc_r = unsafe { libc::memrchr(p, *c, *n) };
+        let fo = offset_void_or_none(s.as_ptr(), fl_r);
+        let lo = offset_void_or_none(s.as_ptr(), lc_r);
+        if fo != lo {
+            divs.push(Divergence {
+                function: "memrchr",
+                case: format!("({:?}, {:#x}, {})", s, c, n),
+                frankenlibc: render_offset(fo),
+                glibc: render_offset(lo),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "memrchr divergences:\n{}",
         render_divs(&divs)
     );
 }
@@ -424,6 +463,66 @@ fn diff_memcmp_cases() {
 }
 
 // ===========================================================================
+// memmem — bounded byte substring search (NUL-permissible)
+// ===========================================================================
+
+const MEMMEM_CASES: &[(&[u8], usize, &[u8], usize)] = &[
+    (b"", 0, b"", 0),                     // empty needle matches at start
+    (b"abc", 3, b"", 0),                  // empty needle, non-empty haystack
+    (b"", 0, b"a", 1),                    // non-empty needle, empty haystack
+    (b"hello world", 11, b"world", 5),    // match at end
+    (b"hello world", 11, b"hello", 5),    // match at start
+    (b"hello world", 11, b" ", 1),        // single-byte needle
+    (b"abcabc", 6, b"bc", 2),             // first repeated match
+    (b"aaaaa", 5, b"aaa", 3),             // overlapping candidates
+    (b"abcdef", 6, b"xyz", 3),            // absent needle
+    (b"abc", 2, b"bc", 2),                // haystack_len truncates match
+    (b"abcdef", 6, b"cdeX", 3),           // needle_len truncates needle buffer
+    (b"abc\0def", 7, b"\0d", 2),          // embedded NUL is ordinary data
+    (b"\xff\xfe\xfd", 3, b"\xfe\xfd", 2), // high-bit bytes
+];
+
+#[test]
+fn diff_memmem_cases() {
+    let mut divs = Vec::new();
+    for (haystack, haystack_len, needle, needle_len) in MEMMEM_CASES {
+        let hbuf = if haystack.is_empty() {
+            vec![0_u8]
+        } else {
+            haystack.to_vec()
+        };
+        let nbuf = if needle.is_empty() {
+            vec![0_u8]
+        } else {
+            needle.to_vec()
+        };
+        let hp = hbuf.as_ptr().cast::<c_void>();
+        let np = nbuf.as_ptr().cast::<c_void>();
+
+        let fl_r = unsafe { fl::memmem(hp, *haystack_len, np, *needle_len) };
+        let lc_r = unsafe { libc_memmem(hp, *haystack_len, np, *needle_len) };
+        let fo = offset_void_or_none(hbuf.as_ptr(), fl_r);
+        let lo = offset_void_or_none(hbuf.as_ptr(), lc_r);
+        if fo != lo {
+            divs.push(Divergence {
+                function: "memmem",
+                case: format!(
+                    "({:?}, {}, {:?}, {})",
+                    haystack, haystack_len, needle, needle_len
+                ),
+                frankenlibc: render_offset(fo),
+                glibc: render_offset(lo),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "memmem divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
@@ -433,10 +532,11 @@ fn string_diff_coverage_report() {
         + STRSTR_CASES.len()
         + PBRK_CASES.len() * 3            // strpbrk + strspn + strcspn
         + STRNLEN_CASES.len()
-        + MEMCHR_CASES.len()
-        + MEMCMP_CASES.len();
+        + MEMCHR_CASES.len() * 2          // memchr + memrchr
+        + MEMCMP_CASES.len()
+        + MEMMEM_CASES.len();
     eprintln!(
-        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":9,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":11,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
