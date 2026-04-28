@@ -722,9 +722,9 @@ pub fn execute_fixture_case(
         "__libc_start_main" => execute_libc_start_main_case(inputs, mode),
         // virtual memory ops
         "mmap" => execute_mmap_case(inputs, mode),
-        "munmap" => execute_munmap_case(mode),
-        "mprotect" => execute_mprotect_case(mode),
-        "madvise" => execute_madvise_case(mode),
+        "munmap" => execute_munmap_case(inputs, mode),
+        "mprotect" => execute_mprotect_case(inputs, mode),
+        "madvise" => execute_madvise_case(inputs, mode),
         // backtrace ops
         "backtrace" => execute_backtrace_case(inputs, mode),
         "backtrace_symbols" => execute_backtrace_symbols_case(mode),
@@ -14833,22 +14833,108 @@ fn execute_mmap_case(
     Ok(non_host_execution(result.to_string()))
 }
 
-fn execute_munmap_case(mode: &str) -> Result<DifferentialExecution, String> {
-    ensure_supported_mode(mode)?;
-    // Would unmap memory - needs valid mapped addr, stub
-    Ok(non_host_execution("0".to_string()))
+fn map_impl_private_anonymous(length: usize, prot: c_int) -> Result<*mut c_void, String> {
+    let ptr = unsafe {
+        frankenlibc_abi::mmap_abi::mmap(
+            std::ptr::null_mut(),
+            length,
+            prot,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    if ptr == libc::MAP_FAILED {
+        return Err(format!(
+            "failed to create FrankenLibC anonymous mapping of {length} bytes"
+        ));
+    }
+    Ok(ptr)
 }
 
-fn execute_mprotect_case(mode: &str) -> Result<DifferentialExecution, String> {
-    ensure_supported_mode(mode)?;
-    // Would change protection - needs valid mapped addr, stub
-    Ok(non_host_execution("0".to_string()))
+fn map_host_private_anonymous(length: usize, prot: c_int) -> Result<*mut c_void, String> {
+    let ptr = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            length,
+            prot,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    if ptr == libc::MAP_FAILED {
+        return Err(format!(
+            "failed to create host anonymous mapping of {length} bytes"
+        ));
+    }
+    Ok(ptr)
 }
 
-fn execute_madvise_case(mode: &str) -> Result<DifferentialExecution, String> {
+fn execute_munmap_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    // Would advise kernel - needs valid mapped addr, stub
-    Ok(non_host_execution("0".to_string()))
+    let length = parse_usize_any(inputs, &["length", "len"])?;
+
+    let impl_ptr = map_impl_private_anonymous(length, libc::PROT_READ | libc::PROT_WRITE)?;
+    let impl_rc = unsafe { frankenlibc_abi::mmap_abi::munmap(impl_ptr, length) };
+    let impl_output = impl_rc.to_string();
+
+    if mode_is_strict(mode) {
+        let host_ptr = map_host_private_anonymous(length, libc::PROT_READ | libc::PROT_WRITE)?;
+        let host_rc = unsafe { libc::munmap(host_ptr, length) };
+        return Ok(parity_execution(host_rc.to_string(), impl_output));
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_mprotect_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let length = parse_usize_any(inputs, &["length", "len"])?;
+    let prot = parse_i32(inputs, "prot")?;
+
+    let impl_ptr = map_impl_private_anonymous(length, libc::PROT_READ | libc::PROT_WRITE)?;
+    let impl_rc = unsafe { frankenlibc_abi::mmap_abi::mprotect(impl_ptr, length, prot) };
+    let _ = unsafe { frankenlibc_abi::mmap_abi::munmap(impl_ptr, length) };
+    let impl_output = impl_rc.to_string();
+
+    if mode_is_strict(mode) {
+        let host_ptr = map_host_private_anonymous(length, libc::PROT_READ | libc::PROT_WRITE)?;
+        let host_rc = unsafe { libc::mprotect(host_ptr, length, prot) };
+        let _ = unsafe { libc::munmap(host_ptr, length) };
+        return Ok(parity_execution(host_rc.to_string(), impl_output));
+    }
+
+    Ok(non_host_execution(impl_output))
+}
+
+fn execute_madvise_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let length = parse_usize_any(inputs, &["length", "len"])?;
+    let advice = parse_i32(inputs, "advice")?;
+
+    let impl_ptr = map_impl_private_anonymous(length, libc::PROT_READ | libc::PROT_WRITE)?;
+    let impl_rc = unsafe { frankenlibc_abi::mmap_abi::madvise(impl_ptr, length, advice) };
+    let _ = unsafe { frankenlibc_abi::mmap_abi::munmap(impl_ptr, length) };
+    let impl_output = impl_rc.to_string();
+
+    if mode_is_strict(mode) {
+        let host_ptr = map_host_private_anonymous(length, libc::PROT_READ | libc::PROT_WRITE)?;
+        let host_rc = unsafe { libc::madvise(host_ptr, length, advice) };
+        let _ = unsafe { libc::munmap(host_ptr, length) };
+        return Ok(parity_execution(host_rc.to_string(), impl_output));
+    }
+
+    Ok(non_host_execution(impl_output))
 }
 
 fn execute_backtrace_case(
