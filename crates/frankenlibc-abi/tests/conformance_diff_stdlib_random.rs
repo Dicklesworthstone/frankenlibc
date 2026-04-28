@@ -29,6 +29,13 @@ unsafe extern "C" {
     /// directly. This is a thin C-ABI declaration; the real symbol is
     /// resolved at link time against libc.so.6.
     fn rand_r(seedp: *mut c_uint) -> std::ffi::c_int;
+
+    /// Host glibc `erand48` — also not in libc crate's surface.
+    fn erand48(xsubi: *mut u16) -> std::ffi::c_double;
+    /// Host glibc `nrand48`.
+    fn nrand48(xsubi: *mut u16) -> std::ffi::c_long;
+    /// Host glibc `jrand48`.
+    fn jrand48(xsubi: *mut u16) -> std::ffi::c_long;
 }
 
 #[derive(Debug)]
@@ -138,14 +145,157 @@ fn diff_rand_r_return_in_range() {
 }
 
 // ===========================================================================
+// 48-bit family — erand48 / nrand48 / jrand48 (caller-supplied xsubi)
+// ===========================================================================
+//
+// All three operate on the same explicit-state 48-bit LCG (a=0x5DEECE66D,
+// c=0xB, mod 2^48). They differ only in how they project the 48-bit
+// state into a return value:
+//
+//   erand48: state / 2^48   as f64        → [0.0, 1.0)
+//   nrand48: state >> 17    as i64        → [0, 2^31)
+//   jrand48: (state >> 16) sign-extended  → [-2^31, 2^31)
+//
+// State advance is identical across all three (and across our impl and
+// glibc's). After running e/n/jrand48 from the same seed for the same
+// number of calls, the post-state must match byte-for-byte against
+// glibc — and the per-call return value too, modulo the projection
+// formula glibc encodes in stdlib/erand48.c et al.
+//
+// We carry the test through 3 calls per seed because the LCG can
+// accidentally agree at one step but diverge later; six seeds exercise
+// the full state space (zero, one-bit, all-ones, plus a "looks-random"
+// pattern and the glibc default low-word 0x330e).
+
+const RAND48_SEEDS: &[[u16; 3]] = &[
+    [0, 0, 0],
+    [1, 0, 0],
+    [0, 0, 1],
+    [0xFFFF, 0xFFFF, 0xFFFF],
+    [0x1234, 0xABCD, 0x4567],
+    [0x330E, 0xABCD, 0x1234],  // 0x330e == glibc default low word from srand48
+];
+
+const RAND48_CALLS_PER_SEED: usize = 3;
+
+#[test]
+fn diff_erand48_cases() {
+    let mut divs = Vec::new();
+    for &seed_init in RAND48_SEEDS {
+        let mut fl_state = seed_init;
+        let mut lc_state = seed_init;
+        for call_idx in 0..RAND48_CALLS_PER_SEED {
+            // SAFETY: state pointers are exclusive locals.
+            let fl_v = unsafe { fl::erand48(fl_state.as_mut_ptr()) };
+            let lc_v = unsafe { erand48(lc_state.as_mut_ptr()) };
+            let case = format!("seed={:04x?}, call={call_idx}", seed_init);
+            // f64 bit-exact — both impls drive the same LCG and project
+            // identically, so any difference is a real divergence (no
+            // float-tolerance noise here).
+            if fl_v.to_bits() != lc_v.to_bits() {
+                divs.push(Divergence {
+                    function: "erand48",
+                    case: case.clone(),
+                    field: "return_value",
+                    frankenlibc: format!("{fl_v}"),
+                    glibc: format!("{lc_v}"),
+                });
+            }
+            if fl_state != lc_state {
+                divs.push(Divergence {
+                    function: "erand48",
+                    case,
+                    field: "post_state",
+                    frankenlibc: format!("{fl_state:04x?}"),
+                    glibc: format!("{lc_state:04x?}"),
+                });
+                break;
+            }
+        }
+    }
+    assert!(divs.is_empty(), "erand48 divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_nrand48_cases() {
+    let mut divs = Vec::new();
+    for &seed_init in RAND48_SEEDS {
+        let mut fl_state = seed_init;
+        let mut lc_state = seed_init;
+        for call_idx in 0..RAND48_CALLS_PER_SEED {
+            // SAFETY: state pointers are exclusive locals.
+            let fl_v = unsafe { fl::nrand48(fl_state.as_mut_ptr()) };
+            let lc_v = unsafe { nrand48(lc_state.as_mut_ptr()) };
+            let case = format!("seed={:04x?}, call={call_idx}", seed_init);
+            if fl_v != lc_v {
+                divs.push(Divergence {
+                    function: "nrand48",
+                    case: case.clone(),
+                    field: "return_value",
+                    frankenlibc: format!("{fl_v}"),
+                    glibc: format!("{lc_v}"),
+                });
+            }
+            if fl_state != lc_state {
+                divs.push(Divergence {
+                    function: "nrand48",
+                    case,
+                    field: "post_state",
+                    frankenlibc: format!("{fl_state:04x?}"),
+                    glibc: format!("{lc_state:04x?}"),
+                });
+                break;
+            }
+        }
+    }
+    assert!(divs.is_empty(), "nrand48 divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_jrand48_cases() {
+    let mut divs = Vec::new();
+    for &seed_init in RAND48_SEEDS {
+        let mut fl_state = seed_init;
+        let mut lc_state = seed_init;
+        for call_idx in 0..RAND48_CALLS_PER_SEED {
+            // SAFETY: state pointers are exclusive locals.
+            let fl_v = unsafe { fl::jrand48(fl_state.as_mut_ptr()) };
+            let lc_v = unsafe { jrand48(lc_state.as_mut_ptr()) };
+            let case = format!("seed={:04x?}, call={call_idx}", seed_init);
+            if fl_v != lc_v {
+                divs.push(Divergence {
+                    function: "jrand48",
+                    case: case.clone(),
+                    field: "return_value",
+                    frankenlibc: format!("{fl_v}"),
+                    glibc: format!("{lc_v}"),
+                });
+            }
+            if fl_state != lc_state {
+                divs.push(Divergence {
+                    function: "jrand48",
+                    case,
+                    field: "post_state",
+                    frankenlibc: format!("{fl_state:04x?}"),
+                    glibc: format!("{lc_state:04x?}"),
+                });
+                break;
+            }
+        }
+    }
+    assert!(divs.is_empty(), "jrand48 divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
 #[test]
 fn stdlib_random_diff_coverage_report() {
-    let total = RAND_R_SEEDS.len() * CALLS_PER_SEED;
+    let total = RAND_R_SEEDS.len() * CALLS_PER_SEED
+        + RAND48_SEEDS.len() * RAND48_CALLS_PER_SEED * 3; // erand48 + nrand48 + jrand48
     eprintln!(
-        "{{\"family\":\"stdlib.h.random\",\"reference\":\"glibc\",\"functions\":1,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h.random\",\"reference\":\"glibc\",\"functions\":4,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
