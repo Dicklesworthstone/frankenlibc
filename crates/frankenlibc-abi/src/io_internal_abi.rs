@@ -1938,6 +1938,69 @@ unsafe extern "C" fn trampoline_imbue(_fp: *mut c_void, _locale: *mut c_void) {
     // No-op: we don't track per-stream locale state.
 }
 
+unsafe extern "C" fn trampoline_wfinish(fp: *mut c_void, dummy: c_int) {
+    unsafe { _IO_wdefault_finish(fp, dummy) }
+}
+
+unsafe extern "C" fn trampoline_woverflow(fp: *mut c_void, ch: c_int) -> c_int {
+    unsafe { _IO_wfile_overflow(fp, ch as u32) as c_int }
+}
+
+unsafe extern "C" fn trampoline_wunderflow(fp: *mut c_void) -> c_int {
+    unsafe { _IO_wfile_underflow(fp) as c_int }
+}
+
+unsafe extern "C" fn trampoline_wuflow(fp: *mut c_void) -> c_int {
+    unsafe { _IO_wdefault_uflow(fp) as c_int }
+}
+
+unsafe extern "C" fn trampoline_wpbackfail(fp: *mut c_void, ch: c_int) -> c_int {
+    unsafe { _IO_wdefault_pbackfail(fp, ch as u32) as c_int }
+}
+
+unsafe extern "C" fn trampoline_wxsputn(fp: *mut c_void, buf: *const c_void, n: usize) -> usize {
+    unsafe { _IO_wfile_xsputn(fp, buf, n) }
+}
+
+unsafe extern "C" fn trampoline_wxsgetn(fp: *mut c_void, buf: *mut c_void, n: usize) -> usize {
+    unsafe { _IO_wdefault_xsgetn(fp, buf, n) }
+}
+
+unsafe extern "C" fn trampoline_wseekoff(
+    fp: *mut c_void,
+    offset: i64,
+    dir: c_int,
+    mode: c_int,
+) -> i64 {
+    unsafe { _IO_wfile_seekoff(fp, offset, dir, mode) }
+}
+
+unsafe extern "C" fn trampoline_wseekpos(fp: *mut c_void, pos: i64, mode: c_int) -> i64 {
+    unsafe { _IO_wfile_seekoff(fp, pos, libc::SEEK_SET, mode) }
+}
+
+unsafe extern "C" fn trampoline_wsetbuf(
+    fp: *mut c_void,
+    buf: *mut c_void,
+    size: isize,
+) -> *mut c_void {
+    let end = if !buf.is_null() && size > 0 {
+        unsafe { buf.cast::<u8>().add(size as usize).cast::<c_void>() }
+    } else {
+        ptr::null_mut()
+    };
+    unsafe { _IO_wsetb(fp, buf, end, 0) };
+    fp
+}
+
+unsafe extern "C" fn trampoline_wsync(fp: *mut c_void) -> c_int {
+    unsafe { _IO_wfile_sync(fp) }
+}
+
+unsafe extern "C" fn trampoline_wdoallocate(fp: *mut c_void) -> c_int {
+    unsafe { _IO_wdefault_doallocate(fp) }
+}
+
 /// The native `_IO_jump_t` vtable with all trampolines wired up.
 ///
 /// This is the vtable that every `NativeFile` uses. It dispatches all
@@ -2004,23 +2067,24 @@ pub static mut _IO_file_jumps: _IO_jump_t = _IO_jump_t {
 };
 
 /// `_IO_wfile_jumps` — default FILE vtable for wide-oriented files.
-/// Native-owned: same trampolines as `_IO_file_jumps` (wide dispatch is TODO).
+/// Native-owned: routes wide slots to the wide FILE hooks and raw fd slots to
+/// the same low-level byte syscalls as regular files.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut _IO_wfile_jumps: _IO_jump_t = _IO_jump_t {
     __dummy: 0,
     __dummy2: 0,
-    __finish: trampoline_finish,
-    __overflow: trampoline_overflow,
-    __underflow: trampoline_underflow,
-    __uflow: trampoline_uflow,
-    __pbackfail: trampoline_pbackfail,
-    __xsputn: trampoline_xsputn,
-    __xsgetn: trampoline_xsgetn,
-    __seekoff: trampoline_seekoff,
-    __seekpos: trampoline_seekpos,
-    __setbuf: trampoline_setbuf,
-    __sync: trampoline_sync,
-    __doallocate: trampoline_doallocate,
+    __finish: trampoline_wfinish,
+    __overflow: trampoline_woverflow,
+    __underflow: trampoline_wunderflow,
+    __uflow: trampoline_wuflow,
+    __pbackfail: trampoline_wpbackfail,
+    __xsputn: trampoline_wxsputn,
+    __xsgetn: trampoline_wxsgetn,
+    __seekoff: trampoline_wseekoff,
+    __seekpos: trampoline_wseekpos,
+    __setbuf: trampoline_wsetbuf,
+    __sync: trampoline_wsync,
+    __doallocate: trampoline_wdoallocate,
     __read: trampoline_read,
     __write: trampoline_write,
     __seek: trampoline_seek,

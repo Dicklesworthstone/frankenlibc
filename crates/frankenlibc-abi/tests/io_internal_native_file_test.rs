@@ -7,9 +7,9 @@ use std::ptr;
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::io_internal_abi::{
-    _IO_iter_begin, _IO_iter_end, _IO_iter_file, _IO_iter_next, DEFAULT_FD_VTABLE,
-    NATIVE_FILE_MAGIC, NATIVE_IO_JUMP_T, NativeFile, NativeFileBufMode, NativeFileVtable,
-    file_flags, native_stream_registry,
+    _IO_file_jumps_get, _IO_iter_begin, _IO_iter_end, _IO_iter_file, _IO_iter_next, _IO_jump_t,
+    _IO_wfile_jumps_get, DEFAULT_FD_VTABLE, NATIVE_FILE_MAGIC, NATIVE_IO_JUMP_T, NativeFile,
+    NativeFileBufMode, NativeFileVtable, file_flags, native_stream_registry,
 };
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -321,6 +321,35 @@ fn vtable_default_has_all_fields() {
     let _seek = DEFAULT_FD_VTABLE.seek;
     let _close = DEFAULT_FD_VTABLE.close;
     let _flush = DEFAULT_FD_VTABLE.flush;
+}
+
+#[test]
+fn wide_file_jump_table_uses_wide_slots() {
+    let narrow = unsafe { _IO_file_jumps_get() };
+    let wide_ptr = unsafe { _IO_wfile_jumps_get() };
+    assert_ne!(wide_ptr, narrow);
+
+    let wide = unsafe { &*(wide_ptr.cast::<_IO_jump_t>()) };
+
+    assert_eq!(
+        unsafe { (wide.__overflow)(ptr::null_mut(), b'X' as c_int) },
+        -1
+    );
+    assert_eq!(unsafe { (wide.__underflow)(ptr::null_mut()) }, -1);
+    assert_eq!(unsafe { (wide.__uflow)(ptr::null_mut()) }, -1);
+    assert_eq!(
+        unsafe { (wide.__pbackfail)(ptr::null_mut(), b'X' as c_int) },
+        -1
+    );
+    assert_eq!(
+        unsafe { (wide.__xsputn)(ptr::null_mut(), b"wide".as_ptr().cast(), 4) },
+        0
+    );
+    let mut buf = [0_u32; 2];
+    assert_eq!(
+        unsafe { (wide.__xsgetn)(ptr::null_mut(), buf.as_mut_ptr().cast(), buf.len()) },
+        0
+    );
 }
 
 #[test]
