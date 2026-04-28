@@ -422,22 +422,21 @@ pub fn strndup_bytes(s: &[u8], n: usize) -> Vec<u8> {
 /// Extracts the next token from a NUL-terminated string, using `delim` as delimiter set.
 ///
 /// Equivalent to BSD `strsep`. Modifies `s` in place by writing a NUL at the delimiter.
-/// Returns `(token_start, next_start)` or `None` if `s` starts with NUL.
+/// Returns the delimiter index, or `None` if no delimiter is found before the terminator.
 pub fn strsep(s: &mut [u8], delim: &[u8]) -> Option<usize> {
-    let s_len = strlen(s);
-    if s_len == 0 && s.first() == Some(&0) {
-        return None;
-    }
     let delim_len = strlen(delim);
     let delim_set = &delim[..delim_len];
 
-    for (i, byte) in s[..s_len].iter_mut().enumerate() {
-        if delim_set.contains(byte) {
+    for (i, byte) in s.iter_mut().enumerate() {
+        if *byte == 0 {
+            return None;
+        }
+        if delim_set.contains(&*byte) {
             *byte = 0;
             return Some(i);
         }
     }
-    // No delimiter found.
+
     None
 }
 
@@ -875,6 +874,27 @@ mod tests {
     fn test_strsep_empty_string() {
         let mut s = *b"\0";
         assert_eq!(strsep(&mut s, b",\0"), None);
+    }
+
+    #[test]
+    fn test_strsep_stops_at_terminator() {
+        let mut s = *b"abc\0:def";
+        assert_eq!(strsep(&mut s, b":\0"), None);
+        assert_eq!(s[4], b':');
+    }
+
+    #[test]
+    fn test_strsep_absent_without_terminator_returns_none() {
+        let mut s = *b"unterminated";
+        assert_eq!(strsep(&mut s, b":\0"), None);
+        assert_eq!(&s, b"unterminated");
+    }
+
+    #[test]
+    fn test_strsep_empty_delim_never_splits() {
+        let mut s = *b"abc\0";
+        assert_eq!(strsep(&mut s, b"\0"), None);
+        assert_eq!(&s, b"abc\0");
     }
 
     #[test]

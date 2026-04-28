@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use frankenlibc_core::string::{
-    memcmp, memcpy, strchr, strchrnul, strcmp, strcspn, strlen, strpbrk, strrchr, strspn,
+    memcmp, memcpy, strchr, strchrnul, strcmp, strcspn, strlen, strpbrk, strrchr, strsep, strspn,
 };
 
 #[derive(Default)]
@@ -366,6 +366,39 @@ fn bench_strspn_full(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_strsep_absent(c: &mut Criterion) {
+    let sizes: &[usize] = &[16, 64, 256, 1024, 4096];
+    let mode = mode_label();
+    let delim = b":\0";
+    let mut group = c.benchmark_group("strsep_absent");
+
+    for &size in sizes {
+        let mut s = vec![b'A'; size];
+        let bench_label = format!("strsep_absent_{size}");
+        s.push(0);
+        group.throughput(Throughput::Bytes(size as u64));
+
+        for _ in 0..10_000 {
+            black_box(strsep(&mut s, delim));
+        }
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_with_input(BenchmarkId::new(mode, size), &size, |b, _| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(strsep(&mut s, delim));
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        stats.borrow().report(mode, &bench_label);
+    }
+    group.finish();
+}
+
 fn bench_strchrnul_absent(c: &mut Criterion) {
     let sizes: &[usize] = &[16, 64, 256, 1024, 4096];
     let mode = mode_label();
@@ -404,6 +437,6 @@ criterion_group!(
         .warm_up_time(Duration::from_millis(1))
         .measurement_time(Duration::from_secs(2))
         .sample_size(100);
-    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp, bench_strchr_absent, bench_strrchr_absent, bench_strcspn_absent, bench_strpbrk_absent, bench_strspn_full, bench_strchrnul_absent
+    targets = bench_memcpy_sizes, bench_strlen, bench_memcmp_sizes, bench_strcmp, bench_strchr_absent, bench_strrchr_absent, bench_strcspn_absent, bench_strpbrk_absent, bench_strspn_full, bench_strsep_absent, bench_strchrnul_absent
 );
 criterion_main!(benches);
