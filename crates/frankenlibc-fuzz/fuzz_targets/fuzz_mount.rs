@@ -6,13 +6,14 @@
 //! filesystems. File descriptors returned by the new mount API are closed
 //! immediately.
 //!
-//! Bead: bd-4z5o3
+//! Beads: bd-4z5o3, bd-xn6p8.1
 
 use std::ffi::{CString, c_void};
 
 use arbitrary::Arbitrary;
 use frankenlibc_abi::unistd_abi::{
-    fsconfig, fsmount, fsopen, fspick, mount, mount_setattr, move_mount, open_tree, umount2,
+    fsconfig, fsmount, fsopen, fspick, mount, mount_setattr, move_mount, open_tree, umount,
+    umount2,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -138,7 +139,8 @@ fuzz_target!(|input: MountInput| {
         attr.as_mut_ptr().cast()
     };
 
-    match input.op % 9 {
+    let op = input.op % 10;
+    match op {
         0 => {
             let rc = unsafe {
                 mount(
@@ -149,37 +151,41 @@ fuzz_target!(|input: MountInput| {
                     std::ptr::null(),
                 )
             };
-            assert_unit_rc(input.op % 9, rc);
+            assert_unit_rc(op, rc);
         }
         1 => {
-            let rc = unsafe { umount2(path_ptr, input.flags as libc::c_int) };
-            assert_unit_rc(input.op % 9, rc);
+            let rc = unsafe { umount(path_ptr) };
+            assert_unit_rc(op, rc);
         }
         2 => {
-            let fd = unsafe { fsopen(fs_ptr, input.flags) };
-            assert_fd_rc(input.op % 9, fd);
-            close_if_fd(fd);
+            let rc = unsafe { umount2(path_ptr, input.flags as libc::c_int) };
+            assert_unit_rc(op, rc);
         }
         3 => {
-            let fd = unsafe { fsmount(-1, input.flags, input.attr_flags) };
-            assert_fd_rc(input.op % 9, fd);
+            let fd = unsafe { fsopen(fs_ptr, input.flags) };
+            assert_fd_rc(op, fd);
             close_if_fd(fd);
         }
         4 => {
-            let rc = unsafe { fsconfig(-1, input.flags, key_ptr, value_ptr, input.aux) };
-            assert_unit_rc(input.op % 9, rc);
-        }
-        5 => {
-            let fd = unsafe { fspick(dirfd(input.dirfd_kind), path_ptr, input.flags) };
-            assert_fd_rc(input.op % 9, fd);
+            let fd = unsafe { fsmount(-1, input.flags, input.attr_flags) };
+            assert_fd_rc(op, fd);
             close_if_fd(fd);
         }
+        5 => {
+            let rc = unsafe { fsconfig(-1, input.flags, key_ptr, value_ptr, input.aux) };
+            assert_unit_rc(op, rc);
+        }
         6 => {
-            let fd = unsafe { open_tree(dirfd(input.dirfd_kind), path_ptr, input.flags) };
-            assert_fd_rc(input.op % 9, fd);
+            let fd = unsafe { fspick(dirfd(input.dirfd_kind), path_ptr, input.flags) };
+            assert_fd_rc(op, fd);
             close_if_fd(fd);
         }
         7 => {
+            let fd = unsafe { open_tree(dirfd(input.dirfd_kind), path_ptr, input.flags) };
+            assert_fd_rc(op, fd);
+            close_if_fd(fd);
+        }
+        8 => {
             let rc = unsafe {
                 move_mount(
                     dirfd(input.dirfd_kind),
@@ -189,11 +195,11 @@ fuzz_target!(|input: MountInput| {
                     input.flags,
                 )
             };
-            assert_unit_rc(input.op % 9, rc);
+            assert_unit_rc(op, rc);
         }
         _ => {
             let rc = unsafe { mount_setattr(-1, path_ptr, input.flags, attr_ptr, attr.len()) };
-            assert_unit_rc(input.op % 9, rc);
+            assert_unit_rc(op, rc);
         }
     }
 });
