@@ -25,6 +25,16 @@
       "note": "Signal 0 to own process group"
     },
     {
+      "name": "kill_nonexistent_pid_zero_strict",
+      "function": "kill",
+      "spec_section": "POSIX kill",
+      "inputs": { "pid": 2147483647, "sig": 0 },
+      "expected_output": "-1",
+      "expected_errno": 3,
+      "mode": "strict",
+      "note": "Signal 0 performs existence checking without signal delivery; an unreachable PID returns ESRCH"
+    },
+    {
       "name": "signal_install_sigusr1_both",
       "function": "signal",
       "spec_section": "POSIX signal",

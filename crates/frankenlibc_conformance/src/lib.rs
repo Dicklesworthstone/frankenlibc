@@ -14259,16 +14259,43 @@ fn execute_kill_case(
     inputs: &serde_json::Value,
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
-    ensure_supported_mode(mode)?;
-    let _pid = parse_i32(inputs, "pid")? as libc::pid_t;
+    let strict = mode_is_strict(mode);
+    let hardened = mode_is_hardened(mode);
+    if !strict && !hardened {
+        return Err(format!("unsupported mode: {mode}"));
+    }
+
+    let pid = parse_i32(inputs, "pid")? as libc::pid_t;
     let sig = parse_i32(inputs, "sig")?;
-    // Signal delivery via kill() crashes test harness; stub expected values
-    let result = if sig == 0 {
-        0 // null signal to process group succeeds
-    } else {
-        -1 // real signal delivery is intentionally stubbed in the harness
+
+    if sig != 0 && frankenlibc_core::signal::valid_signal(sig) {
+        return Ok(non_host_execution("SKIP_SIGNAL_DELIVERY".to_string()));
+    }
+
+    unsafe {
+        frankenlibc_abi::errno_abi::set_abi_errno(0);
+    }
+    let impl_rc = unsafe { frankenlibc_abi::signal_abi::kill(pid, sig) };
+    let impl_output = impl_rc.to_string();
+
+    if strict {
+        unsafe {
+            *libc::__errno_location() = 0;
+        }
+        let host_rc = unsafe { libc::kill(pid, sig) };
+        return Ok(parity_execution(host_rc.to_string(), impl_output));
+    }
+
+    if hardened {
+        return Ok(DifferentialExecution {
+            host_output: String::from("SKIP"),
+            impl_output,
+            host_parity: true,
+            note: None,
+        });
     };
-    Ok(non_host_execution(format!("{result}")))
+
+    unreachable!("mode checked above")
 }
 
 fn execute_sigaction_case(
