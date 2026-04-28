@@ -3416,15 +3416,40 @@ pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
 /// and redirects stdin/stdout/stderr to /dev/null.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
+    // The daemon child runs forever without exec, so it inherits the full
+    // mutex state of the parent. If a different parent thread held
+    // ENVIRON_LOCK (or any pipeline lock) at clone time, that lock becomes
+    // stuck in the child whose owning thread doesn't exist on the child
+    // side. Mirror fork()'s pre-clone preparation: run atfork_prepare,
+    // acquire the membrane pipeline guard, and serialize against in-flight
+    // setenv via ENVIRON_LOCK before the syscall. (Same hazard class as
+    // bd-sq7ae and the round-4 fork() ENVIRON_LOCK fix.)
+    crate::pthread_abi::run_atfork_prepare();
+    let _pipeline_guard =
+        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+
     // SAFETY: fork via raw syscall
     let pid = match syscall::sys_clone_fork(0) {
         Ok(p) => p,
-        Err(_) => return -1,
+        Err(_) => {
+            drop(_environ_guard);
+            drop(_pipeline_guard);
+            return -1;
+        }
     };
+
+    drop(_environ_guard);
+    drop(_pipeline_guard);
+
     if pid > 0 {
-        // Parent: exit immediately
+        // Parent: run atfork_parent for symmetry with fork(), then exit.
+        crate::pthread_abi::run_atfork_parent();
         syscall::sys_exit_group(0);
     }
+
+    // Child: re-initialize via atfork_child before any further work.
+    crate::pthread_abi::run_atfork_child();
 
     // Child: create new session
     if syscall::sys_setsid().is_err() {
