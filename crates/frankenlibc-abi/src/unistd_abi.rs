@@ -18320,10 +18320,10 @@ pub unsafe extern "C" fn mcheck_pedantic(_abortfunc: Option<unsafe extern "C" fn
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mcheck_check_all() {}
 
-/// `mprobe` — check a single allocation (always returns MCHECK_OK=0).
+/// `mprobe` — check a single allocation using FrankenLibC allocator metadata.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mprobe(_ptr: *mut c_void) -> c_int {
-    0 // MCHECK_OK
+pub unsafe extern "C" fn mprobe(ptr: *mut c_void) -> c_int {
+    unsafe { crate::malloc_abi::mprobe_status(ptr) }
 }
 
 /// `mtrace` — start malloc tracing (no-op in frankenlibc).

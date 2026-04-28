@@ -18,8 +18,10 @@ use frankenlibc_core::errno::{EINVAL, ENOMEM};
 use frankenlibc_membrane::MEMBRANE_SCHEMA_VERSION;
 use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
 use frankenlibc_membrane::check_oracle::CheckStage;
+use frankenlibc_membrane::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use frankenlibc_membrane::galois::PointerAbstraction;
 use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::lattice::SafetyState;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use frankenlibc_membrane::util::now_utc_iso_like;
 
@@ -1253,6 +1255,66 @@ pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
 #[doc(hidden)]
 pub fn malloc_known_remaining_for_tests(ptr: *const c_void) -> Option<usize> {
     known_remaining(ptr as usize)
+}
+
+const MCHECK_OK: c_int = 0;
+const MCHECK_FREE: c_int = 1;
+const MCHECK_HEAD: c_int = 2;
+const MCHECK_TAIL: c_int = 3;
+
+#[inline]
+unsafe fn read_fixed<const N: usize>(ptr: *const u8) -> [u8; N] {
+    let mut out = [0u8; N];
+    // SAFETY: callers only pass addresses from live/quarantined arena slots,
+    // which remain allocated while the slot is visible to lookup.
+    unsafe { std::ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N) };
+    out
+}
+
+#[must_use]
+pub(crate) unsafe fn mprobe_status(ptr: *mut c_void) -> c_int {
+    if ptr.is_null() {
+        return MCHECK_HEAD;
+    }
+
+    if is_bump_ptr(ptr) || fallback_contains(ptr) {
+        return MCHECK_OK;
+    }
+
+    let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
+        return MCHECK_HEAD;
+    };
+    let Some(slot) = pipeline.arena.lookup(ptr as usize) else {
+        return MCHECK_HEAD;
+    };
+
+    if slot.user_base != ptr as usize {
+        return MCHECK_HEAD;
+    }
+
+    match slot.state {
+        SafetyState::Quarantined | SafetyState::Freed => return MCHECK_FREE,
+        SafetyState::Invalid | SafetyState::Unknown => return MCHECK_HEAD,
+        state if !state.is_live() => return MCHECK_HEAD,
+        _ => {}
+    }
+
+    let fingerprint_bytes = unsafe { read_fixed::<FINGERPRINT_SIZE>(slot.raw_base as *const u8) };
+    let fingerprint = AllocationFingerprint::from_bytes(&fingerprint_bytes);
+    if fingerprint.size != slot.user_size as u64
+        || fingerprint.generation != slot.generation
+        || !fingerprint.verify(slot.raw_base)
+    {
+        return MCHECK_HEAD;
+    }
+
+    let canary_ptr = slot.user_base.saturating_add(slot.user_size) as *const u8;
+    let canary_bytes = unsafe { read_fixed::<CANARY_SIZE>(canary_ptr) };
+    if !fingerprint.canary().verify(&canary_bytes) {
+        return MCHECK_TAIL;
+    }
+
+    MCHECK_OK
 }
 
 #[inline]

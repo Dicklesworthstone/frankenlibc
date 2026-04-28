@@ -14,6 +14,7 @@ use frankenlibc_abi::malloc_abi::{
     posix_memalign, pvalloc, realloc, signal_runtime_ready_for_tests,
     take_last_decision_gate_for_tests, valloc,
 };
+use frankenlibc_abi::unistd_abi::mprobe;
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
@@ -390,6 +391,40 @@ fn test_malloc_trim_returns_success() {
     assert_eq!(rc, 1, "malloc_trim should return 1");
     let rc = unsafe { malloc_trim(4096) };
     assert_eq!(rc, 1);
+}
+
+// ---------------------------------------------------------------------------
+// mprobe
+// ---------------------------------------------------------------------------
+
+const MCHECK_OK: i32 = 0;
+const MCHECK_HEAD: i32 = 2;
+
+#[test]
+fn test_mprobe_reports_live_malloc_base_ok() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { malloc(64) };
+    assert!(!p.is_null());
+    assert_eq!(unsafe { mprobe(p) }, MCHECK_OK);
+    unsafe { free(p) };
+}
+
+#[test]
+fn test_mprobe_rejects_stack_pointer() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let mut stack_byte = 0u8;
+    let ptr = (&mut stack_byte as *mut u8).cast::<c_void>();
+    assert_eq!(unsafe { mprobe(ptr) }, MCHECK_HEAD);
+}
+
+#[test]
+fn test_mprobe_rejects_malloc_interior_pointer() {
+    let _guard = test_lock().lock().expect("test lock poisoned");
+    let p = unsafe { malloc(64) };
+    assert!(!p.is_null());
+    let interior = unsafe { (p.cast::<u8>()).add(1).cast::<c_void>() };
+    assert_eq!(unsafe { mprobe(interior) }, MCHECK_HEAD);
+    unsafe { free(p) };
 }
 
 // ---------------------------------------------------------------------------
