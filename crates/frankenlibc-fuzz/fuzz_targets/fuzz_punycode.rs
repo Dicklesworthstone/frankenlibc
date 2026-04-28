@@ -44,7 +44,7 @@ impl<'a> PunycodeFuzzInput<'a> {
         let split = if body.is_empty() {
             0
         } else {
-            usize::from(selector).min(body.len())
+            usize::from(selector) % (body.len() + 1)
         };
         Self {
             code_point_bytes: &body[..split],
