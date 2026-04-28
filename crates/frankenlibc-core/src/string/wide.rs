@@ -193,12 +193,26 @@ pub fn wcschr(s: &[u32], c: u32) -> Option<usize> {
 /// Equivalent to C `wcsrchr`. Returns the index of the character, or `None` if not found.
 /// The terminating NUL character is considered part of the string.
 pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
-    let len = wcslen(s);
     if c == 0 {
-        return Some(len);
+        for (i, &ch) in s.iter().enumerate() {
+            if ch == 0 {
+                return Some(i);
+            }
+        }
+        return Some(s.len());
     }
-    // Scan backwards from the end of the string (not including NUL)
-    (0..len).rev().find(|&i| s[i] == c)
+
+    let mut last = None;
+    for (i, &ch) in s.iter().enumerate() {
+        if ch == 0 {
+            return last;
+        }
+        if ch == c {
+            last = Some(i);
+        }
+    }
+
+    last
 }
 
 /// Locates the first occurrence of substring `needle` in `haystack`.
@@ -648,6 +662,20 @@ mod tests {
     #[test]
     fn test_wcsrchr_basic() {
         let s = [b'A' as u32, b'B' as u32, b'A' as u32, 0];
+        assert_eq!(wcsrchr(&s, b'A' as u32), Some(2));
+        assert_eq!(wcsrchr(&s, b'C' as u32), None);
+        assert_eq!(wcsrchr(&s, 0), Some(3));
+    }
+
+    #[test]
+    fn test_wcsrchr_stops_at_terminator() {
+        let s = [b'A' as u32, b'B' as u32, 0, b'B' as u32];
+        assert_eq!(wcsrchr(&s, b'B' as u32), Some(1));
+    }
+
+    #[test]
+    fn test_wcsrchr_unterminated_returns_last_match() {
+        let s = [b'A' as u32, b'B' as u32, b'A' as u32];
         assert_eq!(wcsrchr(&s, b'A' as u32), Some(2));
         assert_eq!(wcsrchr(&s, b'C' as u32), None);
         assert_eq!(wcsrchr(&s, 0), Some(3));
