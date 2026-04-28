@@ -2528,6 +2528,15 @@ fn consttime_memequal_examines_all_bytes_for_full_buffer_equality() {
 
 use frankenlibc_abi::string_abi::strmode;
 
+fn canonical_strmode(mode: libc::mode_t) -> String {
+    let mut buf = [0xffu8; 12];
+    unsafe { strmode(mode, buf.as_mut_ptr().cast()) };
+    let rendered = std::str::from_utf8(&buf[..11]).expect("strmode output must be ASCII");
+    rendered
+        .strip_suffix(' ')
+        .map_or_else(|| rendered.to_owned(), |prefix| format!("{prefix}<sp>"))
+}
+
 #[test]
 fn strmode_writes_11_chars_plus_nul_for_directory() {
     let mut buf = [0xffu8; 12];
@@ -2581,6 +2590,42 @@ fn strmode_symlink_full() {
     unsafe { strmode(mode, buf.as_mut_ptr().cast()) };
     assert_eq!(&buf[..11], b"lrwxrwxrwx ");
     assert_eq!(buf[11], 0);
+}
+
+#[test]
+fn strmode_mode_matrix_matches_golden_artifact() {
+    let cases: &[(&str, libc::mode_t)] = &[
+        ("regular_0644", libc::S_IFREG | 0o644),
+        ("regular_no_perms", libc::S_IFREG),
+        ("directory_0755", libc::S_IFDIR | 0o755),
+        ("directory_sticky_1777", libc::S_IFDIR | 0o1777),
+        ("setuid_exec_4755", libc::S_IFREG | 0o4755),
+        ("setuid_no_exec_4644", libc::S_IFREG | 0o4644),
+        ("setgid_exec_2755", libc::S_IFREG | 0o2755),
+        ("setgid_no_exec_2644", libc::S_IFREG | 0o2644),
+        ("sticky_exec_1755", libc::S_IFREG | 0o1755),
+        ("sticky_no_exec_1644", libc::S_IFREG | 0o1644),
+        ("symlink_0777", libc::S_IFLNK | 0o777),
+        ("fifo_0600", libc::S_IFIFO | 0o600),
+        ("socket_0666", libc::S_IFSOCK | 0o666),
+        ("char_0600", libc::S_IFCHR | 0o600),
+        ("block_0660", libc::S_IFBLK | 0o660),
+        ("unknown_zero", 0),
+    ];
+
+    let mut actual = String::from("# strmode(mode) golden matrix\n");
+    for (name, mode) in cases {
+        actual.push_str(name);
+        actual.push('\t');
+        actual.push_str(&canonical_strmode(*mode));
+        actual.push('\n');
+    }
+
+    let golden_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/conformance/golden/strmode_modes.golden");
+    let expected =
+        std::fs::read_to_string(&golden_path).expect("strmode golden artifact must be readable");
+    assert_eq!(actual, expected);
 }
 
 #[test]

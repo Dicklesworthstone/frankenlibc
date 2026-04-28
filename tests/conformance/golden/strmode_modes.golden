@@ -1,0 +1,17 @@
+# strmode(mode) golden matrix
+regular_0644	-rw-r--r--<sp>
+regular_no_perms	----------<sp>
+directory_0755	drwxr-xr-x<sp>
+directory_sticky_1777	drwxrwxrwt<sp>
+setuid_exec_4755	-rwsr-xr-x<sp>
+setuid_no_exec_4644	-rwSr--r--<sp>
+setgid_exec_2755	-rwxr-sr-x<sp>
+setgid_no_exec_2644	-rw-r-Sr--<sp>
+sticky_exec_1755	-rwxr-xr-t<sp>
+sticky_no_exec_1644	-rw-r--r-T<sp>
+symlink_0777	lrwxrwxrwx<sp>
+fifo_0600	prw-------<sp>
+socket_0666	srw-rw-rw-<sp>
+char_0600	crw-------<sp>
+block_0660	brw-rw----<sp>
+unknown_zero	?---------<sp>
