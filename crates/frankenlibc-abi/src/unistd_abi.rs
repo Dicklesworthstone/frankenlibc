@@ -3416,6 +3416,18 @@ pub unsafe extern "C" fn nice(inc: c_int) -> c_int {
 /// and redirects stdin/stdout/stderr to /dev/null.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
+    // Apply ApiFamily::Process policy before any state mutation. fork()
+    // runs through the same gate; daemon() is a fork-creator and must
+    // respect the same Deny decisions, otherwise a sandbox or runtime
+    // policy that disables fork could be bypassed simply by routing
+    // through daemon().
+    let (_, decision) = runtime_policy::decide(ApiFamily::Process, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
+        unsafe { set_abi_errno(libc::EAGAIN) };
+        return -1;
+    }
+
     // The daemon child runs forever without exec, so it inherits the full
     // mutex state of the parent. If a different parent thread held
     // ENVIRON_LOCK (or any pipeline lock) at clone time, that lock becomes
@@ -6934,6 +6946,17 @@ pub unsafe extern "C" fn forkpty(
 ) -> libc::pid_t {
     if amaster.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+
+    // Apply ApiFamily::Process policy before allocating PTY fds. fork()
+    // runs through the same gate; forkpty() is a fork-creator and must
+    // respect the same Deny decisions, otherwise a runtime policy that
+    // disables fork could be bypassed by routing through forkpty().
+    let (_, decision) = runtime_policy::decide(ApiFamily::Process, 0, 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
+        unsafe { set_abi_errno(libc::EAGAIN) };
         return -1;
     }
 
