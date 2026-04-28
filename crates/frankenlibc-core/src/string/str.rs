@@ -239,20 +239,44 @@ pub fn strrchr(s: &[u8], c: u8) -> Option<usize> {
 /// Equivalent to C `strstr`. Returns the byte index where `needle` starts,
 /// or `None` if not found.
 pub fn strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    let h_len = strlen(haystack);
     let n_len = strlen(needle);
 
     if n_len == 0 {
         return Some(0);
     }
-    if n_len > h_len {
-        return None;
+
+    let needle = &needle[..n_len];
+    let first = needle[0];
+
+    for i in 0..haystack.len() {
+        let byte = haystack[i];
+        if byte == 0 {
+            return None;
+        }
+        if byte != first {
+            continue;
+        }
+        if i + n_len > haystack.len() {
+            return None;
+        }
+
+        let mut matched = true;
+        for j in 1..n_len {
+            let candidate = haystack[i + j];
+            if candidate == 0 {
+                return None;
+            }
+            if candidate != needle[j] {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return Some(i);
+        }
     }
 
-    let haystack = &haystack[..h_len];
-    let needle = &needle[..n_len];
-
-    haystack.windows(n_len).position(|window| window == needle)
+    None
 }
 
 /// BSD `strnstr`: like [`strstr`] but searches at most `n` bytes of
@@ -755,6 +779,21 @@ mod tests {
     #[test]
     fn test_strstr_empty_needle() {
         assert_eq!(strstr(b"hello\0", b"\0"), Some(0));
+    }
+
+    #[test]
+    fn test_strstr_stops_at_terminator() {
+        assert_eq!(strstr(b"a\0bc\0", b"bc\0"), None);
+    }
+
+    #[test]
+    fn test_strstr_unterminated_haystack_match() {
+        assert_eq!(strstr(b"abc", b"bc\0"), Some(1));
+    }
+
+    #[test]
+    fn test_strstr_unterminated_haystack_short_candidate() {
+        assert_eq!(strstr(b"ab", b"bc\0"), None);
     }
 
     // ---- strnstr (BSD bounded substring search) ----
