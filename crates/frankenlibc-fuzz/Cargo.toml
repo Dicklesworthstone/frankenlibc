@@ -290,4 +290,9 @@ name = "fuzz_keyring"
 path = "fuzz_targets/fuzz_keyring.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_punycode"
+path = "fuzz_targets/fuzz_punycode.rs"
+doc = false
+
 [workspace]
