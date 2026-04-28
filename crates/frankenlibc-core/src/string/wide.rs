@@ -221,20 +221,42 @@ pub fn wcsrchr(s: &[u32], c: u32) -> Option<usize> {
 /// or `None` if not found.
 pub fn wcsstr(haystack: &[u32], needle: &[u32]) -> Option<usize> {
     let needle_len = wcslen(needle);
-    let haystack_len = wcslen(haystack);
 
     if needle_len == 0 {
         return Some(0);
     }
-    if needle_len > haystack_len {
-        return None;
-    }
 
-    for i in 0..=(haystack_len - needle_len) {
-        if haystack[i..i + needle_len] == needle[..needle_len] {
+    let needle = &needle[..needle_len];
+    let first = needle[0];
+
+    for i in 0..haystack.len() {
+        let ch = haystack[i];
+        if ch == 0 {
+            return None;
+        }
+        if ch != first {
+            continue;
+        }
+        if i + needle_len > haystack.len() {
+            return None;
+        }
+
+        let mut matched = true;
+        for j in 1..needle_len {
+            let candidate = haystack[i + j];
+            if candidate == 0 {
+                return None;
+            }
+            if candidate != needle[j] {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
             return Some(i);
         }
     }
+
     None
 }
 
@@ -692,6 +714,27 @@ mod tests {
 
         let empty = [0u32];
         assert_eq!(wcsstr(&haystack, &empty), Some(0));
+    }
+
+    #[test]
+    fn test_wcsstr_stops_at_terminator() {
+        let haystack = [b'A' as u32, 0, b'B' as u32, b'C' as u32, 0];
+        let needle = [b'B' as u32, b'C' as u32, 0];
+        assert_eq!(wcsstr(&haystack, &needle), None);
+    }
+
+    #[test]
+    fn test_wcsstr_unterminated_haystack_match() {
+        let haystack = [b'A' as u32, b'B' as u32, b'C' as u32];
+        let needle = [b'B' as u32, b'C' as u32, 0];
+        assert_eq!(wcsstr(&haystack, &needle), Some(1));
+    }
+
+    #[test]
+    fn test_wcsstr_unterminated_haystack_short_candidate() {
+        let haystack = [b'A' as u32, b'B' as u32];
+        let needle = [b'B' as u32, b'C' as u32, 0];
+        assert_eq!(wcsstr(&haystack, &needle), None);
     }
 
     #[test]
