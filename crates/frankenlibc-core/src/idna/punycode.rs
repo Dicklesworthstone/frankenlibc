@@ -129,8 +129,8 @@ pub fn encode(input: &[u32]) -> Option<Vec<u8>> {
                 h += 1;
             }
         }
-        delta += 1;
-        n += 1;
+        delta = delta.checked_add(1)?;
+        n = n.checked_add(1)?;
     }
 
     Some(output)
@@ -440,6 +440,11 @@ mod tests {
     fn encode_empty_input_returns_empty_label() {
         let enc = encode(&[]).unwrap();
         assert_eq!(enc, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn encode_rejects_trailing_state_overflow() {
+        assert!(encode(&[u32::MAX]).is_none());
     }
 
     #[test]
