@@ -27,14 +27,38 @@ pub fn srand(seed: u32) {
     SEED.store(seed, Ordering::Relaxed);
 }
 
-/// Reentrant variant: uses `*seedp` as state.
+/// Reentrant variant — bit-exact port of glibc `rand_r`.
+///
+/// glibc `rand_r` is **not** a single LCG step. It runs three LCG
+/// updates per call and combines them so the 31-bit return space is
+/// actually used (a single TYPE_0 step would only produce 15 bits of
+/// entropy, the historical POSIX rand_r contract). Matching glibc
+/// bit-for-bit matters for any program that pre-computes expected
+/// rand_r sequences for testing or that compares output across libc
+/// implementations under LD_PRELOAD.
+///
+/// Reference: glibc `stdlib/rand_r.c`. Verified against glibc on
+/// Linux/x86_64 in tests/conformance_diff_stdlib_random.rs.
 pub fn rand_r(seed: &mut u32) -> i32 {
-    let next = lcg_next(*seed);
+    let mut next = *seed;
+
+    next = next.wrapping_mul(1_103_515_245).wrapping_add(12345);
+    let mut result: u32 = (next / 65536) % 2048;
+
+    next = next.wrapping_mul(1_103_515_245).wrapping_add(12345);
+    result <<= 10;
+    result ^= (next / 65536) % 1024;
+
+    next = next.wrapping_mul(1_103_515_245).wrapping_add(12345);
+    result <<= 10;
+    result ^= (next / 65536) % 1024;
+
     *seed = next;
-    (next >> 1) as i32 & RAND_MAX
+    result as i32
 }
 
-/// glibc TYPE_0 LCG: next = (seed * 1103515245 + 12345)
+/// glibc TYPE_0 LCG step used by [`rand`]: `next = seed * 1103515245 + 12345`.
+/// Note that [`rand_r`] does **not** simply wrap this — see its docs.
 #[inline]
 fn lcg_next(seed: u32) -> u32 {
     seed.wrapping_mul(1_103_515_245).wrapping_add(12345)
@@ -82,5 +106,31 @@ mod tests {
         srand(1);
         let v = rand();
         assert!(v >= 0);
+    }
+
+    /// Bit-exact reference values captured from host glibc `rand_r` on
+    /// Linux/x86_64 (`gcc 13` + glibc 2.38). Each row is
+    /// (initial_seed, three consecutive return values, final state).
+    /// Pinning these here means a future refactor that breaks bit-exact
+    /// glibc parity will fail the test suite immediately rather than
+    /// silently drifting until a downstream consumer notices.
+    #[test]
+    fn rand_r_matches_glibc_reference_outputs() {
+        let cases: &[(u32, [i32; 3], u32)] = &[
+            (0,          [1012484, 1716955679, 1792309082], 2941955441),
+            (1,          [476707713, 1186278907, 505671508], 3210001534),
+            (42,         [681191333, 928546885, 1457394273], 1314989459),
+            (12345,      [1036784229, 1520991917, 1373464794], 551188310),
+            (0xDEADBEEF, [1075635910, 1410355045, 390111939], 2730713236),
+            (0xFFFFFFFF, [1670702726, 99100226, 931463008], 2673909348),
+            (100,        [393052193, 249735217, 2015305992], 3976760965),
+        ];
+        for &(initial, [r0, r1, r2], final_state) in cases {
+            let mut seed = initial;
+            assert_eq!(rand_r(&mut seed), r0, "rand_r call 0 with seed={initial}");
+            assert_eq!(rand_r(&mut seed), r1, "rand_r call 1 with seed={initial}");
+            assert_eq!(rand_r(&mut seed), r2, "rand_r call 2 with seed={initial}");
+            assert_eq!(seed, final_state, "final state with seed={initial}");
+        }
     }
 }
