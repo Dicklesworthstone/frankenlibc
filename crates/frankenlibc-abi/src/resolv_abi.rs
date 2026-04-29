@@ -4484,52 +4484,149 @@ fn loc_ntoa_format(bytes: &[u8]) -> String {
 
 // --- DNS symbol tables ---
 
-/// `__sym_ntop(*tab, value, *success) -> *const c_char` — symbol-table
-/// numeric -> text lookup. Stub returns NULL and reports failure via
-/// `*success = 0`.
+/// glibc's `struct res_sym` from `<arpa/nameser.h>`.
+#[repr(C)]
+struct ResSym {
+    number: c_int,
+    name: *const c_char,
+    humanname: *const c_char,
+}
+
+const SYM_UNKNOWN_BUF_LEN: usize = 24;
+
+thread_local! {
+    static SYM_NTOP_BUF: RefCell<[u8; SYM_UNKNOWN_BUF_LEN]> =
+        const { RefCell::new([0u8; SYM_UNKNOWN_BUF_LEN]) };
+    static SYM_NTOS_BUF: RefCell<[u8; SYM_UNKNOWN_BUF_LEN]> =
+        const { RefCell::new([0u8; SYM_UNKNOWN_BUF_LEN]) };
+}
+
+fn write_decimal_to_tls(
+    cell: &'static std::thread::LocalKey<RefCell<[u8; SYM_UNKNOWN_BUF_LEN]>>,
+    value: c_int,
+) -> *const c_char {
+    cell.with(|c| {
+        let mut buf = c.borrow_mut();
+        let s = format!("{value}");
+        let bytes = s.as_bytes();
+        let n = bytes.len().min(SYM_UNKNOWN_BUF_LEN - 1);
+        buf[..n].copy_from_slice(&bytes[..n]);
+        buf[n] = 0;
+        buf.as_ptr() as *const c_char
+    })
+}
+
+/// `__sym_ntop(*tab, value, *success) -> *const c_char` — find the
+/// `humanname` entry for `value` in a NULL-terminated `struct res_sym`
+/// table. On success sets `*success = 1` and returns the humanname.
+/// On failure sets `*success = 0` and returns a thread-local string
+/// containing the decimal representation of `value`.
 ///
 /// # Safety
-/// All pointers may be NULL.
+/// `tab` must be NULL or point to a NULL-terminated `struct res_sym`
+/// array. `success` may be NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sym_ntop(
-    _tab: *const c_void,
-    _value: c_int,
+    tab: *const c_void,
+    value: c_int,
     success: *mut c_int,
 ) -> *const c_char {
+    if !tab.is_null() {
+        let mut p = tab as *const ResSym;
+        loop {
+            // SAFETY: caller asserts `tab` is a NULL-terminated table.
+            let entry = unsafe { &*p };
+            if entry.name.is_null() {
+                break;
+            }
+            if entry.number == value {
+                if !success.is_null() {
+                    unsafe { *success = 1 };
+                }
+                return entry.humanname;
+            }
+            p = unsafe { p.add(1) };
+        }
+    }
     if !success.is_null() {
         unsafe { *success = 0 };
     }
-    core::ptr::null()
+    write_decimal_to_tls(&SYM_NTOP_BUF, value)
 }
 
-/// `__sym_ntos(*tab, value, *success) -> *const c_char` — symbol-table
-/// numeric -> short-text lookup. Stub returns NULL.
+/// `__sym_ntos(*tab, value, *success) -> *const c_char` — like
+/// `__sym_ntop` but returns the symbol's short `name` rather than the
+/// human-readable description.
 ///
 /// # Safety
-/// All pointers may be NULL.
+/// `tab` must be NULL or point to a NULL-terminated `struct res_sym`
+/// array. `success` may be NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sym_ntos(
-    _tab: *const c_void,
-    _value: c_int,
+    tab: *const c_void,
+    value: c_int,
     success: *mut c_int,
 ) -> *const c_char {
+    if !tab.is_null() {
+        let mut p = tab as *const ResSym;
+        loop {
+            let entry = unsafe { &*p };
+            if entry.name.is_null() {
+                break;
+            }
+            if entry.number == value {
+                if !success.is_null() {
+                    unsafe { *success = 1 };
+                }
+                return entry.name;
+            }
+            p = unsafe { p.add(1) };
+        }
+    }
     if !success.is_null() {
         unsafe { *success = 0 };
     }
-    core::ptr::null()
+    write_decimal_to_tls(&SYM_NTOS_BUF, value)
 }
 
-/// `__sym_ston(*tab, *str, *success) -> int` — symbol-table text ->
-/// numeric lookup. Stub returns 0 and reports failure.
+/// `__sym_ston(*tab, *str, *success) -> int` — case-insensitive text
+/// lookup against the `name` column of a NULL-terminated
+/// `struct res_sym` array. On match sets `*success = 1` and returns
+/// the matching `number`. On miss sets `*success = 0` and returns
+/// the `number` field of the sentinel (unknown) entry.
 ///
 /// # Safety
-/// All pointers may be NULL.
+/// `tab` must be NULL or point to a NULL-terminated `struct res_sym`
+/// array. `str` and `success` may be NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __sym_ston(
-    _tab: *const c_void,
-    _str: *const c_char,
+    tab: *const c_void,
+    str: *const c_char,
     success: *mut c_int,
 ) -> c_int {
+    if !tab.is_null() && !str.is_null() {
+        let needle = unsafe { CStr::from_ptr(str) }.to_bytes();
+        let mut p = tab as *const ResSym;
+        loop {
+            let entry = unsafe { &*p };
+            if entry.name.is_null() {
+                // Sentinel entry: report failure but return its number,
+                // matching libresolv's "unknown" semantics.
+                if !success.is_null() {
+                    unsafe { *success = 0 };
+                }
+                return entry.number;
+            }
+            let name_bytes = unsafe { CStr::from_ptr(entry.name) }.to_bytes();
+            if name_bytes.eq_ignore_ascii_case(needle) {
+                if !success.is_null() {
+                    unsafe { *success = 1 };
+                }
+                return entry.number;
+            }
+            p = unsafe { p.add(1) };
+        }
+    }
     if !success.is_null() {
         unsafe { *success = 0 };
     }
