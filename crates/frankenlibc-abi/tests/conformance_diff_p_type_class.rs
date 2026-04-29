@@ -17,6 +17,7 @@ use frankenlibc_abi::resolv_abi as fl;
 unsafe extern "C" {
     fn __p_class(class: c_int) -> *const c_char;
     fn __p_type(ty: c_int) -> *const c_char;
+    fn __p_rcode(rcode: c_int) -> *const c_char;
 }
 
 #[derive(Debug)]
@@ -111,6 +112,39 @@ fn diff_p_class_known_and_unknown() {
         }
     }
     assert!(divs.is_empty(), "__p_class divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_p_rcode_known_and_unknown() {
+    let mut divs = Vec::new();
+    let rcodes: &[c_int] = &[0, 1, 2, 3, 4, 5, 9, 10, 16, 17, 100, 65535];
+    for &rc in rcodes {
+        let p_fl = unsafe { fl::__p_rcode(rc) };
+        let p_lc = unsafe { __p_rcode(rc) };
+        if p_fl.is_null() != p_lc.is_null() {
+            divs.push(Divergence {
+                case: format!("rcode={rc}"),
+                field: "null_return",
+                frankenlibc: format!("{}", p_fl.is_null()),
+                glibc: format!("{}", p_lc.is_null()),
+            });
+            continue;
+        }
+        if p_fl.is_null() {
+            continue;
+        }
+        let s_fl = unsafe { CStr::from_ptr(p_fl).to_bytes() };
+        let s_lc = unsafe { CStr::from_ptr(p_lc).to_bytes() };
+        if s_fl != s_lc {
+            divs.push(Divergence {
+                case: format!("rcode={rc}"),
+                field: "name",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
+                glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "__p_rcode divergences:\n{}", render_divs(&divs));
 }
 
 #[test]

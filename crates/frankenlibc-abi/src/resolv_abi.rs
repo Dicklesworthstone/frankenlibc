@@ -3801,8 +3801,25 @@ pub unsafe extern "C" fn __p_option(_option: c_int) -> *const c_char {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_rcode(_rcode: c_int) -> *const c_char {
-    c"NOERROR".as_ptr()
+pub unsafe extern "C" fn __p_rcode(rcode: c_int) -> *const c_char {
+    // RFC 1035 + RFC 2136 + RFC 2845 + RFC 6195 (DNS RCODE registry)
+    match rcode {
+        0 => c"NOERROR".as_ptr(),
+        1 => c"FORMERR".as_ptr(),
+        2 => c"SERVFAIL".as_ptr(),
+        3 => c"NXDOMAIN".as_ptr(),
+        4 => c"NOTIMP".as_ptr(),
+        5 => c"REFUSED".as_ptr(),
+        6 => c"YXDOMAIN".as_ptr(),
+        7 => c"YXRRSET".as_ptr(),
+        8 => c"NXRRSET".as_ptr(),
+        9 => c"NOTAUTH".as_ptr(),
+        10 => c"NOTZONE".as_ptr(),
+        16 => c"BADSIG".as_ptr(),
+        17 => c"BADKEY".as_ptr(),
+        18 => c"BADTIME".as_ptr(),
+        _ => unsafe { write_decimal_fallback(rcode) },
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
