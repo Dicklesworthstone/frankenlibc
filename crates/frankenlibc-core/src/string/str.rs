@@ -124,7 +124,11 @@ pub fn strncpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 pub fn stpncpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
     let count = strncpy(dest, src, n);
     let src_len = strlen(src);
-    if src_len < count { src_len } else { count }
+    if src_len < count {
+        src_len
+    } else {
+        count
+    }
 }
 
 /// Appends `src` to the end of the NUL-terminated string in `dest`.
@@ -191,7 +195,11 @@ pub fn strchr(s: &[u8], c: u8) -> Option<usize> {
         }
     }
 
-    if c == 0 { Some(s.len()) } else { None }
+    if c == 0 {
+        Some(s.len())
+    } else {
+        None
+    }
 }
 
 /// Locates `c` in `s`, returning either the match index or the terminating NUL index.
@@ -380,6 +388,19 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// Equivalent to C `strspn`.
 pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
     let accept_len = strlen(accept);
+    if accept_len == 0 {
+        return 0;
+    }
+    if accept_len == 1 {
+        let accepted = accept[0];
+        for (i, &byte) in s.iter().enumerate() {
+            if byte == 0 || byte != accepted {
+                return i;
+            }
+        }
+        return s.len();
+    }
+
     let accept_set = &accept[..accept_len];
 
     for (i, &byte) in s.iter().enumerate() {
@@ -790,6 +811,11 @@ mod tests {
     #[test]
     fn test_strspn_basic() {
         assert_eq!(strspn(b"abc123\0", b"abc\0"), 3);
+    }
+
+    #[test]
+    fn test_strspn_single_accept_full_without_terminator() {
+        assert_eq!(strspn(b"AAAA", b"A\0"), 4);
     }
 
     #[test]
