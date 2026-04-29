@@ -4619,9 +4619,11 @@ fn unvis_round_trips_every_byte() {
     // perfectly valid input byte for the streaming decoder).
     for b in 0u8..=255 {
         let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(&[b], 0);
-        let decoded = unvis_drain(&encoded)
-            .unwrap_or_else(|e| panic!("unvis_drain failed for {b:#x}: {e} encoded={encoded:?}"));
-        assert_eq!(decoded, vec![b], "round-trip mismatch for byte {b:#x}");
+        assert_eq!(
+            unvis_drain(&encoded),
+            Ok(vec![b]),
+            "round-trip mismatch for byte {b:#x}; encoded={encoded:?}"
+        );
     }
 }
 
