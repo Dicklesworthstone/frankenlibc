@@ -161,6 +161,11 @@ storage.sqlite3-wal.corrupt-*
 # Codex CLI cache
 .codex
 
+# rch (remote_compilation_helper) per-invocation scratch directory —
+# holds the artifact bundle the local cargo wrapper ships to the
+# remote build worker; cleared on the next run.
+.rch-tmp/
+
 # csplit scratch output at repo root
 /xx[0-9][0-9]
 
