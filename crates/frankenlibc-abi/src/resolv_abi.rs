@@ -2131,14 +2131,17 @@ pub unsafe extern "C" fn __h_errno_location() -> *mut c_int {
 ///
 /// `src` must point to at least 2 readable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ns_get16(src: *const u8) -> u16 {
+pub unsafe extern "C" fn ns_get16(src: *const u8) -> libc::c_uint {
     if src.is_null() || !tracked_region_fits(src.cast(), 2) {
         return 0;
     }
-    // SAFETY: caller-supplied 2-byte buffer.
+    // SAFETY: caller-supplied 2-byte buffer. Return type is c_uint (u32) to
+    // match glibc's `unsigned int ns_get16(...)` ABI exactly — the return
+    // value occupies the full 32-bit register slot, not just the low 16
+    // bits, so glibc-compiled callers don't read garbage in the upper half.
     let b0 = unsafe { *src };
     let b1 = unsafe { *src.add(1) };
-    ((b0 as u16) << 8) | (b1 as u16)
+    (((b0 as u16) << 8) | (b1 as u16)) as libc::c_uint
 }
 
 /// libresolv `ns_get32(*src) -> u32` — read a big-endian 32-bit
@@ -2148,13 +2151,17 @@ pub unsafe extern "C" fn ns_get16(src: *const u8) -> u16 {
 ///
 /// `src` must point to at least 4 readable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ns_get32(src: *const u8) -> u32 {
+pub unsafe extern "C" fn ns_get32(src: *const u8) -> libc::c_ulong {
     if src.is_null() || !tracked_region_fits(src.cast(), 4) {
         return 0;
     }
-    // SAFETY: caller-supplied 4-byte buffer.
+    // SAFETY: caller-supplied 4-byte buffer. Return type is c_ulong (u64
+    // on Linux/x86_64) to match glibc's `unsigned long ns_get32(...)` ABI.
+    // The value never exceeds u32::MAX (4 bytes of data), but the SysV AMD64
+    // calling convention requires the full 64-bit register slot for u_long
+    // returns.
     let bytes = unsafe { core::slice::from_raw_parts(src, 4) };
-    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as libc::c_ulong
 }
 
 /// libresolv `ns_put16(value, *dst)` — write `value` as a big-endian
@@ -3594,21 +3601,21 @@ pub unsafe extern "C" fn ns_sprintrr(
 
 // --- Byte-order primitives (network big-endian) ---
 
-/// `__ns_get16(*src) -> u16` — GLIBC_PRIVATE alias for `ns_get16`.
+/// `__ns_get16(*src) -> c_uint` — GLIBC_PRIVATE alias for `ns_get16`.
 ///
 /// # Safety
 /// `src` must point to at least 2 readable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __ns_get16(src: *const u8) -> u16 {
+pub unsafe extern "C" fn __ns_get16(src: *const u8) -> libc::c_uint {
     unsafe { ns_get16(src) }
 }
 
-/// `__ns_get32(*src) -> u32` — GLIBC_PRIVATE alias for `ns_get32`.
+/// `__ns_get32(*src) -> c_ulong` — GLIBC_PRIVATE alias for `ns_get32`.
 ///
 /// # Safety
 /// `src` must point to at least 4 readable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __ns_get32(src: *const u8) -> u32 {
+pub unsafe extern "C" fn __ns_get32(src: *const u8) -> libc::c_ulong {
     unsafe { ns_get32(src) }
 }
 
