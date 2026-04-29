@@ -3513,8 +3513,13 @@ pub unsafe extern "C" fn ns_sprintrrf(
     out.push(' ');
 
     let mut ttl_buf = [0u8; 32];
-    let ttl_n =
-        unsafe { ns_format_ttl(ttl.into(), ttl_buf.as_mut_ptr() as *mut c_char, ttl_buf.len()) };
+    let ttl_n = unsafe {
+        ns_format_ttl(
+            ttl.into(),
+            ttl_buf.as_mut_ptr() as *mut c_char,
+            ttl_buf.len(),
+        )
+    };
     if ttl_n < 0 {
         return -1;
     }
@@ -3899,7 +3904,13 @@ pub unsafe extern "C" fn __p_time(value: u32) -> *const c_char {
         let buf_ptr = cell.get();
         // SAFETY: thread-local; no aliasing across threads.
         let buf = unsafe { &mut *buf_ptr };
-        let n = unsafe { ns_format_ttl(value as libc::c_ulong, buf.as_mut_ptr() as *mut c_char, buf.len()) };
+        let n = unsafe {
+            ns_format_ttl(
+                value as libc::c_ulong,
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+            )
+        };
         if n < 0 {
             // Fallback shouldn't happen for u32 inputs in a 32-byte buffer.
             buf[0] = b'0';
@@ -3980,6 +3991,18 @@ fn hostalias_lookup(name: &[u8], hosts_file: &str) -> Option<Vec<u8>> {
     None
 }
 
+unsafe fn hostalias_name_bytes<'a>(name: *const c_char) -> Option<&'a [u8]> {
+    let Ok(Some(name_cstr)) = (unsafe { opt_cstr(name) }) else {
+        return None;
+    };
+    let name_bytes = name_cstr.to_bytes();
+    if name_bytes.is_empty() {
+        None
+    } else {
+        Some(name_bytes)
+    }
+}
+
 /// `__hostalias(*name) -> *const c_char` — lookup HOSTALIASES alias.
 /// Reads `$HOSTALIASES` (a path to a file with `alias dnsname` lines),
 /// case-insensitively matches `name` against the first column, and
@@ -3993,13 +4016,9 @@ fn hostalias_lookup(name: &[u8], hosts_file: &str) -> Option<Vec<u8>> {
 /// until the next call from the same thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __hostalias(name: *const c_char) -> *const c_char {
-    if name.is_null() {
+    let Some(name_bytes) = (unsafe { hostalias_name_bytes(name) }) else {
         return core::ptr::null();
-    }
-    let name_bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
-    if name_bytes.is_empty() {
-        return core::ptr::null();
-    }
+    };
     let Ok(file) = std::env::var("HOSTALIASES") else {
         return core::ptr::null();
     };
@@ -4020,18 +4039,45 @@ pub unsafe extern "C" fn __hostalias(name: *const c_char) -> *const c_char {
 }
 
 /// `__res_hostalias(*statp, *name, *buf, buflen) -> *const c_char` —
-/// resolver-state-aware HOSTALIASES lookup. Stub returns NULL.
+/// reentrant variant of `__hostalias`. Writes the resolved DNS name
+/// into the caller-supplied `buf` (NUL-terminated, capped at `buflen`)
+/// and returns `buf` on success. Returns NULL on miss, missing
+/// `$HOSTALIASES`, or invalid arguments. The `statp` resolver state
+/// is unused — the lookup is identical to `__hostalias`'s.
 ///
 /// # Safety
-/// Pointers may be NULL; we don't dereference them.
+/// `name` must be NULL or NUL-terminated. `buf`, when non-NULL, must
+/// point to at least `buflen` writable bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_hostalias(
     _statp: *mut c_void,
-    _name: *const c_char,
-    _buf: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
 ) -> *const c_char {
-    core::ptr::null()
+    if buf.is_null() || buflen == 0 {
+        return core::ptr::null();
+    }
+    let Some(name_bytes) = (unsafe { hostalias_name_bytes(name) }) else {
+        return core::ptr::null();
+    };
+    let Ok(file) = std::env::var("HOSTALIASES") else {
+        return core::ptr::null();
+    };
+    let Some(dns) = hostalias_lookup(name_bytes, &file) else {
+        return core::ptr::null();
+    };
+    let effective_buflen =
+        known_remaining(buf as usize).map_or(buflen, |remaining| remaining.min(buflen));
+    if effective_buflen == 0 {
+        return core::ptr::null();
+    }
+    let copy_len = dns.len().min(effective_buflen - 1);
+    unsafe {
+        std::ptr::copy_nonoverlapping(dns.as_ptr(), buf as *mut u8, copy_len);
+        *(buf.add(copy_len)) = 0;
+    }
+    buf
 }
 
 // --- RFC 1876 LOC records ---
@@ -4091,7 +4137,11 @@ fn loc_precsize_parse(s: &[u8]) -> Option<(u8, usize)> {
         i += 1;
     }
     let int_str = std::str::from_utf8(&s[start..int_end]).ok()?;
-    let int_meters: u64 = if int_str.is_empty() { 0 } else { int_str.parse().ok()? };
+    let int_meters: u64 = if int_str.is_empty() {
+        0
+    } else {
+        int_str.parse().ok()?
+    };
     let frac_part: u64 = if frac_end > int_end + 1 {
         // We have a '.' + digits.
         let frac_str = std::str::from_utf8(&s[int_end + 1..frac_end]).ok()?;
@@ -4108,9 +4158,7 @@ fn loc_precsize_parse(s: &[u8]) -> Option<(u8, usize)> {
     } else {
         0
     };
-    let cm = int_meters
-        .checked_mul(100)?
-        .checked_add(frac_part)?;
+    let cm = int_meters.checked_mul(100)?.checked_add(frac_part)?;
     // Choose the smallest exponent that keeps mantissa <= 9.
     let mut mantissa = cm;
     let mut exponent = 0u8;
@@ -4257,7 +4305,7 @@ fn loc_aton_inner(s: &[u8]) -> Option<[u8; 16]> {
     let lon_word = (ref_pos + lon_ms) as u32;
 
     // Altitude reference is -100,000m, stored in cm.
-    let alt_word = (alt_meters_centi + 100_000_00i64) as u32;
+    let alt_word = (alt_meters_centi + 10_000_000_i64) as u32;
 
     let mut out = [0u8; 16];
     out[0] = 0; // version
@@ -4285,7 +4333,11 @@ fn parse_seconds(s: &[u8]) -> Option<(u32, u32)> {
         None => Some((parse_u32(s)?, 0)),
         Some(idx) => {
             let int_str = std::str::from_utf8(&s[..idx]).ok()?;
-            let int_val: u32 = if int_str.is_empty() { 0 } else { int_str.parse().ok()? };
+            let int_val: u32 = if int_str.is_empty() {
+                0
+            } else {
+                int_str.parse().ok()?
+            };
             let frac_str = std::str::from_utf8(&s[idx + 1..]).ok()?;
             // Pad/truncate to 3 digits to express milliseconds.
             let mut buf = String::from(frac_str);
@@ -4320,7 +4372,11 @@ fn parse_signed_meters(s: &[u8]) -> Option<i64> {
         }
         Some(idx) => {
             let int_str = std::str::from_utf8(&bytes[..idx]).ok()?;
-            let int_val: i64 = if int_str.is_empty() { 0 } else { int_str.parse().ok()? };
+            let int_val: i64 = if int_str.is_empty() {
+                0
+            } else {
+                int_str.parse().ok()?
+            };
             let frac_str = std::str::from_utf8(&bytes[idx + 1..]).ok()?;
             let mut buf = String::from(frac_str);
             if buf.len() < 2 {
@@ -4463,10 +4519,10 @@ fn loc_ntoa_format(bytes: &[u8]) -> String {
     let (alt_meters, alt_centi) = if alt_signed < 0 {
         // glibc: altmeters = (altval / 100) * altsign; altfrac = altval % 100
         // where altval = referencealt - templ (always positive).
-        let altval = (-alt_signed) as i64;
-        ((altval / 100) * -1, altval % 100)
+        let altval = -alt_signed;
+        (-(altval / 100), altval % 100)
     } else {
-        let altval = alt_signed as i64;
+        let altval = alt_signed;
         (altval / 100, altval % 100)
     };
 
@@ -4476,9 +4532,21 @@ fn loc_ntoa_format(bytes: &[u8]) -> String {
 
     format!(
         "{} {:02} {:02}.{:03} {} {} {:02} {:02}.{:03} {} {}.{:02}m {}m {}m {}m",
-        lat_deg, lat_min, lat_sec, lat_secfrac, north_south,
-        lon_deg, lon_min, lon_sec, lon_secfrac, east_west,
-        alt_meters, alt_centi, size_str, hp_str, vp_str,
+        lat_deg,
+        lat_min,
+        lat_sec,
+        lat_secfrac,
+        north_south,
+        lon_deg,
+        lon_min,
+        lon_sec,
+        lon_secfrac,
+        east_west,
+        alt_meters,
+        alt_centi,
+        size_str,
+        hp_str,
+        vp_str,
     )
 }
 
