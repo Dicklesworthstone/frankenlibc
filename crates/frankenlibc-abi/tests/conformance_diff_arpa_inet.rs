@@ -408,6 +408,16 @@ fn diff_inet_aton_cases() {
         b"1.2.3.4",
         b"a.b.c.d",
         b"",
+        // BSD numbers-and-dots grammar parity — glibc accepts these.
+        b"127",
+        b"127.1",
+        b"127.0.0",
+        b"0177.0.0.1",
+        b"0x7f.0.0.1",
+        b"2130706433",
+        b"08.0.0.0",
+        b"1.2.3.4.5",
+        b" 127.0.0.1",
     ];
     for input in cases {
         let cinp = CString::new(*input).unwrap();
@@ -464,6 +474,20 @@ const INET_ADDR_INPUTS: &[&[u8]] = &[
     b"1.2.3.4.5", // too many octets — INADDR_NONE
     b"abc",       // not numeric — INADDR_NONE
     b"",          // empty — INADDR_NONE
+    // BSD numbers-and-dots grammar: 1, 2, 3-part forms, hex/octal radixes.
+    // glibc accepts all of these; the previous fl impl wrongly rejected them.
+    b"127",            // 1-part, decimal — full 32-bit value.
+    b"2130706433",     // 1-part, decimal: 0x7F000001 == 127.0.0.1
+    b"127.1",          // 2-part: 127.0.0.1
+    b"127.0.0",        // 3-part: 127.0.0.0
+    b"1.2.3",          // 3-part: 1.2.0.3
+    b"0177.0.0.1",     // octal in part 0
+    b"0x7f.0.0.1",     // hex in part 0
+    b"127.0.0.01",     // single-digit octal == decimal 1
+    b"0",              // 1-part zero
+    b"08.0.0.0",       // invalid octal (8 not in [0,7]) — INADDR_NONE
+    b"127.0.0.1\t",    // trailing tab tolerated
+    b" 127.0.0.1",     // leading space rejected — INADDR_NONE
 ];
 
 #[test]

@@ -61,8 +61,12 @@ pub fn ntohl(v: u32) -> u32 {
 /// Parses a dotted-quad IPv4 address string into a `u32` in network byte order.
 ///
 /// Equivalent to C `inet_addr`. Returns `INADDR_NONE` (`u32::MAX`) on error.
+///
+/// Accepts the full BSD numbers-and-dots grammar (per POSIX/glibc): 1, 2, 3,
+/// or 4 part forms, with each part written in decimal, hex (0x prefix), or
+/// octal (0 prefix). See [`parse_ipv4_bsd`] for the exact grammar.
 pub fn inet_addr(s: &[u8]) -> u32 {
-    match parse_ipv4(s) {
+    match parse_ipv4_bsd(s) {
         Some(octets) => u32::from_ne_bytes(octets),
         None => INADDR_NONE,
     }
@@ -147,7 +151,10 @@ pub fn inet_ntop(af: i32, src: &[u8]) -> Option<Vec<u8>> {
 /// into `dst`), 0 on failure. Unlike `inet_pton`, `inet_aton` is a legacy
 /// function that only handles AF_INET.
 pub fn inet_aton(src: &[u8], dst: &mut [u8; 4]) -> i32 {
-    match parse_ipv4(src) {
+    // POSIX/glibc inet_aton accepts the full BSD numbers-and-dots grammar
+    // (1/2/3/4-part forms, hex/octal/decimal). The strict 4-quad parser
+    // (`parse_ipv4`) backs `inet_pton` which is intentionally restricted.
+    match parse_ipv4_bsd(src) {
         Some(octets) => {
             *dst = octets;
             1
@@ -159,6 +166,119 @@ pub fn inet_aton(src: &[u8], dst: &mut [u8; 4]) -> i32 {
 // ---------------------------------------------------------------------------
 // Internal: IPv4 parsing
 // ---------------------------------------------------------------------------
+
+/// Parse an IPv4 text address using the BSD numbers-and-dots grammar
+/// (per `inet_aton(3)` and POSIX `inet_addr`).
+///
+/// Accepts 1, 2, 3, or 4 dot-separated parts; each part may be decimal
+/// (no prefix), hex (`0x` prefix), or octal (`0` prefix). The combination
+/// rules:
+///
+/// | parts | a.b.c.d   | byte placement                                |
+/// |-------|-----------|-----------------------------------------------|
+/// | 1     | a         | 32-bit value, no further interpretation       |
+/// | 2     | a.b       | a is byte 0; b is the low 24 bits             |
+/// | 3     | a.b.c     | a is byte 0; b is byte 1; c is the low 16     |
+/// | 4     | a.b.c.d   | classic dotted quad                           |
+///
+/// Trailing ASCII whitespace is tolerated (matches glibc); leading
+/// whitespace is rejected. Each part's value must fit in the bit-width
+/// implied by the form; otherwise returns `None`.
+pub fn parse_ipv4_bsd(src: &[u8]) -> Option<[u8; 4]> {
+    let s = core::str::from_utf8(src).ok()?;
+    let s = s.trim_end_matches('\0');
+    // Trim trailing ASCII whitespace (glibc accepts " 1.2.3.4\t" with trailing
+    // tab but not leading space).
+    let s = s.trim_end_matches(|c: char| c.is_ascii_whitespace());
+    if s.is_empty() {
+        return None;
+    }
+    if s.starts_with(|c: char| c.is_ascii_whitespace()) {
+        return None;
+    }
+
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.is_empty() || parts.len() > 4 {
+        return None;
+    }
+    let mut nums = [0u32; 4];
+    for (i, part) in parts.iter().enumerate() {
+        nums[i] = parse_bsd_part(part)?;
+    }
+    let mut octets = [0u8; 4];
+    match parts.len() {
+        1 => {
+            // Single 32-bit value, network byte order means high byte is octet 0.
+            let v = nums[0];
+            octets[0] = (v >> 24) as u8;
+            octets[1] = (v >> 16) as u8;
+            octets[2] = (v >> 8) as u8;
+            octets[3] = v as u8;
+        }
+        2 => {
+            // a.b — a is the first byte; b occupies the low 24 bits.
+            if nums[0] > 0xFF || nums[1] > 0x00FF_FFFF {
+                return None;
+            }
+            octets[0] = nums[0] as u8;
+            octets[1] = (nums[1] >> 16) as u8;
+            octets[2] = (nums[1] >> 8) as u8;
+            octets[3] = nums[1] as u8;
+        }
+        3 => {
+            // a.b.c — first two bytes; c occupies the low 16 bits.
+            if nums[0] > 0xFF || nums[1] > 0xFF || nums[2] > 0xFFFF {
+                return None;
+            }
+            octets[0] = nums[0] as u8;
+            octets[1] = nums[1] as u8;
+            octets[2] = (nums[2] >> 8) as u8;
+            octets[3] = nums[2] as u8;
+        }
+        4 => {
+            for n in &nums {
+                if *n > 0xFF {
+                    return None;
+                }
+            }
+            octets[0] = nums[0] as u8;
+            octets[1] = nums[1] as u8;
+            octets[2] = nums[2] as u8;
+            octets[3] = nums[3] as u8;
+        }
+        _ => unreachable!(),
+    }
+    Some(octets)
+}
+
+/// Parse one BSD-grammar IPv4 part: hex (`0x`/`0X` prefix), octal (`0` prefix
+/// followed by digits), or decimal. Empty input rejected. Overflow rejected.
+fn parse_bsd_part(part: &str) -> Option<u32> {
+    if part.is_empty() {
+        return None;
+    }
+    let bytes = part.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'0' && (bytes[1] == b'x' || bytes[1] == b'X') {
+        // Hex.
+        let rest = &part[2..];
+        if rest.is_empty() {
+            return None;
+        }
+        u32::from_str_radix(rest, 16).ok()
+    } else if bytes[0] == b'0' && bytes.len() > 1 {
+        // Octal. Each remaining char must be 0..=7.
+        if bytes[1..].iter().any(|&b| !(b'0'..=b'7').contains(&b)) {
+            return None;
+        }
+        u32::from_str_radix(&part[1..], 8).ok()
+    } else {
+        // Decimal.
+        if bytes.iter().any(|&b| !b.is_ascii_digit()) {
+            return None;
+        }
+        part.parse().ok()
+    }
+}
 
 /// Parse a dotted-quad IPv4 text address into exactly 4 bytes.
 /// Rejects leading zeros, values > 255, wrong number of parts, and trailing junk.
@@ -561,16 +681,37 @@ mod tests {
     fn test_inet_addr_invalid() {
         assert_eq!(inet_addr(b""), INADDR_NONE);
         assert_eq!(inet_addr(b"abc"), INADDR_NONE);
-        assert_eq!(inet_addr(b"1.2.3"), INADDR_NONE);
+        // Too many parts is still rejected.
         assert_eq!(inet_addr(b"1.2.3.4.5"), INADDR_NONE);
+        // Each part still has a max width — 256 doesn't fit in 8 bits.
         assert_eq!(inet_addr(b"256.0.0.1"), INADDR_NONE);
         assert_eq!(inet_addr(b"1.2.3.999"), INADDR_NONE);
+        // Leading whitespace rejected (matches glibc).
+        assert_eq!(inet_addr(b" 1.2.3.4"), INADDR_NONE);
     }
 
     #[test]
-    fn test_inet_addr_leading_zeros_rejected() {
-        assert_eq!(inet_addr(b"01.02.03.04"), INADDR_NONE);
-        assert_eq!(inet_addr(b"1.2.3.04"), INADDR_NONE);
+    fn test_inet_addr_bsd_partial_quads() {
+        // 3-part form: a.b.c, c spans low 16 bits.
+        // "1.2.3" → 1.0.2.3 (a=1, b=2 in byte 1, c=3 in low 16).
+        assert_eq!(inet_addr(b"1.2.3").to_ne_bytes(), [1, 2, 0, 3]);
+        // 2-part form: "127.1" → 127.0.0.1 (a=127, b=1 in low 24 bits).
+        assert_eq!(inet_addr(b"127.1").to_ne_bytes(), [127, 0, 0, 1]);
+        // 1-part form: 32-bit value treated as network order.
+        // 2130706433 = 0x7F000001 → 127.0.0.1.
+        assert_eq!(inet_addr(b"2130706433").to_ne_bytes(), [127, 0, 0, 1]);
+    }
+
+    #[test]
+    fn test_inet_addr_bsd_radix_prefixes() {
+        // Octal: "0177.0.0.1" → 127.0.0.1.
+        assert_eq!(inet_addr(b"0177.0.0.1").to_ne_bytes(), [127, 0, 0, 1]);
+        // Hex: "0x7f.0.0.1" → 127.0.0.1.
+        assert_eq!(inet_addr(b"0x7f.0.0.1").to_ne_bytes(), [127, 0, 0, 1]);
+        // Trailing-zero in last octet decoded as decimal still: "127.0.0.01" → 127.0.0.1.
+        assert_eq!(inet_addr(b"127.0.0.01").to_ne_bytes(), [127, 0, 0, 1]);
+        // Octal digit out of range rejected: "08" is not valid octal.
+        assert_eq!(inet_addr(b"08.0.0.0"), INADDR_NONE);
     }
 
     #[test]
@@ -1021,9 +1162,12 @@ mod tests {
         let mut dst = [0u8; 4];
         assert_eq!(inet_aton(b"", &mut dst), 0);
         assert_eq!(inet_aton(b"abc", &mut dst), 0);
-        assert_eq!(inet_aton(b"1.2.3", &mut dst), 0);
+        // 5+ parts still rejected.
         assert_eq!(inet_aton(b"1.2.3.4.5", &mut dst), 0);
+        // Width overflow still rejected.
         assert_eq!(inet_aton(b"256.0.0.1", &mut dst), 0);
+        // BSD-grammar valid forms are NOT in this list any more — see
+        // test_inet_addr_bsd_partial_quads / radix_prefixes.
     }
 
     #[test]
