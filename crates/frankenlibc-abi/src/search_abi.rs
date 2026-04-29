@@ -74,7 +74,8 @@ unsafe fn hash_key_len(ptr: *mut c_char) -> Option<usize> {
     if ptr.is_null() {
         return None;
     }
-    let (len, terminated) = unsafe { crate::util::scan_c_string(ptr.cast_const(), None) };
+    let bound = crate::malloc_abi::known_remaining(ptr as usize);
+    let (len, terminated) = unsafe { crate::util::scan_c_string(ptr.cast_const(), bound) };
     terminated.then_some(len)
 }
 
