@@ -40,13 +40,13 @@ the expected vs. actual behavior.
 - **Spec reference:** POSIX fprintf() extension - behavior is undefined in C11
   but POSIX requires "(null)" output
 
-### DISC-004: Positional Arguments with Dynamic Width
+### DISC-004: Positional Arguments with Dynamic Width (FIXED)
 
 - **Reference:** `%1$*2$d` uses arg 1 as value, arg 2 as width
-- **Our impl:** Positional width specifier not functioning
-- **Impact:** `sprintf("%1$*2$d", 42, 5)` returns "42" instead of "   42"
-- **Resolution:** WILL-FIX - Implement positional argument width extraction
-- **Tests affected:** `sprintf_positional_width`
+- **Our impl:** Now extracts and normalizes positional width/precision arguments as C `int`
+- **Impact:** None - fixed
+- **Resolution:** FIXED (2026-04-29) - `render_printf` now resolves `*` width and precision through `c_int`, so zero-extended negative positional/`va_list` star arguments obey POSIX semantics instead of becoming huge positive fields.
+- **Tests affected:** `snprintf_normalizes_positional_negative_star_width`, `snprintf_normalizes_positional_negative_star_precision`, `diff_snprintf_negative_star_width_precision`
 - **Spec reference:** POSIX fprintf() positional arguments extension
 
 ---
@@ -67,8 +67,8 @@ the expected vs. actual behavior.
 overflow wrapping) not available in the core library test harness. These are tracked separately
 as implementation gaps.*
 
-Active divergences: 1 (printf DISC-004: positional width args)
-Fixed divergences: 5 (DISC-001: banker's rounding, DISC-002: octal alternate form, printf DISC-003: NULL string, scanf DISC-003: overflow wrapping, scanf DISC-004: hex float parsing)
+Active divergences: 0
+Fixed divergences: 6 (DISC-001: banker's rounding, DISC-002: octal alternate form, printf DISC-003: NULL string, printf DISC-004: positional dynamic width, scanf DISC-003: overflow wrapping, scanf DISC-004: hex float parsing)
 
 ---
 
@@ -103,3 +103,4 @@ Fixed divergences: 5 (DISC-001: banker's rounding, DISC-002: octal alternate for
 |------|----------|--------|
 | 2026-04-14 | Initial | Created with 4 known divergences |
 | 2026-04-14 | Claude | Fixed DISC-001 (banker's rounding) and DISC-004 (hex float parsing). Added 29 new test cases. |
+| 2026-04-29 | Codex | Fixed printf DISC-004 positional dynamic width/precision normalization and added ABI + glibc differential coverage. |

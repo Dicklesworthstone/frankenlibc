@@ -3031,7 +3031,7 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                         None
                     };
                     if let Some(raw_width) = read_arg(width_position, &mut arg_idx) {
-                        let w = raw_width as i64;
+                        let w = (raw_width as core::ffi::c_int) as i64;
                         if w < 0 {
                             resolved_spec.flags.left_justify = true;
                             resolved_spec.width = Width::Fixed((-w) as usize);
@@ -3049,7 +3049,7 @@ pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize
                         None
                     };
                     if let Some(raw_precision) = read_arg(precision_position, &mut arg_idx) {
-                        let p = raw_precision as i64;
+                        let p = (raw_precision as core::ffi::c_int) as i64;
                         resolved_spec.precision = if p < 0 {
                             Precision::None
                         } else {

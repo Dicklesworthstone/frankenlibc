@@ -267,6 +267,91 @@ fn diff_snprintf_truncation() {
     );
 }
 
+#[test]
+fn diff_snprintf_negative_star_width_precision() {
+    let mut divs = Vec::new();
+
+    let mut width_fl = vec![0u8; 64];
+    let mut width_lc = vec![0u8; 64];
+    let width_fmt = b"|%1$*2$d|\0";
+    let width_fl_rc = unsafe {
+        fl::snprintf(
+            width_fl.as_mut_ptr() as *mut c_char,
+            width_fl.len(),
+            width_fmt.as_ptr() as *const c_char,
+            42_i32,
+            -5_i32,
+        )
+    };
+    let width_lc_rc = unsafe {
+        libc::snprintf(
+            width_lc.as_mut_ptr() as *mut c_char,
+            width_lc.len(),
+            width_fmt.as_ptr() as *const c_char,
+            42_i32,
+            -5_i32,
+        )
+    };
+    if width_fl_rc != width_lc_rc || buf_used(&width_fl) != buf_used(&width_lc) {
+        divs.push(Divergence {
+            function: "snprintf",
+            case: "%1$*2$d width=-5".to_string(),
+            field: "rc/output",
+            frankenlibc: format!(
+                "rc={width_fl_rc} bytes={:?}",
+                String::from_utf8_lossy(buf_used(&width_fl))
+            ),
+            glibc: format!(
+                "rc={width_lc_rc} bytes={:?}",
+                String::from_utf8_lossy(buf_used(&width_lc))
+            ),
+        });
+    }
+
+    let mut precision_fl = vec![0u8; 64];
+    let mut precision_lc = vec![0u8; 64];
+    let precision_fmt = b"%1$.*2$d\0";
+    let precision_fl_rc = unsafe {
+        fl::snprintf(
+            precision_fl.as_mut_ptr() as *mut c_char,
+            precision_fl.len(),
+            precision_fmt.as_ptr() as *const c_char,
+            42_i32,
+            -1_i32,
+        )
+    };
+    let precision_lc_rc = unsafe {
+        libc::snprintf(
+            precision_lc.as_mut_ptr() as *mut c_char,
+            precision_lc.len(),
+            precision_fmt.as_ptr() as *const c_char,
+            42_i32,
+            -1_i32,
+        )
+    };
+    if precision_fl_rc != precision_lc_rc || buf_used(&precision_fl) != buf_used(&precision_lc) {
+        divs.push(Divergence {
+            function: "snprintf",
+            case: "%1$.*2$d precision=-1".to_string(),
+            field: "rc/output",
+            frankenlibc: format!(
+                "rc={precision_fl_rc} bytes={:?}",
+                String::from_utf8_lossy(buf_used(&precision_fl))
+            ),
+            glibc: format!(
+                "rc={precision_lc_rc} bytes={:?}",
+                String::from_utf8_lossy(buf_used(&precision_lc))
+            ),
+        });
+    }
+
+    assert!(
+        divs.is_empty(),
+        "snprintf negative star width/precision divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 // ===========================================================================
 // snprintf — float formats
 // ===========================================================================

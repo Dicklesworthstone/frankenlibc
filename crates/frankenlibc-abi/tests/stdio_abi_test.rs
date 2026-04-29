@@ -1077,6 +1077,44 @@ fn snprintf_supports_positional_width_and_precision() {
 }
 
 #[test]
+fn snprintf_normalizes_positional_negative_star_width() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"|%1$*2$d|".as_ptr(),
+            42_i32,
+            -5_i32,
+        )
+    };
+    assert_eq!(written, 7);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"|42   |");
+}
+
+#[test]
+fn snprintf_normalizes_positional_negative_star_precision() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%1$.*2$d".as_ptr(),
+            42_i32,
+            -1_i32,
+        )
+    };
+    assert_eq!(written, 2);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"42");
+}
+
+#[test]
 fn snprintf_percent_n_records_bytes_before_directive() {
     let mut buf = [0_i8; 64];
     let mut count = -1_i32;
@@ -2336,6 +2374,17 @@ fn vsnprintf_truncates_correctly() {
     assert!(n > 0);
     let result = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes();
     assert_eq!(result, b"42-hell"); // Truncated to fit in 8 bytes
+}
+
+#[test]
+fn vsprintf_normalizes_negative_star_width_from_va_list() {
+    let mut buf = [0_i8; 64];
+
+    let written = unsafe { call_io_vsprintf(buf.as_mut_ptr(), c"|%*d|".as_ptr(), -5_i32, 42_i32) };
+    assert_eq!(written, 7);
+
+    let out = unsafe { CStr::from_ptr(buf.as_ptr()) };
+    assert_eq!(out.to_bytes(), b"|42   |");
 }
 
 // ---------------------------------------------------------------------------
