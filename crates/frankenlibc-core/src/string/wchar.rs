@@ -367,9 +367,65 @@ pub fn wcwidth(wc: u32) -> i32 {
         || wc == 0x093C                     // Devanagari sign nukta (Mn)
         || (0x0941..=0x0948).contains(&wc)  // Devanagari vowel signs (Mn)
         || wc == 0x094D                     // Devanagari sign virama (Mn)
+        || wc == 0x0981                     // Bengali sign candrabindu (Mn)
+        || wc == 0x09BC                     // Bengali sign nukta (Mn)
+        || (0x09C1..=0x09C4).contains(&wc)  // Bengali vowel signs (Mn)
+        || wc == 0x09CD                     // Bengali sign virama (Mn)
+        || (0x09E2..=0x09E3).contains(&wc)  // Bengali vocalic marks (Mn)
+        || wc == 0x09FE                     // Bengali sandhi mark (Mn)
+        || (0x0A01..=0x0A02).contains(&wc)  // Gurmukhi signs (Mn)
+        || wc == 0x0A3C                     // Gurmukhi sign nukta (Mn)
+        || (0x0A41..=0x0A42).contains(&wc)  // Gurmukhi vowel signs (Mn)
+        || (0x0A47..=0x0A48).contains(&wc)
+        || (0x0A4B..=0x0A4D).contains(&wc)
+        || wc == 0x0A51
+        || (0x0A70..=0x0A71).contains(&wc)
+        || wc == 0x0A75
+        || wc == 0x0B01                     // Odia sign candrabindu (Mn)
+        || wc == 0x0B3C                     // Odia sign nukta (Mn)
+        || wc == 0x0B3F                     // Odia vowel sign i (Mn)
+        || (0x0B41..=0x0B44).contains(&wc)
+        || wc == 0x0B4D
+        || (0x0B55..=0x0B56).contains(&wc)
+        || (0x0B62..=0x0B63).contains(&wc)
+        || wc == 0x0B82                     // Tamil sign anusvara (Mn)
+        || wc == 0x0BC0
+        || wc == 0x0BCD
+        || wc == 0x0C00                     // Telugu sign combining candrabindu (Mn)
+        || wc == 0x0C04
+        || wc == 0x0C3C
+        || (0x0C3E..=0x0C40).contains(&wc)
+        || (0x0C46..=0x0C48).contains(&wc)
+        || (0x0C4A..=0x0C4D).contains(&wc)
+        || (0x0C55..=0x0C56).contains(&wc)
+        || (0x0C62..=0x0C63).contains(&wc)
+        || wc == 0x0C81                     // Kannada sign candrabindu (Mn)
+        || wc == 0x0CBC
+        || wc == 0x0CBF
+        || wc == 0x0CC6
+        || wc == 0x0CCC
+        || wc == 0x0CCD
+        || (0x0CE2..=0x0CE3).contains(&wc)
+        || (0x0D00..=0x0D01).contains(&wc)  // Malayalam signs (Mn)
+        || (0x0D3B..=0x0D3C).contains(&wc)
+        || (0x0D41..=0x0D44).contains(&wc)
+        || wc == 0x0D4D
+        || (0x0D62..=0x0D63).contains(&wc)
+        || wc == 0x0D81                     // Sinhala sign candrabindu (Mn)
+        || wc == 0x0DCA
+        || (0x0DD2..=0x0DD4).contains(&wc)
+        || wc == 0x0DD6
         || wc == 0x0E31                     // Thai character mai han-akat (Mn)
         || (0x0E34..=0x0E3A).contains(&wc)  // Thai vowel signs / phinthu (Mn)
         || (0x0E47..=0x0E4E).contains(&wc)  // Thai tone/sign marks (Mn)
+        || (0x0F18..=0x0F19).contains(&wc)  // Tibetan astrological signs (Mn)
+        || wc == 0x0F35
+        || wc == 0x0F37
+        || wc == 0x0F39
+        || (0x0F71..=0x0F84).contains(&wc)
+        || (0x0F86..=0x0F87).contains(&wc)
+        || (0x0F8D..=0x0FBC).contains(&wc)
+        || wc == 0x0FC6
         || (0x1AB0..=0x1AFF).contains(&wc)  // Combining Diacritical Marks Extended (Mn)
         || (0x1DC0..=0x1DFF).contains(&wc)  // Combining Diacritical Marks Supplement (Mn)
         || (0x200B..=0x200F).contains(&wc)    // ZWSP/ZWNJ/ZWJ/LRM/RLM (Cf, width 0)
@@ -542,9 +598,19 @@ mod tests {
         assert_eq!(wcwidth(0x0900), 0); // DEVANAGARI SIGN INVERTED CANDRABINDU
         assert_eq!(wcwidth(0x093C), 0); // DEVANAGARI SIGN NUKTA
         assert_eq!(wcwidth(0x094D), 0); // DEVANAGARI SIGN VIRAMA
+        assert_eq!(wcwidth(0x0981), 0); // BENGALI SIGN CANDRABINDU
+        assert_eq!(wcwidth(0x09CD), 0); // BENGALI SIGN VIRAMA
+        assert_eq!(wcwidth(0x0A4D), 0); // GURMUKHI SIGN VIRAMA
+        assert_eq!(wcwidth(0x0B4D), 0); // ODIA SIGN VIRAMA
+        assert_eq!(wcwidth(0x0BCD), 0); // TAMIL SIGN VIRAMA
+        assert_eq!(wcwidth(0x0C4D), 0); // TELUGU SIGN VIRAMA
+        assert_eq!(wcwidth(0x0CCD), 0); // KANNADA SIGN VIRAMA
+        assert_eq!(wcwidth(0x0D4D), 0); // MALAYALAM SIGN VIRAMA
+        assert_eq!(wcwidth(0x0DCA), 0); // SINHALA SIGN AL-LAKUNA
         assert_eq!(wcwidth(0x0E31), 0); // THAI CHARACTER MAI HAN-AKAT
         assert_eq!(wcwidth(0x0E34), 0); // THAI CHARACTER SARA I
         assert_eq!(wcwidth(0x0E4E), 0); // THAI CHARACTER YAMAKKAN
+        assert_eq!(wcwidth(0x0F71), 0); // TIBETAN VOWEL SIGN AA
         assert_eq!(wcwidth(0x3099), 0); // COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK
         assert_eq!(wcwidth(0xFE20), 0); // Combining Half Marks
         // Line/paragraph separators (Zl, Zp).
