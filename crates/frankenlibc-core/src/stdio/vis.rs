@@ -154,21 +154,14 @@ pub fn strvis_to_vec(src: &[u8], flags: u32) -> Vec<u8> {
 /// through). Mirrors NetBSD `svis(3)`.
 pub fn encode_byte_with_extra(c: u8, flags: u32, extra: &[u8], out: &mut Vec<u8>) {
     if extra.contains(&c) && c != b'\\' && (0x20..=0x7e).contains(&c) {
-        // Force-escape this otherwise-printable byte using the same
-        // notation we'd pick for a control byte (caret form by
-        // default, octal under VIS_OCTAL).
-        if flags & VIS_OCTAL != 0 {
-            out.push(b'\\');
-            out.push(b'0' + ((c >> 6) & 0x07));
-            out.push(b'0' + ((c >> 3) & 0x07));
-            out.push(b'0' + (c & 0x07));
-        } else {
-            // Printable bytes are all < 0x80 and != 0x7f, so the
-            // caret form `\^X` (X = c XOR 0x40) is well-defined.
-            out.push(b'\\');
-            out.push(b'^');
-            out.push(c ^ 0x40);
-        }
+        // Extra-escaped printable bytes still have to be safe inside
+        // a NUL-terminated C output string. Caret form would turn
+        // bytes like '@' through '_' into embedded control bytes, so
+        // use octal for this forced-escape path in every mode.
+        out.push(b'\\');
+        out.push(b'0' + ((c >> 6) & 0x07));
+        out.push(b'0' + ((c >> 3) & 0x07));
+        out.push(b'0' + (c & 0x07));
         return;
     }
     encode_byte(c, flags, out);
@@ -390,6 +383,18 @@ mod tests {
     #[test]
     fn octal_mode_still_doubles_backslash() {
         assert_eq!(enc_oct(b"\\"), b"\\\\".to_vec());
+    }
+
+    #[test]
+    fn extra_printable_bytes_use_c_string_safe_octal() {
+        let encoded = strvis_to_vec_with_extra(b"@A_?", 0, b"@A_?");
+        assert_eq!(encoded, b"\\100\\101\\137\\077".to_vec());
+        assert!(
+            encoded
+                .iter()
+                .all(|&b| b != 0 && (0x20..=0x7e).contains(&b))
+        );
+        assert_eq!(dec(&encoded), Some(b"@A_?".to_vec()));
     }
 
     // ---- decode round trips ----

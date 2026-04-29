@@ -4759,8 +4759,19 @@ fn svis_escapes_byte_listed_in_extras() {
     let mut buf = [0 as c_char; 8];
     let end = unsafe { svis(buf.as_mut_ptr(), b'#' as c_int, 0, 0, extra.as_ptr()) };
     assert!(!end.is_null());
-    // '#' is 0x23 → caret form would be \^c (0x23 ^ 0x40 = 0x63 = 'c').
-    assert_eq!(svis_collect(&buf, end), b"\\^c".to_vec());
+    // Extra-forced printable bytes use octal so the output remains
+    // C-string safe for bytes whose caret spelling would be control.
+    assert_eq!(svis_collect(&buf, end), b"\\043".to_vec());
+}
+
+#[test]
+fn svis_extra_at_sign_does_not_emit_embedded_nul() {
+    let extra = c"@";
+    let mut buf = [0xeeu8 as c_char; 8];
+    let end = unsafe { svis(buf.as_mut_ptr(), b'@' as c_int, 0, 0, extra.as_ptr()) };
+    assert!(!end.is_null());
+    assert_eq!(svis_collect(&buf, end), b"\\100".to_vec());
+    assert_eq!(buf[4] as u8, 0);
 }
 
 #[test]
@@ -4814,7 +4825,7 @@ fn svis_rejects_tracked_unterminated_extra() {
 fn snvis_returns_null_on_overflow() {
     let extra = c"#";
     let mut buf = [0 as c_char; 2];
-    // '#' encodes to \^c (3 bytes) + NUL = 4. Buffer of 2 must fail.
+    // '#' encodes to \043 (4 bytes) + NUL = 5. Buffer of 2 must fail.
     let r = unsafe { snvis(buf.as_mut_ptr(), 2, b'#' as c_int, 0, 0, extra.as_ptr()) };
     assert!(r.is_null());
 }
@@ -4823,10 +4834,10 @@ fn snvis_returns_null_on_overflow() {
 fn snvis_succeeds_with_exact_room() {
     let extra = c"#";
     let mut buf = [0xeeu8 as c_char; 8];
-    let end = unsafe { snvis(buf.as_mut_ptr(), 4, b'#' as c_int, 0, 0, extra.as_ptr()) };
+    let end = unsafe { snvis(buf.as_mut_ptr(), 5, b'#' as c_int, 0, 0, extra.as_ptr()) };
     assert!(!end.is_null());
-    assert_eq!(svis_collect(&buf[..3], end), b"\\^c".to_vec());
-    assert_eq!(buf[3] as u8, 0);
+    assert_eq!(svis_collect(&buf[..4], end), b"\\043".to_vec());
+    assert_eq!(buf[4] as u8, 0);
 }
 
 #[test]
@@ -4836,9 +4847,8 @@ fn strsvis_escapes_only_listed_extras() {
     let mut dst = [0 as c_char; 32];
     let n = unsafe { strsvis(dst.as_mut_ptr(), src.as_ptr(), 0, extra.as_ptr()) };
     assert!(n >= 0);
-    // 'a' passthrough; '#' → \^c; 'b' passthrough; '/' is 0x2f → \^o
-    // (0x2f ^ 0x40 = 0x6f); 'c' passthrough.
-    assert_eq!(svisx_collect(&dst, n), b"a\\^cb\\^oc".to_vec());
+    // 'a' passthrough; forced extras use C-string-safe octal.
+    assert_eq!(svisx_collect(&dst, n), b"a\\043b\\057c".to_vec());
     assert_eq!(dst[n as usize] as u8, 0);
 }
 
@@ -4886,7 +4896,7 @@ fn strsnvis_returns_minus_one_on_overflow() {
     let src = c"###";
     let extra = c"#";
     let mut dst = [0 as c_char; 4];
-    // Encoded length is 9 (\^c × 3) + NUL = 10. Buffer of 4 must fail.
+    // Encoded length is 12 (\043 x 3) + NUL = 13. Buffer of 4 must fail.
     let n = unsafe { strsnvis(dst.as_mut_ptr(), 4, src.as_ptr(), 0, extra.as_ptr()) };
     assert_eq!(n, -1);
 }
@@ -4897,8 +4907,8 @@ fn strsnvis_succeeds_with_room() {
     let extra = c"#";
     let mut dst = [0xeeu8 as c_char; 8];
     let n = unsafe { strsnvis(dst.as_mut_ptr(), 8, src.as_ptr(), 0, extra.as_ptr()) };
-    assert_eq!(n, 3);
-    assert_eq!(svisx_collect(&dst, n), b"\\^c".to_vec());
+    assert_eq!(n, 4);
+    assert_eq!(svisx_collect(&dst, n), b"\\043".to_vec());
     assert_eq!(dst[n as usize] as u8, 0);
 }
 
@@ -4917,9 +4927,9 @@ fn strsvisx_handles_embedded_nul() {
         )
     };
     assert!(n >= 0);
-    // 'a' passthrough; \0 → \^@; 'b' passthrough; '#' → \^c;
+    // 'a' passthrough; \0 -> \^@; 'b' passthrough; '#' -> \043;
     // 'c' passthrough.
-    assert_eq!(svisx_collect(&dst, n), b"a\\^@b\\^cc".to_vec());
+    assert_eq!(svisx_collect(&dst, n), b"a\\^@b\\043c".to_vec());
 }
 
 #[test]
@@ -4955,8 +4965,8 @@ fn strsnvisx_succeeds_with_room() {
             extra.as_ptr(),
         )
     };
-    assert_eq!(n, 3);
-    assert_eq!(svisx_collect(&dst, n), b"\\^c".to_vec());
+    assert_eq!(n, 4);
+    assert_eq!(svisx_collect(&dst, n), b"\\043".to_vec());
     assert_eq!(dst[n as usize] as u8, 0);
 }
 
