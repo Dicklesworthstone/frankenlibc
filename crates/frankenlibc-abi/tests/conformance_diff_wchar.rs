@@ -34,6 +34,18 @@ unsafe extern "C" {
     fn wcsncpy(dst: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> *mut libc::wchar_t;
     fn mbstowcs(dst: *mut libc::wchar_t, src: *const libc::c_char, n: usize) -> usize;
     fn wcstombs(dst: *mut libc::c_char, src: *const libc::wchar_t, n: usize) -> usize;
+    fn wmemcpy(
+        dst: *mut libc::wchar_t,
+        src: *const libc::wchar_t,
+        n: usize,
+    ) -> *mut libc::wchar_t;
+    fn wmemmove(
+        dst: *mut libc::wchar_t,
+        src: *const libc::wchar_t,
+        n: usize,
+    ) -> *mut libc::wchar_t;
+    fn wmemset(dst: *mut libc::wchar_t, c: libc::wchar_t, n: usize) -> *mut libc::wchar_t;
+    fn wmemcmp(s1: *const libc::wchar_t, s2: *const libc::wchar_t, n: usize) -> c_int;
 }
 
 #[derive(Debug)]
@@ -695,9 +707,259 @@ fn diff_wcstombs_ascii_cases() {
     );
 }
 
+// ===========================================================================
+// wmemcpy / wmemmove / wmemset / wmemchr / wmemcmp — wide-char memory ops
+// ===========================================================================
+//
+// Pure wide-char analogues of memcpy/memmove/memset/memchr/memcmp. They
+// operate on wchar_t (i32/u32 on Linux/x86_64) — explicit count, no NUL
+// semantics — so they're the cleanest possible diff target: any
+// disagreement is a real algorithmic divergence, no ambiguity around
+// terminators.
+//
+// We diff in two dimensions for the mutating functions (wmemcpy /
+// wmemmove / wmemset):
+//   1. dst-buffer post-call state (wchar_t array byte-for-byte)
+//   2. return-pointer offset relative to dst (must equal `n` for
+//      wmemset, dst for wmemcpy/wmemmove per POSIX)
+// And direct value comparison for the read-only ones (wmemchr returns
+// pointer-or-NULL, wmemcmp returns sign).
+
+const WIDE_BUFS: &[&[u32]] = &[
+    &[],
+    &[0x41],                                  // single ASCII
+    &[0x41, 0x42, 0x43],                      // ASCII run
+    &[0x80, 0x100, 0x10FF],                   // mid-BMP
+    &[0x10FFFF],                              // max codepoint
+    &[0, 0, 0],                               // all-zero, no NUL semantics for wmem*
+    &[0x41, 0, 0x42],                         // embedded zero (must NOT terminate scan)
+    &[0xFFFFFFFF],                            // u32 saturation (wchar_t max as i32 is 0x7fffffff)
+];
+
+#[test]
+fn diff_wmemcpy_cases() {
+    let mut divs = Vec::new();
+    for src in WIDE_BUFS {
+        for &n in &[0usize, 1, src.len(), src.len().saturating_sub(1)] {
+            if n > src.len() {
+                continue;
+            }
+            let mut dst_fl = vec![0xCDCDCDCDu32; 16];
+            let mut dst_lc = vec![0xCDCDCDCDu32; 16];
+            // SAFETY: dst is 16 wchar_ts; n ≤ src.len() ≤ 8 < 16; src is
+            // a Rust slice owned for the call.
+            let fl_r = unsafe { fl::wmemcpy(dst_fl.as_mut_ptr(), src.as_ptr(), n) };
+            let lc_r = unsafe {
+                wmemcpy(
+                    dst_lc.as_mut_ptr() as *mut libc::wchar_t,
+                    src.as_ptr() as *const libc::wchar_t,
+                    n,
+                )
+            };
+            let fl_off = (fl_r as usize).wrapping_sub(dst_fl.as_ptr() as usize);
+            let lc_off = (lc_r as usize).wrapping_sub(dst_lc.as_ptr() as usize);
+            if fl_off != lc_off {
+                divs.push(Divergence {
+                    function: "wmemcpy",
+                    case: format!("(src.len={}, n={})", src.len(), n),
+                    field: "return_offset",
+                    frankenlibc: format!("{fl_off}"),
+                    glibc: format!("{lc_off}"),
+                });
+            }
+            if dst_fl != dst_lc {
+                divs.push(Divergence {
+                    function: "wmemcpy",
+                    case: format!("(src.len={}, n={})", src.len(), n),
+                    field: "dst_buffer",
+                    frankenlibc: format!("{:?}", &dst_fl[..n.min(8)]),
+                    glibc: format!("{:?}", &dst_lc[..n.min(8)]),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "wmemcpy divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wmemmove_cases() {
+    // wmemmove must handle overlapping src/dst — the only behavioral
+    // contract that distinguishes it from wmemcpy. Test both
+    // non-overlapping (above) and overlapping (forward + backward).
+    let mut divs = Vec::new();
+    let cases: &[(&[u32], usize, isize, usize)] = &[
+        // (initial_buffer, src_offset, dst_delta_from_src_in_words, n)
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 0, 0),       // n=0 no-op
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 0, 4),       // exact overlap
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 2, 4),       // forward overlap
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 2, -2, 4),      // backward overlap
+        (&[1, 2, 3, 4, 5, 6, 7, 8], 0, 4, 4),       // disjoint within buf
+    ];
+    for &(initial, src_off, dst_delta, n) in cases {
+        let mut buf_fl = initial.to_vec();
+        let mut buf_lc = initial.to_vec();
+        let dst_off = (src_off as isize + dst_delta) as usize;
+        // SAFETY: indexes computed to stay within initial (8 words).
+        let fl_r = unsafe {
+            fl::wmemmove(
+                buf_fl.as_mut_ptr().add(dst_off),
+                buf_fl.as_ptr().add(src_off),
+                n,
+            )
+        };
+        let lc_r = unsafe {
+            wmemmove(
+                buf_lc.as_mut_ptr().add(dst_off) as *mut libc::wchar_t,
+                buf_lc.as_ptr().add(src_off) as *const libc::wchar_t,
+                n,
+            )
+        };
+        let fl_off = (fl_r as usize).wrapping_sub(buf_fl.as_ptr() as usize)
+            / std::mem::size_of::<u32>();
+        let lc_off = (lc_r as usize).wrapping_sub(buf_lc.as_ptr() as usize)
+            / std::mem::size_of::<u32>();
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wmemmove",
+                case: format!("(src_off={src_off}, dst_delta={dst_delta}, n={n})"),
+                field: "return_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+        if buf_fl != buf_lc {
+            divs.push(Divergence {
+                function: "wmemmove",
+                case: format!("(src_off={src_off}, dst_delta={dst_delta}, n={n})"),
+                field: "buffer",
+                frankenlibc: format!("{:?}", buf_fl),
+                glibc: format!("{:?}", buf_lc),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wmemmove divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wmemset_cases() {
+    let mut divs = Vec::new();
+    let fill_values: &[u32] = &[0, 1, 0x41, 0x10FFFF, 0x7FFFFFFF];
+    for &c in fill_values {
+        for &n in &[0usize, 1, 4, 16] {
+            let mut dst_fl = vec![0xCDCDCDCDu32; 16];
+            let mut dst_lc = vec![0xCDCDCDCDu32; 16];
+            // SAFETY: dst is 16 wchar_ts; n ≤ 16.
+            let fl_r = unsafe { fl::wmemset(dst_fl.as_mut_ptr(), c, n) };
+            let lc_r =
+                unsafe { wmemset(dst_lc.as_mut_ptr() as *mut libc::wchar_t, c as libc::wchar_t, n) };
+            let fl_off = (fl_r as usize).wrapping_sub(dst_fl.as_ptr() as usize);
+            let lc_off = (lc_r as usize).wrapping_sub(dst_lc.as_ptr() as usize);
+            if fl_off != lc_off {
+                divs.push(Divergence {
+                    function: "wmemset",
+                    case: format!("(c={c:#x}, n={n})"),
+                    field: "return_offset",
+                    frankenlibc: format!("{fl_off}"),
+                    glibc: format!("{lc_off}"),
+                });
+            }
+            if dst_fl != dst_lc {
+                divs.push(Divergence {
+                    function: "wmemset",
+                    case: format!("(c={c:#x}, n={n})"),
+                    field: "dst_buffer",
+                    frankenlibc: format!("{:?}", &dst_fl[..n.min(8)]),
+                    glibc: format!("{:?}", &dst_lc[..n.min(8)]),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "wmemset divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wmemchr_cases() {
+    let mut divs = Vec::new();
+    let cases: &[(&[u32], u32, usize)] = &[
+        (&[], 0x41, 0),
+        (&[0x41, 0x42, 0x43], 0x42, 3),       // match in middle
+        (&[0x41, 0x42, 0x43], 0x44, 3),       // no match
+        (&[0x41, 0x42, 0x43], 0x42, 1),       // bound stops before match
+        (&[0x41, 0x42, 0x43, 0x42], 0x42, 4), // first of two matches
+        (&[0, 0, 0], 0, 3),                   // search for zero (no NUL semantics)
+        (&[0x10FFFF, 0x41], 0x10FFFF, 2),     // max codepoint
+    ];
+    for (buf, c, n) in cases {
+        let fl_r = unsafe { fl::wmemchr(buf.as_ptr(), *c, *n) };
+        let lc_r = unsafe {
+            libc::wmemchr(
+                buf.as_ptr() as *const libc::wchar_t,
+                *c as libc::wchar_t,
+                *n,
+            )
+        };
+        let fl_off = if fl_r.is_null() {
+            -1
+        } else {
+            ptr_offset_u32(buf.as_ptr(), fl_r as *const u32)
+        };
+        let lc_off = if lc_r.is_null() {
+            -1
+        } else {
+            ptr_offset_u32(buf.as_ptr(), lc_r as *const u32)
+        };
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wmemchr",
+                case: format!("(buf={buf:?}, c={c:#x}, n={n})"),
+                field: "return_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wmemchr divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wmemcmp_cases() {
+    let mut divs = Vec::new();
+    // POSIX requires only the sign of wmemcmp's result to be portable.
+    let cases: &[(&[u32], &[u32], usize)] = &[
+        (&[], &[], 0),
+        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x43], 3),       // equal
+        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x44], 3),       // a<b at index 2
+        (&[0x41, 0x42, 0x44], &[0x41, 0x42, 0x43], 3),       // a>b at index 2
+        (&[0x41, 0x42, 0x43], &[0x41, 0x42, 0x44], 2),       // bound stops before diff
+        (&[0xFFFFFFFF, 0], &[0, 0], 1),                      // unsigned compare (high bit set)
+        (&[0x10FFFF], &[0x10FFFE], 1),
+        (&[0, 0, 0], &[0, 0, 1], 3),                         // embedded zeros, no NUL semantics
+    ];
+    for (a, b, n) in cases {
+        let fl_r = unsafe { fl::wmemcmp(a.as_ptr(), b.as_ptr(), *n) };
+        let lc_r = unsafe {
+            wmemcmp(
+                a.as_ptr() as *const libc::wchar_t,
+                b.as_ptr() as *const libc::wchar_t,
+                *n,
+            )
+        };
+        if sign(fl_r) != sign(lc_r) {
+            divs.push(Divergence {
+                function: "wmemcmp",
+                case: format!("(a={a:?}, b={b:?}, n={n})"),
+                field: "return_sign",
+                frankenlibc: format!("sign={}", sign(fl_r)),
+                glibc: format!("sign={}", sign(lc_r)),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wmemcmp divergences:\n{}", render_divs(&divs));
+}
+
 #[test]
 fn wchar_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"wchar.h core\",\"reference\":\"glibc\",\"functions\":10,\"divergences\":0}}",
+        "{{\"family\":\"wchar.h core\",\"reference\":\"glibc\",\"functions\":15,\"divergences\":0}}",
     );
 }
