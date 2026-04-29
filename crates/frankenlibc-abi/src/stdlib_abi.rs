@@ -4718,10 +4718,16 @@ pub unsafe extern "C" fn ecvt_r(
     if buf.is_null() || decpt.is_null() || sign.is_null() || buflen == 0 {
         return libc::EINVAL;
     }
+    let effective_buflen = known_remaining(buf as usize)
+        .map(|remaining| remaining.min(buflen))
+        .unwrap_or(buflen);
+    if effective_buflen == 0 {
+        return libc::EINVAL;
+    }
     unsafe { *sign = if value < 0.0 { 1 } else { 0 } };
     let abs_val = value.abs();
     let requested = (ndigit.max(0) as usize)
-        .min(buflen.saturating_sub(1))
+        .min(effective_buflen.saturating_sub(1))
         .min(MAX_LEGACY_CVT_DIGITS);
     let s = if requested > 0 {
         format!("{abs_val:.prec$e}", prec = requested.saturating_sub(1))
@@ -4741,7 +4747,7 @@ pub unsafe extern "C" fn ecvt_r(
         if ch == b'.' {
             continue;
         }
-        if i + 1 >= buflen {
+        if i + 1 >= effective_buflen {
             break;
         }
         unsafe { *buf.add(i) = ch as c_char };
@@ -4763,10 +4769,16 @@ pub unsafe extern "C" fn fcvt_r(
     if buf.is_null() || decpt.is_null() || sign.is_null() || buflen == 0 {
         return libc::EINVAL;
     }
+    let effective_buflen = known_remaining(buf as usize)
+        .map(|remaining| remaining.min(buflen))
+        .unwrap_or(buflen);
+    if effective_buflen == 0 {
+        return libc::EINVAL;
+    }
     unsafe { *sign = if value < 0.0 { 1 } else { 0 } };
     let abs_val = value.abs();
     let prec = (ndigit.max(0) as usize)
-        .min(buflen.saturating_sub(1))
+        .min(effective_buflen.saturating_sub(1))
         .min(MAX_LEGACY_CVT_DIGITS);
     let s = format!("{abs_val:.prec$}");
     let dot_pos = s.find('.').unwrap_or(s.len());
@@ -4776,7 +4788,7 @@ pub unsafe extern "C" fn fcvt_r(
         if ch == b'.' {
             continue;
         }
-        if i + 1 >= buflen {
+        if i + 1 >= effective_buflen {
             break;
         }
         unsafe { *buf.add(i) = ch as c_char };

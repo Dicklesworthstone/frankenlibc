@@ -4426,6 +4426,56 @@ fn cvt_huge_precision_is_bounded_before_formatting() {
 }
 
 #[test]
+fn ecvt_r_caps_tracked_one_byte_buffer_when_buflen_is_large() {
+    let raw = unsafe { malloc_tracked_bytes(1) };
+    unsafe { raw.write(b'X') };
+    let mut decpt: libc::c_int = 0;
+    let mut sign: libc::c_int = 0;
+
+    let rc = unsafe {
+        ecvt_r(
+            123.456,
+            6,
+            &mut decpt,
+            &mut sign,
+            raw.cast::<libc::c_char>(),
+            64,
+        )
+    };
+
+    assert_eq!(rc, 0);
+    assert_eq!(unsafe { raw.read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
+#[test]
+fn fcvt_r_caps_tracked_two_byte_buffer_when_buflen_is_large() {
+    let raw = unsafe { malloc_tracked_bytes(2) };
+    unsafe {
+        raw.write(b'X');
+        raw.add(1).write(b'Y');
+    }
+    let mut decpt: libc::c_int = 0;
+    let mut sign: libc::c_int = 0;
+
+    let rc = unsafe {
+        fcvt_r(
+            123.456,
+            6,
+            &mut decpt,
+            &mut sign,
+            raw.cast::<libc::c_char>(),
+            64,
+        )
+    };
+
+    assert_eq!(rc, 0);
+    assert_eq!(unsafe { raw.read() }, b'1');
+    assert_eq!(unsafe { raw.add(1).read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
+#[test]
 fn gcvt_huge_precision_caps_tracked_two_byte_buffer() {
     let raw = unsafe { malloc_tracked_bytes(2) };
     unsafe {
