@@ -2643,36 +2643,69 @@ pub unsafe extern "C" fn inet_netof(inp: c_uint) -> c_uint {
         a >> 8
     } // class C
 }
+
+fn parse_inet_network_component(component: &[u8]) -> Option<u32> {
+    if component.is_empty() {
+        return None;
+    }
+    let (base, digits) =
+        if component.len() >= 2 && component[0] == b'0' && component[1].eq_ignore_ascii_case(&b'x')
+        {
+            (16u32, &component[2..])
+        } else if component.len() > 1 && component[0] == b'0' {
+            (8u32, &component[1..])
+        } else {
+            (10u32, component)
+        };
+    if digits.is_empty() {
+        return None;
+    }
+
+    let mut value = 0u32;
+    for &b in digits {
+        let digit = match b {
+            b'0'..=b'7' => (b - b'0') as u32,
+            b'8'..=b'9' if base == 10 => (b - b'0') as u32,
+            b'a'..=b'f' if base == 16 => (b - b'a' + 10) as u32,
+            b'A'..=b'F' if base == 16 => (b - b'A' + 10) as u32,
+            _ => return None,
+        };
+        if digit >= base {
+            return None;
+        }
+        value = value.checked_mul(base)?.checked_add(digit)?;
+        if value > 0xFF {
+            return None;
+        }
+    }
+    Some(value)
+}
+
 // inet_network: native — parse dotted-decimal to host-order network number
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet_network(cp: *const c_char) -> c_uint {
     let Some(bytes) = (unsafe { bounded_c_string_bytes(cp, INET_TEXT_SCAN_LIMIT) }) else {
         return u32::MAX;
     };
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let bytes = &bytes[..end];
+    if bytes.is_empty() {
+        return u32::MAX;
+    }
+
     let mut result: u32 = 0;
-    let mut parts = 0u32;
-    let mut cur: u32 = 0;
-    for &b in &bytes {
-        if b == b'.' {
-            if parts >= 3 {
-                return u32::MAX;
-            }
-            result = (result << 8) | (cur & 0xFF);
-            cur = 0;
-            parts += 1;
-        } else if b.is_ascii_digit() {
-            let Some(next) = cur
-                .checked_mul(10)
-                .and_then(|value| value.checked_add((b - b'0') as u32))
-            else {
-                return u32::MAX;
-            };
-            cur = next;
-        } else {
+    for (parts, component) in bytes.split(|&b| b == b'.').enumerate() {
+        if parts >= 4 {
             return u32::MAX;
         }
+        let Some(value) = parse_inet_network_component(component) else {
+            return u32::MAX;
+        };
+        result = (result << 8) | value;
     }
-    result = (result << 8) | (cur & 0xFF);
     // glibc does NOT left-pad partial dotted-quads. inet_network("127")
     // returns 0x0000007f, not 0x7f000000 — the result is the parsed
     // network number value as-is, so the previous `for _ in parts..3:

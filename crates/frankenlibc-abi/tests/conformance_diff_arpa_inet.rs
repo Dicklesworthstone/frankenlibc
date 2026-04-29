@@ -460,10 +460,10 @@ const INET_ADDR_INPUTS: &[&[u8]] = &[
     b"1.2.3.4",
     b"172.16.5.4",
     b"200.1.2.3",
-    b"256.0.0.0",         // out of range — must return INADDR_NONE
-    b"1.2.3.4.5",         // too many octets — INADDR_NONE
-    b"abc",               // not numeric — INADDR_NONE
-    b"",                  // empty — INADDR_NONE
+    b"256.0.0.0", // out of range — must return INADDR_NONE
+    b"1.2.3.4.5", // too many octets — INADDR_NONE
+    b"abc",       // not numeric — INADDR_NONE
+    b"",          // empty — INADDR_NONE
 ];
 
 #[test]
@@ -485,7 +485,11 @@ fn diff_inet_addr_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "inet_addr divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "inet_addr divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 const INET_NETWORK_INPUTS: &[&[u8]] = &[
@@ -493,11 +497,25 @@ const INET_NETWORK_INPUTS: &[&[u8]] = &[
     b"127.0",
     b"127.0.0",
     b"127.0.0.1",
+    b"127 ",
+    b" 127",
     b"10",
     b"10.0",
     b"172.16",
     b"192.168.1",
     b"0",
+    b"0x7f",
+    b"0177",
+    b"0x1.0x2.03.4",
+    b"255.255.255.255",
+    b"256",
+    b"1.256",
+    b"1.2.3.256",
+    b"1.",
+    b".1",
+    b"1..2",
+    b"08",
+    b"127 abc",
 ];
 
 #[test]
@@ -519,7 +537,11 @@ fn diff_inet_network_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "inet_network divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "inet_network divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 const INET_NTOA_S_ADDRS: &[u32] = &[
@@ -554,7 +576,11 @@ fn diff_inet_ntoa_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "inet_ntoa divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "inet_ntoa divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -602,20 +628,18 @@ fn diff_inet_makeaddr_cases() {
     // `net` size: net < 128 is class A, net < 0x10000 is class B,
     // else class C.
     let pairs: &[(u32, u32)] = &[
-        (127, 1),                  // class A
-        (10, 1),                   // class A
-        (0, 0),                    // class A degenerate
-        (0xac, 0x100501),          // class B (172 = 0xac is class B)
-        (0xc0, 0xa80164),          // class C boundary (192 = 0xc0)
-        (0xc8, 0x010203),          // class C (200 = 0xc8)
-        (0x100, 0x10203),          // 16-bit net
-        (0x10000, 0x42),           // 24-bit net
+        (127, 1),         // class A
+        (10, 1),          // class A
+        (0, 0),           // class A degenerate
+        (0xac, 0x100501), // class B (172 = 0xac is class B)
+        (0xc0, 0xa80164), // class C boundary (192 = 0xc0)
+        (0xc8, 0x010203), // class C (200 = 0xc8)
+        (0x100, 0x10203), // 16-bit net
+        (0x10000, 0x42),  // 24-bit net
     ];
     let mut divs = Vec::new();
     for &(net, host) in pairs {
-        let fl_a = unsafe {
-            frankenlibc_abi::glibc_internal_abi::inet_makeaddr(net, host)
-        };
+        let fl_a = unsafe { frankenlibc_abi::glibc_internal_abi::inet_makeaddr(net, host) };
         let lc_a = unsafe { inet_makeaddr(net, host) };
         if fl_a != lc_a.s_addr {
             divs.push(Divergence {
