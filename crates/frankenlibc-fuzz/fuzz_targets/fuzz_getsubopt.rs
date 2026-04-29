@@ -127,6 +127,15 @@ fuzz_target!(|data: &[u8]| {
         fl_hits,
         fl_hits_again,
     );
+    assert_eq!(
+        fl_buf,
+        fl_buf_again,
+        "fl::getsubopt buffer mutation non-deterministic\n  input={:?}\n  tokens={:?}\n  buf1={:?}\n  buf2={:?}",
+        ascii_lossy(&option),
+        tokens.iter().map(|t| ascii_lossy(t)).collect::<Vec<_>>(),
+        fl_buf,
+        fl_buf_again,
+    );
 
     // Differential: fl and host must agree on the sequence and post-state.
     assert_eq!(
