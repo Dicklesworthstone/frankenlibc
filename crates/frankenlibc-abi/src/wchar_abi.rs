@@ -1588,8 +1588,13 @@ pub unsafe extern "C" fn wcstok(
         return std::ptr::null_mut();
     }
 
-    // Scan delimiters to build set
-    let (delim_len, _) = unsafe { scan_w_string(delim, None) };
+    let delim_bound = known_remaining(delim as usize).map(bytes_to_wchars);
+    let (delim_len, delim_terminated) = unsafe { scan_w_string(delim, delim_bound) };
+    if !delim_terminated {
+        runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
+        return std::ptr::null_mut();
+    }
+    let delim_slice = unsafe { std::slice::from_raw_parts(delim, delim_len) };
 
     unsafe {
         // Skip leading delimiters
@@ -1601,7 +1606,6 @@ pub unsafe extern "C" fn wcstok(
                 runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 7, false);
                 return std::ptr::null_mut();
             }
-            let delim_slice = std::slice::from_raw_parts(delim, delim_len);
             if !delim_slice.contains(&ch) {
                 break;
             }
@@ -1616,7 +1620,6 @@ pub unsafe extern "C" fn wcstok(
                 *save_ptr = pos;
                 break;
             }
-            let delim_slice = std::slice::from_raw_parts(delim, delim_len);
             if delim_slice.contains(&ch) {
                 *pos = 0;
                 *save_ptr = pos.add(1);

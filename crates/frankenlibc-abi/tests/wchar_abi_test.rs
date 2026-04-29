@@ -298,6 +298,22 @@ fn wcstok_splits_on_delimiters() {
     assert!(tok4.is_null());
 }
 
+#[test]
+fn wcstok_rejects_tracked_unterminated_delimiter() {
+    unsafe {
+        let mut s = wstr(b"one,two");
+        let delim = malloc_unterminated_wide(&[b',' as u32]);
+        let mut save: *mut u32 = std::ptr::null_mut();
+
+        let tok = wcstok(s.as_mut_ptr(), delim, &mut save);
+
+        assert!(tok.is_null());
+        assert!(save.is_null());
+        assert_eq!(s, wstr(b"one,two"));
+        free(delim.cast());
+    }
+}
+
 // ── wmemcpy / wmemmove / wmemset / wmemcmp / wmemchr / wmemrchr ─────────────
 
 #[test]
