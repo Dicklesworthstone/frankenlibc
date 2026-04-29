@@ -141,6 +141,12 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         return (digits, int_part.len() as i32, negative);
     }
 
+    if ndigit == 0 {
+        // Rounding a non-zero sub-unit value to zero fractional places
+        // still returns the rounded integer digit.
+        return (b"0".to_vec(), 1, negative);
+    }
+
     // int_part == "0", so |value| < 1. Either rounding produced
     // significant fractional digits (in which case strip leading
     // zeros) or rounding yielded exactly zero.
@@ -345,21 +351,18 @@ mod tests {
             (-1.0, 4, b"10000", 1, true),
             (123.456, 4, b"1234560", 3, false),
             (-12345.0, 4, b"123450000", 5, true),
-            (0.0001234, 0, b"", 0, false),  // rounded to zero
+            (0.0001234, 0, b"0", 1, false), // rounded to integer zero
             (0.0001234, 2, b"", -2, false), // rounded to zero
             (0.0001234, 4, b"1", -3, false),
             (0.0001234, 6, b"123", -3, false),
             (1e10, 4, b"100000000000000", 11, false),
-            (1e-10, 4, b"", -4, false),     // rounded to zero
-            (1e-10, 6, b"", -6, false),     // rounded to zero
-            (1e-10, 0, b"", 0, false),      // rounded to zero
+            (1e-10, 4, b"", -4, false), // rounded to zero
+            (1e-10, 6, b"", -6, false), // rounded to zero
+            (1e-10, 0, b"0", 1, false), // rounded to integer zero
         ];
         for &(value, ndigit, expected_digits, expected_decpt, expected_neg) in cases {
             let (digits, decpt, neg) = fcvt(value, ndigit);
-            assert_eq!(
-                digits, expected_digits,
-                "fcvt({value}, {ndigit}) digits"
-            );
+            assert_eq!(digits, expected_digits, "fcvt({value}, {ndigit}) digits");
             assert_eq!(decpt, expected_decpt, "fcvt({value}, {ndigit}) decpt");
             assert_eq!(neg, expected_neg, "fcvt({value}, {ndigit}) sign");
         }
