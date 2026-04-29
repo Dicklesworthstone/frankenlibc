@@ -6,7 +6,7 @@
 //! - Linear search: `lfind`, `lsearch`
 //! - Linked list: `insque`, `remque`
 
-use std::ffi::{c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::sync::Mutex;
 
 // ---------------------------------------------------------------------------
@@ -167,8 +167,8 @@ pub unsafe extern "C" fn hdestroy() {
 #[repr(C)]
 pub struct HsearchData {
     table: *mut c_void,
-    size: usize,
-    filled: usize,
+    size: c_uint,
+    filled: c_uint,
 }
 
 /// POSIX `hcreate_r` — create a reentrant hash table.
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn hcreate_r(nel: usize, htab: *mut HsearchData) -> c_int 
     let ht = Box::new(HashTable::new(nel));
     let htab_ref = unsafe { &mut *htab };
     htab_ref.table = Box::into_raw(ht) as *mut c_void;
-    htab_ref.size = nel.max(1);
+    htab_ref.size = c_uint::try_from(nel.max(1)).unwrap_or(c_uint::MAX);
     htab_ref.filled = 0;
     1
 }

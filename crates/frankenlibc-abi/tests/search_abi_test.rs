@@ -6,7 +6,7 @@
 //! binary trees (tsearch/tfind/tdelete/twalk), linear search (lfind/lsearch),
 //! and linked lists (insque/remque).
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_char, c_int, c_uint, c_void};
 
 use frankenlibc_abi::search_abi::*;
 
@@ -28,12 +28,24 @@ unsafe fn malloc_tracked_i32s(values: &[i32]) -> *mut i32 {
 #[repr(C)]
 struct HsearchDataView {
     table: *mut c_void,
-    size: usize,
-    filled: usize,
+    size: c_uint,
+    filled: c_uint,
 }
 
 fn htab_filled(htab: &HsearchData) -> usize {
-    unsafe { (*(htab as *const HsearchData).cast::<HsearchDataView>()).filled }
+    unsafe { (*(htab as *const HsearchData).cast::<HsearchDataView>()).filled as usize }
+}
+
+#[test]
+fn hsearch_data_test_view_matches_abi_layout() {
+    assert_eq!(
+        std::mem::size_of::<HsearchDataView>(),
+        std::mem::size_of::<HsearchData>()
+    );
+    assert_eq!(
+        std::mem::align_of::<HsearchDataView>(),
+        std::mem::align_of::<HsearchData>()
+    );
 }
 
 // ===========================================================================
