@@ -31,6 +31,13 @@ unsafe extern "C" {
     /// Host glibc `l64a` — SVID base-64 long encoder. Returns a
     /// pointer to a static buffer.
     fn l64a(value: c_long) -> *mut c_char;
+    /// Host glibc `ecvt` — double → digit string + decpt + sign.
+    fn ecvt(
+        value: f64,
+        ndigit: c_int,
+        decpt: *mut c_int,
+        sign: *mut c_int,
+    ) -> *mut c_char;
 }
 
 #[derive(Debug)]
@@ -770,6 +777,92 @@ fn c_str_to_vec(p: *const c_char) -> Vec<u8> {
 }
 
 // ===========================================================================
+// ecvt — double → digit string + decpt + sign (scientific notation digits)
+// ===========================================================================
+//
+// SVID-deprecated double-to-string converter. Implemented in
+// frankenlibc-abi/src/stdlib_abi.rs (delegating to
+// frankenlibc-core/src/stdlib::ecvt). The diff drives both impls on a
+// curated input set covering zero, integer powers of 10, "ugly"
+// non-representable decimals, negatives, sub-1 magnitudes, and a
+// high-magnitude value, each at four ndigit values (1, 2, 6, 10).
+//
+// Companion `fcvt` and `gcvt` are NOT diff-tested in this commit:
+//
+//   * fcvt needs leading-zero-stripping and rounded-to-zero handling
+//     (glibc returns digits="" with decpt=-ndigit when |value| < 0.5e-ndigit;
+//     our impl returns "00...0" with decpt=1). Real bug surface, follow-up.
+//
+//   * gcvt is implemented with `format!("{:.prec$}", value)` (i.e., %.Nf
+//     fixed-point semantics) but per POSIX/glibc gcvt is %.Ng — total
+//     significant digits, with auto-switch between fixed and scientific
+//     based on exponent, and trailing-zero stripping. Substantial
+//     rewrite needed (Rust's std `{:e}` doesn't emit C-style "+02"
+//     exponents either), follow-up.
+//
+// Both gaps were caught when this conformance harness was first wired
+// up; this commit ships ecvt coverage now and leaves the broken
+// surfaces for a dedicated rewrite slice.
+
+const CVT_INPUTS: &[(f64, &str)] = &[
+    (0.0, "zero"),
+    (1.0, "one"),
+    (-1.0, "neg_one"),
+    (123.456, "ascii_decimal"),
+    (-12345.0, "neg_integer"),
+    (0.0001234, "small_positive"),
+    (1e10, "ten_billion"),
+    (1e-10, "ten_picosecond"),
+    (1.5e20, "high_magnitude"),
+];
+
+#[test]
+fn diff_ecvt_cases() {
+    let mut divs = Vec::new();
+    for (value, label) in CVT_INPUTS {
+        for &ndigit in &[1, 2, 6, 10] {
+            let mut fl_dp: c_int = 0;
+            let mut fl_sg: c_int = 0;
+            let mut lc_dp: c_int = 0;
+            let mut lc_sg: c_int = 0;
+            let fl_p = unsafe { fl::ecvt(*value, ndigit, &mut fl_dp, &mut fl_sg) };
+            let fl_digits = c_str_to_vec(fl_p);
+            let lc_p = unsafe { ecvt(*value, ndigit, &mut lc_dp, &mut lc_sg) };
+            let lc_digits = c_str_to_vec(lc_p);
+            let case = format!("{label}({value}), ndigit={ndigit}");
+            if fl_digits != lc_digits {
+                divs.push(Divergence {
+                    function: "ecvt",
+                    case: case.clone(),
+                    field: "digits",
+                    frankenlibc: format!("{:?}", String::from_utf8_lossy(&fl_digits)),
+                    glibc: format!("{:?}", String::from_utf8_lossy(&lc_digits)),
+                });
+            }
+            if fl_dp != lc_dp {
+                divs.push(Divergence {
+                    function: "ecvt",
+                    case: case.clone(),
+                    field: "decpt",
+                    frankenlibc: format!("{fl_dp}"),
+                    glibc: format!("{lc_dp}"),
+                });
+            }
+            if fl_sg != lc_sg {
+                divs.push(Divergence {
+                    function: "ecvt",
+                    case,
+                    field: "sign",
+                    frankenlibc: format!("{fl_sg}"),
+                    glibc: format!("{lc_sg}"),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "ecvt divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
@@ -781,9 +874,10 @@ fn stdlib_numeric_diff_coverage_report() {
         + STRTOD_CASES.len()                     // strtod
         + STRTOF_CASES.len()                     // strtof
         + A64L_DECODE_CASES.len()                // a64l
-        + L64A_ENCODE_CASES.len() * 2;           // l64a direct + roundtrip
+        + L64A_ENCODE_CASES.len() * 2            // l64a direct + roundtrip
+        + CVT_INPUTS.len() * 4;                  // ecvt × 4 ndigit values
     eprintln!(
-        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":11,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":12,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
