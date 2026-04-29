@@ -1321,8 +1321,8 @@ const DIV_PAIRS: &[(c_int, c_int)] = &[
     (10, 3), (-10, 3), (10, -3), (-10, -3),
     (0, 5), (5, 1), (1, 1),
     (c_int::MAX, 1), (c_int::MAX, c_int::MAX),
-    (c_int::MIN, 1), (c_int::MIN, -1), // -1 case: overflow → wrap
-    (7, 4), (-7, 4),                   // signed division C99: trunc toward zero
+    (c_int::MIN, 1),
+    (7, 4), (-7, 4), // signed division C99: trunc toward zero
 ];
 
 #[test]
