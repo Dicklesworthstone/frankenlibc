@@ -632,6 +632,45 @@ fn diff_strptime_cases() {
 }
 
 // ===========================================================================
+// gmtime_r extreme-epoch behavior — glibc returns NULL when tm_year would
+// overflow `c_int`. fl previously spun in a year-walking loop for billions
+// of iterations and then truncated tm_year on i32 cast.
+// ===========================================================================
+#[test]
+fn diff_gmtime_r_overflow_returns_null() {
+    let mut divs = Vec::new();
+    let extreme_epochs: &[i64] = &[
+        i64::MAX,
+        i64::MIN,
+        // ±67_768_036_191_676_800 is fl's exact cutoff — glibc rejects too.
+        70_000_000_000_000_000,
+        -70_000_000_000_000_000,
+    ];
+    with_utc(|| {
+        for &epoch in extreme_epochs {
+            let mut fl_tm = unsafe { std::mem::zeroed::<libc::tm>() };
+            let mut lc_tm = unsafe { std::mem::zeroed::<libc::tm>() };
+            let fl_r = unsafe { fl::gmtime_r(&epoch, &mut fl_tm) };
+            let lc_r = unsafe { libc::gmtime_r(&epoch, &mut lc_tm) };
+            if fl_r.is_null() != lc_r.is_null() {
+                divs.push(Divergence {
+                    function: "gmtime_r",
+                    case: format!("epoch={epoch}"),
+                    field: "null_return",
+                    frankenlibc: format!("{}", fl_r.is_null()),
+                    glibc: format!("{}", lc_r.is_null()),
+                });
+            }
+        }
+    });
+    assert!(
+        divs.is_empty(),
+        "gmtime_r overflow divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // strftime year-format boundary cases — pin the bare-`%d` contract for
 // %Y/%C/%G/%c/%F. fl previously zero-padded year to width 4, which silently
 // corrupted output for years < 1000 or > 9999. The GMTIME_EPOCHS sweep above

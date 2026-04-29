@@ -65,6 +65,27 @@ const DAYS_IN_MONTH: [i32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
 /// Convert seconds since Unix epoch to broken-down UTC time.
 ///
 /// Handles negative epochs (pre-1970). UTC only — no timezone/DST.
+/// Maximum epoch second whose corresponding year still fits a `tm_year`
+/// field (which is a `c_int` = i32). Beyond this, a glibc-faithful
+/// implementation must return NULL from gmtime/localtime/etc. — and
+/// crucially, `epoch_to_broken_down` itself would otherwise spin in a
+/// year-walking loop for billions of iterations.
+///
+/// Computed as: max safe year = i32::MAX + 1900 ≈ 2.147e9, days from
+/// epoch ≈ 2.147e9 * 365.2425, seconds ≈ days * 86400 ≈ 6.78e16.
+/// We pick a slightly conservative ±6.78e16 as the cutoff.
+pub const EPOCH_RANGE_LIMIT: i64 = 67_768_036_191_676_800;
+
+/// Like [`epoch_to_broken_down`] but returns `None` if `epoch_secs` would
+/// overflow `tm_year` (matching glibc's NULL-return contract on
+/// `gmtime`/`localtime` for extreme inputs).
+pub fn epoch_to_broken_down_checked(epoch_secs: i64) -> Option<BrokenDownTime> {
+    if !(-EPOCH_RANGE_LIMIT..=EPOCH_RANGE_LIMIT).contains(&epoch_secs) {
+        return None;
+    }
+    Some(epoch_to_broken_down(epoch_secs))
+}
+
 pub fn epoch_to_broken_down(epoch_secs: i64) -> BrokenDownTime {
     // Seconds within the day
     let mut rem = epoch_secs % 86400;

@@ -386,7 +386,11 @@ pub unsafe extern "C" fn localtime_r(timer: *const i64, result: *mut libc::tm) -
     }
 
     let epoch = unsafe { *timer };
-    let bd = time_core::epoch_to_broken_down(epoch);
+    let Some(bd) = time_core::epoch_to_broken_down_checked(epoch) else {
+        // Year would overflow `tm_year` (c_int). Match glibc's NULL return.
+        unsafe { set_abi_errno(errno::EOVERFLOW) };
+        return std::ptr::null_mut();
+    };
     unsafe { write_tm(result, &bd) };
     result
 }
@@ -410,7 +414,11 @@ pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *
     }
 
     let epoch = unsafe { *timer };
-    let bd = time_core::epoch_to_broken_down(epoch);
+    let Some(bd) = time_core::epoch_to_broken_down_checked(epoch) else {
+        // Year would overflow `tm_year` (c_int). Match glibc's NULL return.
+        unsafe { set_abi_errno(errno::EOVERFLOW) };
+        return std::ptr::null_mut();
+    };
     unsafe { write_tm(result, &bd) };
     result
 }
@@ -662,7 +670,9 @@ pub unsafe extern "C" fn ctime_r(
     }
 
     let epoch = unsafe { *timer };
-    let bd = time_core::epoch_to_broken_down(epoch);
+    let Some(bd) = time_core::epoch_to_broken_down_checked(epoch) else {
+        return std::ptr::null_mut();
+    };
     let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, ASCTIME_R_BUF_BYTES) };
     let n = time_core::format_asctime(&bd, dst);
     if n == 0 {
