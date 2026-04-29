@@ -2618,12 +2618,23 @@ pub unsafe extern "C" fn inet_lnaof(inp: c_uint) -> c_uint {
 // inet_makeaddr: native — combine net + host into IPv4 address
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn inet_makeaddr(net: c_uint, host: c_uint) -> c_uint {
+    // Per glibc inet_makeaddr semantics, the four ranges are:
+    //   net < 128       (class A): (net << 24) | (host & 0x00FF_FFFF)
+    //   net < 65536     (class B): (net << 16) | (host & 0x0000_FFFF)
+    //   net < 16777216  (class C): (net << 8)  | (host & 0x0000_00FF)
+    //   net >= 16777216 (full):    net | host  (already a 32-bit address)
+    //
+    // The fourth case matters because a left shift by 8 of any net value
+    // >= 0x0100_0000 overflows the low byte off the top of u32, mangling
+    // the supposedly-passthrough address. Earlier this branch was missing.
     let addr = if net < 128 {
         (net << 24) | (host & 0x00FF_FFFF)
     } else if net < 0x1_0000 {
         (net << 16) | (host & 0x0000_FFFF)
-    } else {
+    } else if net < 0x0100_0000 {
         (net << 8) | (host & 0x0000_00FF)
+    } else {
+        net | host
     };
     addr.to_be()
 }

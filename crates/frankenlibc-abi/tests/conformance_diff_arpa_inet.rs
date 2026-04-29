@@ -673,6 +673,13 @@ fn diff_inet_makeaddr_cases() {
         (0xc8, 0x010203), // class C (200 = 0xc8)
         (0x100, 0x10203), // 16-bit net
         (0x10000, 0x42),  // 24-bit net
+        // Full-address fourth-class cases (net >= 0x0100_0000): glibc
+        // returns net | host without any shift; the previous fl impl
+        // applied (net << 8) which overflowed the high byte.
+        (0x0100_0000, 0xff),
+        (0x7f00_0001, 0),
+        (0xffff_ffff, 0),
+        (0xc0a8_0101, 0xff),
     ];
     let mut divs = Vec::new();
     for &(net, host) in pairs {
