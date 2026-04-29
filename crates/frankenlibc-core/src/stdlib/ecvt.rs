@@ -3,6 +3,8 @@
 //! These are obsolete POSIX.1-2001 functions (removed in POSIX.1-2008)
 //! but glibc still exports them for backward compatibility.
 
+const MAX_LEGACY_CVT_DIGITS: usize = 512;
+
 /// `ecvt` — convert double to string in scientific notation form.
 ///
 /// Returns `(digits, decimal_point_position, is_negative)`.
@@ -22,7 +24,7 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         return (b"inf".to_vec(), 0, negative);
     }
 
-    let ndigit = ndigit.max(0) as usize;
+    let ndigit = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
     if ndigit == 0 {
         return (Vec::new(), 0, negative);
     }
@@ -112,7 +114,7 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
         return (b"inf".to_vec(), 0, negative);
     }
 
-    let ndigit = ndigit.max(0) as usize;
+    let ndigit = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
 
     // Special case: exact zero. Glibc emits ndigit+1 zeros with
     // decpt=1 — i.e., one integer zero plus ndigit fractional zeros.
@@ -190,7 +192,7 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
 /// Linux/x86_64) included `gcvt(123.456, 1)` -> `"123.5"` (vs glibc's
 /// `"1e+02"`) and `gcvt(0, 1)` -> `"0.0"` (vs `"0"`).
 pub fn gcvt(value: f64, ndigit: i32, buf: &mut [u8]) -> usize {
-    let ndigit = ndigit.max(1) as usize;
+    let ndigit = (ndigit.max(1) as usize).min(MAX_LEGACY_CVT_DIGITS);
     let rendered = render_gcvt(value, ndigit);
     let bytes = rendered.as_bytes();
     let copy_len = bytes.len().min(buf.len().saturating_sub(1));
@@ -405,5 +407,19 @@ mod tests {
                 std::str::from_utf8(expected).unwrap_or("<invalid utf8>"),
             );
         }
+    }
+
+    #[test]
+    fn huge_precision_is_clamped_before_formatting() {
+        let (digits, _, _) = ecvt(1.25, i32::MAX);
+        assert_eq!(digits.len(), MAX_LEGACY_CVT_DIGITS);
+
+        let (digits, _, _) = fcvt(1.25, i32::MAX);
+        assert_eq!(digits.len(), MAX_LEGACY_CVT_DIGITS + 1);
+
+        let mut buf = [0u8; 16];
+        let len = gcvt(1.25, i32::MAX, &mut buf);
+        assert!(len < buf.len());
+        assert_eq!(buf[len], 0);
     }
 }

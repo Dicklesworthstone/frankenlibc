@@ -2242,7 +2242,7 @@ mod tests {
         // Exercise %f, %e, %g, %a at prec = 65536 (the first panicking value)
         // and at prec = usize::MAX / 2 (pathological) — neither must panic.
         for prec in [65_536usize, 100_000, usize::MAX / 2] {
-            for conv in [b'f', b'e', b'g', b'a', b'F', b'E', b'G', b'A'] {
+            for conv in *b"fegaFEGA" {
                 let spec = FormatSpec::new(
                     FormatFlags::default(),
                     Width::None,

@@ -20,6 +20,8 @@ use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use libc::{intmax_t, uintmax_t};
 
+const MAX_LEGACY_CVT_DIGITS: usize = 512;
+
 #[inline]
 fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
     heals_enabled || matches!(action, MembraneAction::Repair(_))
@@ -4718,11 +4720,11 @@ pub unsafe extern "C" fn ecvt_r(
     }
     unsafe { *sign = if value < 0.0 { 1 } else { 0 } };
     let abs_val = value.abs();
-    let s = if ndigit > 0 {
-        format!(
-            "{abs_val:.prec$e}",
-            prec = (ndigit as usize).saturating_sub(1)
-        )
+    let requested = (ndigit.max(0) as usize)
+        .min(buflen.saturating_sub(1))
+        .min(MAX_LEGACY_CVT_DIGITS);
+    let s = if requested > 0 {
+        format!("{abs_val:.prec$e}", prec = requested.saturating_sub(1))
     } else {
         format!("{abs_val:e}")
     };
@@ -4763,7 +4765,9 @@ pub unsafe extern "C" fn fcvt_r(
     }
     unsafe { *sign = if value < 0.0 { 1 } else { 0 } };
     let abs_val = value.abs();
-    let prec = if ndigit > 0 { ndigit as usize } else { 0 };
+    let prec = (ndigit.max(0) as usize)
+        .min(buflen.saturating_sub(1))
+        .min(MAX_LEGACY_CVT_DIGITS);
     let s = format!("{abs_val:.prec$}");
     let dot_pos = s.find('.').unwrap_or(s.len());
     unsafe { *decpt = dot_pos as c_int };
@@ -4841,7 +4845,8 @@ pub unsafe extern "C" fn qgcvt(value: c_double, ndigit: c_int, buf: *mut c_char)
     if buf.is_null() {
         return std::ptr::null_mut();
     }
-    let s = format!("{value:.prec$}", prec = ndigit.max(0) as usize);
+    let prec = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
+    let s = format!("{value:.prec$}");
     let bytes = s.as_bytes();
     let tracked_remaining = known_remaining(buf as usize);
     let copy_len = tracked_remaining

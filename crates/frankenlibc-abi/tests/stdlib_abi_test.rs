@@ -9,14 +9,14 @@ use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::resolv_abi::__h_errno_location;
 use frankenlibc_abi::stdlib_abi::{
     a64l, at_quick_exit, atof, atoll, bsearch_r, clearenv, confstr, dehumanize_number, drand48,
-    drand48_r, ecvt, erand48, erand48_r, error_at_line, expand_number, fcvt, fmtcheck, freezero,
-    gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv,
-    getenv_r, getsubopt, humanize_number, initstate, initstate_r, jrand48, l64a, lcong48,
-    lcong48_r, lrand48, lrand48_r, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit,
-    putenv, qgcvt, qsort_r, rand, random, random_r, reallocarray, reallocf, recallocarray, seed48,
-    seed48_r, setenv, setstate, setstate_r, srand, srand48, srand48_r, srandom, srandom_r, strpct,
-    strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq,
-    system, unsetenv,
+    drand48_r, ecvt, ecvt_r, erand48, erand48_r, error_at_line, expand_number, fcvt, fcvt_r,
+    fmtcheck, freezero, gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages,
+    getbsize, getenv, getenv_r, getsubopt, humanize_number, initstate, initstate_r, jrand48, l64a,
+    lcong48, lcong48_r, lrand48, lrand48_r, mkostemp, mkostemps, mkstemps, mrand48, nrand48,
+    on_exit, putenv, qgcvt, qsort_r, rand, random, random_r, reallocarray, reallocf, recallocarray,
+    seed48, seed48_r, setenv, setstate, setstate_r, srand, srand48, srand48_r, srandom, srandom_r,
+    strpct, strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull,
+    strtouq, system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -4383,6 +4383,74 @@ fn qgcvt_caps_tracked_two_byte_buffer() {
 
     assert_eq!(result.cast::<u8>(), raw);
     assert_eq!(unsafe { raw.read() }, b'1');
+    assert_eq!(unsafe { raw.add(1).read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
+#[test]
+fn cvt_huge_precision_is_bounded_before_formatting() {
+    let mut decpt: libc::c_int = 0;
+    let mut sign: libc::c_int = 0;
+    let mut ecvt_buf = [0 as libc::c_char; 4];
+    let mut fcvt_buf = [0 as libc::c_char; 4];
+
+    assert_eq!(
+        unsafe {
+            ecvt_r(
+                1.25,
+                libc::c_int::MAX,
+                &mut decpt,
+                &mut sign,
+                ecvt_buf.as_mut_ptr(),
+                4,
+            )
+        },
+        0
+    );
+    assert_eq!(ecvt_buf[3], 0);
+
+    assert_eq!(
+        unsafe {
+            fcvt_r(
+                1.25,
+                libc::c_int::MAX,
+                &mut decpt,
+                &mut sign,
+                fcvt_buf.as_mut_ptr(),
+                4,
+            )
+        },
+        0
+    );
+    assert_eq!(fcvt_buf[3], 0);
+}
+
+#[test]
+fn gcvt_huge_precision_caps_tracked_two_byte_buffer() {
+    let raw = unsafe { malloc_tracked_bytes(2) };
+    unsafe {
+        raw.write(b'X');
+        raw.add(1).write(b'Y');
+    }
+
+    let result = unsafe { gcvt(123.456, libc::c_int::MAX, raw.cast::<libc::c_char>()) };
+
+    assert_eq!(result.cast::<u8>(), raw);
+    assert_eq!(unsafe { raw.add(1).read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
+#[test]
+fn qgcvt_huge_precision_caps_tracked_two_byte_buffer() {
+    let raw = unsafe { malloc_tracked_bytes(2) };
+    unsafe {
+        raw.write(b'X');
+        raw.add(1).write(b'Y');
+    }
+
+    let result = unsafe { qgcvt(123.456, libc::c_int::MAX, raw.cast::<libc::c_char>()) };
+
+    assert_eq!(result.cast::<u8>(), raw);
     assert_eq!(unsafe { raw.add(1).read() }, 0);
     unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
 }
