@@ -93,6 +93,11 @@ unsafe fn bounded_wide_string_len(ptr: *const WcharT) -> usize {
 }
 
 #[inline]
+fn tracked_output_too_short(ptr: *mut c_void, requested: usize) -> bool {
+    requested > 0 && known_remaining(ptr as usize).is_some_and(|remaining| requested > remaining)
+}
+
+#[inline]
 unsafe fn dns_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     unsafe { bounded_c_string_bytes(ptr, DNS_CSTR_SCAN_LIMIT) }
 }
@@ -3349,10 +3354,14 @@ pub unsafe extern "C" fn __pread64(
     count: SizeT,
     offset: i64,
 ) -> SSizeT {
+    if tracked_output_too_short(buf, count) {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
     match unsafe { raw_syscall::sys_pread64(fd, buf as *mut u8, count, offset) } {
         Ok(n) => n as SSizeT,
         Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
+            unsafe { set_abi_errno(e) };
             -1
         }
     }
@@ -3397,10 +3406,14 @@ pub unsafe extern "C" fn __rcmd_errstr() -> *mut *mut c_char {
 // __read/__write: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
+    if tracked_output_too_short(buf, count) {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
     match unsafe { raw_syscall::sys_read(fd, buf as *mut u8, count) } {
         Ok(n) => n as SSizeT,
         Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
+            unsafe { set_abi_errno(e) };
             -1
         }
     }
@@ -6882,10 +6895,14 @@ pub unsafe extern "C" fn __open64_nocancel(
 /// `__read_nocancel` — read(2) without cancellation point.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __read_nocancel(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
+    if tracked_output_too_short(buf, count) {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
     match unsafe { raw_syscall::sys_read(fd, buf as *mut u8, count) } {
         Ok(n) => n as SSizeT,
         Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
+            unsafe { set_abi_errno(e) };
             -1
         }
     }
@@ -6911,10 +6928,14 @@ pub unsafe extern "C" fn __pread64_nocancel(
     count: SizeT,
     offset: i64,
 ) -> SSizeT {
+    if tracked_output_too_short(buf, count) {
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return -1;
+    }
     match unsafe { raw_syscall::sys_pread64(fd, buf as *mut u8, count, offset) } {
         Ok(n) => n as SSizeT,
         Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
+            unsafe { set_abi_errno(e) };
             -1
         }
     }

@@ -45,7 +45,11 @@ use frankenlibc_abi::glibc_internal_abi::{
     __nss_next,
     __nss_passwd_lookup,
     __overflow,
+    __pread64,
+    __pread64_nocancel,
     __printf_fp,
+    __read,
+    __read_nocancel,
     // Session 13 additions:
     __res_mkquery,
     __res_send,
@@ -135,7 +139,7 @@ use frankenlibc_abi::glibc_internal_abi::{
     xprt_register,
     xprt_unregister,
 };
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::ptr;
 
 // ===========================================================================
@@ -603,6 +607,43 @@ unsafe fn malloc_unterminated_wide(wchars: &[libc::wchar_t]) -> *mut libc::wchar
     raw.cast()
 }
 
+unsafe fn malloc_tracked_zeroed_bytes(len: usize) -> *mut c_void {
+    assert!(len > 0);
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(len) };
+    assert!(!raw.is_null());
+    unsafe { std::ptr::write_bytes(raw.cast::<u8>(), 0, len) };
+    raw
+}
+
+fn clear_errno() {
+    unsafe { *__errno_location() = 0 };
+}
+
+fn errno_value() -> c_int {
+    unsafe { *__errno_location() }
+}
+
+fn pipe_with_payload(payload: &[u8]) -> [c_int; 2] {
+    let mut fds = [-1, -1];
+    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+    assert_eq!(
+        unsafe { libc::write(fds[1], payload.as_ptr().cast(), payload.len()) },
+        payload.len() as isize,
+    );
+    fds
+}
+
+fn memfd_with_payload(payload: &[u8]) -> c_int {
+    let name = CString::new("frankenlibc-internal-pread").unwrap();
+    let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), 0) as c_int };
+    assert!(fd >= 0, "memfd_create failed with errno {}", errno_value());
+    assert_eq!(
+        unsafe { libc::write(fd, payload.as_ptr().cast(), payload.len()) },
+        payload.len() as isize,
+    );
+    fd
+}
+
 #[test]
 fn strl_chk_bounds_tracked_unterminated_source() {
     unsafe {
@@ -624,6 +665,68 @@ fn strl_chk_bounds_tracked_unterminated_source() {
         assert_eq!(appended[2], 0);
 
         frankenlibc_abi::malloc_abi::free(src.cast());
+    }
+}
+
+#[test]
+fn internal_read_rejects_tracked_short_output_buffer() {
+    let fds = pipe_with_payload(b"read");
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1);
+        clear_errno();
+        let n = __read(fds[0], raw, 4);
+        assert_eq!(n, -1);
+        assert_eq!(errno_value(), libc::EFAULT);
+        assert_eq!(raw.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(raw);
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
+}
+
+#[test]
+fn internal_read_nocancel_rejects_tracked_short_output_buffer() {
+    let fds = pipe_with_payload(b"read");
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1);
+        clear_errno();
+        let n = __read_nocancel(fds[0], raw, 4);
+        assert_eq!(n, -1);
+        assert_eq!(errno_value(), libc::EFAULT);
+        assert_eq!(raw.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(raw);
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+    }
+}
+
+#[test]
+fn internal_pread64_rejects_tracked_short_output_buffer() {
+    let fd = memfd_with_payload(b"pread");
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1);
+        clear_errno();
+        let n = __pread64(fd, raw, 5, 0);
+        assert_eq!(n, -1);
+        assert_eq!(errno_value(), libc::EFAULT);
+        assert_eq!(raw.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(raw);
+        libc::close(fd);
+    }
+}
+
+#[test]
+fn internal_pread64_nocancel_rejects_tracked_short_output_buffer() {
+    let fd = memfd_with_payload(b"pread");
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1);
+        clear_errno();
+        let n = __pread64_nocancel(fd, raw, 5, 0);
+        assert_eq!(n, -1);
+        assert_eq!(errno_value(), libc::EFAULT);
+        assert_eq!(raw.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(raw);
+        libc::close(fd);
     }
 }
 
@@ -3898,7 +4001,6 @@ fn libc_use_alloca_matches_libc_alloca_cutoff() {
 // ---------------------------------------------------------------------------
 
 use frankenlibc_abi::glibc_internal_abi::__libc_fatal;
-use std::ffi::c_int;
 
 #[test]
 fn libc_fatal_aborts_child_with_message() {
