@@ -6115,6 +6115,8 @@ pub extern "C" fn strerrorname_np(errnum: c_int) -> *const c_char {
 // Batch: C23 float-to-string — Implemented
 // ===========================================================================
 
+const MAX_STRFROM_PRECISION: usize = 512;
+
 /// C23 `strfromd` — convert double to string with format.
 ///
 /// Writes at most `n` bytes (including null) to `s`.
@@ -6191,7 +6193,10 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
         let prec = if num_end == 0 {
             0
         } else {
-            after_dot[..num_end].parse().unwrap_or(6)
+            after_dot[..num_end]
+                .parse::<usize>()
+                .map(|precision| precision.min(MAX_STRFROM_PRECISION))
+                .unwrap_or(6)
         };
         (Some(prec), &after_dot[num_end..])
     } else {

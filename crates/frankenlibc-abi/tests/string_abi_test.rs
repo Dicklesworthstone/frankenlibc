@@ -1493,6 +1493,19 @@ fn strfromd_hex_float_formats_match_glibc_shape() {
 }
 
 #[test]
+fn strfromd_caps_absurd_precision_before_rendering() {
+    let mut buf = [0_i8; 16];
+
+    let len = unsafe { strfromd(buf.as_mut_ptr(), buf.len(), c"%.2147483647a".as_ptr(), 1.0) };
+
+    assert_eq!(len, 519);
+    assert_eq!(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
+        b"0x1.00000000000"
+    );
+}
+
+#[test]
 fn strfromd_rejects_tracked_unterminated_format() {
     unsafe {
         let raw = malloc_unterminated(b"%.2f");
