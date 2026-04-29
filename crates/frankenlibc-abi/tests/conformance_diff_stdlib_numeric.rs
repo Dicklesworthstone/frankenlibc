@@ -78,6 +78,12 @@ unsafe extern "C" {
         buf: *mut c_char,
         buflen: usize,
     ) -> c_int;
+    /// Host glibc `abs` / `labs` / `llabs` — absolute value of integer.
+    fn abs(n: c_int) -> c_int;
+    fn labs(n: c_long) -> c_long;
+    fn llabs(n: std::ffi::c_longlong) -> std::ffi::c_longlong;
+    /// Host glibc `imaxabs` — absolute value of intmax_t (i64 on x86_64).
+    fn imaxabs(j: std::ffi::c_longlong) -> std::ffi::c_longlong;
     /// Host glibc `ffs` — find first set bit in an int.
     fn ffs(i: c_int) -> c_int;
     /// Host glibc `ffsl` — find first set bit in a long.
@@ -1270,6 +1276,106 @@ fn nul_terminated_slice(buf: &[u8]) -> &[u8] {
 }
 
 // ===========================================================================
+// abs / labs / llabs / imaxabs — integer absolute value
+// ===========================================================================
+//
+// All four are pure delegators in stdlib_abi.rs. POSIX undefined-
+// behavior at INT_MIN/LONG_MIN/LLONG_MIN (the value can't be negated
+// in two's-complement); glibc and our impl both wrap via wrapping_abs,
+// but the comparison still pins parity at the bit level.
+
+const ABS_INPUTS: &[c_int] = &[
+    0, 1, -1, 42, -42, c_int::MIN, c_int::MAX, c_int::MIN + 1,
+];
+
+#[test]
+fn diff_abs_cases() {
+    let mut divs = Vec::new();
+    for &v in ABS_INPUTS {
+        let fl_v = fl::abs(v);
+        let lc_v = unsafe { abs(v) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "abs",
+                case: format!("{v}"),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "abs divergences:\n{}", render_divs(&divs));
+}
+
+const LABS_INPUTS: &[c_long] = &[
+    0, 1, -1, 42, -42, i64::MIN, i64::MAX, i64::MIN + 1,
+    1 << 32, -(1i64 << 32),
+];
+
+#[test]
+fn diff_labs_cases() {
+    let mut divs = Vec::new();
+    for &v in LABS_INPUTS {
+        let fl_v = fl::labs(v);
+        let lc_v = unsafe { labs(v) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "labs",
+                case: format!("{v}"),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "labs divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_llabs_cases() {
+    let mut divs = Vec::new();
+    let inputs: &[std::ffi::c_longlong] = &[
+        0, 1, -1, 42, -42, i64::MIN, i64::MAX, i64::MIN + 1,
+    ];
+    for &v in inputs {
+        let fl_v = fl::llabs(v);
+        let lc_v = unsafe { llabs(v) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "llabs",
+                case: format!("{v}"),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "llabs divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_imaxabs_cases() {
+    let mut divs = Vec::new();
+    let inputs: &[std::ffi::c_longlong] = &[
+        0, 1, -1, 42, -42, i64::MIN, i64::MAX, i64::MIN + 1,
+    ];
+    for &v in inputs {
+        let fl_v = fl::imaxabs(v);
+        let lc_v = unsafe { imaxabs(v) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "imaxabs",
+                case: format!("{v}"),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "imaxabs divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
 // ffs / ffsl / ffsll — find first set bit
 // ===========================================================================
 //
@@ -1374,9 +1480,12 @@ fn stdlib_numeric_diff_coverage_report() {
         + FFSLL_INPUTS.len()                     // ffsll
         + CVT_R_INPUTS.len() * 4 * 2             // (ecvt_r + fcvt_r) × 4 ndigit
         + ECVT_R_SMALL_BUFFER_CASES.len()
-        + FCVT_R_SMALL_BUFFER_CASES.len();
+        + FCVT_R_SMALL_BUFFER_CASES.len()
+        + ABS_INPUTS.len()                       // abs
+        + LABS_INPUTS.len()                      // labs
+        + 8 * 2;                                 // llabs + imaxabs (8 inputs each)
     eprintln!(
-        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":19,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":23,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
