@@ -46,10 +46,10 @@
 use std::ffi::c_int;
 use std::sync::Once;
 
-use arbitrary::Arbitrary;
+use arbitrary::{Arbitrary, Unstructured};
 use frankenlibc_abi::wchar_abi::{
     btowc, mbstowcs, mbtowc, wcscat, wcschr, wcscmp, wcscspn, wcsdup, wcslen, wcsncat, wcsncmp,
-    wcsncpy, wcsspn, wcstombs, wctob, wctomb,
+    wcsncpy, wcspbrk, wcsrchr, wcsspn, wcsstr, wcstok, wcstombs, wctob, wctomb,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -92,6 +92,14 @@ enum Op {
         s: Vec<u8>,
         c: u32,
     },
+    Wcsrchr {
+        s: Vec<u8>,
+        c: u32,
+    },
+    Wcsstr {
+        haystack: Vec<u8>,
+        needle: Vec<u8>,
+    },
     Wcsspn {
         s: Vec<u8>,
         accept: Vec<u8>,
@@ -99,6 +107,14 @@ enum Op {
     Wcscspn {
         s: Vec<u8>,
         reject: Vec<u8>,
+    },
+    Wcspbrk {
+        s: Vec<u8>,
+        accept: Vec<u8>,
+    },
+    Wcstok {
+        s: Vec<u8>,
+        delim: Vec<u8>,
     },
     Wcsdup {
         s: Vec<u8>,
@@ -252,6 +268,17 @@ fn apply_wcschr(s: &[u8], c: u32) {
     let _ = unsafe { wcschr(sw.as_ptr(), c) };
 }
 
+fn apply_wcsrchr(s: &[u8], c: u32) {
+    let sw = make_wide(s);
+    let _ = unsafe { wcsrchr(sw.as_ptr(), c) };
+}
+
+fn apply_wcsstr(haystack: &[u8], needle: &[u8]) {
+    let hw = make_wide(haystack);
+    let nw = make_wide(needle);
+    let _ = unsafe { wcsstr(hw.as_ptr(), nw.as_ptr()) };
+}
+
 fn apply_wcsspn(s: &[u8], accept: &[u8]) {
     let sw = make_wide(s);
     let aw = make_wide(accept);
@@ -262,6 +289,24 @@ fn apply_wcscspn(s: &[u8], reject: &[u8]) {
     let sw = make_wide(s);
     let rw = make_wide(reject);
     let _ = unsafe { wcscspn(sw.as_ptr(), rw.as_ptr()) };
+}
+
+fn apply_wcspbrk(s: &[u8], accept: &[u8]) {
+    let sw = make_wide(s);
+    let aw = make_wide(accept);
+    let _ = unsafe { wcspbrk(sw.as_ptr(), aw.as_ptr()) };
+}
+
+fn apply_wcstok(s: &[u8], delim: &[u8]) {
+    let mut sw = make_wide(s);
+    let dw = make_wide(delim);
+    let mut save_ptr: *mut u32 = std::ptr::null_mut();
+    let mut segment = unsafe { wcstok(sw.as_mut_ptr(), dw.as_ptr(), &mut save_ptr) };
+    let mut segments = 0usize;
+    while !segment.is_null() && segments < MAX_LEN {
+        segments += 1;
+        segment = unsafe { wcstok(std::ptr::null_mut(), dw.as_ptr(), &mut save_ptr) };
+    }
 }
 
 fn apply_wcsdup(s: &[u8]) {
@@ -359,8 +404,12 @@ fn apply_op(op: &Op) {
         Op::Wcscmp { a, b } => apply_wcscmp(a, b),
         Op::Wcsncmp { a, b, n } => apply_wcsncmp(a, b, *n),
         Op::Wcschr { s, c } => apply_wcschr(s, *c),
+        Op::Wcsrchr { s, c } => apply_wcsrchr(s, *c),
+        Op::Wcsstr { haystack, needle } => apply_wcsstr(haystack, needle),
         Op::Wcsspn { s, accept } => apply_wcsspn(s, accept),
         Op::Wcscspn { s, reject } => apply_wcscspn(s, reject),
+        Op::Wcspbrk { s, accept } => apply_wcspbrk(s, accept),
+        Op::Wcstok { s, delim } => apply_wcstok(s, delim),
         Op::Wcsdup { s } => apply_wcsdup(s),
         Op::MbtowcWctombRoundTrip { c } => apply_mbtowc_wctomb_round_trip(*c),
         Op::BtowcWctobAscii { c } => apply_btowc_wctob_ascii(*c),
@@ -369,13 +418,62 @@ fn apply_op(op: &Op) {
     }
 }
 
-fuzz_target!(|input: WcharFuzzInput| {
-    if input.ops.len() > 16 {
+fn apply_scripted_seed(data: &[u8]) {
+    let Some(mut payload) = data.strip_prefix(b"WCHAR|") else {
         return;
+    };
+    if let Some(stripped) = payload.strip_suffix(b"\n") {
+        payload = stripped;
     }
-    init_hardened_mode();
+    if let Some(stripped) = payload.strip_suffix(b"\r") {
+        payload = stripped;
+    }
 
-    for op in &input.ops {
-        apply_op(op);
+    let mut parts = payload.split(|&b| b == b'|');
+    let Some(op) = parts.next() else {
+        return;
+    };
+
+    match op {
+        b"wcsrchr" => {
+            let s = parts.next().unwrap_or_default();
+            let c = parts
+                .next()
+                .and_then(|p| p.first())
+                .copied()
+                .unwrap_or(b'a') as u32;
+            apply_wcsrchr(s, c);
+        }
+        b"wcsstr" => {
+            let haystack = parts.next().unwrap_or_default();
+            let needle = parts.next().unwrap_or_default();
+            apply_wcsstr(haystack, needle);
+        }
+        b"wcspbrk" => {
+            let s = parts.next().unwrap_or_default();
+            let accept = parts.next().unwrap_or_default();
+            apply_wcspbrk(s, accept);
+        }
+        b"wcstok" => {
+            let s = parts.next().unwrap_or_default();
+            let delim = parts.next().unwrap_or(b",");
+            apply_wcstok(s, delim);
+        }
+        _ => {}
+    }
+}
+
+fuzz_target!(|data: &[u8]| {
+    init_hardened_mode();
+    apply_scripted_seed(data);
+
+    let mut u = Unstructured::new(data);
+    if let Ok(input) = WcharFuzzInput::arbitrary(&mut u) {
+        if input.ops.len() > 16 {
+            return;
+        }
+        for op in &input.ops {
+            apply_op(op);
+        }
     }
 });
