@@ -776,7 +776,11 @@ fn diff_stpcpy_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "stpcpy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "stpcpy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -826,7 +830,11 @@ fn diff_stpncpy_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "stpncpy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "stpncpy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -884,7 +892,11 @@ fn diff_mempcpy_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "mempcpy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "mempcpy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -925,6 +937,12 @@ const STRFROM_DOUBLE_CASES: &[(f64, &[u8])] = &[
     (f64::INFINITY, b"%.2E"),
     (f64::NEG_INFINITY, b"%.2F"),
     (f64::NAN, b"%.2G"),
+    (3.25, b"%a"),
+    (3.25, b"%A"),
+    (3.25, b"%.0a"),
+    (0.1, b"%.3a"),
+    (-0.0, b"%a"),
+    (f64::INFINITY, b"%A"),
 ];
 
 #[test]
@@ -997,6 +1015,10 @@ const STRFROM_FLOAT_CASES: &[(f32, &[u8])] = &[
     (f32::INFINITY, b"%.2E"),
     (f32::NEG_INFINITY, b"%.2F"),
     (f32::NAN, b"%.2G"),
+    (3.25, b"%a"),
+    (3.25, b"%A"),
+    (3.25, b"%.0a"),
+    (0.1, b"%.3a"),
 ];
 
 #[test]
@@ -1085,7 +1107,11 @@ fn diff_bzero_cases() {
             });
         }
     }
-    assert!(divs.is_empty(), "bzero divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "bzero divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -1100,20 +1126,9 @@ fn diff_bcmp_cases() {
         (b"abc\x00def", b"abc\x00def", 7),
     ];
     for (a, b, n) in cases {
-        let fl_v = unsafe {
-            fl::bcmp(
-                a.as_ptr() as *const c_void,
-                b.as_ptr() as *const c_void,
-                *n,
-            )
-        };
-        let lc_v = unsafe {
-            bcmp(
-                a.as_ptr() as *const c_void,
-                b.as_ptr() as *const c_void,
-                *n,
-            )
-        };
+        let fl_v =
+            unsafe { fl::bcmp(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void, *n) };
+        let lc_v = unsafe { bcmp(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void, *n) };
         // bcmp returns 0 if equal, non-zero otherwise. The exact
         // non-zero magnitude varies by impl; compare the boolean.
         if (fl_v == 0) != (lc_v == 0) {
@@ -1163,7 +1178,11 @@ fn diff_bcopy_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "bcopy divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "bcopy divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================

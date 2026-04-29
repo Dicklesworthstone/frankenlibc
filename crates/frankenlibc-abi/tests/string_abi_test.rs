@@ -1431,6 +1431,68 @@ fn strfromd_uppercase_formats_uppercase_special_values() {
 }
 
 #[test]
+fn strfromd_hex_float_formats_match_glibc_shape() {
+    let mut lower_buf = [0_i8; 32];
+    let mut upper_buf = [0_i8; 32];
+    let mut rounded_buf = [0_i8; 32];
+    let mut zero_buf = [0_i8; 32];
+
+    let lower_len = unsafe {
+        strfromd(
+            lower_buf.as_mut_ptr(),
+            lower_buf.len(),
+            c"%a".as_ptr(),
+            3.25,
+        )
+    };
+    let upper_len = unsafe {
+        strfromd(
+            upper_buf.as_mut_ptr(),
+            upper_buf.len(),
+            c"%A".as_ptr(),
+            3.25,
+        )
+    };
+    let rounded_len = unsafe {
+        strfromd(
+            rounded_buf.as_mut_ptr(),
+            rounded_buf.len(),
+            c"%.3a".as_ptr(),
+            0.1,
+        )
+    };
+    let zero_len = unsafe {
+        strfromd(
+            zero_buf.as_mut_ptr(),
+            zero_buf.len(),
+            c"%.0a".as_ptr(),
+            3.25,
+        )
+    };
+
+    assert_eq!(lower_len, 8);
+    assert_eq!(upper_len, 8);
+    assert_eq!(rounded_len, 10);
+    assert_eq!(zero_len, 6);
+    assert_eq!(
+        unsafe { CStr::from_ptr(lower_buf.as_ptr()) }.to_bytes(),
+        b"0x1.ap+1"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(upper_buf.as_ptr()) }.to_bytes(),
+        b"0X1.AP+1"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(rounded_buf.as_ptr()) }.to_bytes(),
+        b"0x1.99ap-4"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(zero_buf.as_ptr()) }.to_bytes(),
+        b"0x2p+1"
+    );
+}
+
+#[test]
 fn strfromd_rejects_tracked_unterminated_format() {
     unsafe {
         let raw = malloc_unterminated(b"%.2f");

@@ -6188,26 +6188,31 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
         let num_end = after_dot
             .find(|c: char| !c.is_ascii_digit())
             .unwrap_or(after_dot.len());
-        let prec: usize = after_dot[..num_end].parse().unwrap_or(6);
-        (prec, &after_dot[num_end..])
+        let prec = if num_end == 0 {
+            0
+        } else {
+            after_dot[..num_end].parse().unwrap_or(6)
+        };
+        (Some(prec), &after_dot[num_end..])
     } else {
-        (6, rest)
+        (None, rest)
     };
+    let decimal_precision = precision.unwrap_or(6);
 
     match spec {
         // %f / %F — fixed-point with `precision` fractional digits.
         // Rust's `{:.N$}` is bit-compatible with printf %f for f64.
-        "f" => format!("{value:.precision$}"),
-        "F" => format!("{value:.precision$}").to_ascii_uppercase(),
+        "f" => format!("{value:.decimal_precision$}"),
+        "F" => format!("{value:.decimal_precision$}").to_ascii_uppercase(),
 
         // %e — scientific with C-style `e+02` exponent (Rust's default
         // gives `e2` without sign or leading zeros, which doesn't match
         // glibc strfromd). Delegate to the shared helper that handles
         // the reshape.
-        "e" => frankenlibc_core::stdlib::ecvt::render_pct_e(value, precision),
+        "e" => frankenlibc_core::stdlib::ecvt::render_pct_e(value, decimal_precision),
         "E" => {
             // %E is identical to %e but with uppercase `E`.
-            frankenlibc_core::stdlib::ecvt::render_pct_e(value, precision)
+            frankenlibc_core::stdlib::ecvt::render_pct_e(value, decimal_precision)
                 .replace('e', "E")
                 .to_ascii_uppercase()
         }
@@ -6218,12 +6223,145 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
         // length-based shorter-of-two heuristic was structurally
         // wrong: for value=0 with precision=6 it picked "0.000000"
         // instead of glibc's "0".
-        "g" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, precision),
-        "G" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, precision)
+        "g" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, decimal_precision),
+        "G" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, decimal_precision)
             .replace('e', "E")
             .to_ascii_uppercase(),
 
+        "a" => render_hex_float(value, precision, false),
+        "A" => render_hex_float(value, precision, true),
+
         _ => format!("{value}"),
+    }
+}
+
+fn render_hex_float(value: f64, precision: Option<usize>, uppercase: bool) -> String {
+    if value.is_nan() {
+        return if uppercase {
+            String::from("NAN")
+        } else {
+            String::from("nan")
+        };
+    }
+    if value.is_infinite() {
+        let inf = if uppercase { "INF" } else { "inf" };
+        return if value.is_sign_negative() {
+            format!("-{inf}")
+        } else {
+            inf.to_string()
+        };
+    }
+
+    let prefix = if uppercase { "0X" } else { "0x" };
+    let exponent_marker = if uppercase { 'P' } else { 'p' };
+    let hex_digits = if uppercase {
+        b"0123456789ABCDEF"
+    } else {
+        b"0123456789abcdef"
+    };
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    let bits = value.abs().to_bits();
+    let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1_u64 << 52) - 1);
+
+    if exponent_bits == 0 && fraction == 0 {
+        let mut out = format!("{sign}{prefix}0");
+        if let Some(precision) = precision
+            && precision != 0
+        {
+            out.push('.');
+            out.extend(std::iter::repeat_n('0', precision));
+        }
+        out.push(exponent_marker);
+        out.push_str("+0");
+        return out;
+    }
+
+    let exponent = if exponent_bits == 0 {
+        -1022
+    } else {
+        exponent_bits - 1023
+    };
+    let mantissa_units = if exponent_bits == 0 {
+        fraction as u128
+    } else {
+        (1_u128 << 52) | fraction as u128
+    };
+
+    let mut out = String::new();
+    out.push_str(sign);
+    out.push_str(prefix);
+    match precision {
+        Some(precision) => {
+            let integer;
+            let fraction;
+            if precision >= 13 {
+                integer = mantissa_units >> 52;
+                fraction = mantissa_units & ((1_u128 << 52) - 1);
+            } else {
+                let rounded = round_hex_mantissa(mantissa_units, precision);
+                let scale = if precision == 0 {
+                    1
+                } else {
+                    1_u128 << (4 * precision)
+                };
+                integer = rounded / scale;
+                fraction = rounded % scale;
+            }
+            let _ = write!(out, "{integer:x}");
+            if precision != 0 {
+                out.push('.');
+                if precision >= 13 {
+                    let _ = write!(out, "{fraction:013x}");
+                    out.extend(std::iter::repeat_n('0', precision - 13));
+                } else {
+                    let _ = write!(out, "{fraction:0precision$x}");
+                }
+            }
+        }
+        None => {
+            let integer = mantissa_units >> 52;
+            let fraction = mantissa_units & ((1_u128 << 52) - 1);
+            let _ = write!(out, "{integer:x}");
+            let mut digits = String::with_capacity(13);
+            for idx in (0..13).rev() {
+                let nibble = ((fraction >> (idx * 4)) & 0xf) as usize;
+                digits.push(hex_digits[nibble] as char);
+            }
+            let trimmed = digits.trim_end_matches('0');
+            if !trimmed.is_empty() {
+                out.push('.');
+                out.push_str(trimmed);
+            }
+        }
+    }
+    if uppercase {
+        out = out.to_ascii_uppercase();
+    }
+    out.push(exponent_marker);
+    if exponent >= 0 {
+        let _ = write!(out, "+{exponent}");
+    } else {
+        let _ = write!(out, "{exponent}");
+    }
+    out
+}
+
+fn round_hex_mantissa(mantissa_units: u128, precision: usize) -> u128 {
+    if precision >= 13 {
+        return mantissa_units << (4 * (precision - 13));
+    }
+    let shift = 52 - (4 * precision);
+    if shift == 0 {
+        return mantissa_units;
+    }
+    let quotient = mantissa_units >> shift;
+    let remainder = mantissa_units & ((1_u128 << shift) - 1);
+    let half = 1_u128 << (shift - 1);
+    if remainder > half || (remainder == half && quotient & 1 == 1) {
+        quotient + 1
+    } else {
+        quotient
     }
 }
 
