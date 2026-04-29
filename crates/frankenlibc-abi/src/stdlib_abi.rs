@@ -3431,7 +3431,6 @@ pub unsafe extern "C" fn getsubopt(
         return -1;
     };
     if end == opt_ptr && !at_comma {
-        unsafe { *valuep = ptr::null_mut() };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 4, false);
         return -1;
     }

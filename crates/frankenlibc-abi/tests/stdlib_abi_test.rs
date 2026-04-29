@@ -4639,6 +4639,27 @@ fn getsubopt_unknown_value_returns_entire_suboption() {
 }
 
 #[test]
+fn getsubopt_empty_input_preserves_value_pointer() {
+    let tok_foo = CString::new("foo").unwrap();
+    let tokens_raw: [*mut libc::c_char; 2] =
+        [tok_foo.as_ptr() as *mut libc::c_char, ptr::null_mut()];
+    let input = CString::new("").unwrap();
+    let mut buf: Vec<u8> = input.into_bytes_with_nul();
+    let mut opt_ptr = buf.as_mut_ptr() as *mut libc::c_char;
+    let sentinel = 0x1234usize as *mut libc::c_char;
+    let mut valuep = sentinel;
+
+    let idx = unsafe { getsubopt(&mut opt_ptr, tokens_raw.as_ptr(), &mut valuep) };
+
+    assert_eq!(idx, -1);
+    assert_eq!(opt_ptr, buf.as_mut_ptr() as *mut libc::c_char);
+    assert_eq!(
+        valuep, sentinel,
+        "glibc leaves valuep unchanged for an empty input string"
+    );
+}
+
+#[test]
 fn getsubopt_rejects_tracked_unterminated_option() {
     let tok_foo = CString::new("foo").unwrap();
     let tokens_raw: [*mut libc::c_char; 2] =
