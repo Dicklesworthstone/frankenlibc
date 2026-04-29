@@ -91,8 +91,11 @@ const CONVERSIONS: &[(&str, &str, &[u8])] = &[
     ("UTF-8", "UTF-8", b"already UTF-8 \xc3\xa9"),
     ("LATIN1", "UTF-8", b"Hello!"), // LATIN1 alias for ISO-8859-1
     ("UTF-8", "LATIN1", b"caf\xe9"),
-    // Cases excluded (fl charset whitelist gap): "ASCII"/"US-ASCII" not
-    // recognized by fl::iconv_open. glibc accepts them. Tracked separately.
+    // ASCII cases — fl now aliases ASCII to UTF-8 (see iconv/mod.rs).
+    // Pure ASCII bytes pass through identically in both fl and glibc.
+    ("ASCII", "UTF-8", b"plain ASCII"),
+    ("UTF-8", "ASCII", b"plain ASCII"),
+    ("US-ASCII", "UTF-8", b"more ASCII"),
 ];
 
 #[test]

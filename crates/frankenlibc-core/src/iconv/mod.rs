@@ -90,7 +90,15 @@ const PHASE1_CODEC_TABLE: [CodecSpec; 4] = [
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
         normalized: "UTF8",
-        aliases: &["UTF8"],
+        // ASCII / US-ASCII / ANSI_X3.4-1968 / ISO646-US are all 7-bit
+        // codecs whose byte set is a strict subset of UTF-8. Aliasing them
+        // to UTF-8 means ASCII→UTF-8 passes through identically, and
+        // UTF-8→ASCII passes through any UTF-8-valid byte (including
+        // multi-byte sequences). The latter is more permissive than glibc's
+        // strict ASCII codec, which rejects non-ASCII with EILSEQ — that
+        // remains a parity gap (bd-b60b5d) until we implement a dedicated
+        // ASCII codec with proper rejection.
+        aliases: &["UTF8", "ASCII", "USASCII", "ANSIX341968", "ISO646US"],
     },
     CodecSpec {
         encoding: Encoding::Latin1,
