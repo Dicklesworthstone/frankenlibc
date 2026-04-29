@@ -4847,9 +4847,18 @@ pub unsafe extern "C" fn qgcvt(value: c_double, ndigit: c_int, buf: *mut c_char)
     if buf.is_null() {
         return std::ptr::null_mut();
     }
+    // Per glibc: qgcvt is the long-double variant of gcvt and shares
+    // the same `%.<ndigit>g` semantics — total significant digits,
+    // auto-switch between fixed and scientific based on exponent,
+    // trailing-zero stripping, C-style `e+02` exponents. The previous
+    // impl used `format!("{:.prec$}", value)` (i.e., %.Nf fixed-point
+    // with N fractional digits), which diverged from glibc on every
+    // case where %f and %g differ — same bug shape as the original
+    // gcvt before its 58ac3c7f rewrite. Delegate to the now-correct
+    // shared %g renderer in frankenlibc-core.
     let prec = (ndigit.max(0) as usize).min(MAX_LEGACY_CVT_DIGITS);
-    let s = format!("{value:.prec$}");
-    let bytes = s.as_bytes();
+    let rendered = frankenlibc_core::stdlib::ecvt::render_pct_g(value, prec);
+    let bytes = rendered.as_bytes();
     let tracked_remaining = known_remaining(buf as usize);
     let copy_len = tracked_remaining
         .map(|remaining| bytes.len().min(remaining.saturating_sub(1)))

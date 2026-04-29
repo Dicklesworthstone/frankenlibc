@@ -4352,8 +4352,12 @@ fn gcvt_caps_tracked_two_byte_buffer() {
 
 #[test]
 fn qgcvt_basic_conversion() {
+    // ndigit is the number of *significant* digits per %g semantics
+    // (not fractional digits). qgcvt(3.25, 6) = "3.25" — 3 significant
+    // digits within the precision budget. With ndigit=2 the answer is
+    // "3.2" (rounded to 2 sig digits), not "3.25".
     let mut buf = [0u8; 64];
-    let result = unsafe { qgcvt(3.25, 2, buf.as_mut_ptr() as *mut libc::c_char) };
+    let result = unsafe { qgcvt(3.25, 6, buf.as_mut_ptr() as *mut libc::c_char) };
     assert!(!result.is_null());
     let s = unsafe { std::ffi::CStr::from_ptr(result) };
     assert!(s.to_str().unwrap().contains("3.25"));

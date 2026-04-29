@@ -49,6 +49,17 @@ unsafe extern "C" {
         decpt: *mut c_int,
         sign: *mut c_int,
     ) -> *mut c_char;
+    // The q* (long-double) variants — qecvt / qfcvt / qgcvt /
+    // qecvt_r / qfcvt_r — are NOT diff-tested here. On x86_64 glibc
+    // they take 80-bit extended precision, but the FrankenLibC impl
+    // approximates them as f64. A direct diff against glibc's
+    // long-double conversions would surface precision-mismatch noise
+    // (different rounded digits for non-exact f64 values) rather
+    // than real algorithmic bugs. The fixes from
+    // 5543f5d5 (ecvt_r/fcvt_r) and the qgcvt %g rewrite shipping in
+    // this commit are pinned via the in-crate stdlib_abi unit tests
+    // and the gcvt parity diff (since qgcvt now delegates to the
+    // same render_pct_g helper).
     /// Host glibc reentrant `ecvt_r`: caller provides buffer.
     fn ecvt_r(
         value: f64,
