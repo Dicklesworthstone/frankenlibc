@@ -3223,11 +3223,17 @@ pub unsafe extern "C" fn gcvt(value: c_double, ndigit: c_int, buf: *mut c_char) 
         return buf;
     }
 
-    // Assume caller's buffer is at least ndigit + 16 bytes (glibc doesn't bounds-check).
-    let buf_size = (ndigit.max(0) as usize).saturating_add(32).min(512);
+    // Preserve the historical assumption for untracked buffers, but never
+    // manufacture a Rust slice past the end of a malloc-tracked allocation.
+    let assumed_size = (ndigit.max(0) as usize).saturating_add(32).min(512);
+    let tracked_remaining = known_remaining(buf as usize);
+    let buf_size = tracked_remaining
+        .map(|remaining| remaining.min(assumed_size))
+        .unwrap_or(assumed_size);
+    let adverse = tracked_remaining.is_some_and(|remaining| remaining < assumed_size);
     let slice = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buf_size) };
     frankenlibc_core::stdlib::gcvt(value, ndigit, slice);
-    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, false);
+    runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 8, adverse);
     buf
 }
 

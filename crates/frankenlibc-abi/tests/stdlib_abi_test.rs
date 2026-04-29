@@ -4322,6 +4322,34 @@ fn gcvt_basic_conversion() {
     assert!(s.to_str().unwrap().contains("3.25"));
 }
 
+#[test]
+fn gcvt_caps_tracked_one_byte_buffer() {
+    let raw = unsafe { malloc_tracked_bytes(1) };
+    unsafe { raw.write(b'X') };
+
+    let result = unsafe { gcvt(123.456, 10, raw.cast::<libc::c_char>()) };
+
+    assert_eq!(result.cast::<u8>(), raw);
+    assert_eq!(unsafe { raw.read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
+#[test]
+fn gcvt_caps_tracked_two_byte_buffer() {
+    let raw = unsafe { malloc_tracked_bytes(2) };
+    unsafe {
+        raw.write(b'X');
+        raw.add(1).write(b'Y');
+    }
+
+    let result = unsafe { gcvt(123.456, 10, raw.cast::<libc::c_char>()) };
+
+    assert_eq!(result.cast::<u8>(), raw);
+    assert_eq!(unsafe { raw.read() }, b'1');
+    assert_eq!(unsafe { raw.add(1).read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
 // ===========================================================================
 // on_exit / at_quick_exit tests
 // ===========================================================================
