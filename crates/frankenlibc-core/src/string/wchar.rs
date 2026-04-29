@@ -363,6 +363,13 @@ pub fn wcwidth(wc: u32) -> i32 {
         || (0x06DF..=0x06E4).contains(&wc)
         || (0x06E7..=0x06E8).contains(&wc)
         || (0x06EA..=0x06ED).contains(&wc)
+        || (0x0900..=0x0902).contains(&wc)  // Devanagari signs (Mn)
+        || wc == 0x093C                     // Devanagari sign nukta (Mn)
+        || (0x0941..=0x0948).contains(&wc)  // Devanagari vowel signs (Mn)
+        || wc == 0x094D                     // Devanagari sign virama (Mn)
+        || wc == 0x0E31                     // Thai character mai han-akat (Mn)
+        || (0x0E34..=0x0E3A).contains(&wc)  // Thai vowel signs / phinthu (Mn)
+        || (0x0E47..=0x0E4E).contains(&wc)  // Thai tone/sign marks (Mn)
         || (0x1AB0..=0x1AFF).contains(&wc)  // Combining Diacritical Marks Extended (Mn)
         || (0x1DC0..=0x1DFF).contains(&wc)  // Combining Diacritical Marks Supplement (Mn)
         || (0x200B..=0x200F).contains(&wc)    // ZWSP/ZWNJ/ZWJ/LRM/RLM (Cf, width 0)
@@ -532,6 +539,12 @@ mod tests {
         assert_eq!(wcwidth(0x1AB0), 0); // Combining Diacritical Marks Extended
         assert_eq!(wcwidth(0x1DC0), 0); // Combining Diacritical Marks Supplement
         assert_eq!(wcwidth(0x20D0), 0); // Combining Diacritical Marks for Symbols
+        assert_eq!(wcwidth(0x0900), 0); // DEVANAGARI SIGN INVERTED CANDRABINDU
+        assert_eq!(wcwidth(0x093C), 0); // DEVANAGARI SIGN NUKTA
+        assert_eq!(wcwidth(0x094D), 0); // DEVANAGARI SIGN VIRAMA
+        assert_eq!(wcwidth(0x0E31), 0); // THAI CHARACTER MAI HAN-AKAT
+        assert_eq!(wcwidth(0x0E34), 0); // THAI CHARACTER SARA I
+        assert_eq!(wcwidth(0x0E4E), 0); // THAI CHARACTER YAMAKKAN
         assert_eq!(wcwidth(0x3099), 0); // COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK
         assert_eq!(wcwidth(0xFE20), 0); // Combining Half Marks
         // Line/paragraph separators (Zl, Zp).
