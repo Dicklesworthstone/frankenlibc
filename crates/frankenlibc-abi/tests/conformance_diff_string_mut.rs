@@ -912,6 +912,9 @@ const STRFROM_DOUBLE_CASES: &[(f64, &[u8])] = &[
     (1e-10, b"%.6e"),
     (1e10, b"%.2g"),
     (123.456, b"%.2g"),
+    (f64::INFINITY, b"%.2E"),
+    (f64::NEG_INFINITY, b"%.2F"),
+    (f64::NAN, b"%.2G"),
 ];
 
 #[test]
@@ -981,6 +984,9 @@ const STRFROM_FLOAT_CASES: &[(f32, &[u8])] = &[
     (123.456, b"%g"),
     (1.5, b"%.0f"),
     (123.456, b"%.2g"),
+    (f32::INFINITY, b"%.2E"),
+    (f32::NEG_INFINITY, b"%.2F"),
+    (f32::NAN, b"%.2G"),
 ];
 
 #[test]

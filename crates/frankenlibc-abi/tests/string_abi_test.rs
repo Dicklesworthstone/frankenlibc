@@ -1388,11 +1388,46 @@ fn strfromf_and_strfroml_delegate_to_shared_formatter() {
 
     assert_eq!(f_len, 3);
     assert_eq!(unsafe { CStr::from_ptr(f_buf.as_ptr()) }.to_bytes(), b"3.2");
-    assert_eq!(l_len, 7);
+    assert_eq!(l_len, 9);
     assert_eq!(
         unsafe { CStr::from_ptr(l_buf.as_ptr()) }.to_bytes(),
-        b"3.250e0"
+        b"3.250e+00"
     );
+}
+
+#[test]
+fn strfromd_uppercase_formats_uppercase_special_values() {
+    let mut e_buf = [0_i8; 16];
+    let mut f_buf = [0_i8; 16];
+    let mut g_buf = [0_i8; 16];
+
+    let e_len = unsafe {
+        strfromd(
+            e_buf.as_mut_ptr(),
+            e_buf.len(),
+            c"%.2E".as_ptr(),
+            f64::INFINITY,
+        )
+    };
+    let f_len = unsafe {
+        strfromd(
+            f_buf.as_mut_ptr(),
+            f_buf.len(),
+            c"%.2F".as_ptr(),
+            f64::NEG_INFINITY,
+        )
+    };
+    let g_len = unsafe { strfromd(g_buf.as_mut_ptr(), g_buf.len(), c"%.2G".as_ptr(), f64::NAN) };
+
+    assert_eq!(e_len, 3);
+    assert_eq!(f_len, 4);
+    assert_eq!(g_len, 3);
+    assert_eq!(unsafe { CStr::from_ptr(e_buf.as_ptr()) }.to_bytes(), b"INF");
+    assert_eq!(
+        unsafe { CStr::from_ptr(f_buf.as_ptr()) }.to_bytes(),
+        b"-INF"
+    );
+    assert_eq!(unsafe { CStr::from_ptr(g_buf.as_ptr()) }.to_bytes(), b"NAN");
 }
 
 #[test]

@@ -6185,7 +6185,8 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
     match spec {
         // %f / %F — fixed-point with `precision` fractional digits.
         // Rust's `{:.N$}` is bit-compatible with printf %f for f64.
-        "f" | "F" => format!("{value:.precision$}"),
+        "f" => format!("{value:.precision$}"),
+        "F" => format!("{value:.precision$}").to_ascii_uppercase(),
 
         // %e — scientific with C-style `e+02` exponent (Rust's default
         // gives `e2` without sign or leading zeros, which doesn't match
@@ -6196,6 +6197,7 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
             // %E is identical to %e but with uppercase `E`.
             frankenlibc_core::stdlib::ecvt::render_pct_e(value, precision)
                 .replace('e', "E")
+                .to_ascii_uppercase()
         }
 
         // %g — uses *significant* digits (not fractional) and switches
@@ -6206,7 +6208,8 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
         // instead of glibc's "0".
         "g" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, precision),
         "G" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, precision)
-            .replace('e', "E"),
+            .replace('e', "E")
+            .to_ascii_uppercase(),
 
         _ => format!("{value}"),
     }
