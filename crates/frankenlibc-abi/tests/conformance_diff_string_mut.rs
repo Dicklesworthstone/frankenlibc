@@ -1275,13 +1275,15 @@ fn diff_swab_cases() {
     let mut divs = Vec::new();
     let cases: &[(&[u8], isize)] = &[
         (b"", 0),
-        (b"ab", 2),                      // single pair
-        (b"abcd", 4),                    // two pairs
-        (b"abcdefgh", 8),                // four pairs
-        (b"\xff\x00\xfe\x01", 4),        // high-bit bytes
+        (b"ab", 2),               // single pair
+        (b"abcd", 4),             // two pairs
+        (b"abc", 3),              // odd count leaves trailing byte untouched
+        (b"\xff\x00\xfe", 3),     // odd high-bit count
+        (b"abcdefgh", 8),         // four pairs
+        (b"\xff\x00\xfe\x01", 4), // high-bit bytes
         (b"\x00\x01\x02\x03", 4),
-        (b"abcdef", 0),                  // zero count = no-op
-        (b"abcdef", -2),                 // negative count = no-op per glibc
+        (b"abcdef", 0),  // zero count = no-op
+        (b"abcdef", -2), // negative count = no-op per glibc
     ];
     for &(src, n) in cases {
         // Prefill both dst buffers with a sentinel so we catch any
@@ -1330,7 +1332,7 @@ fn diff_memfrob_cases() {
         b"hello",
         b"\x00\x01\x02\x03",
         b"\xff\xfe\xfd\xfc",
-        b"AAAA",                         // all same byte
+        b"AAAA", // all same byte
         b"the quick brown fox",
     ];
     for src in inputs {
@@ -1370,7 +1372,11 @@ fn diff_memfrob_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "memfrob divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "memfrob divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
