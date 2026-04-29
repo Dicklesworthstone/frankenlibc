@@ -300,4 +300,14 @@ name = "fuzz_fnmatch"
 path = "fuzz_targets/fuzz_fnmatch.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_vis"
+path = "fuzz_targets/fuzz_vis.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_strptime"
+path = "fuzz_targets/fuzz_strptime.rs"
+doc = false
+
 [workspace]
