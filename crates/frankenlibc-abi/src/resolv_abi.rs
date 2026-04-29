@@ -3954,14 +3954,69 @@ pub unsafe extern "C" fn __p_fqnname(
 
 // --- HOSTALIASES ---
 
+const HOSTALIAS_BUF_LEN: usize = 1025;
+
+thread_local! {
+    static HOSTALIAS_BUF: RefCell<[u8; HOSTALIAS_BUF_LEN]> =
+        const { RefCell::new([0u8; HOSTALIAS_BUF_LEN]) };
+}
+
+fn hostalias_lookup(name: &[u8], hosts_file: &str) -> Option<Vec<u8>> {
+    let contents = std::fs::read_to_string(hosts_file).ok()?;
+    for line in contents.lines() {
+        // Skip comments and blank lines.
+        let line = line.trim_start();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Split on first whitespace run: alias, then dns name.
+        let mut it = line.split_whitespace();
+        let alias = it.next()?;
+        let dns = it.next()?;
+        if alias.as_bytes().eq_ignore_ascii_case(name) {
+            return Some(dns.as_bytes().to_vec());
+        }
+    }
+    None
+}
+
 /// `__hostalias(*name) -> *const c_char` — lookup HOSTALIASES alias.
-/// Stub returns NULL (no alias file consulted).
+/// Reads `$HOSTALIASES` (a path to a file with `alias dnsname` lines),
+/// case-insensitively matches `name` against the first column, and
+/// returns a pointer to a thread-local static buffer holding the DNS
+/// name. Returns NULL if `$HOSTALIASES` is unset, the file is missing,
+/// or no alias matches.
 ///
 /// # Safety
-/// `name` may be NULL; we don't dereference it.
+/// `name` may be NULL; we return NULL in that case. Otherwise it must
+/// point to a NUL-terminated C string. The returned pointer is valid
+/// until the next call from the same thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __hostalias(_name: *const c_char) -> *const c_char {
-    core::ptr::null()
+pub unsafe extern "C" fn __hostalias(name: *const c_char) -> *const c_char {
+    if name.is_null() {
+        return core::ptr::null();
+    }
+    let name_bytes = unsafe { CStr::from_ptr(name) }.to_bytes();
+    if name_bytes.is_empty() {
+        return core::ptr::null();
+    }
+    let Ok(file) = std::env::var("HOSTALIASES") else {
+        return core::ptr::null();
+    };
+    let Some(dns) = hostalias_lookup(name_bytes, &file) else {
+        return core::ptr::null();
+    };
+    // Cap to buffer size minus the NUL terminator.
+    let copy_len = dns.len().min(HOSTALIAS_BUF_LEN - 1);
+    HOSTALIAS_BUF.with(|cell| {
+        let mut buf = cell.borrow_mut();
+        buf[..copy_len].copy_from_slice(&dns[..copy_len]);
+        buf[copy_len] = 0;
+        // Return pointer to the thread-local buffer. Casting through
+        // a raw pointer here is the standard pattern for handing back
+        // a static-lifetime view of TLS storage.
+        buf.as_ptr() as *const c_char
+    })
 }
 
 /// `__res_hostalias(*statp, *name, *buf, buflen) -> *const c_char` —
