@@ -3699,10 +3699,10 @@ pub unsafe extern "C" fn __fp_nquery(_msg: *const u8, _len: c_int, _file: *mut c
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fp_resstat(_statp: *const c_void, _file: *mut c_void) {}
 
-/// All `__p_*` helpers below take values and write a textual rep to a
-/// FILE* or return a `*const c_char`. The look-up variants below replicate
-/// glibc's static-table → fallback-decimal-buffer behavior; the writing
-/// variants stay no-ops since we don't render to FILE* streams.
+// All `__p_*` helpers below take values and write a textual rep to a
+// FILE* or return a `*const c_char`. The look-up variants below replicate
+// glibc's static-table → fallback-decimal-buffer behavior; the writing
+// variants stay no-ops since we don't render to FILE* streams.
 
 thread_local! {
     /// Per-thread fallback buffer for `__p_class` / `__p_type` decimal
@@ -3716,7 +3716,7 @@ unsafe fn write_decimal_fallback(value: c_int) -> *const c_char {
         let buf_ptr = cell.get();
         // SAFETY: thread-local; no aliasing across threads.
         let buf = unsafe { &mut *buf_ptr };
-        let s = format!("{}", value as i32);
+        let s = format!("{value}");
         let bytes = s.as_bytes();
         let n = bytes.len().min(buf.len() - 1);
         buf[..n].copy_from_slice(&bytes[..n]);

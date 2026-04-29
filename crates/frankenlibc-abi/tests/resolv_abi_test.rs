@@ -2765,8 +2765,9 @@ fn bd_dcfj5_dns_text_helpers_return_static_strings() {
     assert_eq!(class_str.to_bytes(), b"IN");
     let type_str = unsafe { CStr::from_ptr(__p_type(1)) };
     assert_eq!(type_str.to_bytes(), b"A");
+    // __p_option(0) is unknown — falls back to "?0x0?" matching glibc.
     let opt_str = unsafe { CStr::from_ptr(__p_option(0)) };
-    assert_eq!(opt_str.to_bytes(), b"");
+    assert_eq!(opt_str.to_bytes(), b"?0x0?");
     let rcode_str = unsafe { CStr::from_ptr(__p_rcode(0)) };
     assert_eq!(rcode_str.to_bytes(), b"NOERROR");
     let secs_str = unsafe { CStr::from_ptr(__p_secstodate(0)) };
