@@ -124,11 +124,7 @@ pub fn strncpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
 pub fn stpncpy(dest: &mut [u8], src: &[u8], n: usize) -> usize {
     let count = strncpy(dest, src, n);
     let src_len = strlen(src);
-    if src_len < count {
-        src_len
-    } else {
-        count
-    }
+    if src_len < count { src_len } else { count }
 }
 
 /// Appends `src` to the end of the NUL-terminated string in `dest`.
@@ -195,11 +191,7 @@ pub fn strchr(s: &[u8], c: u8) -> Option<usize> {
         }
     }
 
-    if c == 0 {
-        Some(s.len())
-    } else {
-        None
-    }
+    if c == 0 { Some(s.len()) } else { None }
 }
 
 /// Locates `c` in `s`, returning either the match index or the terminating NUL index.
@@ -388,17 +380,39 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 /// Equivalent to C `strspn`.
 pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
     let accept_len = strlen(accept);
-    if accept_len == 0 {
-        return 0;
-    }
-    if accept_len == 1 {
-        let accepted = accept[0];
-        for (i, &byte) in s.iter().enumerate() {
-            if byte == 0 || byte != accepted {
-                return i;
+    match accept_len {
+        0 => return 0,
+        1 => {
+            let accepted = accept[0];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || byte != accepted {
+                    return i;
+                }
             }
+            return s.len();
         }
-        return s.len();
+        2 => {
+            let a0 = accept[0];
+            let a1 = accept[1];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || (byte != a0 && byte != a1) {
+                    return i;
+                }
+            }
+            return s.len();
+        }
+        3 => {
+            let a0 = accept[0];
+            let a1 = accept[1];
+            let a2 = accept[2];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || (byte != a0 && byte != a1 && byte != a2) {
+                    return i;
+                }
+            }
+            return s.len();
+        }
+        _ => {}
     }
 
     let accept_set = &accept[..accept_len];
@@ -418,17 +432,39 @@ pub fn strspn(s: &[u8], accept: &[u8]) -> usize {
 /// Equivalent to C `strcspn`.
 pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
     let reject_len = strlen(reject);
-    if reject_len == 0 {
-        return strlen(s);
-    }
-    if reject_len == 1 {
-        let rejected = reject[0];
-        for (i, &byte) in s.iter().enumerate() {
-            if byte == 0 || byte == rejected {
-                return i;
+    match reject_len {
+        0 => return strlen(s),
+        1 => {
+            let rejected = reject[0];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || byte == rejected {
+                    return i;
+                }
             }
+            return s.len();
         }
-        return s.len();
+        2 => {
+            let r0 = reject[0];
+            let r1 = reject[1];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || byte == r0 || byte == r1 {
+                    return i;
+                }
+            }
+            return s.len();
+        }
+        3 => {
+            let r0 = reject[0];
+            let r1 = reject[1];
+            let r2 = reject[2];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 || byte == r0 || byte == r1 || byte == r2 {
+                    return i;
+                }
+            }
+            return s.len();
+        }
+        _ => {}
     }
 
     let reject_set = &reject[..reject_len];
@@ -447,20 +483,48 @@ pub fn strcspn(s: &[u8], reject: &[u8]) -> usize {
 /// Equivalent to C `strpbrk`. Returns the index of the first match, or `None`.
 pub fn strpbrk(s: &[u8], accept: &[u8]) -> Option<usize> {
     let accept_len = strlen(accept);
-    if accept_len == 0 {
-        return None;
-    }
-    if accept_len == 1 {
-        let accepted = accept[0];
-        for (i, &byte) in s.iter().enumerate() {
-            if byte == 0 {
-                return None;
+    match accept_len {
+        0 => return None,
+        1 => {
+            let accepted = accept[0];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 {
+                    return None;
+                }
+                if byte == accepted {
+                    return Some(i);
+                }
             }
-            if byte == accepted {
-                return Some(i);
-            }
+            return None;
         }
-        return None;
+        2 => {
+            let a0 = accept[0];
+            let a1 = accept[1];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 {
+                    return None;
+                }
+                if byte == a0 || byte == a1 {
+                    return Some(i);
+                }
+            }
+            return None;
+        }
+        3 => {
+            let a0 = accept[0];
+            let a1 = accept[1];
+            let a2 = accept[2];
+            for (i, &byte) in s.iter().enumerate() {
+                if byte == 0 {
+                    return None;
+                }
+                if byte == a0 || byte == a1 || byte == a2 {
+                    return Some(i);
+                }
+            }
+            return None;
+        }
+        _ => {}
     }
 
     let accept_set = &accept[..accept_len];
@@ -819,6 +883,12 @@ mod tests {
     }
 
     #[test]
+    fn test_strspn_small_accept_sets() {
+        assert_eq!(strspn(b"ababaZ\0", b"ab\0"), 5);
+        assert_eq!(strspn(b"cabbaZ\0", b"abc\0"), 5);
+    }
+
+    #[test]
     fn test_strspn_stops_at_terminator() {
         assert_eq!(strspn(b"abc\0Z", b"abcZ\0"), 3);
     }
@@ -845,6 +915,12 @@ mod tests {
     }
 
     #[test]
+    fn test_strcspn_small_reject_sets() {
+        assert_eq!(strcspn(b"abcXdef\0", b"XY\0"), 3);
+        assert_eq!(strcspn(b"abcZdef\0", b"XYZ\0"), 3);
+    }
+
+    #[test]
     fn test_strcspn_stops_at_terminator() {
         assert_eq!(strcspn(b"abc\0Z", b"Z\0"), 3);
     }
@@ -867,6 +943,12 @@ mod tests {
     #[test]
     fn test_strpbrk_single_accept_match_without_terminator() {
         assert_eq!(strpbrk(b"abcZdef", b"Z\0"), Some(3));
+    }
+
+    #[test]
+    fn test_strpbrk_small_accept_sets() {
+        assert_eq!(strpbrk(b"abcYdef\0", b"XY\0"), Some(3));
+        assert_eq!(strpbrk(b"abcZdef\0", b"XYZ\0"), Some(3));
     }
 
     #[test]

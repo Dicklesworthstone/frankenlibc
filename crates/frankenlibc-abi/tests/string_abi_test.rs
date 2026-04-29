@@ -643,6 +643,32 @@ fn strcspn_counts_rejected_prefix() {
 }
 
 #[test]
+fn constant_set_scan_helpers_match_public_entrypoints() {
+    let s = c"abcZdef";
+    assert_eq!(
+        unsafe { __strspn_c2(s.as_ptr(), b'a' as c_int, b'b' as c_int) },
+        unsafe { strspn(s.as_ptr(), c"ab".as_ptr()) }
+    );
+    assert_eq!(
+        unsafe { __strspn_c3(s.as_ptr(), b'a' as c_int, b'b' as c_int, b'c' as c_int) },
+        unsafe { strspn(s.as_ptr(), c"abc".as_ptr()) }
+    );
+    assert_eq!(
+        unsafe { __strcspn_c2(s.as_ptr(), b'X' as c_int, b'Z' as c_int) },
+        unsafe { strcspn(s.as_ptr(), c"XZ".as_ptr()) }
+    );
+    assert_eq!(
+        unsafe { __strcspn_c3(s.as_ptr(), b'X' as c_int, b'Y' as c_int, b'Z' as c_int) },
+        unsafe { strcspn(s.as_ptr(), c"XYZ".as_ptr()) }
+    );
+
+    let p2 = unsafe { __strpbrk_c2(s.as_ptr(), b'Y' as c_int, b'Z' as c_int) };
+    let p3 = unsafe { __strpbrk_c3(s.as_ptr(), b'X' as c_int, b'Y' as c_int, b'Z' as c_int) };
+    assert_eq!(unsafe { p2.offset_from(s.as_ptr()) }, 3);
+    assert_eq!(unsafe { p3.offset_from(s.as_ptr()) }, 3);
+}
+
+#[test]
 fn strpbrk_finds_first_matching_char() {
     let ptr = unsafe { strpbrk(c"hello world".as_ptr(), c"aeiou".as_ptr()) };
     assert!(!ptr.is_null());
