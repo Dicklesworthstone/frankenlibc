@@ -28,6 +28,16 @@ unsafe extern "C" {
     fn strfromd(s: *mut c_char, n: usize, format: *const c_char, value: f64) -> c_int;
     /// Host glibc C23 `strfromf` — float → string with format.
     fn strfromf(s: *mut c_char, n: usize, format: *const c_char, value: f32) -> c_int;
+    /// Host glibc BSD `bzero` — memset-with-zero.
+    fn bzero(s: *mut c_void, n: usize);
+    /// Host glibc BSD `bcmp` — memcmp returning 0 or non-zero.
+    fn bcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int;
+    /// Host glibc BSD `bcopy` — memmove with src/dst args swapped.
+    fn bcopy(src: *const c_void, dst: *mut c_void, n: usize);
+    /// Host glibc BSD `index` — strchr alias.
+    fn index(s: *const c_char, c: c_int) -> *mut c_char;
+    /// Host glibc BSD `rindex` — strrchr alias.
+    fn rindex(s: *const c_char, c: c_int) -> *mut c_char;
 }
 
 #[derive(Debug)]
@@ -1051,12 +1061,187 @@ fn nul_terminated_slice(buf: &[u8]) -> &[u8] {
 }
 
 // ===========================================================================
+// bzero / bcmp / bcopy — BSD legacy memory ops (mostly aliases for the
+// memcmp/memmove/memset trio with arg-shape quirks)
+// ===========================================================================
+
+#[test]
+fn diff_bzero_cases() {
+    let mut divs = Vec::new();
+    for &n in &[0usize, 1, 4, 16, 64] {
+        let mut fl_buf = vec![0xCDu8; 64];
+        let mut lc_buf = vec![0xCDu8; 64];
+        unsafe {
+            fl::bzero(fl_buf.as_mut_ptr() as *mut c_void, n);
+            bzero(lc_buf.as_mut_ptr() as *mut c_void, n);
+        }
+        if fl_buf != lc_buf {
+            divs.push(Divergence {
+                function: "bzero",
+                case: format!("n={n}"),
+                field: "buffer",
+                frankenlibc: format!("{:?}", &fl_buf[..n.min(16)]),
+                glibc: format!("{:?}", &lc_buf[..n.min(16)]),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "bzero divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_bcmp_cases() {
+    let mut divs = Vec::new();
+    let cases: &[(&[u8], &[u8], usize)] = &[
+        (b"abc", b"abc", 3),
+        (b"abc", b"abd", 3),
+        (b"abc", b"abd", 2),
+        (b"", b"", 0),
+        (b"\xff\xff", b"\x00\x00", 2),
+        (b"abc\x00def", b"abc\x00def", 7),
+    ];
+    for (a, b, n) in cases {
+        let fl_v = unsafe {
+            fl::bcmp(
+                a.as_ptr() as *const c_void,
+                b.as_ptr() as *const c_void,
+                *n,
+            )
+        };
+        let lc_v = unsafe {
+            bcmp(
+                a.as_ptr() as *const c_void,
+                b.as_ptr() as *const c_void,
+                *n,
+            )
+        };
+        // bcmp returns 0 if equal, non-zero otherwise. The exact
+        // non-zero magnitude varies by impl; compare the boolean.
+        if (fl_v == 0) != (lc_v == 0) {
+            divs.push(Divergence {
+                function: "bcmp",
+                case: format!("({:?}, {:?}, {})", a, b, n),
+                field: "equality",
+                frankenlibc: format!("{}", fl_v == 0),
+                glibc: format!("{}", lc_v == 0),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "bcmp divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_bcopy_cases() {
+    let mut divs = Vec::new();
+    let srcs: &[&[u8]] = &[b"", b"a", b"hello", b"\xff\xfe\xfd\xfc"];
+    for src in srcs {
+        for &n in &[0usize, 1, 3, src.len()] {
+            if n > src.len() {
+                continue;
+            }
+            let mut dst_fl = vec![0xCDu8; 32];
+            let mut dst_lc = vec![0xCDu8; 32];
+            unsafe {
+                fl::bcopy(
+                    src.as_ptr() as *const c_void,
+                    dst_fl.as_mut_ptr() as *mut c_void,
+                    n,
+                );
+                bcopy(
+                    src.as_ptr() as *const c_void,
+                    dst_lc.as_mut_ptr() as *mut c_void,
+                    n,
+                );
+            }
+            if dst_fl != dst_lc {
+                divs.push(Divergence {
+                    function: "bcopy",
+                    case: format!("(src={:?}, n={})", src, n),
+                    field: "buffer",
+                    frankenlibc: format!("{:?}", &dst_fl[..n.min(16)]),
+                    glibc: format!("{:?}", &dst_lc[..n.min(16)]),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "bcopy divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
+// index / rindex — BSD aliases for strchr / strrchr
+// ===========================================================================
+
+#[test]
+fn diff_index_rindex_cases() {
+    let mut divs = Vec::new();
+    let cases: &[(&[u8], c_int)] = &[
+        (b"", b'a' as c_int),
+        (b"hello", b'l' as c_int),
+        (b"hello", b'z' as c_int),
+        (b"hello", 0),
+        (b"\xff\xfe\xfd", 0xff),
+        (b"abc", b'b' as c_int),
+        (b"aaaa", b'a' as c_int),
+    ];
+    for (s, c) in cases {
+        let buf = cstr(s);
+        let p = buf.as_ptr() as *const c_char;
+        let fl_idx = unsafe { fl::index(p, *c) };
+        let lc_idx = unsafe { index(p, *c) };
+        let fl_off = if fl_idx.is_null() {
+            -1
+        } else {
+            unsafe { fl_idx.offset_from(p) }
+        };
+        let lc_off = if lc_idx.is_null() {
+            -1
+        } else {
+            unsafe { lc_idx.offset_from(p) }
+        };
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "index",
+                case: format!("({:?}, {:#x})", s, *c as u32),
+                field: "offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+        let fl_ridx = unsafe { fl::rindex(p, *c) };
+        let lc_ridx = unsafe { rindex(p, *c) };
+        let fl_roff = if fl_ridx.is_null() {
+            -1
+        } else {
+            unsafe { fl_ridx.offset_from(p) }
+        };
+        let lc_roff = if lc_ridx.is_null() {
+            -1
+        } else {
+            unsafe { lc_ridx.offset_from(p) }
+        };
+        if fl_roff != lc_roff {
+            divs.push(Divergence {
+                function: "rindex",
+                case: format!("({:?}, {:#x})", s, *c as u32),
+                field: "offset",
+                frankenlibc: format!("{fl_roff}"),
+                glibc: format!("{lc_roff}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "index/rindex divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
 #[test]
 fn string_mut_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":20,\"divergences\":0}}",
+        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":25,\"divergences\":0}}",
     );
 }

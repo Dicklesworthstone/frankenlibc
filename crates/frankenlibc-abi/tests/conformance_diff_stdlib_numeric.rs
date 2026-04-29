@@ -49,6 +49,12 @@ unsafe extern "C" {
         decpt: *mut c_int,
         sign: *mut c_int,
     ) -> *mut c_char;
+    /// Host glibc `ffs` — find first set bit in an int.
+    fn ffs(i: c_int) -> c_int;
+    /// Host glibc `ffsl` — find first set bit in a long.
+    fn ffsl(i: c_long) -> c_int;
+    /// Host glibc `ffsll` — find first set bit in a long long.
+    fn ffsll(i: std::ffi::c_longlong) -> c_int;
 }
 
 #[derive(Debug)]
@@ -939,6 +945,92 @@ fn diff_gcvt_cases() {
 }
 
 // ===========================================================================
+// ffs / ffsl / ffsll — find first set bit
+// ===========================================================================
+//
+// POSIX `ffs(int)` and the GNU `ffsl(long)` / `ffsll(long long)`
+// extensions return the 1-indexed position of the lowest set bit, or
+// 0 if the input is zero. Implemented in stdlib_abi.rs as thin
+// delegators to frankenlibc-core. Pure functions, deterministic.
+
+const FFS_INT_INPUTS: &[c_int] = &[
+    0, 1, 2, 3, 4, 5, 7, 8,
+    0x80, 0x100, -1,
+    0x7FFFFFFF,                  // INT_MAX
+    i32::MIN,                    // sign bit only
+    0x55555555, 0xAAAAAAAAu32 as c_int,
+];
+
+#[test]
+fn diff_ffs_cases() {
+    let mut divs = Vec::new();
+    for &v in FFS_INT_INPUTS {
+        let fl_v = fl::ffs(v);
+        let lc_v = unsafe { ffs(v) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "ffs",
+                case: format!("0x{:08x}", v as u32),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "ffs divergences:\n{}", render_divs(&divs));
+}
+
+const FFSL_INPUTS: &[c_long] = &[
+    0, 1, 2, 0x100000000, -1,
+    1 << 62, 1 << 63 - 1,
+    i64::MIN,                    // sign bit only on 64-bit long
+];
+
+#[test]
+fn diff_ffsl_cases() {
+    let mut divs = Vec::new();
+    for &v in FFSL_INPUTS {
+        let fl_v = fl::ffsl(v);
+        let lc_v = unsafe { ffsl(v) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "ffsl",
+                case: format!("0x{:016x}", v as u64),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "ffsl divergences:\n{}", render_divs(&divs));
+}
+
+const FFSLL_INPUTS: &[std::ffi::c_longlong] = &[
+    0, 1, 2, 0x100000000, -1,
+    1 << 62, 1 << 63 - 1,
+    i64::MIN,
+];
+
+#[test]
+fn diff_ffsll_cases() {
+    let mut divs = Vec::new();
+    for &v in FFSLL_INPUTS {
+        let fl_v = fl::ffsll(v);
+        let lc_v = unsafe { ffsll(v) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "ffsll",
+                case: format!("0x{:016x}", v as u64),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "ffsll divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
@@ -951,9 +1043,12 @@ fn stdlib_numeric_diff_coverage_report() {
         + STRTOF_CASES.len()                     // strtof
         + A64L_DECODE_CASES.len()                // a64l
         + L64A_ENCODE_CASES.len() * 2            // l64a direct + roundtrip
-        + CVT_INPUTS.len() * 4 * 3;              // (ecvt + fcvt + gcvt) × 4 ndigit values
+        + CVT_INPUTS.len() * 4 * 3               // (ecvt + fcvt + gcvt) × 4 ndigit values
+        + FFS_INT_INPUTS.len()                   // ffs
+        + FFSL_INPUTS.len()                      // ffsl
+        + FFSLL_INPUTS.len();                    // ffsll
     eprintln!(
-        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":14,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":17,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
