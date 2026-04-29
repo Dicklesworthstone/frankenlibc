@@ -64,6 +64,38 @@ unsafe extern "C" {
         s2: *const libc::wchar_t,
         n: usize,
     ) -> c_int;
+    /// Host glibc `wcstol` — wide-char strtol.
+    fn wcstol(
+        nptr: *const libc::wchar_t,
+        endptr: *mut *mut libc::wchar_t,
+        base: c_int,
+    ) -> libc::c_long;
+    /// Host glibc `wcstoul` — wide-char strtoul.
+    fn wcstoul(
+        nptr: *const libc::wchar_t,
+        endptr: *mut *mut libc::wchar_t,
+        base: c_int,
+    ) -> libc::c_ulong;
+    /// Host glibc `wcstoll` — wide-char strtoll.
+    fn wcstoll(
+        nptr: *const libc::wchar_t,
+        endptr: *mut *mut libc::wchar_t,
+        base: c_int,
+    ) -> libc::c_longlong;
+    /// Host glibc `wcstoull` — wide-char strtoull.
+    fn wcstoull(
+        nptr: *const libc::wchar_t,
+        endptr: *mut *mut libc::wchar_t,
+        base: c_int,
+    ) -> libc::c_ulonglong;
+}
+
+/// Convert an ASCII byte slice into a NUL-terminated wchar_t vector
+/// for passing to wide-char numeric conversion functions.
+fn ascii_to_wchars(bytes: &[u8]) -> Vec<u32> {
+    let mut v: Vec<u32> = bytes.iter().map(|&b| b as u32).collect();
+    v.push(0);
+    v
 }
 
 #[derive(Debug)]
@@ -1258,9 +1290,184 @@ fn diff_wcsncasecmp_cases() {
     assert!(divs.is_empty(), "wcsncasecmp divergences:\n{}", render_divs(&divs));
 }
 
+// ===========================================================================
+// wcstol / wcstoul / wcstoll / wcstoull — wide-char integer parsers
+// ===========================================================================
+//
+// Wide-char analogues of strtol/strtoul/strtoll/strtoull. POSIX
+// requires the same parsing rules (whitespace skip, optional sign,
+// 0x/0/decimal prefix detection in base 0, ERANGE on overflow). Our
+// inputs are ASCII-encoded into wchar_t arrays so the locale-
+// sensitive paths stay neutral.
+//
+// Each test compares: return value (must agree exactly within range
+// the C type can represent) AND endptr offset relative to the input
+// (must agree on consumed character count).
+
+const WCS_INT_INPUTS: &[(&[u8], c_int)] = &[
+    (b"42", 0),
+    (b"-7", 0),
+    (b"+99", 0),
+    (b"  123", 0),
+    (b"0x1F", 0),       // base 0 → hex
+    (b"017", 0),        // base 0 → octal
+    (b"0", 0),
+    (b"42", 10),
+    (b"FF", 16),
+    (b"-2147483648", 10), // INT32_MIN
+    (b"2147483647", 10),  // INT32_MAX
+    (b"abc", 10),         // no digits
+    (b"", 10),            // empty
+    (b"123abc", 10),      // trailing garbage
+];
+
+fn ptr_offset_w(base: *const u32, ptr: *const libc::wchar_t) -> isize {
+    if ptr.is_null() {
+        -1
+    } else {
+        unsafe { (ptr as *const u32).offset_from(base) }
+    }
+}
+
+#[test]
+fn diff_wcstol_cases() {
+    let mut divs = Vec::new();
+    for (input, base) in WCS_INT_INPUTS {
+        let w = ascii_to_wchars(input);
+        let p = w.as_ptr();
+        let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let fl_v = unsafe { fl::wcstol(p as *const libc::wchar_t, &mut fl_end, *base) };
+        let lc_v = unsafe { wcstol(p as *const libc::wchar_t, &mut lc_end, *base) };
+        let fl_off = ptr_offset_w(p, fl_end);
+        let lc_off = ptr_offset_w(p, lc_end);
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcstol",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wcstol",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "endptr_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcstol divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wcstoul_cases() {
+    let mut divs = Vec::new();
+    for (input, base) in WCS_INT_INPUTS {
+        let w = ascii_to_wchars(input);
+        let p = w.as_ptr();
+        let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let fl_v = unsafe { fl::wcstoul(p as *const libc::wchar_t, &mut fl_end, *base) };
+        let lc_v = unsafe { wcstoul(p as *const libc::wchar_t, &mut lc_end, *base) };
+        let fl_off = ptr_offset_w(p, fl_end);
+        let lc_off = ptr_offset_w(p, lc_end);
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcstoul",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wcstoul",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "endptr_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcstoul divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wcstoll_cases() {
+    let mut divs = Vec::new();
+    for (input, base) in WCS_INT_INPUTS {
+        let w = ascii_to_wchars(input);
+        let p = w.as_ptr();
+        let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let fl_v = unsafe { fl::wcstoll(p as *const libc::wchar_t, &mut fl_end, *base) };
+        let lc_v = unsafe { wcstoll(p as *const libc::wchar_t, &mut lc_end, *base) };
+        let fl_off = ptr_offset_w(p, fl_end);
+        let lc_off = ptr_offset_w(p, lc_end);
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcstoll",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wcstoll",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "endptr_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcstoll divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wcstoull_cases() {
+    let mut divs = Vec::new();
+    for (input, base) in WCS_INT_INPUTS {
+        let w = ascii_to_wchars(input);
+        let p = w.as_ptr();
+        let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let fl_v = unsafe { fl::wcstoull(p as *const libc::wchar_t, &mut fl_end, *base) };
+        let lc_v = unsafe { wcstoull(p as *const libc::wchar_t, &mut lc_end, *base) };
+        let fl_off = ptr_offset_w(p, fl_end);
+        let lc_off = ptr_offset_w(p, lc_end);
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcstoull",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wcstoull",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "endptr_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcstoull divergences:\n{}", render_divs(&divs));
+}
+
 #[test]
 fn wchar_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"wchar.h core\",\"reference\":\"glibc\",\"functions\":21,\"divergences\":0}}",
+        "{{\"family\":\"wchar.h core\",\"reference\":\"glibc\",\"functions\":25,\"divergences\":0}}",
     );
 }
