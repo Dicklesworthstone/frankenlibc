@@ -5925,6 +5925,61 @@ fn gethostname_returns_nonempty_string() {
     assert!(!name.is_empty());
 }
 
+#[test]
+fn gethostname_caps_tracked_short_output_buffer() {
+    let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
+    assert_eq!(unsafe { libc::uname(uts.as_mut_ptr()) }, 0);
+    let uts = unsafe { uts.assume_init() };
+    assert_ne!(uts.nodename[0], 0);
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let rc = unsafe { gethostname(raw.cast::<c_char>(), 256) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::ENAMETOOLONG);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, uts.nodename[0] as u8);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
+fn getdomainname_caps_tracked_short_output_buffer() {
+    let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
+    assert_eq!(unsafe { libc::uname(uts.as_mut_ptr()) }, 0);
+    let uts = unsafe { uts.assume_init() };
+    let domain_len = uts
+        .domainname
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(uts.domainname.len());
+    let expected_first = if domain_len == 0 {
+        0
+    } else {
+        uts.domainname[0] as u8
+    };
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    let rc = unsafe { frankenlibc_abi::unistd_abi::getdomainname(raw.cast::<c_char>(), 256) };
+
+    assert_eq!(rc, 0);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, expected_first);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Core POSIX: uname
 // ---------------------------------------------------------------------------

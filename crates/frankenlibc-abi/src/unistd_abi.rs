@@ -2007,6 +2007,7 @@ pub unsafe extern "C" fn gethostname(name: *mut c_char, len: usize) -> c_int {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
+    let effective_len = tracked_output_capacity(name, len);
     let uts = match read_utsname() {
         Ok(uts) => uts,
         Err(e) => {
@@ -2016,7 +2017,12 @@ pub unsafe extern "C" fn gethostname(name: *mut c_char, len: usize) -> c_int {
     };
     let nodename = &uts.nodename;
     let hostname_len = uts_field_len(nodename);
-    if hostname_len >= len {
+    if hostname_len >= effective_len {
+        if effective_len > 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(nodename.as_ptr(), name.cast(), effective_len);
+            }
+        }
         unsafe { set_abi_errno(errno::ENAMETOOLONG) };
         return -1;
     }
@@ -3525,6 +3531,7 @@ pub unsafe extern "C" fn getdomainname(name: *mut c_char, len: usize) -> c_int {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
+    let effective_len = tracked_output_capacity(name, len);
     let uts = match read_utsname() {
         Ok(uts) => uts,
         Err(e) => {
@@ -3534,14 +3541,14 @@ pub unsafe extern "C" fn getdomainname(name: *mut c_char, len: usize) -> c_int {
     };
     let domainname = &uts.domainname;
     let domain_len = uts_field_len(domainname);
-    if len == 0 {
+    if effective_len == 0 {
         return 0;
     }
 
-    let copy_len = domain_len.min(len);
+    let copy_len = domain_len.min(effective_len);
     unsafe {
         std::ptr::copy_nonoverlapping(domainname.as_ptr(), name.cast(), copy_len);
-        if copy_len < len {
+        if copy_len < effective_len {
             *name.add(copy_len) = 0;
         }
     }
