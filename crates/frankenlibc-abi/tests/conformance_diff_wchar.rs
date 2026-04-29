@@ -88,6 +88,22 @@ unsafe extern "C" {
         endptr: *mut *mut libc::wchar_t,
         base: c_int,
     ) -> libc::c_ulonglong;
+    /// Host glibc `wcstod` — wide-char strtod.
+    fn wcstod(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f64;
+    /// Host glibc `wcstof` — wide-char strtof.
+    fn wcstof(nptr: *const libc::wchar_t, endptr: *mut *mut libc::wchar_t) -> f32;
+    /// Host glibc `wcstoimax` — wide-char strtoimax (intmax_t = i64).
+    fn wcstoimax(
+        nptr: *const libc::wchar_t,
+        endptr: *mut *mut libc::wchar_t,
+        base: c_int,
+    ) -> i64;
+    /// Host glibc `wcstoumax` — wide-char strtoumax (uintmax_t = u64).
+    fn wcstoumax(
+        nptr: *const libc::wchar_t,
+        endptr: *mut *mut libc::wchar_t,
+        base: c_int,
+    ) -> u64;
 }
 
 /// Convert an ASCII byte slice into a NUL-terminated wchar_t vector
@@ -1465,9 +1481,202 @@ fn diff_wcstoull_cases() {
     assert!(divs.is_empty(), "wcstoull divergences:\n{}", render_divs(&divs));
 }
 
+// ===========================================================================
+// wcstod / wcstof — wide-char float parsers
+// ===========================================================================
+//
+// POSIX wide-char strtod/strtof. ASCII-encoded numeric input in C
+// locale yields deterministic IEEE-754 results. The diff compares
+// f64/f32 bit-pattern equality (via to_bits) to catch any rounding
+// drift, plus endptr offset to pin the consumed-character count.
+
+const WCS_FLOAT_INPUTS: &[&[u8]] = &[
+    b"0",
+    b"0.0",
+    b"1.0",
+    b"-1.0",
+    b"3.14159",
+    b"1e10",
+    b"-1.5e-10",
+    b"0x1.fp3",          // hex float, glibc supports
+    b"inf",
+    b"-inf",
+    b"nan",
+    b"  42.5",           // leading whitespace
+    b"abc",              // no digits
+    b"",                 // empty
+    b"123abc",           // trailing garbage
+];
+
+#[test]
+fn diff_wcstod_cases() {
+    let mut divs = Vec::new();
+    for input in WCS_FLOAT_INPUTS {
+        let w = ascii_to_wchars(input);
+        let p = w.as_ptr();
+        let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let fl_v = unsafe {
+            fl::wcstod(p as *const libc::wchar_t, &mut fl_end)
+        };
+        let lc_v = unsafe { wcstod(p as *const libc::wchar_t, &mut lc_end) };
+        let fl_off = ptr_offset_w(p, fl_end);
+        let lc_off = ptr_offset_w(p, lc_end);
+        // NaN bit patterns can differ between glibc's preferred quiet
+        // NaN encoding and Rust's; check is_nan equality on both
+        // sides as a special case.
+        let bit_match = if fl_v.is_nan() && lc_v.is_nan() {
+            true
+        } else {
+            fl_v.to_bits() == lc_v.to_bits()
+        };
+        if !bit_match {
+            divs.push(Divergence {
+                function: "wcstod",
+                case: format!("{:?}", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wcstod",
+                case: format!("{:?}", String::from_utf8_lossy(input)),
+                field: "endptr_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcstod divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wcstof_cases() {
+    let mut divs = Vec::new();
+    for input in WCS_FLOAT_INPUTS {
+        let w = ascii_to_wchars(input);
+        let p = w.as_ptr();
+        let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let fl_v = unsafe {
+            fl::wcstof(p as *const libc::wchar_t, &mut fl_end)
+        };
+        let lc_v = unsafe { wcstof(p as *const libc::wchar_t, &mut lc_end) };
+        let fl_off = ptr_offset_w(p, fl_end);
+        let lc_off = ptr_offset_w(p, lc_end);
+        let bit_match = if fl_v.is_nan() && lc_v.is_nan() {
+            true
+        } else {
+            fl_v.to_bits() == lc_v.to_bits()
+        };
+        if !bit_match {
+            divs.push(Divergence {
+                function: "wcstof",
+                case: format!("{:?}", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wcstof",
+                case: format!("{:?}", String::from_utf8_lossy(input)),
+                field: "endptr_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcstof divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
+// wcstoimax / wcstoumax — wide-char intmax_t / uintmax_t parsers
+// ===========================================================================
+//
+// On x86_64 Linux, intmax_t == long long and uintmax_t == unsigned
+// long long, so glibc maps these to wcstoll / wcstoull internally.
+// Pin parity here so any future divergence in the alias chain shows
+// up immediately.
+
+#[test]
+fn diff_wcstoimax_cases() {
+    let mut divs = Vec::new();
+    for (input, base) in WCS_INT_INPUTS {
+        let w = ascii_to_wchars(input);
+        let p = w.as_ptr();
+        let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let fl_v = unsafe {
+            fl::wcstoimax(p, &mut fl_end as *mut _ as *mut *mut u32, *base)
+        };
+        let lc_v = unsafe { wcstoimax(p as *const libc::wchar_t, &mut lc_end, *base) };
+        let fl_off = ptr_offset_w(p, fl_end);
+        let lc_off = ptr_offset_w(p, lc_end);
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcstoimax",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wcstoimax",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "endptr_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcstoimax divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wcstoumax_cases() {
+    let mut divs = Vec::new();
+    for (input, base) in WCS_INT_INPUTS {
+        let w = ascii_to_wchars(input);
+        let p = w.as_ptr();
+        let mut fl_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let mut lc_end: *mut libc::wchar_t = std::ptr::null_mut();
+        let fl_v = unsafe {
+            fl::wcstoumax(p, &mut fl_end as *mut _ as *mut *mut u32, *base)
+        };
+        let lc_v = unsafe { wcstoumax(p as *const libc::wchar_t, &mut lc_end, *base) };
+        let fl_off = ptr_offset_w(p, fl_end);
+        let lc_off = ptr_offset_w(p, lc_end);
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcstoumax",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wcstoumax",
+                case: format!("({:?}, base={base})", String::from_utf8_lossy(input)),
+                field: "endptr_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcstoumax divergences:\n{}", render_divs(&divs));
+}
+
 #[test]
 fn wchar_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"wchar.h core\",\"reference\":\"glibc\",\"functions\":25,\"divergences\":0}}",
+        "{{\"family\":\"wchar.h core\",\"reference\":\"glibc\",\"functions\":29,\"divergences\":0}}",
     );
 }
