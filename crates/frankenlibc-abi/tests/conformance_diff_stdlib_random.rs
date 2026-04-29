@@ -39,6 +39,18 @@ unsafe extern "C" {
     fn nrand48(xsubi: *mut u16) -> std::ffi::c_long;
     /// Host glibc `jrand48`.
     fn jrand48(xsubi: *mut u16) -> std::ffi::c_long;
+
+    /// Host glibc `drand48` — global-state f64 in [0,1).
+    fn drand48() -> std::ffi::c_double;
+    /// Host glibc `lrand48` — global-state non-negative i32 in [0, 2^31).
+    fn lrand48() -> std::ffi::c_long;
+    /// Host glibc `mrand48` — global-state signed i32 in [-2^31, 2^31).
+    fn mrand48() -> std::ffi::c_long;
+    /// Host glibc `srand48` — seed global state from a single long.
+    fn srand48(seedval: std::ffi::c_long);
+    /// Host glibc `seed48` — seed global state from a 3-element u16 array,
+    /// returning the previous state as 3 u16s.
+    fn seed48(seed16v: *mut u16) -> *mut u16;
 }
 
 fn global_rng_lock() -> MutexGuard<'static, ()> {
@@ -349,6 +361,138 @@ fn diff_jrand48_cases() {
 }
 
 // ===========================================================================
+// drand48 / lrand48 / mrand48 — global-state 48-bit LCG.
+//
+// Both fl and glibc implement the POSIX-specified 48-bit linear congruential
+// generator with a=0x5DEECE66D, c=0xB. They keep state in SEPARATE process-
+// global slots (fl in atomics under frankenlibc-core, glibc inside libc.so).
+// We seed both via *_their own* srand48 / seed48 with the same input, then
+// collect N outputs from each and compare.
+//
+// Tests are serialized through `global_rng_lock` because they all touch the
+// glibc process-global state.
+// ===========================================================================
+
+const SRAND48_SEEDS: &[std::ffi::c_long] = &[0, 1, 42, 0x12345678, -1];
+const SRAND48_CALLS: usize = 8;
+
+#[test]
+fn diff_srand48_drand48_lrand48_mrand48_cases() {
+    let _lock = global_rng_lock();
+    let mut divs = Vec::new();
+    for &seed in SRAND48_SEEDS {
+        // Seed both impls.
+        unsafe { fl::srand48(seed) };
+        unsafe { srand48(seed) };
+        for call_idx in 0..SRAND48_CALLS {
+            let case = format!("seed={seed}, call={call_idx}");
+            let fl_d = unsafe { fl::drand48() };
+            let lc_d = unsafe { drand48() };
+            if fl_d.to_bits() != lc_d.to_bits() {
+                divs.push(Divergence {
+                    function: "drand48",
+                    case: case.clone(),
+                    field: "return_value",
+                    frankenlibc: format!("{fl_d}"),
+                    glibc: format!("{lc_d}"),
+                });
+            }
+            let fl_l = unsafe { fl::lrand48() };
+            let lc_l = unsafe { lrand48() };
+            if fl_l != lc_l {
+                divs.push(Divergence {
+                    function: "lrand48",
+                    case: case.clone(),
+                    field: "return_value",
+                    frankenlibc: format!("{fl_l}"),
+                    glibc: format!("{lc_l}"),
+                });
+            }
+            let fl_m = unsafe { fl::mrand48() };
+            let lc_m = unsafe { mrand48() };
+            if fl_m != lc_m {
+                divs.push(Divergence {
+                    function: "mrand48",
+                    case,
+                    field: "return_value",
+                    frankenlibc: format!("{fl_m}"),
+                    glibc: format!("{lc_m}"),
+                });
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "drand48/lrand48/mrand48 divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
+// seed48 — set global state from a 3-element u16 array, returning prior state.
+// We compare both the output sequence after seeding AND the returned previous
+// state (which fl tracks via its own SAVED_SEED slot).
+// ===========================================================================
+const SEED48_INPUTS: &[[u16; 3]] = &[
+    [0, 0, 0],
+    [1, 2, 3],
+    [0xFFFF, 0xFFFF, 0xFFFF],
+    [0x330E, 0xABCD, 0x1234],
+];
+
+#[test]
+fn diff_seed48_state_swap_cases() {
+    let _lock = global_rng_lock();
+    let mut divs = Vec::new();
+    for &input in SEED48_INPUTS {
+        // Pre-seed both impls to a known state so the "previous" returned
+        // by seed48 is comparable. Use srand48(seed) which both impls
+        // implement identically (set high 32 bits, low 16 = 0x330E).
+        unsafe { fl::srand48(0xDEADBEEF) };
+        unsafe { srand48(0xDEADBEEF) };
+
+        // Now invoke seed48; it should return the prior state.
+        let mut fl_in = input;
+        let mut lc_in = input;
+        let fl_prev_ptr = unsafe { fl::seed48(fl_in.as_mut_ptr()) };
+        let lc_prev_ptr = unsafe { seed48(lc_in.as_mut_ptr()) };
+        // Both return pointers into thread-local / static storage. We copy
+        // out 3 u16s defensively before issuing more RNG calls.
+        let fl_prev = unsafe { [*fl_prev_ptr, *fl_prev_ptr.add(1), *fl_prev_ptr.add(2)] };
+        let lc_prev = unsafe { [*lc_prev_ptr, *lc_prev_ptr.add(1), *lc_prev_ptr.add(2)] };
+        if fl_prev != lc_prev {
+            divs.push(Divergence {
+                function: "seed48",
+                case: format!("input={input:04x?}"),
+                field: "previous_state",
+                frankenlibc: format!("{fl_prev:04x?}"),
+                glibc: format!("{lc_prev:04x?}"),
+            });
+        }
+
+        // After seeding, the next 4 lrand48 / drand48 outputs must match.
+        for call_idx in 0..4 {
+            let fl_l = unsafe { fl::lrand48() };
+            let lc_l = unsafe { lrand48() };
+            if fl_l != lc_l {
+                divs.push(Divergence {
+                    function: "seed48->lrand48",
+                    case: format!("input={input:04x?}, call={call_idx}"),
+                    field: "post_seed_value",
+                    frankenlibc: format!("{fl_l}"),
+                    glibc: format!("{lc_l}"),
+                });
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "seed48 divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
@@ -356,9 +500,11 @@ fn diff_jrand48_cases() {
 fn stdlib_random_diff_coverage_report() {
     let total = RAND_SEEDS.len() * CALLS_PER_SEED
         + RAND_R_SEEDS.len() * CALLS_PER_SEED
-        + RAND48_SEEDS.len() * RAND48_CALLS_PER_SEED * 3; // erand48 + nrand48 + jrand48
+        + RAND48_SEEDS.len() * RAND48_CALLS_PER_SEED * 3 // erand48 + nrand48 + jrand48
+        + SRAND48_SEEDS.len() * SRAND48_CALLS * 3        // drand48 + lrand48 + mrand48
+        + SEED48_INPUTS.len() * 5;                       // seed48 + 4 follow-ups
     eprintln!(
-        "{{\"family\":\"stdlib.h.random\",\"reference\":\"glibc\",\"functions\":5,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h.random\",\"reference\":\"glibc\",\"functions\":10,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
