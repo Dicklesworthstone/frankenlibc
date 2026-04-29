@@ -13,6 +13,7 @@
 //! Bead: CONFORMANCE: libc wchar.h diff matrix.
 
 use std::ffi::c_int;
+use std::process::Command;
 
 use frankenlibc_abi::wchar_abi as fl;
 
@@ -23,6 +24,12 @@ unsafe extern "C" {
     fn wcschr(s: *const libc::wchar_t, c: libc::wchar_t) -> *mut libc::wchar_t;
     fn wcsrchr(s: *const libc::wchar_t, c: libc::wchar_t) -> *mut libc::wchar_t;
     fn wcsstr(h: *const libc::wchar_t, n: *const libc::wchar_t) -> *mut libc::wchar_t;
+    fn wcspbrk(s: *const libc::wchar_t, accept: *const libc::wchar_t) -> *mut libc::wchar_t;
+    fn wcstok(
+        s: *mut libc::wchar_t,
+        delim: *const libc::wchar_t,
+        save_ptr: *mut *mut libc::wchar_t,
+    ) -> *mut libc::wchar_t;
     fn wcscpy(dst: *mut libc::wchar_t, src: *const libc::wchar_t) -> *mut libc::wchar_t;
     fn wcsncpy(dst: *mut libc::wchar_t, src: *const libc::wchar_t, n: usize) -> *mut libc::wchar_t;
     fn mbstowcs(dst: *mut libc::wchar_t, src: *const libc::c_char, n: usize) -> usize;
@@ -57,6 +64,87 @@ fn wcstring(chars: &[u32]) -> Vec<u32> {
 
 fn sign(x: c_int) -> c_int {
     x.signum()
+}
+
+fn ptr_offset_u32(base: *const u32, ptr: *const u32) -> isize {
+    if ptr.is_null() {
+        -1
+    } else {
+        unsafe { ptr.offset_from(base) }
+    }
+}
+
+fn run_wchar_child(helper: &str) {
+    let output = Command::new(std::env::current_exe().expect("current test binary path"))
+        .args([
+            "--exact",
+            "wchar_subprocess_child_invocation",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env("FRANKENLIBC_WCHAR_HELPER", helper)
+        .output()
+        .expect("run isolated wchar helper");
+    assert!(
+        output.status.success(),
+        "isolated wchar helper `{helper}` failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn collect_wcstok_fl(mut input: Vec<u32>, delim: &[u32]) -> (Vec<Vec<u32>>, Vec<u32>) {
+    let mut out = Vec::new();
+    let mut save_ptr: *mut u32 = std::ptr::null_mut();
+    let mut segment = unsafe { fl::wcstok(input.as_mut_ptr(), delim.as_ptr(), &mut save_ptr) };
+    while !segment.is_null() && out.len() < input.len() {
+        let offset = ptr_offset_u32(input.as_ptr(), segment as *const u32);
+        assert!(
+            offset >= 0,
+            "FrankenLibC wcstok returned an out-of-buffer token"
+        );
+        let mut token = Vec::new();
+        let mut i = offset as usize;
+        while i < input.len() && input[i] != 0 {
+            token.push(input[i]);
+            i += 1;
+        }
+        out.push(token);
+        segment = unsafe { fl::wcstok(std::ptr::null_mut(), delim.as_ptr(), &mut save_ptr) };
+    }
+    (out, input)
+}
+
+fn collect_wcstok_lc(mut input: Vec<u32>, delim: &[u32]) -> (Vec<Vec<u32>>, Vec<u32>) {
+    let mut out = Vec::new();
+    let mut save_ptr: *mut libc::wchar_t = std::ptr::null_mut();
+    let mut segment = unsafe {
+        wcstok(
+            input.as_mut_ptr() as *mut libc::wchar_t,
+            delim.as_ptr() as *const libc::wchar_t,
+            &mut save_ptr,
+        )
+    };
+    while !segment.is_null() && out.len() < input.len() {
+        let offset = ptr_offset_u32(input.as_ptr(), segment as *const u32);
+        assert!(offset >= 0, "glibc wcstok returned an out-of-buffer token");
+        let mut token = Vec::new();
+        let mut i = offset as usize;
+        while i < input.len() && input[i] != 0 {
+            token.push(input[i]);
+            i += 1;
+        }
+        out.push(token);
+        segment = unsafe {
+            wcstok(
+                std::ptr::null_mut(),
+                delim.as_ptr() as *const libc::wchar_t,
+                &mut save_ptr,
+            )
+        };
+    }
+    (out, input)
 }
 
 // ===========================================================================
@@ -314,6 +402,115 @@ fn diff_wcsstr_cases() {
     assert!(
         divs.is_empty(),
         "wcsstr divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_wcspbrk_wcstok_subprocess() {
+    run_wchar_child("search-token");
+}
+
+#[test]
+fn wchar_subprocess_child_invocation() {
+    let Ok(helper) = std::env::var("FRANKENLIBC_WCHAR_HELPER") else {
+        return;
+    };
+    assert_eq!(helper, "search-token");
+
+    let mut divs = Vec::new();
+    let wcspbrk_cases: &[(&[u32], &[u32])] = &[
+        (&[], &['x' as u32]),
+        (&['a' as u32, 'b' as u32, 'c' as u32], &[]),
+        (
+            &['a' as u32, 'b' as u32, 'c' as u32],
+            &['x' as u32, 'b' as u32],
+        ),
+        (
+            &['a' as u32, 'b' as u32, 'c' as u32],
+            &['x' as u32, 'y' as u32],
+        ),
+        (
+            &['a' as u32, 'b' as u32, 'c' as u32],
+            &['c' as u32, 'a' as u32],
+        ),
+    ];
+    for (s, accept) in wcspbrk_cases {
+        let sb = wcstring(s);
+        let ab = wcstring(accept);
+        let r_fl = unsafe { fl::wcspbrk(sb.as_ptr(), ab.as_ptr()) };
+        let r_lc = unsafe {
+            wcspbrk(
+                sb.as_ptr() as *const libc::wchar_t,
+                ab.as_ptr() as *const libc::wchar_t,
+            )
+        };
+        let off_fl = ptr_offset_u32(sb.as_ptr(), r_fl as *const u32);
+        let off_lc = ptr_offset_u32(sb.as_ptr(), r_lc as *const u32);
+        if off_fl != off_lc {
+            divs.push(Divergence {
+                function: "wcspbrk",
+                case: format!("({:?}, {:?})", s, accept),
+                field: "offset",
+                frankenlibc: format!("{off_fl}"),
+                glibc: format!("{off_lc}"),
+            });
+        }
+    }
+
+    let wcstok_cases: &[(&[u32], &[u32])] = &[
+        (&[], &[',' as u32]),
+        (&[',' as u32, ',' as u32], &[',' as u32]),
+        (
+            &[
+                'a' as u32, ',' as u32, 'b' as u32, ',' as u32, ',' as u32, 'c' as u32,
+            ],
+            &[',' as u32],
+        ),
+        (
+            &[
+                ' ' as u32,
+                'a' as u32,
+                ' ' as u32,
+                'b' as u32,
+                '\t' as u32,
+                'c' as u32,
+            ],
+            &[' ' as u32, '\t' as u32],
+        ),
+        (
+            &['a' as u32, ':' as u32, 'b' as u32, '/' as u32, 'c' as u32],
+            &[':' as u32, '/' as u32],
+        ),
+    ];
+    for (s, delim) in wcstok_cases {
+        let input = wcstring(s);
+        let delim = wcstring(delim);
+        let (tokens_fl, mutated_fl) = collect_wcstok_fl(input.clone(), &delim);
+        let (tokens_lc, mutated_lc) = collect_wcstok_lc(input, &delim);
+        if tokens_fl != tokens_lc {
+            divs.push(Divergence {
+                function: "wcstok",
+                case: format!("({:?}, {:?})", s, delim),
+                field: "tokens",
+                frankenlibc: format!("{tokens_fl:?}"),
+                glibc: format!("{tokens_lc:?}"),
+            });
+        }
+        if mutated_fl != mutated_lc {
+            divs.push(Divergence {
+                function: "wcstok",
+                case: format!("({:?}, {:?})", s, delim),
+                field: "mutated_buffer",
+                frankenlibc: format!("{mutated_fl:?}"),
+                glibc: format!("{mutated_lc:?}"),
+            });
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "subprocess wchar search/token divergences:\n{}",
         render_divs(&divs)
     );
 }
