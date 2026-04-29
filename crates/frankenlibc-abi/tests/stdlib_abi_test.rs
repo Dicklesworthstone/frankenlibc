@@ -4409,7 +4409,7 @@ fn cvt_huge_precision_is_bounded_before_formatting() {
                 4,
             )
         },
-        0
+        -1
     );
     assert_eq!(ecvt_buf[3], 0);
 
@@ -4424,7 +4424,7 @@ fn cvt_huge_precision_is_bounded_before_formatting() {
                 4,
             )
         },
-        0
+        -1
     );
     assert_eq!(fcvt_buf[3], 0);
 }
@@ -4447,7 +4447,7 @@ fn ecvt_r_caps_tracked_one_byte_buffer_when_buflen_is_large() {
         )
     };
 
-    assert_eq!(rc, 0);
+    assert_eq!(rc, -1);
     assert_eq!(unsafe { raw.read() }, 0);
     unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
 }
@@ -4473,7 +4473,7 @@ fn fcvt_r_caps_tracked_two_byte_buffer_when_buflen_is_large() {
         )
     };
 
-    assert_eq!(rc, 0);
+    assert_eq!(rc, -1);
     assert_eq!(unsafe { raw.read() }, b'1');
     assert_eq!(unsafe { raw.add(1).read() }, 0);
     unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };

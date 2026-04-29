@@ -4715,6 +4715,43 @@ pub unsafe extern "C" fn setstate_r(statebuf: *mut c_char, buf: *mut c_void) -> 
 // ecvt_r / fcvt_r / qecvt / qfcvt / qgcvt / qecvt_r / qfcvt_r
 // ===========================================================================
 
+#[inline]
+fn ecvt_r_required_capacity(value: c_double, requested: c_int, digits_len: usize) -> usize {
+    if value.is_nan() || value.is_infinite() {
+        return digits_len.saturating_add(1);
+    }
+    match requested.max(0) as usize {
+        0 => 1,
+        1 => 2,
+        n => n.saturating_add(2),
+    }
+}
+
+#[inline]
+fn fcvt_r_required_capacity(value: c_double, requested: c_int, digits_len: usize) -> usize {
+    if value.is_nan() || value.is_infinite() {
+        return digits_len.saturating_add(1);
+    }
+    let requested = requested.max(0) as usize;
+    if requested == 0 {
+        return digits_len.saturating_add(1);
+    }
+    format!("{:.prec$}", value.abs(), prec = requested)
+        .len()
+        .saturating_add(1)
+}
+
+#[inline]
+unsafe fn copy_legacy_cvt_digits(buf: *mut c_char, effective_buflen: usize, digits: &[u8]) {
+    let copy_len = digits.len().min(effective_buflen.saturating_sub(1));
+    if copy_len != 0 {
+        unsafe { std::ptr::copy_nonoverlapping(digits.as_ptr(), buf as *mut u8, copy_len) };
+    }
+    if effective_buflen != 0 {
+        unsafe { *buf.add(copy_len) = 0 };
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ecvt_r(
     value: c_double,
@@ -4735,17 +4772,21 @@ pub unsafe extern "C" fn ecvt_r(
     }
     // Use signbit semantics: -0.0 returns sign=1 too, matching glibc.
     // Previous impl used `value < 0.0` which is false for -0.0.
-    unsafe { *sign = if value.is_sign_negative() && !value.is_nan() { 1 } else { 0 } };
+    unsafe {
+        *sign = if value.is_sign_negative() && !value.is_nan() {
+            1
+        } else {
+            0
+        }
+    };
     let requested = ndigit.max(0).min(MAX_LEGACY_CVT_DIGITS as i32);
     let (digits, dp, _neg) = frankenlibc_core::stdlib::ecvt(value, requested);
-    unsafe { *decpt = dp };
-    let copy_len = digits.len().min(effective_buflen.saturating_sub(1));
-    // SAFETY: caller owns `buf` for `effective_buflen` bytes; copy_len
-    // is bounded by that minus one for the trailing NUL.
-    unsafe {
-        std::ptr::copy_nonoverlapping(digits.as_ptr(), buf as *mut u8, copy_len);
-        *buf.add(copy_len) = 0;
+    let required = ecvt_r_required_capacity(value, requested, digits.len());
+    unsafe { copy_legacy_cvt_digits(buf, effective_buflen, &digits) };
+    if effective_buflen < required {
+        return -1;
     }
+    unsafe { *decpt = dp };
     0
 }
 
@@ -4768,7 +4809,13 @@ pub unsafe extern "C" fn fcvt_r(
         return libc::EINVAL;
     }
     // signbit semantics again — -0.0 must report sign=1.
-    unsafe { *sign = if value.is_sign_negative() && !value.is_nan() { 1 } else { 0 } };
+    unsafe {
+        *sign = if value.is_sign_negative() && !value.is_nan() {
+            1
+        } else {
+            0
+        }
+    };
     let requested = ndigit.max(0).min(MAX_LEGACY_CVT_DIGITS as i32);
     // Delegate to the corrected core fcvt: handles leading-zero
     // stripping for sub-1 magnitudes (digits="1" decpt=-3 for
@@ -4777,14 +4824,12 @@ pub unsafe extern "C" fn fcvt_r(
     // previous in-place impl emitted "00001" decpt=1 and "00000"
     // decpt=1 for those cases respectively.
     let (digits, dp, _neg) = frankenlibc_core::stdlib::fcvt(value, requested);
-    unsafe { *decpt = dp };
-    let copy_len = digits.len().min(effective_buflen.saturating_sub(1));
-    // SAFETY: caller owns `buf` for `effective_buflen` bytes; copy_len
-    // is bounded by that minus one for the trailing NUL.
-    unsafe {
-        std::ptr::copy_nonoverlapping(digits.as_ptr(), buf as *mut u8, copy_len);
-        *buf.add(copy_len) = 0;
+    let required = fcvt_r_required_capacity(value, requested, digits.len());
+    unsafe { copy_legacy_cvt_digits(buf, effective_buflen, &digits) };
+    if effective_buflen < required {
+        return -1;
     }
+    unsafe { *decpt = dp };
     0
 }
 

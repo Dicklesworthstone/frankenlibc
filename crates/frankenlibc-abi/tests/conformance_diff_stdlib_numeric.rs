@@ -1005,6 +1005,19 @@ const CVT_R_INPUTS: &[(f64, &str)] = &[
     (1e-10, "ten_picosecond"),
 ];
 
+const ECVT_R_SMALL_BUFFER_CASES: &[(f64, &str, c_int, usize)] = &[
+    (123.456, "ascii_decimal", 6, 7),
+    (1.25, "one_point_25", 2, 3),
+    (0.0, "zero", 6, 7),
+];
+
+const FCVT_R_SMALL_BUFFER_CASES: &[(f64, &str, c_int, usize)] = &[
+    (123.456, "ascii_decimal", 6, 10),
+    (1.25, "one_point_25", 2, 4),
+    (0.0001234, "small_positive", 4, 6),
+    (1e-10, "ten_picosecond", 4, 6),
+];
+
 #[test]
 fn diff_ecvt_r_cases() {
     let mut divs = Vec::new();
@@ -1155,6 +1168,100 @@ fn diff_fcvt_r_cases() {
     assert!(divs.is_empty(), "fcvt_r divergences:\n{}", render_divs(&divs));
 }
 
+#[test]
+fn diff_ecvt_r_small_buffer_reports_failure() {
+    let mut divs = Vec::new();
+    for (value, label, ndigit, buflen) in ECVT_R_SMALL_BUFFER_CASES {
+        let mut fl_buf = [0x7eu8; 16];
+        let mut lc_buf = [0x7eu8; 16];
+        let mut fl_dp: c_int = 777;
+        let mut fl_sg: c_int = 888;
+        let mut lc_dp: c_int = 777;
+        let mut lc_sg: c_int = 888;
+        let fl_rc = unsafe {
+            fl::ecvt_r(
+                *value,
+                *ndigit,
+                &mut fl_dp,
+                &mut fl_sg,
+                fl_buf.as_mut_ptr() as *mut c_char,
+                *buflen,
+            )
+        };
+        let lc_rc = unsafe {
+            ecvt_r(
+                *value,
+                *ndigit,
+                &mut lc_dp,
+                &mut lc_sg,
+                lc_buf.as_mut_ptr() as *mut c_char,
+                *buflen,
+            )
+        };
+        if fl_rc != lc_rc {
+            divs.push(Divergence {
+                function: "ecvt_r",
+                case: format!("{label}({value}), ndigit={ndigit}, buflen={buflen}"),
+                field: "small_buffer_rc",
+                frankenlibc: format!("{fl_rc}"),
+                glibc: format!("{lc_rc}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "ecvt_r small-buffer divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_fcvt_r_small_buffer_reports_failure() {
+    let mut divs = Vec::new();
+    for (value, label, ndigit, buflen) in FCVT_R_SMALL_BUFFER_CASES {
+        let mut fl_buf = [0x7eu8; 16];
+        let mut lc_buf = [0x7eu8; 16];
+        let mut fl_dp: c_int = 777;
+        let mut fl_sg: c_int = 888;
+        let mut lc_dp: c_int = 777;
+        let mut lc_sg: c_int = 888;
+        let fl_rc = unsafe {
+            fl::fcvt_r(
+                *value,
+                *ndigit,
+                &mut fl_dp,
+                &mut fl_sg,
+                fl_buf.as_mut_ptr() as *mut c_char,
+                *buflen,
+            )
+        };
+        let lc_rc = unsafe {
+            fcvt_r(
+                *value,
+                *ndigit,
+                &mut lc_dp,
+                &mut lc_sg,
+                lc_buf.as_mut_ptr() as *mut c_char,
+                *buflen,
+            )
+        };
+        if fl_rc != lc_rc {
+            divs.push(Divergence {
+                function: "fcvt_r",
+                case: format!("{label}({value}), ndigit={ndigit}, buflen={buflen}"),
+                field: "small_buffer_rc",
+                frankenlibc: format!("{fl_rc}"),
+                glibc: format!("{lc_rc}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "fcvt_r small-buffer divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 fn nul_terminated_slice(buf: &[u8]) -> &[u8] {
     match buf.iter().position(|&b| b == 0) {
         Some(idx) => &buf[..idx],
@@ -1200,7 +1307,7 @@ fn diff_ffs_cases() {
 
 const FFSL_INPUTS: &[c_long] = &[
     0, 1, 2, 0x100000000, -1,
-    1 << 62, 1 << 63 - 1,
+    1 << 62, 1 << (63 - 1),
     i64::MIN,                    // sign bit only on 64-bit long
 ];
 
@@ -1225,7 +1332,7 @@ fn diff_ffsl_cases() {
 
 const FFSLL_INPUTS: &[std::ffi::c_longlong] = &[
     0, 1, 2, 0x100000000, -1,
-    1 << 62, 1 << 63 - 1,
+    1 << 62, 1 << (63 - 1),
     i64::MIN,
 ];
 
@@ -1265,7 +1372,9 @@ fn stdlib_numeric_diff_coverage_report() {
         + FFS_INT_INPUTS.len()                   // ffs
         + FFSL_INPUTS.len()                      // ffsl
         + FFSLL_INPUTS.len()                     // ffsll
-        + CVT_R_INPUTS.len() * 4 * 2;            // (ecvt_r + fcvt_r) × 4 ndigit
+        + CVT_R_INPUTS.len() * 4 * 2             // (ecvt_r + fcvt_r) × 4 ndigit
+        + ECVT_R_SMALL_BUFFER_CASES.len()
+        + FCVT_R_SMALL_BUFFER_CASES.len();
     eprintln!(
         "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":19,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
