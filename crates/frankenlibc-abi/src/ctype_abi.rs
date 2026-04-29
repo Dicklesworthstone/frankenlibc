@@ -213,7 +213,7 @@ pub unsafe extern "C" fn __ctype_tolower_loc() -> *const *const i32 {
 }
 
 #[inline]
-fn classify(c: c_int, f: fn(u8) -> bool) -> c_int {
+fn classify_with_mask(c: c_int, mask: u16) -> c_int {
     if !(0..=255).contains(&c) {
         return 0;
     }
@@ -223,13 +223,14 @@ fn classify(c: c_int, f: fn(u8) -> bool) -> c_int {
         runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, true);
         return 0;
     }
-    let result = f(byte);
+    let flags = CTYPE_B_TABLE[usize::from(byte) + 128];
+    let result = (flags & mask) != 0;
     runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, false);
     c_int::from(result)
 }
 
 #[inline]
-fn convert(c: c_int, f: fn(u8) -> u8) -> c_int {
+fn convert_with_table(c: c_int, table: &[i32; 384]) -> c_int {
     if !(0..=255).contains(&c) {
         return c;
     }
@@ -239,79 +240,79 @@ fn convert(c: c_int, f: fn(u8) -> u8) -> c_int {
         runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, true);
         return c;
     }
-    let result = f(byte);
+    let result = table[usize::from(byte) + 128];
     runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, false);
-    result as c_int
+    result
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isalpha(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_alpha)
+    classify_with_mask(c, _ISALPHA)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isdigit(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_digit)
+    classify_with_mask(c, _ISDIGIT)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isalnum(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_alnum)
+    classify_with_mask(c, _ISALNUM)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isspace(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_space)
+    classify_with_mask(c, _ISSPACE)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isupper(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_upper)
+    classify_with_mask(c, _ISUPPER)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn islower(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_lower)
+    classify_with_mask(c, _ISLOWER)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isprint(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_print)
+    classify_with_mask(c, _ISPRINT)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ispunct(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_punct)
+    classify_with_mask(c, _ISPUNCT)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isxdigit(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_xdigit)
+    classify_with_mask(c, _ISXDIGIT)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn toupper(c: c_int) -> c_int {
-    convert(c, frankenlibc_core::ctype::to_upper)
+    convert_with_table(c, &TOUPPER_TABLE)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tolower(c: c_int) -> c_int {
-    convert(c, frankenlibc_core::ctype::to_lower)
+    convert_with_table(c, &TOLOWER_TABLE)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isblank(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_blank)
+    classify_with_mask(c, _ISBLANK)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iscntrl(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_cntrl)
+    classify_with_mask(c, _ISCNTRL)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isgraph(c: c_int) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_graph)
+    classify_with_mask(c, _ISGRAPH)
 }
 
 /// Returns non-zero if `c` is a 7-bit ASCII value (0–127).
@@ -333,72 +334,72 @@ pub unsafe extern "C" fn toascii(c: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isalpha_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_alpha)
+    classify_with_mask(c, _ISALPHA)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isdigit_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_digit)
+    classify_with_mask(c, _ISDIGIT)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isalnum_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_alnum)
+    classify_with_mask(c, _ISALNUM)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isspace_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_space)
+    classify_with_mask(c, _ISSPACE)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isupper_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_upper)
+    classify_with_mask(c, _ISUPPER)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn islower_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_lower)
+    classify_with_mask(c, _ISLOWER)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isprint_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_print)
+    classify_with_mask(c, _ISPRINT)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ispunct_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_punct)
+    classify_with_mask(c, _ISPUNCT)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isxdigit_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_xdigit)
+    classify_with_mask(c, _ISXDIGIT)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isblank_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_blank)
+    classify_with_mask(c, _ISBLANK)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iscntrl_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_cntrl)
+    classify_with_mask(c, _ISCNTRL)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn isgraph_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify(c, frankenlibc_core::ctype::is_graph)
+    classify_with_mask(c, _ISGRAPH)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn toupper_l(c: c_int, _locale: *mut c_void) -> c_int {
-    convert(c, frankenlibc_core::ctype::to_upper)
+    convert_with_table(c, &TOUPPER_TABLE)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tolower_l(c: c_int, _locale: *mut c_void) -> c_int {
-    convert(c, frankenlibc_core::ctype::to_lower)
+    convert_with_table(c, &TOLOWER_TABLE)
 }
 
 // ===========================================================================
