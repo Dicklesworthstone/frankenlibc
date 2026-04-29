@@ -15,6 +15,17 @@ use std::ptr;
 use frankenlibc_abi::stdlib_abi as fl_stdlib;
 use frankenlibc_abi::string_abi as fl;
 
+unsafe extern "C" {
+    /// Host glibc `stpcpy` — POSIX/GNU "strcpy that returns a pointer
+    /// to the trailing NUL". Not exposed by the libc crate's default
+    /// surface; we link it directly here.
+    fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char;
+    /// Host glibc `stpncpy` — like strncpy but returns dst+n_actual.
+    fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char;
+    /// Host glibc `mempcpy` (GNU) — like memcpy but returns dst+n.
+    fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
+}
+
 #[derive(Debug)]
 struct Divergence {
     function: &'static str,
@@ -691,12 +702,184 @@ fn diff_strtok_r_cases() {
 }
 
 // ===========================================================================
+// stpcpy / stpncpy / mempcpy — copy variants returning end-of-dest
+// ===========================================================================
+//
+// All three functions are byte-for-byte identical to their non-`p`
+// siblings in the destination side effect (stpcpy ↔ strcpy,
+// stpncpy ↔ strncpy, mempcpy ↔ memcpy) but return a pointer past the
+// last copied byte instead of `dst`. That return-pointer offset is
+// what most callers use them for (chained copies without re-walking
+// strings) and is the part most likely to drift between
+// implementations.
+//
+// The diff compares both:
+//   1. dst-buffer contents byte-for-byte (catches any side-effect
+//      divergence — e.g., NUL-padding in stpncpy, off-by-one writes
+//      in mempcpy).
+//   2. The return-pointer offset relative to dst — must match exactly.
+
+#[test]
+fn diff_stpcpy_cases() {
+    let mut divs = Vec::new();
+    for src in &[b"" as &[u8], b"a", b"hello", b"\xff\xfe\xfd", b"abc\0xyz"] {
+        // cstr() truncates at the embedded NUL like every other
+        // C-string consumer does, so the b"abc\0xyz" case effectively
+        // tests a 3-byte copy.
+        let sb = cstr(src);
+        let mut dst_fl = vec![0xCDu8; 64];
+        let mut dst_lc = vec![0xCDu8; 64];
+        let fl_end = unsafe {
+            fl::stpcpy(
+                dst_fl.as_mut_ptr() as *mut c_char,
+                sb.as_ptr() as *const c_char,
+            )
+        };
+        let lc_end = unsafe {
+            stpcpy(
+                dst_lc.as_mut_ptr() as *mut c_char,
+                sb.as_ptr() as *const c_char,
+            )
+        };
+        let fl_off = (fl_end as usize).wrapping_sub(dst_fl.as_ptr() as usize);
+        let lc_off = (lc_end as usize).wrapping_sub(dst_lc.as_ptr() as usize);
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "stpcpy",
+                case: format!("{:?}", src),
+                field: "return_offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+        if dst_fl != dst_lc {
+            divs.push(Divergence {
+                function: "stpcpy",
+                case: format!("{:?}", src),
+                field: "dst_buffer",
+                frankenlibc: format!("{:?}", &dst_fl[..16]),
+                glibc: format!("{:?}", &dst_lc[..16]),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "stpcpy divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_stpncpy_cases() {
+    let mut divs = Vec::new();
+    // stpncpy with n shorter than src: no NUL written, end pointer
+    // is dst+n. With n longer than src: pads with NULs, end pointer
+    // is at the first NUL written. Both shapes are exercised.
+    for src in &[b"" as &[u8], b"a", b"hello", b"hello world"] {
+        for &n in &[0usize, 1, 3, 5, 8, 16] {
+            let sb = cstr(src);
+            let mut dst_fl = vec![0xCDu8; 32];
+            let mut dst_lc = vec![0xCDu8; 32];
+            let fl_end = unsafe {
+                fl::stpncpy(
+                    dst_fl.as_mut_ptr() as *mut c_char,
+                    sb.as_ptr() as *const c_char,
+                    n,
+                )
+            };
+            let lc_end = unsafe {
+                stpncpy(
+                    dst_lc.as_mut_ptr() as *mut c_char,
+                    sb.as_ptr() as *const c_char,
+                    n,
+                )
+            };
+            let fl_off = (fl_end as usize).wrapping_sub(dst_fl.as_ptr() as usize);
+            let lc_off = (lc_end as usize).wrapping_sub(dst_lc.as_ptr() as usize);
+            if fl_off != lc_off {
+                divs.push(Divergence {
+                    function: "stpncpy",
+                    case: format!("(src={:?}, n={})", src, n),
+                    field: "return_offset",
+                    frankenlibc: format!("{fl_off}"),
+                    glibc: format!("{lc_off}"),
+                });
+            }
+            if dst_fl != dst_lc {
+                divs.push(Divergence {
+                    function: "stpncpy",
+                    case: format!("(src={:?}, n={})", src, n),
+                    field: "dst_buffer",
+                    frankenlibc: format!("{:?}", &dst_fl[..n.min(16)]),
+                    glibc: format!("{:?}", &dst_lc[..n.min(16)]),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "stpncpy divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_mempcpy_cases() {
+    let mut divs = Vec::new();
+    let bufs: &[&[u8]] = &[
+        b"",
+        b"a",
+        b"abc",
+        b"hello world",
+        b"\x00\x01\x02\x03\xff\xfe\xfd\xfc",
+        b"\x00\x00\x00\x00\x00\x00\x00\x00",
+    ];
+    for src in bufs {
+        for &n in &[0usize, 1, 4, 8, 32, 64] {
+            if n > src.len() && n != 0 {
+                // mempcpy has no NUL semantics — n must not exceed src.
+                continue;
+            }
+            let mut dst_fl = vec![0xCDu8; 64];
+            let mut dst_lc = vec![0xCDu8; 64];
+            let fl_end = unsafe {
+                fl::mempcpy(
+                    dst_fl.as_mut_ptr() as *mut c_void,
+                    src.as_ptr() as *const c_void,
+                    n,
+                )
+            };
+            let lc_end = unsafe {
+                mempcpy(
+                    dst_lc.as_mut_ptr() as *mut c_void,
+                    src.as_ptr() as *const c_void,
+                    n,
+                )
+            };
+            let fl_off = (fl_end as usize).wrapping_sub(dst_fl.as_ptr() as usize);
+            let lc_off = (lc_end as usize).wrapping_sub(dst_lc.as_ptr() as usize);
+            if fl_off != lc_off {
+                divs.push(Divergence {
+                    function: "mempcpy",
+                    case: format!("(src.len={}, n={})", src.len(), n),
+                    field: "return_offset",
+                    frankenlibc: format!("{fl_off}"),
+                    glibc: format!("{lc_off}"),
+                });
+            }
+            if dst_fl != dst_lc {
+                divs.push(Divergence {
+                    function: "mempcpy",
+                    case: format!("(src.len={}, n={})", src.len(), n),
+                    field: "dst_buffer",
+                    frankenlibc: format!("{:?}", &dst_fl[..n.min(16)]),
+                    glibc: format!("{:?}", &dst_lc[..n.min(16)]),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "mempcpy divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
 #[test]
 fn string_mut_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":15,\"divergences\":0}}",
+        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":18,\"divergences\":0}}",
     );
 }
