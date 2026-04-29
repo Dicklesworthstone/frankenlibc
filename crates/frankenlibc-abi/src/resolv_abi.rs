@@ -2442,9 +2442,10 @@ pub unsafe extern "C" fn ns_parse_ttl(src: *const c_char, dst: *mut u32) -> c_in
 }
 
 #[inline]
-fn ttl_emit_unit(value: u32, unit: u8, dst: &mut [u8], pos: &mut usize) -> bool {
+fn ttl_emit_unit(value: u64, unit: u8, dst: &mut [u8], pos: &mut usize) -> bool {
     // Format value in decimal then append unit. Returns false on overflow.
-    let mut digits = [0u8; 10];
+    // u64 is wide enough for any TTL value glibc accepts (u_long).
+    let mut digits = [0u8; 20];
     let mut n = value;
     let mut len = 0usize;
     if n == 0 {
@@ -2484,19 +2485,29 @@ fn ttl_emit_unit(value: u32, unit: u8, dst: &mut [u8], pos: &mut usize) -> bool 
 /// `dst`, when non-NULL, must point to at least `dstlen` writable
 /// bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ns_format_ttl(mut src: u32, dst: *mut c_char, dstlen: usize) -> c_int {
+pub unsafe extern "C" fn ns_format_ttl(
+    src: libc::c_ulong,
+    dst: *mut c_char,
+    dstlen: usize,
+) -> c_int {
     if dst.is_null() || dstlen == 0 {
         return -1;
     }
-    let secs = src % 60;
-    src /= 60;
-    let mins = src % 60;
-    src /= 60;
-    let hours = src % 24;
-    src /= 24;
-    let days = src % 7;
-    src /= 7;
-    let weeks = src;
+    // Match glibc: u_long input, decomposed across u64 to avoid truncation
+    // for values > u32::MAX. Since `src` is unsigned, modular arithmetic is
+    // exact at every cascade level. On Linux x86_64 c_ulong is u64; the
+    // explicit widen keeps 32-bit portability.
+    #[allow(clippy::useless_conversion)]
+    let mut s: u64 = u64::try_from(src).unwrap_or(u64::MAX);
+    let secs = s % 60;
+    s /= 60;
+    let mins = s % 60;
+    s /= 60;
+    let hours = s % 24;
+    s /= 24;
+    let days = s % 7;
+    s /= 7;
+    let weeks = s;
 
     // Need NUL-terminator slot; reserve one.
     let mut buf = vec![0u8; dstlen];
@@ -3495,7 +3506,8 @@ pub unsafe extern "C" fn ns_sprintrrf(
     out.push(' ');
 
     let mut ttl_buf = [0u8; 32];
-    let ttl_n = unsafe { ns_format_ttl(ttl, ttl_buf.as_mut_ptr() as *mut c_char, ttl_buf.len()) };
+    let ttl_n =
+        unsafe { ns_format_ttl(ttl.into(), ttl_buf.as_mut_ptr() as *mut c_char, ttl_buf.len()) };
     if ttl_n < 0 {
         return -1;
     }

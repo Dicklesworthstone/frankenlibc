@@ -1858,7 +1858,9 @@ fn ns_parse_ttl_rejects_tracked_unterminated_input() {
 fn format_ttl(secs: u32, capacity: usize) -> Option<String> {
     use frankenlibc_abi::resolv_abi::ns_format_ttl;
     let mut buf = vec![0u8; capacity];
-    let rc = unsafe { ns_format_ttl(secs, buf.as_mut_ptr() as *mut c_char, buf.len()) };
+    let rc = unsafe {
+        ns_format_ttl(secs.into(), buf.as_mut_ptr() as *mut c_char, buf.len())
+    };
     if rc < 0 {
         return None;
     }
