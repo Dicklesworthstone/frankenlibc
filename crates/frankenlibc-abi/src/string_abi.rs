@@ -5988,6 +5988,9 @@ pub unsafe extern "C" fn rawmemchr(s: *const c_void, c: c_int) -> *mut c_void {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn strerrordesc_np(errnum: c_int) -> *const c_char {
     let desc: &[u8] = match errnum {
+        // glibc treats errno=0 as a valid input with description "Success",
+        // returning a non-NULL pointer. Without this branch fl returned NULL.
+        0 => b"Success\0",
         libc::EPERM => b"Operation not permitted\0",
         libc::ENOENT => b"No such file or directory\0",
         libc::ESRCH => b"No such process\0",
