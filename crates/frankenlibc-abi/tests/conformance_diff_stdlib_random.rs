@@ -51,6 +51,8 @@ unsafe extern "C" {
     /// Host glibc `seed48` — seed global state from a 3-element u16 array,
     /// returning the previous state as 3 u16s.
     fn seed48(seed16v: *mut u16) -> *mut u16;
+    /// Host glibc `lcong48` — set global state plus LCG multiplier/increment.
+    fn lcong48(param: *mut u16);
 }
 
 fn global_rng_lock() -> MutexGuard<'static, ()> {
@@ -492,6 +494,96 @@ fn diff_seed48_state_swap_cases() {
     );
 }
 
+#[test]
+fn diff_lcong48_explicit_state_parameters() {
+    let _lock = global_rng_lock();
+    let mut divs = Vec::new();
+    let params = [0u16, 0, 0, 1, 0, 0, 1];
+
+    let mut fl_params = params;
+    let mut lc_params = params;
+    unsafe { fl::lcong48(fl_params.as_mut_ptr()) };
+    unsafe { lcong48(lc_params.as_mut_ptr()) };
+
+    let mut fl_erand_state = [0u16, 0, 0];
+    let mut lc_erand_state = [0u16, 0, 0];
+    let fl_erand = unsafe { fl::erand48(fl_erand_state.as_mut_ptr()) };
+    let lc_erand = unsafe { erand48(lc_erand_state.as_mut_ptr()) };
+    if fl_erand.to_bits() != lc_erand.to_bits() {
+        divs.push(Divergence {
+            function: "lcong48->erand48",
+            case: "a=1,c=1,explicit_state=0".to_string(),
+            field: "return_value",
+            frankenlibc: format!("{fl_erand}"),
+            glibc: format!("{lc_erand}"),
+        });
+    }
+    if fl_erand_state != lc_erand_state {
+        divs.push(Divergence {
+            function: "lcong48->erand48",
+            case: "a=1,c=1,explicit_state=0".to_string(),
+            field: "post_state",
+            frankenlibc: format!("{fl_erand_state:04x?}"),
+            glibc: format!("{lc_erand_state:04x?}"),
+        });
+    }
+
+    let mut fl_nrand_state = [0u16, 0, 0];
+    let mut lc_nrand_state = [0u16, 0, 0];
+    let fl_nrand = unsafe { fl::nrand48(fl_nrand_state.as_mut_ptr()) };
+    let lc_nrand = unsafe { nrand48(lc_nrand_state.as_mut_ptr()) };
+    if fl_nrand != lc_nrand {
+        divs.push(Divergence {
+            function: "lcong48->nrand48",
+            case: "a=1,c=1,explicit_state=0".to_string(),
+            field: "return_value",
+            frankenlibc: format!("{fl_nrand}"),
+            glibc: format!("{lc_nrand}"),
+        });
+    }
+    if fl_nrand_state != lc_nrand_state {
+        divs.push(Divergence {
+            function: "lcong48->nrand48",
+            case: "a=1,c=1,explicit_state=0".to_string(),
+            field: "post_state",
+            frankenlibc: format!("{fl_nrand_state:04x?}"),
+            glibc: format!("{lc_nrand_state:04x?}"),
+        });
+    }
+
+    let mut fl_jrand_state = [0u16, 0, 0];
+    let mut lc_jrand_state = [0u16, 0, 0];
+    let fl_jrand = unsafe { fl::jrand48(fl_jrand_state.as_mut_ptr()) };
+    let lc_jrand = unsafe { jrand48(lc_jrand_state.as_mut_ptr()) };
+    if fl_jrand != lc_jrand {
+        divs.push(Divergence {
+            function: "lcong48->jrand48",
+            case: "a=1,c=1,explicit_state=0".to_string(),
+            field: "return_value",
+            frankenlibc: format!("{fl_jrand}"),
+            glibc: format!("{lc_jrand}"),
+        });
+    }
+    if fl_jrand_state != lc_jrand_state {
+        divs.push(Divergence {
+            function: "lcong48->jrand48",
+            case: "a=1,c=1,explicit_state=0".to_string(),
+            field: "post_state",
+            frankenlibc: format!("{fl_jrand_state:04x?}"),
+            glibc: format!("{lc_jrand_state:04x?}"),
+        });
+    }
+
+    unsafe { fl::srand48(1) };
+    unsafe { srand48(1) };
+
+    assert!(
+        divs.is_empty(),
+        "lcong48 explicit-state divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 // ===========================================================================
 // Coverage report
 // ===========================================================================
@@ -502,9 +594,10 @@ fn stdlib_random_diff_coverage_report() {
         + RAND_R_SEEDS.len() * CALLS_PER_SEED
         + RAND48_SEEDS.len() * RAND48_CALLS_PER_SEED * 3 // erand48 + nrand48 + jrand48
         + SRAND48_SEEDS.len() * SRAND48_CALLS * 3        // drand48 + lrand48 + mrand48
-        + SEED48_INPUTS.len() * 5;                       // seed48 + 4 follow-ups
+        + SEED48_INPUTS.len() * 5                        // seed48 + 4 follow-ups
+        + 4; // lcong48 + erand48/nrand48/jrand48 explicit-state checks
     eprintln!(
-        "{{\"family\":\"stdlib.h.random\",\"reference\":\"glibc\",\"functions\":10,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h.random\",\"reference\":\"glibc\",\"functions\":11,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }

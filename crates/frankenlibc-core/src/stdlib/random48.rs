@@ -54,8 +54,10 @@ fn advance_global() -> u64 {
 /// Advance a caller-supplied 48-bit state (packed in a `[u16; 3]`).
 #[inline]
 fn advance_state(xsubi: &mut [u16; 3]) -> u64 {
+    let a = MULTIPLIER.load(Ordering::Relaxed);
+    let c = INCREMENT.load(Ordering::Relaxed);
     let state = pack_state(xsubi);
-    let next = step(state, DEFAULT_A, DEFAULT_C);
+    let next = step(state, a, c);
     unpack_state(next, xsubi);
     next
 }
@@ -256,6 +258,29 @@ mod tests {
             (0.0..1.0).contains(&v),
             "drand48 after lcong48 out of range: {v}"
         );
+        // Restore default parameters for other tests.
+        srand48(1);
+    }
+
+    #[test]
+    fn test_lcong48_params_apply_to_explicit_state_family() {
+        let _lock = random48_lock();
+        let params = [0u16, 0, 0, 1, 0, 0, 1];
+        lcong48(&params);
+
+        let mut erand_state = [0u16, 0, 0];
+        let erand = erand48(&mut erand_state);
+        assert_eq!(erand_state, [1, 0, 0]);
+        assert_eq!(erand, 1.0 / ((1u64 << 48) as f64));
+
+        let mut nrand_state = [0u16, 0, 0];
+        assert_eq!(nrand48(&mut nrand_state), 0);
+        assert_eq!(nrand_state, [1, 0, 0]);
+
+        let mut jrand_state = [0u16, 0, 0];
+        assert_eq!(jrand48(&mut jrand_state), 0);
+        assert_eq!(jrand_state, [1, 0, 0]);
+
         // Restore default parameters for other tests.
         srand48(1);
     }
