@@ -2673,6 +2673,50 @@ const RAND48_STATE_BYTES: usize = core::mem::size_of::<[u16; 3]>();
 const RAND48_PARAM_BYTES: usize = core::mem::size_of::<[u16; 7]>();
 const RANDOM_STATE_MIN_BYTES: usize = 8;
 const RANDOM_STATE_MAX_BYTES: usize = 128;
+const RANDOM_STATE_REGISTRY_LIMIT: usize = 64;
+
+static RANDOM_STATE_BUFFERS: std::sync::Mutex<Vec<(usize, usize)>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn remember_random_state_buffer(ptr: *const c_char, len: usize) {
+    let ptr = ptr as usize;
+    let len = len.min(RANDOM_STATE_MAX_BYTES);
+    let mut buffers = RANDOM_STATE_BUFFERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((_, stored_len)) = buffers
+        .iter_mut()
+        .find(|(stored_ptr, _)| *stored_ptr == ptr)
+    {
+        *stored_len = len;
+        return;
+    }
+    if buffers.len() == RANDOM_STATE_REGISTRY_LIMIT {
+        buffers.remove(0);
+    }
+    buffers.push((ptr, len));
+}
+
+fn remembered_random_state_len(ptr: *const c_char) -> Option<usize> {
+    let ptr = ptr as usize;
+    let buffers = RANDOM_STATE_BUFFERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    buffers
+        .iter()
+        .rev()
+        .find_map(|(stored_ptr, len)| (*stored_ptr == ptr).then_some(*len))
+}
+
+fn random_state_len_for_setstate(ptr: *const c_char) -> Option<usize> {
+    match known_remaining(ptr as usize) {
+        Some(remaining) if remaining >= RANDOM_STATE_MIN_BYTES => {
+            Some(remaining.min(RANDOM_STATE_MAX_BYTES))
+        }
+        Some(_) => None,
+        None => remembered_random_state_len(ptr).or(Some(RANDOM_STATE_MIN_BYTES)),
+    }
+}
 
 /// `drand48` — return a double in [0.0, 1.0) using global 48-bit state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2906,6 +2950,7 @@ pub unsafe extern "C" fn initstate(seed: c_uint, state: *mut c_char, size: usize
     }
     let buf = unsafe { std::slice::from_raw_parts_mut(state as *mut u8, size) };
     let _ = frankenlibc_core::stdlib::initstate(seed, buf);
+    remember_random_state_buffer(state.cast_const(), size);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, false);
     state
 }
@@ -2926,14 +2971,11 @@ pub unsafe extern "C" fn setstate(state: *mut c_char) -> *mut c_char {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
         return ptr::null_mut();
     }
-    let state_len = known_remaining(state as usize)
-        .map(|remaining| remaining.min(RANDOM_STATE_MAX_BYTES))
-        .unwrap_or(RANDOM_STATE_MAX_BYTES);
-    if state_len < RANDOM_STATE_MIN_BYTES {
+    let Some(state_len) = random_state_len_for_setstate(state.cast_const()) else {
         unsafe { set_abi_errno(libc::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
         return ptr::null_mut();
-    }
+    };
     let buf = unsafe { std::slice::from_raw_parts(state as *const u8, state_len) };
     let _ = frankenlibc_core::stdlib::setstate(buf);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, false);

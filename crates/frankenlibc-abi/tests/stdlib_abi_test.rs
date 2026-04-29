@@ -3995,6 +3995,18 @@ fn setstate_rejects_tracked_too_short_state() {
 }
 
 #[test]
+fn setstate_accepts_untracked_minimum_state_without_overread() {
+    let _lock = random_lock();
+    let mut tiny = [0u8; 8];
+    unsafe {
+        *__errno_location() = 0;
+        let result = setstate(tiny.as_mut_ptr().cast());
+        assert_eq!(result, tiny.as_mut_ptr().cast());
+        assert_eq!(*__errno_location(), 0);
+    }
+}
+
+#[test]
 fn random_r_accepts_valid_tracked_state_and_result() {
     let buf = unsafe { malloc_tracked_bytes(std::mem::size_of::<u32>()) };
     let result = unsafe { malloc_tracked_bytes(std::mem::size_of::<i32>()) }.cast::<i32>();
