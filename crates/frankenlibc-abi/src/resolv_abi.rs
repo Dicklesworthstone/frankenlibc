@@ -4036,24 +4036,450 @@ pub unsafe extern "C" fn __res_hostalias(
 
 // --- RFC 1876 LOC records ---
 
-/// `__loc_aton(*ascii, *binary) -> int` — parse LOC ASCII rep into
-/// 16-byte binary. Stub returns 0 (parse failure).
+const LOC_NTOA_BUF_LEN: usize = 96;
+
+thread_local! {
+    static LOC_NTOA_BUF: RefCell<[u8; LOC_NTOA_BUF_LEN]> =
+        const { RefCell::new([0u8; LOC_NTOA_BUF_LEN]) };
+}
+
+const POWERS_OF_TEN: [u64; 10] = [
+    1,
+    10,
+    100,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000,
+    10_000_000,
+    100_000_000,
+    1_000_000_000,
+];
+
+/// Format a precision byte (mantissa-exponent encoded centimeters) as
+/// "<meters>.<centi-meters-2dp>" — matches glibc's `precsize_ntoa`.
+fn loc_precsize_format(prec: u8) -> String {
+    let mantissa = ((prec >> 4) & 0x0f) as usize % 10;
+    let exponent = (prec & 0x0f) as usize % 10;
+    let val = (mantissa as u64) * POWERS_OF_TEN[exponent];
+    format!("{}.{:02}", val / 100, val % 100)
+}
+
+/// Parse a "<meters>[.<frac>]" string into a precision byte. Returns
+/// the byte plus the number of input bytes consumed (whitespace not
+/// included). On parse failure returns None.
+fn loc_precsize_parse(s: &[u8]) -> Option<(u8, usize)> {
+    // Match optional digits, optional '.', optional digits, optional 'm'.
+    let mut i = 0;
+    let start = i;
+    while i < s.len() && s[i].is_ascii_digit() {
+        i += 1;
+    }
+    let int_end = i;
+    let mut frac_end = i;
+    if i < s.len() && s[i] == b'.' {
+        i += 1;
+        while i < s.len() && s[i].is_ascii_digit() {
+            i += 1;
+        }
+        frac_end = i;
+    }
+    if int_end == start && frac_end == start {
+        return None;
+    }
+    if i < s.len() && s[i] == b'm' {
+        i += 1;
+    }
+    let int_str = std::str::from_utf8(&s[start..int_end]).ok()?;
+    let int_meters: u64 = if int_str.is_empty() { 0 } else { int_str.parse().ok()? };
+    let frac_part: u64 = if frac_end > int_end + 1 {
+        // We have a '.' + digits.
+        let frac_str = std::str::from_utf8(&s[int_end + 1..frac_end]).ok()?;
+        // Pad/truncate to 2 digits so we get centimeters.
+        let mut buf = String::from(frac_str);
+        if buf.len() < 2 {
+            while buf.len() < 2 {
+                buf.push('0');
+            }
+        } else {
+            buf.truncate(2);
+        }
+        buf.parse().ok()?
+    } else {
+        0
+    };
+    let cm = int_meters
+        .checked_mul(100)?
+        .checked_add(frac_part)?;
+    // Choose the smallest exponent that keeps mantissa <= 9.
+    let mut mantissa = cm;
+    let mut exponent = 0u8;
+    while mantissa > 9 && exponent < 9 {
+        mantissa /= 10;
+        exponent += 1;
+    }
+    if mantissa > 9 {
+        // Out of range.
+        return None;
+    }
+    Some((((mantissa as u8) << 4) | exponent, i))
+}
+
+/// `__loc_aton(*ascii, *binary) -> int` — parse LOC ASCII rep per
+/// RFC 1876 into 16-byte binary. Returns 1 on success, 0 on failure.
+///
+/// Format: `<lat-d> <lat-m> <lat-s>[.<frac>] <N|S> <lon-d> <lon-m>
+/// <lon-s>[.<frac>] <E|W> <alt>[m] [<size>[m] [<hp>[m] [<vp>[m]]]]`
+/// where minutes/seconds default to 0 if omitted (we still require the
+/// hemisphere letter to disambiguate end-of-coordinate).
 ///
 /// # Safety
-/// Pointers may be NULL.
+/// Pointers may be NULL; we return 0 in that case.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __loc_aton(_ascii: *const c_char, _binary: *mut u8) -> c_int {
-    0
+pub unsafe extern "C" fn __loc_aton(ascii: *const c_char, binary: *mut u8) -> c_int {
+    if ascii.is_null() || binary.is_null() {
+        return 0;
+    }
+    let s = unsafe { CStr::from_ptr(ascii) }.to_bytes();
+    let Some(out) = loc_aton_inner(s) else {
+        return 0;
+    };
+    let dst = unsafe { std::slice::from_raw_parts_mut(binary, 16) };
+    dst.copy_from_slice(&out);
+    // Match glibc: return the size of the LOC RR (16 bytes) on success.
+    16
+}
+
+fn loc_aton_inner(s: &[u8]) -> Option<[u8; 16]> {
+    let mut tokens = LocTokens::new(s);
+
+    // Latitude: deg [min [sec[.frac]]] (N|S)
+    let lat_deg: u32 = tokens.next_u32()?;
+    if lat_deg > 90 {
+        return None;
+    }
+    let mut lat_min: u32 = 0;
+    let mut lat_sec_int: u32 = 0;
+    let mut lat_sec_frac: u32 = 0;
+    let mut tok = tokens.next_token()?;
+    if !is_hemisphere(tok) {
+        lat_min = parse_u32(tok)?;
+        if lat_min >= 60 {
+            return None;
+        }
+        tok = tokens.next_token()?;
+        if !is_hemisphere(tok) {
+            let (sec_int, sec_frac) = parse_seconds(tok)?;
+            lat_sec_int = sec_int;
+            lat_sec_frac = sec_frac;
+            if lat_sec_int >= 60 {
+                return None;
+            }
+            tok = tokens.next_token()?;
+        }
+    }
+    let north_south = match tok {
+        b"N" | b"n" => 1i64,
+        b"S" | b"s" => -1i64,
+        _ => return None,
+    };
+
+    // Longitude: deg [min [sec[.frac]]] (E|W)
+    let lon_deg: u32 = tokens.next_u32()?;
+    if lon_deg > 180 {
+        return None;
+    }
+    let mut lon_min: u32 = 0;
+    let mut lon_sec_int: u32 = 0;
+    let mut lon_sec_frac: u32 = 0;
+    let mut tok = tokens.next_token()?;
+    if !is_hemisphere(tok) {
+        lon_min = parse_u32(tok)?;
+        if lon_min >= 60 {
+            return None;
+        }
+        tok = tokens.next_token()?;
+        if !is_hemisphere(tok) {
+            let (sec_int, sec_frac) = parse_seconds(tok)?;
+            lon_sec_int = sec_int;
+            lon_sec_frac = sec_frac;
+            if lon_sec_int >= 60 {
+                return None;
+            }
+            tok = tokens.next_token()?;
+        }
+    }
+    let east_west = match tok {
+        b"E" | b"e" => 1i64,
+        b"W" | b"w" => -1i64,
+        _ => return None,
+    };
+
+    // Altitude (with optional 'm' suffix, optional fractional, optional sign)
+    let alt_tok = tokens.next_token()?;
+    let alt_meters_centi = parse_signed_meters(alt_tok)?;
+
+    // Defaults: size=1m, horiz_pre=10km, vert_pre=10m
+    let mut size_byte: u8 = 0x12;
+    let mut hp_byte: u8 = 0x16;
+    let mut vp_byte: u8 = 0x13;
+    if let Some(t) = tokens.peek_token() {
+        size_byte = loc_precsize_parse(t)?.0;
+        tokens.consume_token();
+    }
+    if let Some(t) = tokens.peek_token() {
+        hp_byte = loc_precsize_parse(t)?.0;
+        tokens.consume_token();
+    }
+    if let Some(t) = tokens.peek_token() {
+        vp_byte = loc_precsize_parse(t)?.0;
+        tokens.consume_token();
+    }
+    if tokens.peek_token().is_some() {
+        return None; // trailing garbage
+    }
+
+    // Build latitude/longitude in milli-arcseconds (signed).
+    let lat_ms: i64 = north_south
+        * (lat_deg as i64 * 3_600_000
+            + lat_min as i64 * 60_000
+            + lat_sec_int as i64 * 1_000
+            + lat_sec_frac as i64);
+    let lon_ms: i64 = east_west
+        * (lon_deg as i64 * 3_600_000
+            + lon_min as i64 * 60_000
+            + lon_sec_int as i64 * 1_000
+            + lon_sec_frac as i64);
+
+    // Latitude/longitude reference is 2^31 (equator, prime meridian).
+    let ref_pos: i64 = 1i64 << 31;
+    let lat_word = (ref_pos + lat_ms) as u32;
+    let lon_word = (ref_pos + lon_ms) as u32;
+
+    // Altitude reference is -100,000m, stored in cm.
+    let alt_word = (alt_meters_centi + 100_000_00i64) as u32;
+
+    let mut out = [0u8; 16];
+    out[0] = 0; // version
+    out[1] = size_byte;
+    out[2] = hp_byte;
+    out[3] = vp_byte;
+    out[4..8].copy_from_slice(&lat_word.to_be_bytes());
+    out[8..12].copy_from_slice(&lon_word.to_be_bytes());
+    out[12..16].copy_from_slice(&alt_word.to_be_bytes());
+    Some(out)
+}
+
+fn is_hemisphere(tok: &[u8]) -> bool {
+    matches!(tok, b"N" | b"n" | b"S" | b"s" | b"E" | b"e" | b"W" | b"w")
+}
+
+fn parse_u32(s: &[u8]) -> Option<u32> {
+    std::str::from_utf8(s).ok()?.parse().ok()
+}
+
+fn parse_seconds(s: &[u8]) -> Option<(u32, u32)> {
+    // Accept "ss" or "ss.fff" (frac ms, up to 3 digits).
+    let dot = s.iter().position(|&b| b == b'.');
+    match dot {
+        None => Some((parse_u32(s)?, 0)),
+        Some(idx) => {
+            let int_str = std::str::from_utf8(&s[..idx]).ok()?;
+            let int_val: u32 = if int_str.is_empty() { 0 } else { int_str.parse().ok()? };
+            let frac_str = std::str::from_utf8(&s[idx + 1..]).ok()?;
+            // Pad/truncate to 3 digits to express milliseconds.
+            let mut buf = String::from(frac_str);
+            if buf.len() < 3 {
+                while buf.len() < 3 {
+                    buf.push('0');
+                }
+            } else {
+                buf.truncate(3);
+            }
+            let frac_val: u32 = if buf.is_empty() { 0 } else { buf.parse().ok()? };
+            Some((int_val, frac_val))
+        }
+    }
+}
+
+fn parse_signed_meters(s: &[u8]) -> Option<i64> {
+    let mut bytes = s;
+    let neg = !bytes.is_empty() && bytes[0] == b'-';
+    if neg || (!bytes.is_empty() && bytes[0] == b'+') {
+        bytes = &bytes[1..];
+    }
+    // Strip optional trailing 'm'.
+    if !bytes.is_empty() && *bytes.last().unwrap() == b'm' {
+        bytes = &bytes[..bytes.len() - 1];
+    }
+    let dot = bytes.iter().position(|&b| b == b'.');
+    let (int_part, frac_part_cm): (i64, i64) = match dot {
+        None => {
+            let v: i64 = parse_u32(bytes)? as i64;
+            (v, 0)
+        }
+        Some(idx) => {
+            let int_str = std::str::from_utf8(&bytes[..idx]).ok()?;
+            let int_val: i64 = if int_str.is_empty() { 0 } else { int_str.parse().ok()? };
+            let frac_str = std::str::from_utf8(&bytes[idx + 1..]).ok()?;
+            let mut buf = String::from(frac_str);
+            if buf.len() < 2 {
+                while buf.len() < 2 {
+                    buf.push('0');
+                }
+            } else {
+                buf.truncate(2);
+            }
+            let frac_val: i64 = buf.parse().ok()?;
+            (int_val, frac_val)
+        }
+    };
+    let cm = int_part.checked_mul(100)?.checked_add(frac_part_cm)?;
+    Some(if neg { -cm } else { cm })
+}
+
+struct LocTokens<'a> {
+    src: &'a [u8],
+    pos: usize,
+}
+impl<'a> LocTokens<'a> {
+    fn new(src: &'a [u8]) -> Self {
+        Self { src, pos: 0 }
+    }
+    fn skip_ws(&mut self) {
+        while self.pos < self.src.len() && self.src[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+    fn peek_token(&mut self) -> Option<&'a [u8]> {
+        self.skip_ws();
+        let start = self.pos;
+        let mut end = start;
+        while end < self.src.len() && !self.src[end].is_ascii_whitespace() {
+            end += 1;
+        }
+        if start == end {
+            None
+        } else {
+            Some(&self.src[start..end])
+        }
+    }
+    fn consume_token(&mut self) {
+        self.skip_ws();
+        while self.pos < self.src.len() && !self.src[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+    fn next_token(&mut self) -> Option<&'a [u8]> {
+        let t = self.peek_token()?;
+        self.consume_token();
+        Some(t)
+    }
+    fn next_u32(&mut self) -> Option<u32> {
+        let t = self.next_token()?;
+        parse_u32(t)
+    }
 }
 
 /// `__loc_ntoa(*binary, *ascii) -> *const c_char` — render LOC binary
-/// as ASCII. Stub returns NULL (no rendering).
+/// as ASCII per RFC 1876. Writes into `ascii` if non-NULL, else into
+/// a thread-local static buffer. Returns the buffer pointer or an
+/// error string for unknown versions.
 ///
 /// # Safety
-/// Pointers may be NULL.
+/// `binary` must point to at least 16 readable bytes when non-NULL.
+/// `ascii`, if non-NULL, must have room for ~90 bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __loc_ntoa(_binary: *const u8, _ascii: *mut c_char) -> *const c_char {
-    core::ptr::null()
+pub unsafe extern "C" fn __loc_ntoa(binary: *const u8, ascii: *mut c_char) -> *const c_char {
+    if binary.is_null() {
+        return core::ptr::null();
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(binary, 16) };
+    let formatted = loc_ntoa_format(bytes);
+    let formatted_bytes = formatted.as_bytes();
+
+    if ascii.is_null() {
+        // Write into thread-local static buffer.
+        return LOC_NTOA_BUF.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            let n = formatted_bytes.len().min(LOC_NTOA_BUF_LEN - 1);
+            buf[..n].copy_from_slice(&formatted_bytes[..n]);
+            buf[n] = 0;
+            buf.as_ptr() as *const c_char
+        });
+    }
+    // Write into caller-provided buffer (assumed >= 90 bytes).
+    unsafe {
+        let dst = ascii as *mut u8;
+        std::ptr::copy_nonoverlapping(formatted_bytes.as_ptr(), dst, formatted_bytes.len());
+        *dst.add(formatted_bytes.len()) = 0;
+    }
+    ascii
+}
+
+fn loc_ntoa_format(bytes: &[u8]) -> String {
+    let version = bytes[0];
+    if version != 0 {
+        return "; error: unknown LOC RR version".to_string();
+    }
+    let size_byte = bytes[1];
+    let hp_byte = bytes[2];
+    let vp_byte = bytes[3];
+    let lat_word = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    let lon_word = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+    let alt_word = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+
+    let ref_pos: i64 = 1i64 << 31;
+    let mut lat_val: i64 = lat_word as i64 - ref_pos;
+    let north_south = if lat_val < 0 {
+        lat_val = -lat_val;
+        'S'
+    } else {
+        'N'
+    };
+    let lat_secfrac = (lat_val % 1000) as i32;
+    let lat_v = lat_val / 1000;
+    let lat_sec = (lat_v % 60) as i32;
+    let lat_v = lat_v / 60;
+    let lat_min = (lat_v % 60) as i32;
+    let lat_deg = (lat_v / 60) as i32;
+
+    let mut lon_val: i64 = lon_word as i64 - ref_pos;
+    let east_west = if lon_val < 0 {
+        lon_val = -lon_val;
+        'W'
+    } else {
+        'E'
+    };
+    let lon_secfrac = (lon_val % 1000) as i32;
+    let lon_v = lon_val / 1000;
+    let lon_sec = (lon_v % 60) as i32;
+    let lon_v = lon_v / 60;
+    let lon_min = (lon_v % 60) as i32;
+    let lon_deg = (lon_v / 60) as i32;
+
+    let reference_alt: i64 = 100_000 * 100;
+    let alt_signed = alt_word as i64 - reference_alt;
+    let (alt_meters, alt_centi) = if alt_signed < 0 {
+        // glibc: altmeters = (altval / 100) * altsign; altfrac = altval % 100
+        // where altval = referencealt - templ (always positive).
+        let altval = (-alt_signed) as i64;
+        ((altval / 100) * -1, altval % 100)
+    } else {
+        let altval = alt_signed as i64;
+        (altval / 100, altval % 100)
+    };
+
+    let size_str = loc_precsize_format(size_byte);
+    let hp_str = loc_precsize_format(hp_byte);
+    let vp_str = loc_precsize_format(vp_byte);
+
+    format!(
+        "{} {:02} {:02}.{:03} {} {} {:02} {:02}.{:03} {} {}.{:02}m {}m {}m {}m",
+        lat_deg, lat_min, lat_sec, lat_secfrac, north_south,
+        lon_deg, lon_min, lon_sec, lon_secfrac, east_west,
+        alt_meters, alt_centi, size_str, hp_str, vp_str,
+    )
 }
 
 // --- DNS symbol tables ---
