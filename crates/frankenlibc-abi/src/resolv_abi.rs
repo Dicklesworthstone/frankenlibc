@@ -3823,13 +3823,61 @@ pub unsafe extern "C" fn __p_rcode(rcode: c_int) -> *const c_char {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_secstodate(_secs: u32) -> *const c_char {
-    c"19700101000000".as_ptr()
+pub unsafe extern "C" fn __p_secstodate(secs: u32) -> *const c_char {
+    // glibc renders the SOA SERIAL / RRSIG signature time as
+    // YYYYMMDDHHMMSS in UTC. fl uses the same closed-form date
+    // conversion that powers gmtime_r (no syscalls).
+    use frankenlibc_core::time as time_core;
+    thread_local! {
+        static SECSTODATE_BUF: core::cell::UnsafeCell<[u8; 24]> =
+            const { core::cell::UnsafeCell::new([0u8; 24]) };
+    }
+    SECSTODATE_BUF.with(|cell| {
+        let buf_ptr = cell.get();
+        // SAFETY: thread-local; no aliasing across threads.
+        let buf = unsafe { &mut *buf_ptr };
+        let bd = time_core::epoch_to_broken_down(secs as i64);
+        let year = (bd.tm_year as i64 + 1900).clamp(0, 9999) as u32;
+        let s = format!(
+            "{:04}{:02}{:02}{:02}{:02}{:02}",
+            year,
+            (bd.tm_mon + 1) as u32,
+            bd.tm_mday as u32,
+            bd.tm_hour as u32,
+            bd.tm_min as u32,
+            bd.tm_sec as u32,
+        );
+        let bytes = s.as_bytes();
+        let n = bytes.len().min(buf.len() - 1);
+        buf[..n].copy_from_slice(&bytes[..n]);
+        buf[n] = 0;
+        buf.as_ptr() as *const c_char
+    })
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_time(_value: u32) -> *const c_char {
-    c"0".as_ptr()
+pub unsafe extern "C" fn __p_time(value: u32) -> *const c_char {
+    // __p_time renders a TTL using the same W/D/H/M/S decomposition as
+    // ns_format_ttl. We share the same thread-local buffer to avoid
+    // duplicating the formatter; the output format ("1D", "2w6h56m7s")
+    // is identical.
+    thread_local! {
+        static P_TIME_BUF: core::cell::UnsafeCell<[u8; 32]> =
+            const { core::cell::UnsafeCell::new([0u8; 32]) };
+    }
+    P_TIME_BUF.with(|cell| {
+        let buf_ptr = cell.get();
+        // SAFETY: thread-local; no aliasing across threads.
+        let buf = unsafe { &mut *buf_ptr };
+        let n = unsafe { ns_format_ttl(value as libc::c_ulong, buf.as_mut_ptr() as *mut c_char, buf.len()) };
+        if n < 0 {
+            // Fallback shouldn't happen for u32 inputs in a 32-byte buffer.
+            buf[0] = b'0';
+            buf[1] = b'S';
+            buf[2] = 0;
+        }
+        buf.as_ptr() as *const c_char
+    })
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

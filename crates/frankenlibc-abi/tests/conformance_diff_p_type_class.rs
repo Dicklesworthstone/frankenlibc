@@ -18,6 +18,7 @@ unsafe extern "C" {
     fn __p_class(class: c_int) -> *const c_char;
     fn __p_type(ty: c_int) -> *const c_char;
     fn __p_rcode(rcode: c_int) -> *const c_char;
+    fn __p_time(value: u32) -> *const c_char;
 }
 
 #[derive(Debug)]
@@ -145,6 +146,44 @@ fn diff_p_rcode_known_and_unknown() {
         }
     }
     assert!(divs.is_empty(), "__p_rcode divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_p_time_known_and_unknown() {
+    let mut divs = Vec::new();
+    let times: &[u32] = &[
+        0, 1, 60, 3600, 86400, 604800,
+        // Multi-unit
+        90090, 1234567, 60 * 60 * 24 * 365,
+        u32::MAX,
+    ];
+    for &t in times {
+        let p_fl = unsafe { fl::__p_time(t) };
+        let p_lc = unsafe { __p_time(t) };
+        if p_fl.is_null() != p_lc.is_null() {
+            divs.push(Divergence {
+                case: format!("time={t}"),
+                field: "null_return",
+                frankenlibc: format!("{}", p_fl.is_null()),
+                glibc: format!("{}", p_lc.is_null()),
+            });
+            continue;
+        }
+        if p_fl.is_null() {
+            continue;
+        }
+        let s_fl = unsafe { CStr::from_ptr(p_fl).to_bytes() };
+        let s_lc = unsafe { CStr::from_ptr(p_lc).to_bytes() };
+        if s_fl != s_lc {
+            divs.push(Divergence {
+                case: format!("time={t}"),
+                field: "string",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
+                glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "__p_time divergences:\n{}", render_divs(&divs));
 }
 
 #[test]

@@ -2759,6 +2759,8 @@ fn bd_dcfj5_dns_print_helpers_are_void_noops() {
 #[test]
 fn bd_dcfj5_dns_text_helpers_return_static_strings() {
     use frankenlibc_abi::resolv_abi::*;
+    // After bd-58e87f, the helpers map values to RFC-correct strings
+    // (matching glibc) instead of returning fixed stub strings.
     let class_str = unsafe { CStr::from_ptr(__p_class(1)) };
     assert_eq!(class_str.to_bytes(), b"IN");
     let type_str = unsafe { CStr::from_ptr(__p_type(1)) };
@@ -2769,8 +2771,10 @@ fn bd_dcfj5_dns_text_helpers_return_static_strings() {
     assert_eq!(rcode_str.to_bytes(), b"NOERROR");
     let secs_str = unsafe { CStr::from_ptr(__p_secstodate(0)) };
     assert_eq!(secs_str.to_bytes(), b"19700101000000");
+    // __p_time uses ns_format_ttl-style W/D/H/M/S decomposition: TTL 0
+    // → "0S" (zero-second single-unit form), matching glibc libresolv.
     let time_str = unsafe { CStr::from_ptr(__p_time(0)) };
-    assert_eq!(time_str.to_bytes(), b"0");
+    assert_eq!(time_str.to_bytes(), b"0S");
 }
 
 #[test]
