@@ -125,9 +125,9 @@ pub fn parse(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
 /// Render `bytes[..⌈prefix_bits/8⌉]` plus the prefix suffix into a
 /// CIDR string. Mirrors libresolv `inet_net_ntop(3)` for AF_INET.
 ///
-/// The output omits the `/prefix` suffix when `prefix_bits == 32`
-/// AND the address is a complete 4-byte form — matching libresolv's
-/// "host address" shorthand.
+/// Conforming to libresolv: always emit the `/prefix` suffix, mask the
+/// final partial-octet to the prefix boundary, and emit at least one
+/// "0" octet even for `prefix_bits == 0`.
 pub fn format(bytes: &[u8], prefix_bits: u32) -> Result<Vec<u8>, NetPtonError> {
     if prefix_bits > 32 {
         return Err(NetPtonError::Invalid);
@@ -138,19 +138,36 @@ pub fn format(bytes: &[u8], prefix_bits: u32) -> Result<Vec<u8>, NetPtonError> {
     }
 
     let mut out = Vec::with_capacity(20);
-    for (i, &byte) in bytes.iter().enumerate().take(bytes_needed) {
+    // libresolv emits at least one octet, even for prefix_bits == 0
+    // (otherwise the output would start with '/'). Use "0" as the
+    // standalone leading octet for the all-zero / zero-prefix case.
+    let emit_count = bytes_needed.max(1);
+
+    for i in 0..emit_count {
         if i > 0 {
             out.push(b'.');
         }
-        write_decimal(&mut out, byte as u32);
+        let byte = if i < bytes.len() { bytes[i] } else { 0 };
+        // Mask the final partial-octet to the prefix boundary so
+        // bits beyond `prefix_bits` are emitted as zero — matches glibc.
+        let masked = if (i + 1) * 8 > prefix_bits as usize && prefix_bits as usize > i * 8 {
+            let kept_bits = prefix_bits as usize - i * 8;
+            let mask: u8 = if kept_bits == 0 {
+                0
+            } else {
+                (!0u8).wrapping_shl(8 - kept_bits as u32)
+            };
+            byte & mask
+        } else if (i + 1) * 8 > prefix_bits as usize {
+            // Octet entirely outside the prefix → zero.
+            0
+        } else {
+            byte
+        };
+        write_decimal(&mut out, masked as u32);
     }
-    // Always emit the /prefix when the prefix is < 32 (network) or
-    // when the prefix is not a multiple of 8 (partial-octet network).
-    // For /32 with all 4 octets we elide it (host shorthand).
-    if !(prefix_bits == 32 && bytes_needed == 4) {
-        out.push(b'/');
-        write_decimal(&mut out, prefix_bits);
-    }
+    out.push(b'/');
+    write_decimal(&mut out, prefix_bits);
     Ok(out)
 }
 
@@ -410,8 +427,8 @@ mod tests {
     fn format_full_host_address() {
         let bytes = [192u8, 168, 0, 1];
         let s = format(&bytes, 32).unwrap();
-        // /32 with full 4 bytes elides the prefix suffix.
-        assert_eq!(s, b"192.168.0.1");
+        // libresolv always emits the /prefix suffix — no host shorthand.
+        assert_eq!(s, b"192.168.0.1/32");
     }
 
     #[test]
@@ -439,14 +456,17 @@ mod tests {
     fn format_zero_prefix() {
         let bytes = [];
         let s = format(&bytes, 0).unwrap();
-        assert_eq!(s, b"/0");
+        // libresolv prints a leading "0" octet so the output isn't bare "/0".
+        assert_eq!(s, b"0/0");
     }
 
     #[test]
     fn format_partial_octet_prefix() {
         let bytes = [10u8, 1, 2];
         let s = format(&bytes, 20).unwrap();
-        assert_eq!(s, b"10.1.2/20");
+        // /20 = 8+8+4 bits; the third octet is masked to its top 4 bits,
+        // so 2 (0b00000010) becomes 0 — matches glibc.
+        assert_eq!(s, b"10.1.0/20");
     }
 
     #[test]
@@ -466,19 +486,22 @@ mod tests {
 
     #[test]
     fn round_trip_canonical_forms() {
-        let cases: &[&[u8]] = &[
-            b"10/8",
-            b"10.0/16",
-            b"192.168.0/24",
-            b"10.1.2/20",
-            b"192.168.0.1",
+        // After the libresolv-aligned format fix:
+        //   /32 emits the suffix (no host shorthand)
+        //   /20 masks partial octets to bit boundary
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"10/8", b"10/8"),
+            (b"10.0/16", b"10.0/16"),
+            (b"192.168.0/24", b"192.168.0/24"),
+            (b"10.1.2/20", b"10.1.0/20"),
+            (b"192.168.0.1", b"192.168.0.1/32"),
         ];
-        for &input in cases {
+        for &(input, expected_round) in cases {
             let mut dst = [0u8; 4];
             let p = parse(input, &mut dst).unwrap();
             let bytes_used = (p as usize).div_ceil(8);
             let formatted = format(&dst[..bytes_used], p).unwrap();
-            assert_eq!(formatted, input, "round trip for {:?}", input);
+            assert_eq!(formatted, expected_round, "round trip for {:?}", input);
         }
     }
 }
