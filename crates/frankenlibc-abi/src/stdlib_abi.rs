@@ -4736,7 +4736,7 @@ pub unsafe extern "C" fn ecvt_r(
     // Use signbit semantics: -0.0 returns sign=1 too, matching glibc.
     // Previous impl used `value < 0.0` which is false for -0.0.
     unsafe { *sign = if value.is_sign_negative() && !value.is_nan() { 1 } else { 0 } };
-    let requested = (ndigit.max(0) as i32).min(MAX_LEGACY_CVT_DIGITS as i32);
+    let requested = ndigit.max(0).min(MAX_LEGACY_CVT_DIGITS as i32);
     let (digits, dp, _neg) = frankenlibc_core::stdlib::ecvt(value, requested);
     unsafe { *decpt = dp };
     let copy_len = digits.len().min(effective_buflen.saturating_sub(1));
@@ -4769,7 +4769,7 @@ pub unsafe extern "C" fn fcvt_r(
     }
     // signbit semantics again — -0.0 must report sign=1.
     unsafe { *sign = if value.is_sign_negative() && !value.is_nan() { 1 } else { 0 } };
-    let requested = (ndigit.max(0) as i32).min(MAX_LEGACY_CVT_DIGITS as i32);
+    let requested = ndigit.max(0).min(MAX_LEGACY_CVT_DIGITS as i32);
     // Delegate to the corrected core fcvt: handles leading-zero
     // stripping for sub-1 magnitudes (digits="1" decpt=-3 for
     // 0.0001234 with ndigit=4) and the rounded-to-zero case

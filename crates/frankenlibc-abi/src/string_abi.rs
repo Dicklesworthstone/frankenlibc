@@ -5874,6 +5874,7 @@ fn strverscmp_bytes(s1: &[u8], s2: &[u8]) -> c_int {
             let leading_zero = c1 == b'0' || c2 == b'0';
             if leading_zero {
                 // Left-aligned comparison (treat as fraction after decimal point).
+                let mut seen_nonzero = false;
                 loop {
                     let d1 = strvers_byte(s1, i);
                     let d2 = strvers_byte(s2, i);
@@ -5883,13 +5884,24 @@ fn strverscmp_bytes(s1: &[u8], s2: &[u8]) -> c_int {
                         break;
                     }
                     if !is_d1 {
-                        return 1;
+                        return if seen_nonzero {
+                            (d1 as c_int) - (d2 as c_int)
+                        } else {
+                            1
+                        };
                     }
                     if !is_d2 {
-                        return -1;
+                        return if seen_nonzero {
+                            (d1 as c_int) - (d2 as c_int)
+                        } else {
+                            -1
+                        };
                     }
                     if d1 != d2 {
                         return (d1 as c_int) - (d2 as c_int);
+                    }
+                    if d1 != b'0' {
+                        seen_nonzero = true;
                     }
                     i += 1;
                 }

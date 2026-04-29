@@ -721,6 +721,10 @@ const STRVERSCMP_CASES: &[(&[u8], &[u8])] = &[
     (b"a", b"a0"),                   // numeric suffix
     (b"a0", b"a"),
     (b"abc1", b"abc01"),             // leading zero in numeric segment
+    (b"a01", b"a010"),               // zero-prefixed prefix after non-zero digit
+    (b"a010", b"a01"),               // reverse ordering of the prefix case
+    (b"a0", b"a00"),                 // all-zero prefix has opposite GNU ordering
+    (b"a00", b"a001"),               // all-zero run before the first non-zero digit
 ];
 
 #[test]
