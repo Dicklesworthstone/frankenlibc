@@ -320,4 +320,9 @@ name = "fuzz_argz"
 path = "fuzz_targets/fuzz_argz.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_asprintf"
+path = "fuzz_targets/fuzz_asprintf.rs"
+doc = false
+
 [workspace]
