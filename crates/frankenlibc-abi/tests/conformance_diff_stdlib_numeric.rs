@@ -84,12 +84,43 @@ unsafe extern "C" {
     fn llabs(n: std::ffi::c_longlong) -> std::ffi::c_longlong;
     /// Host glibc `imaxabs` — absolute value of intmax_t (i64 on x86_64).
     fn imaxabs(j: std::ffi::c_longlong) -> std::ffi::c_longlong;
+    /// Host glibc `div` / `ldiv` / `lldiv` — integer division
+    /// returning a struct of (quot, rem). The structs are
+    /// repr(C) and small enough to fit in registers, so the ABI
+    /// matches the FrankenLibC `CDiv`/`CLdiv`/`CLldiv` types.
+    fn div(numer: c_int, denom: c_int) -> HostDiv;
+    fn ldiv(numer: c_long, denom: c_long) -> HostLdiv;
+    fn lldiv(
+        numer: std::ffi::c_longlong,
+        denom: std::ffi::c_longlong,
+    ) -> HostLldiv;
     /// Host glibc `ffs` — find first set bit in an int.
     fn ffs(i: c_int) -> c_int;
     /// Host glibc `ffsl` — find first set bit in a long.
     fn ffsl(i: c_long) -> c_int;
     /// Host glibc `ffsll` — find first set bit in a long long.
     fn ffsll(i: std::ffi::c_longlong) -> c_int;
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct HostDiv {
+    quot: c_int,
+    rem: c_int,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct HostLdiv {
+    quot: c_long,
+    rem: c_long,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct HostLldiv {
+    quot: std::ffi::c_longlong,
+    rem: std::ffi::c_longlong,
 }
 
 #[derive(Debug)]
@@ -1276,6 +1307,107 @@ fn nul_terminated_slice(buf: &[u8]) -> &[u8] {
 }
 
 // ===========================================================================
+// div / ldiv / lldiv — integer division returning {quot, rem}
+// ===========================================================================
+//
+// Three pure functions implemented as thin delegators to
+// frankenlibc-core. The struct return ABI is the interesting part:
+// each impl returns a small C struct via registers (per x86_64
+// SysV: 16-byte structs in rax+rdx). The repr(C) HostDiv/HostLdiv/
+// HostLldiv mirrors the layout, so the diff catches both the
+// arithmetic AND the struct-return calling-convention parity.
+
+const DIV_PAIRS: &[(c_int, c_int)] = &[
+    (10, 3), (-10, 3), (10, -3), (-10, -3),
+    (0, 5), (5, 1), (1, 1),
+    (c_int::MAX, 1), (c_int::MAX, c_int::MAX),
+    (c_int::MIN, 1), (c_int::MIN, -1), // -1 case: overflow → wrap
+    (7, 4), (-7, 4),                   // signed division C99: trunc toward zero
+];
+
+#[test]
+fn diff_div_cases() {
+    let mut divs = Vec::new();
+    for &(n, d) in DIV_PAIRS {
+        if d == 0 || (n == c_int::MIN && d == -1) {
+            // Skip undefined-behavior cases: division by zero, and
+            // INT_MIN / -1 (overflow). Both impls have to wrap or
+            // trap — comparing isn't meaningful.
+            continue;
+        }
+        let fl_r = fl::div(n, d);
+        let lc_r = unsafe { div(n, d) };
+        if fl_r.quot != lc_r.quot || fl_r.rem != lc_r.rem {
+            divs.push(Divergence {
+                function: "div",
+                case: format!("({n}, {d})"),
+                field: "result",
+                frankenlibc: format!("(q={}, r={})", fl_r.quot, fl_r.rem),
+                glibc: format!("(q={}, r={})", lc_r.quot, lc_r.rem),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "div divergences:\n{}", render_divs(&divs));
+}
+
+const LDIV_PAIRS: &[(c_long, c_long)] = &[
+    (10, 3), (-10, 3), (10, -3), (-10, -3),
+    (0, 5), (5, 1),
+    (i64::MAX, 1), (i64::MAX, i64::MAX),
+    (i64::MIN, 1),
+    (1 << 32, 1 << 16), (-(1i64 << 32), 1 << 16),
+];
+
+#[test]
+fn diff_ldiv_cases() {
+    let mut divs = Vec::new();
+    for &(n, d) in LDIV_PAIRS {
+        if d == 0 || (n == i64::MIN && d == -1) {
+            continue;
+        }
+        let fl_r = fl::ldiv(n, d);
+        let lc_r = unsafe { ldiv(n, d) };
+        if fl_r.quot != lc_r.quot || fl_r.rem != lc_r.rem {
+            divs.push(Divergence {
+                function: "ldiv",
+                case: format!("({n}, {d})"),
+                field: "result",
+                frankenlibc: format!("(q={}, r={})", fl_r.quot, fl_r.rem),
+                glibc: format!("(q={}, r={})", lc_r.quot, lc_r.rem),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "ldiv divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_lldiv_cases() {
+    let mut divs = Vec::new();
+    let pairs: &[(std::ffi::c_longlong, std::ffi::c_longlong)] = &[
+        (10, 3), (-10, 3), (10, -3), (-10, -3),
+        (0, 5), (5, 1),
+        (i64::MAX, 1), (i64::MIN, 1),
+    ];
+    for &(n, d) in pairs {
+        if d == 0 {
+            continue;
+        }
+        let fl_r = fl::lldiv(n, d);
+        let lc_r = unsafe { lldiv(n, d) };
+        if fl_r.quot != lc_r.quot || fl_r.rem != lc_r.rem {
+            divs.push(Divergence {
+                function: "lldiv",
+                case: format!("({n}, {d})"),
+                field: "result",
+                frankenlibc: format!("(q={}, r={})", fl_r.quot, fl_r.rem),
+                glibc: format!("(q={}, r={})", lc_r.quot, lc_r.rem),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "lldiv divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
 // abs / labs / llabs / imaxabs — integer absolute value
 // ===========================================================================
 //
@@ -1483,9 +1615,12 @@ fn stdlib_numeric_diff_coverage_report() {
         + FCVT_R_SMALL_BUFFER_CASES.len()
         + ABS_INPUTS.len()                       // abs
         + LABS_INPUTS.len()                      // labs
-        + 8 * 2;                                 // llabs + imaxabs (8 inputs each)
+        + 8 * 2                                  // llabs + imaxabs (8 inputs each)
+        + DIV_PAIRS.len()                        // div
+        + LDIV_PAIRS.len()                       // ldiv
+        + 8;                                     // lldiv (8 pairs)
     eprintln!(
-        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":23,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":26,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
