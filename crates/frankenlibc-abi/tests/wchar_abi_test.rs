@@ -646,6 +646,11 @@ fn wcwidth_reports_display_width() {
     assert_eq!(unsafe { wcwidth(b'A' as u32) }, 1);
     assert_eq!(unsafe { wcwidth(0x754c) }, 2); // CJK char '界'
     assert_eq!(unsafe { wcwidth(0) }, 0); // NUL
+    assert_eq!(unsafe { wcwidth(0x1AB0) }, 0); // Combining Diacritical Marks Extended
+    assert_eq!(unsafe { wcwidth(0x1DC0) }, 0); // Combining Diacritical Marks Supplement
+    assert_eq!(unsafe { wcwidth(0x20D0) }, 0); // Combining Diacritical Marks for Symbols
+    assert_eq!(unsafe { wcwidth(0x3099) }, 0); // COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK
+    assert_eq!(unsafe { wcwidth(0xFE20) }, 0); // Combining Half Marks
 }
 
 // ── wctype / iswctype ───────────────────────────────────────────────────────

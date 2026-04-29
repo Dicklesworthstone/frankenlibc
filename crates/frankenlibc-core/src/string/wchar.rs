@@ -314,13 +314,18 @@ pub fn wcwidth(wc: u32) -> i32 {
         || (0x06DF..=0x06E4).contains(&wc)
         || (0x06E7..=0x06E8).contains(&wc)
         || (0x06EA..=0x06ED).contains(&wc)
+        || (0x1AB0..=0x1AFF).contains(&wc)  // Combining Diacritical Marks Extended (Mn)
+        || (0x1DC0..=0x1DFF).contains(&wc)  // Combining Diacritical Marks Supplement (Mn)
         || (0x200B..=0x200F).contains(&wc)    // ZWSP/ZWNJ/ZWJ/LRM/RLM (Cf, width 0)
+        || (0x20D0..=0x20FF).contains(&wc)  // Combining Diacritical Marks for Symbols (Mn)
         || (0x202A..=0x202E).contains(&wc)    // bidi controls (Cf, width 0)
         || (0x2060..=0x2064).contains(&wc)    // word joiner / invisible separators (Cf)
         || (0x206A..=0x206F).contains(&wc)    // deprecated formatting (Cf)
+        || (0x3099..=0x309A).contains(&wc)  // Hiragana/Katakana voiced sound marks (Mn)
         || wc == 0xFEFF                         // ZWNBSP / BOM
         || (0xFE00..=0xFE0F).contains(&wc)    // Variation Selectors (Mn)
-        || (0xE0100..=0xE01EF).contains(&wc)  // Variation Selectors Supplement (Mn)
+        || (0xFE20..=0xFE2F).contains(&wc)    // Combining Half Marks (Mn)
+        || (0xE0100..=0xE01EF).contains(&wc)
     {
         return 0;
     }
@@ -328,7 +333,7 @@ pub fn wcwidth(wc: u32) -> i32 {
     // Non-printable: line/paragraph separators (Zl, Zp), language tags.
     if wc == 0x2028                            // LINE SEPARATOR (Zl)
         || wc == 0x2029                         // PARAGRAPH SEPARATOR (Zp)
-        || (0xE0000..=0xE007F).contains(&wc)  // Language Tags (Cf, width -1 per glibc)
+        || (0xE0000..=0xE007F).contains(&wc)
     {
         return -1;
     }
@@ -475,6 +480,11 @@ mod tests {
         assert_eq!(wcwidth(0x200D), 0); // ZERO WIDTH JOINER
         assert_eq!(wcwidth(0xFEFF), 0); // BOM / ZWNBSP
         assert_eq!(wcwidth(0xFE0F), 0); // VS-16
+        assert_eq!(wcwidth(0x1AB0), 0); // Combining Diacritical Marks Extended
+        assert_eq!(wcwidth(0x1DC0), 0); // Combining Diacritical Marks Supplement
+        assert_eq!(wcwidth(0x20D0), 0); // Combining Diacritical Marks for Symbols
+        assert_eq!(wcwidth(0x3099), 0); // COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK
+        assert_eq!(wcwidth(0xFE20), 0); // Combining Half Marks
         // Line/paragraph separators (Zl, Zp).
         assert_eq!(wcwidth(0x2028), -1); // LINE SEPARATOR
         assert_eq!(wcwidth(0x2029), -1); // PARAGRAPH SEPARATOR
