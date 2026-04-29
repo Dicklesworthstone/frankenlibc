@@ -59,8 +59,45 @@ fn is_leap_year(year: i64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
-/// Days in each month for a non-leap year.
+/// Days in each month for a non-leap year. Retained as a public constant
+/// for callers in the abi crate that mirror glibc's per-month tables.
+#[allow(dead_code)]
 const DAYS_IN_MONTH: [i32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/// Days from the proleptic Gregorian Unix epoch (1970-01-01) to (year, month, day),
+/// where month is 1..=12 and day is 1-based.
+///
+/// Closed-form O(1) algorithm by Howard Hinnant
+/// (<https://howardhinnant.github.io/date_algorithms.html>), which sidesteps
+/// the year-walking loop that would spin for billions of iterations on
+/// extreme `tm_year` inputs (DoS vector when an attacker controls the
+/// broken-down time fed to `mktime`/`timegm`).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year };
+    // era is the index of the 400-year cycle the year falls in. Use
+    // Euclidean division so negative years bin to the correct era.
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400; // in [0, 399]
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // in [0, 146096]
+    era * 146097 + doe - 719468
+}
+
+/// Inverse of [`days_from_civil`]: given days since 1970-01-01, return
+/// `(year, month_1based, day)`. Closed-form O(1).
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097; // in [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // in [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // in [0, 365]
+    let mp = (5 * doy + 2) / 153; // in [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // in [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // in [1, 12]
+    let year = y + (m <= 2) as i64;
+    (year, m, d)
+}
 
 /// Convert seconds since Unix epoch to broken-down UTC time.
 ///
@@ -87,74 +124,29 @@ pub fn epoch_to_broken_down_checked(epoch_secs: i64) -> Option<BrokenDownTime> {
 }
 
 pub fn epoch_to_broken_down(epoch_secs: i64) -> BrokenDownTime {
-    // Seconds within the day
-    let mut rem = epoch_secs % 86400;
-    let mut days = epoch_secs / 86400;
-    if rem < 0 {
-        rem += 86400;
-        days -= 1;
-    }
+    // Seconds within the day. Use Euclidean division so negative epochs
+    // (pre-1970) round toward -∞ correctly.
+    let days = epoch_secs.div_euclid(86400);
+    let rem = epoch_secs.rem_euclid(86400);
 
     let tm_sec = (rem % 60) as i32;
     let tm_min = ((rem / 60) % 60) as i32;
     let tm_hour = (rem / 3600) as i32;
 
-    // Day of week: Jan 1 1970 was Thursday (4)
-    let mut wday = (days % 7 + 4) % 7;
-    if wday < 0 {
-        wday += 7;
-    }
-    let tm_wday = wday as i32;
+    // Day of week: Jan 1 1970 was Thursday (4). Euclidean mod 7.
+    let tm_wday = ((days + 4).rem_euclid(7)) as i32;
 
-    // Walk years from 1970
-    let mut year: i64 = 1970;
-    let mut remaining_days = days;
-
-    if remaining_days >= 0 {
-        loop {
-            let days_in_year: i64 = if is_leap_year(year) { 366 } else { 365 };
-            if remaining_days < days_in_year {
-                break;
-            }
-            remaining_days -= days_in_year;
-            year += 1;
-        }
-    } else {
-        loop {
-            year -= 1;
-            let days_in_year: i64 = if is_leap_year(year) { 366 } else { 365 };
-            remaining_days += days_in_year;
-            if remaining_days >= 0 {
-                break;
-            }
-        }
-    }
-
-    let tm_yday = remaining_days as i32;
-    let leap = is_leap_year(year);
-
-    // Walk months
-    let mut mon = 0i32;
-    let mut day_rem = remaining_days as i32;
-    for m in 0..12 {
-        let dim = if m == 1 && leap {
-            29
-        } else {
-            DAYS_IN_MONTH[m as usize]
-        };
-        if day_rem < dim {
-            mon = m;
-            break;
-        }
-        day_rem -= dim;
-        mon = m + 1;
-    }
+    // O(1) civil-from-days for year / month / day.
+    let (year, month_1based, day) = civil_from_days(days);
+    let mon = (month_1based - 1) as i32;
+    // tm_yday = days from Jan 1 of `year` to today.
+    let tm_yday = (days - days_from_civil(year, 1, 1)) as i32;
 
     BrokenDownTime {
         tm_sec,
         tm_min,
         tm_hour,
-        tm_mday: day_rem + 1,
+        tm_mday: day as i32,
         tm_mon: mon,
         tm_year: (year - 1900) as i32,
         tm_wday,
@@ -171,36 +163,14 @@ pub fn broken_down_to_epoch(bd: &BrokenDownTime) -> i64 {
     // Normalize month into [0,11] range, adjusting year.
     let mut year = bd.tm_year as i64 + 1900;
     let mut mon = bd.tm_mon as i64;
-    // Normalize month
     if !(0..=11).contains(&mon) {
         year += mon.div_euclid(12);
         mon = mon.rem_euclid(12);
     }
 
-    // Accumulated days from epoch (1970-01-01) to start of `year`.
-    let mut days: i64 = 0;
-    if year >= 1970 {
-        for y in 1970..year {
-            days += if is_leap_year(y) { 366 } else { 365 };
-        }
-    } else {
-        for y in year..1970 {
-            days -= if is_leap_year(y) { 366 } else { 365 };
-        }
-    }
-
-    // Add days for months [0..mon)
-    let leap = is_leap_year(year);
-    for m in 0..mon {
-        days += if m == 1 && leap {
-            29
-        } else {
-            DAYS_IN_MONTH[m as usize] as i64
-        };
-    }
-
-    // Add day of month (tm_mday is 1-based)
-    days += (bd.tm_mday - 1) as i64;
+    // O(1) civil → days closed-form. days_from_civil takes month in 1..=12
+    // and day in 1..=31; mon is 0..=11 so we add 1.
+    let days = days_from_civil(year, mon + 1, bd.tm_mday as i64);
 
     days * 86400 + bd.tm_hour as i64 * 3600 + bd.tm_min as i64 * 60 + bd.tm_sec as i64
 }

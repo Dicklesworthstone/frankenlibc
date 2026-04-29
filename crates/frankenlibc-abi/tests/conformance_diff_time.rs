@@ -632,6 +632,48 @@ fn diff_strptime_cases() {
 }
 
 // ===========================================================================
+// timegm extreme-tm_year — fl previously walked the year axis in a loop,
+// taking ~2.1 billion iterations on tm_year=INT_MAX. The Howard Hinnant
+// closed-form replacement returns in O(1). Diff against host glibc which
+// also uses a closed-form path.
+// ===========================================================================
+#[test]
+fn diff_timegm_extreme_tm_year() {
+    let mut divs = Vec::new();
+    let cases: &[(c_int, &str)] = &[
+        (c_int::MAX, "INT_MAX"),
+        (c_int::MIN, "INT_MIN"),
+        (1_000_000, "1M years"),
+        (-1_000_000, "-1M years"),
+        (100_000, "100k years"),
+    ];
+    with_utc(|| {
+        for &(tm_year, label) in cases {
+            let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+            tm.tm_year = tm_year;
+            tm.tm_mon = 0;
+            tm.tm_mday = 1;
+            let fl_t = unsafe { fl::timegm(&mut tm.clone()) };
+            let lc_t = unsafe { libc::timegm(&mut tm.clone()) };
+            if fl_t != lc_t {
+                divs.push(Divergence {
+                    function: "timegm",
+                    case: format!("(tm_year={tm_year} {label})"),
+                    field: "epoch",
+                    frankenlibc: format!("{fl_t}"),
+                    glibc: format!("{lc_t}"),
+                });
+            }
+        }
+    });
+    assert!(
+        divs.is_empty(),
+        "timegm extreme-tm_year divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // gmtime_r extreme-epoch behavior — glibc returns NULL when tm_year would
 // overflow `c_int`. fl previously spun in a year-walking loop for billions
 // of iterations and then truncated tm_year on i32 cast.
