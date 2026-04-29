@@ -293,6 +293,14 @@ const STRFTIME_FORMATS: &[&[u8]] = &[
     b"%I:%M %p",          // 12-hour clock
     b"%%",                // literal percent
     b"static text only",  // no conversions
+    // Year-format specifiers — exercise the no-width contract that fl
+    // previously violated by zero-padding.
+    b"%c",                // preferred date/time (uses %Y bare)
+    b"%C",                // century, bare-decimal
+    b"%Y",                // full year, bare-decimal
+    b"%G",                // ISO year, bare-decimal
+    b"%F",                // %Y-%m-%d
+    b"%y %g",             // 2-digit year + 2-digit ISO year (zero-padded)
 ];
 
 #[test]
@@ -619,6 +627,76 @@ fn diff_strptime_cases() {
     assert!(
         divs.is_empty(),
         "strptime divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
+// strftime year-format boundary cases — pin the bare-`%d` contract for
+// %Y/%C/%G/%c/%F. fl previously zero-padded year to width 4, which silently
+// corrupted output for years < 1000 or > 9999. The GMTIME_EPOCHS sweep above
+// only exercises 1900-9999 years, so these inputs sit outside that range.
+// ===========================================================================
+#[test]
+fn diff_strftime_boundary_years() {
+    let mut divs = Vec::new();
+    let years_to_test: &[i32] = &[0, 50, 200, 999, 10000, 99999, -100];
+    let format_specs: &[&[u8]] = &[
+        b"%Y", b"%C", b"%c", b"%F", b"%y", b"%G",
+    ];
+    for &year in years_to_test {
+        // Build tm by hand. tm_year is years-since-1900.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        tm.tm_year = year - 1900;
+        tm.tm_mon = 0;
+        tm.tm_mday = 1;
+        tm.tm_wday = 0; // Sunday
+        for fmt in format_specs {
+            let mut fmt_z = fmt.to_vec();
+            fmt_z.push(0);
+            let mut fl_buf = vec![0u8; 64];
+            let mut lc_buf = vec![0u8; 64];
+            let fl_n = unsafe {
+                fl::strftime(
+                    fl_buf.as_mut_ptr() as *mut c_char,
+                    fl_buf.len(),
+                    fmt_z.as_ptr() as *const c_char,
+                    &tm,
+                )
+            };
+            let lc_n = unsafe {
+                libc::strftime(
+                    lc_buf.as_mut_ptr() as *mut c_char,
+                    lc_buf.len(),
+                    fmt_z.as_ptr() as *const c_char,
+                    &tm,
+                )
+            };
+            if fl_n != lc_n {
+                divs.push(Divergence {
+                    function: "strftime",
+                    case: format!("year={year}, fmt={:?}", String::from_utf8_lossy(fmt)),
+                    field: "byte_count",
+                    frankenlibc: format!("{fl_n}"),
+                    glibc: format!("{lc_n}"),
+                });
+            }
+            let s_fl = &fl_buf[..fl_n];
+            let s_lc = &lc_buf[..lc_n];
+            if s_fl != s_lc {
+                divs.push(Divergence {
+                    function: "strftime",
+                    case: format!("year={year}, fmt={:?}", String::from_utf8_lossy(fmt)),
+                    field: "string",
+                    frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
+                    glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
+                });
+            }
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strftime boundary-year divergences:\n{}",
         render_divs(&divs)
     );
 }

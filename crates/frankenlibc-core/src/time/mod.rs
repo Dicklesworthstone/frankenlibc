@@ -440,7 +440,10 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_str!(MON_FULL_NAMES[mon].as_bytes());
             }
             b'c' => {
-                // Preferred date/time: "Day Mon DD HH:MM:SS YYYY"
+                // Preferred date/time: glibc/POSIX C-locale format is
+                // `"%a %b %e %H:%M:%S %Y"` — note the bare `%Y` (no width
+                // padding), so single-digit years print as "1970" / "50"
+                // / "200" without leading zeros.
                 let wday = bd.tm_wday.rem_euclid(7) as usize;
                 let mon = bd.tm_mon.rem_euclid(12) as usize;
                 push_str!(WDAY_NAMES[wday]);
@@ -455,11 +458,14 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push!(b':');
                 push_dec!(bd.tm_sec, 2);
                 push!(b' ');
-                push_dec!(bd.tm_year as i64 + 1900, 4);
+                push_dec!(bd.tm_year as i64 + 1900, 0);
             }
             b'C' => {
+                // %C is the bare-decimal century (year / 100). glibc uses
+                // `%d` with no width: year 0 → "0", year 200 → "2",
+                // year 99999 → "999".
                 let century = (bd.tm_year as i64 + 1900) / 100;
-                push_dec!(century, 2);
+                push_dec!(century, 0);
             }
             b'd' => {
                 push_dec!(bd.tm_mday, 2);
@@ -476,8 +482,8 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec_space!(bd.tm_mday, 2);
             }
             b'F' => {
-                // %Y-%m-%d
-                push_dec!(bd.tm_year as i64 + 1900, 4);
+                // %Y-%m-%d — %Y is bare-decimal (no width padding).
+                push_dec!(bd.tm_year as i64 + 1900, 0);
                 push!(b'-');
                 push_dec!(bd.tm_mon + 1, 2);
                 push!(b'-');
@@ -485,7 +491,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
             b'G' => {
                 let (iso_y, _) = iso_week(bd);
-                push_dec!(iso_y, 4);
+                push_dec!(iso_y, 0);
             }
             b'g' => {
                 let (iso_y, _) = iso_week(bd);
@@ -622,7 +628,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec!((bd.tm_year as i64 + 1900).rem_euclid(100), 2);
             }
             b'Y' => {
-                push_dec!(bd.tm_year as i64 + 1900, 4);
+                // glibc emits bare %d for %Y — no width, no zero-padding.
+                // Year 50 prints as "50", year 200 as "200".
+                push_dec!(bd.tm_year as i64 + 1900, 0);
             }
             b'z' => {
                 // UTC offset: +0000 (we only support UTC for now)
