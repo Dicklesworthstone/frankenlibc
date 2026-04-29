@@ -18,11 +18,20 @@
 //!
 //! Bead: CONFORMANCE: libc stdlib.h numeric diff matrix.
 
-use std::ffi::{c_char, c_int};
+use std::ffi::{c_char, c_int, c_long};
 use std::ptr;
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::stdlib_abi as fl;
+
+unsafe extern "C" {
+    /// Host glibc `a64l` — SVID base-64 long decoder. Not exposed by
+    /// the libc crate's default surface.
+    fn a64l(s: *const c_char) -> c_long;
+    /// Host glibc `l64a` — SVID base-64 long encoder. Returns a
+    /// pointer to a static buffer.
+    fn l64a(value: c_long) -> *mut c_char;
+}
 
 #[derive(Debug)]
 struct Divergence {
@@ -601,6 +610,166 @@ fn diff_strtof_cases() {
 }
 
 // ===========================================================================
+// a64l / l64a — SVID base-64 long encoding
+// ===========================================================================
+//
+// SVID base-64 long encoding: each character of the encoded string
+// represents 6 bits of an integer, low bits first. The 64-character
+// alphabet is `.`, `/`, `0`-`9`, `A`-`Z`, `a`-`z` (in that order — so
+// '.' = 0, '/' = 1, '0' = 2, …, 'Z' = 37, 'a' = 38, …, 'z' = 63).
+// l64a encodes up to 6 characters (32 bits worth); a64l decodes up to
+// 6 characters back into a long.
+//
+// Known-glibc quirks pinned by these tests:
+//   * l64a writes into a static buffer; the returned pointer points at
+//     that buffer (we don't compare pointers, only the bytes).
+//   * l64a(0) returns an empty string (NUL byte at buf[0]).
+//   * l64a only consumes the low 32 bits of its argument — a 64-bit
+//     value with any high bits set encodes the same as the truncation.
+//   * a64l of an empty string returns 0.
+//   * a64l of an alphabet character yields that character's index in
+//     the alphabet, shifted by position.
+
+const A64L_DECODE_CASES: &[&[u8]] = &[
+    b"",                  // empty -> 0
+    b".",                 // single 0-bit char -> 0
+    b"/",                 // single 1-bit char -> 1
+    b"0",                 // alphabet pos 2 -> 2
+    b"9",                 // alphabet pos 11 -> 11
+    b"A",                 // alphabet pos 12 -> 12
+    b"Z",                 // alphabet pos 37 -> 37
+    b"a",                 // alphabet pos 38 -> 38
+    b"z",                 // alphabet pos 63 -> 63
+    b"01",                // 2-char encoding
+    b"abc",               // 3-char
+    b"hello",             // 5-char
+    b"zzzzzz",            // 6-char (max length)
+    b"//////",            // all 1s — high-bit pattern
+    b"......",            // all dots — explicit zero in 6 chars
+];
+
+#[test]
+fn diff_a64l_cases() {
+    let mut divs = Vec::new();
+    for &input in A64L_DECODE_CASES {
+        let s = cstr(input);
+        // SAFETY: cstr returns NUL-terminated buffer owned for the call.
+        let fl_v = unsafe { fl::a64l(s.as_ptr() as *const c_char) };
+        let lc_v = unsafe { a64l(s.as_ptr() as *const c_char) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "a64l",
+                case: format!("{:?}", input),
+                field: "return_value",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "a64l divergences:\n{}", render_divs(&divs));
+}
+
+const L64A_ENCODE_CASES: &[c_long] = &[
+    0,
+    1,
+    2,
+    11,
+    12,
+    37,
+    38,
+    63,
+    64,
+    1234,
+    0x7FFF,
+    0xFFFF,
+    0xFFFFFF,
+    0x7FFFFFFF,         // i32::MAX — max value before sign bit on 32-bit slice
+    0xFFFFFFFF,         // u32::MAX — l64a only encodes low 32 bits
+    0x100000000_i64,    // a value above u32::MAX — should encode like 0
+    0x123456789ABCDEF0, // arbitrary 64-bit value
+    -1,                 // negative value, low 32 bits = 0xFFFFFFFF
+];
+
+#[test]
+fn diff_l64a_cases() {
+    let mut divs = Vec::new();
+    for &value in L64A_ENCODE_CASES {
+        // l64a returns a pointer to a static buffer; copy the bytes
+        // up to (and excluding) the trailing NUL before invoking the
+        // *other* impl, which would clobber the same shape of static
+        // buffer (each impl has its own).
+        let fl_ptr = unsafe { fl::l64a(value) };
+        let fl_bytes = c_str_to_vec(fl_ptr);
+        let lc_ptr = unsafe { l64a(value) };
+        let lc_bytes = c_str_to_vec(lc_ptr);
+        if fl_bytes != lc_bytes {
+            divs.push(Divergence {
+                function: "l64a",
+                case: format!("{value:#x}"),
+                field: "encoded_bytes",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(&fl_bytes)),
+                glibc: format!("{:?}", String::from_utf8_lossy(&lc_bytes)),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "l64a divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_a64l_l64a_roundtrip() {
+    // POSIX guarantees a64l(l64a(x)) == (x & 0xFFFFFFFF) sign-extended
+    // (i.e., the low 32 bits, treated as int32 for the return type).
+    // Drive the same value through fl's and glibc's encoder, decode
+    // each via the *other* impl, and require both pairs to agree.
+    let mut divs = Vec::new();
+    for &value in L64A_ENCODE_CASES {
+        // fl::l64a -> glibc::a64l
+        let fl_ptr = unsafe { fl::l64a(value) };
+        let fl_enc = c_str_to_vec(fl_ptr);
+        let fl_enc_z = cstr(&fl_enc);
+        let cross_a = unsafe { a64l(fl_enc_z.as_ptr() as *const c_char) };
+        // glibc::l64a -> fl::a64l
+        let lc_ptr = unsafe { l64a(value) };
+        let lc_enc = c_str_to_vec(lc_ptr);
+        let lc_enc_z = cstr(&lc_enc);
+        let cross_b = unsafe { fl::a64l(lc_enc_z.as_ptr() as *const c_char) };
+        if cross_a != cross_b {
+            divs.push(Divergence {
+                function: "a64l/l64a roundtrip",
+                case: format!("{value:#x}"),
+                field: "cross_decoded",
+                frankenlibc: format!("fl_l64a -> glibc_a64l = {cross_a}"),
+                glibc: format!("glibc_l64a -> fl_a64l = {cross_b}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "a64l/l64a cross-decode divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+/// Read a NUL-terminated C string at `p` into an owned Vec<u8>,
+/// stopping at the first NUL or after 16 bytes (l64a never emits
+/// more than 6 chars + NUL, so the bound is generous).
+fn c_str_to_vec(p: *const c_char) -> Vec<u8> {
+    if p.is_null() {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(8);
+    for i in 0..16 {
+        // SAFETY: p is a NUL-terminated C string per the l64a contract.
+        let b = unsafe { *(p.add(i) as *const u8) };
+        if b == 0 {
+            break;
+        }
+        out.push(b);
+    }
+    out
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
@@ -610,9 +779,11 @@ fn stdlib_numeric_diff_coverage_report() {
         + STRTOL_CASES.len() * 2                 // strtol + strtoll
         + STRTOUL_CASES.len() * 2                // strtoul + strtoull
         + STRTOD_CASES.len()                     // strtod
-        + STRTOF_CASES.len(); // strtof
+        + STRTOF_CASES.len()                     // strtof
+        + A64L_DECODE_CASES.len()                // a64l
+        + L64A_ENCODE_CASES.len() * 2;           // l64a direct + roundtrip
     eprintln!(
-        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":9,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":11,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }

@@ -9,8 +9,11 @@ const ALPHABET: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijkl
 
 /// `a64l` — convert a base-64 ASCII string to a long.
 ///
-/// Processes up to 6 characters (6 × 6 bits = 36 bits max, matching glibc).
-/// Invalid characters terminate processing.
+/// Per glibc man page: encodes a **32-bit** value. Reads up to 6 input
+/// characters; though six 6-bit chunks could express 36 bits, glibc
+/// truncates to 32 bits before returning. We zero-extend the result
+/// from u32 to i64 to match — `a64l("zzzzzz")` returns 4294967295,
+/// not -1 and not 68719476735.
 pub fn a64l(s: &[u8]) -> i64 {
     let mut result: u64 = 0;
     let mut shift = 0u32;
@@ -31,22 +34,27 @@ pub fn a64l(s: &[u8]) -> i64 {
         shift += 6;
     }
 
-    result as i64
+    // Truncate to 32 bits per glibc, then zero-extend back to long.
+    (result as u32) as i64
 }
 
 /// `l64a` — convert a long to a base-64 ASCII string.
 ///
-/// Returns the encoded string as a byte vector (up to 6 chars + NUL).
-/// If `value` is 0, returns an empty string (matching glibc).
+/// Per glibc: takes the **low 32 bits** of `value` (regardless of
+/// sign), then encodes 1-6 chars while non-zero. So `l64a(-1)`
+/// truncates to 0xFFFFFFFF and encodes as `"zzzzz1"` (six chars);
+/// `l64a(0x100000000)` truncates to 0 and returns the empty string.
+/// The previous impl rejected negative values outright and could emit
+/// up to 11 chars for 64-bit inputs — both diverged from glibc.
 pub fn l64a(value: i64) -> Vec<u8> {
-    if value <= 0 {
+    // Take low 32 bits per glibc; cast through u32 to zero-extend.
+    let mut v = (value as u32) as u64;
+    if v == 0 {
         return Vec::new();
     }
 
-    let mut result = Vec::with_capacity(7);
-    let mut v = value as u64;
-
-    while v > 0 {
+    let mut result = Vec::with_capacity(6);
+    while v != 0 && result.len() < 6 {
         let idx = (v & 0x3F) as usize;
         result.push(ALPHABET[idx]);
         v >>= 6;
