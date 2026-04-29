@@ -2673,9 +2673,11 @@ pub unsafe extern "C" fn inet_network(cp: *const c_char) -> c_uint {
         }
     }
     result = (result << 8) | (cur & 0xFF);
-    for _ in parts..3 {
-        result <<= 8;
-    }
+    // glibc does NOT left-pad partial dotted-quads. inet_network("127")
+    // returns 0x0000007f, not 0x7f000000 — the result is the parsed
+    // network number value as-is, so the previous `for _ in parts..3:
+    // result <<= 8` shifted it to the wrong bit position whenever
+    // fewer than 4 octets were supplied.
     result
 }
 // inet_nsap_addr: convert hex NSAP address string to binary
