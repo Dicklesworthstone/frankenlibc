@@ -104,6 +104,24 @@ unsafe extern "C" {
         endptr: *mut *mut libc::wchar_t,
         base: c_int,
     ) -> u64;
+    /// Host glibc `wcsspn` — span over wide-char accept set.
+    fn wcsspn(s: *const libc::wchar_t, accept: *const libc::wchar_t) -> usize;
+    /// Host glibc `wcscspn` — span over wide-char reject set.
+    fn wcscspn(s: *const libc::wchar_t, reject: *const libc::wchar_t) -> usize;
+    /// Host glibc `wcsdup` — duplicate wide string via malloc.
+    fn wcsdup(s: *const libc::wchar_t) -> *mut libc::wchar_t;
+    /// Host glibc `wcsnlen` — bounded wide-string length.
+    fn wcsnlen(s: *const libc::wchar_t, maxlen: usize) -> usize;
+    /// GNU `wcschrnul` — wcschr that returns end pointer on miss instead of NULL.
+    fn wcschrnul(s: *const libc::wchar_t, c: libc::wchar_t) -> *mut libc::wchar_t;
+    /// POSIX `wcwidth` — printable column width of a single wide char.
+    fn wcwidth(c: libc::wchar_t) -> c_int;
+    /// POSIX `wcswidth` — printable column width over the first `n` wide chars.
+    fn wcswidth(s: *const libc::wchar_t, n: usize) -> c_int;
+    /// POSIX `btowc` — single-byte → wide-char in current locale.
+    fn btowc(c: c_int) -> u32;
+    /// POSIX `wctob` — wide-char → single-byte in current locale.
+    fn wctob(c: u32) -> c_int;
 }
 
 /// Convert an ASCII byte slice into a NUL-terminated wchar_t vector
@@ -167,6 +185,33 @@ fn run_wchar_child(helper: &str) {
     assert!(
         output.status.success(),
         "isolated wchar helper `{helper}` failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Like `run_wchar_child` but seeds the child's environment with a UTF-8 locale
+/// so that locale-sensitive functions (wcwidth/wcswidth) read glibc's UTF-8
+/// character class tables. We can't switch locale in-process because parallel
+/// tests share state.
+fn run_wchar_child_utf8(helper: &str) {
+    let output = Command::new(std::env::current_exe().expect("current test binary path"))
+        .args([
+            "--exact",
+            "wchar_subprocess_child_invocation",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env("FRANKENLIBC_WCHAR_HELPER", helper)
+        .env("LC_ALL", "C.UTF-8")
+        .env("LANG", "C.UTF-8")
+        .env("LC_CTYPE", "C.UTF-8")
+        .output()
+        .expect("run isolated wchar helper (UTF-8 locale)");
+    assert!(
+        output.status.success(),
+        "isolated UTF-8 wchar helper `{helper}` failed:\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -490,10 +535,69 @@ fn diff_wcspbrk_wcstok_subprocess() {
 }
 
 #[test]
+fn diff_wcwidth_utf8_subprocess() {
+    run_wchar_child_utf8("wcwidth-utf8");
+}
+
+#[test]
 fn wchar_subprocess_child_invocation() {
     let Ok(helper) = std::env::var("FRANKENLIBC_WCHAR_HELPER") else {
         return;
     };
+    if helper == "wcwidth-utf8" {
+        // setlocale must be called in this subprocess for glibc to consult the
+        // UTF-8 character class tables. The env vars above seeded the locale,
+        // but glibc only honors them after `setlocale(LC_ALL, "")`.
+        unsafe extern "C" {
+            fn setlocale(category: c_int, locale: *const libc::c_char) -> *mut libc::c_char;
+        }
+        let empty = std::ffi::CString::new("").unwrap();
+        unsafe { setlocale(libc::LC_ALL, empty.as_ptr()) };
+
+        // (codepoint, label, expected fl behavior matches glibc)
+        const CASES: &[(u32, &str)] = &[
+            (0, "NUL"),
+            (b'a' as u32, "ASCII a"),
+            (b'~' as u32, "ASCII ~"),
+            (0x09, "TAB (Cc)"),
+            (0x7F, "DEL (Cc)"),
+            (0x0300, "COMBINING GRAVE (Mn)"),
+            (0x0301, "COMBINING ACUTE (Mn)"),
+            (0x0303, "COMBINING TILDE (Mn)"),
+            (0x200B, "ZERO WIDTH SPACE (Cf)"),
+            (0x200C, "ZERO WIDTH NON-JOINER (Cf)"),
+            (0x200D, "ZERO WIDTH JOINER (Cf)"),
+            (0x2028, "LINE SEPARATOR (Zl)"),
+            (0x2029, "PARAGRAPH SEPARATOR (Zp)"),
+            (0xFEFF, "BOM / ZWNBSP"),
+            (0xFE0F, "VARIATION SELECTOR-16"),
+            (0xE0000, "LANGUAGE TAG (Cf)"),
+            (0xE0100, "VS-17 (supplement)"),
+            (0x4E00, "CJK 一"),
+            (0x3041, "Hiragana あ"),
+        ];
+
+        let mut divs = Vec::new();
+        for (cp, label) in CASES {
+            let fl_v = unsafe { fl::wcwidth(*cp) };
+            let lc_v = unsafe { wcwidth(*cp as i32) };
+            if fl_v != lc_v {
+                divs.push(Divergence {
+                    function: "wcwidth (UTF-8 locale)",
+                    case: format!("(U+{cp:04X} {label})"),
+                    field: "return",
+                    frankenlibc: format!("{fl_v}"),
+                    glibc: format!("{lc_v}"),
+                });
+            }
+        }
+        assert!(
+            divs.is_empty(),
+            "wcwidth UTF-8 divergences:\n{}",
+            render_divs(&divs)
+        );
+        return;
+    }
     assert_eq!(helper, "search-token");
 
     let mut divs = Vec::new();
@@ -1674,9 +1778,375 @@ fn diff_wcstoumax_cases() {
     assert!(divs.is_empty(), "wcstoumax divergences:\n{}", render_divs(&divs));
 }
 
+// ---------------------------------------------------------------------------
+// wcsspn / wcscspn — wide-char span/complement-span over an accept/reject set.
+// Each input string is paired with several accept/reject sets to exercise:
+//   - empty set (always returns 0 / strlen)
+//   - single-char set (fast path)
+//   - multi-char set
+//   - set with chars not in s (full traversal)
+// Diffs the returned span length against host glibc.
+// ---------------------------------------------------------------------------
+const WCS_SPAN_CASES: &[(&[u8], &[u8])] = &[
+    (b"", b""),
+    (b"abc", b""),
+    (b"", b"abc"),
+    (b"abcabc", b"abc"),
+    (b"abcdef", b"abc"),
+    (b"abcabc", b"a"),
+    (b"aaaa", b"a"),
+    (b"aaaa", b"b"),
+    (b"   42", b" "),
+    (b"+-+-+x", b"+-"),
+    (b"hello world", b"helo"),
+    (b"hello world", b"xyz"),
+    (b"0123456789", b"0123456789"),
+    (b"0123456789abc", b"0123456789"),
+    (b"\xc2\xa0\xc2\xa0", b"\xc2\xa0"),
+    (b"the quick brown fox", b" "),
+];
+
+#[test]
+fn diff_wcsspn_cases() {
+    let mut divs = Vec::new();
+    for (s, set) in WCS_SPAN_CASES {
+        let ws = ascii_to_wchars(s);
+        let wset = ascii_to_wchars(set);
+        let fl_v = unsafe { fl::wcsspn(ws.as_ptr(), wset.as_ptr()) };
+        let lc_v = unsafe { wcsspn(ws.as_ptr() as *const libc::wchar_t, wset.as_ptr() as *const libc::wchar_t) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcsspn",
+                case: format!("(s={:?}, set={:?})", String::from_utf8_lossy(s), String::from_utf8_lossy(set)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcsspn divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wcscspn_cases() {
+    let mut divs = Vec::new();
+    for (s, set) in WCS_SPAN_CASES {
+        let ws = ascii_to_wchars(s);
+        let wset = ascii_to_wchars(set);
+        let fl_v = unsafe { fl::wcscspn(ws.as_ptr(), wset.as_ptr()) };
+        let lc_v = unsafe { wcscspn(ws.as_ptr() as *const libc::wchar_t, wset.as_ptr() as *const libc::wchar_t) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcscspn",
+                case: format!("(s={:?}, set={:?})", String::from_utf8_lossy(s), String::from_utf8_lossy(set)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcscspn divergences:\n{}", render_divs(&divs));
+}
+
+// ---------------------------------------------------------------------------
+// wcsdup — duplicate a wide string via malloc. Compare contents and length.
+// We use libc::free to release both fl and host buffers (fl::wcsdup uses
+// libc::malloc per the wchar_abi.rs comment so cross-allocator is safe).
+// ---------------------------------------------------------------------------
+#[test]
+fn diff_wcsdup_cases() {
+    const CASES: &[&[u8]] = &[b"", b"a", b"hello", b"the quick brown fox", b"\xff", b"\x00"];
+    let mut divs = Vec::new();
+    for input in CASES {
+        let w = ascii_to_wchars(input);
+        let fl_p = unsafe { fl::wcsdup(w.as_ptr()) };
+        let lc_p = unsafe { wcsdup(w.as_ptr() as *const libc::wchar_t) };
+        if fl_p.is_null() != lc_p.is_null() {
+            divs.push(Divergence {
+                function: "wcsdup",
+                case: format!("({:?})", String::from_utf8_lossy(input)),
+                field: "null_return",
+                frankenlibc: format!("{}", fl_p.is_null()),
+                glibc: format!("{}", lc_p.is_null()),
+            });
+            if !fl_p.is_null() {
+                unsafe { libc::free(fl_p as *mut libc::c_void) };
+            }
+            if !lc_p.is_null() {
+                unsafe { libc::free(lc_p as *mut libc::c_void) };
+            }
+            continue;
+        }
+        if !fl_p.is_null() {
+            // Walk both until a NUL is found in either; compare in lockstep.
+            let mut i = 0usize;
+            loop {
+                let a = unsafe { *fl_p.add(i) };
+                let b = unsafe { *(lc_p.add(i) as *const u32) };
+                if a != b {
+                    divs.push(Divergence {
+                        function: "wcsdup",
+                        case: format!("({:?})", String::from_utf8_lossy(input)),
+                        field: "char_at",
+                        frankenlibc: format!("[{i}]={a:#x}"),
+                        glibc: format!("[{i}]={b:#x}"),
+                    });
+                    break;
+                }
+                if a == 0 {
+                    break;
+                }
+                i += 1;
+                if i > 64 {
+                    break;
+                }
+            }
+            unsafe { libc::free(fl_p as *mut libc::c_void) };
+            unsafe { libc::free(lc_p as *mut libc::c_void) };
+        }
+    }
+    assert!(divs.is_empty(), "wcsdup divergences:\n{}", render_divs(&divs));
+}
+
+// ---------------------------------------------------------------------------
+// wcsnlen — bounded wide-string length. Tests both short (NUL within maxlen)
+// and long (no NUL within maxlen) inputs.
+// ---------------------------------------------------------------------------
+#[test]
+fn diff_wcsnlen_cases() {
+    const CASES: &[(&[u8], usize)] = &[
+        (b"", 0),
+        (b"", 5),
+        (b"a", 0),
+        (b"a", 1),
+        (b"a", 5),
+        (b"hello", 3),
+        (b"hello", 5),
+        (b"hello", 10),
+        (b"the quick brown fox", 0),
+        (b"the quick brown fox", 19),
+        (b"the quick brown fox", 100),
+    ];
+    let mut divs = Vec::new();
+    for (input, maxlen) in CASES {
+        let w = ascii_to_wchars(input);
+        let fl_v = unsafe { fl::wcsnlen(w.as_ptr() as *const libc::wchar_t, *maxlen) };
+        let lc_v = unsafe { wcsnlen(w.as_ptr() as *const libc::wchar_t, *maxlen) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcsnlen",
+                case: format!("({:?}, maxlen={maxlen})", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcsnlen divergences:\n{}", render_divs(&divs));
+}
+
+// ---------------------------------------------------------------------------
+// wcschrnul — like wcschr, but returns pointer to terminator on miss.
+// Compare offset of returned pointer relative to base.
+// ---------------------------------------------------------------------------
+#[test]
+fn diff_wcschrnul_cases() {
+    const CASES: &[(&[u8], u8)] = &[
+        (b"", 0),
+        (b"", b'a'),
+        (b"abc", b'a'),
+        (b"abc", b'c'),
+        (b"abc", b'z'),
+        (b"abc", 0),
+        (b"hello world", b' '),
+        (b"hello world", b'h'),
+        (b"hello world", b'd'),
+        (b"hello world", b'x'),
+    ];
+    let mut divs = Vec::new();
+    for (input, c) in CASES {
+        let w = ascii_to_wchars(input);
+        let fl_p = unsafe { fl::wcschrnul(w.as_ptr() as *const libc::wchar_t, *c as i32) };
+        let lc_p = unsafe { wcschrnul(w.as_ptr() as *const libc::wchar_t, *c as i32) };
+        let fl_off = (fl_p as isize - w.as_ptr() as isize) / 4;
+        let lc_off = (lc_p as isize - w.as_ptr() as isize) / 4;
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "wcschrnul",
+                case: format!("({:?}, c={:?})", String::from_utf8_lossy(input), *c as char),
+                field: "offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("{lc_off}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcschrnul divergences:\n{}", render_divs(&divs));
+}
+
+// ---------------------------------------------------------------------------
+// wmemrchr — find LAST occurrence of `c` in first `n` wide chars (no NUL stop).
+// glibc does not export wmemrchr (it's fl-only), so this pins fl against a
+// reference implementation derived from the documented semantics: scan from
+// s+n-1 downwards and return the first match, or NULL.
+// ---------------------------------------------------------------------------
+#[test]
+fn correctness_wmemrchr_cases() {
+    const CASES: &[(&[u8], u8, usize)] = &[
+        (b"", 0, 0),
+        (b"abcabc", b'a', 6),
+        (b"abcabc", b'b', 6),
+        (b"abcabc", b'c', 6),
+        (b"abcabc", b'z', 6),
+        (b"abcabc", b'a', 3),
+        (b"aaaa", b'a', 4),
+        (b"aaaa", b'a', 1),
+        (b"aaaa", b'a', 0),
+        (b"hello world", b'o', 11),
+        (b"hello world", b'l', 11),
+        (b"hello world", b'l', 5),
+    ];
+    let mut divs = Vec::new();
+    for (input, c, n) in CASES {
+        let w: Vec<u32> = input.iter().map(|&b| b as u32).collect();
+        let fl_p = unsafe { fl::wmemrchr(w.as_ptr(), *c as u32, *n) };
+        let fl_off = if fl_p.is_null() { -1 } else { (fl_p as isize - w.as_ptr() as isize) / 4 };
+        // Reference: scan first `n` elements right-to-left.
+        let target = *c as u32;
+        let expected: isize = w.iter().take(*n).enumerate().rev()
+            .find(|&(_, &b)| b == target)
+            .map(|(i, _)| i as isize)
+            .unwrap_or(-1);
+        if fl_off != expected {
+            divs.push(Divergence {
+                function: "wmemrchr",
+                case: format!("({:?}, c={:?}, n={n})", String::from_utf8_lossy(input), *c as char),
+                field: "offset",
+                frankenlibc: format!("{fl_off}"),
+                glibc: format!("(reference) {expected}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wmemrchr divergences:\n{}", render_divs(&divs));
+}
+
+// ---------------------------------------------------------------------------
+// wcwidth / wcswidth — column width of wide chars.
+//
+// glibc's wcwidth is locale-dependent: in the C locale only ASCII printable
+// characters return 1 (everything else returns -1); in UTF-8 it consults the
+// locale's character class tables. Switching the locale globally would race
+// with parallel tests in this binary, so we lock the diff to inputs that
+// produce the SAME answer in either locale: NUL (0 in both), ASCII printables
+// (1 in both), and ASCII controls plus DEL (-1 in both).
+// fl::wcwidth is locale-agnostic (always returns the Unicode width), which
+// happens to coincide with glibc on this restricted set.
+// ---------------------------------------------------------------------------
+#[test]
+fn diff_wcwidth_locale_invariant_cases() {
+    const CASES: &[(u32, &str)] = &[
+        (0, "NUL"),
+        (b'a' as u32, "ASCII a"),
+        (b' ' as u32, "ASCII space"),
+        (b'~' as u32, "ASCII ~"),
+        (b'0' as u32, "ASCII 0"),
+        (b'A' as u32, "ASCII A"),
+        (b'Z' as u32, "ASCII Z"),
+        (0x07, "BEL"),
+        (0x09, "TAB"),
+        (0x1B, "ESC"),
+        (0x7f, "DEL"),
+    ];
+    let mut divs = Vec::new();
+    for (cp, label) in CASES {
+        let fl_v = unsafe { fl::wcwidth(*cp) };
+        let lc_v = unsafe { wcwidth(*cp as i32) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcwidth",
+                case: format!("(U+{cp:04X} {label})"),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcwidth divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_wcswidth_locale_invariant_cases() {
+    // All-ASCII printable strings have width == min(strlen, n) in either locale.
+    const CASES: &[(&[u8], usize)] = &[
+        (b"", 0),
+        (b"", 5),
+        (b"hello", 0),
+        (b"hello", 3),
+        (b"hello", 5),
+        (b"hello", 10),
+        (b"the quick brown fox", 19),
+    ];
+    let mut divs = Vec::new();
+    for (input, n) in CASES {
+        let w = ascii_to_wchars(input);
+        let fl_v = unsafe { fl::wcswidth(w.as_ptr() as *const libc::wchar_t, *n) };
+        let lc_v = unsafe { wcswidth(w.as_ptr() as *const libc::wchar_t, *n) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wcswidth",
+                case: format!("({:?}, n={n})", String::from_utf8_lossy(input)),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "wcswidth divergences:\n{}", render_divs(&divs));
+}
+
+// ---------------------------------------------------------------------------
+// btowc / wctob — single-byte ↔ single-wide-char round-trip in current locale.
+// In the C locale (the test binary default since we don't call setlocale),
+// bytes 0x00..=0x7F map straight through; bytes 0x80..=0xFF return WEOF for
+// btowc; wide-chars >= 0x80 return EOF for wctob. We test only ASCII-range and
+// EOF/WEOF special values to stay locale-invariant.
+// ---------------------------------------------------------------------------
+#[test]
+fn diff_btowc_wctob_ascii_cases() {
+    let mut divs = Vec::new();
+    // btowc: ASCII bytes plus EOF.
+    for c in [-1i32, 0, 1, 0x20, 0x41, 0x7E, 0x7F] {
+        let fl_v = unsafe { fl::btowc(c) };
+        let lc_v = unsafe { btowc(c) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "btowc",
+                case: format!("(c={c})"),
+                field: "return",
+                frankenlibc: format!("{fl_v:#x}"),
+                glibc: format!("{lc_v:#x}"),
+            });
+        }
+    }
+    // wctob: ASCII-range wide-chars plus WEOF.
+    for c in [u32::MAX, 0u32, 0x20, 0x41, 0x7E, 0x7F] {
+        let fl_v = unsafe { fl::wctob(c) };
+        let lc_v = unsafe { wctob(c) };
+        if fl_v != lc_v {
+            divs.push(Divergence {
+                function: "wctob",
+                case: format!("(c={c:#x})"),
+                field: "return",
+                frankenlibc: format!("{fl_v}"),
+                glibc: format!("{lc_v}"),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "btowc/wctob divergences:\n{}", render_divs(&divs));
+}
+
 #[test]
 fn wchar_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"wchar.h core\",\"reference\":\"glibc\",\"functions\":29,\"divergences\":0}}",
+        "{{\"family\":\"wchar.h core\",\"reference\":\"glibc\",\"functions\":39,\"divergences\":0}}",
     );
 }
