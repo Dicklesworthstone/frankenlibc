@@ -3,10 +3,13 @@
 //! Implements `random`, `srandom`, `initstate`, `setstate` with
 //! glibc-compatible TYPE_3 (degree 31) polynomial by default.
 //!
-//! Unlike the simple LCG in `rand()`, this generator uses an additive
-//! feedback shift register for better statistical properties.
+//! The public `rand()`/`srand()` wrappers share this state, matching glibc.
+//! This generator uses an additive feedback shift register for better
+//! statistical properties than the historical one-word LCG.
 
 use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::MutexGuard;
 
 /// Default degree-31 state table size (matching glibc TYPE_3 = 31 words + 3 bookkeeping).
 const DEG_3: usize = 31;
@@ -28,12 +31,13 @@ struct RandomState {
 impl RandomState {
     fn seed(&mut self, seed: u32) {
         // Initialize state table using glibc's initialization algorithm.
-        self.table[1] = seed as i32;
-        let mut prev = seed as i64;
+        let seed_word = if seed == 0 { 1 } else { seed as i32 };
+        self.table[1] = seed_word;
+        let mut prev = i64::from(seed_word);
         for i in 2..STATE_SIZE {
             // glibc: state[i] = (16807 * state[i-1]) % 2147483647
             // Using the same LCG as glibc (Park-Miller minimal standard).
-            prev = (16807 * prev) % 2_147_483_647;
+            prev = (16807 * prev).rem_euclid(2_147_483_647);
             self.table[i] = prev as i32;
         }
         self.fptr = SEP_3 + 1;
@@ -74,6 +78,16 @@ static GLOBAL: Mutex<RandomState> = Mutex::new(RandomState {
 
 /// Track whether the global state has been initialized.
 static INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+static TEST_RANDOM_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn test_global_random_lock() -> MutexGuard<'static, ()> {
+    TEST_RANDOM_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn ensure_init() {
     if !INITIALIZED.load(std::sync::atomic::Ordering::Acquire) {
@@ -164,19 +178,10 @@ pub fn setstate(state_buf: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
-
-    static TEST_RANDOM_SV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn lock_random_sv_tests() -> MutexGuard<'static, ()> {
-        TEST_RANDOM_SV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
 
     #[test]
     fn test_srandom_deterministic() {
-        let _guard = lock_random_sv_tests();
+        let _guard = test_global_random_lock();
         srandom(42);
         let a = random();
         srandom(42);
@@ -186,7 +191,7 @@ mod tests {
 
     #[test]
     fn test_random_range() {
-        let _guard = lock_random_sv_tests();
+        let _guard = test_global_random_lock();
         srandom(1);
         for _ in 0..200 {
             let v = random();
@@ -196,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_initstate_setstate_basic() {
-        let _guard = lock_random_sv_tests();
+        let _guard = test_global_random_lock();
         // Verify initstate seeds and setstate restores without panicking.
         // Seed first to ensure non-zero table state.
         srandom(777);
@@ -215,9 +220,19 @@ mod tests {
 
     #[test]
     fn test_initstate_too_small_buf() {
-        let _guard = lock_random_sv_tests();
+        let _guard = test_global_random_lock();
         let mut buf = [0u8; 4]; // too small
         let token = initstate(1, &mut buf);
         assert_eq!(token, 0);
+    }
+
+    #[test]
+    fn srandom_zero_matches_seed_one() {
+        let _guard = test_global_random_lock();
+        srandom(0);
+        let zero_seeded: Vec<i64> = (0..6).map(|_| random()).collect();
+        srandom(1);
+        let one_seeded: Vec<i64> = (0..6).map(|_| random()).collect();
+        assert_eq!(zero_seeded, one_seeded);
     }
 }

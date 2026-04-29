@@ -13,10 +13,10 @@ use frankenlibc_abi::stdlib_abi::{
     gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv,
     getenv_r, getsubopt, humanize_number, initstate, initstate_r, jrand48, l64a, lcong48,
     lcong48_r, lrand48, lrand48_r, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit,
-    putenv, qsort_r, random, random_r, reallocarray, reallocf, recallocarray, seed48, seed48_r,
-    setenv, setstate, setstate_r, srand48, srand48_r, srandom, srandom_r, strpct, strspct, strtod,
-    strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq, system,
-    unsetenv,
+    putenv, qsort_r, rand, random, random_r, reallocarray, reallocf, recallocarray, seed48,
+    seed48_r, setenv, setstate, setstate_r, srand, srand48, srand48_r, srandom, srandom_r, strpct,
+    strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq,
+    system, unsetenv,
 };
 use frankenlibc_abi::unistd_abi::{
     __sched_cpualloc, __sched_cpucount, __sched_cpufree, close_range, creat64, ctermid, ether_aton,
@@ -3884,6 +3884,36 @@ fn random_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .expect("random lock should not be poisoned")
+}
+
+#[test]
+fn rand_seeded_deterministic() {
+    let _lock = random_lock();
+    srand(42);
+    let a = rand();
+    srand(42);
+    let b = rand();
+    assert_eq!(a, b);
+}
+
+#[test]
+fn rand_shares_random_global_state() {
+    let _lock = random_lock();
+    srand(42);
+    let via_rand = rand();
+    srandom(42);
+    let via_random = random() as libc::c_int;
+    assert_eq!(via_rand, via_random);
+}
+
+#[test]
+fn srand_zero_matches_srand_one() {
+    let _lock = random_lock();
+    srand(0);
+    let zero_seeded: Vec<libc::c_int> = (0..6).map(|_| rand()).collect();
+    srand(1);
+    let one_seeded: Vec<libc::c_int> = (0..6).map(|_| rand()).collect();
+    assert_eq!(zero_seeded, one_seeded);
 }
 
 #[test]

@@ -2,28 +2,31 @@
 
 //! Differential conformance harness for `<stdlib.h>` reentrant RNG.
 //!
-//! `rand_r` is the only POSIX/glibc RNG that's truly pure — caller owns
-//! the seed pointer, no global state, no thread-local drift. That makes
-//! it the cleanest target for bit-exact host parity. Critically, glibc
+//! `rand_r` is the cleanest POSIX/glibc RNG target because caller owns
+//! the seed pointer, no global state, no thread-local drift. Critically, glibc
 //! `rand_r` is **not** a single LCG step — it runs three updates per
 //! call and combines them so the 31-bit return space is actually used.
 //! frankenlibc-core/src/stdlib/random.rs ports the three-step glibc
 //! algorithm; this harness pins that port against the host C library
 //! at runtime.
 //!
-//! `rand` / `srand` are intentionally NOT diff-tested here because they
-//! own a process-global state machine (TYPE_3 by default in glibc with
-//! 31-word ring buffer). Differential testing them would either
-//! interleave with other tests' RNG state or require setstate dance
-//! that rand_r already covers semantically.
+//! `rand` / `srand` share glibc's process-global TYPE_3 state with
+//! `random` / `srandom`, so their deterministic seed-output contract is
+//! serialized behind a process-local test lock.
 //!
 //! Bead: CONFORMANCE: libc stdlib.h reentrant RNG diff matrix.
 
-use std::ffi::c_uint;
+use std::ffi::{c_int, c_uint};
+use std::sync::{Mutex, MutexGuard};
 
 use frankenlibc_abi::stdlib_abi as fl;
 
 unsafe extern "C" {
+    /// Host glibc `rand`.
+    fn rand() -> c_int;
+    /// Host glibc `srand`.
+    fn srand(seed: c_uint);
+
     /// Host glibc `rand_r` — not currently exposed by the `libc` crate
     /// (POSIX-only, gated behind `_POSIX_C_SOURCE`), so we link it
     /// directly. This is a thin C-ABI declaration; the real symbol is
@@ -36,6 +39,12 @@ unsafe extern "C" {
     fn nrand48(xsubi: *mut u16) -> std::ffi::c_long;
     /// Host glibc `jrand48`.
     fn jrand48(xsubi: *mut u16) -> std::ffi::c_long;
+}
+
+fn global_rng_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock()
+        .expect("stdlib random diff lock should not be poisoned")
 }
 
 #[derive(Debug)]
@@ -59,6 +68,56 @@ fn render_divs(divs: &[Divergence]) -> String {
 }
 
 // ===========================================================================
+// rand / srand — glibc TYPE_3 global state parity
+// ===========================================================================
+
+const RAND_SEEDS: &[c_uint] = &[0, 1, 42, 100, 12345, 0xDEADBEEF, 0xFFFFFFFF];
+
+#[test]
+fn diff_rand_srand_cases() {
+    let _lock = global_rng_lock();
+    let mut divs = Vec::new();
+
+    for &seed in RAND_SEEDS {
+        unsafe {
+            fl::srand(seed);
+            srand(seed);
+        }
+
+        for call_idx in 0..CALLS_PER_SEED {
+            let fl_v = fl::rand();
+            let lc_v = unsafe { rand() };
+            if fl_v != lc_v {
+                divs.push(Divergence {
+                    function: "rand",
+                    case: format!("seed={seed:#010x}, call={call_idx}"),
+                    field: "return_value",
+                    frankenlibc: format!("{fl_v}"),
+                    glibc: format!("{lc_v}"),
+                });
+                break;
+            }
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "rand/srand divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+#[test]
+fn diff_srand_zero_matches_srand_one() {
+    let _lock = global_rng_lock();
+    fl::srand(0);
+    let fl_zero: Vec<c_int> = (0..CALLS_PER_SEED).map(|_| fl::rand()).collect();
+    fl::srand(1);
+    let fl_one: Vec<c_int> = (0..CALLS_PER_SEED).map(|_| fl::rand()).collect();
+    assert_eq!(fl_zero, fl_one, "FrankenLibC srand(0) must match srand(1)");
+}
+
+// ===========================================================================
 // rand_r — three-step combined LCG, bit-exact glibc parity expected
 // ===========================================================================
 
@@ -67,16 +126,7 @@ fn render_divs(divs: &[Divergence]) -> String {
 /// boundary, and a small unrelated value to make sure the algorithm
 /// isn't only correct on one shape.
 const RAND_R_SEEDS: &[c_uint] = &[
-    0,
-    1,
-    42,
-    100,
-    12345,
-    0xDEADBEEF,
-    0xFFFFFFFF,
-    0x80000000,
-    0x55555555,
-    0xAAAAAAAA,
+    0, 1, 42, 100, 12345, 0xDEADBEEF, 0xFFFFFFFF, 0x80000000, 0x55555555, 0xAAAAAAAA,
 ];
 
 /// Number of consecutive rand_r calls to make per seed. Three is enough
@@ -173,7 +223,7 @@ const RAND48_SEEDS: &[[u16; 3]] = &[
     [0, 0, 1],
     [0xFFFF, 0xFFFF, 0xFFFF],
     [0x1234, 0xABCD, 0x4567],
-    [0x330E, 0xABCD, 0x1234],  // 0x330e == glibc default low word from srand48
+    [0x330E, 0xABCD, 0x1234], // 0x330e == glibc default low word from srand48
 ];
 
 const RAND48_CALLS_PER_SEED: usize = 3;
@@ -213,7 +263,11 @@ fn diff_erand48_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "erand48 divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "erand48 divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -248,7 +302,11 @@ fn diff_nrand48_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "nrand48 divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "nrand48 divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
@@ -283,7 +341,11 @@ fn diff_jrand48_cases() {
             }
         }
     }
-    assert!(divs.is_empty(), "jrand48 divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "jrand48 divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 // ===========================================================================
@@ -292,10 +354,11 @@ fn diff_jrand48_cases() {
 
 #[test]
 fn stdlib_random_diff_coverage_report() {
-    let total = RAND_R_SEEDS.len() * CALLS_PER_SEED
+    let total = RAND_SEEDS.len() * CALLS_PER_SEED
+        + RAND_R_SEEDS.len() * CALLS_PER_SEED
         + RAND48_SEEDS.len() * RAND48_CALLS_PER_SEED * 3; // erand48 + nrand48 + jrand48
     eprintln!(
-        "{{\"family\":\"stdlib.h.random\",\"reference\":\"glibc\",\"functions\":4,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h.random\",\"reference\":\"glibc\",\"functions\":5,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
