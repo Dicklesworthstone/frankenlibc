@@ -3901,8 +3901,10 @@ fn rand_shares_random_global_state() {
     let _lock = random_lock();
     srand(42);
     let via_rand = rand();
-    srandom(42);
-    let via_random = random() as libc::c_int;
+    unsafe {
+        srandom(42);
+    }
+    let via_random = unsafe { random() } as libc::c_int;
     assert_eq!(via_rand, via_random);
 }
 
