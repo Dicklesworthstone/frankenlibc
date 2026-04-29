@@ -418,6 +418,9 @@ fn diff_inet_aton_cases() {
         b"08.0.0.0",
         b"1.2.3.4.5",
         b" 127.0.0.1",
+        b"127.0.0.1 xyz",
+        b"1.2.3\tgarbage",
+        b"1 .2.3.4",
     ];
     for input in cases {
         let cinp = CString::new(*input).unwrap();
@@ -488,6 +491,9 @@ const INET_ADDR_INPUTS: &[&[u8]] = &[
     b"08.0.0.0",       // invalid octal (8 not in [0,7]) — INADDR_NONE
     b"127.0.0.1\t",    // trailing tab tolerated
     b" 127.0.0.1",     // leading space rejected — INADDR_NONE
+    b"127.0.0.1 xyz",  // whitespace terminates parse; following bytes ignored
+    b"1.2.3\tgarbage", // 3-part form with tab terminator
+    b"1 .2.3.4",       // whitespace after first component terminates as 1-part
 ];
 
 #[test]

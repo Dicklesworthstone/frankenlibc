@@ -181,19 +181,17 @@ pub fn inet_aton(src: &[u8], dst: &mut [u8; 4]) -> i32 {
 /// | 3     | a.b.c     | a is byte 0; b is byte 1; c is the low 16     |
 /// | 4     | a.b.c.d   | classic dotted quad                           |
 ///
-/// Trailing ASCII whitespace is tolerated (matches glibc); leading
-/// whitespace is rejected. Each part's value must fit in the bit-width
-/// implied by the form; otherwise returns `None`.
+/// ASCII whitespace after the numeric address terminates parsing and is
+/// tolerated (matches glibc); leading whitespace is rejected. Each part's
+/// value must fit in the bit-width implied by the form; otherwise returns
+/// `None`.
 pub fn parse_ipv4_bsd(src: &[u8]) -> Option<[u8; 4]> {
-    let s = core::str::from_utf8(src).ok()?;
-    let s = s.trim_end_matches('\0');
-    // Trim trailing ASCII whitespace (glibc accepts " 1.2.3.4\t" with trailing
-    // tab but not leading space).
-    let s = s.trim_end_matches(|c: char| c.is_ascii_whitespace());
+    let end = src
+        .iter()
+        .position(|&b| b == b'\0' || b.is_ascii_whitespace())
+        .unwrap_or(src.len());
+    let s = core::str::from_utf8(&src[..end]).ok()?;
     if s.is_empty() {
-        return None;
-    }
-    if s.starts_with(|c: char| c.is_ascii_whitespace()) {
         return None;
     }
 
@@ -712,6 +710,11 @@ mod tests {
         assert_eq!(inet_addr(b"127.0.0.01").to_ne_bytes(), [127, 0, 0, 1]);
         // Octal digit out of range rejected: "08" is not valid octal.
         assert_eq!(inet_addr(b"08.0.0.0"), INADDR_NONE);
+        // Whitespace terminates the address; following bytes are ignored by glibc.
+        assert_eq!(inet_addr(b"127.0.0.1 xyz").to_ne_bytes(), [127, 0, 0, 1]);
+        assert_eq!(inet_addr(b"1.2.3\tgarbage").to_ne_bytes(), [1, 2, 0, 3]);
+        // Whitespace immediately after a complete component terminates parsing.
+        assert_eq!(inet_addr(b"1 .2.3.4").to_ne_bytes(), [0, 0, 0, 1]);
     }
 
     #[test]
