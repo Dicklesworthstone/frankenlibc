@@ -7838,10 +7838,14 @@ pub unsafe extern "C" fn strsvisx(
     flags: c_int,
     extra: *const c_char,
 ) -> c_int {
-    if dst.is_null() || src.is_null() {
+    if dst.is_null() || (src.is_null() && srclen != 0) {
         return -1;
     }
-    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
+    let src_slice: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
     let Some(extras) = (unsafe { extras_slice(extra) }) else {
         return -1;
     };
@@ -7871,10 +7875,14 @@ pub unsafe extern "C" fn strsnvisx(
     flags: c_int,
     extra: *const c_char,
 ) -> c_int {
-    if dst.is_null() || src.is_null() || dlen == 0 {
+    if dst.is_null() || (src.is_null() && srclen != 0) || dlen == 0 {
         return -1;
     }
-    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
+    let src_slice: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
     let Some(extras) = (unsafe { extras_slice(extra) }) else {
         return -1;
     };
@@ -8013,11 +8021,15 @@ pub unsafe extern "C" fn strenvisx(
     flags: c_int,
     cerr_ptr: *mut c_int,
 ) -> c_int {
-    if dst.is_null() || src.is_null() {
+    if dst.is_null() || (src.is_null() && srclen != 0) {
         return -1;
     }
     let merged_flags = (flags as u32) | vis_options_from_env();
-    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
+    let src_slice: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
     let encoded = frankenlibc_core::stdio::vis::strvis_to_vec(src_slice, merged_flags);
     unsafe {
         std::ptr::copy_nonoverlapping(encoded.as_ptr(), dst as *mut u8, encoded.len());
@@ -8050,11 +8062,15 @@ pub unsafe extern "C" fn strsenvisx(
     extra: *const c_char,
     cerr_ptr: *mut c_int,
 ) -> c_int {
-    if dst.is_null() || src.is_null() || dlen == 0 {
+    if dst.is_null() || (src.is_null() && srclen != 0) || dlen == 0 {
         return -1;
     }
     let merged_flags = (flags as u32) | vis_options_from_env();
-    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
+    let src_slice: &[u8] = if srclen == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(src as *const u8, srclen) }
+    };
     let Some(extras) = (unsafe { extras_slice(extra) }) else {
         return -1;
     };

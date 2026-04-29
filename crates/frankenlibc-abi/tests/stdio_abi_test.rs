@@ -4933,6 +4933,14 @@ fn strsvisx_handles_embedded_nul() {
 }
 
 #[test]
+fn strsvisx_zero_srclen_allows_null_src() {
+    let mut dst = [0xeeu8 as c_char; 8];
+    let n = unsafe { strsvisx(dst.as_mut_ptr(), std::ptr::null(), 0, 0, std::ptr::null()) };
+    assert_eq!(n, 0);
+    assert_eq!(dst[0] as u8, 0);
+}
+
+#[test]
 fn strsnvisx_returns_minus_one_on_overflow() {
     let payload: &[u8] = b"###";
     let extra = c"#";
@@ -4968,6 +4976,23 @@ fn strsnvisx_succeeds_with_room() {
     assert_eq!(n, 4);
     assert_eq!(svisx_collect(&dst, n), b"\\043".to_vec());
     assert_eq!(dst[n as usize] as u8, 0);
+}
+
+#[test]
+fn strsnvisx_zero_srclen_allows_null_src() {
+    let mut dst = [0xeeu8 as c_char; 8];
+    let n = unsafe {
+        strsnvisx(
+            dst.as_mut_ptr(),
+            dst.len(),
+            std::ptr::null(),
+            0,
+            0,
+            std::ptr::null(),
+        )
+    };
+    assert_eq!(n, 0);
+    assert_eq!(dst[0] as u8, 0);
 }
 
 #[test]
@@ -5320,6 +5345,18 @@ fn strenvisx_null_cerr_does_not_crash() {
 }
 
 #[test]
+fn strenvisx_zero_srclen_allows_null_src() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(None);
+    let mut buf = [0xeeu8 as c_char; 8];
+    let mut cerr: c_int = 99;
+    let n = unsafe { strenvisx(buf.as_mut_ptr(), std::ptr::null(), 0, 0, &mut cerr) };
+    assert_eq!(n, 0);
+    assert_eq!(cerr, 0);
+    assert_eq!(buf[0] as u8, 0);
+}
+
+#[test]
 fn strenvisx_null_args_return_minus_one() {
     let _g = VIS_OPTIONS_LOCK.lock().unwrap();
     let _restore = VisOptionsGuard::set(None);
@@ -5381,6 +5418,28 @@ fn strsenvisx_overflow_returns_minus_one() {
         )
     };
     assert_eq!(n, -1);
+}
+
+#[test]
+fn strsenvisx_zero_srclen_allows_null_src() {
+    let _g = VIS_OPTIONS_LOCK.lock().unwrap();
+    let _restore = VisOptionsGuard::set(None);
+    let mut buf = [0xeeu8 as c_char; 8];
+    let mut cerr: c_int = 99;
+    let n = unsafe {
+        strsenvisx(
+            buf.as_mut_ptr(),
+            buf.len(),
+            std::ptr::null(),
+            0,
+            0,
+            std::ptr::null(),
+            &mut cerr,
+        )
+    };
+    assert_eq!(n, 0);
+    assert_eq!(cerr, 0);
+    assert_eq!(buf[0] as u8, 0);
 }
 
 #[test]
