@@ -33,6 +33,12 @@ unsafe extern "C" {
         needle: *const c_void,
         needle_len: usize,
     ) -> *mut c_void;
+    /// Host glibc GNU `strchrnul` — like strchr but returns ptr to NUL
+    /// when no match (instead of NULL). Not exposed by libc crate.
+    fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char;
+    /// Host glibc GNU `strverscmp` — version-aware string compare:
+    /// "file9" < "file10". Not exposed by libc crate.
+    fn strverscmp(s1: *const c_char, s2: *const c_char) -> c_int;
 }
 
 #[derive(Debug)]
@@ -652,6 +658,100 @@ fn diff_strncasecmp_cases() {
 }
 
 // ===========================================================================
+// strchrnul — GNU: strchr that returns ptr to trailing NUL on no-match
+// ===========================================================================
+//
+// Differs from POSIX strchr only in the no-match case: strchr returns
+// NULL, strchrnul returns &s[strlen(s)] (the trailing NUL byte). Same
+// match offset for found-cases, different sentinel.
+
+const STRCHRNUL_CASES: &[(&[u8], i32)] = &[
+    (b"hello", b'l' as i32),         // first 'l' at 2
+    (b"hello", b'h' as i32),         // first byte
+    (b"hello", b'o' as i32),         // last char
+    (b"hello", b'z' as i32),         // no-match: glibc returns ptr to NUL (offset 5)
+    (b"hello", 0),                   // search for NUL: same as strlen offset
+    (b"", b'a' as i32),              // empty: returns ptr to NUL (offset 0)
+    (b"", 0),
+    (b"\xff\xfe\xfd", 0xff),         // high-bit byte
+];
+
+#[test]
+fn diff_strchrnul_cases() {
+    let mut divs = Vec::new();
+    for (s, c) in STRCHRNUL_CASES {
+        let buf = cstr(s);
+        let p = buf.as_ptr() as *const c_char;
+        let fl_r = unsafe { fl::strchrnul(p, *c) };
+        let lc_r = unsafe { strchrnul(p, *c) };
+        let fl_off = unsafe { fl_r.offset_from(p) };
+        let lc_off = unsafe { lc_r.offset_from(p) };
+        if fl_off != lc_off {
+            divs.push(Divergence {
+                function: "strchrnul",
+                case: format!("({:?}, {:#x})", s, c),
+                frankenlibc: render_offset(Some(fl_off)),
+                glibc: render_offset(Some(lc_off)),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strchrnul divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
+// strverscmp — GNU version-aware compare ("file9" < "file10")
+// ===========================================================================
+
+const STRVERSCMP_CASES: &[(&[u8], &[u8])] = &[
+    (b"", b""),
+    (b"abc", b"abc"),
+    (b"abc", b"abd"),                // simple lex
+    (b"abc", b"abd"),
+    (b"file1", b"file2"),
+    (b"file9", b"file10"),           // the canonical version case
+    (b"file10", b"file9"),
+    (b"1.0.10", b"1.0.2"),           // multi-segment
+    (b"1.0.2", b"1.0.10"),
+    (b"v1.0", b"v1.1"),
+    (b"alpha", b"beta"),
+    (b"a", b"a0"),                   // numeric suffix
+    (b"a0", b"a"),
+    (b"abc1", b"abc01"),             // leading zero in numeric segment
+];
+
+#[test]
+fn diff_strverscmp_cases() {
+    let mut divs = Vec::new();
+    for (a, b) in STRVERSCMP_CASES {
+        let av = cstr(a);
+        let bv = cstr(b);
+        let fl_v = unsafe {
+            fl::strverscmp(av.as_ptr() as *const c_char, bv.as_ptr() as *const c_char)
+        };
+        let lc_v = unsafe {
+            strverscmp(av.as_ptr() as *const c_char, bv.as_ptr() as *const c_char)
+        };
+        if sign(fl_v) != sign(lc_v) {
+            divs.push(Divergence {
+                function: "strverscmp",
+                case: format!("({:?}, {:?})", a, b),
+                frankenlibc: format!("sign={}", sign(fl_v)),
+                glibc: format!("sign={}", sign(lc_v)),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strverscmp divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
@@ -665,9 +765,11 @@ fn string_diff_coverage_report() {
         + MEMCMP_CASES.len()
         + MEMMEM_CASES.len()
         + STRCASECMP_CASES.len()
-        + STRNCASECMP_CASES.len();
+        + STRNCASECMP_CASES.len()
+        + STRCHRNUL_CASES.len()
+        + STRVERSCMP_CASES.len();
     eprintln!(
-        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":13,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":15,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
