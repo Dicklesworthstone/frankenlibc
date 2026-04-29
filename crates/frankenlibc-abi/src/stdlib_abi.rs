@@ -48,6 +48,11 @@ fn bounded_zero_len(ptr: *mut c_void, requested: usize) -> Option<usize> {
 }
 
 #[inline]
+fn tracked_char_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
+    known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
+}
+
+#[inline]
 unsafe fn read_bounded_cstr_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     if ptr.is_null() {
         return None;
@@ -3537,13 +3542,17 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
 
     let value_len = value.len(); // includes NUL
     if !buf.is_null() && len > 0 {
-        let copy_len = std::cmp::min(len, value_len);
+        let effective_len = tracked_char_output_capacity(buf, len);
+        if effective_len == 0 {
+            return value_len;
+        }
+        let copy_len = std::cmp::min(effective_len, value_len);
         unsafe {
             std::ptr::copy_nonoverlapping(value.as_ptr(), buf as *mut u8, copy_len);
         }
         // Ensure NUL termination if we truncated.
-        if copy_len < value_len && len > 0 {
-            unsafe { *buf.add(len - 1) = 0 };
+        if copy_len < value_len {
+            unsafe { *buf.add(effective_len - 1) = 0 };
         }
     }
     value_len

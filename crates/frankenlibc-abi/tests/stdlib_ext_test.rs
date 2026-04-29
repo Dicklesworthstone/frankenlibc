@@ -125,6 +125,25 @@ fn test_confstr_size_one_buffer() {
 }
 
 #[test]
+fn test_confstr_caps_tracked_short_output_buffer() {
+    let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(1) };
+    assert!(!raw.is_null());
+    unsafe { raw.cast::<u8>().write(0xff) };
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    let needed = unsafe { confstr(0, raw.cast::<c_char>(), 256) };
+
+    assert!(needed > 1, "CS_PATH should need more than 1 byte");
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, 0);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
 fn test_gnu_get_libc_version_is_ascii() {
     let ver = unsafe { gnu_get_libc_version() };
     let s = unsafe { CStr::from_ptr(ver) };
