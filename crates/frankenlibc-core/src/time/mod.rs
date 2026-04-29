@@ -207,9 +207,12 @@ pub fn format_asctime(bd: &BrokenDownTime, buf: &mut [u8]) -> usize {
     let mon = bd.tm_mon.rem_euclid(12) as usize;
     let year = bd.tm_year as i64 + 1900;
 
-    // "Day Mon DD HH:MM:SS YYYY\n"
+    // POSIX/glibc format: `"%.3s %.3s%3d %.2d:%.2d:%.2d %d\n"`. Note the
+    // day field is `%3d` (no preceding literal space), so a 3-digit day
+    // packs flush against the month name ("Jan100"). Year has no width
+    // specifier — single-digit years print as "1", not "   1".
     let s = format!(
-        "{} {} {:2} {:02}:{:02}:{:02} {:4}\n",
+        "{} {}{:>3} {:02}:{:02}:{:02} {}\n",
         std::str::from_utf8(WDAY_NAMES[wday]).unwrap_or("???"),
         std::str::from_utf8(MON_NAMES[mon]).unwrap_or("???"),
         bd.tm_mday,
