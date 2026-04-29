@@ -15329,7 +15329,17 @@ unsafe fn statfs_to_statvfs(sfs: *const syscall::StatFs, vfs: *mut libc::statvfs
     v.f_ffree = s.f_ffree;
     v.f_favail = s.f_ffree; // Same as ffree for non-privileged
     v.f_fsid = u64::from(s.f_fsid.val[0] as u32) | (u64::from(s.f_fsid.val[1] as u32) << 32);
-    v.f_flag = s.f_flags as u64;
+    // Mask f_flags to only the public ST_* bits per <sys/statvfs.h>:
+    // ST_RDONLY (1) | ST_NOSUID (2) | ST_NODEV (4) | ST_NOEXEC (8) |
+    // ST_SYNCHRONOUS (16) | ST_MANDLOCK (64) | ST_WRITE (128) |
+    // ST_APPEND (256) | ST_IMMUTABLE (512) | ST_NOATIME (1024) |
+    // ST_NODIRATIME (2048) | ST_RELATIME (4096).
+    // The kernel includes internal mount-flag bits (e.g. MS_REMOUNT = 0x20)
+    // in f_flags that glibc strips before exposing to user space; matching
+    // that filter avoids spurious f_flag divergence (bd-2b63f4).
+    const PUBLIC_ST_MASK: u64 = 0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x40
+        | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x1000;
+    v.f_flag = (s.f_flags as u64) & PUBLIC_ST_MASK;
     v.f_namemax = s.f_namelen as u64;
 }
 

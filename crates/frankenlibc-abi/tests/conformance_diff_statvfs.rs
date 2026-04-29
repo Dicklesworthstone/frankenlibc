@@ -59,9 +59,7 @@ fn assert_statvfs_match(case: &str, fl_buf: &libc::statvfs, lc_buf: &libc::statv
     check!(f_ffree);
     check!(f_favail);
     check!(f_fsid);
-    // f_flag divergence is a known-issue: fl includes ST_NOEXEC bit
-    // for filesystems where glibc strips it. Filed separately under the
-    // statvfs follow-up. Don't diff f_flag in the lockdown sweep.
+    check!(f_flag);
     check!(f_namemax);
 }
 
