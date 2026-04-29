@@ -523,6 +523,135 @@ fn diff_memmem_cases() {
 }
 
 // ===========================================================================
+// strcasecmp / strncasecmp — ASCII-case-insensitive byte compare
+// ===========================================================================
+//
+// Per POSIX, strcasecmp and strncasecmp fold ASCII letters
+// (A-Z ↔ a-z) before comparing, but bytes outside that range
+// (high-bit, digits, punctuation, control chars) are compared
+// untouched. POSIX requires only the *sign* of the return value to be
+// portable — magnitude is implementation-defined — so the diff
+// compares signum(), not the raw int.
+//
+// strncasecmp adds a byte cap: stop after `n` bytes even before NUL.
+// Both n=0 and n past either string's length are exercised.
+
+const STRCASECMP_CASES: &[(&[u8], &[u8])] = &[
+    // Equal up to case
+    (b"", b""),
+    (b"abc", b"abc"),
+    (b"ABC", b"ABC"),
+    (b"abc", b"ABC"),
+    (b"ABC", b"abc"),
+    (b"AbC", b"aBc"),
+    // Strict less / greater
+    (b"abc", b"abd"),
+    (b"abd", b"abc"),
+    (b"abc", b"abcd"),                // prefix
+    (b"abcd", b"abc"),
+    // First-byte diff (case-folded vs not)
+    (b"a", b"b"),
+    (b"A", b"b"),
+    (b"a", b"B"),
+    // Boundary: byte just before/after the A-Z range
+    (b"@", b"`"),                     // 0x40 vs 0x60 — both unaffected by folding, must NOT be equalized
+    (b"[", b"{"),                     // 0x5B vs 0x7B — same
+    // High-bit bytes — POSIX says only ASCII A-Za-z are folded
+    (b"\xc3", b"\xe3"),               // identical case insensitive ONLY if locale folds it; in C locale, they differ as raw bytes
+    (b"\xff", b"\xff"),
+    (b"\x80", b"\x7f"),               // 0x80 (high) vs 0x7f (DEL) — sign-extension trap
+    // Digits and punctuation — pass-through untouched
+    (b"123", b"123"),
+    (b"abc123", b"ABC123"),
+    (b"abc1", b"abc2"),
+    // Empty vs non-empty
+    (b"", b"a"),
+    (b"a", b""),
+    (b"", b"\xff"),
+];
+
+#[test]
+fn diff_strcasecmp_cases() {
+    let mut divs = Vec::new();
+    for (a, b) in STRCASECMP_CASES {
+        let av = cstr(a);
+        let bv = cstr(b);
+        let ap = av.as_ptr() as *const c_char;
+        let bp = bv.as_ptr() as *const c_char;
+        // SAFETY: cstr() returns a NUL-terminated buffer owned for the
+        // duration of the call.
+        let fl_r = unsafe { fl::strcasecmp(ap, bp) };
+        let lc_r = unsafe { libc::strcasecmp(ap, bp) };
+        if sign(fl_r) != sign(lc_r) {
+            divs.push(Divergence {
+                function: "strcasecmp",
+                case: format!("({:?}, {:?})", a, b),
+                frankenlibc: format!("sign={}", sign(fl_r)),
+                glibc: format!("sign={}", sign(lc_r)),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strcasecmp divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+const STRNCASECMP_CASES: &[(&[u8], &[u8], usize)] = &[
+    // n=0 — must always compare equal regardless of contents
+    (b"abc", b"xyz", 0),
+    (b"", b"", 0),
+    (b"\xff", b"\x00", 0),
+    // Bound stops before any difference would surface
+    (b"abc", b"abd", 2),                // bound 2 → "ab" == "ab"
+    (b"ABC", b"abd", 2),                // bound 2 + folding
+    // Bound exactly at the differing position
+    (b"abc", b"abd", 3),
+    // Bound past either string
+    (b"abc", b"ABC", 100),
+    (b"abc", b"abcd", 100),
+    // Prefix relations under bound
+    (b"abc", b"abcd", 3),               // "abc" == "abc" within first 3
+    (b"abcd", b"abc", 3),               // same
+    (b"abcd", b"abc", 4),               // "abcd" > "abc\0"
+    // High-bit pass-through, bounded
+    (b"\xc3z", b"\xc3Z", 2),
+    // NUL inside — bound spans past first NUL (POSIX: stop on NUL even
+    // before n is reached, both impls must agree).
+    (b"a\x00b", b"a\x00c", 5),
+    (b"abc", b"abd", 1),
+];
+
+#[test]
+fn diff_strncasecmp_cases() {
+    let mut divs = Vec::new();
+    for (a, b, n) in STRNCASECMP_CASES {
+        let av = cstr(a);
+        let bv = cstr(b);
+        let ap = av.as_ptr() as *const c_char;
+        let bp = bv.as_ptr() as *const c_char;
+        // SAFETY: cstr() returns a NUL-terminated buffer; n is bounded
+        // and both impls treat NUL within n as a hard stop.
+        let fl_r = unsafe { fl::strncasecmp(ap, bp, *n) };
+        let lc_r = unsafe { libc::strncasecmp(ap, bp, *n) };
+        if sign(fl_r) != sign(lc_r) {
+            divs.push(Divergence {
+                function: "strncasecmp",
+                case: format!("({:?}, {:?}, {})", a, b, n),
+                frankenlibc: format!("sign={}", sign(fl_r)),
+                glibc: format!("sign={}", sign(lc_r)),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strncasecmp divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
@@ -534,9 +663,11 @@ fn string_diff_coverage_report() {
         + STRNLEN_CASES.len()
         + MEMCHR_CASES.len() * 2          // memchr + memrchr
         + MEMCMP_CASES.len()
-        + MEMMEM_CASES.len();
+        + MEMMEM_CASES.len()
+        + STRCASECMP_CASES.len()
+        + STRNCASECMP_CASES.len();
     eprintln!(
-        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":11,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"string.h\",\"reference\":\"glibc\",\"functions\":13,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
