@@ -38,6 +38,11 @@ unsafe extern "C" {
     fn index(s: *const c_char, c: c_int) -> *mut c_char;
     /// Host glibc BSD `rindex` — strrchr alias.
     fn rindex(s: *const c_char, c: c_int) -> *mut c_char;
+    /// Host glibc/POSIX `swab` — byte-swap pairs in n bytes from src
+    /// to dst. POSIX takes `ssize_t` for the count.
+    fn swab(src: *const c_void, dst: *mut c_void, n: isize);
+    /// Host glibc GNU `memfrob` — XOR each of n bytes with 42.
+    fn memfrob(s: *mut c_void, n: usize) -> *mut c_void;
 }
 
 #[derive(Debug)]
@@ -1255,12 +1260,126 @@ fn diff_index_rindex_cases() {
 }
 
 // ===========================================================================
+// swab — byte-swap pairs (POSIX/BSD)
+// ===========================================================================
+//
+// `swab(src, dst, n)` byte-swaps adjacent pairs while copying. POSIX
+// says: "for n bytes copied, the byte at src[2k] is written to
+// dst[2k+1] and src[2k+1] to dst[2k]." If n is odd, the trailing byte
+// is implementation-defined — glibc just leaves it in dst untouched
+// (we mirror that). If n is negative, glibc treats it as a no-op
+// (POSIX says the behavior is unspecified).
+
+#[test]
+fn diff_swab_cases() {
+    let mut divs = Vec::new();
+    let cases: &[(&[u8], isize)] = &[
+        (b"", 0),
+        (b"ab", 2),                      // single pair
+        (b"abcd", 4),                    // two pairs
+        (b"abcdefgh", 8),                // four pairs
+        (b"\xff\x00\xfe\x01", 4),        // high-bit bytes
+        (b"\x00\x01\x02\x03", 4),
+        (b"abcdef", 0),                  // zero count = no-op
+        (b"abcdef", -2),                 // negative count = no-op per glibc
+    ];
+    for &(src, n) in cases {
+        // Prefill both dst buffers with a sentinel so we catch any
+        // partial writes past the spec'd range.
+        let mut dst_fl = vec![0xCDu8; 16];
+        let mut dst_lc = vec![0xCDu8; 16];
+        unsafe {
+            fl::swab(
+                src.as_ptr() as *const c_void,
+                dst_fl.as_mut_ptr() as *mut c_void,
+                n,
+            );
+            swab(
+                src.as_ptr() as *const c_void,
+                dst_lc.as_mut_ptr() as *mut c_void,
+                n,
+            );
+        }
+        if dst_fl != dst_lc {
+            divs.push(Divergence {
+                function: "swab",
+                case: format!("(src={:?}, n={})", src, n),
+                field: "dst_buffer",
+                frankenlibc: format!("{:?}", &dst_fl[..n.max(0) as usize]),
+                glibc: format!("{:?}", &dst_lc[..n.max(0) as usize]),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "swab divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
+// memfrob — XOR each byte with 42 (GNU; toy obfuscation)
+// ===========================================================================
+//
+// `memfrob(s, n)` XORs the first n bytes of s with 42 (0x2A).
+// Calling it twice with the same arguments restores the original —
+// the diff includes the round-trip identity check.
+
+#[test]
+fn diff_memfrob_cases() {
+    let mut divs = Vec::new();
+    let inputs: &[&[u8]] = &[
+        b"",
+        b"a",
+        b"hello",
+        b"\x00\x01\x02\x03",
+        b"\xff\xfe\xfd\xfc",
+        b"AAAA",                         // all same byte
+        b"the quick brown fox",
+    ];
+    for src in inputs {
+        for &n in &[0usize, 1, src.len()] {
+            if n > src.len() {
+                continue;
+            }
+            let mut buf_fl = src.to_vec();
+            buf_fl.resize(32, 0xCDu8);
+            let mut buf_lc = src.to_vec();
+            buf_lc.resize(32, 0xCDu8);
+            unsafe {
+                let _ = frankenlibc_abi::unistd_abi::memfrob(buf_fl.as_mut_ptr() as *mut c_void, n);
+                let _ = memfrob(buf_lc.as_mut_ptr() as *mut c_void, n);
+            }
+            if buf_fl != buf_lc {
+                divs.push(Divergence {
+                    function: "memfrob",
+                    case: format!("(src={:?}, n={})", src, n),
+                    field: "buffer",
+                    frankenlibc: format!("{:?}", &buf_fl[..n.min(8)]),
+                    glibc: format!("{:?}", &buf_lc[..n.min(8)]),
+                });
+            }
+            // Round trip: a second memfrob(src, n) must restore.
+            unsafe {
+                let _ = frankenlibc_abi::unistd_abi::memfrob(buf_fl.as_mut_ptr() as *mut c_void, n);
+            }
+            if buf_fl[..n] != src[..n] {
+                divs.push(Divergence {
+                    function: "memfrob",
+                    case: format!("(src={:?}, n={}) round_trip", src, n),
+                    field: "round_trip",
+                    frankenlibc: format!("{:?}", &buf_fl[..n.min(8)]),
+                    glibc: format!("{:?}", &src[..n.min(8)]),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "memfrob divergences:\n{}", render_divs(&divs));
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
 #[test]
 fn string_mut_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":25,\"divergences\":0}}",
+        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":27,\"divergences\":0}}",
     );
 }
