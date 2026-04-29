@@ -4344,6 +4344,26 @@ fn getcwd_returns_current_directory() {
 }
 
 #[test]
+fn getcwd_caps_tracked_short_output_buffer() {
+    let _cwd_lock = cwd_test_lock();
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let ptr = unsafe { getcwd(raw.cast::<c_char>(), 256) };
+
+    assert!(ptr.is_null());
+    assert_eq!(errno_value(), libc::ERANGE);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, 0);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
 fn getcwd_null_buffer_allocates() {
     let _cwd_lock = cwd_test_lock();
     let ptr = unsafe { getcwd(std::ptr::null_mut(), 0) };

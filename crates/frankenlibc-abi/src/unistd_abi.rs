@@ -620,7 +620,8 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
         return std::ptr::null_mut();
     }
 
-    match unsafe { syscall::sys_getcwd(buf as *mut u8, size) } {
+    let effective_size = tracked_output_capacity(buf, size);
+    match unsafe { syscall::sys_getcwd(buf as *mut u8, effective_size) } {
         Ok(_) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
             buf
