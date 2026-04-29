@@ -49,6 +49,24 @@ unsafe extern "C" {
         decpt: *mut c_int,
         sign: *mut c_int,
     ) -> *mut c_char;
+    /// Host glibc reentrant `ecvt_r`: caller provides buffer.
+    fn ecvt_r(
+        value: f64,
+        ndigit: c_int,
+        decpt: *mut c_int,
+        sign: *mut c_int,
+        buf: *mut c_char,
+        buflen: usize,
+    ) -> c_int;
+    /// Host glibc reentrant `fcvt_r`: caller provides buffer.
+    fn fcvt_r(
+        value: f64,
+        ndigit: c_int,
+        decpt: *mut c_int,
+        sign: *mut c_int,
+        buf: *mut c_char,
+        buflen: usize,
+    ) -> c_int;
     /// Host glibc `ffs` — find first set bit in an int.
     fn ffs(i: c_int) -> c_int;
     /// Host glibc `ffsl` — find first set bit in a long.
@@ -945,6 +963,195 @@ fn diff_gcvt_cases() {
 }
 
 // ===========================================================================
+// ecvt_r / fcvt_r — reentrant variants with caller-supplied buffer
+// ===========================================================================
+//
+// These are the reentrant siblings of ecvt/fcvt: same digit/decpt/
+// sign output but written into a caller buffer instead of glibc's
+// thread-unsafe static one. Both implementations were hand-rolled
+// before this commit and missed three real glibc behaviors:
+//
+//   1. -0.0 must report sign=1 (signbit) — `value < 0.0` is false
+//      for negative zero.
+//   2. fcvt_r on sub-1 magnitudes must strip leading zeros from the
+//      digit string — same fix shape as the static-buffer fcvt.
+//   3. fcvt_r when rounding to zero must emit empty digits with
+//      decpt=-ndigit, not "0000…" with decpt=1.
+//
+// The fix routes both functions through the now-correct
+// frankenlibc_core::stdlib::ecvt/fcvt. This diff pins the new
+// behavior against host glibc.
+
+const CVT_R_INPUTS: &[(f64, &str)] = &[
+    (0.0, "zero"),
+    (-0.0, "neg_zero"),
+    (1.0, "one"),
+    (-1.0, "neg_one"),
+    (123.456, "ascii_decimal"),
+    (-12345.0, "neg_integer"),
+    (0.0001234, "small_positive"),
+    (1e10, "ten_billion"),
+    (1e-10, "ten_picosecond"),
+];
+
+#[test]
+fn diff_ecvt_r_cases() {
+    let mut divs = Vec::new();
+    for (value, label) in CVT_R_INPUTS {
+        for &ndigit in &[1, 2, 4, 6] {
+            let mut fl_buf = [0u8; 64];
+            let mut lc_buf = [0u8; 64];
+            let mut fl_dp: c_int = 0;
+            let mut fl_sg: c_int = 0;
+            let mut lc_dp: c_int = 0;
+            let mut lc_sg: c_int = 0;
+            let fl_rc = unsafe {
+                fl::ecvt_r(
+                    *value,
+                    ndigit,
+                    &mut fl_dp,
+                    &mut fl_sg,
+                    fl_buf.as_mut_ptr() as *mut c_char,
+                    fl_buf.len(),
+                )
+            };
+            let lc_rc = unsafe {
+                ecvt_r(
+                    *value,
+                    ndigit,
+                    &mut lc_dp,
+                    &mut lc_sg,
+                    lc_buf.as_mut_ptr() as *mut c_char,
+                    lc_buf.len(),
+                )
+            };
+            let case = format!("{label}({value}), ndigit={ndigit}");
+            if fl_rc != lc_rc {
+                divs.push(Divergence {
+                    function: "ecvt_r",
+                    case: case.clone(),
+                    field: "rc",
+                    frankenlibc: format!("{fl_rc}"),
+                    glibc: format!("{lc_rc}"),
+                });
+            }
+            let fl_str = nul_terminated_slice(&fl_buf);
+            let lc_str = nul_terminated_slice(&lc_buf);
+            if fl_str != lc_str {
+                divs.push(Divergence {
+                    function: "ecvt_r",
+                    case: case.clone(),
+                    field: "digits",
+                    frankenlibc: format!("{:?}", String::from_utf8_lossy(fl_str)),
+                    glibc: format!("{:?}", String::from_utf8_lossy(lc_str)),
+                });
+            }
+            if fl_dp != lc_dp {
+                divs.push(Divergence {
+                    function: "ecvt_r",
+                    case: case.clone(),
+                    field: "decpt",
+                    frankenlibc: format!("{fl_dp}"),
+                    glibc: format!("{lc_dp}"),
+                });
+            }
+            if fl_sg != lc_sg {
+                divs.push(Divergence {
+                    function: "ecvt_r",
+                    case,
+                    field: "sign",
+                    frankenlibc: format!("{fl_sg}"),
+                    glibc: format!("{lc_sg}"),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "ecvt_r divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_fcvt_r_cases() {
+    let mut divs = Vec::new();
+    for (value, label) in CVT_R_INPUTS {
+        for &ndigit in &[0, 2, 4, 6] {
+            let mut fl_buf = [0u8; 64];
+            let mut lc_buf = [0u8; 64];
+            let mut fl_dp: c_int = 0;
+            let mut fl_sg: c_int = 0;
+            let mut lc_dp: c_int = 0;
+            let mut lc_sg: c_int = 0;
+            let fl_rc = unsafe {
+                fl::fcvt_r(
+                    *value,
+                    ndigit,
+                    &mut fl_dp,
+                    &mut fl_sg,
+                    fl_buf.as_mut_ptr() as *mut c_char,
+                    fl_buf.len(),
+                )
+            };
+            let lc_rc = unsafe {
+                fcvt_r(
+                    *value,
+                    ndigit,
+                    &mut lc_dp,
+                    &mut lc_sg,
+                    lc_buf.as_mut_ptr() as *mut c_char,
+                    lc_buf.len(),
+                )
+            };
+            let case = format!("{label}({value}), ndigit={ndigit}");
+            if fl_rc != lc_rc {
+                divs.push(Divergence {
+                    function: "fcvt_r",
+                    case: case.clone(),
+                    field: "rc",
+                    frankenlibc: format!("{fl_rc}"),
+                    glibc: format!("{lc_rc}"),
+                });
+            }
+            let fl_str = nul_terminated_slice(&fl_buf);
+            let lc_str = nul_terminated_slice(&lc_buf);
+            if fl_str != lc_str {
+                divs.push(Divergence {
+                    function: "fcvt_r",
+                    case: case.clone(),
+                    field: "digits",
+                    frankenlibc: format!("{:?}", String::from_utf8_lossy(fl_str)),
+                    glibc: format!("{:?}", String::from_utf8_lossy(lc_str)),
+                });
+            }
+            if fl_dp != lc_dp {
+                divs.push(Divergence {
+                    function: "fcvt_r",
+                    case: case.clone(),
+                    field: "decpt",
+                    frankenlibc: format!("{fl_dp}"),
+                    glibc: format!("{lc_dp}"),
+                });
+            }
+            if fl_sg != lc_sg {
+                divs.push(Divergence {
+                    function: "fcvt_r",
+                    case,
+                    field: "sign",
+                    frankenlibc: format!("{fl_sg}"),
+                    glibc: format!("{lc_sg}"),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "fcvt_r divergences:\n{}", render_divs(&divs));
+}
+
+fn nul_terminated_slice(buf: &[u8]) -> &[u8] {
+    match buf.iter().position(|&b| b == 0) {
+        Some(idx) => &buf[..idx],
+        None => buf,
+    }
+}
+
+// ===========================================================================
 // ffs / ffsl / ffsll — find first set bit
 // ===========================================================================
 //
@@ -1046,9 +1253,10 @@ fn stdlib_numeric_diff_coverage_report() {
         + CVT_INPUTS.len() * 4 * 3               // (ecvt + fcvt + gcvt) × 4 ndigit values
         + FFS_INT_INPUTS.len()                   // ffs
         + FFSL_INPUTS.len()                      // ffsl
-        + FFSLL_INPUTS.len();                    // ffsll
+        + FFSLL_INPUTS.len()                     // ffsll
+        + CVT_R_INPUTS.len() * 4 * 2;            // (ecvt_r + fcvt_r) × 4 ndigit
     eprintln!(
-        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":17,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":19,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }

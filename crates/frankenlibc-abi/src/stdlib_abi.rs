@@ -4733,36 +4733,19 @@ pub unsafe extern "C" fn ecvt_r(
     if effective_buflen == 0 {
         return libc::EINVAL;
     }
-    unsafe { *sign = if value < 0.0 { 1 } else { 0 } };
-    let abs_val = value.abs();
-    let requested = (ndigit.max(0) as usize)
-        .min(effective_buflen.saturating_sub(1))
-        .min(MAX_LEGACY_CVT_DIGITS);
-    let s = if requested > 0 {
-        format!("{abs_val:.prec$e}", prec = requested.saturating_sub(1))
-    } else {
-        format!("{abs_val:e}")
-    };
-    // Parse exponent
-    let (mantissa, exp) = if let Some(idx) = s.find('e') {
-        (&s[..idx], s[idx + 1..].parse::<i32>().unwrap_or(0))
-    } else {
-        (s.as_str(), 0)
-    };
-    unsafe { *decpt = exp + 1 };
-    // Copy digits only (skip '.')
-    let mut i = 0usize;
-    for ch in mantissa.bytes() {
-        if ch == b'.' {
-            continue;
-        }
-        if i + 1 >= effective_buflen {
-            break;
-        }
-        unsafe { *buf.add(i) = ch as c_char };
-        i += 1;
+    // Use signbit semantics: -0.0 returns sign=1 too, matching glibc.
+    // Previous impl used `value < 0.0` which is false for -0.0.
+    unsafe { *sign = if value.is_sign_negative() && !value.is_nan() { 1 } else { 0 } };
+    let requested = (ndigit.max(0) as i32).min(MAX_LEGACY_CVT_DIGITS as i32);
+    let (digits, dp, _neg) = frankenlibc_core::stdlib::ecvt(value, requested);
+    unsafe { *decpt = dp };
+    let copy_len = digits.len().min(effective_buflen.saturating_sub(1));
+    // SAFETY: caller owns `buf` for `effective_buflen` bytes; copy_len
+    // is bounded by that minus one for the trailing NUL.
+    unsafe {
+        std::ptr::copy_nonoverlapping(digits.as_ptr(), buf as *mut u8, copy_len);
+        *buf.add(copy_len) = 0;
     }
-    unsafe { *buf.add(i) = 0 };
     0
 }
 
@@ -4784,26 +4767,24 @@ pub unsafe extern "C" fn fcvt_r(
     if effective_buflen == 0 {
         return libc::EINVAL;
     }
-    unsafe { *sign = if value < 0.0 { 1 } else { 0 } };
-    let abs_val = value.abs();
-    let prec = (ndigit.max(0) as usize)
-        .min(effective_buflen.saturating_sub(1))
-        .min(MAX_LEGACY_CVT_DIGITS);
-    let s = format!("{abs_val:.prec$}");
-    let dot_pos = s.find('.').unwrap_or(s.len());
-    unsafe { *decpt = dot_pos as c_int };
-    let mut i = 0usize;
-    for ch in s.bytes() {
-        if ch == b'.' {
-            continue;
-        }
-        if i + 1 >= effective_buflen {
-            break;
-        }
-        unsafe { *buf.add(i) = ch as c_char };
-        i += 1;
+    // signbit semantics again — -0.0 must report sign=1.
+    unsafe { *sign = if value.is_sign_negative() && !value.is_nan() { 1 } else { 0 } };
+    let requested = (ndigit.max(0) as i32).min(MAX_LEGACY_CVT_DIGITS as i32);
+    // Delegate to the corrected core fcvt: handles leading-zero
+    // stripping for sub-1 magnitudes (digits="1" decpt=-3 for
+    // 0.0001234 with ndigit=4) and the rounded-to-zero case
+    // (digits="" decpt=-ndigit when |value| < 0.5e-ndigit). The
+    // previous in-place impl emitted "00001" decpt=1 and "00000"
+    // decpt=1 for those cases respectively.
+    let (digits, dp, _neg) = frankenlibc_core::stdlib::fcvt(value, requested);
+    unsafe { *decpt = dp };
+    let copy_len = digits.len().min(effective_buflen.saturating_sub(1));
+    // SAFETY: caller owns `buf` for `effective_buflen` bytes; copy_len
+    // is bounded by that minus one for the trailing NUL.
+    unsafe {
+        std::ptr::copy_nonoverlapping(digits.as_ptr(), buf as *mut u8, copy_len);
+        *buf.add(copy_len) = 0;
     }
-    unsafe { *buf.add(i) = 0 };
     0
 }
 
