@@ -315,4 +315,9 @@ name = "fuzz_getsubopt"
 path = "fuzz_targets/fuzz_getsubopt.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_argz"
+path = "fuzz_targets/fuzz_argz.rs"
+doc = false
+
 [workspace]
