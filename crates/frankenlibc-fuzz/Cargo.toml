@@ -310,4 +310,9 @@ name = "fuzz_strptime"
 path = "fuzz_targets/fuzz_strptime.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_getsubopt"
+path = "fuzz_targets/fuzz_getsubopt.rs"
+doc = false
+
 [workspace]
