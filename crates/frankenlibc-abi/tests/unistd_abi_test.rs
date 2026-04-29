@@ -5721,6 +5721,57 @@ fn symlink_and_readlink_round_trip() {
 }
 
 #[test]
+fn readlink_caps_tracked_short_output_buffer() {
+    let target = CString::new("tracked-readlink-target").unwrap();
+    let linkp = temp_path("sym_lnk_tracked_short");
+    assert_eq!(unsafe { symlink(target.as_ptr(), linkp.as_ptr()) }, 0);
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    let n = unsafe { readlink(linkp.as_ptr(), raw.cast::<c_char>(), 256) };
+
+    assert_eq!(n, 1);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, b't');
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+    let _ = std::fs::remove_file(linkp.to_str().unwrap());
+}
+
+#[test]
+fn readlinkat_caps_tracked_short_output_buffer() {
+    let target = CString::new("tracked-readlinkat-target").unwrap();
+    let linkp = temp_path("sym_lnk_at_tracked_short");
+    assert_eq!(unsafe { symlink(target.as_ptr(), linkp.as_ptr()) }, 0);
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    let n = unsafe {
+        frankenlibc_abi::unistd_abi::readlinkat(
+            libc::AT_FDCWD,
+            linkp.as_ptr(),
+            raw.cast::<c_char>(),
+            256,
+        )
+    };
+
+    assert_eq!(n, 1);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, b't');
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+    let _ = std::fs::remove_file(linkp.to_str().unwrap());
+}
+
+#[test]
 fn unlink_removes_file() {
     let path = temp_path("unlink");
     std::fs::write(path.to_str().unwrap(), b"x").unwrap();

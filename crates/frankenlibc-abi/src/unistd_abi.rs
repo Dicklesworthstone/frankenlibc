@@ -1071,8 +1071,14 @@ pub unsafe extern "C" fn readlink(path: *const c_char, buf: *mut c_char, bufsiz:
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
+    let effective_bufsiz = tracked_output_capacity(buf, bufsiz);
     let rc = match unsafe {
-        syscall::sys_readlinkat(libc::AT_FDCWD, path as *const u8, buf as *mut u8, bufsiz)
+        syscall::sys_readlinkat(
+            libc::AT_FDCWD,
+            path as *const u8,
+            buf as *mut u8,
+            effective_bufsiz,
+        )
     } {
         Ok(n) => n,
         Err(e) => {
@@ -1792,8 +1798,9 @@ pub unsafe extern "C" fn readlinkat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
+    let effective_bufsiz = tracked_output_capacity(buf, bufsiz);
     let rc = match unsafe {
-        syscall::sys_readlinkat(dirfd, path as *const u8, buf as *mut u8, bufsiz)
+        syscall::sys_readlinkat(dirfd, path as *const u8, buf as *mut u8, effective_bufsiz)
     } {
         Ok(n) => n,
         Err(e) => {
