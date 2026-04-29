@@ -325,4 +325,9 @@ name = "fuzz_asprintf"
 path = "fuzz_targets/fuzz_asprintf.rs"
 doc = false
 
+[[bin]]
+name = "fuzz_loc_codec"
+path = "fuzz_targets/fuzz_loc_codec.rs"
+doc = false
+
 [workspace]
