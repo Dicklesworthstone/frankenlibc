@@ -1499,6 +1499,20 @@ fn wcstod_family_parses_ascii_and_updates_endptr() {
     let ld = unsafe { wcstold(input.as_ptr(), &mut end as *mut *mut libc::wchar_t) };
     assert!((ld - 12.5).abs() < 1e-10);
 
+    let halfway = wstr(b"1.0000000596046447753906251");
+    end = std::ptr::null_mut();
+    let rounded = unsafe {
+        wcstof(
+            halfway.as_ptr() as *const libc::wchar_t,
+            &mut end as *mut *mut libc::wchar_t,
+        )
+    };
+    assert_eq!(rounded.to_bits(), 0x3f80_0001);
+    assert_eq!(
+        unsafe { end.offset_from(halfway.as_ptr() as *mut libc::wchar_t) },
+        27
+    );
+
     let signed: [libc::wchar_t; 4] = [
         b'-' as libc::wchar_t,
         b'7' as libc::wchar_t,

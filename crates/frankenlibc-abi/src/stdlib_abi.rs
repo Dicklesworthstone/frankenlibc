@@ -2060,8 +2060,7 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
         return 0.0;
     };
     let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
-    let (wide, consumed) = frankenlibc_core::stdlib::strtod(slice);
-    let value = wide as f32;
+    let (value, consumed) = frankenlibc_core::stdlib::conversion::strtof_impl(slice);
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed) as *mut c_char };
     }

@@ -769,10 +769,60 @@ pub fn strtod(s: &[u8]) -> (f64, usize) {
     strtod_impl(s)
 }
 
+fn parse_decimal_f32_prefix(slice: &[u8], consumed: usize) -> Option<f32> {
+    let consumed = consumed.min(slice.len());
+    let mut start = 0;
+    while start < consumed && slice[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    if start >= consumed {
+        return None;
+    }
+
+    let mut token_start = start;
+    if matches!(slice[token_start], b'+' | b'-') {
+        token_start += 1;
+    }
+    if token_start >= consumed {
+        return None;
+    }
+
+    if matches!(slice[token_start], b'i' | b'I' | b'n' | b'N') {
+        return None;
+    }
+    if token_start + 1 < consumed
+        && slice[token_start] == b'0'
+        && matches!(slice[token_start + 1], b'x' | b'X')
+    {
+        return None;
+    }
+
+    let text = core::str::from_utf8(&slice[start..consumed]).ok()?;
+    text.parse::<f32>().ok()
+}
+
+/// Parses a C `float` from a NUL-terminated byte slice.
+///
+/// Decimal inputs must round directly to `f32`; parsing through `f64` first can
+/// double-round halfway cases and drift from libc.
+pub fn strtof_impl(s: &[u8]) -> (f32, usize) {
+    let (wide, consumed) = strtod_impl(s);
+    if consumed == 0 {
+        return (wide as f32, consumed);
+    }
+
+    let len = crate::string::strlen(s);
+    let slice = &s[..len];
+    if let Some(value) = parse_decimal_f32_prefix(slice, consumed) {
+        return (value, consumed);
+    }
+
+    (wide as f32, consumed)
+}
+
 /// C `strtof` -- parse float from string, returns (value, bytes_consumed).
 pub fn strtof(s: &[u8]) -> (f32, usize) {
-    let (val, consumed) = strtod_impl(s);
-    (val as f32, consumed)
+    strtof_impl(s)
 }
 
 /// C `atof` -- equivalent to `strtod(s, NULL)`.
@@ -982,6 +1032,14 @@ mod tests {
         let (val, consumed) = strtof(b"3.25\0");
         assert!((val - 3.25_f32).abs() < 1e-5);
         assert_eq!(consumed, 4);
+    }
+
+    #[test]
+    fn test_strtof_decimal_rounds_directly_to_f32() {
+        let input = b"1.0000000596046447753906251\0";
+        let (val, consumed) = strtof(input);
+        assert_eq!(val.to_bits(), 0x3f80_0001);
+        assert_eq!(consumed, 27);
     }
 
     #[test]

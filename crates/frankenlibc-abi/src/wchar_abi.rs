@@ -3233,8 +3233,27 @@ pub unsafe extern "C" fn wcstof(
     nptr: *const libc::wchar_t,
     endptr: *mut *mut libc::wchar_t,
 ) -> f32 {
-    // SAFETY: `wcstod` handles null/endptr contracts and ASCII projection.
-    unsafe { wcstod(nptr, endptr) as f32 }
+    if nptr.is_null() {
+        if !endptr.is_null() {
+            // SAFETY: caller-provided endptr is writable when non-null.
+            unsafe { *endptr = nptr as *mut libc::wchar_t };
+        }
+        return 0.0;
+    }
+
+    // SAFETY: strict mode follows C semantics and scans until NUL.
+    let (len, _) = unsafe { scan_w_string(nptr as *const u32, None) };
+    // SAFETY: bounded by measured wide-string length.
+    let slice = unsafe { std::slice::from_raw_parts(nptr as *const u32, len) };
+    let projected = project_wide_ascii(slice);
+    let (value, consumed) = frankenlibc_core::stdlib::conversion::strtof_impl(&projected);
+
+    if !endptr.is_null() {
+        // SAFETY: consumed is bounded by projected input length.
+        unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed.min(len)) };
+    }
+
+    value
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

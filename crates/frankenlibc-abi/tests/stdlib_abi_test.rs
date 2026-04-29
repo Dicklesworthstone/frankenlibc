@@ -655,6 +655,17 @@ fn strtof_sets_float_range_erange() {
 }
 
 #[test]
+fn strtof_rounds_decimal_directly_to_float() {
+    let input = c"1.0000000596046447753906251";
+    let mut endptr = ptr::null_mut();
+
+    let value = unsafe { strtof(input.as_ptr(), &mut endptr) };
+
+    assert_eq!(value.to_bits(), 0x3f80_0001);
+    assert_eq!(unsafe { endptr.offset_from(input.as_ptr()) }, 27);
+}
+
+#[test]
 fn floating_conversions_reject_tracked_unterminated_inputs() {
     unsafe {
         let atof_raw = malloc_unterminated(b"12.5");
