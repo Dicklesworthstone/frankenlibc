@@ -317,6 +317,57 @@ fn diff_strsignal_cases() {
     );
 }
 
+#[test]
+fn diff_strsignal_realtime_and_unknown_text() {
+    let mut divs = Vec::new();
+    let cases = [
+        -1,
+        0,
+        32,
+        33,
+        unsafe { libc::__libc_current_sigrtmin() },
+        unsafe { libc::__libc_current_sigrtmin() + 1 },
+        unsafe { libc::__libc_current_sigrtmax() },
+        unsafe { libc::__libc_current_sigrtmax() + 1 },
+    ];
+
+    for sig in cases {
+        let p_fl = unsafe { fl_str::strsignal(sig) };
+        let p_lc = unsafe { libc::strsignal(sig) };
+        if p_fl.is_null() != p_lc.is_null() {
+            divs.push(Divergence {
+                function: "strsignal",
+                case: format!("sig={sig}"),
+                field: "null",
+                frankenlibc: format!("{}", p_fl.is_null()),
+                glibc: format!("{}", p_lc.is_null()),
+            });
+            continue;
+        }
+        if p_fl.is_null() {
+            continue;
+        }
+
+        let s_fl = unsafe { std::ffi::CStr::from_ptr(p_fl).to_bytes() };
+        let s_lc = unsafe { std::ffi::CStr::from_ptr(p_lc).to_bytes() };
+        if s_fl != s_lc {
+            divs.push(Divergence {
+                function: "strsignal",
+                case: format!("sig={sig}"),
+                field: "text",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
+                glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
+            });
+        }
+    }
+
+    assert!(
+        divs.is_empty(),
+        "strsignal realtime/unknown divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 // ===========================================================================
 // Compose: sigaddset multiple, then verify membership for ALL signals
 // ===========================================================================
