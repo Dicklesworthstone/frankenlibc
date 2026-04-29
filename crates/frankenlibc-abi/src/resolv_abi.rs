@@ -3796,8 +3796,38 @@ pub unsafe extern "C" fn __p_type(ty: c_int) -> *const c_char {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_option(_option: c_int) -> *const c_char {
-    c"".as_ptr()
+pub unsafe extern "C" fn __p_option(option: c_int) -> *const c_char {
+    // RES_* option flags (from <resolv.h>). glibc returns the symbol
+    // name for known single-bit flags or "?0xVAL?" for unknown.
+    match option {
+        0x0001 => c"init".as_ptr(),
+        0x0002 => c"debug".as_ptr(),
+        0x0008 => c"use-vc".as_ptr(),
+        0x0020 => c"igntc".as_ptr(),
+        0x0040 => c"recurs".as_ptr(),
+        0x0080 => c"defnam".as_ptr(),
+        0x0100 => c"styopn".as_ptr(),
+        0x0200 => c"dnsrch".as_ptr(),
+        0x1000 => c"noaliases".as_ptr(),
+        0x4000 => c"rotate".as_ptr(),
+        _ => {
+            thread_local! {
+                static P_OPTION_BUF: core::cell::UnsafeCell<[u8; 24]> =
+                    const { core::cell::UnsafeCell::new([0u8; 24]) };
+            }
+            P_OPTION_BUF.with(|cell| {
+                let buf_ptr = cell.get();
+                // SAFETY: thread-local; no aliasing across threads.
+                let buf = unsafe { &mut *buf_ptr };
+                let s = format!("?0x{:x}?", option as u32);
+                let bytes = s.as_bytes();
+                let n = bytes.len().min(buf.len() - 1);
+                buf[..n].copy_from_slice(&bytes[..n]);
+                buf[n] = 0;
+                buf.as_ptr() as *const c_char
+            })
+        }
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

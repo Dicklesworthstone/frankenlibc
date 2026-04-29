@@ -19,6 +19,7 @@ unsafe extern "C" {
     fn __p_type(ty: c_int) -> *const c_char;
     fn __p_rcode(rcode: c_int) -> *const c_char;
     fn __p_time(value: u32) -> *const c_char;
+    fn __p_option(option: c_int) -> *const c_char;
 }
 
 #[derive(Debug)]
@@ -184,6 +185,44 @@ fn diff_p_time_known_and_unknown() {
         }
     }
     assert!(divs.is_empty(), "__p_time divergences:\n{}", render_divs(&divs));
+}
+
+#[test]
+fn diff_p_option_known_and_unknown() {
+    let mut divs = Vec::new();
+    let opts: &[c_int] = &[
+        0x0001, 0x0002, 0x0008, 0x0020, 0x0040, 0x0080, 0x0100, 0x0200,
+        0x1000, 0x4000,
+        // Unknown — should fall back to "?0xN?"
+        0x0, 0x4, 0x10, 0x400, 0x800, 0x2000, 0x8000,
+    ];
+    for &opt in opts {
+        let p_fl = unsafe { fl::__p_option(opt) };
+        let p_lc = unsafe { __p_option(opt) };
+        if p_fl.is_null() != p_lc.is_null() {
+            divs.push(Divergence {
+                case: format!("opt={opt:#x}"),
+                field: "null_return",
+                frankenlibc: format!("{}", p_fl.is_null()),
+                glibc: format!("{}", p_lc.is_null()),
+            });
+            continue;
+        }
+        if p_fl.is_null() {
+            continue;
+        }
+        let s_fl = unsafe { CStr::from_ptr(p_fl).to_bytes() };
+        let s_lc = unsafe { CStr::from_ptr(p_lc).to_bytes() };
+        if s_fl != s_lc {
+            divs.push(Divergence {
+                case: format!("opt={opt:#x}"),
+                field: "name",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(s_fl)),
+                glibc: format!("{:?}", String::from_utf8_lossy(s_lc)),
+            });
+        }
+    }
+    assert!(divs.is_empty(), "__p_option divergences:\n{}", render_divs(&divs));
 }
 
 #[test]
