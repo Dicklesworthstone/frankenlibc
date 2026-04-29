@@ -3700,16 +3700,99 @@ pub unsafe extern "C" fn __fp_nquery(_msg: *const u8, _len: c_int, _file: *mut c
 pub unsafe extern "C" fn __fp_resstat(_statp: *const c_void, _file: *mut c_void) {}
 
 /// All `__p_*` helpers below take values and write a textual rep to a
-/// FILE* or return a `*const c_char`. We return NULL/empty string and do
-/// nothing for the writing variants.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_class(_class: c_int) -> *const c_char {
-    c"IN".as_ptr()
+/// FILE* or return a `*const c_char`. The look-up variants below replicate
+/// glibc's static-table → fallback-decimal-buffer behavior; the writing
+/// variants stay no-ops since we don't render to FILE* streams.
+
+thread_local! {
+    /// Per-thread fallback buffer for `__p_class` / `__p_type` decimal
+    /// fallbacks (matches glibc which uses a static buffer).
+    static P_FALLBACK_BUF: core::cell::UnsafeCell<[u8; 16]> =
+        const { core::cell::UnsafeCell::new([0u8; 16]) };
+}
+
+unsafe fn write_decimal_fallback(value: c_int) -> *const c_char {
+    P_FALLBACK_BUF.with(|cell| {
+        let buf_ptr = cell.get();
+        // SAFETY: thread-local; no aliasing across threads.
+        let buf = unsafe { &mut *buf_ptr };
+        let s = format!("{}", value as i32);
+        let bytes = s.as_bytes();
+        let n = bytes.len().min(buf.len() - 1);
+        buf[..n].copy_from_slice(&bytes[..n]);
+        buf[n] = 0;
+        buf.as_ptr() as *const c_char
+    })
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_type(_ty: c_int) -> *const c_char {
-    c"A".as_ptr()
+pub unsafe extern "C" fn __p_class(class: c_int) -> *const c_char {
+    // RFC 1035 / glibc class names. Uses CSNET (class 2) is unknown.
+    match class {
+        1 => c"IN".as_ptr(),
+        3 => c"CHAOS".as_ptr(),
+        4 => c"HS".as_ptr(),
+        255 => c"ANY".as_ptr(),
+        _ => unsafe { write_decimal_fallback(class) },
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_type(ty: c_int) -> *const c_char {
+    // RFC 1035 + RFC 3596 (AAAA) + RFC 2782 (SRV) + RFC 6891 (OPT) + …
+    // Mapping mirrors glibc's __p_type_syms.
+    match ty {
+        1 => c"A".as_ptr(),
+        2 => c"NS".as_ptr(),
+        3 => c"MD".as_ptr(),
+        4 => c"MF".as_ptr(),
+        5 => c"CNAME".as_ptr(),
+        6 => c"SOA".as_ptr(),
+        7 => c"MB".as_ptr(),
+        8 => c"MG".as_ptr(),
+        9 => c"MR".as_ptr(),
+        10 => c"NULL".as_ptr(),
+        11 => c"WKS".as_ptr(),
+        12 => c"PTR".as_ptr(),
+        13 => c"HINFO".as_ptr(),
+        14 => c"MINFO".as_ptr(),
+        15 => c"MX".as_ptr(),
+        16 => c"TXT".as_ptr(),
+        17 => c"RP".as_ptr(),
+        18 => c"AFSDB".as_ptr(),
+        19 => c"X25".as_ptr(),
+        20 => c"ISDN".as_ptr(),
+        21 => c"RT".as_ptr(),
+        22 => c"NSAP".as_ptr(),
+        23 => c"NSAP_PTR".as_ptr(),
+        24 => c"SIG".as_ptr(),
+        25 => c"KEY".as_ptr(),
+        28 => c"AAAA".as_ptr(),
+        29 => c"LOC".as_ptr(),
+        33 => c"SRV".as_ptr(),
+        35 => c"NAPTR".as_ptr(),
+        36 => c"KX".as_ptr(),
+        37 => c"CERT".as_ptr(),
+        39 => c"DNAME".as_ptr(),
+        41 => c"OPT".as_ptr(),
+        43 => c"DS".as_ptr(),
+        46 => c"RRSIG".as_ptr(),
+        47 => c"NSEC".as_ptr(),
+        48 => c"DNSKEY".as_ptr(),
+        50 => c"NSEC3".as_ptr(),
+        51 => c"NSEC3PARAM".as_ptr(),
+        52 => c"TLSA".as_ptr(),
+        65 => c"HTTPS".as_ptr(),
+        249 => c"TKEY".as_ptr(),
+        250 => c"TSIG".as_ptr(),
+        251 => c"IXFR".as_ptr(),
+        252 => c"AXFR".as_ptr(),
+        253 => c"MAILB".as_ptr(),
+        254 => c"MAILA".as_ptr(),
+        255 => c"ANY".as_ptr(),
+        257 => c"CAA".as_ptr(),
+        _ => unsafe { write_decimal_fallback(ty) },
+    }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
