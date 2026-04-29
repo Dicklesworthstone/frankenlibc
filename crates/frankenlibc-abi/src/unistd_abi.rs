@@ -619,7 +619,32 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
         return std::ptr::null_mut();
     }
 
-    if buf.is_null() || size == 0 {
+    // GNU extension: getcwd(NULL, size) allocates the buffer. If size is 0
+    // we pick any size large enough for the cwd (we use 4096 which is the
+    // PATH_MAX boundary glibc uses). If size > 0 we allocate exactly that.
+    if buf.is_null() {
+        let alloc_size = if size == 0 { 4096 } else { size };
+        let alloc = unsafe { libc::malloc(alloc_size) as *mut c_char };
+        if alloc.is_null() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+            return std::ptr::null_mut();
+        }
+        match unsafe { syscall::sys_getcwd(alloc as *mut u8, alloc_size) } {
+            Ok(_) => {
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
+                return alloc;
+            }
+            Err(e) => {
+                unsafe { libc::free(alloc as *mut libc::c_void) };
+                unsafe { set_abi_errno(e) };
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
+                return std::ptr::null_mut();
+            }
+        }
+    }
+
+    if size == 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return std::ptr::null_mut();
