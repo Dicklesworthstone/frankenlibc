@@ -9,6 +9,8 @@
 use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::sync::Mutex;
 
+use crate::errno_abi::set_abi_errno;
+
 // ---------------------------------------------------------------------------
 // POSIX ENTRY type and ACTION enum
 // ---------------------------------------------------------------------------
@@ -118,6 +120,9 @@ static GLOBAL_HTAB: Mutex<Option<HashTable>> = Mutex::new(None);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hcreate(nel: usize) -> c_int {
     let mut guard = GLOBAL_HTAB.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.is_some() {
+        return 0;
+    }
     *guard = Some(HashTable::new(nel));
     1
 }
@@ -175,10 +180,14 @@ pub struct HsearchData {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn hcreate_r(nel: usize, htab: *mut HsearchData) -> c_int {
     if htab.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return 0;
+    }
+    let htab_ref = unsafe { &mut *htab };
+    if !htab_ref.table.is_null() {
         return 0;
     }
     let ht = Box::new(HashTable::new(nel));
-    let htab_ref = unsafe { &mut *htab };
     htab_ref.table = Box::into_raw(ht) as *mut c_void;
     htab_ref.size = c_uint::try_from(nel.max(1)).unwrap_or(c_uint::MAX);
     htab_ref.filled = 0;

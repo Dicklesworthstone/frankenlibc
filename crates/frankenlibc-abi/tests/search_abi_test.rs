@@ -10,6 +10,10 @@ use std::ffi::{CString, c_char, c_int, c_uint, c_void};
 
 use frankenlibc_abi::search_abi::*;
 
+fn errno_value() -> c_int {
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() }
+}
+
 unsafe fn malloc_tracked_unterminated(bytes: &[u8]) -> *mut c_char {
     let raw = unsafe { frankenlibc_abi::malloc_abi::malloc(bytes.len()) }.cast::<u8>();
     assert!(!raw.is_null());
@@ -60,6 +64,11 @@ fn hash_global_api() {
     // --- create and destroy ---
     let rc = unsafe { hcreate(16) };
     assert_eq!(rc, 1, "hcreate should succeed");
+    let rc = unsafe { hcreate(32) };
+    assert_eq!(
+        rc, 0,
+        "glibc refuses hcreate on an already initialized global table"
+    );
     unsafe { hdestroy() };
 
     // --- insert and find ---
@@ -211,11 +220,63 @@ fn hash_reentrant_lifecycle() {
 
 #[test]
 fn hash_reentrant_null_safety() {
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
     let rc = unsafe { hcreate_r(16, std::ptr::null_mut()) };
     assert_eq!(rc, 0, "hcreate_r with null htab should fail");
+    assert_eq!(errno_value(), libc::EINVAL);
 
     unsafe { hdestroy_r(std::ptr::null_mut()) };
     // Should not crash
+}
+
+#[test]
+fn hash_reentrant_second_create_preserves_existing_table() {
+    let mut htab: HsearchData = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { hcreate_r(16, &mut htab) }, 1);
+
+    let key = CString::new("stable-key").unwrap();
+    let item = Entry {
+        key: key.as_ptr() as *mut _,
+        data: 77usize as *mut c_void,
+    };
+    let mut result: *mut Entry = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { hsearch_r(item, Action::ENTER, &mut result, &mut htab) },
+        1
+    );
+    assert!(!result.is_null());
+    assert_eq!(htab_filled(&htab), 1);
+
+    unsafe { frankenlibc_abi::errno_abi::set_abi_errno(0) };
+    let rc = unsafe { hcreate_r(32, &mut htab) };
+    assert_eq!(
+        rc, 0,
+        "glibc refuses hcreate_r on an already initialized hsearch_data"
+    );
+    assert_eq!(
+        errno_value(),
+        0,
+        "duplicate hcreate_r leaves errno unchanged"
+    );
+    assert_eq!(
+        htab_filled(&htab),
+        1,
+        "duplicate hcreate_r must not reset filled"
+    );
+
+    let mut found: *mut Entry = std::ptr::null_mut();
+    assert_eq!(
+        unsafe { hsearch_r(item, Action::FIND, &mut found, &mut htab) },
+        1
+    );
+    assert!(!found.is_null());
+    assert_eq!(
+        unsafe { (*found).data } as usize,
+        77,
+        "duplicate hcreate_r must preserve existing entries"
+    );
+
+    unsafe { hdestroy_r(&mut htab) };
 }
 
 #[test]
