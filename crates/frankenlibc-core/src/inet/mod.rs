@@ -504,7 +504,27 @@ fn format_ipv6_canonical(addr: &[u8; 16]) -> String {
         groups[i] = u16::from_be_bytes([addr[i * 2], addr[i * 2 + 1]]);
     }
 
-    // Find the longest run of consecutive zero groups.
+    // Embedded-IPv4 detection (matches glibc inet_ntop output):
+    //
+    // - IPv4-mapped: bytes[0..10] all zero AND bytes[10..12] == [0xFF, 0xFF].
+    //   Always emit `::ffff:a.b.c.d`.
+    // - IPv4-compatible: bytes[0..12] all zero AND (bytes[12] != 0 OR
+    //   bytes[13] != 0). The high-half check excludes ::1, ::2, ::3 (which
+    //   glibc renders as colon-hex) and the all-zero ::.
+    let v4_zeros_0_to_10 = addr[..10].iter().all(|&b| b == 0);
+    let v4_zeros_0_to_12 = v4_zeros_0_to_10 && addr[10] == 0 && addr[11] == 0;
+    let is_v4_mapped = v4_zeros_0_to_10 && addr[10] == 0xFF && addr[11] == 0xFF;
+    let is_v4_compat = v4_zeros_0_to_12 && (addr[12] != 0 || addr[13] != 0);
+    if is_v4_mapped || is_v4_compat {
+        let v4 = format!("{}.{}.{}.{}", addr[12], addr[13], addr[14], addr[15]);
+        return if is_v4_mapped {
+            format!("::ffff:{v4}")
+        } else {
+            format!("::{v4}")
+        };
+    }
+
+    // Find the longest run of consecutive zero groups (RFC 5952 §4.2.1).
     let mut best_start: usize = 0;
     let mut best_len: usize = 0;
     let mut cur_start: usize = 0;
@@ -529,7 +549,7 @@ fn format_ipv6_canonical(addr: &[u8; 16]) -> String {
         best_len = cur_len;
     }
 
-    // Per RFC 5952, do not abbreviate a single zero group.
+    // Per RFC 5952 §4.2.2, do not abbreviate a single zero group.
     if best_len <= 1 {
         best_len = 0;
     }
@@ -1213,9 +1233,25 @@ mod tests {
         let mut buf = [0u8; 16];
         assert_eq!(inet_pton(AF_INET6, b"::ffff:1.2.3.4", &mut buf), 1);
         assert_eq!(buf, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 1, 2, 3, 4]);
-        // ntop produces hex form (not mapped notation).
+        // ntop emits the canonical RFC 5952 mixed notation for IPv4-mapped
+        // (matches glibc).
         let text = inet_ntop(AF_INET6, &buf).unwrap();
-        assert_eq!(text, b"::ffff:102:304");
+        assert_eq!(text, b"::ffff:1.2.3.4");
+    }
+
+    #[test]
+    fn test_ipv6_compat_ipv4_emits_mixed_notation() {
+        // ::1.0.0.0 — IPv4-compatible. High-half non-zero (byte 12 = 1) so
+        // glibc emits mixed notation; fl matches.
+        let addr = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0];
+        assert_eq!(inet_ntop(AF_INET6, &addr).unwrap(), b"::1.0.0.0");
+        // ::1 — bytes 12-13 are zero, so the v4-compat check fails and we
+        // fall through to colon-hex.
+        let one = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        assert_eq!(inet_ntop(AF_INET6, &one).unwrap(), b"::1");
+        // ::0.0.1.0 — bytes 12-13 are zero → colon-hex (groups[7]=0x0100).
+        let mid = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0];
+        assert_eq!(inet_ntop(AF_INET6, &mid).unwrap(), b"::100");
     }
 
     #[test]
