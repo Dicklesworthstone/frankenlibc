@@ -2964,13 +2964,13 @@ macro_rules! extract_syslog_args {
                 match _kind {
                     ValueArgKind::Gp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.arg::<u64>() };
+                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                             _idx += 1;
                         }
                     }
                     ValueArgKind::Fp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                             _idx += 1;
                         }
                     }
@@ -2980,24 +2980,24 @@ macro_rules! extract_syslog_args {
             for seg in $segments {
                 if let FormatSegment::Spec(spec) = seg {
                     if spec.width.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
                     if spec.precision.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
                     match spec.conversion {
                         b'%' => {}
                         b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
                             if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                                $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                                 _idx += 1;
                             }
                         }
                         _ => {
                             if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.arg::<u64>() };
+                                $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                                 _idx += 1;
                             }
                         }
@@ -4375,8 +4375,8 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: .
 
     // Extract optional mode and value when O_CREAT is set.
     let (mode, initial_value) = if (oflag & libc::O_CREAT) != 0 {
-        let m = unsafe { args.arg::<libc::mode_t>() };
-        let v = unsafe { args.arg::<c_uint>() };
+        let m = unsafe { args.next_arg::<libc::mode_t>() };
+        let v = unsafe { args.next_arg::<c_uint>() };
         (m, v)
     } else {
         (0o600 as libc::mode_t, 0u32)
@@ -4676,8 +4676,8 @@ pub unsafe extern "C" fn mq_open(name: *const c_char, oflag: c_int, mut args: ..
     let kernel_name = unsafe { name.add(1) } as *const u8;
 
     let (mode, attr) = if (oflag & libc::O_CREAT) != 0 {
-        let mode = unsafe { args.arg::<libc::mode_t>() };
-        let attr = unsafe { args.arg::<*const c_void>() };
+        let mode = unsafe { args.next_arg::<libc::mode_t>() };
+        let attr = unsafe { args.next_arg::<*const c_void>() };
         (mode, attr)
     } else {
         (0 as libc::mode_t, std::ptr::null())
@@ -10594,7 +10594,7 @@ pub unsafe extern "C" fn semget(key: c_int, nsems: c_int, semflg: c_int) -> c_in
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn semctl(semid: c_int, semnum: c_int, cmd: c_int, mut args: ...) -> c_int {
     let arg = if semctl_cmd_uses_arg(cmd) {
-        unsafe { args.arg::<libc::c_ulong>() }
+        unsafe { args.next_arg::<libc::c_ulong>() }
     } else {
         0
     };
@@ -11562,7 +11562,7 @@ pub unsafe extern "C" fn execl(path: *const c_char, arg: *const c_char, mut args
     let mut argv: Vec<*const c_char> = Vec::with_capacity(8);
     argv.push(arg);
     loop {
-        let next = unsafe { args.arg::<*const c_char>() };
+        let next = unsafe { args.next_arg::<*const c_char>() };
         argv.push(next);
         if next.is_null() {
             break;
@@ -11577,7 +11577,7 @@ pub unsafe extern "C" fn execlp(file: *const c_char, arg: *const c_char, mut arg
     let mut argv: Vec<*const c_char> = Vec::with_capacity(8);
     argv.push(arg);
     loop {
-        let next = unsafe { args.arg::<*const c_char>() };
+        let next = unsafe { args.next_arg::<*const c_char>() };
         argv.push(next);
         if next.is_null() {
             break;
@@ -11594,14 +11594,14 @@ pub unsafe extern "C" fn execle(path: *const c_char, arg: *const c_char, mut arg
     let mut argv: Vec<*const c_char> = Vec::with_capacity(8);
     argv.push(arg);
     loop {
-        let next = unsafe { args.arg::<*const c_char>() };
+        let next = unsafe { args.next_arg::<*const c_char>() };
         argv.push(next);
         if next.is_null() {
             break;
         }
     }
     // The next variadic argument after NULL is the envp pointer.
-    let envp = unsafe { args.arg::<*const *const c_char>() };
+    let envp = unsafe { args.next_arg::<*const *const c_char>() };
     unsafe { crate::process_abi::execve(path, argv.as_ptr(), envp) }
 }
 
@@ -18617,12 +18617,12 @@ pub unsafe extern "C" fn utmpxname(file: *const c_char) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn syscall(number: c_long, mut args: ...) -> c_long {
     // SAFETY: Extract up to 6 arguments from the caller-provided variadic list.
-    let a1: c_long = unsafe { args.arg() };
-    let a2: c_long = unsafe { args.arg() };
-    let a3: c_long = unsafe { args.arg() };
-    let a4: c_long = unsafe { args.arg() };
-    let a5: c_long = unsafe { args.arg() };
-    let a6: c_long = unsafe { args.arg() };
+    let a1: c_long = unsafe { args.next_arg() };
+    let a2: c_long = unsafe { args.next_arg() };
+    let a3: c_long = unsafe { args.next_arg() };
+    let a4: c_long = unsafe { args.next_arg() };
+    let a5: c_long = unsafe { args.next_arg() };
+    let a6: c_long = unsafe { args.next_arg() };
 
     let ret: c_long;
     // SAFETY: Direct syscall with caller-provided number and arguments.
@@ -20391,7 +20391,7 @@ pub unsafe extern "C" fn openat64(
     mut args: ...
 ) -> c_int {
     let mode: libc::mode_t = if (flags & libc::O_CREAT) != 0 {
-        unsafe { args.arg() }
+        unsafe { args.next_arg() }
     } else {
         0
     };
@@ -20753,7 +20753,7 @@ pub unsafe extern "C" fn makecontext(
         // Extract integer arguments from va_list (up to 6 go in registers on x86_64)
         let mut int_args = [0u64; 8];
         for slot in int_args.iter_mut().take((argc as usize).min(8)) {
-            *slot = args.arg::<u64>();
+            *slot = args.next_arg::<u64>();
         }
 
         // Set up stack: push return address (context_exit trampoline), then args > 6
@@ -22981,7 +22981,7 @@ pub unsafe extern "C" fn strfmon(
         return -1;
     }
     // Simple: extract one double, format as currency
-    let val: f64 = unsafe { args.arg() };
+    let val: f64 = unsafe { args.next_arg() };
     let formatted = format!("{val:.2}");
     let bytes = formatted.as_bytes();
     if bytes.len() + 1 > maxsize {
@@ -23009,7 +23009,7 @@ pub unsafe extern "C" fn strfmon_l(
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    let val: f64 = unsafe { args.arg() };
+    let val: f64 = unsafe { args.next_arg() };
     let formatted = format!("{val:.2}");
     let bytes = formatted.as_bytes();
     if bytes.len() + 1 > maxsize {
@@ -23698,7 +23698,7 @@ pub unsafe extern "C" fn setproctitle(fmt: *const c_char, mut args: ...) {
         let extract_count = frankenlibc_core::stdio::count_printf_args(&segments).min(max_args);
         let mut arg_buf = [0u64; crate::stdio_abi::MAX_VA_ARGS];
         for slot in arg_buf.iter_mut().take(extract_count) {
-            *slot = unsafe { args.arg::<u64>() };
+            *slot = unsafe { args.next_arg::<u64>() };
         }
         let body =
             unsafe { crate::stdio_abi::render_printf(render_fmt, arg_buf.as_ptr(), extract_count) };

@@ -7727,7 +7727,7 @@ pub unsafe extern "C" fn __strfmon_l(
     if s.is_null() || format.is_null() || maxsize == 0 {
         return -1;
     }
-    let val: f64 = unsafe { args.arg() };
+    let val: f64 = unsafe { args.next_arg() };
     let formatted = format!("{val:.2}");
     let bytes = formatted.as_bytes();
     let copy_len = bytes.len().min(maxsize - 1);

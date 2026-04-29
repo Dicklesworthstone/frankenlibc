@@ -2392,13 +2392,13 @@ macro_rules! extract_wprintf_args {
                 match _kind {
                     ValueArgKind::Gp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.arg::<u64>() };
+                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                             _idx += 1;
                         }
                     }
                     ValueArgKind::Fp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                             _idx += 1;
                         }
                     }
@@ -2408,24 +2408,24 @@ macro_rules! extract_wprintf_args {
             for seg in $segments {
                 if let FormatSegment::Spec(spec) = seg {
                     if spec.width.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
                     if spec.precision.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
                     match spec.conversion {
                         b'%' => {}
                         b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
                             if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                                $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                                 _idx += 1;
                             }
                         }
                         _ => {
                             if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.arg::<u64>() };
+                                $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                                 _idx += 1;
                             }
                         }
@@ -2464,87 +2464,87 @@ macro_rules! wscanf_write_one {
         match $val {
             ScanValue::SignedInt(v) => match $spec.length {
                 LengthMod::Hh => {
-                    let ptr = $args.arg::<*mut i8>();
+                    let ptr = $args.next_arg::<*mut i8>();
                     *ptr = *v as i8;
                 }
                 LengthMod::H => {
-                    let ptr = $args.arg::<*mut i16>();
+                    let ptr = $args.next_arg::<*mut i16>();
                     *ptr = *v as i16;
                 }
                 LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                    let ptr = $args.arg::<*mut i64>();
+                    let ptr = $args.next_arg::<*mut i64>();
                     *ptr = *v;
                 }
                 LengthMod::Z | LengthMod::T => {
-                    let ptr = $args.arg::<*mut isize>();
+                    let ptr = $args.next_arg::<*mut isize>();
                     *ptr = *v as isize;
                 }
                 _ => {
-                    let ptr = $args.arg::<*mut c_int>();
+                    let ptr = $args.next_arg::<*mut c_int>();
                     *ptr = *v as c_int;
                 }
             },
             ScanValue::UnsignedInt(v) => match $spec.length {
                 LengthMod::Hh => {
-                    let ptr = $args.arg::<*mut u8>();
+                    let ptr = $args.next_arg::<*mut u8>();
                     *ptr = *v as u8;
                 }
                 LengthMod::H => {
-                    let ptr = $args.arg::<*mut u16>();
+                    let ptr = $args.next_arg::<*mut u16>();
                     *ptr = *v as u16;
                 }
                 LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                    let ptr = $args.arg::<*mut u64>();
+                    let ptr = $args.next_arg::<*mut u64>();
                     *ptr = *v;
                 }
                 LengthMod::Z | LengthMod::T => {
-                    let ptr = $args.arg::<*mut usize>();
+                    let ptr = $args.next_arg::<*mut usize>();
                     *ptr = *v as usize;
                 }
                 _ => {
-                    let ptr = $args.arg::<*mut u32>();
+                    let ptr = $args.next_arg::<*mut u32>();
                     *ptr = *v as u32;
                 }
             },
             ScanValue::Float(v) => match $spec.length {
                 LengthMod::L | LengthMod::BigL => {
-                    let ptr = $args.arg::<*mut f64>();
+                    let ptr = $args.next_arg::<*mut f64>();
                     *ptr = *v;
                 }
                 _ => {
-                    let ptr = $args.arg::<*mut f32>();
+                    let ptr = $args.next_arg::<*mut f32>();
                     *ptr = *v as f32;
                 }
             },
             ScanValue::Char(bytes) => {
-                let ptr = $args.arg::<*mut u8>();
+                let ptr = $args.next_arg::<*mut u8>();
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
             }
             ScanValue::String(bytes) => {
-                let ptr = $args.arg::<*mut c_char>();
+                let ptr = $args.next_arg::<*mut c_char>();
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
                 *ptr.add(bytes.len()) = 0;
             }
             ScanValue::CharsConsumed(n) => match $spec.length {
                 LengthMod::Hh => {
-                    let ptr = $args.arg::<*mut i8>();
+                    let ptr = $args.next_arg::<*mut i8>();
                     *ptr = *n as i8;
                 }
                 LengthMod::H => {
-                    let ptr = $args.arg::<*mut i16>();
+                    let ptr = $args.next_arg::<*mut i16>();
                     *ptr = *n as i16;
                 }
                 LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                    let ptr = $args.arg::<*mut i64>();
+                    let ptr = $args.next_arg::<*mut i64>();
                     *ptr = *n as i64;
                 }
                 _ => {
-                    let ptr = $args.arg::<*mut c_int>();
+                    let ptr = $args.next_arg::<*mut c_int>();
                     *ptr = *n as c_int;
                 }
             },
             ScanValue::Pointer(v) => {
-                let ptr = $args.arg::<*mut *mut c_void>();
+                let ptr = $args.next_arg::<*mut *mut c_void>();
                 *ptr = *v as *mut c_void;
             }
         }

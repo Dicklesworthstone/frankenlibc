@@ -183,13 +183,13 @@ macro_rules! extract_err_args {
                 match _kind {
                     ValueArgKind::Gp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.arg::<u64>() };
+                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                             _idx += 1;
                         }
                     }
                     ValueArgKind::Fp => {
                         if _idx < $extract_count {
-                            $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                             _idx += 1;
                         }
                     }
@@ -199,24 +199,24 @@ macro_rules! extract_err_args {
             for seg in $segments {
                 if let FormatSegment::Spec(spec) = seg {
                     if spec.width.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
                     if spec.precision.uses_arg() && _idx < $extract_count {
-                        $buf[_idx] = unsafe { $args.arg::<u64>() };
+                        $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
                     match spec.conversion {
                         b'%' => {}
                         b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
                             if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.arg::<f64>() }.to_bits();
+                                $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
                                 _idx += 1;
                             }
                         }
                         _ => {
                             if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.arg::<u64>() };
+                                $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                                 _idx += 1;
                             }
                         }
