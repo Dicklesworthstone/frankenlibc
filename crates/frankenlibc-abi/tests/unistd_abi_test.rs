@@ -4556,6 +4556,80 @@ fn write_rejects_tracked_short_input_buffer() {
     }
 }
 
+fn open_pty_pair_for_ttyname() -> Option<(c_int, c_int)> {
+    let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    if master < 0 {
+        return None;
+    }
+    if unsafe { libc::grantpt(master) } != 0 || unsafe { libc::unlockpt(master) } != 0 {
+        unsafe { libc::close(master) };
+        return None;
+    }
+
+    let mut pty_num: c_uint = 0;
+    const TIOCGPTN: libc::c_ulong = 0x80045430;
+    if unsafe { libc::ioctl(master, TIOCGPTN, &mut pty_num) } != 0 {
+        unsafe { libc::close(master) };
+        return None;
+    }
+
+    let path = CString::new(format!("/dev/pts/{pty_num}")).expect("valid PTY path");
+    let slave = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_NOCTTY) };
+    if slave < 0 {
+        unsafe { libc::close(master) };
+        return None;
+    }
+    Some((master, slave))
+}
+
+#[test]
+fn ptsname_r_caps_tracked_short_output_buffer() {
+    let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+    if master < 0 {
+        return;
+    }
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::ptsname_r(master, raw.cast::<c_char>(), 128) };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert_eq!(errno_value(), libc::ERANGE);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, 0);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+        libc::close(master);
+    }
+}
+
+#[test]
+fn ttyname_r_caps_tracked_short_output_buffer() {
+    let Some((master, slave)) = open_pty_pair_for_ttyname() else {
+        return;
+    };
+
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    let rc = unsafe { frankenlibc_abi::unistd_abi::ttyname_r(slave, raw.cast::<c_char>(), 128) };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, 0);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+        libc::close(slave);
+        libc::close(master);
+    }
+}
+
 #[test]
 fn getutid_and_getutline_follow_native_utmp_fixture() {
     let entries = [

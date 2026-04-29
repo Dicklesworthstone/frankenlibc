@@ -89,6 +89,11 @@ fn tracked_region_fits(addr: usize, len: usize) -> bool {
     known_remaining(addr).is_none_or(|remaining| len <= remaining)
 }
 
+#[inline]
+fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
+    known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
+}
+
 /// Query the system page size via AT_PAGESZ from /proc/self/auxv, cached.
 /// Falls back to 4096 (x86_64 default) if the query fails.
 fn runtime_page_size() -> usize {
@@ -13057,6 +13062,7 @@ pub unsafe extern "C" fn ttyname(fd: c_int) -> *mut c_char {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int {
+    let effective_buflen = tracked_output_capacity(buf, buflen);
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         buf as usize,
@@ -13078,8 +13084,12 @@ pub unsafe extern "C" fn ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return errno::EINVAL;
     }
+    if effective_buflen == 0 {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
+        return errno::ERANGE;
+    }
 
-    match unsafe { resolve_ttyname_into(fd, buf, buflen) } {
+    match unsafe { resolve_ttyname_into(fd, buf, effective_buflen) } {
         Ok(path_len) => {
             runtime_policy::observe(
                 ApiFamily::Stdio,
@@ -13093,7 +13103,7 @@ pub unsafe extern "C" fn ttyname_r(fd: c_int, buf: *mut c_char, buflen: usize) -
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
-                runtime_policy::scaled_cost(12, buflen),
+                runtime_policy::scaled_cost(12, effective_buflen),
                 true,
             );
             e
@@ -14268,9 +14278,14 @@ pub unsafe extern "C" fn getpt() -> c_int {
 /// POSIX `ptsname_r` — get slave PTY name (reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -> c_int {
+    let effective_buflen = tracked_output_capacity(buf, buflen);
     if buf.is_null() || buflen == 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
         return libc::EINVAL;
+    }
+    if effective_buflen == 0 {
+        unsafe { set_abi_errno(libc::ERANGE) };
+        return libc::ERANGE;
     }
     let mut pty_num: c_uint = 0;
     const TIOCGPTN: usize = 0x80045430;
@@ -14281,7 +14296,7 @@ pub unsafe extern "C" fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: usize) -
         return e;
     }
     let name = format!("/dev/pts/{pty_num}");
-    if name.len() + 1 > buflen {
+    if name.len() + 1 > effective_buflen {
         unsafe { set_abi_errno(libc::ERANGE) };
         return libc::ERANGE;
     }
