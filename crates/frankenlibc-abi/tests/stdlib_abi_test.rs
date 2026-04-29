@@ -13,7 +13,7 @@ use frankenlibc_abi::stdlib_abi::{
     gcvt, get_avphys_pages, get_nprocs, get_nprocs_conf, get_phys_pages, getbsize, getenv,
     getenv_r, getsubopt, humanize_number, initstate, initstate_r, jrand48, l64a, lcong48,
     lcong48_r, lrand48, lrand48_r, mkostemp, mkostemps, mkstemps, mrand48, nrand48, on_exit,
-    putenv, qsort_r, rand, random, random_r, reallocarray, reallocf, recallocarray, seed48,
+    putenv, qgcvt, qsort_r, rand, random, random_r, reallocarray, reallocf, recallocarray, seed48,
     seed48_r, setenv, setstate, setstate_r, srand, srand48, srand48_r, srandom, srandom_r, strpct,
     strspct, strtod, strtof, strtoi, strtold, strtoll, strtonum, strtoq, strtou, strtoull, strtouq,
     system, unsetenv,
@@ -4343,6 +4343,43 @@ fn gcvt_caps_tracked_two_byte_buffer() {
     }
 
     let result = unsafe { gcvt(123.456, 10, raw.cast::<libc::c_char>()) };
+
+    assert_eq!(result.cast::<u8>(), raw);
+    assert_eq!(unsafe { raw.read() }, b'1');
+    assert_eq!(unsafe { raw.add(1).read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
+#[test]
+fn qgcvt_basic_conversion() {
+    let mut buf = [0u8; 64];
+    let result = unsafe { qgcvt(3.25, 2, buf.as_mut_ptr() as *mut libc::c_char) };
+    assert!(!result.is_null());
+    let s = unsafe { std::ffi::CStr::from_ptr(result) };
+    assert!(s.to_str().unwrap().contains("3.25"));
+}
+
+#[test]
+fn qgcvt_caps_tracked_one_byte_buffer() {
+    let raw = unsafe { malloc_tracked_bytes(1) };
+    unsafe { raw.write(b'X') };
+
+    let result = unsafe { qgcvt(123.456, 10, raw.cast::<libc::c_char>()) };
+
+    assert_eq!(result.cast::<u8>(), raw);
+    assert_eq!(unsafe { raw.read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw.cast()) };
+}
+
+#[test]
+fn qgcvt_caps_tracked_two_byte_buffer() {
+    let raw = unsafe { malloc_tracked_bytes(2) };
+    unsafe {
+        raw.write(b'X');
+        raw.add(1).write(b'Y');
+    }
+
+    let result = unsafe { qgcvt(123.456, 10, raw.cast::<libc::c_char>()) };
 
     assert_eq!(result.cast::<u8>(), raw);
     assert_eq!(unsafe { raw.read() }, b'1');

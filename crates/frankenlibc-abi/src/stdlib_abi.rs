@@ -4843,10 +4843,20 @@ pub unsafe extern "C" fn qgcvt(value: c_double, ndigit: c_int, buf: *mut c_char)
     }
     let s = format!("{value:.prec$}", prec = ndigit.max(0) as usize);
     let bytes = s.as_bytes();
-    let copy_len = bytes.len();
+    let tracked_remaining = known_remaining(buf as usize);
+    let copy_len = tracked_remaining
+        .map(|remaining| bytes.len().min(remaining.saturating_sub(1)))
+        .unwrap_or(bytes.len());
     unsafe {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, copy_len);
-        *buf.add(copy_len) = 0;
+        // SAFETY: `buf` is non-null. For tracked allocations, `copy_len` is
+        // capped to leave room for NUL when possible; untracked buffers keep
+        // the historical libc caller-owned capacity contract.
+        if copy_len != 0 {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, copy_len);
+        }
+        if tracked_remaining.is_none_or(|remaining| remaining > copy_len) {
+            *buf.add(copy_len) = 0;
+        }
     }
     buf
 }
