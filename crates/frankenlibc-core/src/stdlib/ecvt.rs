@@ -77,8 +77,30 @@ pub fn ecvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
 
 /// `fcvt` — convert double to string in fixed-point form.
 ///
-/// Returns `(digits, decimal_point_position, is_negative)`.
-/// `ndigit`: number of digits after the decimal point.
+/// Returns `(digits, decimal_point_position, is_negative)` matching glibc:
+///
+///   * `value == 0.0` (exact): emit `ndigit + 1` zero digits with
+///     `decpt = 1` (one integer zero, then `ndigit` fractional zeros —
+///     reads as "0.00…0").
+///   * `|value| >= 1`: digits are the integer part concatenated with
+///     `ndigit` rounded fractional digits, no leading zeros stripped.
+///     `decpt = number of integer digits`.
+///   * `0 < |value| < 1` and rounded fraction is non-zero: digits are
+///     the significant fractional digits with leading zeros STRIPPED.
+///     `decpt = -(count of stripped leading zeros)`.
+///   * `0 < |value| < 1` but the rounding to `ndigit` fractional
+///     places yields exactly zero: digits are EMPTY, `decpt = -ndigit`.
+///
+/// The previous implementation kept all leading zeros from the
+/// formatted string and computed `decpt` as the position of the
+/// decimal point in that retained-zeros string, which diverged from
+/// glibc on every sub-1 magnitude. Empirical glibc samples (probed
+/// against glibc 2.38 on Linux/x86_64):
+///
+///   fcvt(0.0001234, 4) -> digits="1"   decpt=-3   (was: "00001" decpt=1)
+///   fcvt(0.0001234, 6) -> digits="123" decpt=-3   (was: "0000001" decpt=1)
+///   fcvt(1e-10, 4)     -> digits=""    decpt=-4   (was: "00000" decpt=1)
+///   fcvt(1e-10, 6)     -> digits=""    decpt=-6
 pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
     let negative = value.is_sign_negative() && !value.is_nan();
     let abs_val = value.abs();
@@ -92,33 +114,49 @@ pub fn fcvt(value: f64, ndigit: i32) -> (Vec<u8>, i32, bool) {
 
     let ndigit = ndigit.max(0) as usize;
 
-    // Format in fixed-point notation.
+    // Special case: exact zero. Glibc emits ndigit+1 zeros with
+    // decpt=1 — i.e., one integer zero plus ndigit fractional zeros.
+    if abs_val == 0.0 {
+        let digits = vec![b'0'; ndigit + 1];
+        return (digits, 1, negative);
+    }
+
+    // Round to ndigit fractional places. Rust's "{:.N$}" rounds to
+    // nearest-even at the boundary, matching glibc fcvt.
     let formatted = format!("{:.prec$}", abs_val, prec = ndigit);
 
-    let mut digits = Vec::new();
-    let mut decpt: i32 = 0;
-    let mut found_dot = false;
+    // Split at the decimal point. ndigit=0 produces no decimal point;
+    // treat the whole string as integer in that case.
+    let (int_part, frac_part) = match formatted.find('.') {
+        Some(dot) => (&formatted[..dot], &formatted[dot + 1..]),
+        None => (formatted.as_str(), ""),
+    };
 
-    for c in formatted.bytes() {
-        if c == b'.' {
-            found_dot = true;
-            decpt = digits.len() as i32;
-        } else if c.is_ascii_digit() {
-            digits.push(c);
+    if int_part != "0" {
+        // |value| >= 1: digits = int + frac concatenated, decpt =
+        // length of integer part.
+        let mut digits = Vec::with_capacity(int_part.len() + frac_part.len());
+        digits.extend_from_slice(int_part.as_bytes());
+        digits.extend_from_slice(frac_part.as_bytes());
+        return (digits, int_part.len() as i32, negative);
+    }
+
+    // int_part == "0", so |value| < 1. Either rounding produced
+    // significant fractional digits (in which case strip leading
+    // zeros) or rounding yielded exactly zero.
+    let first_nonzero = frac_part.bytes().position(|b| b != b'0');
+    match first_nonzero {
+        Some(idx) => {
+            let digits = frac_part.as_bytes()[idx..].to_vec();
+            (digits, -(idx as i32), negative)
+        }
+        None => {
+            // Rounded to zero. Glibc convention: empty digits,
+            // decpt = -ndigit (records "the rounded magnitude was
+            // smaller than 10^-ndigit").
+            (Vec::new(), -(ndigit as i32), negative)
         }
     }
-
-    if !found_dot {
-        decpt = digits.len() as i32;
-    }
-
-    // Handle zero: ensure at least one digit.
-    if digits.is_empty() {
-        digits.push(b'0');
-        decpt = 1;
-    }
-
-    (digits, decpt, negative)
 }
 
 /// `gcvt` — convert double to string using shortest representation.
@@ -290,5 +328,79 @@ mod tests {
         let len = gcvt(3.25, 4, &mut buf);
         let s = std::str::from_utf8(&buf[..len]).unwrap();
         assert!(s.contains("3.25") || s.starts_with("3.25"));
+    }
+
+    /// Pinned reference values captured from host glibc 2.38 on
+    /// Linux/x86_64. Each row is `(value, ndigit, expected_digits,
+    /// expected_decpt, expected_negative)`. These pin the fcvt
+    /// rewrite (leading-zero strip + rounded-to-zero handling) at
+    /// the unit-test level so future drift is caught even when the
+    /// ABI conformance harness can't compile.
+    #[test]
+    fn fcvt_matches_glibc_reference_outputs() {
+        let cases: &[(f64, i32, &[u8], i32, bool)] = &[
+            (0.0, 0, b"0", 1, false),
+            (0.0, 4, b"00000", 1, false),
+            (1.0, 4, b"10000", 1, false),
+            (-1.0, 4, b"10000", 1, true),
+            (123.456, 4, b"1234560", 3, false),
+            (-12345.0, 4, b"123450000", 5, true),
+            (0.0001234, 0, b"", 0, false),  // rounded to zero
+            (0.0001234, 2, b"", -2, false), // rounded to zero
+            (0.0001234, 4, b"1", -3, false),
+            (0.0001234, 6, b"123", -3, false),
+            (1e10, 4, b"100000000000000", 11, false),
+            (1e-10, 4, b"", -4, false),     // rounded to zero
+            (1e-10, 6, b"", -6, false),     // rounded to zero
+            (1e-10, 0, b"", 0, false),      // rounded to zero
+        ];
+        for &(value, ndigit, expected_digits, expected_decpt, expected_neg) in cases {
+            let (digits, decpt, neg) = fcvt(value, ndigit);
+            assert_eq!(
+                digits, expected_digits,
+                "fcvt({value}, {ndigit}) digits"
+            );
+            assert_eq!(decpt, expected_decpt, "fcvt({value}, {ndigit}) decpt");
+            assert_eq!(neg, expected_neg, "fcvt({value}, {ndigit}) sign");
+        }
+    }
+
+    /// Pinned reference values for gcvt against host glibc. Covers
+    /// every branch of the new %g algorithm: zero special case,
+    /// fixed-format, scientific-format (large + small magnitudes),
+    /// trailing-zero stripping, exponent reshape (`e+02`, `e-10`).
+    #[test]
+    fn gcvt_matches_glibc_reference_outputs() {
+        let cases: &[(f64, i32, &[u8])] = &[
+            (0.0, 1, b"0"),
+            (0.0, 6, b"0"),
+            (1.0, 1, b"1"),
+            (1.0, 6, b"1"),
+            (-1.0, 6, b"-1"),
+            (123.456, 1, b"1e+02"),
+            (123.456, 2, b"1.2e+02"),
+            (123.456, 6, b"123.456"),
+            (123.456, 10, b"123.456"),
+            (-12345.0, 1, b"-1e+04"),
+            (-12345.0, 6, b"-12345"),
+            (0.0001234, 1, b"0.0001"),
+            (0.0001234, 6, b"0.0001234"),
+            (1e10, 1, b"1e+10"),
+            (1e10, 10, b"1e+10"),
+            (1e-10, 1, b"1e-10"),
+            (1.5e20, 1, b"2e+20"),
+            (1.5e20, 2, b"1.5e+20"),
+        ];
+        for &(value, ndigit, expected) in cases {
+            let mut buf = [0u8; 64];
+            let len = gcvt(value, ndigit, &mut buf);
+            assert_eq!(
+                &buf[..len],
+                expected,
+                "gcvt({value}, {ndigit}) -> {:?}, expected {:?}",
+                std::str::from_utf8(&buf[..len]).unwrap_or("<invalid utf8>"),
+                std::str::from_utf8(expected).unwrap_or("<invalid utf8>"),
+            );
+        }
     }
 }
