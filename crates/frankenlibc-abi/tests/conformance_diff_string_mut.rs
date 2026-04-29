@@ -24,6 +24,10 @@ unsafe extern "C" {
     fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char;
     /// Host glibc `mempcpy` (GNU) — like memcpy but returns dst+n.
     fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
+    /// Host glibc C23 `strfromd` — double → string with format.
+    fn strfromd(s: *mut c_char, n: usize, format: *const c_char, value: f64) -> c_int;
+    /// Host glibc C23 `strfromf` — float → string with format.
+    fn strfromf(s: *mut c_char, n: usize, format: *const c_char, value: f32) -> c_int;
 }
 
 #[derive(Debug)]
@@ -874,12 +878,179 @@ fn diff_mempcpy_cases() {
 }
 
 // ===========================================================================
+// strfromd / strfromf — C23 float-to-string with format
+// ===========================================================================
+//
+// strfromd takes a printf-like format ("%[.<prec>]{f,e,g}") and writes
+// the formatted value into a caller's buffer, returning the count of
+// bytes that would have been written (printf-style return). The impl
+// in frankenlibc-abi/src/string_abi.rs delegates the formatting body
+// to the same %g/%e renderers gcvt uses (frankenlibc-core/src/stdlib/
+// ecvt.rs), so this diff also pins those renderers indirectly.
+
+const STRFROM_DOUBLE_CASES: &[(f64, &[u8])] = &[
+    (0.0, b"%f"),
+    (1.0, b"%f"),
+    (123.456, b"%f"),
+    (-12345.0, b"%f"),
+    (0.0001234, b"%f"),
+    (0.0, b"%e"),
+    (1.0, b"%e"),
+    (123.456, b"%e"),
+    (1e10, b"%e"),
+    (1e-10, b"%e"),
+    (-12345.0, b"%e"),
+    (0.0, b"%g"),
+    (1.0, b"%g"),
+    (123.456, b"%g"),
+    (1e10, b"%g"),
+    (1e-10, b"%g"),
+    (-12345.0, b"%g"),
+    (0.0, b"%.2f"),
+    (1.5, b"%.0f"),
+    (123.456, b"%.10f"),
+    (1e-10, b"%.6e"),
+    (1e10, b"%.2g"),
+    (123.456, b"%.2g"),
+];
+
+#[test]
+fn diff_strfromd_cases() {
+    let mut divs = Vec::new();
+    for (value, fmt) in STRFROM_DOUBLE_CASES {
+        let mut fmt_z = fmt.to_vec();
+        fmt_z.push(0);
+        let mut fl_buf = [0u8; 64];
+        let mut lc_buf = [0u8; 64];
+        // SAFETY: 64-byte buffers; format/value owned for the call.
+        let fl_n = unsafe {
+            fl::strfromd(
+                fl_buf.as_mut_ptr() as *mut c_char,
+                fl_buf.len(),
+                fmt_z.as_ptr() as *const c_char,
+                *value,
+            )
+        };
+        let lc_n = unsafe {
+            strfromd(
+                lc_buf.as_mut_ptr() as *mut c_char,
+                lc_buf.len(),
+                fmt_z.as_ptr() as *const c_char,
+                *value,
+            )
+        };
+        let case = format!("({:?}, {:?})", value, String::from_utf8_lossy(fmt));
+        if fl_n != lc_n {
+            divs.push(Divergence {
+                function: "strfromd",
+                case: case.clone(),
+                field: "return",
+                frankenlibc: format!("{fl_n}"),
+                glibc: format!("{lc_n}"),
+            });
+        }
+        // Compare buffer contents up to the trailing NUL (or end).
+        let fl_str = nul_terminated_slice(&fl_buf);
+        let lc_str = nul_terminated_slice(&lc_buf);
+        if fl_str != lc_str {
+            divs.push(Divergence {
+                function: "strfromd",
+                case,
+                field: "buffer",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(fl_str)),
+                glibc: format!("{:?}", String::from_utf8_lossy(lc_str)),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strfromd divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+const STRFROM_FLOAT_CASES: &[(f32, &[u8])] = &[
+    (0.0, b"%f"),
+    (1.0, b"%f"),
+    (123.456, b"%f"),
+    (0.0, b"%e"),
+    (1.0, b"%e"),
+    (123.456, b"%e"),
+    (0.0, b"%g"),
+    (1.0, b"%g"),
+    (123.456, b"%g"),
+    (1.5, b"%.0f"),
+    (123.456, b"%.2g"),
+];
+
+#[test]
+fn diff_strfromf_cases() {
+    let mut divs = Vec::new();
+    for (value, fmt) in STRFROM_FLOAT_CASES {
+        let mut fmt_z = fmt.to_vec();
+        fmt_z.push(0);
+        let mut fl_buf = [0u8; 64];
+        let mut lc_buf = [0u8; 64];
+        // SAFETY: same as strfromd.
+        let fl_n = unsafe {
+            fl::strfromf(
+                fl_buf.as_mut_ptr() as *mut c_char,
+                fl_buf.len(),
+                fmt_z.as_ptr() as *const c_char,
+                *value,
+            )
+        };
+        let lc_n = unsafe {
+            strfromf(
+                lc_buf.as_mut_ptr() as *mut c_char,
+                lc_buf.len(),
+                fmt_z.as_ptr() as *const c_char,
+                *value,
+            )
+        };
+        let case = format!("({:?}, {:?})", value, String::from_utf8_lossy(fmt));
+        if fl_n != lc_n {
+            divs.push(Divergence {
+                function: "strfromf",
+                case: case.clone(),
+                field: "return",
+                frankenlibc: format!("{fl_n}"),
+                glibc: format!("{lc_n}"),
+            });
+        }
+        let fl_str = nul_terminated_slice(&fl_buf);
+        let lc_str = nul_terminated_slice(&lc_buf);
+        if fl_str != lc_str {
+            divs.push(Divergence {
+                function: "strfromf",
+                case,
+                field: "buffer",
+                frankenlibc: format!("{:?}", String::from_utf8_lossy(fl_str)),
+                glibc: format!("{:?}", String::from_utf8_lossy(lc_str)),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "strfromf divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+fn nul_terminated_slice(buf: &[u8]) -> &[u8] {
+    match buf.iter().position(|&b| b == 0) {
+        Some(idx) => &buf[..idx],
+        None => buf,
+    }
+}
+
+// ===========================================================================
 // Coverage report
 // ===========================================================================
 
 #[test]
 fn string_mut_diff_coverage_report() {
     eprintln!(
-        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":18,\"divergences\":0}}",
+        "{{\"family\":\"string.h mutating\",\"reference\":\"glibc\",\"functions\":20,\"divergences\":0}}",
     );
 }

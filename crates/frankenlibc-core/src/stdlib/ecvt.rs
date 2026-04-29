@@ -263,6 +263,47 @@ fn format_scientific(value: f64, ndigit: usize) -> String {
     rust_e_to_glibc_e(&rust_form)
 }
 
+/// Render `value` as printf-style `%.<ndigit>g` (significant digits +
+/// auto fixed/scientific switch). Wraps the internal `render_gcvt` so
+/// other stdlib code — `strfromd` in frankenlibc-abi — can reuse the
+/// same exponent-switch + trailing-zero-strip logic without
+/// duplicating it.
+pub fn render_pct_g(value: f64, ndigit: usize) -> String {
+    render_gcvt(value, ndigit.max(1))
+}
+
+/// Render `value` as printf-style `%.<ndigit>e` (always scientific,
+/// fractional precision = ndigit, C-style `e+02` exponent). Trailing
+/// zeros in the mantissa are NOT stripped — `%e` keeps explicit
+/// zeros in its precision-padded output, unlike `%g` which strips.
+pub fn render_pct_e(value: f64, ndigit: usize) -> String {
+    let rust_form = format!("{:.prec$e}", value, prec = ndigit);
+    rust_e_to_glibc_e_no_strip(&rust_form)
+}
+
+/// Like `rust_e_to_glibc_e` but does NOT strip trailing zeros from
+/// the mantissa — `%e` callers want full padding, `%g` callers don't.
+fn rust_e_to_glibc_e_no_strip(s: &str) -> String {
+    let Some(e_pos) = s.find('e') else {
+        return s.to_string();
+    };
+    let mantissa = &s[..e_pos];
+    let exp_part = &s[e_pos + 1..];
+    let (sign, digits) = if let Some(rest) = exp_part.strip_prefix('-') {
+        ('-', rest)
+    } else if let Some(rest) = exp_part.strip_prefix('+') {
+        ('+', rest)
+    } else {
+        ('+', exp_part)
+    };
+    let exp_val: i32 = digits.parse().unwrap_or(0);
+    if exp_val.unsigned_abs() < 10 {
+        format!("{mantissa}e{sign}0{}", exp_val.unsigned_abs())
+    } else {
+        format!("{mantissa}e{sign}{}", exp_val.unsigned_abs())
+    }
+}
+
 /// Strip trailing zeros from a decimal string with a `.` separator.
 /// `"1.500"` -> `"1.5"`, `"1.000"` -> `"1"`, `"100"` -> `"100"`.
 fn strip_trailing_zeros(s: &str) -> String {

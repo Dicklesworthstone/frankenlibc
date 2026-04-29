@@ -6165,7 +6165,9 @@ pub unsafe extern "C" fn strfroml(
 }
 
 fn render_strfrom(fmt: &str, value: f64) -> String {
-    // Parse "%[.<prec>]{f|e|g|a}"
+    // Parse "%[.<prec>]{f|e|g|a}". The default precision per C99 is 6
+    // for f/e/g; printf doesn't accept a missing default precision for
+    // %a (hexadecimal) so we use 6 as a sensible fallback there too.
     if !fmt.starts_with('%') {
         return format!("{value}");
     }
@@ -6181,19 +6183,31 @@ fn render_strfrom(fmt: &str, value: f64) -> String {
     };
 
     match spec {
+        // %f / %F — fixed-point with `precision` fractional digits.
+        // Rust's `{:.N$}` is bit-compatible with printf %f for f64.
         "f" | "F" => format!("{value:.precision$}"),
-        "e" => format!("{value:.precision$e}"),
-        "E" => format!("{value:.precision$E}"),
-        "g" | "G" => {
-            // %g: use shorter of %f or %e
-            let f_str = format!("{value:.precision$}");
-            let e_str = format!("{value:.precision$e}");
-            if f_str.len() <= e_str.len() {
-                f_str
-            } else {
-                e_str
-            }
+
+        // %e — scientific with C-style `e+02` exponent (Rust's default
+        // gives `e2` without sign or leading zeros, which doesn't match
+        // glibc strfromd). Delegate to the shared helper that handles
+        // the reshape.
+        "e" => frankenlibc_core::stdlib::ecvt::render_pct_e(value, precision),
+        "E" => {
+            // %E is identical to %e but with uppercase `E`.
+            frankenlibc_core::stdlib::ecvt::render_pct_e(value, precision)
+                .replace('e', "E")
         }
+
+        // %g — uses *significant* digits (not fractional) and switches
+        // between fixed and scientific based on the exponent. Trailing
+        // zeros after the decimal point are stripped. The previous
+        // length-based shorter-of-two heuristic was structurally
+        // wrong: for value=0 with precision=6 it picked "0.000000"
+        // instead of glibc's "0".
+        "g" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, precision),
+        "G" => frankenlibc_core::stdlib::ecvt::render_pct_g(value, precision)
+            .replace('e', "E"),
+
         _ => format!("{value}"),
     }
 }
