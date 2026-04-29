@@ -94,6 +94,11 @@ fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
     known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
 }
 
+#[inline]
+fn tracked_void_output_capacity(ptr: *mut c_void, requested: usize) -> usize {
+    known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
+}
+
 /// Query the system page size via AT_PAGESZ from /proc/self/auxv, cached.
 /// Falls back to 4096 (x86_64 default) if the query fails.
 fn runtime_page_size() -> usize {
@@ -3599,7 +3604,8 @@ pub unsafe extern "C" fn getrandom(buf: *mut c_void, buflen: usize, flags: c_uin
         return -1;
     }
 
-    match unsafe { syscall::sys_getrandom(buf as *mut u8, buflen, flags) } {
+    let effective_buflen = tracked_void_output_capacity(buf, buflen);
+    match unsafe { syscall::sys_getrandom(buf as *mut u8, effective_buflen, flags) } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n
@@ -3942,6 +3948,10 @@ pub unsafe extern "C" fn sched_setaffinity(
 pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int {
     if length > 256 {
         unsafe { set_abi_errno(libc::EIO) };
+        return -1;
+    }
+    if known_remaining(buffer as usize).is_some_and(|remaining| remaining < length) {
+        unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
     match unsafe { syscall::sys_getrandom(buffer as *mut u8, length, 0) } {

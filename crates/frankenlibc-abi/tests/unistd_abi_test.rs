@@ -6249,6 +6249,42 @@ fn aio_suspend_rejects_empty_list_before_timeout() {
     assert_eq!(rc, -1);
 }
 
+#[test]
+fn getrandom_caps_tracked_short_output_buffer() {
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let n = unsafe { frankenlibc_abi::unistd_abi::getrandom(raw, 256, 0) };
+
+    assert_eq!(n, 1);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
+fn getentropy_rejects_tracked_short_output_buffer() {
+    let raw = malloc_tracked_zeroed_bytes(1);
+    let tracked_remaining =
+        frankenlibc_abi::malloc_abi::malloc_known_remaining_for_tests(raw).unwrap_or(usize::MAX);
+    assert_eq!(tracked_remaining, 1);
+
+    clear_errno();
+    let rc = unsafe { frankenlibc_abi::unistd_abi::getentropy(raw, 2) };
+
+    assert_eq!(rc, -1);
+    assert_eq!(errno_value(), libc::EFAULT);
+    assert_eq!(unsafe { raw.cast::<u8>().read() }, 0);
+
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // arc4random_buf short-read contract (bd-ubkl7)
 //
