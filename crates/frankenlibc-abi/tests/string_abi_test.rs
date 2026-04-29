@@ -708,6 +708,32 @@ fn strtok_r_tokenizes_string() {
 }
 
 #[test]
+fn strtok_r_rejects_tracked_unterminated_delimiter() {
+    let mut buf = *b"a,b\0";
+    let delim = unsafe { malloc_unterminated(b",") };
+    let mut saveptr: *mut c_char = std::ptr::null_mut();
+
+    let tok = unsafe { strtok_r(buf.as_mut_ptr().cast(), delim, &mut saveptr) };
+
+    assert!(tok.is_null());
+    assert!(saveptr.is_null());
+    assert_eq!(&buf, b"a,b\0");
+    unsafe { frankenlibc_abi::malloc_abi::free(delim.cast()) };
+}
+
+#[test]
+fn strtok_rejects_tracked_unterminated_delimiter() {
+    let mut buf = *b"a,b\0";
+    let delim = unsafe { malloc_unterminated(b",") };
+
+    let tok = unsafe { strtok(buf.as_mut_ptr().cast(), delim) };
+
+    assert!(tok.is_null());
+    assert_eq!(&buf, b"a,b\0");
+    unsafe { frankenlibc_abi::malloc_abi::free(delim.cast()) };
+}
+
+#[test]
 fn strsep_tokenizes_string() {
     let mut buf = *b"a:b:c\0";
     let mut ptr: *mut c_char = buf.as_mut_ptr().cast();
@@ -723,6 +749,21 @@ fn strsep_tokenizes_string() {
     let tok3 = unsafe { strsep(&mut ptr, c":".as_ptr()) };
     assert!(!tok3.is_null());
     assert_eq!(unsafe { CStr::from_ptr(tok3) }.to_bytes(), b"c");
+}
+
+#[test]
+fn strsep_rejects_tracked_unterminated_delimiter() {
+    let mut buf = *b"a:b\0";
+    let mut ptr: *mut c_char = buf.as_mut_ptr().cast();
+    let original = ptr;
+    let delim = unsafe { malloc_unterminated(b":") };
+
+    let tok = unsafe { strsep(&mut ptr, delim) };
+
+    assert!(tok.is_null());
+    assert_eq!(ptr, original);
+    assert_eq!(&buf, b"a:b\0");
+    unsafe { frankenlibc_abi::malloc_abi::free(delim.cast()) };
 }
 
 // ===========================================================================

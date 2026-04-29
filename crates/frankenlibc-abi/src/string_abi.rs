@@ -2812,50 +2812,45 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
 
             // Warning: `delim` might be unbounded. We scan it safely.
 
-            let delim_bound = if repair {
-                known_remaining(delim as usize)
-            } else {
-                None
-            };
-
+            let delim_bound = known_remaining(delim as usize);
             let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
-
-            let delim_slice_len = if delim_terminated {
-                delim_len + 1
+            if !delim_terminated {
+                STRTOK_SAVE.set(std::ptr::null_mut());
+                work = scan_limit.saturating_add(delim_len);
+                (std::ptr::null_mut(), true, work)
             } else {
-                delim_len
-            };
+                let delim_slice_len = delim_len + 1;
+                let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_slice_len);
 
-            let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_slice_len);
+                // Core `strtok` returns (start_idx, token_len). It modifies s_slice in place.
 
-            // Core `strtok` returns (start_idx, token_len). It modifies s_slice in place.
+                match frankenlibc_core::string::strtok::strtok(s_slice, delim_slice) {
+                    Some((start, len)) => {
+                        let token_start = current.add(start);
+                        let token_end_idx = start + len;
+                        // strtok puts a NUL at token_end_idx. The next token starts after that NUL.
+                        // If we are at the end of the slice (NUL was already there), save_ptr is end.
+                        // But core's strtok writes NUL if needed.
+                        // We need to advance save pointer.
+                        // The core logic doesn't return the "next" position directly, but we can infer it:
+                        // it is token_start + len + 1.
 
-            match frankenlibc_core::string::strtok::strtok(s_slice, delim_slice) {
-                Some((start, len)) => {
-                    let token_start = current.add(start);
-                    let token_end_idx = start + len;
-                    // strtok puts a NUL at token_end_idx. The next token starts after that NUL.
-                    // If we are at the end of the slice (NUL was already there), save_ptr is end.
-                    // But core's strtok writes NUL if needed.
-                    // We need to advance save pointer.
-                    // The core logic doesn't return the "next" position directly, but we can infer it:
-                    // it is token_start + len + 1.
+                        let next_pos = if token_end_idx + 1 < s_slice.len() {
+                            token_end_idx + 1
+                        } else {
+                            token_end_idx // End of string
+                        };
 
-                    let next_pos = if token_end_idx + 1 < s_slice.len() {
-                        token_end_idx + 1
-                    } else {
-                        token_end_idx // End of string
-                    };
-
-                    // Update save pointer
-                    STRTOK_SAVE.set(current.add(next_pos));
-                    work = next_pos; // Approximate work
-                    (token_start, false, work)
-                }
-                None => {
-                    STRTOK_SAVE.set(std::ptr::null_mut());
-                    work = scan_limit;
-                    (std::ptr::null_mut(), false, work)
+                        // Update save pointer
+                        STRTOK_SAVE.set(current.add(next_pos));
+                        work = next_pos; // Approximate work
+                        (token_start, false, work)
+                    }
+                    None => {
+                        STRTOK_SAVE.set(std::ptr::null_mut());
+                        work = scan_limit;
+                        (std::ptr::null_mut(), false, work)
+                    }
                 }
             }
         }
@@ -2969,20 +2964,26 @@ pub unsafe extern "C" fn strtok_r(
 
         let s_slice = std::slice::from_raw_parts_mut(current as *mut u8, slice_len);
 
-        let delim_bound = if repair {
-            known_remaining(delim as usize)
-        } else {
-            None
-        };
-
+        let delim_bound = known_remaining(delim as usize);
         let (delim_len, delim_terminated) = scan_c_string(delim, delim_bound);
+        if !delim_terminated {
+            *saveptr = std::ptr::null_mut();
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                runtime_policy::scaled_cost(8, scan_limit.saturating_add(delim_len)),
+                true,
+            );
+            record_string_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            return std::ptr::null_mut();
+        }
 
-        let delim_slice_len = if delim_terminated {
-            delim_len + 1
-        } else {
-            delim_len
-        };
-
+        let delim_slice_len = delim_len + 1;
         let delim_slice = std::slice::from_raw_parts(delim as *const u8, delim_slice_len);
 
         // Core `strtok_r` returns (start, len, next_offset) relative to the slice start (0)
@@ -4470,30 +4471,30 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
     } else {
         None
     };
-    let delim_bound = if repair {
-        known_remaining(delim as usize)
-    } else {
-        None
-    };
+    let delim_bound = known_remaining(delim as usize);
 
     // SAFETY: bounded scan.
-    let (result, span) = unsafe {
+    let (result, span, adverse) = unsafe {
         let (s_len, s_term) = scan_c_string(s, s_bound);
         let (delim_len, delim_term) = scan_c_string(delim, delim_bound);
         let s_slice_len = if s_term { s_len + 1 } else { s_len };
-        let delim_slice_len = if delim_term { delim_len + 1 } else { delim_len };
-        let s_slice = std::slice::from_raw_parts_mut(s.cast::<u8>(), s_slice_len);
-        let delim_slice = std::slice::from_raw_parts(delim.cast::<u8>(), delim_slice_len);
-        match frankenlibc_core::string::str::strsep(s_slice, delim_slice) {
-            Some(idx) => {
-                // Update *stringp to point past the delimiter.
-                *stringp = s.add(idx + 1);
-                (s, s_len)
-            }
-            None => {
-                *stringp = std::ptr::null_mut();
-                // Return the remaining string as the last token.
-                (s, s_len)
+        if !delim_term {
+            (std::ptr::null_mut(), s_len.saturating_add(delim_len), true)
+        } else {
+            let delim_slice_len = delim_len + 1;
+            let s_slice = std::slice::from_raw_parts_mut(s.cast::<u8>(), s_slice_len);
+            let delim_slice = std::slice::from_raw_parts(delim.cast::<u8>(), delim_slice_len);
+            match frankenlibc_core::string::str::strsep(s_slice, delim_slice) {
+                Some(idx) => {
+                    // Update *stringp to point past the delimiter.
+                    *stringp = s.add(idx + 1);
+                    (s, s_len, s_bound.is_some())
+                }
+                None => {
+                    *stringp = std::ptr::null_mut();
+                    // Return the remaining string as the last token.
+                    (s, s_len, s_bound.is_some())
+                }
             }
         }
     };
@@ -4508,7 +4509,7 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
         ApiFamily::StringMemory,
         decision.profile,
         runtime_policy::scaled_cost(7, span),
-        s_bound.is_some(),
+        adverse,
     );
     result
 }
