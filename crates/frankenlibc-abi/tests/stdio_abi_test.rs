@@ -684,7 +684,7 @@ fn mixed_buffered_and_unbuffered_same_fd_completes_without_deadlock() {
     let writer_stream = thread::spawn(move || {
         let stream = stream_addr as *mut c_void;
         for _ in 0..iterations {
-            let byte = [b'A'];
+            let byte = *b"A";
             // SAFETY: stream and pointer are valid for 1-byte write.
             let wrote = unsafe { fwrite(byte.as_ptr().cast::<c_void>(), 1, 1, stream) };
             if wrote != 1 {
@@ -696,7 +696,7 @@ fn mixed_buffered_and_unbuffered_same_fd_completes_without_deadlock() {
 
     let writer_fd = thread::spawn(move || {
         for _ in 0..iterations {
-            let byte = [b'B'];
+            let byte = *b"B";
             // SAFETY: fd is valid while stream remains open.
             let rc = unsafe { libc::write(fd, byte.as_ptr().cast::<c_void>(), 1) };
             if rc != 1 {

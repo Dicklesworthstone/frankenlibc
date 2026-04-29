@@ -783,7 +783,7 @@ fn iswspace_l_matches_base_for_ascii() {
 
 #[test]
 fn mblen_measures_ascii_and_multibyte() {
-    let ascii = [b'A'];
+    let ascii = *b"A";
     assert_eq!(unsafe { mblen(ascii.as_ptr(), 1) }, 1);
 
     let utf8 = [0xC3u8, 0xA9]; // é
@@ -797,7 +797,7 @@ fn mblen_measures_ascii_and_multibyte() {
 #[test]
 fn mbtowc_converts_ascii() {
     let mut wc: u32 = 0;
-    let ascii = [b'X'];
+    let ascii = *b"X";
     let n = unsafe { mbtowc(&mut wc, ascii.as_ptr(), 1) };
     assert_eq!(n, 1);
     assert_eq!(wc, b'X' as u32);
@@ -901,7 +901,7 @@ fn mbsinit_returns_nonzero_for_initial_state() {
 
 #[test]
 fn mbrlen_measures_multibyte() {
-    let ascii = [b'X'];
+    let ascii = *b"X";
     let n = unsafe { mbrlen(ascii.as_ptr() as *const c_char, 1, std::ptr::null_mut()) };
     assert_eq!(n, 1);
 
