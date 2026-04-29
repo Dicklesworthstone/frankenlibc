@@ -16832,18 +16832,19 @@ pub unsafe extern "C" fn wctrans(property: *const c_char) -> WctransT {
 }
 
 /// `towctrans` — transform wide character by descriptor.
+///
+/// Dispatches to the wchar_abi towupper/towlower so non-ASCII codepoints
+/// get the same Unicode case-folding as direct calls. The previous
+/// implementation short-circuited any wc > 127 to the input unchanged,
+/// which meant `towctrans(L'а', wctrans("toupper"))` returned U+0430
+/// instead of the correct U+0410 for Cyrillic.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn towctrans(wc: c_uint, desc: WctransT) -> c_uint {
-    if wc > 127 {
-        return wc;
+    match desc {
+        1 => unsafe { crate::wchar_abi::towupper(wc) },
+        2 => unsafe { crate::wchar_abi::towlower(wc) },
+        _ => wc,
     }
-    let c = wc as u8;
-    let result = match desc {
-        1 => c.to_ascii_uppercase(),
-        2 => c.to_ascii_lowercase(),
-        _ => c,
-    };
-    result as c_uint
 }
 
 // ===========================================================================

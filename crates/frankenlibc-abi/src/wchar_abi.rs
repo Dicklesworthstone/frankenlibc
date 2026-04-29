@@ -3195,9 +3195,14 @@ pub unsafe extern "C" fn iswcntrl(wc: u32) -> c_int {
 }
 
 /// POSIX `iswgraph` — test for graphic wide character.
+///
+/// glibc UTF-8 excludes whitespace from iswgraph even though most spaces
+/// are technically printable: IDEOGRAPHIC SPACE, OGHAM SPACE, EM QUAD, and
+/// the rest of the U+2000..U+200A block all return 0 from iswgraph despite
+/// returning 1 from iswprint. We mirror that by anding `!iswspace`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswgraph(wc: u32) -> c_int {
-    if wchar_core::iswprint(wc) && wc != 0x20 {
+    if wchar_core::iswprint(wc) && !wchar_core::iswspace(wc) && wc != 0x20 {
         1
     } else {
         0
@@ -3205,9 +3210,18 @@ pub unsafe extern "C" fn iswgraph(wc: u32) -> c_int {
 }
 
 /// POSIX `iswpunct` — test for punctuation wide character.
+///
+/// glibc's UTF-8 iswpunct excludes whitespace characters (Zs/Zl/Zp like
+/// IDEOGRAPHIC SPACE, OGHAM SPACE, EM QUAD, etc.) even though they're
+/// printable and non-alphanumeric. The naive `iswprint && !iswalnum`
+/// formula misclassifies them; we additionally check `!iswspace`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswpunct(wc: u32) -> c_int {
-    if wchar_core::iswprint(wc) && !wchar_core::iswalnum(wc) && wc != 0x20 {
+    if wchar_core::iswprint(wc)
+        && !wchar_core::iswalnum(wc)
+        && !wchar_core::iswspace(wc)
+        && wc != 0x20
+    {
         1
     } else {
         0
@@ -3823,28 +3837,28 @@ pub unsafe extern "C" fn iswctype_l(wc: u32, desc: WctypeT, _locale: *mut std::f
 }
 
 /// `iswctype` — test wide character classification.
+///
+/// Dispatches to the matching `iswX` routine so non-ASCII codepoints get the
+/// same treatment as direct calls. The previous implementation restricted
+/// classification to ASCII, which broke programs that asked
+/// `iswctype(wctype("alpha"), 0x4E00)` for CJK or other non-Latin letters.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswctype(wc: u32, desc: WctypeT) -> i32 {
-    let ascii = u8::try_from(wc).ok().filter(|b| b.is_ascii());
-    let result = match desc {
-        1 => ascii.is_some_and(|c| c.is_ascii_alphanumeric()),
-        2 => ascii.is_some_and(|c| c.is_ascii_alphabetic()),
-        3 => matches!(ascii, Some(b' ') | Some(b'\t')), // space or tab
-        4 => ascii.is_some_and(|c| c.is_ascii_control()),
-        5 => ascii.is_some_and(|c| c.is_ascii_digit()),
-        6 => ascii.is_some_and(|c| c.is_ascii_graphic()),
-        7 => ascii.is_some_and(|c| c.is_ascii_lowercase()),
-        8 => {
-            // print: 0x20..=0x7E
-            ascii.is_some_and(|c| (0x20..=0x7E).contains(&c))
-        }
-        9 => ascii.is_some_and(|c| c.is_ascii_punctuation()),
-        10 => ascii.is_some_and(|c| c.is_ascii_whitespace()),
-        11 => ascii.is_some_and(|c| c.is_ascii_uppercase()),
-        12 => ascii.is_some_and(|c| c.is_ascii_hexdigit()),
-        _ => false,
-    };
-    if result { 1 } else { 0 }
+    match desc {
+        1 => unsafe { iswalnum(wc) },
+        2 => unsafe { iswalpha(wc) },
+        3 => unsafe { iswblank(wc) },
+        4 => unsafe { iswcntrl(wc) },
+        5 => unsafe { iswdigit(wc) },
+        6 => unsafe { iswgraph(wc) },
+        7 => unsafe { iswlower(wc) },
+        8 => unsafe { iswprint(wc) },
+        9 => unsafe { iswpunct(wc) },
+        10 => unsafe { iswspace(wc) },
+        11 => unsafe { iswupper(wc) },
+        12 => unsafe { iswxdigit(wc) },
+        _ => 0,
+    }
 }
 
 /// `towupper_l` — convert wide character to uppercase (locale variant).

@@ -293,17 +293,38 @@ pub fn iswprint(wc: u32) -> bool {
 }
 
 /// Convert wide character to uppercase.
+///
+/// Mirrors glibc semantics: when the Unicode case folding produces multiple
+/// codepoints (e.g. ß → SS, ﬀ → FF), POSIX `towupper` must return a single
+/// wchar_t, so glibc returns the input unchanged. Rust's `char::to_uppercase`
+/// is an iterator, so we check the iteration length and only apply the mapping
+/// when it folds 1:1.
 pub fn towupper(wc: u32) -> u32 {
-    char::from_u32(wc)
-        .and_then(|c| c.to_uppercase().next())
-        .map_or(wc, |c| c as u32)
+    let Some(c) = char::from_u32(wc) else {
+        return wc;
+    };
+    let mut iter = c.to_uppercase();
+    let first = iter.next();
+    if iter.next().is_some() {
+        // Multi-char folding (ß → SS, ligature → expansion). Stay put.
+        return wc;
+    }
+    first.map_or(wc, |c| c as u32)
 }
 
 /// Convert wide character to lowercase.
+///
+/// Same multi-char-fold rule as [`towupper`].
 pub fn towlower(wc: u32) -> u32 {
-    char::from_u32(wc)
-        .and_then(|c| c.to_lowercase().next())
-        .map_or(wc, |c| c as u32)
+    let Some(c) = char::from_u32(wc) else {
+        return wc;
+    };
+    let mut iter = c.to_lowercase();
+    let first = iter.next();
+    if iter.next().is_some() {
+        return wc;
+    }
+    first.map_or(wc, |c| c as u32)
 }
 
 /// Compute display width of a wide character (simplified, glibc-aligned).

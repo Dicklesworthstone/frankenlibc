@@ -21,6 +21,7 @@
 use std::ffi::c_int;
 use std::process::Command;
 
+use frankenlibc_abi::unistd_abi as fl_unistd;
 use frankenlibc_abi::wchar_abi as fl;
 
 unsafe extern "C" {
@@ -38,6 +39,14 @@ unsafe extern "C" {
     fn iswgraph(wc: u32) -> c_int;
     fn towupper(wc: u32) -> u32;
     fn towlower(wc: u32) -> u32;
+    /// Host glibc `iswctype` — class-by-descriptor classification.
+    fn iswctype(wc: u32, desc: libc::c_ulong) -> c_int;
+    /// Host glibc `wctype` — name-to-descriptor for iswctype.
+    fn wctype(name: *const libc::c_char) -> libc::c_ulong;
+    /// Host glibc `towctrans` — transformation by descriptor.
+    fn towctrans(wc: u32, desc: libc::c_ulong) -> u32;
+    /// Host glibc `wctrans` — name-to-descriptor for towctrans.
+    fn wctrans(name: *const libc::c_char) -> libc::c_ulong;
 }
 
 #[derive(Debug)]
@@ -115,6 +124,41 @@ fn diff_wctype_ascii_locale_invariant() {
     assert!(
         divs.is_empty(),
         "ASCII wctype divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
+/// Multi-char Unicode case-folds: glibc's `towupper`/`towlower` always
+/// return a single wchar_t, so when the canonical fold expands to multiple
+/// codepoints (ß → SS, ﬀ → FF) glibc returns the input unchanged. Pin
+/// fl against that contract.
+#[test]
+fn diff_towupper_multi_char_folds_stay_put() {
+    const CASES: &[(u32, &str)] = &[
+        (0x00DF, "ß eszett (uppercase = SS)"),
+        (0xFB00, "ﬀ (uppercase = FF)"),
+        (0xFB01, "ﬁ (uppercase = FI)"),
+        (0xFB02, "ﬂ (uppercase = FL)"),
+        (0xFB03, "ﬃ (uppercase = FFI)"),
+        (0xFB04, "ﬄ (uppercase = FFL)"),
+    ];
+    let mut divs = Vec::new();
+    for (cp, label) in CASES {
+        let fl_u = unsafe { fl::towupper(*cp) };
+        let lc_u = unsafe { towupper(*cp) };
+        if fl_u != lc_u {
+            divs.push(Divergence {
+                function: "towupper",
+                case: format!("(U+{cp:04X} {label})"),
+                field: "return",
+                frankenlibc: format!("{fl_u:#x}"),
+                glibc: format!("{lc_u:#x}"),
+            });
+        }
+    }
+    assert!(
+        divs.is_empty(),
+        "towupper multi-char-fold divergences:\n{}",
         render_divs(&divs)
     );
 }
@@ -260,6 +304,103 @@ fn wctype_utf8_subprocess_invocation() {
             check!("iswcntrl", fl::iswcntrl(*wc), iswcntrl(*wc));
         }
     }
+    // iswpunct / iswgraph for the IDEO/OGHAM/EM-quad whitespace cases —
+    // glibc says these are NOT punctuation/graph (because they're whitespace),
+    // and fl matches after the iswpunct/iswgraph fix that adds !iswspace.
+    for (wc, label) in &[
+        (0x3000u32, "IDEO SP"),
+        (0x1680, "OGHAM SP"),
+        (0x2000, "EN QUAD"),
+        (0x205F, "MATH SP"),
+        (0x00A0, "NBSP"),
+        (0x202F, "NNBSP"),
+        (0x002C, ", comma"),
+        (0x2200, "FOR ALL"),
+    ] {
+        let fl_p = unsafe { fl::iswpunct(*wc) };
+        let lc_p = unsafe { iswpunct(*wc) };
+        if (fl_p != 0) != (lc_p != 0) {
+            divs.push(Divergence {
+                function: "iswpunct",
+                case: format!("(U+{wc:04X} {label})"),
+                field: "bool",
+                frankenlibc: format!("{}", fl_p != 0),
+                glibc: format!("{}", lc_p != 0),
+            });
+        }
+        let fl_g = unsafe { fl::iswgraph(*wc) };
+        let lc_g = unsafe { iswgraph(*wc) };
+        if (fl_g != 0) != (lc_g != 0) {
+            divs.push(Divergence {
+                function: "iswgraph",
+                case: format!("(U+{wc:04X} {label})"),
+                field: "bool",
+                frankenlibc: format!("{}", fl_g != 0),
+                glibc: format!("{}", lc_g != 0),
+            });
+        }
+    }
+
+    // iswctype dispatch — fl's wctype("alpha")→2 and iswctype(_, 2)→iswalpha.
+    // We diff the boolean answer for each impl using its OWN descriptor space:
+    // fl's iswctype takes fl's index (1..12), glibc's takes its opaque pointer.
+    // Each pair is internally consistent — the booleans should match.
+    let class_names: &[&[u8]] = &[
+        b"alpha\0", b"alnum\0", b"digit\0", b"lower\0", b"upper\0", b"space\0",
+        b"print\0", b"punct\0", b"cntrl\0", b"graph\0", b"blank\0", b"xdigit\0",
+    ];
+    let dispatch_cases: &[u32] = &[
+        b'a' as u32, b'A' as u32, b'5' as u32, 0x0410, 0x0430, 0x4E00, 0x3000, 0x2028,
+    ];
+    for class in class_names {
+        let fl_desc = unsafe { fl::wctype(class.as_ptr()) };
+        let lc_desc = unsafe { wctype(class.as_ptr() as *const libc::c_char) };
+        for &wc in dispatch_cases {
+            let fl_v = unsafe { fl::iswctype(wc, fl_desc) };
+            let lc_v = unsafe { iswctype(wc, lc_desc) };
+            if (fl_v != 0) != (lc_v != 0) {
+                divs.push(Divergence {
+                    function: "iswctype",
+                    case: format!(
+                        "(class={:?}, U+{wc:04X})",
+                        std::str::from_utf8(&class[..class.len() - 1]).unwrap()
+                    ),
+                    field: "bool",
+                    frankenlibc: format!("{}", fl_v != 0),
+                    glibc: format!("{}", lc_v != 0),
+                });
+            }
+        }
+    }
+
+    // towctrans dispatch — fl's wctrans("toupper")→1 and towctrans(_, 1)→towupper.
+    // Same matched-pair-of-descriptors strategy.
+    let trans_names: &[&[u8]] = &[b"toupper\0", b"tolower\0"];
+    let trans_cases: &[u32] = &[
+        b'a' as u32, b'A' as u32, 0x0410, 0x0430, 0x00DF, 0xFB00, 0x4E00,
+    ];
+    for trans in trans_names {
+        let fl_desc =
+            unsafe { fl_unistd::wctrans(trans.as_ptr() as *const libc::c_char) };
+        let lc_desc = unsafe { wctrans(trans.as_ptr() as *const libc::c_char) };
+        for &wc in trans_cases {
+            let fl_v = unsafe { fl_unistd::towctrans(wc, fl_desc) };
+            let lc_v = unsafe { towctrans(wc, lc_desc) };
+            if fl_v != lc_v {
+                divs.push(Divergence {
+                    function: "towctrans",
+                    case: format!(
+                        "(trans={:?}, U+{wc:04X})",
+                        std::str::from_utf8(&trans[..trans.len() - 1]).unwrap()
+                    ),
+                    field: "return",
+                    frankenlibc: format!("{fl_v:#x}"),
+                    glibc: format!("{lc_v:#x}"),
+                });
+            }
+        }
+    }
+
     assert!(
         divs.is_empty(),
         "UTF-8 wctype divergences:\n{}",
