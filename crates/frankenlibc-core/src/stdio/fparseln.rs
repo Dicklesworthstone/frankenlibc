@@ -43,7 +43,7 @@ pub const FPARSELN_UNESC_REST: u32 = 0x08;
 pub const FPARSELN_UNESC_ALL: u32 = 0x0f;
 
 /// Default delimiter set: `[escape='\\', sep='\n', comment='#']`.
-pub const DEFAULT_DELIM: [u8; 3] = [b'\\', b'\n', b'#'];
+pub const DEFAULT_DELIM: [u8; 3] = *b"\\\n#";
 
 /// Outcome of folding a single physical line into the running
 /// logical-line buffer.

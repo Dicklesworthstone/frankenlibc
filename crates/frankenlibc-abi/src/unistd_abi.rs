@@ -3114,17 +3114,14 @@ unsafe fn resolve_ttyname_into(fd: c_int, dst: *mut c_char, cap: usize) -> Resul
 
     let proc_link = CString::new(format!("/proc/self/fd/{fd}")).map_err(|_| errno::EINVAL)?;
     let mut resolved = [0 as c_char; TTYNAME_MAX_LEN];
-    let len = match unsafe {
+    let len = unsafe {
         syscall::sys_readlinkat(
             libc::AT_FDCWD,
             proc_link.as_ptr() as *const u8,
             resolved.as_mut_ptr() as *mut u8,
             resolved.len() - 1,
         )
-    } {
-        Ok(n) => n as usize,
-        Err(e) => return Err(e),
-    };
+    }? as usize;
     if len + 1 > cap {
         return Err(errno::ERANGE);
     }

@@ -7119,7 +7119,7 @@ pub unsafe extern "C" fn fpurge(stream: *mut c_void) -> c_int {
 // through frankenlibc_core::stdio::fparseln per the libutil grammar.
 // Returns a malloc'd C string the caller must free().
 
-const FPARSELN_DEFAULT_DELIM: [u8; 3] = [b'\\', b'\n', b'#'];
+const FPARSELN_DEFAULT_DELIM: [u8; 3] = *b"\\\n#";
 
 /// NetBSD libutil `fparseln(stream, *len, *lineno, delim, flags)` —
 /// read a logical line from `stream`, handling backslash
