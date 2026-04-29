@@ -38,6 +38,9 @@ unsafe extern "C" {
         decpt: *mut c_int,
         sign: *mut c_int,
     ) -> *mut c_char;
+    /// Host glibc `gcvt` — double → printable string written into the
+    /// caller's buffer. Per POSIX/glibc: `%.<ndigit>g` semantics.
+    fn gcvt(value: f64, ndigit: c_int, buf: *mut c_char) -> *mut c_char;
 }
 
 #[derive(Debug)]
@@ -787,22 +790,12 @@ fn c_str_to_vec(p: *const c_char) -> Vec<u8> {
 // non-representable decimals, negatives, sub-1 magnitudes, and a
 // high-magnitude value, each at four ndigit values (1, 2, 6, 10).
 //
-// Companion `fcvt` and `gcvt` are NOT diff-tested in this commit:
-//
-//   * fcvt needs leading-zero-stripping and rounded-to-zero handling
-//     (glibc returns digits="" with decpt=-ndigit when |value| < 0.5e-ndigit;
-//     our impl returns "00...0" with decpt=1). Real bug surface, follow-up.
-//
-//   * gcvt is implemented with `format!("{:.prec$}", value)` (i.e., %.Nf
-//     fixed-point semantics) but per POSIX/glibc gcvt is %.Ng — total
-//     significant digits, with auto-switch between fixed and scientific
-//     based on exponent, and trailing-zero stripping. Substantial
-//     rewrite needed (Rust's std `{:e}` doesn't emit C-style "+02"
-//     exponents either), follow-up.
-//
-// Both gaps were caught when this conformance harness was first wired
-// up; this commit ships ecvt coverage now and leaves the broken
-// surfaces for a dedicated rewrite slice.
+// `gcvt` is included now (see diff_gcvt_cases below) — the previous
+// commit aa3ee936 documented this as needing a real %g rewrite, and
+// the rewrite landed in this commit. `fcvt` is still NOT diff-tested
+// here: it needs leading-zero stripping and rounded-to-zero handling
+// (glibc returns digits="" with decpt=-ndigit when |value| < 0.5e-ndigit;
+// our impl returns "00...0" with decpt=1). Real bug surface, follow-up.
 
 const CVT_INPUTS: &[(f64, &str)] = &[
     (0.0, "zero"),
@@ -862,6 +855,38 @@ fn diff_ecvt_cases() {
     assert!(divs.is_empty(), "ecvt divergences:\n{}", render_divs(&divs));
 }
 
+#[test]
+fn diff_gcvt_cases() {
+    let mut divs = Vec::new();
+    for (value, label) in CVT_INPUTS {
+        for &ndigit in &[1, 2, 6, 10] {
+            let mut fl_buf = [0u8; 64];
+            let mut lc_buf = [0u8; 64];
+            // SAFETY: each buffer is 64 bytes — large enough for any
+            // gcvt output up to ndigit=10. caller-supplied buffer
+            // contract per POSIX.
+            let _ = unsafe {
+                fl::gcvt(*value, ndigit, fl_buf.as_mut_ptr() as *mut c_char)
+            };
+            let _ = unsafe {
+                gcvt(*value, ndigit, lc_buf.as_mut_ptr() as *mut c_char)
+            };
+            let fl_str = c_str_to_vec(fl_buf.as_ptr() as *const c_char);
+            let lc_str = c_str_to_vec(lc_buf.as_ptr() as *const c_char);
+            if fl_str != lc_str {
+                divs.push(Divergence {
+                    function: "gcvt",
+                    case: format!("{label}({value}), ndigit={ndigit}"),
+                    field: "buffer",
+                    frankenlibc: format!("{:?}", String::from_utf8_lossy(&fl_str)),
+                    glibc: format!("{:?}", String::from_utf8_lossy(&lc_str)),
+                });
+            }
+        }
+    }
+    assert!(divs.is_empty(), "gcvt divergences:\n{}", render_divs(&divs));
+}
+
 // ===========================================================================
 // Coverage report
 // ===========================================================================
@@ -875,9 +900,9 @@ fn stdlib_numeric_diff_coverage_report() {
         + STRTOF_CASES.len()                     // strtof
         + A64L_DECODE_CASES.len()                // a64l
         + L64A_ENCODE_CASES.len() * 2            // l64a direct + roundtrip
-        + CVT_INPUTS.len() * 4;                  // ecvt × 4 ndigit values
+        + CVT_INPUTS.len() * 4 * 2;              // (ecvt + gcvt) × 4 ndigit values
     eprintln!(
-        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":12,\"total_diff_calls\":{},\"divergences\":0}}",
+        "{{\"family\":\"stdlib.h numeric\",\"reference\":\"glibc\",\"functions\":13,\"total_diff_calls\":{},\"divergences\":0}}",
         total,
     );
 }
