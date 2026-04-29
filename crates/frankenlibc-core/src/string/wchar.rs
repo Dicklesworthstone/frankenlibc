@@ -254,14 +254,42 @@ pub fn iswupper(wc: u32) -> bool {
 }
 
 /// Wide character classification: is `wc` a whitespace character?
+///
+/// Mirrors glibc's `iswspace` in a UTF-8 locale: matches the POSIX whitespace
+/// set rather than the broader Unicode `White_Space` property. This excludes
+/// NEL (U+0085), NBSP (U+00A0), and NNBSP (U+202F), which Rust's
+/// `char::is_whitespace` would otherwise report as whitespace.
 pub fn iswspace(wc: u32) -> bool {
-    char::from_u32(wc).is_some_and(|c| c.is_whitespace())
+    matches!(
+        wc,
+        0x09..=0x0D            // TAB, LF, VT, FF, CR
+            | 0x20             // SPACE
+            | 0x1680           // OGHAM SPACE MARK
+            | 0x2000..=0x200A  // EN QUAD .. HAIR SPACE
+            | 0x2028..=0x2029  // LINE SEPARATOR / PARAGRAPH SEPARATOR
+            | 0x205F           // MEDIUM MATHEMATICAL SPACE
+            | 0x3000           // IDEOGRAPHIC SPACE
+    )
 }
 
 /// Wide character classification: is `wc` a printable character?
+///
+/// Mirrors glibc's `iswprint` in a UTF-8 locale. Excludes:
+/// - Cc category (the ASCII range Rust's `char::is_control` already catches)
+/// - Zl/Zp line/paragraph separators (U+2028, U+2029)
+/// - The LANGUAGE TAG codepoint itself (U+E0000); the rest of the tag block
+///   (U+E0001..U+E007F) is treated as printable by glibc.
 pub fn iswprint(wc: u32) -> bool {
-    // Rough approximation: not a control character and is a valid Unicode char
-    char::from_u32(wc).is_some_and(|c| !c.is_control())
+    let Some(c) = char::from_u32(wc) else {
+        return false;
+    };
+    if c.is_control() {
+        return false;
+    }
+    if wc == 0x2028 || wc == 0x2029 || wc == 0xE0000 {
+        return false;
+    }
+    true
 }
 
 /// Convert wide character to uppercase.
