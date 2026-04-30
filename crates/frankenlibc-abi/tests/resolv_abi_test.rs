@@ -2885,9 +2885,57 @@ fn bd_dcfj5_res_close_is_void_noop() {
 }
 
 #[test]
-fn bd_dcfj5_res_isourserver_returns_zero() {
+fn bd_dcfj5_res_isourserver_matches_configured_ipv4_nameserver() {
     use frankenlibc_abi::resolv_abi::*;
     let rc = unsafe { __res_isourserver(std::ptr::null(), std::ptr::null()) };
+    assert_eq!(rc, 0);
+
+    let config = std::fs::read("/etc/resolv.conf")
+        .map(|content| frankenlibc_core::resolv::config::ResolverConfig::parse(&content))
+        .unwrap_or_default();
+    if let Some(std::net::IpAddr::V4(expected)) = config.nameservers.first() {
+        let sin = libc::sockaddr_in {
+            sin_family: libc::AF_INET as libc::sa_family_t,
+            sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
+            sin_addr: libc::in_addr {
+                s_addr: u32::from_ne_bytes(expected.octets()),
+            },
+            sin_zero: [0; 8],
+        };
+        let rc = unsafe {
+            __res_isourserver(
+                std::ptr::null(),
+                (&sin as *const libc::sockaddr_in).cast::<c_void>(),
+            )
+        };
+        assert_eq!(rc, 1);
+    }
+
+    let mut other_octets = [192, 0, 2, 1];
+    for candidate in [[192, 0, 2, 1], [198, 51, 100, 1], [203, 0, 113, 1]] {
+        let configured = config
+            .nameservers
+            .iter()
+            .any(|addr| matches!(addr, std::net::IpAddr::V4(ip) if ip.octets() == candidate));
+        if !configured {
+            other_octets = candidate;
+            break;
+        }
+    }
+    let other = libc::sockaddr_in {
+        sin_family: libc::AF_INET as libc::sa_family_t,
+        sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes(other_octets),
+        },
+        sin_zero: [0; 8],
+    };
+    let rc = unsafe {
+        __res_isourserver(
+            std::ptr::null(),
+            (&other as *const libc::sockaddr_in).cast::<c_void>(),
+        )
+    };
     assert_eq!(rc, 0);
 }
 

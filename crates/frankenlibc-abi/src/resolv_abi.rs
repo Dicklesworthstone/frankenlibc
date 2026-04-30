@@ -4773,12 +4773,28 @@ pub unsafe extern "C" fn __sym_ston(
 pub unsafe extern "C" fn __res_close(_statp: *mut c_void) {}
 
 /// `__res_isourserver(*statp, *addr) -> int` — check if `*addr`
-/// matches a configured nameserver. Stub returns 0 (not ours).
+/// matches a configured IPv4 nameserver.
 ///
 /// # Safety
-/// Pointers may be NULL.
+/// `addr` may be NULL. Non-NULL pointers must point to a `sockaddr_in`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __res_isourserver(_statp: *const c_void, _addr: *const c_void) -> c_int {
+pub unsafe extern "C" fn __res_isourserver(_statp: *const c_void, addr: *const c_void) -> c_int {
+    if addr.is_null() {
+        return 0;
+    }
+    let sin = unsafe { &*(addr.cast::<libc::sockaddr_in>()) };
+    if sin.sin_family != libc::AF_INET as libc::sa_family_t {
+        return 0;
+    }
+
+    let needle = sin.sin_addr.s_addr;
+    for nameserver in &crate::unistd_abi::RESOLV_CONFIG.nameservers {
+        if let std::net::IpAddr::V4(ip) = nameserver
+            && u32::from_ne_bytes(ip.octets()) == needle
+        {
+            return 1;
+        }
+    }
     0
 }
 
