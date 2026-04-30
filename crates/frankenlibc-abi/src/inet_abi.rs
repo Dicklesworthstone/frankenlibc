@@ -595,7 +595,7 @@ pub unsafe extern "C" fn getservbyname_r(
 
     let (svc_name, port, svc_proto) = match entry {
         Some(e) => e,
-        None => return libc::ENOENT,
+        None => return 0,
     };
 
     // Write name + proto into caller's buffer
@@ -698,7 +698,7 @@ pub unsafe extern "C" fn getservbyport_r(
 
     let (svc_name, _, svc_proto) = match entry {
         Some(e) => e,
-        None => return libc::ENOENT,
+        None => return 0,
     };
 
     let name_len = svc_name.len() + 1;

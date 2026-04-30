@@ -27,6 +27,22 @@ unsafe extern "C" {
     fn if_indextoname(ifindex: libc::c_uint, ifname: *mut c_char) -> *mut c_char;
     fn if_nameindex() -> *mut c_void;
     fn if_freenameindex(ptr: *mut c_void);
+    fn getservbyname_r(
+        name: *const c_char,
+        proto: *const c_char,
+        result_buf: *mut libc::servent,
+        buf: *mut c_char,
+        buflen: usize,
+        result: *mut *mut libc::servent,
+    ) -> c_int;
+    fn getservbyport_r(
+        port: c_int,
+        proto: *const c_char,
+        result_buf: *mut libc::servent,
+        buf: *mut c_char,
+        buflen: usize,
+        result: *mut *mut libc::servent,
+    ) -> c_int;
 }
 
 const AF_INET: c_int = 2;
@@ -952,24 +968,33 @@ fn getservbyname_r_no_proto_filter() {
 fn getservbyname_r_nonexistent_service() {
     let name = CString::new("zzz_no_such_service_ever").unwrap();
     let proto = CString::new("tcp").unwrap();
-    let (mut result_buf, mut buf) = servent_buffers();
-    let mut result: *mut c_void = std::ptr::null_mut();
+    let (mut abi_result_buf, mut abi_buf) = servent_buffers();
+    let mut abi_result: *mut c_void = std::ptr::null_mut();
+    let (mut host_result_buf, mut host_buf) = servent_buffers();
+    let mut host_result: *mut libc::servent = std::ptr::null_mut();
 
-    let rc = unsafe {
+    let abi_rc = unsafe {
         abi_getservbyname_r(
             name.as_ptr(),
             proto.as_ptr(),
-            result_buf.as_mut_ptr().cast(),
-            buf.as_mut_ptr().cast(),
-            buf.len(),
-            &mut result,
+            abi_result_buf.as_mut_ptr().cast(),
+            abi_buf.as_mut_ptr().cast(),
+            abi_buf.len(),
+            &mut abi_result,
         )
     };
-    // glibc may return nonzero error OR return 0 with null result
-    assert!(
-        rc != 0 || result.is_null(),
-        "nonexistent service should not succeed"
-    );
+    let host_rc = unsafe {
+        getservbyname_r(
+            name.as_ptr(),
+            proto.as_ptr(),
+            host_result_buf.as_mut_ptr().cast(),
+            host_buf.as_mut_ptr().cast(),
+            host_buf.len(),
+            &mut host_result,
+        )
+    };
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_result.is_null(), host_result.is_null());
 }
 
 #[test]
@@ -1145,24 +1170,33 @@ fn getservbyport_r_finds_port_80() {
 fn getservbyport_r_nonexistent_port() {
     let proto = CString::new("tcp").unwrap();
     let port_net = (59999u16).to_be() as c_int;
-    let (mut result_buf, mut buf) = servent_buffers();
-    let mut result: *mut c_void = std::ptr::null_mut();
+    let (mut abi_result_buf, mut abi_buf) = servent_buffers();
+    let mut abi_result: *mut c_void = std::ptr::null_mut();
+    let (mut host_result_buf, mut host_buf) = servent_buffers();
+    let mut host_result: *mut libc::servent = std::ptr::null_mut();
 
-    let rc = unsafe {
+    let abi_rc = unsafe {
         abi_getservbyport_r(
             port_net,
             proto.as_ptr(),
-            result_buf.as_mut_ptr().cast(),
-            buf.as_mut_ptr().cast(),
-            buf.len(),
-            &mut result,
+            abi_result_buf.as_mut_ptr().cast(),
+            abi_buf.as_mut_ptr().cast(),
+            abi_buf.len(),
+            &mut abi_result,
         )
     };
-    // glibc may return nonzero error OR return 0 with null result
-    assert!(
-        rc != 0 || result.is_null(),
-        "nonexistent port should not succeed"
-    );
+    let host_rc = unsafe {
+        getservbyport_r(
+            port_net,
+            proto.as_ptr(),
+            host_result_buf.as_mut_ptr().cast(),
+            host_buf.as_mut_ptr().cast(),
+            host_buf.len(),
+            &mut host_result,
+        )
+    };
+    assert_eq!(abi_rc, host_rc);
+    assert_eq!(abi_result.is_null(), host_result.is_null());
 }
 
 #[test]
