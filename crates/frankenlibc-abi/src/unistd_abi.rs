@@ -9891,30 +9891,28 @@ pub unsafe extern "C" fn __libc_ns_samename(a: *const c_char, b: *const c_char) 
 }
 
 /// `__libc_res_nameinquery(name, type, class, *buf, eom) -> int` —
-/// "is this name in the supplied query?" predicate. Stub returns 0
-/// (not present).
+/// internal alias of the resolver query-section predicate.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_res_nameinquery(
-    _name: *const c_char,
-    _type: c_int,
-    _class: c_int,
-    _buf: *const c_void,
-    _eom: *const c_void,
+    name: *const c_char,
+    query_type: c_int,
+    query_class: c_int,
+    buf: *const c_void,
+    eom: *const c_void,
 ) -> c_int {
-    0
+    unsafe { crate::resolv_abi::__res_nameinquery(name, query_type, query_class, buf, eom) }
 }
 
 /// `__libc_res_queriesmatch(buf1, eom1, buf2, eom2) -> int` —
-/// "are these two DNS query messages equivalent?". Stub returns 0
-/// (not equivalent).
+/// internal alias of the resolver query-set comparison predicate.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_res_queriesmatch(
-    _buf1: *const c_void,
-    _eom1: *const c_void,
-    _buf2: *const c_void,
-    _eom2: *const c_void,
+    buf1: *const c_void,
+    eom1: *const c_void,
+    buf2: *const c_void,
+    eom2: *const c_void,
 ) -> c_int {
-    0
+    unsafe { crate::resolv_abi::__res_queriesmatch(buf1, eom1, buf2, eom2) }
 }
 
 /// `__libc_rpc_getport(*addr, prognum, versnum, protocol, timo,
@@ -15362,8 +15360,8 @@ unsafe fn statfs_to_statvfs(sfs: *const syscall::StatFs, vfs: *mut libc::statvfs
     // The kernel includes internal mount-flag bits (e.g. MS_REMOUNT = 0x20)
     // in f_flags that glibc strips before exposing to user space; matching
     // that filter avoids spurious f_flag divergence (bd-2b63f4).
-    const PUBLIC_ST_MASK: u64 = 0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x40
-        | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x1000;
+    const PUBLIC_ST_MASK: u64 =
+        0x1 | 0x2 | 0x4 | 0x8 | 0x10 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x1000;
     v.f_flag = (s.f_flags as u64) & PUBLIC_ST_MASK;
     v.f_namemax = s.f_namelen as u64;
 }

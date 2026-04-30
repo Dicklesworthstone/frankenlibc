@@ -2898,6 +2898,7 @@ const NS_QFIXEDSZ: usize = 4;
 const NS_RRFIXEDSZ: usize = 10;
 const NS_MAXDNAME: usize = 1025;
 const NS_S_MAX: usize = 4;
+const NS_OPCODE_UPDATE: u16 = 5;
 
 /// C-compatible `ns_msg`. Layout (offsets in bytes):
 ///   0:  _msg            8
@@ -2991,6 +2992,53 @@ unsafe fn ns_skip_one_rr(
         }
     }
     Some(p)
+}
+
+unsafe fn dns_message_slice<'a>(buf: *const c_void, eom: *const c_void) -> Option<&'a [u8]> {
+    if buf.is_null() || eom.is_null() {
+        return None;
+    }
+    let msg = buf.cast::<u8>();
+    let eom = eom.cast::<u8>();
+    if msg > eom {
+        return None;
+    }
+    let len = unsafe { eom.offset_from(msg) };
+    if len < NS_HFIXEDSZ as isize {
+        return None;
+    }
+    let len = len as usize;
+    if !tracked_region_fits(buf, len) {
+        return None;
+    }
+    Some(unsafe { core::slice::from_raw_parts(msg, len) })
+}
+
+fn dns_header_opcode(msg_buf: &[u8]) -> Option<u16> {
+    Some((read_be_u16_at(msg_buf, 2)? >> 11) & 0x0f)
+}
+
+unsafe fn read_query_question(
+    msg: *const u8,
+    eom: *const u8,
+    msg_buf: &[u8],
+    pos: usize,
+    name_buf: &mut [c_char; NS_MAXDNAME],
+) -> Option<(usize, u16, u16)> {
+    if pos >= msg_buf.len() {
+        return None;
+    }
+    let comp = unsafe { msg.add(pos) };
+    let name_len = unsafe {
+        crate::unistd_abi::dn_expand(msg, eom, comp, name_buf.as_mut_ptr(), NS_MAXDNAME as c_int)
+    };
+    if name_len < 0 {
+        return None;
+    }
+    let qtype_pos = pos.checked_add(name_len as usize)?;
+    let qtype = read_be_u16_at(msg_buf, qtype_pos)?;
+    let qclass = read_be_u16_at(msg_buf, qtype_pos + 2)?;
+    Some((qtype_pos.checked_add(NS_QFIXEDSZ)?, qtype, qclass))
 }
 
 /// libresolv `ns_initparse(msg, msglen, *handle) -> int` — parse a
@@ -4735,35 +4783,106 @@ pub unsafe extern "C" fn __res_isourserver(_statp: *const c_void, _addr: *const 
     0
 }
 
-/// `__res_nameinquery(name, type, class, *buf, eom) -> int` — public
-/// alias of `__libc_res_nameinquery`. Stub returns 0 (not present).
+/// `__res_nameinquery(name, type, class, *buf, eom) -> int` — return
+/// 1 if the DNS message's question section contains exactly
+/// `(name, type, class)`, 0 if not present, and -1 on malformed input.
 ///
 /// # Safety
-/// Pointers may be NULL.
+/// `name` must be a NUL-terminated C string. `buf` and `eom` must
+/// bound a readable DNS message.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nameinquery(
-    _name: *const c_char,
-    _type: c_int,
-    _class: c_int,
-    _buf: *const c_void,
-    _eom: *const c_void,
+    name: *const c_char,
+    query_type: c_int,
+    query_class: c_int,
+    buf: *const c_void,
+    eom: *const c_void,
 ) -> c_int {
+    let Some(_) = (unsafe { required_cstr_bytes(name) }) else {
+        return -1;
+    };
+    let Some(msg_buf) = (unsafe { dns_message_slice(buf, eom) }) else {
+        return -1;
+    };
+    let qdcount = match read_be_u16_at(msg_buf, 4) {
+        Some(count) => count as usize,
+        None => return -1,
+    };
+    let msg = buf.cast::<u8>();
+    let eom = eom.cast::<u8>();
+    let mut pos = NS_HFIXEDSZ;
+    for _ in 0..qdcount {
+        let mut tname = [0 as c_char; NS_MAXDNAME];
+        let Some((next, qtype, qclass)) =
+            (unsafe { read_query_question(msg, eom, msg_buf, pos, &mut tname) })
+        else {
+            return -1;
+        };
+        if qtype as c_int == query_type
+            && qclass as c_int == query_class
+            && unsafe { ns_samename(tname.as_ptr(), name) } == 1
+        {
+            return 1;
+        }
+        pos = next;
+    }
     0
 }
 
 /// `__res_queriesmatch(buf1, eom1, buf2, eom2) -> int` — public alias
-/// of `__libc_res_queriesmatch`. Stub returns 0.
+/// of `__libc_res_queriesmatch`. Returns 1 when both DNS messages carry
+/// the same question set, 0 when they differ, and -1 on malformed input.
 ///
 /// # Safety
-/// Pointers may be NULL.
+/// Each `(buf, eom)` pair must bound a readable DNS message.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_queriesmatch(
-    _buf1: *const c_void,
-    _eom1: *const c_void,
-    _buf2: *const c_void,
-    _eom2: *const c_void,
+    buf1: *const c_void,
+    eom1: *const c_void,
+    buf2: *const c_void,
+    eom2: *const c_void,
 ) -> c_int {
-    0
+    let Some(msg1) = (unsafe { dns_message_slice(buf1, eom1) }) else {
+        return -1;
+    };
+    let Some(msg2) = (unsafe { dns_message_slice(buf2, eom2) }) else {
+        return -1;
+    };
+    if dns_header_opcode(msg1) == Some(NS_OPCODE_UPDATE)
+        && dns_header_opcode(msg2) == Some(NS_OPCODE_UPDATE)
+    {
+        return 1;
+    }
+    let qdcount1 = match read_be_u16_at(msg1, 4) {
+        Some(count) => count,
+        None => return -1,
+    };
+    let qdcount2 = match read_be_u16_at(msg2, 4) {
+        Some(count) => count,
+        None => return -1,
+    };
+    if qdcount1 != qdcount2 {
+        return 0;
+    }
+
+    let msg = buf1.cast::<u8>();
+    let eom = eom1.cast::<u8>();
+    let mut pos = NS_HFIXEDSZ;
+    for _ in 0..qdcount1 as usize {
+        let mut tname = [0 as c_char; NS_MAXDNAME];
+        let Some((next, qtype, qclass)) =
+            (unsafe { read_query_question(msg, eom, msg1, pos, &mut tname) })
+        else {
+            return -1;
+        };
+        if unsafe { __res_nameinquery(tname.as_ptr(), qtype as c_int, qclass as c_int, buf2, eom2) }
+            == 0
+        {
+            return 0;
+        }
+        pos = next;
+    }
+    1
 }
 
 /// `__dn_count_labels(*name) -> int` — count labels in an encoded DNS

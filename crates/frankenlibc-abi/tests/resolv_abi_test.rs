@@ -2177,6 +2177,30 @@ fn synthetic_dns_message() -> Vec<u8> {
     m
 }
 
+fn synthetic_dns_query_message(qtype: u16, qclass: u16) -> Vec<u8> {
+    let mut m = Vec::<u8>::new();
+    m.extend_from_slice(&[0x12, 0x34]); // ID
+    m.extend_from_slice(&[0x01, 0x00]); // flags: standard recursive query
+    m.extend_from_slice(&[0x00, 0x01]); // QDCOUNT=1
+    m.extend_from_slice(&[0x00, 0x00]); // ANCOUNT=0
+    m.extend_from_slice(&[0x00, 0x00]); // NSCOUNT=0
+    m.extend_from_slice(&[0x00, 0x00]); // ARCOUNT=0
+    m.extend_from_slice(&[3, b'f', b'o', b'o', 3, b'c', b'o', b'm', 0]);
+    m.extend_from_slice(&qtype.to_be_bytes());
+    m.extend_from_slice(&qclass.to_be_bytes());
+    m
+}
+
+fn synthetic_dns_update_header() -> [u8; 12] {
+    let mut m = [0u8; 12];
+    m[2..4].copy_from_slice(&(5u16 << 11).to_be_bytes());
+    m
+}
+
+fn msg_eom(msg: &[u8]) -> *const c_void {
+    unsafe { msg.as_ptr().add(msg.len()) }.cast()
+}
+
 #[test]
 fn ns_initparse_parses_synthetic_response() {
     use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse};
@@ -2859,23 +2883,118 @@ fn bd_dcfj5_res_isourserver_returns_zero() {
 }
 
 #[test]
-fn bd_dcfj5_res_nameinquery_and_queriesmatch_return_zero() {
+fn res_query_nameinquery_finds_matching_question() {
     use frankenlibc_abi::resolv_abi::*;
-    let name = CString::new("example.com").unwrap();
+    let msg = synthetic_dns_query_message(1, 1);
+    let name = CString::new("FOO.com.").unwrap();
     assert_eq!(
-        unsafe { __res_nameinquery(name.as_ptr(), 1, 1, std::ptr::null(), std::ptr::null()) },
+        unsafe { __res_nameinquery(name.as_ptr(), 1, 1, msg.as_ptr().cast(), msg_eom(&msg)) },
+        1
+    );
+    assert_eq!(
+        unsafe { __res_nameinquery(name.as_ptr(), 28, 1, msg.as_ptr().cast(), msg_eom(&msg)) },
         0
+    );
+}
+
+#[test]
+fn res_query_queriesmatch_compares_question_sets() {
+    use frankenlibc_abi::resolv_abi::*;
+    let msg = synthetic_dns_query_message(1, 1);
+    let same = synthetic_dns_query_message(1, 1);
+    let different_type = synthetic_dns_query_message(28, 1);
+    assert_eq!(
+        unsafe {
+            __res_queriesmatch(
+                msg.as_ptr().cast(),
+                msg_eom(&msg),
+                same.as_ptr().cast(),
+                msg_eom(&same),
+            )
+        },
+        1
     );
     assert_eq!(
         unsafe {
             __res_queriesmatch(
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
+                msg.as_ptr().cast(),
+                msg_eom(&msg),
+                different_type.as_ptr().cast(),
+                msg_eom(&different_type),
             )
         },
         0
+    );
+}
+
+#[test]
+fn res_query_queriesmatch_accepts_update_opcode_headers() {
+    use frankenlibc_abi::resolv_abi::*;
+    let a = synthetic_dns_update_header();
+    let b = synthetic_dns_update_header();
+    assert_eq!(
+        unsafe {
+            __res_queriesmatch(
+                a.as_ptr().cast(),
+                msg_eom(&a),
+                b.as_ptr().cast(),
+                msg_eom(&b),
+            )
+        },
+        1
+    );
+}
+
+#[test]
+fn res_query_predicates_reject_malformed_packets() {
+    use frankenlibc_abi::resolv_abi::*;
+    let name = CString::new("foo.com").unwrap();
+    let mut truncated = [0u8; 12];
+    truncated[5] = 1; // QDCOUNT=1, but no question bytes follow.
+    assert_eq!(
+        unsafe {
+            __res_nameinquery(
+                name.as_ptr(),
+                1,
+                1,
+                truncated.as_ptr().cast(),
+                msg_eom(&truncated),
+            )
+        },
+        -1
+    );
+    assert_eq!(
+        unsafe {
+            __res_queriesmatch(
+                truncated.as_ptr().cast(),
+                msg_eom(&truncated),
+                truncated.as_ptr().cast(),
+                msg_eom(&truncated),
+            )
+        },
+        -1
+    );
+}
+
+#[test]
+fn res_query_internal_aliases_delegate_to_public_impl() {
+    use frankenlibc_abi::unistd_abi::{__libc_res_nameinquery, __libc_res_queriesmatch};
+    let msg = synthetic_dns_query_message(1, 1);
+    let name = CString::new("foo.com").unwrap();
+    assert_eq!(
+        unsafe { __libc_res_nameinquery(name.as_ptr(), 1, 1, msg.as_ptr().cast(), msg_eom(&msg)) },
+        1
+    );
+    assert_eq!(
+        unsafe {
+            __libc_res_queriesmatch(
+                msg.as_ptr().cast(),
+                msg_eom(&msg),
+                msg.as_ptr().cast(),
+                msg_eom(&msg),
+            )
+        },
+        1
     );
 }
 
