@@ -12501,19 +12501,39 @@ fn res_iclose_is_void_noop() {
 }
 
 #[test]
-fn res_nopt_returns_minus_one() {
-    use frankenlibc_abi::unistd_abi::__res_nopt;
+fn res_nopt_appends_edns0_opt_record() {
+    use frankenlibc_abi::unistd_abi::{__res_context_mkquery, __res_nopt};
     let mut buf = [0u8; 512];
+    let dname = CString::new("example.com").unwrap();
+    let query_len = unsafe {
+        __res_context_mkquery(
+            std::ptr::null_mut(),
+            0,
+            dname.as_ptr(),
+            1,
+            1,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as c_int,
+        )
+    };
+    assert_eq!(query_len, 29);
+
     let rc = unsafe {
         __res_nopt(
             std::ptr::null_mut(),
-            0,
+            query_len,
             buf.as_mut_ptr() as *mut c_void,
             buf.len() as c_int,
-            512,
+            4096,
         )
     };
-    assert_eq!(rc, -1);
+    assert_eq!(rc, query_len + 11);
+    assert_eq!(u16::from_be_bytes([buf[10], buf[11]]), 1);
+    let opt = &buf[query_len as usize..rc as usize];
+    assert_eq!(opt, &[0, 0, 41, 0x10, 0, 0, 0, 0, 0, 0, 0]);
 }
 
 // ---------------------------------------------------------------------------

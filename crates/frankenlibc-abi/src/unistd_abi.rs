@@ -10052,16 +10052,48 @@ pub unsafe extern "C" fn __res_get_nsaddr(_statp: *mut c_void, _n: c_uint) -> *m
 pub unsafe extern "C" fn __res_iclose(_statp: *mut c_void, _free_addr: c_int) {}
 
 /// `__res_nopt(*ctx, n0, *buf, buflen, anslen) -> int` — append an
-/// EDNS OPT pseudo-RR to a DNS query. Stub returns -1.
+/// EDNS0 OPT pseudo-RR to a DNS query and return the new packet length.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nopt(
     _ctx: *mut c_void,
-    _n0: c_int,
-    _buf: *mut c_void,
-    _buflen: c_int,
-    _anslen: c_int,
+    n0: c_int,
+    buf: *mut c_void,
+    buflen: c_int,
+    anslen: c_int,
 ) -> c_int {
-    -1
+    const DNS_HEADER_LEN: usize = 12;
+    const OPT_RR_LEN: usize = 11;
+    const NS_T_OPT: u16 = 41;
+
+    if buf.is_null()
+        || n0 < DNS_HEADER_LEN as c_int
+        || buflen < 0
+        || anslen < 0
+        || anslen > u16::MAX as c_int
+    {
+        return -1;
+    }
+    let packet_len = n0 as usize;
+    let capacity = buflen as usize;
+    if capacity < packet_len || capacity - packet_len < OPT_RR_LEN {
+        return -1;
+    }
+
+    let packet = unsafe { core::slice::from_raw_parts_mut(buf.cast::<u8>(), capacity) };
+    let arcount = u16::from_be_bytes([packet[10], packet[11]]);
+    let Some(next_arcount) = arcount.checked_add(1) else {
+        return -1;
+    };
+
+    let opt = &mut packet[packet_len..packet_len + OPT_RR_LEN];
+    opt[0] = 0; // Root owner name.
+    opt[1..3].copy_from_slice(&NS_T_OPT.to_be_bytes());
+    opt[3..5].copy_from_slice(&(anslen as u16).to_be_bytes());
+    opt[5..9].copy_from_slice(&0u32.to_be_bytes());
+    opt[9..11].copy_from_slice(&0u16.to_be_bytes());
+    packet[10..12].copy_from_slice(&next_arcount.to_be_bytes());
+
+    (packet_len + OPT_RR_LEN) as c_int
 }
 
 // CRYPT_B64 / crypt_b64_encode / crypt_sha512 / crypt_sha256 / crypt_md5
