@@ -461,9 +461,12 @@ unsafe fn set_h_errnop(h_errnop: *mut c_int, value: c_int) {
     }
 }
 
+const HOSTENT_MAX_ALIASES: usize = 8;
+
 struct HostentTlsStorage {
     name: [c_char; 256],
-    aliases: [*mut c_char; 1],
+    alias_names: [[c_char; 256]; HOSTENT_MAX_ALIASES],
+    aliases: [*mut c_char; HOSTENT_MAX_ALIASES + 1],
     addr_list: [*mut c_char; 2],
     addr: [u8; 4],
     hostent: libc::hostent,
@@ -473,7 +476,8 @@ impl HostentTlsStorage {
     fn new() -> Self {
         Self {
             name: [0; 256],
-            aliases: [ptr::null_mut(); 1],
+            alias_names: [[0; 256]; HOSTENT_MAX_ALIASES],
+            aliases: [ptr::null_mut(); HOSTENT_MAX_ALIASES + 1],
             addr_list: [ptr::null_mut(); 2],
             addr: [0; 4],
             hostent: libc::hostent {
@@ -500,6 +504,15 @@ fn with_tls_hostent<R>(f: impl FnOnce(&mut HostentTlsStorage) -> R) -> R {
 }
 
 unsafe fn populate_tls_hostent(name_bytes: &[u8], ip: Ipv4Addr) -> *mut c_void {
+    let aliases: &[Vec<u8>] = &[];
+    unsafe { populate_tls_hostent_with_aliases(name_bytes, aliases, ip) }
+}
+
+unsafe fn populate_tls_hostent_with_aliases(
+    name_bytes: &[u8],
+    aliases: &[Vec<u8>],
+    ip: Ipv4Addr,
+) -> *mut c_void {
     with_tls_hostent(|storage| {
         storage.name.fill(0);
         let max_name = storage.name.len().saturating_sub(1);
@@ -508,8 +521,16 @@ unsafe fn populate_tls_hostent(name_bytes: &[u8], ip: Ipv4Addr) -> *mut c_void {
             storage.name[index] = byte as c_char;
         }
 
+        storage.aliases.fill(ptr::null_mut());
+        for alias_name in &mut storage.alias_names {
+            alias_name.fill(0);
+        }
+        for (index, alias) in aliases.iter().take(HOSTENT_MAX_ALIASES).enumerate() {
+            copy_to_cchar_buf(&mut storage.alias_names[index], alias);
+            storage.aliases[index] = storage.alias_names[index].as_mut_ptr();
+        }
+
         storage.addr = ip.octets();
-        storage.aliases[0] = ptr::null_mut();
         storage.addr_list[0] = storage.addr.as_mut_ptr().cast::<c_char>();
         storage.addr_list[1] = ptr::null_mut();
         storage.hostent = libc::hostent {
@@ -4931,26 +4952,89 @@ pub unsafe extern "C" fn __dn_count_labels(name: *const c_char) -> c_int {
 // --- /etc/hosts iteration ---
 //
 // These are the historical libresolv hooks for iterating /etc/hosts. They
-// were superseded by the NSS files plugin (_nss_files_gethostent_r) which
-// we already ship. Returning NULL/void from the legacy entries reports
-// "no host table available", matching the contract for "fall back to NSS".
+// reuse the same files-backend parser as the non-iterator lookup hooks and
+// expose IPv4 entries through the shared thread-local hostent storage.
+
+thread_local! {
+    static HOSTS_ITER_LINE_OFFSET: RefCell<usize> = const { RefCell::new(0) };
+}
+
+fn reset_hosts_iterator() {
+    HOSTS_ITER_LINE_OFFSET.with(|cell| *cell.borrow_mut() = 0);
+}
+
+struct HostsIterEntry {
+    addr: Ipv4Addr,
+    hostname: Vec<u8>,
+    aliases: Vec<Vec<u8>>,
+}
+
+fn next_hosts_ipv4_entry(content: &[u8], offset: &mut usize) -> Option<HostsIterEntry> {
+    while *offset < content.len() {
+        let start = *offset;
+        let rel_end = content[start..]
+            .iter()
+            .position(|&byte| byte == b'\n')
+            .unwrap_or(content.len() - start);
+        let end = start + rel_end;
+        *offset = if end < content.len() { end + 1 } else { end };
+
+        let Some((addr, hostnames)) =
+            frankenlibc_core::resolv::parse_hosts_line(&content[start..end])
+        else {
+            continue;
+        };
+        let mut hostnames = hostnames.into_iter();
+        let Some(hostname) = hostnames.next() else {
+            continue;
+        };
+        let Ok(addr_text) = core::str::from_utf8(&addr) else {
+            continue;
+        };
+        if let Ok(addr) = addr_text.parse::<Ipv4Addr>() {
+            return Some(HostsIterEntry {
+                addr,
+                hostname,
+                aliases: hostnames.collect(),
+            });
+        }
+    }
+    None
+}
 
 /// `_sethtent(stayopen) -> ()` — open or rewind /etc/hosts iteration.
-/// Stub no-op.
+/// The `stayopen` hint is accepted for ABI compatibility but ignored
+/// because this implementation uses cached file snapshots rather than
+/// holding an open file descriptor.
 ///
 /// # Safety
 /// Trivially safe.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _sethtent(_stayopen: c_int) {}
+pub unsafe extern "C" fn _sethtent(_stayopen: c_int) {
+    reset_hosts_iterator();
+}
 
-/// `_gethtent() -> *struct hostent` — next /etc/hosts entry. Stub
-/// returns NULL.
+/// `_gethtent() -> *struct hostent` — next IPv4 /etc/hosts entry.
 ///
 /// # Safety
 /// Trivially safe.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn _gethtent() -> *mut c_void {
-    core::ptr::null_mut()
+    let Ok(content) = read_hosts_backend() else {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    };
+    let next = HOSTS_ITER_LINE_OFFSET.with(|cell| {
+        let mut offset = cell.borrow_mut();
+        next_hosts_ipv4_entry(&content, &mut offset)
+    });
+    let Some(entry) = next else {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    };
+
+    unsafe { set_h_errnop(ptr::null_mut(), 0) };
+    unsafe { populate_tls_hostent_with_aliases(&entry.hostname, &entry.aliases, entry.addr) }
 }
 
 /// `_gethtbyname(*name) -> *struct hostent` — lookup name in

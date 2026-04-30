@@ -3080,11 +3080,62 @@ fn bd_dcfj5_dn_count_labels_rejects_tracked_unterminated_name() {
 }
 
 #[test]
-fn bd_dcfj5_etc_hosts_iteration_returns_null_or_void() {
+fn bd_dcfj5_etc_hosts_iteration_reads_ipv4_entries() {
     use frankenlibc_abi::resolv_abi::*;
-    unsafe { _sethtent(0) };
-    unsafe { _sethtent(1) };
-    assert!(unsafe { _gethtent() }.is_null());
+    with_resolver_backends(
+        Some(
+            b"# ignored comment\n\
+              ::1 ipv6-localhost\n\
+              203.0.113.8 legacy-name legacy-alias\n\
+              malformed line\n\
+              198.51.100.4 second-name\n",
+        ),
+        None,
+        |_| {
+            unsafe { _sethtent(1) };
+
+            let first = unsafe { _gethtent() };
+            assert!(!first.is_null());
+            let hostent = unsafe { &*(first as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"legacy-name"
+            );
+            let addr_ptr = unsafe { *hostent.h_addr_list };
+            let octets = unsafe { std::slice::from_raw_parts(addr_ptr.cast::<u8>(), 4) };
+            assert_eq!(octets, [203, 0, 113, 8]);
+            let alias_ptr = unsafe { *hostent.h_aliases };
+            assert_eq!(
+                unsafe { CStr::from_ptr(alias_ptr) }.to_bytes(),
+                b"legacy-alias"
+            );
+            assert!(unsafe { *hostent.h_aliases.add(1) }.is_null());
+
+            let second = unsafe { _gethtent() };
+            assert!(!second.is_null());
+            let hostent = unsafe { &*(second as *const libc::hostent) };
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"second-name"
+            );
+            let addr_ptr = unsafe { *hostent.h_addr_list };
+            let octets = unsafe { std::slice::from_raw_parts(addr_ptr.cast::<u8>(), 4) };
+            assert_eq!(octets, [198, 51, 100, 4]);
+
+            assert!(unsafe { _gethtent() }.is_null());
+
+            unsafe { _sethtent(0) };
+            let rewound = unsafe { _gethtent() };
+            assert!(!rewound.is_null());
+            let hostent = unsafe { &*(rewound as *const libc::hostent) };
+            assert_eq!(
+                unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+                b"legacy-name"
+            );
+        },
+    );
 }
 
 #[test]
