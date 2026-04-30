@@ -3003,11 +3003,10 @@ unsafe fn dns_message_slice<'a>(buf: *const c_void, eom: *const c_void) -> Optio
     if msg > eom {
         return None;
     }
-    let len = unsafe { eom.offset_from(msg) };
-    if len < NS_HFIXEDSZ as isize {
+    let len = (eom as usize).checked_sub(msg as usize)?;
+    if len < NS_HFIXEDSZ || len > isize::MAX as usize {
         return None;
     }
-    let len = len as usize;
     if !tracked_region_fits(buf, len) {
         return None;
     }
@@ -4423,7 +4422,7 @@ fn parse_signed_meters(s: &[u8]) -> Option<i64> {
         bytes = &bytes[1..];
     }
     // Strip optional trailing 'm'.
-    if !bytes.is_empty() && *bytes.last().unwrap() == b'm' {
+    if bytes.last().copied() == Some(b'm') {
         bytes = &bytes[..bytes.len() - 1];
     }
     let dot = bytes.iter().position(|&b| b == b'.');
