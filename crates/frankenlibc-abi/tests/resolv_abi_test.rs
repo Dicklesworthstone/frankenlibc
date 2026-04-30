@@ -2828,6 +2828,63 @@ fn bd_dcfj5_dns_cdname_fqname_return_null() {
 }
 
 #[test]
+fn bd_dcfj5_p_fqnname_expands_wire_name() {
+    use frankenlibc_abi::resolv_abi::__p_fqnname;
+    let msg = synthetic_dns_message();
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+    let mut name = [0 as c_char; 64];
+    let next = unsafe {
+        __p_fqnname(
+            answer_name,
+            msg.as_ptr(),
+            msg.len() as c_int,
+            name.as_mut_ptr(),
+            name.len() as c_int,
+        )
+    };
+
+    assert_eq!(next, unsafe { answer_name.add(2) });
+    assert_eq!(
+        unsafe { CStr::from_ptr(name.as_ptr()) }.to_bytes(),
+        b"foo.com"
+    );
+}
+
+#[test]
+fn bd_dcfj5_p_fqnname_rejects_invalid_bounds() {
+    use frankenlibc_abi::resolv_abi::__p_fqnname;
+    let msg = synthetic_dns_message();
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+    let mut small = [0 as c_char; 4];
+    assert!(
+        unsafe {
+            __p_fqnname(
+                answer_name,
+                msg.as_ptr(),
+                msg.len() as c_int,
+                small.as_mut_ptr(),
+                small.len() as c_int,
+            )
+        }
+        .is_null()
+    );
+    let outside = unsafe { msg.as_ptr().add(msg.len()) };
+    let mut name = [0 as c_char; 64];
+    assert!(
+        unsafe {
+            __p_fqnname(
+                outside,
+                msg.as_ptr(),
+                msg.len() as c_int,
+                name.as_mut_ptr(),
+                name.len() as c_int,
+            )
+        }
+        .is_null()
+    );
+}
+
+#[test]
 fn bd_dcfj5_hostalias_helpers_return_null() {
     use frankenlibc_abi::resolv_abi::*;
     let name = CString::new("alias").unwrap();

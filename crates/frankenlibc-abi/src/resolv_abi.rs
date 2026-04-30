@@ -4036,13 +4036,39 @@ pub unsafe extern "C" fn __p_fqname(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __p_fqnname(
-    _cp: *const u8,
-    _msg: *const u8,
-    _msglen: c_int,
-    _name: *mut c_char,
-    _namelen: c_int,
+    cp: *const u8,
+    msg: *const u8,
+    msglen: c_int,
+    name: *mut c_char,
+    namelen: c_int,
 ) -> *const u8 {
-    core::ptr::null()
+    if cp.is_null() || msg.is_null() || name.is_null() || msglen <= 0 || namelen <= 0 {
+        return core::ptr::null();
+    }
+    let msglen = msglen as usize;
+    let namelen = namelen as usize;
+    if !tracked_region_fits(msg.cast(), msglen) || !tracked_region_fits(name.cast(), namelen) {
+        return core::ptr::null();
+    }
+    let Some(cp_offset) = (cp as usize).checked_sub(msg as usize) else {
+        return core::ptr::null();
+    };
+    if cp_offset >= msglen {
+        return core::ptr::null();
+    }
+    let eom = unsafe { msg.add(msglen) };
+    let consumed = unsafe { crate::unistd_abi::dn_expand(msg, eom, cp, name, namelen as c_int) };
+    if consumed < 0 {
+        return core::ptr::null();
+    }
+    let consumed = consumed as usize;
+    if cp_offset
+        .checked_add(consumed)
+        .is_none_or(|end| end > msglen)
+    {
+        return core::ptr::null();
+    }
+    unsafe { cp.add(consumed) }
 }
 
 // --- HOSTALIASES ---
