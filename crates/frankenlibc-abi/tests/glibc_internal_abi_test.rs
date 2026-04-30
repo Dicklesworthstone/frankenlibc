@@ -3017,6 +3017,45 @@ fn inet_text_parsers_reject_tracked_unterminated_inputs() {
     }
 }
 
+#[test]
+fn inet_nsap_helpers_cap_tracked_short_buffers() {
+    unsafe {
+        let text = CString::new("abcd").unwrap();
+        let out = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        let parsed =
+            frankenlibc_abi::glibc_internal_abi::inet_nsap_addr(text.as_ptr(), out.cast(), 8);
+        assert_eq!(parsed, 1);
+        assert_eq!(*out, 0xab);
+        frankenlibc_abi::malloc_abi::free(out.cast());
+
+        let src = [0xab, 0xcd];
+        let short_text = malloc_tracked_zeroed_bytes(4).cast::<c_char>();
+        std::ptr::write_bytes(short_text.cast::<u8>(), 0x7e, 4);
+        let returned = frankenlibc_abi::glibc_internal_abi::inet_nsap_ntoa(
+            src.len() as c_int,
+            src.as_ptr().cast(),
+            short_text,
+        );
+        assert_eq!(returned, short_text);
+        assert_eq!(*short_text, 0);
+        assert_eq!(*short_text.add(1) as u8, 0x7e);
+        frankenlibc_abi::malloc_abi::free(short_text.cast());
+
+        let short_src = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *short_src = 0xab;
+        let mut text_buf = [0x7eu8; 16];
+        let returned = frankenlibc_abi::glibc_internal_abi::inet_nsap_ntoa(
+            2,
+            short_src.cast(),
+            text_buf.as_mut_ptr().cast(),
+        );
+        assert_eq!(returned, text_buf.as_mut_ptr().cast::<c_char>());
+        assert_eq!(text_buf[0], 0);
+        assert_eq!(text_buf[1], 0x7e);
+        frankenlibc_abi::malloc_abi::free(short_src.cast());
+    }
+}
+
 // ===========================================================================
 // __inet_pton_length — inet_pton with explicit source length
 // ===========================================================================
@@ -3113,6 +3152,33 @@ fn test_inet_pton_length_null_src() {
         )
     };
     assert_eq!(rc, -1);
+}
+
+#[test]
+fn inet_pton_length_rejects_tracked_short_source() {
+    unsafe {
+        let src = malloc_tracked_zeroed_bytes(4).cast::<u8>();
+        std::ptr::copy_nonoverlapping(b"10.0".as_ptr(), src, 4);
+        let mut dst = [0xa5u8; 4];
+        let rc = __inet_pton_length(2, src.cast(), 8, dst.as_mut_ptr().cast());
+        assert_eq!(rc, -1);
+        assert_eq!(dst, [0xa5; 4]);
+        frankenlibc_abi::malloc_abi::free(src.cast());
+    }
+}
+
+#[test]
+fn inet_pton_length_rejects_tracked_short_destination() {
+    unsafe {
+        let src = b"10.0.0.1";
+        let dst = malloc_tracked_zeroed_bytes(2).cast::<u8>();
+        std::ptr::write_bytes(dst, 0xa5, 2);
+        let rc = __inet_pton_length(2, src.as_ptr().cast(), src.len(), dst.cast());
+        assert_eq!(rc, -1);
+        assert_eq!(*dst, 0xa5);
+        assert_eq!(*dst.add(1), 0xa5);
+        frankenlibc_abi::malloc_abi::free(dst.cast());
+    }
 }
 
 // ===========================================================================

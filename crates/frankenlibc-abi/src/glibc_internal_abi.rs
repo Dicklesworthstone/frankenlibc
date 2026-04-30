@@ -2780,7 +2780,8 @@ pub unsafe extern "C" fn inet_nsap_addr(
     let Some(text) = (unsafe { bounded_c_string_bytes(cp, NSAP_TEXT_SCAN_LIMIT) }) else {
         return 0;
     };
-    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, buflen as usize) };
+    let effective_buflen = effective_output_len(buf, buflen as usize);
+    let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, effective_buflen) };
     frankenlibc_core::inet::nsap::parse_nsap_addr(&text, dst) as c_uint
 }
 // inet_nsap_ntoa: convert binary NSAP address to hex string
@@ -2804,8 +2805,16 @@ pub unsafe extern "C" fn inet_nsap_ntoa(
         unsafe { *dst = 0 };
         return dst;
     }
+    if tracked_region_too_short_addr(cp as usize, len as usize) {
+        unsafe { *dst = 0 };
+        return dst;
+    }
     let src = unsafe { std::slice::from_raw_parts(cp as *const u8, len as usize) };
     let formatted = frankenlibc_core::inet::nsap::format_nsap_addr(src);
+    if !buf.is_null() && tracked_output_too_short(buf.cast(), formatted.len() + 1) {
+        unsafe { *dst = 0 };
+        return dst;
+    }
     unsafe {
         std::ptr::copy_nonoverlapping(formatted.as_ptr(), dst as *mut u8, formatted.len());
         *dst.add(formatted.len()) = 0;
@@ -7283,13 +7292,19 @@ pub unsafe extern "C" fn __inet_pton_length(
     if src.is_null() || dst.is_null() {
         return -1;
     }
-    // Build a length-bounded byte slice from the source
-    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
+    if srclen > isize::MAX as usize || tracked_region_too_short_addr(src as usize, srclen) {
+        return -1;
+    }
     let dst_size = match af {
         2 /* AF_INET */ => 4usize,
         10 /* AF_INET6 */ => 16usize,
         _ => return -1,
     };
+    if tracked_output_too_short(dst, dst_size) {
+        return -1;
+    }
+    // Build a length-bounded byte slice from the source.
+    let src_slice = unsafe { std::slice::from_raw_parts(src as *const u8, srclen) };
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dst_size) };
     frankenlibc_core::inet::inet_pton(af, src_slice, dst_slice)
 }
