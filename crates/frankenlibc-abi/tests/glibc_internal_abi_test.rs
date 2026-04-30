@@ -3293,6 +3293,18 @@ fn test_inet6_scopeid_pton_empty_returns_enoent() {
 }
 
 #[test]
+fn inet6_scopeid_pton_rejects_tracked_short_scope() {
+    unsafe {
+        let addr = [0u8; 16];
+        let scope = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *scope = b'4';
+        let rc = __inet6_scopeid_pton(addr.as_ptr().cast(), scope.cast(), 2);
+        assert_eq!(rc, libc::ENOENT);
+        frankenlibc_abi::malloc_abi::free(scope.cast());
+    }
+}
+
+#[test]
 fn test_inet6_scopeid_pton_invalid_name() {
     // Non-numeric, non-existent interface name
     let scope = b"nonexistent_iface_xyz_12345";

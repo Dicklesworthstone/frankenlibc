@@ -7342,6 +7342,9 @@ pub unsafe extern "C" fn __inet6_scopeid_pton(
     if scope.is_null() || scopelen == 0 {
         return libc::ENOENT;
     }
+    if scopelen > isize::MAX as usize || tracked_region_too_short_addr(scope as usize, scopelen) {
+        return libc::ENOENT;
+    }
     // Build a byte slice from the scope string
     let scope_bytes = unsafe { std::slice::from_raw_parts(scope as *const u8, scopelen) };
     // Try numeric parse first
