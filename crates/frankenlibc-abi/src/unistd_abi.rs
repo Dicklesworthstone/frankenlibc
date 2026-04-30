@@ -90,6 +90,13 @@ fn tracked_region_fits(addr: usize, len: usize) -> bool {
 }
 
 #[inline]
+fn tracked_object_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null()
+        && (ptr as usize).is_multiple_of(core::mem::align_of::<T>())
+        && tracked_region_fits(ptr as usize, core::mem::size_of::<T>())
+}
+
+#[inline]
 fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
     known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
 }
@@ -97,6 +104,16 @@ fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
 #[inline]
 fn tracked_void_output_capacity(ptr: *mut c_void, requested: usize) -> usize {
     known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
+}
+
+fn aligned_output_offset(base: *const c_char, min_offset: usize, align: usize) -> Option<usize> {
+    if align <= 1 {
+        return Some(min_offset);
+    }
+    let addr = (base as usize).checked_add(min_offset)?;
+    let rem = addr % align;
+    let padding = if rem == 0 { 0 } else { align - rem };
+    min_offset.checked_add(padding)
 }
 
 /// Query the system page size via AT_PAGESZ from /proc/self/auxv, cached.
@@ -22786,10 +22803,29 @@ unsafe fn fill_protoent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    // Need room for: name + NUL + null-terminated alias pointer
+    if !tracked_object_fits::<libc::protoent>(result_buf.cast())
+        || !tracked_object_fits::<*mut c_void>(result as *const *mut c_void)
+    {
+        return libc::EINVAL;
+    }
+
+    // Need room for: name + NUL + aligned null-terminated alias pointer.
+    let effective_buflen = tracked_output_capacity(buf, buflen);
     let alias_ptr_size = core::mem::size_of::<*mut c_char>();
-    let needed = name.len() + 1 + alias_ptr_size;
-    if needed > buflen {
+    let alias_ptr_align = core::mem::align_of::<*mut c_char>();
+    let name_len = match name.len().checked_add(1) {
+        Some(len) => len,
+        None => return libc::ERANGE,
+    };
+    let alias_offset = match aligned_output_offset(buf, name_len, alias_ptr_align) {
+        Some(offset) => offset,
+        None => return libc::ERANGE,
+    };
+    let needed = match alias_offset.checked_add(alias_ptr_size) {
+        Some(needed) => needed,
+        None => return libc::ERANGE,
+    };
+    if needed > effective_buflen {
         return libc::ERANGE;
     }
 
@@ -22800,28 +22836,20 @@ unsafe fn fill_protoent_r(
         *buf_u8.add(name.len()) = 0;
     }
 
-    // Aliases: NULL-terminated list at end of buffer (just a single NULL ptr)
-    let alias_offset = name.len() + 1;
-    // Align to pointer size
-    let alias_offset = (alias_offset + (alias_ptr_size - 1)) & !(alias_ptr_size - 1);
-    if alias_offset + alias_ptr_size > buflen {
-        return libc::ERANGE;
-    }
+    // Aliases: NULL-terminated list after p_name (just a single NULL ptr).
     unsafe {
         *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut();
     }
 
-    // Fill struct protoent: { p_name, p_aliases, p_proto }
-    let ent = result_buf as *mut *mut c_char;
+    // Fill struct protoent.
+    let ent = result_buf.cast::<libc::protoent>();
     unsafe {
-        *ent = buf; // p_name
-        *(ent.add(1) as *mut *mut *mut c_char) = buf_u8.add(alias_offset) as *mut *mut c_char; // p_aliases
-        *((result_buf as *mut u8).add(16) as *mut c_int) = proto; // p_proto
+        (*ent).p_name = buf;
+        (*ent).p_aliases = buf_u8.add(alias_offset) as *mut *mut c_char;
+        (*ent).p_proto = proto;
     }
 
-    if !result.is_null() {
-        unsafe { *result = result_buf };
-    }
+    unsafe { *result = result_buf };
     0
 }
 
@@ -22836,10 +22864,15 @@ pub unsafe extern "C" fn getprotobyname_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
     }
-    if name.is_null() || result_buf.is_null() || buf.is_null() {
+    unsafe { *result = std::ptr::null_mut() };
+    if name.is_null()
+        || result_buf.is_null()
+        || buf.is_null()
+        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
+    {
         return libc::EINVAL;
     }
 
@@ -22890,10 +22923,14 @@ pub unsafe extern "C" fn getprotobynumber_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
     }
-    if result_buf.is_null() || buf.is_null() {
+    unsafe { *result = std::ptr::null_mut() };
+    if result_buf.is_null()
+        || buf.is_null()
+        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
+    {
         return libc::EINVAL;
     }
 
@@ -22942,10 +22979,14 @@ pub unsafe extern "C" fn getprotoent_r(
 ) -> c_int {
     use std::io::BufRead;
 
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
     }
-    if result_buf.is_null() || buf.is_null() {
+    unsafe { *result = std::ptr::null_mut() };
+    if result_buf.is_null()
+        || buf.is_null()
+        || !tracked_object_fits::<libc::protoent>(result_buf.cast())
+    {
         return libc::EINVAL;
     }
 

@@ -4851,6 +4851,74 @@ fn getprotobyname_r_rejects_tracked_unterminated_name() {
 }
 
 #[test]
+fn getprotobyname_r_caps_tracked_short_buffer() {
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let name = CString::new("tcp").unwrap();
+
+    let rc = unsafe {
+        getprotobyname_r(
+            name.as_ptr(),
+            (&mut proto as *mut libc::protoent).cast(),
+            raw_buf.cast::<c_char>(),
+            512,
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn getprotobyname_r_rejects_tracked_short_result_buf() {
+    let raw_proto = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 512];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let name = CString::new("tcp").unwrap();
+
+    let rc = unsafe {
+        getprotobyname_r(
+            name.as_ptr(),
+            raw_proto,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_proto.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_proto) };
+}
+
+#[test]
+fn getprotobynumber_r_caps_tracked_short_buffer() {
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    let rc = unsafe {
+        getprotobynumber_r(
+            6,
+            (&mut proto as *mut libc::protoent).cast(),
+            raw_buf.cast::<c_char>(),
+            512,
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
 fn getprotobynumber_r_and_getprotoent_r_surface_entries() {
     let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
     let mut buf = [0i8; 512];
@@ -4887,6 +4955,28 @@ fn getprotobynumber_r_and_getprotoent_r_surface_entries() {
         !proto.p_name.is_null(),
         "first protocol enumeration entry should populate p_name"
     );
+}
+
+#[test]
+fn getprotoent_r_caps_tracked_short_buffer() {
+    let mut proto: libc::protoent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    unsafe { setprotoent(1) };
+    let rc = unsafe {
+        getprotoent_r(
+            (&mut proto as *mut libc::protoent).cast(),
+            raw_buf.cast::<c_char>(),
+            512,
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
 }
 
 #[test]
