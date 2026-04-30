@@ -98,6 +98,16 @@ fn tracked_output_too_short(ptr: *mut c_void, requested: usize) -> bool {
 }
 
 #[inline]
+fn tracked_region_too_short_addr(addr: usize, requested: usize) -> bool {
+    requested > 0 && known_remaining(addr).is_some_and(|remaining| requested > remaining)
+}
+
+#[inline]
+fn effective_output_len(ptr: *mut c_void, requested: usize) -> usize {
+    known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
+}
+
+#[inline]
 unsafe fn dns_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     unsafe { bounded_c_string_bytes(ptr, DNS_CSTR_SCAN_LIMIT) }
 }
@@ -889,7 +899,8 @@ pub unsafe extern "C" fn __res_mkquery(
     };
     let qname = frankenlibc_core::resolv::dns::encode_domain_name(&name_bytes);
     let needed = 12 + qname.len() + 4; // header + qname + qtype + qclass
-    if (buflen as usize) < needed {
+    let effective_buflen = effective_output_len(buf, buflen as usize);
+    if effective_buflen < needed {
         return -1;
     }
 
@@ -898,7 +909,7 @@ pub unsafe extern "C" fn __res_mkquery(
     let tx_id = TX_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     let out = buf as *mut u8;
-    let out_slice = unsafe { std::slice::from_raw_parts_mut(out, buflen as usize) };
+    let out_slice = unsafe { std::slice::from_raw_parts_mut(out, effective_buflen) };
 
     // Header: ID, flags (RD=1), qdcount=1
     let hdr = frankenlibc_core::resolv::dns::DnsHeader::new_query(tx_id);
@@ -1613,7 +1624,8 @@ pub unsafe extern "C" fn ns_name_ntop(
             frankenlibc_core::resolv::dns_name::NS_MAXDNAME,
         )
     };
-    let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dstsiz) };
+    let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
+    let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_ntop(wire, out) {
         Ok(n) => n as c_int,
         Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
@@ -1642,7 +1654,8 @@ pub unsafe extern "C" fn ns_name_pton(
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     };
-    let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dstsiz) };
+    let effective_dstsiz = effective_output_len(dst, dstsiz);
+    let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_pton(&name_bytes, out) {
         Ok(n) => n as c_int,
         Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
@@ -1678,7 +1691,8 @@ pub unsafe extern "C" fn ns_name_unpack(
     let msg_len = unsafe { eom.offset_from(msg) } as usize;
     let src_offset = unsafe { src.offset_from(msg) } as usize;
     let msg_slice = unsafe { std::slice::from_raw_parts(msg, msg_len) };
-    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
+    let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_unpack(msg_slice, src_offset, out) {
         Ok(n) => n as c_int,
         Err(_) => -1,
@@ -1707,7 +1721,8 @@ pub unsafe extern "C" fn ns_name_pack(
     let src_slice = unsafe {
         std::slice::from_raw_parts(src, frankenlibc_core::resolv::dns_name::NS_MAXCDNAME)
     };
-    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstlen as usize) };
+    let effective_dstlen = effective_output_len(dst.cast(), dstlen as usize);
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstlen) };
     match frankenlibc_core::resolv::dns_name::name_pack(src_slice, out) {
         Ok(n) => n as c_int,
         Err(_) => -1,
@@ -2161,6 +2176,9 @@ pub unsafe extern "C" fn inet6_opt_init(extbuf: *mut c_void, extlen: c_int) -> c
     if extlen < 2 {
         return -1;
     }
+    if tracked_output_too_short(extbuf, 2) {
+        return -1;
+    }
     let buf = extbuf as *mut u8;
     unsafe {
         *buf = 0; // Next Header (filled by kernel).
@@ -2200,10 +2218,14 @@ pub unsafe extern "C" fn inet6_opt_append(
     if extbuf.is_null() {
         return new_off as c_int;
     }
-    if new_off > extlen as usize {
+    if extlen < 0 {
         return -1;
     }
-    let buf = unsafe { std::slice::from_raw_parts_mut(extbuf as *mut u8, extlen as usize) };
+    let effective_extlen = effective_output_len(extbuf, extlen as usize);
+    if new_off > effective_extlen {
+        return -1;
+    }
+    let buf = unsafe { std::slice::from_raw_parts_mut(extbuf as *mut u8, effective_extlen) };
     inet6_opt_write_pad(buf, off, padlen);
     let opt_start = off + padlen;
     buf[opt_start] = typ;
@@ -2234,10 +2256,14 @@ pub unsafe extern "C" fn inet6_opt_finish(
     if extbuf.is_null() {
         return total as c_int;
     }
-    if total > extlen as usize {
+    if extlen < 0 {
         return -1;
     }
-    let buf = unsafe { std::slice::from_raw_parts_mut(extbuf as *mut u8, extlen as usize) };
+    let effective_extlen = effective_output_len(extbuf, extlen as usize);
+    if total > effective_extlen {
+        return -1;
+    }
+    let buf = unsafe { std::slice::from_raw_parts_mut(extbuf as *mut u8, effective_extlen) };
     inet6_opt_write_pad(buf, off, padlen);
     // Update Header Ext Length: (total - 8) / 8, in 8-octet units not counting first 8.
     if total >= 8 {
@@ -2261,12 +2287,18 @@ pub unsafe extern "C" fn inet6_opt_set_val(
     if databuf.is_null() || val.is_null() || offset < 0 || vallen < 0 {
         return -1;
     }
+    let off = offset as usize;
+    let len = vallen as usize;
+    let Some(data_addr) = (databuf as usize).checked_add(off) else {
+        return -1;
+    };
+    if tracked_region_too_short_addr(data_addr, len)
+        || tracked_region_too_short_addr(val as usize, len)
+    {
+        return -1;
+    }
     unsafe {
-        std::ptr::copy_nonoverlapping(
-            val as *const u8,
-            (databuf as *mut u8).add(offset as usize),
-            vallen as usize,
-        );
+        std::ptr::copy_nonoverlapping(val as *const u8, (databuf as *mut u8).add(off), len);
     }
     offset + vallen
 }
@@ -2284,12 +2316,18 @@ pub unsafe extern "C" fn inet6_opt_get_val(
     if databuf.is_null() || val.is_null() || offset < 0 || vallen < 0 {
         return -1;
     }
+    let off = offset as usize;
+    let len = vallen as usize;
+    let Some(data_addr) = (databuf as usize).checked_add(off) else {
+        return -1;
+    };
+    if tracked_region_too_short_addr(data_addr, len)
+        || tracked_region_too_short_addr(val as usize, len)
+    {
+        return -1;
+    }
     unsafe {
-        std::ptr::copy_nonoverlapping(
-            (databuf as *const u8).add(offset as usize),
-            val as *mut u8,
-            vallen as usize,
-        );
+        std::ptr::copy_nonoverlapping((databuf as *const u8).add(off), val as *mut u8, len);
     }
     offset + vallen
 }
@@ -7969,7 +8007,8 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
     }
     let wire =
         unsafe { std::slice::from_raw_parts(src, frankenlibc_core::resolv::dns_name::NS_MAXDNAME) };
-    let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, dstsiz) };
+    let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
+    let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_ntop(wire, out) {
         Ok(n) => n as c_int,
         Err(frankenlibc_core::resolv::dns_name::NameError::OutputTooSmall) => {
@@ -7999,7 +8038,8 @@ pub unsafe extern "C" fn __ns_name_pton(src: *const c_char, dst: *mut u8, dstsiz
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     };
-    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
+    let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_pton(&name_bytes, out) {
         Ok(_) => {
             if name_bytes.last() == Some(&b'.') {
@@ -8041,7 +8081,8 @@ pub unsafe extern "C" fn __ns_name_unpack(
     let msg_len = unsafe { eom.offset_from(msg) } as usize;
     let src_offset = unsafe { src.offset_from(msg) } as usize;
     let msg_slice = unsafe { std::slice::from_raw_parts(msg, msg_len) };
-    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz) };
+    let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_unpack(msg_slice, src_offset, out) {
         Ok(n) => n as c_int,
         Err(_) => {
@@ -8072,7 +8113,8 @@ pub unsafe extern "C" fn __ns_name_pack(
     let src_slice = unsafe {
         std::slice::from_raw_parts(src, frankenlibc_core::resolv::dns_name::NS_MAXCDNAME)
     };
-    let out = unsafe { std::slice::from_raw_parts_mut(dst, dstsiz as usize) };
+    let effective_dstsiz = effective_output_len(dst.cast(), dstsiz as usize);
+    let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_pack(src_slice, out) {
         Ok(n) => n as c_int,
         Err(_) => {
@@ -9102,11 +9144,12 @@ pub unsafe extern "C" fn inet_net_pton(
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     };
-    // SAFETY: caller-supplied writable region of `size` bytes.
+    let effective_size = effective_output_len(dst, size);
+    // SAFETY: caller-supplied writable region capped to tracked allocation size.
     let dst_slice: &mut [u8] = if size == 0 {
         &mut []
     } else {
-        unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, size) }
+        unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, effective_size) }
     };
     match core_np::parse(&src_bytes, dst_slice) {
         Ok(p) => p as c_int,
@@ -9174,7 +9217,8 @@ pub unsafe extern "C" fn inet_net_ntop(
         }
     };
 
-    if formatted.len() + 1 > size {
+    let effective_size = effective_output_len(dst.cast(), size);
+    if formatted.len() + 1 > effective_size {
         unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
         return std::ptr::null_mut();
     }

@@ -879,6 +879,72 @@ fn resolver_name_functions_reject_tracked_unterminated_names() {
 }
 
 #[test]
+fn resolver_output_functions_cap_tracked_short_buffers() {
+    let name = CString::new("example.com").unwrap();
+    let wire = make_wire_name("example.com");
+
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(2);
+
+        clear_errno();
+        assert_eq!(ns_name_pton(name.as_ptr(), raw, 64), -1);
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+
+        clear_errno();
+        assert_eq!(__ns_name_pton(name.as_ptr(), raw.cast(), 64), -1);
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+
+        clear_errno();
+        assert_eq!(
+            ns_name_ntop(wire.as_ptr().cast(), raw.cast::<c_char>(), 64),
+            -1
+        );
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+
+        clear_errno();
+        assert_eq!(__ns_name_ntop(wire.as_ptr(), raw.cast::<c_char>(), 64), -1);
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+
+        clear_errno();
+        assert_eq!(
+            ns_name_pack(
+                wire.as_ptr().cast(),
+                raw,
+                64,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            ),
+            -1
+        );
+
+        clear_errno();
+        assert_eq!(
+            __ns_name_pack(wire.as_ptr(), raw.cast(), 64, ptr::null_mut(), ptr::null(),),
+            -1
+        );
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+
+        std::ptr::write_bytes(raw.cast::<u8>(), 0, 2);
+        clear_errno();
+        let query_len = __res_mkquery(
+            0,
+            name.as_ptr(),
+            1,
+            1,
+            ptr::null(),
+            0,
+            ptr::null(),
+            raw,
+            512,
+        );
+        assert_eq!(query_len, -1);
+        assert_eq!(raw.cast::<u8>().read(), 0);
+
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
 fn ns_name_ntop_decodes_wire_to_text() {
     let wire = make_wire_name("example.com");
     let mut buf = [0u8; 256];
@@ -1137,6 +1203,38 @@ fn inet6_opt_init_initializes_buffer() {
     assert_eq!(ret, 2);
     assert_eq!(buf[0], 0); // Next Header.
     assert_eq!(buf[1], 0); // Header Ext Length.
+}
+
+#[test]
+fn inet6_opt_helpers_reject_tracked_short_buffers() {
+    unsafe {
+        let one_byte = malloc_tracked_zeroed_bytes(1);
+        assert_eq!(inet6_opt_init(one_byte, 64), -1);
+        assert_eq!(one_byte.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(one_byte);
+
+        let ext = malloc_tracked_zeroed_bytes(4);
+        assert_eq!(inet6_opt_init(ext, 64), 2);
+        let mut databuf = ptr::null_mut();
+        assert_eq!(inet6_opt_append(ext, 64, 2, 0x22, 4, 2, &mut databuf), -1);
+        assert!(databuf.is_null());
+        frankenlibc_abi::malloc_abi::free(ext);
+
+        let data = malloc_tracked_zeroed_bytes(1);
+        let value = [1u8, 2, 3, 4];
+        assert_eq!(inet6_opt_set_val(data, 0, value.as_ptr().cast(), 4), -1);
+        assert_eq!(data.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(data);
+
+        let src = [1u8, 2, 3, 4];
+        let out = malloc_tracked_zeroed_bytes(1);
+        assert_eq!(
+            inet6_opt_get_val(src.as_ptr().cast_mut().cast(), 0, out, 4),
+            -1
+        );
+        assert_eq!(out.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(out);
+    }
 }
 
 #[test]
@@ -3819,6 +3917,20 @@ fn inet_net_pton_buffer_too_small_sets_emsgsize() {
 }
 
 #[test]
+fn inet_net_pton_caps_tracked_short_output_buffer() {
+    let s = c"192.168.0.1";
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1);
+        clear_errno();
+        let p = inet_net_pton(libc::AF_INET, s.as_ptr(), raw, 4);
+        assert_eq!(p, -1);
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+        assert_eq!(raw.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
+}
+
+#[test]
 fn inet_net_pton_unknown_af_sets_eafnosupport() {
     let s = c"192.168.0/24";
     let mut dst = [0u8; 4];
@@ -3884,7 +3996,21 @@ fn inet_net_ntop_renders_full_host() {
     };
     assert!(!p.is_null());
     let s = unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes();
-    assert_eq!(s, b"192.168.0.1");
+    assert_eq!(s, b"192.168.0.1/32");
+}
+
+#[test]
+fn inet_net_ntop_caps_tracked_short_output_buffer() {
+    let bytes = [192u8, 168, 0, 1];
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(4);
+        clear_errno();
+        let p = inet_net_ntop(libc::AF_INET, bytes.as_ptr().cast(), 32, raw.cast(), 32);
+        assert!(p.is_null());
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+        assert_eq!(raw.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(raw);
+    }
 }
 
 #[test]
