@@ -9953,15 +9953,15 @@ pub unsafe extern "C" fn __open_catalog(
 
 /// `__res_context_hostalias(*ctx, name, *buf, buflen) ->
 /// *const c_char` — look up the HOSTALIASES entry for `name`.
-/// Stub returns NULL.
+/// Context-aware alias of the reentrant resolver hostalias helper.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_context_hostalias(
     _ctx: *mut c_void,
-    _name: *const c_char,
-    _buf: *mut c_char,
-    _buflen: usize,
+    name: *const c_char,
+    buf: *mut c_char,
+    buflen: usize,
 ) -> *const c_char {
-    core::ptr::null()
+    unsafe { crate::resolv_abi::__res_hostalias(core::ptr::null_mut(), name, buf, buflen) }
 }
 
 /// `__res_context_mkquery(*ctx, op, *dname, class, type, *data,

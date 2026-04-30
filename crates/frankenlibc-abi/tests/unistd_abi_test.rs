@@ -34,6 +34,34 @@ static GAI_TEST_LOCK: Mutex<()> = Mutex::new(());
 /// assertions when this test binary runs with multiple test threads.
 static CWD_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Serializes tests that mutate HOSTALIASES.
+static HOSTALIASES_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+struct HostaliasesEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl HostaliasesEnvGuard {
+    fn set(path: &std::path::Path) -> Self {
+        let previous = std::env::var_os("HOSTALIASES");
+        // SAFETY: HOSTALIASES mutation is serialized by HOSTALIASES_TEST_LOCK.
+        unsafe { std::env::set_var("HOSTALIASES", path) };
+        Self { previous }
+    }
+}
+
+impl Drop for HostaliasesEnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: HOSTALIASES mutation is serialized by HOSTALIASES_TEST_LOCK.
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var("HOSTALIASES", value),
+                None => std::env::remove_var("HOSTALIASES"),
+            }
+        }
+    }
+}
+
 struct CwdRestore {
     fd: c_int,
 }
@@ -12331,8 +12359,19 @@ fn open_catalog_returns_minus_one() {
 }
 
 #[test]
-fn res_context_hostalias_returns_null() {
+fn res_context_hostalias_uses_hostaliases_file() {
     use frankenlibc_abi::unistd_abi::__res_context_hostalias;
+    let _lock = HOSTALIASES_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    let path = temp_path_buf("hostaliases");
+    std::fs::write(
+        &path,
+        b"# comments and blank lines are ignored\n\nalias canonical.example\nother ignored\n",
+    )
+    .expect("write HOSTALIASES fixture");
+    let _env_guard = HostaliasesEnvGuard::set(&path);
+
     let name = CString::new("alias").unwrap();
     let mut buf = [0u8; 32];
     let p = unsafe {
@@ -12343,7 +12382,11 @@ fn res_context_hostalias_returns_null() {
             buf.len(),
         )
     };
-    assert!(p.is_null());
+    assert_eq!(p, buf.as_ptr().cast());
+    assert_eq!(
+        unsafe { CStr::from_ptr(p) }.to_str().unwrap(),
+        "canonical.example"
+    );
 }
 
 #[test]
