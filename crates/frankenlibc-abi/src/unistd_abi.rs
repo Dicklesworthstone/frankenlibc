@@ -25,6 +25,14 @@ struct RpcEnt {
     r_number: c_int,
 }
 
+#[repr(C)]
+struct NetEnt {
+    n_name: *mut c_char,
+    n_aliases: *mut *mut c_char,
+    n_addrtype: c_int,
+    n_net: u32,
+}
+
 unsafe extern "C" {}
 
 #[inline]
@@ -22657,11 +22665,31 @@ unsafe fn fill_netent_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
+    if !tracked_object_fits::<NetEnt>(result_buf.cast())
+        || !tracked_object_fits::<*mut c_void>(result as *const *mut c_void)
+    {
+        return libc::EINVAL;
+    }
+
+    let effective_buflen = tracked_output_capacity(buf, buflen);
     let alias_ptr_size = core::mem::size_of::<*mut c_char>();
-    let needed = name.len() + 1 + alias_ptr_size;
-    if needed > buflen {
+    let alias_ptr_align = core::mem::align_of::<*mut c_char>();
+    let name_len = match name.len().checked_add(1) {
+        Some(len) => len,
+        None => return libc::ERANGE,
+    };
+    let alias_offset = match aligned_output_offset(buf, name_len, alias_ptr_align) {
+        Some(offset) => offset,
+        None => return libc::ERANGE,
+    };
+    let needed = match alias_offset.checked_add(alias_ptr_size) {
+        Some(needed) => needed,
+        None => return libc::ERANGE,
+    };
+    if needed > effective_buflen {
         return libc::ERANGE;
     }
+
     let buf_u8 = buf as *mut u8;
     // Copy name
     unsafe {
@@ -22669,23 +22697,16 @@ unsafe fn fill_netent_r(
         *buf_u8.add(name.len()) = 0;
     }
     // NULL-terminated aliases
-    let alias_offset = (name.len() + 1 + (alias_ptr_size - 1)) & !(alias_ptr_size - 1);
-    if alias_offset + alias_ptr_size > buflen {
-        return libc::ERANGE;
-    }
     unsafe { *(buf_u8.add(alias_offset) as *mut *mut c_char) = std::ptr::null_mut() };
 
-    // Fill struct netent: { n_name, n_aliases, n_addrtype, n_net }
-    let ent = result_buf as *mut *mut c_char;
+    let ent = result_buf.cast::<NetEnt>();
     unsafe {
-        *ent = buf;
-        *(ent.add(1) as *mut *mut *mut c_char) = buf_u8.add(alias_offset) as *mut *mut c_char;
-        *((result_buf as *mut u8).add(16) as *mut c_int) = libc::AF_INET;
-        *((result_buf as *mut u8).add(20) as *mut u32) = net;
+        (*ent).n_name = buf;
+        (*ent).n_aliases = buf_u8.add(alias_offset) as *mut *mut c_char;
+        (*ent).n_addrtype = libc::AF_INET;
+        (*ent).n_net = net;
     }
-    if !result.is_null() {
-        unsafe { *result = result_buf };
-    }
+    unsafe { *result = result_buf };
     0
 }
 
@@ -22700,8 +22721,12 @@ pub unsafe extern "C" fn getnetbyaddr_r(
     result: *mut *mut c_void,
     _h_errnop: *mut c_int,
 ) -> c_int {
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    if result_buf.is_null() || buf.is_null() || !tracked_object_fits::<NetEnt>(result_buf.cast()) {
+        return libc::EINVAL;
     }
     let content = match std::fs::read(NETWORKS_PATH) {
         Ok(c) => c,
@@ -22727,10 +22752,15 @@ pub unsafe extern "C" fn getnetbyname_r(
     result: *mut *mut c_void,
     _h_errnop: *mut c_int,
 ) -> c_int {
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
     }
-    if name.is_null() {
+    unsafe { *result = std::ptr::null_mut() };
+    if name.is_null()
+        || result_buf.is_null()
+        || buf.is_null()
+        || !tracked_object_fits::<NetEnt>(result_buf.cast())
+    {
         return libc::EINVAL;
     }
     let Some(needle) = (unsafe { read_c_string_bytes(name) }) else {
@@ -22761,8 +22791,12 @@ pub unsafe extern "C" fn getnetent_r(
 ) -> c_int {
     use std::io::BufRead;
 
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    if result_buf.is_null() || buf.is_null() || !tracked_object_fits::<NetEnt>(result_buf.cast()) {
+        return libc::EINVAL;
     }
 
     NET_ITER.with(|cell| {

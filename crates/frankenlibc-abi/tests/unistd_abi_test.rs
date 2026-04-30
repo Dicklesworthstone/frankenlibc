@@ -187,6 +187,18 @@ struct NetEnt {
     n_net: u32,
 }
 
+fn first_network_entry_for_tests() -> Option<(CString, u32)> {
+    let content = std::fs::read("/etc/networks").ok()?;
+    for line in content.split(|&byte| byte == b'\n') {
+        if let Some(entry) = frankenlibc_core::resolv::parse_networks_line(line)
+            && let Ok(name) = CString::new(entry.name)
+        {
+            return Some((name, entry.number));
+        }
+    }
+    None
+}
+
 #[repr(C)]
 struct Fstab {
     fs_spec: *mut c_char,
@@ -5106,6 +5118,112 @@ fn getnetbyname_r_rejects_tracked_unterminated_name() {
     assert_eq!(rc, libc::EINVAL);
     assert!(result.is_null());
     unsafe { frankenlibc_abi::malloc_abi::free(raw_name.cast()) };
+}
+
+#[test]
+fn getnetbyname_r_caps_tracked_short_buffer() {
+    let Some((name, _)) = first_network_entry_for_tests() else {
+        return;
+    };
+    let mut net: NetEnt = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        getnetbyname_r(
+            name.as_ptr(),
+            (&mut net as *mut NetEnt).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn getnetbyname_r_rejects_tracked_short_result_buf() {
+    let Some((name, _)) = first_network_entry_for_tests() else {
+        return;
+    };
+    let raw_net = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        getnetbyname_r(
+            name.as_ptr(),
+            raw_net,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_net.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_net) };
+}
+
+#[test]
+fn getnetbyaddr_r_caps_tracked_short_buffer() {
+    let Some((_, network_number)) = first_network_entry_for_tests() else {
+        return;
+    };
+    let mut net: NetEnt = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        getnetbyaddr_r(
+            network_number,
+            libc::AF_INET,
+            (&mut net as *mut NetEnt).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn getnetent_r_caps_tracked_short_buffer() {
+    let mut net: NetEnt = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    unsafe { setnetent(1) };
+    let rc = unsafe {
+        getnetent_r(
+            (&mut net as *mut NetEnt).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
 }
 
 #[test]
