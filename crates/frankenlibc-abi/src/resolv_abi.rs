@@ -3788,8 +3788,9 @@ pub unsafe extern "C" fn __fp_resstat(_statp: *const c_void, _file: *mut c_void)
 
 // All `__p_*` helpers below take values and write a textual rep to a
 // FILE* or return a `*const c_char`. The look-up variants below replicate
-// glibc's static-table → fallback-decimal-buffer behavior; the writing
-// variants stay no-ops since we don't render to FILE* streams.
+// glibc's static-table → fallback-decimal-buffer behavior; the FILE*
+// variants parse enough DNS wire data to return the next cursor while
+// intentionally not rendering to FILE* streams.
 
 thread_local! {
     /// Per-thread fallback buffer for `__p_class` / `__p_type` decimal
@@ -4006,36 +4007,7 @@ pub unsafe extern "C" fn __p_time(value: u32) -> *const c_char {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __p_query(_msg: *const u8) {}
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_cdname(
-    _cp: *const u8,
-    _msg: *const u8,
-    _file: *mut c_void,
-) -> *const u8 {
-    core::ptr::null()
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_cdnname(
-    _cp: *const u8,
-    _msg: *const u8,
-    _len: c_int,
-    _file: *mut c_void,
-) -> *const u8 {
-    core::ptr::null()
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_fqname(
-    _cp: *const u8,
-    _msg: *const u8,
-    _file: *mut c_void,
-) -> *const u8 {
-    core::ptr::null()
-}
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __p_fqnname(
+unsafe fn printable_dns_name_cursor(
     cp: *const u8,
     msg: *const u8,
     msglen: c_int,
@@ -4069,6 +4041,65 @@ pub unsafe extern "C" fn __p_fqnname(
         return core::ptr::null();
     }
     unsafe { cp.add(consumed) }
+}
+
+unsafe fn printable_dns_name_cursor_scratch(
+    cp: *const u8,
+    msg: *const u8,
+    msglen: c_int,
+) -> *const u8 {
+    let mut name = [0 as c_char; NS_MAXDNAME];
+    unsafe { printable_dns_name_cursor(cp, msg, msglen, name.as_mut_ptr(), name.len() as c_int) }
+}
+
+fn tracked_dns_message_len(msg: *const u8) -> Option<c_int> {
+    let len = known_remaining(msg as usize)?;
+    c_int::try_from(len).ok()
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_cdname(
+    cp: *const u8,
+    msg: *const u8,
+    _file: *mut c_void,
+) -> *const u8 {
+    let Some(msglen) = tracked_dns_message_len(msg) else {
+        return core::ptr::null();
+    };
+    unsafe { printable_dns_name_cursor_scratch(cp, msg, msglen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_cdnname(
+    cp: *const u8,
+    msg: *const u8,
+    len: c_int,
+    _file: *mut c_void,
+) -> *const u8 {
+    unsafe { printable_dns_name_cursor_scratch(cp, msg, len) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_fqname(
+    cp: *const u8,
+    msg: *const u8,
+    _file: *mut c_void,
+) -> *const u8 {
+    let Some(msglen) = tracked_dns_message_len(msg) else {
+        return core::ptr::null();
+    };
+    unsafe { printable_dns_name_cursor_scratch(cp, msg, msglen) }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __p_fqnname(
+    cp: *const u8,
+    msg: *const u8,
+    msglen: c_int,
+    name: *mut c_char,
+    namelen: c_int,
+) -> *const u8 {
+    unsafe { printable_dns_name_cursor(cp, msg, msglen, name, namelen) }
 }
 
 // --- HOSTALIASES ---

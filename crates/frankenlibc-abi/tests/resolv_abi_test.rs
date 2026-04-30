@@ -2828,6 +2828,60 @@ fn bd_dcfj5_dns_cdname_fqname_return_null() {
 }
 
 #[test]
+fn bd_dcfj5_p_cdnname_advances_wire_name() {
+    use frankenlibc_abi::resolv_abi::__p_cdnname;
+    let msg = synthetic_dns_message();
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+    let next = unsafe {
+        __p_cdnname(
+            answer_name,
+            msg.as_ptr(),
+            msg.len() as c_int,
+            std::ptr::null_mut(),
+        )
+    };
+
+    assert_eq!(next, unsafe { answer_name.add(2) });
+}
+
+#[test]
+fn bd_dcfj5_p_cdname_fqname_advance_tracked_message() {
+    use frankenlibc_abi::resolv_abi::{__p_cdname, __p_fqname};
+    let msg = malloc_bytes(&synthetic_dns_message());
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+
+    assert_eq!(
+        unsafe { __p_cdname(answer_name, msg.as_ptr(), std::ptr::null_mut()) },
+        unsafe { answer_name.add(2) }
+    );
+    assert_eq!(
+        unsafe { __p_fqname(answer_name, msg.as_ptr(), std::ptr::null_mut()) },
+        unsafe { answer_name.add(2) }
+    );
+}
+
+#[test]
+fn bd_dcfj5_p_cdnname_rejects_invalid_bounds() {
+    use frankenlibc_abi::resolv_abi::__p_cdnname;
+    let msg = synthetic_dns_message();
+    let answer_name = unsafe { msg.as_ptr().add(25) };
+    let outside = unsafe { msg.as_ptr().add(msg.len()) };
+
+    assert!(unsafe { __p_cdnname(answer_name, msg.as_ptr(), 8, std::ptr::null_mut(),) }.is_null());
+    assert!(
+        unsafe {
+            __p_cdnname(
+                outside,
+                msg.as_ptr(),
+                msg.len() as c_int,
+                std::ptr::null_mut(),
+            )
+        }
+        .is_null()
+    );
+}
+
+#[test]
 fn bd_dcfj5_p_fqnname_expands_wire_name() {
     use frankenlibc_abi::resolv_abi::__p_fqnname;
     let msg = synthetic_dns_message();
