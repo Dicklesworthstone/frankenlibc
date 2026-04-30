@@ -32,7 +32,7 @@ fn bench_printf_parse(c: &mut Criterion) {
     for &(name, fmt) in formats {
         group.throughput(Throughput::Bytes(fmt.len() as u64));
         group.bench_with_input(BenchmarkId::from_parameter(name), fmt, |b, input| {
-            b.iter(|| black_box(parse_format_string(black_box(*input))));
+            b.iter(|| black_box(parse_format_string(black_box(input))));
         });
     }
     group.finish();
