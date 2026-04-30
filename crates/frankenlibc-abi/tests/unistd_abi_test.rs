@@ -12303,7 +12303,7 @@ fn libc_res_nameinquery_returns_zero() {
 }
 
 #[test]
-fn libc_res_queriesmatch_returns_zero() {
+fn libc_res_queriesmatch_matches_empty_question_sets() {
     use frankenlibc_abi::unistd_abi::__libc_res_queriesmatch;
     let buf1 = [0u8; 64];
     let buf2 = [0u8; 64];
@@ -12315,7 +12315,7 @@ fn libc_res_queriesmatch_returns_zero() {
             buf2.as_ptr().wrapping_add(buf2.len()) as *const c_void,
         )
     };
-    assert_eq!(rc, 0);
+    assert_eq!(rc, 1);
 }
 
 #[test]
@@ -12487,10 +12487,28 @@ fn res_context_send_rejects_short_query_before_network() {
 }
 
 #[test]
-fn res_get_nsaddr_returns_null() {
+fn res_get_nsaddr_returns_configured_ipv4_nameserver() {
     use frankenlibc_abi::unistd_abi::__res_get_nsaddr;
+    let config = std::fs::read("/etc/resolv.conf")
+        .map(|content| frankenlibc_core::resolv::config::ResolverConfig::parse(&content))
+        .unwrap_or_default();
     let p = unsafe { __res_get_nsaddr(std::ptr::null_mut(), 0) };
-    assert!(p.is_null());
+    match config.nameservers.first() {
+        Some(std::net::IpAddr::V4(expected)) => {
+            assert!(!p.is_null());
+            let sin = unsafe { &*(p as *const libc::sockaddr_in) };
+            assert_eq!(sin.sin_family, libc::AF_INET as libc::sa_family_t);
+            assert_eq!(
+                sin.sin_port,
+                frankenlibc_core::resolv::config::DNS_PORT.to_be()
+            );
+            assert_eq!(sin.sin_addr.s_addr, u32::from_ne_bytes(expected.octets()));
+        }
+        _ => assert!(p.is_null()),
+    }
+
+    let missing = unsafe { __res_get_nsaddr(std::ptr::null_mut(), c_uint::MAX) };
+    assert!(missing.is_null());
 }
 
 #[test]

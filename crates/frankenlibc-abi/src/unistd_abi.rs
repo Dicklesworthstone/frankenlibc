@@ -10039,10 +10039,40 @@ pub unsafe extern "C" fn __res_context_send(
 }
 
 /// `__res_get_nsaddr(*statp, n) -> *struct sockaddr_in` — return
-/// nameserver `n`'s address. Stub returns NULL.
+/// nameserver `n`'s IPv4 address from the active resolver config.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __res_get_nsaddr(_statp: *mut c_void, _n: c_uint) -> *mut c_void {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn __res_get_nsaddr(_statp: *mut c_void, n: c_uint) -> *mut c_void {
+    thread_local! {
+        static RES_NSADDR: core::cell::UnsafeCell<libc::sockaddr_in> =
+            const { core::cell::UnsafeCell::new(libc::sockaddr_in {
+                sin_family: 0,
+                sin_port: 0,
+                sin_addr: libc::in_addr { s_addr: 0 },
+                sin_zero: [0; 8],
+            }) };
+    }
+
+    let Some(addr) = RESOLV_CONFIG.nameservers.get(n as usize) else {
+        return core::ptr::null_mut();
+    };
+    let std::net::IpAddr::V4(ip) = addr else {
+        return core::ptr::null_mut();
+    };
+
+    RES_NSADDR.with(|cell| {
+        let ptr = cell.get();
+        unsafe {
+            *ptr = libc::sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes(ip.octets()),
+                },
+                sin_zero: [0; 8],
+            };
+        }
+        ptr.cast::<c_void>()
+    })
 }
 
 /// `__res_iclose(*statp, free_addr) -> ()` — close all the
