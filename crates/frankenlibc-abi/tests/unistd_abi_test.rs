@@ -243,6 +243,18 @@ struct RpcEnt {
     r_number: c_int,
 }
 
+fn first_rpc_entry_for_tests() -> Option<(CString, c_int)> {
+    let content = std::fs::read("/etc/rpc").ok()?;
+    for line in content.split(|&byte| byte == b'\n') {
+        if let Some(entry) = frankenlibc_core::rpc::parse_rpc_line(line)
+            && let Ok(name) = CString::new(entry.name)
+        {
+            return Some((name, entry.number));
+        }
+    }
+    None
+}
+
 #[repr(C)]
 struct TtyEnt {
     ty_name: *mut c_char,
@@ -5953,6 +5965,56 @@ fn rpc_reentrant_wrappers_match_host_shapes() {
         !rpc.r_name.is_null(),
         "reentrant RPC iteration should populate r_name"
     );
+}
+
+#[test]
+fn getrpcbyname_r_caps_tracked_short_buffer() {
+    let Some((name, _)) = first_rpc_entry_for_tests() else {
+        return;
+    };
+    let mut rpc: RpcEnt = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<RpcEnt>();
+
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::getrpcbyname_r(
+            name.as_ptr(),
+            (&mut rpc as *mut RpcEnt).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            (&mut result as *mut *mut RpcEnt).cast(),
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn getrpcbyname_r_rejects_tracked_short_result_buf() {
+    let Some((name, _)) = first_rpc_entry_for_tests() else {
+        return;
+    };
+    let raw_rpc = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<RpcEnt>();
+
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::getrpcbyname_r(
+            name.as_ptr(),
+            raw_rpc,
+            buf.as_mut_ptr(),
+            buf.len(),
+            (&mut result as *mut *mut RpcEnt).cast(),
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_rpc.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_rpc) };
 }
 
 #[test]

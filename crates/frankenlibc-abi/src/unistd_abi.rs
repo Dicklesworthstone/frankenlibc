@@ -19918,20 +19918,22 @@ unsafe fn fill_rpcent_result(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
     }
+    unsafe { *result = std::ptr::null_mut() };
     if src.is_null() {
         return 0;
     }
-    if result_buf.is_null() || buffer.is_null() {
+    if result_buf.is_null() || buffer.is_null() || !tracked_object_fits::<RpcEnt>(result_buf.cast())
+    {
         return libc::EINVAL;
     }
 
     let src = unsafe { &*src };
-    let dst = result_buf as *mut RpcEnt;
+    let dst = result_buf.cast::<RpcEnt>();
     let buf = buffer as *mut u8;
-    let mut off = 0usize;
+    let effective_buflen = tracked_output_capacity(buffer, buflen);
 
     if src.r_name.is_null() {
         return libc::EINVAL;
@@ -19941,7 +19943,10 @@ unsafe fn fill_rpcent_result(
     if !name_terminated {
         return libc::EINVAL;
     }
-    let name_len_with_nul = name_len + 1;
+    let name_len_with_nul = match name_len.checked_add(1) {
+        Some(len) => len,
+        None => return libc::ERANGE,
+    };
     let alias_count = if src.r_aliases.is_null() {
         0
     } else {
@@ -19958,23 +19963,9 @@ unsafe fn fill_rpcent_result(
         }
         count
     };
-    let alias_table_bytes = (alias_count + 1) * std::mem::size_of::<*mut c_char>();
-    let aliases_region = buf;
-    off += alias_table_bytes;
-    if off > buflen {
-        return libc::ERANGE;
-    }
 
-    let name_ptr = unsafe { buf.add(off) as *mut c_char };
-    if off + name_len_with_nul > buflen {
-        return libc::ERANGE;
-    }
-    unsafe {
-        std::ptr::copy_nonoverlapping(src.r_name.cast::<u8>(), buf.add(off), name_len_with_nul);
-    }
-    off += name_len_with_nul;
-
-    for i in 0..alias_count {
+    let mut alias_lens = [0usize; RPC_ENTRY_ALIAS_SLOTS];
+    for (i, len_slot) in alias_lens.iter_mut().take(alias_count).enumerate() {
         let alias_src = unsafe { *src.r_aliases.add(i) };
         if alias_src.is_null() {
             return libc::EINVAL;
@@ -19984,10 +19975,56 @@ unsafe fn fill_rpcent_result(
         if !alias_terminated {
             return libc::EINVAL;
         }
-        let alias_len_with_nul = alias_len + 1;
-        if off + alias_len_with_nul > buflen {
-            return libc::ERANGE;
-        }
+        *len_slot = match alias_len.checked_add(1) {
+            Some(len) => len,
+            None => return libc::ERANGE,
+        };
+    }
+
+    let ptr_size = core::mem::size_of::<*mut c_char>();
+    let ptr_align = core::mem::align_of::<*mut c_char>();
+    let alias_table_off = match aligned_output_offset(buffer, 0, ptr_align) {
+        Some(offset) => offset,
+        None => return libc::ERANGE,
+    };
+    let alias_table_bytes = match alias_count
+        .checked_add(1)
+        .and_then(|slots| slots.checked_mul(ptr_size))
+    {
+        Some(bytes) => bytes,
+        None => return libc::ERANGE,
+    };
+    let name_off = match alias_table_off.checked_add(alias_table_bytes) {
+        Some(offset) => offset,
+        None => return libc::ERANGE,
+    };
+    let mut total_needed = match name_off.checked_add(name_len_with_nul) {
+        Some(needed) => needed,
+        None => return libc::ERANGE,
+    };
+    for len in alias_lens.iter().take(alias_count) {
+        total_needed = match total_needed.checked_add(*len) {
+            Some(needed) => needed,
+            None => return libc::ERANGE,
+        };
+    }
+    if total_needed > effective_buflen {
+        return libc::ERANGE;
+    }
+
+    let aliases_region = unsafe { buf.add(alias_table_off) };
+    let name_ptr = unsafe { buf.add(name_off) as *mut c_char };
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            src.r_name.cast::<u8>(),
+            buf.add(name_off),
+            name_len_with_nul,
+        );
+    }
+    let mut off = name_off + name_len_with_nul;
+
+    for (i, alias_len_with_nul) in alias_lens.iter().copied().take(alias_count).enumerate() {
+        let alias_src = unsafe { *src.r_aliases.add(i) };
         let alias_ptr = unsafe { buf.add(off) as *mut c_char };
         unsafe {
             std::ptr::copy_nonoverlapping(alias_src.cast::<u8>(), buf.add(off), alias_len_with_nul);
@@ -20002,9 +20039,7 @@ unsafe fn fill_rpcent_result(
         (*dst).r_number = src.r_number;
     }
 
-    if !result.is_null() {
-        unsafe { *result = dst.cast() };
-    }
+    unsafe { *result = dst.cast() };
     0
 }
 
