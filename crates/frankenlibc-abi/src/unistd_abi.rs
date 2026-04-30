@@ -10019,21 +10019,23 @@ pub unsafe extern "C" fn __res_context_search(
 
 /// `__res_context_send(*ctx, *buf, buflen, *buf2, buflen2,
 /// *answer, anslen, *anssiz, *thishreply) -> int` — send a
-/// pre-built DNS query. Stub returns -1.
+/// pre-built DNS query through a resolver context. The primary query
+/// path is native; the optional secondary query buffer is ignored
+/// until dual-question replies are modeled.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn __res_context_send(
-    _ctx: *mut c_void,
-    _buf: *const c_void,
-    _buflen: c_int,
+    ctx: *mut c_void,
+    buf: *const c_void,
+    buflen: c_int,
     _buf2: *const c_void,
     _buflen2: c_int,
-    _answer: *mut c_void,
-    _anslen: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
     _ansp: *mut *mut c_void,
     _ansp2: *mut *mut c_void,
 ) -> c_int {
-    -1
+    unsafe { crate::glibc_internal_abi::__res_nsend(ctx, buf, buflen, answer, anslen) }
 }
 
 /// `__res_get_nsaddr(*statp, n) -> *struct sockaddr_in` — return

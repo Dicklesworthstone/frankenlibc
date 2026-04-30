@@ -12464,9 +12464,9 @@ fn res_context_search_rejects_non_utf8_name_before_network() {
 }
 
 #[test]
-fn res_context_send_returns_minus_one() {
+fn res_context_send_rejects_short_query_before_network() {
     use frankenlibc_abi::unistd_abi::__res_context_send;
-    let qbuf = [0u8; 64];
+    let qbuf = [0u8; 8];
     let mut answer = [0u8; 512];
     let mut ansp: *mut c_void = std::ptr::null_mut();
     let mut ansp2: *mut c_void = std::ptr::null_mut();
