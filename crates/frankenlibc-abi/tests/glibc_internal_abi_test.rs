@@ -1218,6 +1218,13 @@ fn inet6_opt_helpers_reject_tracked_short_buffers() {
         let mut databuf = ptr::null_mut();
         assert_eq!(inet6_opt_append(ext, 64, 2, 0x22, 4, 2, &mut databuf), -1);
         assert!(databuf.is_null());
+
+        let mut opt_type = 0u8;
+        let mut opt_len = 0usize;
+        assert_eq!(
+            inet6_opt_next(ext, 64, 2, &mut opt_type, &mut opt_len, ptr::null_mut()),
+            -1
+        );
         frankenlibc_abi::malloc_abi::free(ext);
 
         let data = malloc_tracked_zeroed_bytes(1);
@@ -1234,6 +1241,51 @@ fn inet6_opt_helpers_reject_tracked_short_buffers() {
         );
         assert_eq!(out.cast::<u8>().read(), 0);
         frankenlibc_abi::malloc_abi::free(out);
+
+        let mut buf = [0u8; 64];
+        let off = inet6_opt_init(buf.as_mut_ptr().cast(), buf.len() as c_int);
+        let off = inet6_opt_append(
+            buf.as_mut_ptr().cast(),
+            buf.len() as c_int,
+            off,
+            0x33,
+            2,
+            1,
+            ptr::null_mut(),
+        );
+        let total = inet6_opt_finish(buf.as_mut_ptr().cast(), buf.len() as c_int, off);
+
+        let short_lenp = malloc_tracked_zeroed_bytes(1).cast::<usize>();
+        let mut opt_type = 0u8;
+        assert_eq!(
+            inet6_opt_next(
+                buf.as_mut_ptr().cast(),
+                total,
+                2,
+                &mut opt_type,
+                short_lenp,
+                ptr::null_mut(),
+            ),
+            -1
+        );
+        assert_eq!(short_lenp.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(short_lenp.cast());
+
+        let short_databufp = malloc_tracked_zeroed_bytes(1).cast::<*mut c_void>();
+        let mut opt_len = 0usize;
+        assert_eq!(
+            inet6_opt_find(
+                buf.as_mut_ptr().cast(),
+                total,
+                2,
+                0x33,
+                &mut opt_len,
+                short_databufp,
+            ),
+            -1
+        );
+        assert_eq!(short_databufp.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(short_databufp.cast());
     }
 }
 

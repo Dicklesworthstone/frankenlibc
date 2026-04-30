@@ -2347,6 +2347,19 @@ pub unsafe extern "C" fn inet6_opt_next(
     if extbuf.is_null() || offset < 2 || extlen < 2 {
         return -1;
     }
+    if tracked_region_too_short_addr(extbuf as usize, extlen as usize)
+        || (!typep.is_null()
+            && tracked_region_too_short_addr(typep as usize, core::mem::size_of::<u8>()))
+        || (!lenp.is_null()
+            && tracked_region_too_short_addr(lenp as usize, core::mem::size_of::<SizeT>()))
+        || (!databufp.is_null()
+            && tracked_region_too_short_addr(
+                databufp as usize,
+                core::mem::size_of::<*mut c_void>(),
+            ))
+    {
+        return -1;
+    }
     let buf = unsafe { std::slice::from_raw_parts(extbuf as *const u8, extlen as usize) };
     let mut pos = offset as usize;
 
