@@ -12423,28 +12423,32 @@ fn res_context_mkquery_builds_query_packet() {
 }
 
 #[test]
-fn res_context_query_returns_minus_one() {
+fn res_context_query_rejects_null_answer_before_network() {
+    use frankenlibc_abi::errno_abi::__errno_location;
     use frankenlibc_abi::unistd_abi::__res_context_query;
     let name = CString::new("example.com").unwrap();
-    let mut buf = [0u8; 512];
+    unsafe { *__errno_location() = 0 };
     let rc = unsafe {
         __res_context_query(
             std::ptr::null_mut(),
             name.as_ptr(),
             1,
             1,
-            buf.as_mut_ptr() as *mut c_void,
-            buf.len() as c_int,
+            std::ptr::null_mut(),
+            512,
         )
     };
     assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]
-fn res_context_search_returns_minus_one() {
+fn res_context_search_rejects_non_utf8_name_before_network() {
+    use frankenlibc_abi::errno_abi::__errno_location;
     use frankenlibc_abi::unistd_abi::__res_context_search;
-    let name = CString::new("example").unwrap();
+    let name = CString::new(vec![0xff, b'e', b'x']).unwrap();
     let mut buf = [0u8; 512];
+    unsafe { *__errno_location() = 0 };
     let rc = unsafe {
         __res_context_search(
             std::ptr::null_mut(),
@@ -12456,6 +12460,7 @@ fn res_context_search_returns_minus_one() {
         )
     };
     assert_eq!(rc, -1);
+    assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
 }
 
 #[test]

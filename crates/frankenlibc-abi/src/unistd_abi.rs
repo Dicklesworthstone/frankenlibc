@@ -9989,32 +9989,32 @@ pub unsafe extern "C" fn __res_context_mkquery(
 }
 
 /// `__res_context_query(*ctx, name, class, type, *answer,
-/// anslen) -> int` — perform a DNS query. Stub returns -1.
+/// anslen) -> int` — perform a DNS query through a resolver context.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_context_query(
-    _ctx: *mut c_void,
-    _name: *const c_char,
-    _class: c_int,
-    _type: c_int,
-    _answer: *mut c_void,
-    _anslen: c_int,
+    ctx: *mut c_void,
+    name: *const c_char,
+    class: c_int,
+    type_: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
 ) -> c_int {
-    -1
+    unsafe { crate::glibc_internal_abi::__res_nquery(ctx, name, class, type_, answer, anslen) }
 }
 
 /// `__res_context_search(*ctx, name, class, type, *answer,
-/// anslen) -> int` — DNS query with search-list expansion. Stub
-/// returns -1.
+/// anslen) -> int` — DNS query with search-list expansion through a
+/// resolver context.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_context_search(
-    _ctx: *mut c_void,
-    _name: *const c_char,
-    _class: c_int,
-    _type: c_int,
-    _answer: *mut c_void,
-    _anslen: c_int,
+    ctx: *mut c_void,
+    name: *const c_char,
+    class: c_int,
+    type_: c_int,
+    answer: *mut c_void,
+    anslen: c_int,
 ) -> c_int {
-    -1
+    unsafe { crate::glibc_internal_abi::__res_nsearch(ctx, name, class, type_, answer, anslen) }
 }
 
 /// `__res_context_send(*ctx, *buf, buflen, *buf2, buflen2,
