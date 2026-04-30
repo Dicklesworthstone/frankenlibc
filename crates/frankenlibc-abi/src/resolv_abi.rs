@@ -372,6 +372,20 @@ fn resolve_hosts_subset(node: &str, family: c_int) -> Option<HostsAddress> {
     None
 }
 
+fn lookup_hosts_ipv4_by_name(name: &[u8]) -> Option<Ipv4Addr> {
+    let content = read_hosts_backend().ok()?;
+    let candidates = frankenlibc_core::resolv::lookup_hosts(&content, name);
+    for candidate in candidates {
+        let Ok(text) = core::str::from_utf8(&candidate) else {
+            continue;
+        };
+        if let Ok(v4) = text.parse::<Ipv4Addr>() {
+            return Some(v4);
+        }
+    }
+    None
+}
+
 fn parse_port(service: Option<&CStr>, repair: bool) -> Result<u16, c_int> {
     let Some(service) = service else {
         return Ok(0);
@@ -4806,35 +4820,82 @@ pub unsafe extern "C" fn _gethtent() -> *mut c_void {
 }
 
 /// `_gethtbyname(*name) -> *struct hostent` — lookup name in
-/// /etc/hosts. Stub returns NULL.
+/// /etc/hosts.
 ///
 /// # Safety
 /// `name` may be NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _gethtbyname(_name: *const c_char) -> *mut c_void {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn _gethtbyname(name: *const c_char) -> *mut c_void {
+    unsafe { _gethtbyname2(name, libc::AF_INET) }
 }
 
 /// `_gethtbyname2(*name, af) -> *struct hostent` — address-family-
-/// constrained variant. Stub returns NULL.
+/// constrained variant.
 ///
 /// # Safety
 /// `name` may be NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _gethtbyname2(_name: *const c_char, _af: c_int) -> *mut c_void {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn _gethtbyname2(name: *const c_char, af: c_int) -> *mut c_void {
+    if af != libc::AF_UNSPEC && af != libc::AF_INET {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    }
+
+    let name_cstr = match unsafe { opt_cstr(name) } {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+            return core::ptr::null_mut();
+        }
+        Err(()) => {
+            unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
+            return core::ptr::null_mut();
+        }
+    };
+    let name_bytes = name_cstr.to_bytes();
+    if name_bytes.is_empty() {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    }
+
+    let Some(addr) = lookup_hosts_ipv4_by_name(name_bytes) else {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    };
+
+    unsafe { set_h_errnop(ptr::null_mut(), 0) };
+    unsafe { populate_tls_hostent(name_bytes, addr) }
 }
 
 /// `_gethtbyaddr(*addr, len, af) -> *struct hostent` — reverse
-/// lookup. Stub returns NULL.
+/// lookup in /etc/hosts.
 ///
 /// # Safety
 /// `addr` may be NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _gethtbyaddr(
-    _addr: *const c_void,
-    _len: c_int,
-    _af: c_int,
-) -> *mut c_void {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn _gethtbyaddr(addr: *const c_void, len: c_int, af: c_int) -> *mut c_void {
+    if addr.is_null()
+        || af != libc::AF_INET
+        || len < 4
+        || !tracked_region_fits(addr, size_of::<libc::in_addr>())
+    {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    }
+
+    let octets = unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), 4) };
+    let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+    let ip_text = ip.to_string();
+    let Ok(content) = read_hosts_backend() else {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    };
+    let hostnames = frankenlibc_core::resolv::reverse_lookup_hosts(&content, ip_text.as_bytes());
+    let Some(hostname) = hostnames.first() else {
+        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+        return core::ptr::null_mut();
+    };
+
+    unsafe { set_h_errnop(ptr::null_mut(), 0) };
+    unsafe { populate_tls_hostent(hostname, ip) }
 }

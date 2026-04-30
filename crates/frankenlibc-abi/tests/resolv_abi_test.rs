@@ -1858,9 +1858,7 @@ fn ns_parse_ttl_rejects_tracked_unterminated_input() {
 fn format_ttl(secs: u32, capacity: usize) -> Option<String> {
     use frankenlibc_abi::resolv_abi::ns_format_ttl;
     let mut buf = vec![0u8; capacity];
-    let rc = unsafe {
-        ns_format_ttl(secs.into(), buf.as_mut_ptr() as *mut c_char, buf.len())
-    };
+    let rc = unsafe { ns_format_ttl(secs.into(), buf.as_mut_ptr() as *mut c_char, buf.len()) };
     if rc < 0 {
         return None;
     }
@@ -2911,9 +2909,51 @@ fn bd_dcfj5_etc_hosts_iteration_returns_null_or_void() {
     unsafe { _sethtent(0) };
     unsafe { _sethtent(1) };
     assert!(unsafe { _gethtent() }.is_null());
-    let name = CString::new("localhost").unwrap();
-    assert!(unsafe { _gethtbyname(name.as_ptr()) }.is_null());
-    assert!(unsafe { _gethtbyname2(name.as_ptr(), libc::AF_INET) }.is_null());
-    let addr = [127u8, 0, 0, 1];
-    assert!(unsafe { _gethtbyaddr(addr.as_ptr() as *const c_void, 4, libc::AF_INET) }.is_null());
+}
+
+#[test]
+fn etc_hosts_legacy_name_hooks_use_hosts_backend() {
+    use frankenlibc_abi::resolv_abi::*;
+    with_resolver_backends(
+        Some(b"203.0.113.8 legacy-name legacy-alias\n"),
+        None,
+        |_| {
+            let name = CString::new("legacy-alias").unwrap();
+
+            let by_name = unsafe { _gethtbyname(name.as_ptr()) };
+            assert!(!by_name.is_null());
+            let hostent = unsafe { &*(by_name as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+            let addr_ptr = unsafe { *hostent.h_addr_list };
+            let octets = unsafe { std::slice::from_raw_parts(addr_ptr.cast::<u8>(), 4) };
+            assert_eq!(octets, [203, 0, 113, 8]);
+
+            let by_name2 = unsafe { _gethtbyname2(name.as_ptr(), libc::AF_INET) };
+            assert!(!by_name2.is_null());
+            assert!(unsafe { _gethtbyname2(name.as_ptr(), libc::AF_INET6) }.is_null());
+            assert_eq!(unsafe { *__h_errno_location() }, HOST_NOT_FOUND_ERRNO);
+        },
+    );
+}
+
+#[test]
+fn etc_hosts_legacy_addr_hook_uses_hosts_backend() {
+    use frankenlibc_abi::resolv_abi::*;
+    with_resolver_backends(
+        Some(b"203.0.113.8 legacy-name legacy-alias\n"),
+        None,
+        |_| {
+            unsafe { *__h_errno_location() = HOST_NOT_FOUND_ERRNO };
+            let addr = [203u8, 0, 113, 8];
+            let ptr = unsafe { _gethtbyaddr(addr.as_ptr() as *const c_void, 4, libc::AF_INET) };
+            assert!(!ptr.is_null());
+            let hostent = unsafe { &*(ptr as *const libc::hostent) };
+            assert_eq!(hostent.h_addrtype, libc::AF_INET);
+            assert_eq!(hostent.h_length, 4);
+            let host_name = unsafe { CStr::from_ptr(hostent.h_name) };
+            assert_eq!(host_name.to_bytes(), b"legacy-name");
+            assert_eq!(unsafe { *__h_errno_location() }, 0);
+        },
+    );
 }
