@@ -343,6 +343,19 @@ pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
         unsafe { set_abi_errno(errno::EFAULT) };
         return 0;
     }
+
+    // Bounded read first so invalid inputs do not pay socket/ioctl setup.
+    // Linux interface names are capped at IF_NAMESIZE - 1 bytes; glibc
+    // reports impossible names as ENODEV.
+    let Some(name_bytes) = (unsafe { read_bounded_cstr(ifname) }) else {
+        unsafe { set_abi_errno(errno::ENODEV) };
+        return 0;
+    };
+    if name_bytes.is_empty() || name_bytes.len() >= libc::IF_NAMESIZE {
+        unsafe { set_abi_errno(errno::ENODEV) };
+        return 0;
+    }
+
     let sock = match raw_syscall::sys_socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0) {
         Ok(fd) => fd,
         Err(e) => {
@@ -352,15 +365,7 @@ pub unsafe extern "C" fn if_nametoindex(ifname: *const c_char) -> libc::c_uint {
     };
 
     let mut ifr: IfreqCompat = unsafe { std::mem::zeroed() };
-    // Bounded read — non-NUL-terminated `ifname` would otherwise walk
-    // arbitrary memory through CStr::from_ptr. (REVIEW round 5.)
-    let Some(name_bytes) = (unsafe { read_bounded_cstr(ifname) }) else {
-        let _ = raw_syscall::sys_close(sock);
-        unsafe { set_abi_errno(errno::ENODEV) };
-        return 0;
-    };
-    let copy_len = name_bytes.len().min(15);
-    ifr.ifr_name[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+    ifr.ifr_name[..name_bytes.len()].copy_from_slice(&name_bytes);
 
     let failure_errno =
         unsafe { raw_syscall::sys_ioctl(sock, SIOCGIFINDEX, &ifr as *const _ as usize) }.err();

@@ -612,6 +612,56 @@ fn if_nametoindex_invalid_name_sets_errno_like_host() {
 }
 
 #[test]
+fn if_nametoindex_overlong_name_sets_errno_like_host() {
+    let overlong = CString::new("frankenlibc-overlong-interface-name").unwrap();
+
+    unsafe { set_abi_errno(0) };
+    let observed = unsafe { frankenlibc_abi::inet_abi::if_nametoindex(overlong.as_ptr()) };
+    let observed_errno = unsafe { *__errno_location() };
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let expected = unsafe { libc::if_nametoindex(overlong.as_ptr()) };
+    let expected_errno = unsafe { *libc::__errno_location() };
+
+    assert_eq!(observed, expected);
+    assert_eq!(observed_errno, expected_errno);
+}
+
+#[test]
+fn if_nametoindex_rejects_tracked_unterminated_name() {
+    let raw_name = tracked_unterminated_c_bytes(b"lo");
+
+    unsafe { set_abi_errno(0) };
+    let observed = unsafe { frankenlibc_abi::inet_abi::if_nametoindex(raw_name) };
+
+    assert_eq!(observed, 0);
+    assert_eq!(unsafe { *__errno_location() }, libc::ENODEV);
+    unsafe {
+        frankenlibc_abi::malloc_abi::free(raw_name.cast());
+    }
+}
+
+#[test]
+fn if_nametoindex_empty_name_sets_errno_like_host() {
+    let name = CString::new("").unwrap();
+
+    unsafe { set_abi_errno(0) };
+    let observed = unsafe { frankenlibc_abi::inet_abi::if_nametoindex(name.as_ptr()) };
+    let observed_errno = unsafe { *__errno_location() };
+
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let expected = unsafe { libc::if_nametoindex(name.as_ptr()) };
+    let expected_errno = unsafe { *libc::__errno_location() };
+
+    assert_eq!(observed, expected);
+    assert_eq!(observed_errno, expected_errno);
+}
+
+#[test]
 fn if_indextoname_invalid_index_sets_errno_like_host() {
     let invalid_index = u32::MAX;
     let mut observed_buf = [0i8; 16];
