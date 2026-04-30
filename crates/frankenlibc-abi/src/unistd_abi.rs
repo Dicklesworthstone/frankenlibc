@@ -9966,22 +9966,26 @@ pub unsafe extern "C" fn __res_context_hostalias(
 
 /// `__res_context_mkquery(*ctx, op, *dname, class, type, *data,
 /// datalen, *newrr, *buf, buflen) -> int` — build a DNS query
-/// packet. Stub returns -1 (failure).
+/// packet using the per-context resolver query builder.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn __res_context_mkquery(
-    _ctx: *mut c_void,
-    _op: c_int,
-    _dname: *const c_char,
-    _class: c_int,
-    _type: c_int,
-    _data: *const c_void,
-    _datalen: c_int,
-    _newrr: *const c_void,
-    _buf: *mut c_void,
-    _buflen: c_int,
+    ctx: *mut c_void,
+    op: c_int,
+    dname: *const c_char,
+    class: c_int,
+    type_: c_int,
+    data: *const c_void,
+    datalen: c_int,
+    newrr: *const c_void,
+    buf: *mut c_void,
+    buflen: c_int,
 ) -> c_int {
-    -1
+    unsafe {
+        crate::glibc_internal_abi::__res_nmkquery(
+            ctx, op, dname, class, type_, data, datalen, newrr, buf, buflen,
+        )
+    }
 }
 
 /// `__res_context_query(*ctx, name, class, type, *answer,

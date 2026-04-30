@@ -12390,7 +12390,7 @@ fn res_context_hostalias_uses_hostaliases_file() {
 }
 
 #[test]
-fn res_context_mkquery_returns_minus_one() {
+fn res_context_mkquery_builds_query_packet() {
     use frankenlibc_abi::unistd_abi::__res_context_mkquery;
     let dname = CString::new("example.com").unwrap();
     let mut buf = [0u8; 512];
@@ -12408,7 +12408,18 @@ fn res_context_mkquery_returns_minus_one() {
             buf.len() as c_int,
         )
     };
-    assert_eq!(rc, -1);
+    assert_eq!(rc, 29);
+    assert_eq!(buf[2] & 0x80, 0, "QR should be 0 for a query");
+    assert_eq!(buf[2] & 0x01, 1, "RD should be set");
+    assert_eq!(u16::from_be_bytes([buf[4], buf[5]]), 1);
+    assert_eq!(
+        &buf[12..25],
+        &[
+            7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0
+        ]
+    );
+    assert_eq!(u16::from_be_bytes([buf[25], buf[26]]), 1);
+    assert_eq!(u16::from_be_bytes([buf[27], buf[28]]), 1);
 }
 
 #[test]
