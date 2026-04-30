@@ -1045,6 +1045,53 @@ fn getservbyname_r_tiny_buffer() {
 }
 
 #[test]
+fn getservbyname_r_caps_tracked_short_buffer() {
+    let name = CString::new("ssh").unwrap();
+    let proto = CString::new("tcp").unwrap();
+    let (mut result_buf, _) = servent_buffers();
+    let raw_buf = tracked_zeroed_bytes(2);
+    let mut result: *mut c_void = std::ptr::null_mut();
+
+    let rc = unsafe {
+        abi_getservbyname_r(
+            name.as_ptr(),
+            proto.as_ptr(),
+            result_buf.as_mut_ptr().cast(),
+            raw_buf.cast(),
+            256,
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn getservbyname_r_rejects_tracked_short_result_buf() {
+    let name = CString::new("ssh").unwrap();
+    let raw_result_buf = tracked_zeroed_bytes(1);
+    let mut buf = vec![0u8; 256];
+    let mut result: *mut c_void = std::ptr::null_mut();
+
+    let rc = unsafe {
+        abi_getservbyname_r(
+            name.as_ptr(),
+            std::ptr::null(),
+            raw_result_buf,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_result_buf) };
+}
+
+#[test]
 fn getservbyname_r_rejects_tracked_unterminated_name() {
     let name = tracked_unterminated_c_bytes(b"ssh");
     let (mut result_buf, mut buf) = servent_buffers();
@@ -1197,6 +1244,52 @@ fn getservbyport_r_nonexistent_port() {
     };
     assert_eq!(abi_rc, host_rc);
     assert_eq!(abi_result.is_null(), host_result.is_null());
+}
+
+#[test]
+fn getservbyport_r_caps_tracked_short_buffer() {
+    let proto = CString::new("tcp").unwrap();
+    let port_net = (22u16).to_be() as c_int;
+    let (mut result_buf, _) = servent_buffers();
+    let raw_buf = tracked_zeroed_bytes(2);
+    let mut result: *mut c_void = std::ptr::null_mut();
+
+    let rc = unsafe {
+        abi_getservbyport_r(
+            port_net,
+            proto.as_ptr(),
+            result_buf.as_mut_ptr().cast(),
+            raw_buf.cast(),
+            256,
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn getservbyport_r_rejects_tracked_short_result_buf() {
+    let raw_result_buf = tracked_zeroed_bytes(1);
+    let mut buf = vec![0u8; 256];
+    let mut result: *mut c_void = std::ptr::null_mut();
+
+    let rc = unsafe {
+        abi_getservbyport_r(
+            (22u16).to_be() as c_int,
+            std::ptr::null(),
+            raw_result_buf,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_result_buf) };
 }
 
 #[test]

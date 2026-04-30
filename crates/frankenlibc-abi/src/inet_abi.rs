@@ -39,6 +39,18 @@ fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
 }
 
+#[inline]
+fn tracked_object_fits<T>(ptr: *const T) -> bool {
+    is_aligned_for::<T>(ptr.cast())
+        && known_remaining(ptr as usize)
+            .is_none_or(|remaining| remaining >= std::mem::size_of::<T>())
+}
+
+#[inline]
+fn effective_c_buffer_len(ptr: *const c_char, requested: usize) -> usize {
+    known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
+}
+
 /// Read a user-supplied C string pointer with a known-region bound so a
 /// non-NUL-terminated argument cannot walk arbitrary process memory through
 /// `CStr::from_ptr`. Returns `None` for null or unterminated input.
@@ -546,14 +558,18 @@ pub unsafe extern "C" fn getservbyname_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    if name.is_null() || result_buf.is_null() || buf.is_null() || result.is_null() {
-        if !result.is_null() {
-            unsafe { *result = std::ptr::null_mut() };
-        }
+    if result.is_null() {
+        return libc::EINVAL;
+    }
+    if !tracked_object_fits(result) {
+        return libc::EINVAL;
+    }
+    if name.is_null() || result_buf.is_null() || buf.is_null() {
+        unsafe { *result = std::ptr::null_mut() };
         return libc::EINVAL;
     }
     unsafe { *result = std::ptr::null_mut() };
-    if !is_aligned_for::<libc::servent>(result_buf) {
+    if !tracked_object_fits(result_buf.cast::<libc::servent>()) {
         return libc::EINVAL;
     }
 
@@ -614,7 +630,8 @@ pub unsafe extern "C" fn getservbyname_r(
         Some(needed) => needed,
         None => return libc::ERANGE,
     };
-    if needed > buflen {
+    let effective_buflen = effective_c_buffer_len(buf, buflen);
+    if needed > effective_buflen {
         return libc::ERANGE;
     }
 
@@ -657,14 +674,18 @@ pub unsafe extern "C" fn getservbyport_r(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> c_int {
-    if result_buf.is_null() || buf.is_null() || result.is_null() {
-        if !result.is_null() {
-            unsafe { *result = std::ptr::null_mut() };
-        }
+    if result.is_null() {
+        return libc::EINVAL;
+    }
+    if !tracked_object_fits(result) {
+        return libc::EINVAL;
+    }
+    if result_buf.is_null() || buf.is_null() {
+        unsafe { *result = std::ptr::null_mut() };
         return libc::EINVAL;
     }
     unsafe { *result = std::ptr::null_mut() };
-    if !is_aligned_for::<libc::servent>(result_buf) {
+    if !tracked_object_fits(result_buf.cast::<libc::servent>()) {
         return libc::EINVAL;
     }
 
@@ -716,7 +737,8 @@ pub unsafe extern "C" fn getservbyport_r(
         Some(needed) => needed,
         None => return libc::ERANGE,
     };
-    if needed > buflen {
+    let effective_buflen = effective_c_buffer_len(buf, buflen);
+    if needed > effective_buflen {
         return libc::ERANGE;
     }
 
