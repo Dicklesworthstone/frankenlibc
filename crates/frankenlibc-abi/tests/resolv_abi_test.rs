@@ -2839,26 +2839,35 @@ fn bd_dcfj5_hostalias_helpers_return_null() {
 }
 
 #[test]
-fn bd_dcfj5_loc_helpers_return_failure() {
+fn bd_dcfj5_loc_helpers_round_trip_rfc1876() {
     use frankenlibc_abi::resolv_abi::*;
     let ascii = CString::new("42 21 30 N 71 6 18 W -24m 30m").unwrap();
     let mut binary = [0u8; 16];
     assert_eq!(
         unsafe { __loc_aton(ascii.as_ptr(), binary.as_mut_ptr()) },
-        0
+        16
     );
     let mut out = [0i8; 256];
-    assert!(unsafe { __loc_ntoa(binary.as_ptr(), out.as_mut_ptr()) }.is_null());
+    assert_eq!(
+        unsafe { __loc_ntoa(binary.as_ptr(), out.as_mut_ptr()) },
+        out.as_ptr()
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(out.as_ptr()) }.to_str().unwrap(),
+        "42 21 30.000 N 71 06 18.000 W -24.00m 30.00m 10000.00m 10.00m"
+    );
 }
 
 #[test]
-fn bd_dcfj5_sym_helpers_set_success_zero() {
+fn bd_dcfj5_sym_helpers_return_decimal_on_null_table() {
     use frankenlibc_abi::resolv_abi::*;
     let mut success: c_int = 99;
-    assert!(unsafe { __sym_ntop(std::ptr::null(), 1, &mut success) }.is_null());
+    let ntop = unsafe { __sym_ntop(std::ptr::null(), 1, &mut success) };
+    assert_eq!(unsafe { CStr::from_ptr(ntop) }.to_str().unwrap(), "1");
     assert_eq!(success, 0);
     success = 99;
-    assert!(unsafe { __sym_ntos(std::ptr::null(), 1, &mut success) }.is_null());
+    let ntos = unsafe { __sym_ntos(std::ptr::null(), 1, &mut success) };
+    assert_eq!(unsafe { CStr::from_ptr(ntos) }.to_str().unwrap(), "1");
     assert_eq!(success, 0);
     success = 99;
     let key = CString::new("ANY").unwrap();
