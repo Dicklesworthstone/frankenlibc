@@ -187,6 +187,24 @@ struct NetEnt {
     n_net: u32,
 }
 
+fn has_host_entry_for_tests() -> bool {
+    let Ok(content) = std::fs::read("/etc/hosts") else {
+        return false;
+    };
+    content.split(|&byte| byte == b'\n').any(|line| {
+        let Some((addr_text, hostnames)) = frankenlibc_core::resolv::parse_hosts_line(line) else {
+            return false;
+        };
+        if hostnames.is_empty() {
+            return false;
+        }
+        let Ok(addr_str) = std::str::from_utf8(&addr_text) else {
+            return false;
+        };
+        frankenlibc_core::resolv::parse_addr_binary(addr_str).is_some()
+    })
+}
+
 fn first_network_entry_for_tests() -> Option<(CString, u32)> {
     let content = std::fs::read("/etc/networks").ok()?;
     for line in content.split(|&byte| byte == b'\n') {
@@ -5014,6 +5032,56 @@ fn gethostent_r_surfaces_host_enumeration_entry() {
         !host.h_name.is_null(),
         "host enumeration should populate h_name"
     );
+}
+
+#[test]
+fn gethostent_r_caps_tracked_short_buffer() {
+    if !has_host_entry_for_tests() {
+        return;
+    }
+    let mut host: libc::hostent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    unsafe { sethostent(1) };
+    let rc = unsafe {
+        gethostent_r(
+            (&mut host as *mut libc::hostent).cast(),
+            raw_buf.cast::<c_char>(),
+            2048,
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn gethostent_r_rejects_tracked_short_result_buf() {
+    let raw_host = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 2048];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+    let mut h_errno = -1;
+
+    let rc = unsafe {
+        gethostent_r(
+            raw_host,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_host.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_host) };
 }
 
 #[test]

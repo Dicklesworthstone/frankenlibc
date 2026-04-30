@@ -22550,10 +22550,14 @@ pub unsafe extern "C" fn gethostent_r(
 ) -> c_int {
     use std::io::BufRead;
 
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
     }
-    if result_buf.is_null() || buf.is_null() {
+    unsafe { *result = std::ptr::null_mut() };
+    if result_buf.is_null()
+        || buf.is_null()
+        || !tracked_object_fits::<libc::hostent>(result_buf.cast())
+    {
         return libc::EINVAL;
     }
 
@@ -22596,19 +22600,50 @@ pub unsafe extern "C" fn gethostent_r(
 
             let buf_u8 = buf as *mut u8;
             let ptr_size = core::mem::size_of::<*mut c_char>();
-            let alen = addr_len as usize;
+            let ptr_align = core::mem::align_of::<*mut c_char>();
+            let alen = match usize::try_from(addr_len) {
+                Ok(len) => len,
+                Err(_) => return libc::ERANGE,
+            };
             let primary = &hostnames[0];
+            let effective_buflen = tracked_output_capacity(buf, buflen);
 
             // Layout in buf: name + NUL + addr_data + align + addr_list[2] + alias_list[n+1]
-            let name_end = primary.len() + 1;
+            let name_end = match primary.len().checked_add(1) {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
             let addr_off = name_end;
-            let addr_end = addr_off + alen;
-            let list_off = (addr_end + (ptr_size - 1)) & !(ptr_size - 1);
+            let addr_end = match addr_off.checked_add(alen) {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
+            let list_off = match aligned_output_offset(buf, addr_end, ptr_align) {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
             let addr_list_off = list_off;
-            let alias_list_off = addr_list_off + 2 * ptr_size;
+            let addr_list_bytes = match 2usize.checked_mul(ptr_size) {
+                Some(bytes) => bytes,
+                None => return libc::ERANGE,
+            };
+            let alias_list_off = match addr_list_off.checked_add(addr_list_bytes) {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
             let alias_count = hostnames.len() - 1;
-            let total_needed = alias_list_off + (alias_count + 1) * ptr_size;
-            if total_needed > buflen {
+            let alias_list_bytes = match alias_count
+                .checked_add(1)
+                .and_then(|slots| slots.checked_mul(ptr_size))
+            {
+                Some(bytes) => bytes,
+                None => return libc::ERANGE,
+            };
+            let total_needed = match alias_list_off.checked_add(alias_list_bytes) {
+                Some(needed) => needed,
+                None => return libc::ERANGE,
+            };
+            if total_needed > effective_buflen {
                 return libc::ERANGE;
             }
 
@@ -22636,21 +22671,16 @@ pub unsafe extern "C" fn gethostent_r(
                 *(buf_u8.add(alias_list_off) as *mut *mut c_char) = std::ptr::null_mut();
             }
 
-            // Fill struct hostent in result_buf
-            let ent = result_buf as *mut u8;
+            let ent = result_buf.cast::<libc::hostent>();
             unsafe {
-                *(ent as *mut *mut c_char) = buf; // h_name
-                *((ent as *mut *mut c_char).add(1) as *mut *mut *mut c_char) =
-                    buf_u8.add(alias_list_off) as *mut *mut c_char; // h_aliases
-                *(ent.add(16) as *mut c_int) = af; // h_addrtype
-                *(ent.add(20) as *mut c_int) = addr_len; // h_length
-                *(ent.add(24) as *mut *mut *mut c_char) =
-                    buf_u8.add(addr_list_off) as *mut *mut c_char; // h_addr_list
+                (*ent).h_name = buf;
+                (*ent).h_aliases = buf_u8.add(alias_list_off) as *mut *mut c_char;
+                (*ent).h_addrtype = af;
+                (*ent).h_length = addr_len;
+                (*ent).h_addr_list = buf_u8.add(addr_list_off) as *mut *mut c_char;
             }
 
-            if !result.is_null() {
-                unsafe { *result = result_buf };
-            }
+            unsafe { *result = result_buf };
             return 0;
         }
     })
