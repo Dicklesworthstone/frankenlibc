@@ -1597,6 +1597,64 @@ fn fgetpwent_r_skips_comments_and_blank_lines() {
 }
 
 #[test]
+fn fgetpwent_r_caps_tracked_short_buffer() {
+    let path = b"/etc/passwd\0";
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr().cast(), mode.as_ptr().cast()) };
+    if stream.is_null() {
+        return;
+    }
+
+    let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<libc::passwd>();
+    let rc = unsafe {
+        fgetpwent_r(
+            stream.cast(),
+            &mut entry,
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+        )
+    };
+
+    unsafe { fclose(stream) };
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn fgetpwent_r_rejects_tracked_short_result_buf() {
+    let path = b"/etc/passwd\0";
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr().cast(), mode.as_ptr().cast()) };
+    if stream.is_null() {
+        return;
+    }
+
+    let raw_entry = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0 as c_char; 256];
+    let mut result = std::ptr::dangling_mut::<libc::passwd>();
+    let rc = unsafe {
+        fgetpwent_r(
+            stream.cast(),
+            raw_entry.cast::<libc::passwd>(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+
+    unsafe { fclose(stream) };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_entry.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_entry) };
+}
+
+#[test]
 fn fgetgrent_r_skips_comments_and_blank_lines() {
     let path = temp_path("fgetgrent_r_skip");
     let path_str = path.as_c_str().to_str().unwrap();
@@ -1625,6 +1683,64 @@ fn fgetgrent_r_skips_comments_and_blank_lines() {
 
     unsafe { fclose(stream) };
     std::fs::remove_file(path_str).unwrap();
+}
+
+#[test]
+fn fgetgrent_r_caps_tracked_short_buffer() {
+    let path = b"/etc/group\0";
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr().cast(), mode.as_ptr().cast()) };
+    if stream.is_null() {
+        return;
+    }
+
+    let mut entry: libc::group = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<libc::group>();
+    let rc = unsafe {
+        fgetgrent_r(
+            stream.cast(),
+            &mut entry,
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+        )
+    };
+
+    unsafe { fclose(stream) };
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn fgetgrent_r_rejects_tracked_short_result_buf() {
+    let path = b"/etc/group\0";
+    let mode = b"r\0";
+    let stream = unsafe { fopen(path.as_ptr().cast(), mode.as_ptr().cast()) };
+    if stream.is_null() {
+        return;
+    }
+
+    let raw_entry = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0 as c_char; 256];
+    let mut result = std::ptr::dangling_mut::<libc::group>();
+    let rc = unsafe {
+        fgetgrent_r(
+            stream.cast(),
+            raw_entry.cast::<libc::group>(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+
+    unsafe { fclose(stream) };
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_entry.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_entry) };
 }
 
 #[test]

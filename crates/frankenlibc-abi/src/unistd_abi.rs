@@ -20259,10 +20259,17 @@ pub unsafe extern "C" fn fgetspent_r(
     buflen: usize,
     result: *mut *mut libc::spwd,
 ) -> c_int {
-    if stream.is_null() || result_buf.is_null() || buffer.is_null() || result.is_null() {
+    if !tracked_object_fits::<*mut libc::spwd>(result as *const *mut libc::spwd) {
         return libc::EINVAL;
     }
     unsafe { *result = std::ptr::null_mut() };
+    if stream.is_null()
+        || result_buf.is_null()
+        || buffer.is_null()
+        || !tracked_object_fits::<libc::spwd>(result_buf)
+    {
+        return libc::EINVAL;
+    }
 
     let mut line_buf = [0u8; 1024];
     loop {
@@ -20281,11 +20288,22 @@ pub unsafe extern "C" fn fgetspent_r(
         let Some(parsed) = frankenlibc_core::pwd::shadow::parse_shadow_line(line_bytes) else {
             continue;
         };
-        let needed = parsed.name.len() + 1 + parsed.passwd.len() + 1;
-        if needed > buflen {
+        let needed = match parsed
+            .name
+            .len()
+            .checked_add(1)
+            .and_then(|offset| offset.checked_add(parsed.passwd.len()))
+            .and_then(|offset| offset.checked_add(1))
+        {
+            Some(needed) => needed,
+            None => return libc::ERANGE,
+        };
+        let effective_buflen = tracked_output_capacity(buffer, buflen);
+        if needed > effective_buflen {
             return libc::ERANGE;
         }
-        let buf_slice = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
+        let buf_slice =
+            unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, effective_buflen) };
         buf_slice[..parsed.name.len()].copy_from_slice(&parsed.name);
         buf_slice[parsed.name.len()] = 0;
         let pass_off = parsed.name.len() + 1;
@@ -20320,10 +20338,17 @@ pub unsafe extern "C" fn fgetpwent_r(
     buflen: usize,
     result: *mut *mut libc::passwd,
 ) -> c_int {
-    if stream.is_null() || result_buf.is_null() || buffer.is_null() || result.is_null() {
+    if !tracked_object_fits::<*mut libc::passwd>(result as *const *mut libc::passwd) {
         return libc::EINVAL;
     }
     unsafe { *result = std::ptr::null_mut() };
+    if stream.is_null()
+        || result_buf.is_null()
+        || buffer.is_null()
+        || !tracked_object_fits::<libc::passwd>(result_buf)
+    {
+        return libc::EINVAL;
+    }
 
     let mut line_buf = [0u8; 1024];
     loop {
@@ -20350,21 +20375,22 @@ pub unsafe extern "C" fn fgetpwent_r(
             continue;
         }
 
-        let needed = parts[0].len()
-            + 1
-            + parts[1].len()
-            + 1
-            + parts[4].len()
-            + 1
-            + parts[5].len()
-            + 1
-            + parts[6].len()
-            + 1;
-        if needed > buflen {
+        let mut needed = 0usize;
+        for field in [parts[0], parts[1], parts[4], parts[5], parts[6]] {
+            needed = match needed
+                .checked_add(field.len())
+                .and_then(|offset| offset.checked_add(1))
+            {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
+        }
+        let effective_buflen = tracked_output_capacity(buffer, buflen);
+        if needed > effective_buflen {
             return libc::ERANGE;
         }
 
-        let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
+        let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, effective_buflen) };
         let mut off = 0usize;
         let mut copy_field = |field: &str| -> *mut c_char {
             let ptr = unsafe { buffer.add(off) };
@@ -20398,10 +20424,17 @@ pub unsafe extern "C" fn fgetgrent_r(
     buflen: usize,
     result: *mut *mut libc::group,
 ) -> c_int {
-    if stream.is_null() || result_buf.is_null() || buffer.is_null() || result.is_null() {
+    if !tracked_object_fits::<*mut libc::group>(result as *const *mut libc::group) {
         return libc::EINVAL;
     }
     unsafe { *result = std::ptr::null_mut() };
+    if stream.is_null()
+        || result_buf.is_null()
+        || buffer.is_null()
+        || !tracked_object_fits::<libc::group>(result_buf)
+    {
+        return libc::EINVAL;
+    }
 
     let mut line_buf = [0u8; 1024];
     loop {
@@ -20436,17 +20469,48 @@ pub unsafe extern "C" fn fgetgrent_r(
         };
 
         let ptr_size = std::mem::size_of::<*mut c_char>();
-        let needed = parts[0].len()
-            + 1
-            + parts[1].len()
-            + 1
-            + member_names.iter().map(|m| m.len() + 1).sum::<usize>()
-            + (member_names.len() + 1) * ptr_size;
-        if needed > buflen {
+        let ptr_align = std::mem::align_of::<*mut c_char>();
+        let mut string_prefix_len = 0usize;
+        for field in [parts[0], parts[1]] {
+            string_prefix_len = match string_prefix_len
+                .checked_add(field.len())
+                .and_then(|offset| offset.checked_add(1))
+            {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
+        }
+        let mem_array_off = match aligned_output_offset(buffer, string_prefix_len, ptr_align) {
+            Some(offset) => offset,
+            None => return libc::ERANGE,
+        };
+        let mem_array_bytes = match member_names
+            .len()
+            .checked_add(1)
+            .and_then(|slots| slots.checked_mul(ptr_size))
+        {
+            Some(bytes) => bytes,
+            None => return libc::ERANGE,
+        };
+        let mut total_needed = match mem_array_off.checked_add(mem_array_bytes) {
+            Some(offset) => offset,
+            None => return libc::ERANGE,
+        };
+        for member in &member_names {
+            total_needed = match total_needed
+                .checked_add(member.len())
+                .and_then(|offset| offset.checked_add(1))
+            {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
+        }
+        let effective_buflen = tracked_output_capacity(buffer, buflen);
+        if total_needed > effective_buflen {
             return libc::ERANGE;
         }
 
-        let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, buflen) };
+        let buf = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, effective_buflen) };
         let mut off = 0usize;
 
         fn copy_field_at(
@@ -20467,10 +20531,7 @@ pub unsafe extern "C" fn fgetgrent_r(
         gr.gr_passwd = copy_field_at(buf, buffer, &mut off, parts[1]);
         gr.gr_gid = parts[2].parse().unwrap_or(65534);
 
-        let align = off % ptr_size;
-        if align != 0 {
-            off += ptr_size - align;
-        }
+        off = mem_array_off;
 
         let mem_array_ptr = unsafe { buffer.add(off) as *mut *mut c_char };
         let mem_array_bytes = (member_names.len() + 1) * ptr_size;
