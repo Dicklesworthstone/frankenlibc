@@ -217,6 +217,14 @@ fn first_network_entry_for_tests() -> Option<(CString, u32)> {
     None
 }
 
+fn has_service_entry_for_tests() -> bool {
+    std::fs::read("/etc/services").ok().is_some_and(|content| {
+        content
+            .split(|&byte| byte == b'\n')
+            .any(|line| frankenlibc_core::resolv::parse_services_line(line).is_some())
+    })
+}
+
 #[repr(C)]
 struct Fstab {
     fs_spec: *mut c_char,
@@ -5357,6 +5365,45 @@ fn getservent_r_surfaces_first_service_entry() {
         !service.s_name.is_null(),
         "reentrant service lookup should populate s_name"
     );
+}
+
+#[test]
+fn getservent_r_caps_tracked_short_buffer() {
+    if !has_service_entry_for_tests() {
+        return;
+    }
+    let mut service: libc::servent = unsafe { std::mem::zeroed() };
+    let raw_buf = malloc_tracked_zeroed_bytes(2);
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    unsafe { setservent(1) };
+    let rc = unsafe {
+        getservent_r(
+            (&mut service as *mut libc::servent).cast(),
+            raw_buf.cast::<c_char>(),
+            1024,
+            &mut result,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_buf.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_buf) };
+}
+
+#[test]
+fn getservent_r_rejects_tracked_short_result_buf() {
+    let raw_service = malloc_tracked_zeroed_bytes(1);
+    let mut buf = [0i8; 1024];
+    let mut result = std::ptr::dangling_mut::<c_void>();
+
+    let rc = unsafe { getservent_r(raw_service, buf.as_mut_ptr(), buf.len(), &mut result) };
+
+    assert_eq!(rc, libc::EINVAL);
+    assert!(result.is_null());
+    assert_eq!(unsafe { raw_service.cast::<u8>().read() }, 0);
+    unsafe { frankenlibc_abi::malloc_abi::free(raw_service) };
 }
 
 #[test]

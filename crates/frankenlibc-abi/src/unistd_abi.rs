@@ -23114,10 +23114,14 @@ pub unsafe extern "C" fn getservent_r(
 ) -> c_int {
     use std::io::BufRead;
 
-    if !result.is_null() {
-        unsafe { *result = std::ptr::null_mut() };
+    if !tracked_object_fits::<*mut c_void>(result as *const *mut c_void) {
+        return libc::EINVAL;
     }
-    if result_buf.is_null() || buf.is_null() {
+    unsafe { *result = std::ptr::null_mut() };
+    if result_buf.is_null()
+        || buf.is_null()
+        || !tracked_object_fits::<libc::servent>(result_buf.cast())
+    {
         return libc::EINVAL;
     }
 
@@ -23147,62 +23151,63 @@ pub unsafe extern "C" fn getservent_r(
                 None => continue,
             };
 
-            // Pack into caller-supplied buffer: struct servent is 32 bytes
-            let needed = entry.name.len()
-                + 1
-                + entry.protocol.len()
-                + 1
-                + core::mem::size_of::<*mut c_char>(); // NULL alias ptr
-            if needed > buflen {
+            // Pack into caller-supplied buffer: name + protocol + aligned NULL alias ptr.
+            let effective_buflen = tracked_output_capacity(buf, buflen);
+            let alias_ptr_size = core::mem::size_of::<*mut c_char>();
+            let alias_ptr_align = core::mem::align_of::<*mut c_char>();
+            let name_end = match entry.name.len().checked_add(1) {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
+            let proto_end = match name_end
+                .checked_add(entry.protocol.len())
+                .and_then(|offset| offset.checked_add(1))
+            {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
+            let alias_off = match aligned_output_offset(buf, proto_end, alias_ptr_align) {
+                Some(offset) => offset,
+                None => return libc::ERANGE,
+            };
+            let total_needed = match alias_off.checked_add(alias_ptr_size) {
+                Some(needed) => needed,
+                None => return libc::ERANGE,
+            };
+            if total_needed > effective_buflen {
                 return libc::ERANGE;
             }
 
             let buf_u8 = buf as *mut u8;
-            let mut off = 0usize;
 
-            let name_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
+            let name_ptr = buf;
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    entry.name.as_ptr(),
-                    buf_u8.add(off),
-                    entry.name.len(),
-                );
-                *buf_u8.add(off + entry.name.len()) = 0;
+                std::ptr::copy_nonoverlapping(entry.name.as_ptr(), buf_u8, entry.name.len());
+                *buf_u8.add(entry.name.len()) = 0;
             }
-            off += entry.name.len() + 1;
 
-            let proto_ptr = unsafe { buf_u8.add(off) } as *mut c_char;
+            let proto_ptr = unsafe { buf_u8.add(name_end) } as *mut c_char;
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     entry.protocol.as_ptr(),
-                    buf_u8.add(off),
+                    buf_u8.add(name_end),
                     entry.protocol.len(),
                 );
-                *buf_u8.add(off + entry.protocol.len()) = 0;
+                *buf_u8.add(name_end + entry.protocol.len()) = 0;
             }
-            off += entry.protocol.len() + 1;
 
-            // Align alias pointer
-            let alias_ptr_size = core::mem::size_of::<*mut c_char>();
-            off = (off + (alias_ptr_size - 1)) & !(alias_ptr_size - 1);
-            if off + alias_ptr_size > buflen {
-                return libc::ERANGE;
-            }
-            let aliases_ptr = unsafe { buf_u8.add(off) } as *mut *mut c_char;
+            let aliases_ptr = unsafe { buf_u8.add(alias_off) } as *mut *mut c_char;
             unsafe { *aliases_ptr = std::ptr::null_mut() };
 
-            // Fill struct servent in result_buf
-            let ent = result_buf as *mut *mut c_char;
+            let ent = result_buf.cast::<libc::servent>();
             unsafe {
-                *ent = name_ptr; // s_name
-                *(ent.add(1) as *mut *mut *mut c_char) = aliases_ptr; // s_aliases
-                *((result_buf as *mut u8).add(16) as *mut c_int) = (entry.port as c_int).to_be(); // s_port (NBO)
-                *((result_buf as *mut u8).add(24) as *mut *mut c_char) = proto_ptr; // s_proto
+                (*ent).s_name = name_ptr;
+                (*ent).s_aliases = aliases_ptr;
+                (*ent).s_port = (entry.port as c_int).to_be();
+                (*ent).s_proto = proto_ptr;
             }
 
-            if !result.is_null() {
-                unsafe { *result = result_buf };
-            }
+            unsafe { *result = result_buf };
             return 0;
         }
     })
