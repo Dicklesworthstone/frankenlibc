@@ -2506,6 +2506,24 @@ fn ns_name_uncompressed_p_returns_false_for_pointer() {
 }
 
 #[test]
+fn ns_name_uncompressed_p_bounds_tracked_message() {
+    unsafe {
+        let msg = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *msg = 0;
+
+        assert_eq!(__ns_name_uncompressed_p(msg, msg.add(1), msg), 1);
+
+        let oversized_eom = ((msg as usize) + 2) as *const u8;
+        assert_eq!(__ns_name_uncompressed_p(msg, oversized_eom, msg), 0);
+
+        *msg = 3;
+        assert_eq!(__ns_name_uncompressed_p(msg, msg.add(1), msg), 0);
+
+        frankenlibc_abi::malloc_abi::free(msg.cast());
+    }
+}
+
+#[test]
 fn ns_samename_same_names() {
     let a = CString::new("example.com").unwrap();
     let b = CString::new("example.com").unwrap();

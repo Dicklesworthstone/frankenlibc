@@ -8314,10 +8314,17 @@ pub unsafe extern "C" fn __ns_name_uncompressed_p(
     if msg.is_null() || eom.is_null() || src.is_null() {
         return 0;
     }
-    if src >= eom {
+    let msg_addr = msg as usize;
+    let src_addr = src as usize;
+    let eom_addr = eom as usize;
+    if src_addr < msg_addr || src_addr >= eom_addr {
         return 0;
     }
-    let buf = unsafe { std::slice::from_raw_parts(src, eom.offset_from(src) as usize) };
+    let span_len = eom_addr - src_addr;
+    if span_len > isize::MAX as usize || tracked_region_too_short_addr(src_addr, span_len) {
+        return 0;
+    }
+    let buf = unsafe { std::slice::from_raw_parts(src, span_len) };
     if frankenlibc_core::resolv::dns_name::is_uncompressed(buf) {
         1
     } else {
