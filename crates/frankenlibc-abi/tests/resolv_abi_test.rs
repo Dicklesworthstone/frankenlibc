@@ -1794,6 +1794,20 @@ fn ns_makecanon_rejects_tracked_unterminated_src() {
     assert_eq!(errno, libc::EINVAL);
 }
 
+#[test]
+fn ns_makecanon_rejects_tracked_short_dst() {
+    use frankenlibc_abi::resolv_abi::ns_makecanon;
+    let src = std::ffi::CString::new("foo.com").unwrap();
+    let mut dst = malloc_filled_bytes(4, 0xAA);
+
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let rc = unsafe { ns_makecanon(src.as_ptr(), dst.as_mut_ptr() as *mut c_char, 16) };
+    assert_eq!(rc, -1);
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+    assert_eq!(dst.as_slice(), &[0xAA; 4]);
+}
+
 // ---------------------------------------------------------------------------
 // libresolv ns_parse_ttl / ns_format_ttl / ns_datetosecs
 // ---------------------------------------------------------------------------

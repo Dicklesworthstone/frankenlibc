@@ -2401,14 +2401,15 @@ pub unsafe extern "C" fn ns_makecanon(
         unsafe { set_abi_errno(frankenlibc_core::errno::EINVAL) };
         return -1;
     }
+    let dst_limit = known_remaining(dst as usize).map_or(dstsiz, |remaining| remaining.min(dstsiz));
     let needs_dot = sbytes.last().copied() != Some(b'.');
     let extra: usize = if needs_dot { 1 } else { 0 };
     let needed = sbytes.len().saturating_add(extra).saturating_add(1);
-    if needed > dstsiz {
+    if needed > dst_limit {
         unsafe { set_abi_errno(libc::EMSGSIZE) };
         return -1;
     }
-    // SAFETY: dst points to dstsiz writable bytes; we write needed ≤ dstsiz.
+    // SAFETY: dst has dst_limit writable bytes; we write needed ≤ dst_limit.
     unsafe {
         core::ptr::copy_nonoverlapping(sbytes.as_ptr() as *const c_char, dst, sbytes.len());
         let mut off = sbytes.len();
