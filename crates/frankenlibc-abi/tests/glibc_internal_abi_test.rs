@@ -948,6 +948,94 @@ fn resolver_output_functions_cap_tracked_short_buffers() {
 }
 
 #[test]
+fn resolver_wire_input_functions_bound_tracked_names() {
+    unsafe {
+        let root = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *root = 0;
+
+        let mut text = [0u8; 8];
+        assert_eq!(
+            ns_name_ntop(root.cast(), text.as_mut_ptr().cast(), text.len()),
+            1
+        );
+        let rendered = std::ffi::CStr::from_ptr(text.as_ptr().cast());
+        assert_eq!(rendered.to_bytes(), b".");
+
+        let mut internal_text = [0u8; 8];
+        assert_eq!(
+            __ns_name_ntop(root, internal_text.as_mut_ptr().cast(), internal_text.len()),
+            1
+        );
+        let rendered = std::ffi::CStr::from_ptr(internal_text.as_ptr().cast());
+        assert_eq!(rendered.to_bytes(), b".");
+
+        let mut packed = [0x7eu8; 4];
+        assert_eq!(
+            ns_name_pack(
+                root.cast(),
+                packed.as_mut_ptr().cast(),
+                packed.len() as c_int,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            ),
+            1
+        );
+        assert_eq!(packed[0], 0);
+        assert_eq!(packed[1], 0x7e);
+
+        let mut internal_packed = [0x7eu8; 4];
+        assert_eq!(
+            __ns_name_pack(
+                root,
+                internal_packed.as_mut_ptr(),
+                internal_packed.len() as c_int,
+                ptr::null_mut(),
+                ptr::null(),
+            ),
+            1
+        );
+        assert_eq!(internal_packed[0], 0);
+        assert_eq!(internal_packed[1], 0x7e);
+
+        *root = 3;
+        assert_eq!(
+            ns_name_ntop(root.cast(), text.as_mut_ptr().cast(), text.len()),
+            -1
+        );
+        clear_errno();
+        assert_eq!(
+            __ns_name_ntop(root, internal_text.as_mut_ptr().cast(), internal_text.len()),
+            -1
+        );
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+        assert_eq!(
+            ns_name_pack(
+                root.cast(),
+                packed.as_mut_ptr().cast(),
+                packed.len() as c_int,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            ),
+            -1
+        );
+        clear_errno();
+        assert_eq!(
+            __ns_name_pack(
+                root,
+                internal_packed.as_mut_ptr(),
+                internal_packed.len() as c_int,
+                ptr::null_mut(),
+                ptr::null(),
+            ),
+            -1
+        );
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+
+        frankenlibc_abi::malloc_abi::free(root.cast());
+    }
+}
+
+#[test]
 fn ns_name_ntop_decodes_wire_to_text() {
     let wire = make_wire_name("example.com");
     let mut buf = [0u8; 256];

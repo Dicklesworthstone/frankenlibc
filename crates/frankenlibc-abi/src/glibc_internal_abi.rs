@@ -112,6 +112,26 @@ unsafe fn dns_c_string_bytes(ptr: *const c_char) -> Option<Vec<u8>> {
     unsafe { bounded_c_string_bytes(ptr, DNS_CSTR_SCAN_LIMIT) }
 }
 
+#[inline]
+unsafe fn bounded_dns_wire_name_len(ptr: *const u8, max_scan: usize) -> Option<usize> {
+    let bound = known_remaining(ptr as usize).map_or(max_scan, |remaining| remaining.min(max_scan));
+    let mut offset = 0usize;
+    while offset < bound {
+        let label_len = unsafe { *ptr.add(offset) };
+        if label_len == 0 {
+            return offset.checked_add(1);
+        }
+        if label_len & 0xC0 == 0xC0 {
+            return offset.checked_add(2).filter(|len| *len <= bound);
+        }
+        if label_len & 0xC0 != 0 {
+            return offset.checked_add(1);
+        }
+        offset = offset.checked_add(1)?.checked_add(label_len as usize)?;
+    }
+    None
+}
+
 // ==========================================================================
 // Native math helpers
 // ==========================================================================
@@ -1628,13 +1648,15 @@ pub unsafe extern "C" fn ns_name_ntop(
     if src.is_null() || dst.is_null() || dstsiz == 0 {
         return -1;
     }
-    // Wire form is bounded by NS_MAXDNAME (1025 bytes per glibc).
-    let wire = unsafe {
-        std::slice::from_raw_parts(
+    let Some(wire_len) = (unsafe {
+        bounded_dns_wire_name_len(
             src as *const u8,
             frankenlibc_core::resolv::dns_name::NS_MAXDNAME,
         )
+    }) else {
+        return -1;
     };
+    let wire = unsafe { std::slice::from_raw_parts(src as *const u8, wire_len) };
     let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
     let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_ntop(wire, out) {
@@ -1728,10 +1750,12 @@ pub unsafe extern "C" fn ns_name_pack(
     if src.is_null() || dst.is_null() || dstlen < 1 {
         return -1;
     }
-    // The uncompressed input is bounded by NS_MAXCDNAME.
-    let src_slice = unsafe {
-        std::slice::from_raw_parts(src, frankenlibc_core::resolv::dns_name::NS_MAXCDNAME)
+    let Some(src_len) = (unsafe {
+        bounded_dns_wire_name_len(src, frankenlibc_core::resolv::dns_name::NS_MAXCDNAME)
+    }) else {
+        return -1;
     };
+    let src_slice = unsafe { std::slice::from_raw_parts(src, src_len) };
     let effective_dstlen = effective_output_len(dst.cast(), dstlen as usize);
     let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstlen) };
     match frankenlibc_core::resolv::dns_name::name_pack(src_slice, out) {
@@ -8070,8 +8094,13 @@ pub unsafe extern "C" fn __ns_name_ntop(src: *const u8, dst: *mut c_char, dstsiz
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    let wire =
-        unsafe { std::slice::from_raw_parts(src, frankenlibc_core::resolv::dns_name::NS_MAXDNAME) };
+    let Some(wire_len) = (unsafe {
+        bounded_dns_wire_name_len(src, frankenlibc_core::resolv::dns_name::NS_MAXDNAME)
+    }) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
+        return -1;
+    };
+    let wire = unsafe { std::slice::from_raw_parts(src, wire_len) };
     let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
     let out = unsafe { std::slice::from_raw_parts_mut(dst as *mut u8, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_ntop(wire, out) {
@@ -8175,9 +8204,13 @@ pub unsafe extern "C" fn __ns_name_pack(
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    let src_slice = unsafe {
-        std::slice::from_raw_parts(src, frankenlibc_core::resolv::dns_name::NS_MAXCDNAME)
+    let Some(src_len) = (unsafe {
+        bounded_dns_wire_name_len(src, frankenlibc_core::resolv::dns_name::NS_MAXCDNAME)
+    }) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
+        return -1;
     };
+    let src_slice = unsafe { std::slice::from_raw_parts(src, src_len) };
     let effective_dstsiz = effective_output_len(dst.cast(), dstsiz as usize);
     let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstsiz) };
     match frankenlibc_core::resolv::dns_name::name_pack(src_slice, out) {
