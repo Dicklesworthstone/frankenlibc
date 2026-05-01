@@ -3441,6 +3441,43 @@ fn bd_dcfj5_res_isourserver_matches_configured_ipv4_nameserver() {
 }
 
 #[test]
+fn bd_dcfj5_res_isourserver_rejects_tracked_short_sockaddr() {
+    use frankenlibc_abi::resolv_abi::*;
+    let mut addr = malloc_filled_bytes(mem::size_of::<libc::sockaddr_in>() - 1, 0);
+    let family = (libc::AF_INET as libc::sa_family_t).to_ne_bytes();
+    unsafe {
+        ptr::copy_nonoverlapping(family.as_ptr(), addr.as_mut_ptr(), family.len());
+    }
+
+    let rc = unsafe { __res_isourserver(std::ptr::null(), addr.as_ptr().cast::<c_void>()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
+fn bd_dcfj5_res_isourserver_rejects_unaligned_sockaddr() {
+    use frankenlibc_abi::resolv_abi::*;
+    let sin = libc::sockaddr_in {
+        sin_family: libc::AF_INET as libc::sa_family_t,
+        sin_port: frankenlibc_core::resolv::config::DNS_PORT.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes([127, 0, 0, 1]),
+        },
+        sin_zero: [0; 8],
+    };
+    let mut bytes = vec![0u8; mem::size_of::<libc::sockaddr_in>() + 1];
+    unsafe {
+        ptr::copy_nonoverlapping(
+            (&sin as *const libc::sockaddr_in).cast::<u8>(),
+            bytes.as_mut_ptr().add(1),
+            mem::size_of::<libc::sockaddr_in>(),
+        );
+    }
+
+    let rc = unsafe { __res_isourserver(std::ptr::null(), bytes.as_ptr().add(1).cast::<c_void>()) };
+    assert_eq!(rc, 0);
+}
+
+#[test]
 fn res_query_nameinquery_finds_matching_question() {
     use frankenlibc_abi::resolv_abi::*;
     let msg = synthetic_dns_query_message(1, 1);

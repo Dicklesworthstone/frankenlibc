@@ -4943,7 +4943,7 @@ pub unsafe extern "C" fn __res_close(_statp: *mut c_void) {}
 /// `addr` may be NULL. Non-NULL pointers must point to a `sockaddr_in`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_isourserver(_statp: *const c_void, addr: *const c_void) -> c_int {
-    if addr.is_null() {
+    if !tracked_object_fits(addr.cast::<libc::sockaddr_in>()) {
         return 0;
     }
     let sin = unsafe { &*(addr.cast::<libc::sockaddr_in>()) };
