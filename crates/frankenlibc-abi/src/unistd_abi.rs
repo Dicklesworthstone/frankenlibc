@@ -5511,18 +5511,15 @@ pub unsafe extern "C" fn statmount(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    const SYS_STATMOUNT: libc::c_long = 457;
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            SYS_STATMOUNT,
-            req as libc::c_long,
-            out as libc::c_long,
-            bufsize as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_statmount(req as *const u8, out as *mut u8, bufsize, flags)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `listmount(*req, *mnt_ids, count, flags) -> int` (Linux
@@ -5544,18 +5541,15 @@ pub unsafe extern "C" fn listmount(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    const SYS_LISTMOUNT: libc::c_long = 458;
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            SYS_LISTMOUNT,
-            req as libc::c_long,
-            mnt_ids as libc::c_long,
-            count as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_listmount(req as *const u8, mnt_ids, count, flags)
+    } {
+        Ok(n) => n as c_int,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `finit_module(fd, *param_values, flags) -> int`

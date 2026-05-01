@@ -578,6 +578,10 @@ pub const SYS_MIGRATE_PAGES: usize = 256;
 pub const SYS_MOVE_PAGES: usize = 279;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_SET_MEMPOLICY_HOME_NODE: usize = 450;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_STATMOUNT: usize = 457;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LISTMOUNT: usize = 458;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -750,6 +754,10 @@ pub const SYS_MIGRATE_PAGES: usize = 238;
 pub const SYS_MOVE_PAGES: usize = 239;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_SET_MEMPOLICY_HOME_NODE: usize = 450;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_STATMOUNT: usize = 457;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LISTMOUNT: usize = 458;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2163,6 +2171,61 @@ pub unsafe fn sys_set_mempolicy_home_node(
         )
     };
     syscall_result(ret).map(|_| ())
+}
+
+/// `statmount(req, out, bufsize, flags)` — query a single mount by ID
+/// (Linux 6.8+, syscall 457).
+///
+/// # Safety
+///
+/// `req` must point to a valid `struct mnt_id_req`; `out` must point
+/// to writable storage of at least `bufsize` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_statmount(
+    req: *const u8,
+    out: *mut u8,
+    bufsize: usize,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_STATMOUNT,
+            req as usize,
+            out as usize,
+            bufsize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `listmount(req, mnt_ids, count, flags)` — list child mount IDs of
+/// a mount (Linux 6.8+, syscall 458). On success returns the number
+/// of entries written to `mnt_ids`.
+///
+/// # Safety
+///
+/// `req` must point to a valid `struct mnt_id_req`; `mnt_ids` must
+/// point to writable storage for at least `count` `u64` entries.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_listmount(
+    req: *const u8,
+    mnt_ids: *mut u64,
+    count: usize,
+    flags: u32,
+) -> Result<usize, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_LISTMOUNT,
+            req as usize,
+            mnt_ids as usize,
+            count,
+            flags as usize,
+        )
+    };
+    syscall_result(ret)
 }
 
 /// `futex(uaddr, futex_op, val, timeout, uaddr2, val3)` — fast userspace mutex.
