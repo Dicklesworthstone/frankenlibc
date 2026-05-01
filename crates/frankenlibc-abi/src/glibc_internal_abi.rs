@@ -1137,6 +1137,11 @@ pub unsafe extern "C" fn __res_send(
     if msg.is_null() || answer.is_null() || msglen < 12 || anslen <= 0 {
         return -1;
     }
+    if tracked_region_too_short_addr(msg as usize, msglen as usize)
+        || tracked_output_too_short(answer, anslen as usize)
+    {
+        return -1;
+    }
 
     let query = unsafe { std::slice::from_raw_parts(msg as *const u8, msglen as usize) };
     let tx_id = u16::from_be_bytes([query[0], query[1]]);

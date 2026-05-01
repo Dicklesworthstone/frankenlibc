@@ -2062,6 +2062,30 @@ fn res_send_null_msg_returns_error() {
 }
 
 #[test]
+fn res_send_rejects_tracked_short_query() {
+    unsafe {
+        let query = malloc_tracked_zeroed_bytes(12);
+        let mut answer = [0u8; 32];
+        let r = __res_send(query, 13, answer.as_mut_ptr().cast(), answer.len() as c_int);
+        assert_eq!(r, -1);
+        assert!(answer.iter().all(|byte| *byte == 0));
+        frankenlibc_abi::malloc_abi::free(query);
+    }
+}
+
+#[test]
+fn res_send_rejects_tracked_short_answer() {
+    unsafe {
+        let query = [0u8; 12];
+        let answer = malloc_tracked_zeroed_bytes(1);
+        let r = __res_send(query.as_ptr().cast(), query.len() as c_int, answer, 512);
+        assert_eq!(r, -1);
+        assert_eq!(answer.cast::<u8>().read(), 0);
+        frankenlibc_abi::malloc_abi::free(answer);
+    }
+}
+
+#[test]
 fn res_state_returns_non_null() {
     let state = unsafe { __res_state() };
     assert!(
