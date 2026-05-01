@@ -3216,6 +3216,32 @@ fn bd_dcfj5_loc_helpers_round_trip_rfc1876() {
 }
 
 #[test]
+fn bd_dcfj5_loc_aton_rejects_tracked_short_binary() {
+    use frankenlibc_abi::resolv_abi::*;
+    let ascii = CString::new("42 21 30 N 71 6 18 W -24m 30m").unwrap();
+    let mut binary = malloc_filled_bytes(4, 0xAA);
+
+    assert_eq!(
+        unsafe { __loc_aton(ascii.as_ptr(), binary.as_mut_ptr()) },
+        0
+    );
+    assert_eq!(binary.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
+fn bd_dcfj5_loc_aton_rejects_tracked_unterminated_ascii() {
+    use frankenlibc_abi::resolv_abi::*;
+    let ascii = malloc_unterminated(b"42 21 30 N 71 6 18 W -24m 30m");
+    let mut binary = [0xAA; 16];
+
+    assert_eq!(
+        unsafe { __loc_aton(ascii.as_ptr(), binary.as_mut_ptr()) },
+        0
+    );
+    assert_eq!(binary, [0xAA; 16]);
+}
+
+#[test]
 fn bd_dcfj5_sym_helpers_return_decimal_on_null_table() {
     use frankenlibc_abi::resolv_abi::*;
     let mut success: c_int = 99;

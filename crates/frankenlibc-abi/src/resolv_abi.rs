@@ -4388,7 +4388,12 @@ pub unsafe extern "C" fn __loc_aton(ascii: *const c_char, binary: *mut u8) -> c_
     if ascii.is_null() || binary.is_null() {
         return 0;
     }
-    let s = unsafe { CStr::from_ptr(ascii) }.to_bytes();
+    if !tracked_region_fits(binary.cast(), 16) {
+        return 0;
+    }
+    let Some(s) = (unsafe { required_cstr_bytes(ascii) }) else {
+        return 0;
+    };
     let Some(out) = loc_aton_inner(s) else {
         return 0;
     };
