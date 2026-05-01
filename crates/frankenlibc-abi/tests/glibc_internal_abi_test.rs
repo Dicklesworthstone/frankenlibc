@@ -1044,6 +1044,21 @@ fn ns_name_skip_null_returns_error() {
 }
 
 #[test]
+fn ns_name_skip_rejects_tracked_short_message() {
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *raw = 0;
+        let start = raw.cast::<std::ffi::c_void>();
+        let mut cur = start.cast_const();
+        let eom = raw.wrapping_add(2).cast::<std::ffi::c_void>();
+        let ret = ns_name_skip(&mut cur, eom);
+        assert_eq!(ret, -1);
+        assert_eq!(cur, start.cast_const());
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
 fn ns_name_unpack_decompresses_wire_name() {
     // Build a DNS message: header (12 bytes) + "example.com" wire name + pointer back to name.
     let mut msg = vec![0u8; 12]; // Fake DNS header.
@@ -2310,6 +2325,20 @@ fn ns_name_skip_compressed() {
     let ret = unsafe { __ns_name_skip(&mut ptr, eom) };
     assert_eq!(ret, 0);
     assert_eq!(unsafe { ptr.offset_from(msg.as_ptr()) } as usize, 2);
+}
+
+#[test]
+fn internal_ns_name_skip_rejects_tracked_short_message() {
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *raw = 0;
+        let mut ptr = raw.cast_const();
+        let eom = raw.wrapping_add(2).cast_const();
+        let ret = __ns_name_skip(&mut ptr, eom);
+        assert_eq!(ret, -1);
+        assert_eq!(ptr, raw.cast_const());
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
 }
 
 #[test]

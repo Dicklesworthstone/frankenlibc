@@ -1596,10 +1596,16 @@ pub unsafe extern "C" fn ns_name_skip(ptrptr: *mut *const c_void, eom: *const c_
     }
     let ptr = unsafe { *ptrptr } as *const u8;
     let eom = eom as *const u8;
-    if ptr.is_null() || ptr >= eom {
+    let ptr_addr = ptr as usize;
+    let eom_addr = eom as usize;
+    if ptr.is_null() || ptr_addr >= eom_addr {
         return -1;
     }
-    let buf = unsafe { std::slice::from_raw_parts(ptr, eom.offset_from(ptr) as usize) };
+    let span_len = eom_addr - ptr_addr;
+    if span_len > isize::MAX as usize || tracked_region_too_short_addr(ptr_addr, span_len) {
+        return -1;
+    }
+    let buf = unsafe { std::slice::from_raw_parts(ptr, span_len) };
     match frankenlibc_core::resolv::dns_name::name_skip(buf) {
         Ok(n) => {
             unsafe { *ptrptr = ptr.add(n) as *const c_void };
@@ -8237,11 +8243,18 @@ pub unsafe extern "C" fn __ns_name_skip(ptrptr: *mut *const u8, eom: *const u8) 
         return -1;
     }
     let ptr = unsafe { *ptrptr };
-    if ptr.is_null() || ptr >= eom {
+    let ptr_addr = ptr as usize;
+    let eom_addr = eom as usize;
+    if ptr.is_null() || ptr_addr >= eom_addr {
         unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
         return -1;
     }
-    let buf = unsafe { std::slice::from_raw_parts(ptr, eom.offset_from(ptr) as usize) };
+    let span_len = eom_addr - ptr_addr;
+    if span_len > isize::MAX as usize || tracked_region_too_short_addr(ptr_addr, span_len) {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
+        return -1;
+    }
+    let buf = unsafe { std::slice::from_raw_parts(ptr, span_len) };
     match frankenlibc_core::resolv::dns_name::name_skip(buf) {
         Ok(n) => {
             unsafe { *ptrptr = ptr.add(n) };
