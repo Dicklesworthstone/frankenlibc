@@ -568,6 +568,8 @@ pub const SYS_GET_MEMPOLICY: usize = 239;
 pub const SYS_MSEAL: usize = 462;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_RSEQ: usize = 334;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_CACHESTAT: usize = 451;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -730,6 +732,8 @@ pub const SYS_GET_MEMPOLICY: usize = 236;
 pub const SYS_MSEAL: usize = 462;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_RSEQ: usize = 293;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_CACHESTAT: usize = 451;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -1995,6 +1999,33 @@ pub unsafe fn sys_rseq(
             rseq_len as usize,
             flags as usize,
             sig as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `cachestat(fd, *cstat_range, *cstat, flags)` — query page cache
+/// statistics for a file range (Linux 6.5+, syscall 451).
+///
+/// # Safety
+///
+/// `cstat_range` must point to a valid `struct cachestat_range`;
+/// `cstat` must point to writable `struct cachestat` storage.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_cachestat(
+    fd: u32,
+    cstat_range: *const u8,
+    cstat: *mut u8,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_CACHESTAT,
+            fd as usize,
+            cstat_range as usize,
+            cstat as usize,
+            flags as usize,
         )
     };
     syscall_result(ret).map(|_| ())

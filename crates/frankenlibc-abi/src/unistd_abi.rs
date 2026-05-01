@@ -5268,21 +5268,15 @@ pub unsafe extern "C" fn cachestat(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SYS_cachestat = 451 on x86_64 (libc 0.2.185 doesn't expose
-    // SYS_cachestat yet; embed the literal so we work on every
-    // Linux x86_64 toolchain that has the kernel support).
-    const SYS_CACHESTAT: libc::c_long = 451;
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            SYS_CACHESTAT,
-            fd as libc::c_long,
-            cstat_range as libc::c_long,
-            cstat as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_cachestat(fd, cstat_range as *const u8, cstat as *mut u8, flags)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
