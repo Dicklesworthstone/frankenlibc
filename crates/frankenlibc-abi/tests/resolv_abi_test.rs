@@ -2236,6 +2236,16 @@ fn ns_initparse_rejects_truncated_section() {
 }
 
 #[test]
+fn ns_initparse_rejects_tracked_short_message_span() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse};
+    let full = synthetic_dns_message();
+    let msg = malloc_bytes(&full[..12]);
+    let mut handle: CNsMsg = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_initparse(msg.as_ptr(), full.len() as c_int, &mut handle) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
 fn ns_msg_getflag_reads_header_bits() {
     use frankenlibc_abi::resolv_abi::{CNsMsg, ns_initparse, ns_msg_getflag};
     let msg = synthetic_dns_message();
@@ -2333,6 +2343,32 @@ fn ns_parserr_rejects_out_of_range_rrnum() {
 }
 
 #[test]
+fn ns_parserr_rejects_tracked_short_handle_message_span() {
+    use frankenlibc_abi::resolv_abi::{CNsMsg, CNsRr, ns_parserr};
+    let full = synthetic_dns_message();
+    let msg = malloc_bytes(&full[..12]);
+    let mut handle = CNsMsg {
+        _msg: msg.as_ptr(),
+        _eom: msg.as_ptr().wrapping_add(full.len()),
+        _id: 0x1234,
+        _flags: 0x8180,
+        _counts: [1, 0, 0, 0],
+        _sections: [
+            msg.as_ptr().wrapping_add(12),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+        ],
+        _sect: 0,
+        _rrnum: 0,
+        _msg_ptr: msg.as_ptr().wrapping_add(12),
+    };
+    let mut rr: CNsRr = unsafe { std::mem::zeroed() };
+    let rc = unsafe { ns_parserr(&mut handle, 0, 0, &mut rr) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
 fn ns_skiprr_advances_past_question_and_answer() {
     use frankenlibc_abi::resolv_abi::ns_skiprr;
     let msg = synthetic_dns_message();
@@ -2361,6 +2397,15 @@ fn ns_skiprr_rejects_overrun() {
     let eom = unsafe { msg.as_ptr().add(msg.len()) };
     // Asking for too many entries should overrun the message.
     let rc = unsafe { ns_skiprr(qd_start, eom, 0, 100) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_skiprr_rejects_tracked_short_message_span() {
+    use frankenlibc_abi::resolv_abi::ns_skiprr;
+    let msg = malloc_bytes(&[3]);
+    let eom = msg.as_ptr().wrapping_add(13);
+    let rc = unsafe { ns_skiprr(msg.as_ptr(), eom, 0, 1) };
     assert_eq!(rc, -1);
 }
 

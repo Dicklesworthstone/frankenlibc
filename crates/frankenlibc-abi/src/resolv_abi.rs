@@ -114,6 +114,32 @@ fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
 }
 
+#[inline]
+fn tracked_addr_region_fits(addr: usize, len: usize) -> bool {
+    known_remaining(addr).is_none_or(|remaining| len <= remaining)
+}
+
+#[inline]
+fn tracked_object_fits<T>(ptr: *const T) -> bool {
+    !ptr.is_null()
+        && (ptr as usize).is_multiple_of(align_of::<T>())
+        && tracked_addr_region_fits(ptr as usize, size_of::<T>())
+}
+
+#[inline]
+fn dns_span_len_allow_empty(start: *const u8, eom: *const u8) -> Option<usize> {
+    let start_addr = start as usize;
+    let eom_addr = eom as usize;
+    if eom_addr < start_addr {
+        return None;
+    }
+    let span_len = eom_addr.checked_sub(start_addr)?;
+    if span_len > isize::MAX as usize || !tracked_addr_region_fits(start_addr, span_len) {
+        return None;
+    }
+    Some(span_len)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileFingerprint {
     len: u64,
@@ -3076,11 +3102,14 @@ unsafe fn read_query_question(
 /// must point to writable [`CNsMsg`] storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_initparse(msg: *const u8, msglen: c_int, handle: *mut CNsMsg) -> c_int {
-    if msg.is_null() || handle.is_null() || msglen < 0 {
+    if msg.is_null() || !tracked_object_fits(handle) || msglen < 0 {
         return -1;
     }
     let msglen = msglen as usize;
     if msglen < NS_HFIXEDSZ {
+        return -1;
+    }
+    if !tracked_region_fits(msg.cast(), msglen) {
         return -1;
     }
     // SAFETY: caller-supplied buffer of msglen bytes.
@@ -3140,10 +3169,13 @@ pub unsafe extern "C" fn ns_skiprr(
     section: c_int,
     count: c_int,
 ) -> c_int {
-    if ptr.is_null() || eom.is_null() || count < 0 || ptr > eom {
+    if ptr.is_null() || eom.is_null() || count < 0 {
         return -1;
     }
-    let len = unsafe { eom.offset_from(ptr) } as usize;
+    let Some(len) = dns_span_len_allow_empty(ptr, eom) else {
+        return -1;
+    };
+    // SAFETY: ptr/eom were checked as a bounded readable u8 span above.
     let buf = unsafe { core::slice::from_raw_parts(ptr, len) };
     let mut pos = 0usize;
     for _ in 0..count {
@@ -3174,7 +3206,7 @@ pub unsafe extern "C" fn ns_parserr(
     rrnum: c_int,
     rr: *mut CNsRr,
 ) -> c_int {
-    if handle.is_null() || rr.is_null() || rrnum < 0 {
+    if !tracked_object_fits(handle) || !tracked_object_fits(rr) || rrnum < 0 {
         return -1;
     }
     if !(0..NS_S_MAX as c_int).contains(&section) {
@@ -3191,9 +3223,17 @@ pub unsafe extern "C" fn ns_parserr(
     if msg_ptr.is_null() || eom.is_null() || section_start.is_null() {
         return -1;
     }
-    let msg_len = unsafe { eom.offset_from(msg_ptr) } as usize;
-    let buf = unsafe { core::slice::from_raw_parts(msg_ptr, msg_len) };
-    let mut pos = unsafe { section_start.offset_from(msg_ptr) } as usize;
+    // SAFETY: handle message bounds are revalidated before a slice is built.
+    let Some(buf) = (unsafe { dns_message_slice(msg_ptr.cast(), eom.cast()) }) else {
+        return -1;
+    };
+    let msg_len = buf.len();
+    let msg_addr = msg_ptr as usize;
+    let section_addr = section_start as usize;
+    if section_addr < msg_addr || section_addr > (eom as usize) {
+        return -1;
+    }
+    let mut pos = section_addr - msg_addr;
     for _ in 0..rrnum {
         match unsafe { ns_skip_one_rr(buf, eom, pos, section) } {
             Some(p) => pos = p,
