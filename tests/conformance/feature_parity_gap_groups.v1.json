@@ -1,0 +1,370 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.3.1",
+  "generated_at_utc": "2026-05-01T17:35:00Z",
+  "purpose": "Group every unresolved feature-parity ledger gap into countable implementation batches by FEATURE_PARITY section, symbol family, evidence artifact, and likely source owner.",
+  "inputs": {
+    "gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "feature_parity": "FEATURE_PARITY.md",
+    "support_matrix": "support_matrix.json",
+    "symbol_fixture_coverage": "tests/conformance/symbol_fixture_coverage.v1.json",
+    "per_symbol_fixture_tests": "tests/conformance/per_symbol_fixture_tests.v1.json",
+    "gap_bead_coverage": "tests/conformance/feature_parity_gap_bead_coverage.v1.json"
+  },
+  "batch_policy": {
+    "must_cover_every_gap_once": true,
+    "must_preserve_ambition": true,
+    "claim_advancement_requires_machine_evidence": true,
+    "owner_status_closed_is_not_gap_closed": true,
+    "unit_and_e2e_logging_required_for_followup_batches": true
+  },
+  "batches": [
+    {
+      "batch_id": "fpg-claim-control",
+      "title": "Release-claim and replacement-level gates",
+      "feature_parity_sections": [
+        "macro_targets",
+        "machine_delta"
+      ],
+      "symbol_family": "global replacement claims, strict/hardened mode claims, conformance and benchmark gates",
+      "evidence_artifacts": [
+        "FEATURE_PARITY.md",
+        "support_matrix.json",
+        "tests/conformance/reality_report.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/semantic_contract_inventory.v1.json"
+      ],
+      "source_owner": "docs/conformance release-gate owners",
+      "priority": 0,
+      "gap_count": 8,
+      "gap_ids": [
+        "fp-macro-targets-fa7a23e18f01",
+        "fp-macro-targets-7b75050a0f03",
+        "fp-macro-targets-025864627e97",
+        "fp-macro-targets-b1b8d5acbeff",
+        "fp-macro-targets-b1983d62901c",
+        "fp-macro-targets-556631616b22",
+        "fp-macro-targets-1e330b896784",
+        "gap-macro-fp-macro-targets-fa7a23e18f01"
+      ],
+      "actionable_next_step": "Make README, FEATURE_PARITY, replacement_levels, and release notes consume machine evidence rather than support taxonomy counts alone."
+    },
+    {
+      "batch_id": "fpg-reverse-runtime-core",
+      "title": "Reverse-round runtime core pressure points",
+      "feature_parity_sections": [
+        "reverse_core"
+      ],
+      "symbol_family": "allocator, string/memory, pthread/cancellation, stdio/locale parsing, signal/setjmp, time, NSS/resolver, iconv/i18n, strict/hardened decisions",
+      "evidence_artifacts": [
+        "tests/conformance/fixtures/membrane_mode_split.json",
+        "tests/conformance/symbol_fixture_coverage.v1.json",
+        "tests/conformance/per_symbol_fixture_tests.v1.json",
+        "tests/conformance/semantic_contract_inventory.v1.json"
+      ],
+      "source_owner": "frankenlibc-core and frankenlibc-abi subsystem owners",
+      "priority": 0,
+      "gap_count": 10,
+      "gap_ids": [
+        "fp-reverse-core-311e99aff4d6",
+        "fp-reverse-core-a30cbdd5d2da",
+        "fp-reverse-core-422dc81789ec",
+        "fp-reverse-core-bbe405ff4f84",
+        "fp-reverse-core-97ef5634c70b",
+        "fp-reverse-core-bdb29f3d780e",
+        "fp-reverse-core-d6c0faa879a5",
+        "fp-reverse-core-36e1946e7f8d",
+        "fp-reverse-core-afa6d92abe42",
+        "fp-reverse-core-8f333dadeb11"
+      ],
+      "actionable_next_step": "Create per-family strict/hardened fixture campaigns and source-owner beads for the runtime paths most likely to affect real users."
+    },
+    {
+      "batch_id": "fpg-reverse-loader-process-abi",
+      "title": "Reverse-round loader, ABI, process, and platform compatibility pressure points",
+      "feature_parity_sections": [
+        "reverse_core"
+      ],
+      "symbol_family": "loader/symbol/IFUNC, ABI/time64/layout, VM transitions, process bootstrap, syscall glue, SysV IPC, diagnostics/unwinding, session accounting, profiling, floating-point/fenv",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "tests/conformance/conformance_matrix.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/hard_parts_e2e_failure_matrix.v1.json"
+      ],
+      "source_owner": "ABI, loader, syscall, process, and hard-parts harness owners",
+      "priority": 0,
+      "gap_count": 10,
+      "gap_ids": [
+        "fp-reverse-core-0191894bf973",
+        "fp-reverse-core-c16c9c1ae7a4",
+        "fp-reverse-core-83ea12557c2f",
+        "fp-reverse-core-a764fe234295",
+        "fp-reverse-core-3ac0cb0d65a2",
+        "fp-reverse-core-757002295174",
+        "fp-reverse-core-8f05cebd7805",
+        "fp-reverse-core-b4b2f8e772cb",
+        "fp-reverse-core-44162ed23382",
+        "fp-reverse-core-a559b1461f71"
+      ],
+      "actionable_next_step": "Drive loader/startup/platform gaps through executable e2e scenarios rather than static support assertions."
+    },
+    {
+      "batch_id": "fpg-proof-core-safety",
+      "title": "Core safety and refinement proof obligations",
+      "feature_parity_sections": [
+        "proof_math"
+      ],
+      "symbol_family": "strict refinement, hardened safety, deterministic replay, barrier invariance, robust radius, secure-mode noninterference, conformal validity",
+      "evidence_artifacts": [
+        "tests/conformance/proof_obligations_binder.v1.json",
+        "tests/conformance/proof_binder_validation.v1.json",
+        "tests/conformance/mode_contract_lock.v1.json"
+      ],
+      "source_owner": "membrane proof and conformance-binder owners",
+      "priority": 0,
+      "gap_count": 7,
+      "gap_ids": [
+        "fp-proof-math-b821b415a5d6",
+        "fp-proof-math-f3e03ea48a96",
+        "fp-proof-math-0dbb786935af",
+        "fp-proof-math-8c76410adba7",
+        "fp-proof-math-2a49b40113a6",
+        "fp-proof-math-f4c99678233a",
+        "fp-proof-math-498e3ada4658"
+      ],
+      "actionable_next_step": "Bind each safety proof claim to executable strict/hardened mode cases and proof-binder validation rows."
+    },
+    {
+      "batch_id": "fpg-proof-online-control",
+      "title": "Online controller, decision, and risk proof obligations",
+      "feature_parity_sections": [
+        "proof_math"
+      ],
+      "symbol_family": "sequential regression, drift detection, CPOMDP, CHC/CEGAR, tail risk, HJI, mean-field, entropic transition, online optimizer, hybrid reachability, Stackelberg, observability, contention stability",
+      "evidence_artifacts": [
+        "tests/conformance/runtime_env_inventory.v1.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/anytime_valid_monitor_spec.json",
+        "tests/conformance/optimization_proof_ledger.v1.json"
+      ],
+      "source_owner": "runtime_math controller owners",
+      "priority": 0,
+      "gap_count": 13,
+      "gap_ids": [
+        "fp-proof-math-df8f42355e99",
+        "fp-proof-math-6d3837dc2cdd",
+        "fp-proof-math-1a1ed91c6ee8",
+        "fp-proof-math-5a7ebb15c2f5",
+        "fp-proof-math-b9be3da6001d",
+        "fp-proof-math-eb51f3bf762d",
+        "fp-proof-math-96c6e9c65324",
+        "fp-proof-math-f929ecc9dcd6",
+        "fp-proof-math-c215c413371b",
+        "fp-proof-math-050acfed5d6f",
+        "fp-proof-math-fa21b6b68812",
+        "fp-proof-math-76ad47f58ff9",
+        "fp-proof-math-10bc920debc7"
+      ],
+      "actionable_next_step": "Pair each controller theorem with deterministic calibration, replay logs, and latency/risk budget assertions."
+    },
+    {
+      "batch_id": "fpg-proof-coverage-interaction",
+      "title": "Coverage, interaction, latency, and low-level correctness proof obligations",
+      "feature_parity_sections": [
+        "proof_math"
+      ],
+      "symbol_family": "superoptimization, concurrent linearizability, combinatorial interaction coverage, probabilistic coupling, tropical latency, async control, termios/ioctl safety, launch complexity, arithmetic compatibility, Clifford kernel equivalence",
+      "evidence_artifacts": [
+        "tests/conformance/branch_diversity_spec.v1.json",
+        "tests/conformance/submodular_coverage.v1.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json"
+      ],
+      "source_owner": "coverage, performance, ABI-layout, and low-level kernel owners",
+      "priority": 1,
+      "gap_count": 10,
+      "gap_ids": [
+        "fp-proof-math-4577b75545e4",
+        "fp-proof-math-638859dcb801",
+        "fp-proof-math-77bcaf571ca9",
+        "fp-proof-math-c76d1265a4b8",
+        "fp-proof-math-0a9c8933d821",
+        "fp-proof-math-a4fd102d5fd8",
+        "fp-proof-math-25ac141c57f6",
+        "fp-proof-math-0d50ca59b972",
+        "fp-proof-math-d09a6233acb5",
+        "fp-proof-math-080870cbbd8d"
+      ],
+      "actionable_next_step": "Turn coverage and low-level proof claims into deterministic interaction matrices, latency gates, and ABI/kernel equivalence tests."
+    },
+    {
+      "batch_id": "fpg-proof-algebraic-topological",
+      "title": "Algebraic, topological, and categorical proof obligations",
+      "feature_parity_sections": [
+        "proof_math"
+      ],
+      "symbol_family": "sheaf consistency, SOS invariant, topological anomaly, rough signatures, coalgebraic streams, codec factorization, loader namespace sheaves, spectral sequences, algebraic normal forms, Serre/Grothendieck descent, families index, Atiyah-Bott, derived t-structure",
+      "evidence_artifacts": [
+        "tests/conformance/proof_traceability_check.json",
+        "tests/conformance/sheaf_coverage.v1.json",
+        "tests/conformance/math_value_proof.json",
+        "tests/conformance/math_governance.json"
+      ],
+      "source_owner": "runtime_math algebraic/topological monitor owners",
+      "priority": 1,
+      "gap_count": 15,
+      "gap_ids": [
+        "fp-proof-math-9c25ab032255",
+        "fp-proof-math-5fa634c732ac",
+        "fp-proof-math-d7e5810905ab",
+        "fp-proof-math-f6429eb2d1c8",
+        "fp-proof-math-37337d818152",
+        "fp-proof-math-a0873d9da0f5",
+        "fp-proof-math-bccf06e26bab",
+        "fp-proof-math-fcb2fed207e1",
+        "fp-proof-math-76cb028ebd3b",
+        "fp-proof-math-7d4ac141f993",
+        "fp-proof-math-7c593b074cca",
+        "fp-proof-math-cecd99919641",
+        "fp-proof-math-c9faf981c807",
+        "fp-proof-math-1cf962a06c67",
+        "fp-proof-math-58baa463bee3"
+      ],
+      "actionable_next_step": "Attach proof traceability, monitor-level fixtures, and falsifiable drift signatures to each advanced proof claim."
+    },
+    {
+      "batch_id": "fpg-gap-summary-evidence-foundation",
+      "title": "Evidence foundation gaps in the feature-parity summary",
+      "feature_parity_sections": [
+        "gap_summary"
+      ],
+      "symbol_family": "fixtures, benchmarks, version scripts, proof artifacts, runtime math wiring, sequential guardrails, membrane-mode fixture evidence",
+      "evidence_artifacts": [
+        "tests/conformance/fixtures/",
+        "tests/conformance/perf_baseline_spec.json",
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "tests/conformance/proof_obligations_binder.v1.json",
+        "tests/conformance/fixtures/membrane_mode_split.json"
+      ],
+      "source_owner": "conformance, benchmark, ABI-symbol, and proof-binder owners",
+      "priority": 0,
+      "gap_count": 7,
+      "gap_ids": [
+        "fp-gap-summary-7b67c9268b67",
+        "fp-gap-summary-d643858a62b5",
+        "fp-gap-summary-7c8a46cdcb5e",
+        "fp-gap-summary-b04531fdcdde",
+        "fp-gap-summary-3675b24bb188",
+        "fp-gap-summary-e0624b12f6a0",
+        "fp-gap-summary-be0b24532a7e"
+      ],
+      "actionable_next_step": "Convert foundation gaps into current machine-verifiable fixtures, baselines, symbol/version diffs, and proof-binder rows."
+    },
+    {
+      "batch_id": "fpg-gap-summary-ported-surface-evidence",
+      "title": "Ported surface evidence gaps in the feature-parity summary",
+      "feature_parity_sections": [
+        "gap_summary"
+      ],
+      "symbol_family": "allocator, stdlib, string/memory, math/fenv, dlfcn, POSIX batch 3, HTM hot paths",
+      "evidence_artifacts": [
+        "tests/conformance/symbol_fixture_coverage.v1.json",
+        "tests/conformance/per_symbol_fixture_tests.v1.json",
+        "tests/conformance/dlfcn_boundary_policy.v1.json",
+        "tests/conformance/optimization_proof_ledger.v1.json"
+      ],
+      "source_owner": "ported core/ABI family owners",
+      "priority": 0,
+      "gap_count": 10,
+      "gap_ids": [
+        "fp-gap-summary-0398e27f075e",
+        "fp-gap-summary-793c83cceb16",
+        "fp-gap-summary-5cbb74613755",
+        "fp-gap-summary-5da3dc1c8d50",
+        "fp-gap-summary-267b493369f9",
+        "fp-gap-summary-17c934647652",
+        "fp-gap-summary-a51012652c16",
+        "fp-gap-summary-17d24896af61",
+        "fp-gap-summary-161e06bc3a3d",
+        "fp-gap-summary-7bd4926c4439"
+      ],
+      "actionable_next_step": "Attach per-symbol fixture, strict/hardened behavior, and performance evidence to each already-ported surface before moving dashboard rows to DONE."
+    },
+    {
+      "batch_id": "fpg-gap-summary-runtime-monitor-evidence",
+      "title": "Runtime monitor evidence gaps in the feature-parity summary",
+      "feature_parity_sections": [
+        "gap_summary"
+      ],
+      "symbol_family": "runtime_math monitors and controllers: tropical latency, spectral phase, rough path, persistent homology, Schrödinger bridge, large deviations, HJI, mean-field, D-optimal probes, sparse recovery, fusion, equivariance, p-adic, symplectic, higher-topos, commitment audit, change point, conformal risk, Malliavin/info-geometry/matrix/nerve/Wasserstein/MMD, Stein/POMDP/K-theory/SOS",
+      "evidence_artifacts": [
+        "tests/conformance/runtime_env_inventory.v1.json",
+        "tests/conformance/optimization_proof_ledger.v1.json",
+        "tests/conformance/perf_regression_attribution.v1.json",
+        "tests/conformance/proof_traceability_check.json"
+      ],
+      "source_owner": "runtime_math monitor owners",
+      "priority": 1,
+      "gap_count": 21,
+      "gap_ids": [
+        "fp-gap-summary-db582a1956fa",
+        "fp-gap-summary-84240b59cfd1",
+        "fp-gap-summary-70370851cacb",
+        "fp-gap-summary-205f8c297218",
+        "fp-gap-summary-a1d7fcc3399f",
+        "fp-gap-summary-10132dfe6278",
+        "fp-gap-summary-b95fff14be76",
+        "fp-gap-summary-09fac08213b2",
+        "fp-gap-summary-26353b43713e",
+        "fp-gap-summary-5dd50f7bfbf2",
+        "fp-gap-summary-e9257a2a9c49",
+        "fp-gap-summary-ca75128647d2",
+        "fp-gap-summary-a3aed10a522c",
+        "fp-gap-summary-03bcda968d0e",
+        "fp-gap-summary-3c88823923b9",
+        "fp-gap-summary-994260bdf05c",
+        "fp-gap-summary-42c1bf789b12",
+        "fp-gap-summary-e1b445fd58b5",
+        "fp-gap-summary-b7a23cbbae29",
+        "fp-gap-summary-99daf17ed425",
+        "fp-gap-summary-b679d62602b3"
+      ],
+      "actionable_next_step": "Replace summary-level monitor claims with per-monitor replay/calibration artifacts, failure signatures, and strict/hardened decision-path logs."
+    }
+  ],
+  "summary": {
+    "ledger_gap_count": 111,
+    "batch_count": 10,
+    "batched_gap_count": 111,
+    "duplicate_gap_count": 0,
+    "unbatched_gap_count": 0,
+    "by_feature_parity_section": {
+      "macro_targets": 7,
+      "machine_delta": 1,
+      "reverse_core": 20,
+      "proof_math": 45,
+      "gap_summary": 38
+    },
+    "by_likely_source_owner": {
+      "docs/conformance release-gate owners": 8,
+      "frankenlibc-core and frankenlibc-abi subsystem owners": 10,
+      "ABI, loader, syscall, process, and hard-parts harness owners": 10,
+      "membrane proof and conformance-binder owners": 7,
+      "runtime_math controller owners": 13,
+      "coverage, performance, ABI-layout, and low-level kernel owners": 10,
+      "runtime_math algebraic/topological monitor owners": 15,
+      "conformance, benchmark, ABI-symbol, and proof-binder owners": 7,
+      "ported core/ABI family owners": 10,
+      "runtime_math monitor owners": 21
+    },
+    "highest_priority_batches": [
+      "fpg-claim-control",
+      "fpg-reverse-runtime-core",
+      "fpg-reverse-loader-process-abi",
+      "fpg-proof-core-safety",
+      "fpg-gap-summary-evidence-foundation",
+      "fpg-gap-summary-ported-surface-evidence"
+    ]
+  }
+}
