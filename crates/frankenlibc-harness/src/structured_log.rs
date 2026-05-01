@@ -93,10 +93,28 @@ pub struct LogEntry {
     pub scenario_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    /// Canonical runtime mode for ambition evidence rows. Kept separate from legacy `mode`
+    /// during migration so old logs still deserialize, while new gates can require the
+    /// explicit field named in the evidence contract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_mode: Option<String>,
+    /// Replacement-readiness level proved by this row (`L0`..`L3`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement_level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
+    /// Oracle used to decide expected behavior (unit, fixture, host_glibc, e2e, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oracle_kind: Option<String>,
+    /// Expected value for row-level comparisons. Free-form JSON keeps tests, fixtures, and
+    /// benchmark gates on the same log record shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<serde_json::Value>,
+    /// Actual observed value for row-level comparisons.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decision_path: Option<String>,
     /// Optional span id for multi-component traces under one `trace_id`.
@@ -144,6 +162,16 @@ pub struct LogEntry {
     /// Wall-clock duration for a higher-level gate step (milliseconds).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Source commit that produced the evidence row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_commit: Option<String>,
+    /// Target directory used for the run, normally an isolated cargo target dir.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_dir: Option<String>,
+    /// Deterministic failure classifier. Successful rows should use `none` when the field is
+    /// required by a gate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_signature: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_refs: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -164,8 +192,13 @@ impl LogEntry {
             gate: None,
             scenario_id: None,
             mode: None,
+            runtime_mode: None,
+            replacement_level: None,
             api_family: None,
             symbol: None,
+            oracle_kind: None,
+            expected: None,
+            actual: None,
             decision_path: None,
             span_id: None,
             parent_span_id: None,
@@ -183,6 +216,9 @@ impl LogEntry {
             exit_code: None,
             latency_ns: None,
             duration_ms: None,
+            source_commit: None,
+            target_dir: None,
+            failure_signature: None,
             artifact_refs: None,
             details: None,
         }
@@ -223,11 +259,49 @@ impl LogEntry {
         self
     }
 
+    /// Set the canonical runtime mode for ambition evidence. This also fills the legacy `mode`
+    /// field when it is absent so old aggregators still see the runtime mode.
+    #[must_use]
+    pub fn with_runtime_mode(mut self, runtime_mode: impl Into<String>) -> Self {
+        let runtime_mode = runtime_mode.into();
+        if self.mode.is_none() {
+            self.mode = Some(runtime_mode.clone());
+        }
+        self.runtime_mode = Some(runtime_mode);
+        self
+    }
+
+    /// Set the replacement-readiness level (`L0`..`L3`).
+    #[must_use]
+    pub fn with_replacement_level(mut self, replacement_level: impl Into<String>) -> Self {
+        self.replacement_level = Some(replacement_level.into());
+        self
+    }
+
     /// Set the API family and symbol.
     #[must_use]
     pub fn with_api(mut self, family: impl Into<String>, symbol: impl Into<String>) -> Self {
         self.api_family = Some(family.into());
         self.symbol = Some(symbol.into());
+        self
+    }
+
+    /// Set the oracle kind used for expected behavior.
+    #[must_use]
+    pub fn with_oracle_kind(mut self, oracle_kind: impl Into<String>) -> Self {
+        self.oracle_kind = Some(oracle_kind.into());
+        self
+    }
+
+    /// Set expected and actual values for row-level comparisons.
+    #[must_use]
+    pub fn with_expected_actual(
+        mut self,
+        expected: serde_json::Value,
+        actual: serde_json::Value,
+    ) -> Self {
+        self.expected = Some(expected);
+        self.actual = Some(actual);
         self
     }
 
@@ -369,6 +443,27 @@ impl LogEntry {
     #[must_use]
     pub fn with_duration_ms(mut self, ms: u64) -> Self {
         self.duration_ms = Some(ms);
+        self
+    }
+
+    /// Set source commit metadata.
+    #[must_use]
+    pub fn with_source_commit(mut self, source_commit: impl Into<String>) -> Self {
+        self.source_commit = Some(source_commit.into());
+        self
+    }
+
+    /// Set target directory metadata.
+    #[must_use]
+    pub fn with_target_dir(mut self, target_dir: impl Into<String>) -> Self {
+        self.target_dir = Some(target_dir.into());
+        self
+    }
+
+    /// Set deterministic failure signature metadata.
+    #[must_use]
+    pub fn with_failure_signature(mut self, failure_signature: impl Into<String>) -> Self {
+        self.failure_signature = Some(failure_signature.into());
         self
     }
 
@@ -731,6 +826,40 @@ pub fn validate_log_line(
         });
     }
 
+    // Validate canonical runtime_mode enum if present. `mode` remains accepted for legacy
+    // emitters, but new ambition evidence rows must populate runtime_mode explicitly.
+    if let Some(runtime_mode) = obj.get("runtime_mode").and_then(|v| v.as_str())
+        && !["strict", "hardened"].contains(&runtime_mode)
+    {
+        errors.push(LogValidationError {
+            line_number,
+            field: "runtime_mode".to_string(),
+            message: format!("invalid runtime_mode: '{runtime_mode}'"),
+        });
+    }
+
+    if let (Some(mode), Some(runtime_mode)) = (
+        obj.get("mode").and_then(|v| v.as_str()),
+        obj.get("runtime_mode").and_then(|v| v.as_str()),
+    ) && mode != runtime_mode
+    {
+        errors.push(LogValidationError {
+            line_number,
+            field: "runtime_mode".to_string(),
+            message: format!("runtime_mode '{runtime_mode}' must match legacy mode '{mode}'"),
+        });
+    }
+
+    if let Some(level) = obj.get("replacement_level").and_then(|v| v.as_str())
+        && !["L0", "L1", "L2", "L3"].contains(&level)
+    {
+        errors.push(LogValidationError {
+            line_number,
+            field: "replacement_level".to_string(),
+            message: format!("invalid replacement_level: '{level}'"),
+        });
+    }
+
     // Validate outcome enum if present
     if let Some(outcome) = obj.get("outcome").and_then(|v| v.as_str())
         && !["pass", "fail", "skip", "error", "timeout"].contains(&outcome)
@@ -771,6 +900,97 @@ pub fn validate_log_line(
         .get("event")
         .and_then(|v| v.as_str())
         .is_some_and(|e| e == "runtime_decision");
+
+    let is_ambition_evidence_event = obj
+        .get("event")
+        .and_then(|v| v.as_str())
+        .is_some_and(|e| e == "ambition_evidence")
+        || obj
+            .get("gate")
+            .and_then(|v| v.as_str())
+            .is_some_and(|g| g == "ambition_evidence");
+
+    if is_ambition_evidence_event {
+        for field in [
+            "bead_id",
+            "scenario_id",
+            "runtime_mode",
+            "replacement_level",
+            "api_family",
+            "symbol",
+            "oracle_kind",
+            "decision_path",
+            "healing_action",
+            "source_commit",
+            "target_dir",
+            "failure_signature",
+        ] {
+            match obj.get(field).and_then(|v| v.as_str()) {
+                Some(value) if !value.trim().is_empty() => {}
+                _ => errors.push(LogValidationError {
+                    line_number,
+                    field: field.to_string(),
+                    message: format!("ambition_evidence events must include non-empty {field}"),
+                }),
+            }
+        }
+
+        for field in ["expected", "actual"] {
+            if obj.get(field).is_none_or(serde_json::Value::is_null) {
+                errors.push(LogValidationError {
+                    line_number,
+                    field: field.to_string(),
+                    message: format!("ambition_evidence events must include {field}"),
+                });
+            }
+        }
+
+        match obj.get("errno").and_then(|v| v.as_i64()) {
+            Some(_) => {}
+            None => errors.push(LogValidationError {
+                line_number,
+                field: "errno".to_string(),
+                message: "ambition_evidence events must include integer errno".to_string(),
+            }),
+        }
+
+        match obj.get("latency_ns").and_then(|v| v.as_u64()) {
+            Some(_) => {}
+            None => errors.push(LogValidationError {
+                line_number,
+                field: "latency_ns".to_string(),
+                message: "ambition_evidence events must include integer latency_ns".to_string(),
+            }),
+        }
+
+        match obj.get("artifact_refs").and_then(|v| v.as_array()) {
+            Some(refs) if !refs.is_empty() && refs.iter().all(serde_json::Value::is_string) => {}
+            _ => errors.push(LogValidationError {
+                line_number,
+                field: "artifact_refs".to_string(),
+                message:
+                    "ambition_evidence events must include non-empty string artifact_refs array"
+                        .to_string(),
+            }),
+        }
+
+        if matches!(
+            obj.get("outcome").and_then(|v| v.as_str()),
+            Some("fail" | "error" | "timeout")
+        ) && obj
+            .get("failure_signature")
+            .and_then(|v| v.as_str())
+            .is_none_or(|sig| sig.trim().is_empty() || sig == "none")
+        {
+            errors.push(LogValidationError {
+                line_number,
+                field: "failure_signature".to_string(),
+                message:
+                    "failing ambition_evidence events must include a concrete failure_signature"
+                        .to_string(),
+            });
+        }
+    }
 
     if is_runtime_decision_event {
         match obj.get("symbol").and_then(|v| v.as_str()) {
@@ -991,6 +1211,8 @@ mod tests {
         assert!(parsed.get("stream").is_none());
         assert!(parsed.get("gate").is_none());
         assert!(parsed.get("mode").is_none());
+        assert!(parsed.get("runtime_mode").is_none());
+        assert!(parsed.get("replacement_level").is_none());
         assert!(parsed.get("controller_id").is_none());
         assert!(parsed.get("decision_action").is_none());
         assert!(parsed.get("risk_inputs").is_none());
@@ -1002,8 +1224,10 @@ mod tests {
             .with_bead("bd-144")
             .with_stream(StreamKind::E2e)
             .with_gate("e2e_suite")
-            .with_mode("hardened")
+            .with_runtime_mode("hardened")
+            .with_replacement_level("L1")
             .with_api("malloc", "realloc")
+            .with_oracle_kind("host_glibc")
             .with_span("span-1", None)
             .with_profile(ValidationProfile::Full)
             .with_healing_action("ClampSize")
@@ -1019,6 +1243,13 @@ mod tests {
             .with_exit_code(1)
             .with_latency_ns(150)
             .with_duration_ms(2)
+            .with_expected_actual(
+                serde_json::json!({"return":"non-null"}),
+                serde_json::json!({"return":null}),
+            )
+            .with_source_commit("0123456789abcdef")
+            .with_target_dir("target/rch/bd-bp8fl.7.5")
+            .with_failure_signature("allocator_bounds_exceeded")
             .with_artifacts(vec!["path/to/backtrace".to_string()])
             .with_details(serde_json::json!({"expected": "non-null"}));
 
@@ -1028,8 +1259,11 @@ mod tests {
         assert_eq!(parsed["stream"], "e2e");
         assert_eq!(parsed["gate"], "e2e_suite");
         assert_eq!(parsed["mode"], "hardened");
+        assert_eq!(parsed["runtime_mode"], "hardened");
+        assert_eq!(parsed["replacement_level"], "L1");
         assert_eq!(parsed["api_family"], "malloc");
         assert_eq!(parsed["symbol"], "realloc");
+        assert_eq!(parsed["oracle_kind"], "host_glibc");
         assert_eq!(parsed["span_id"], "span-1");
         assert_eq!(parsed["profile"], "Full");
         assert_eq!(parsed["healing_action"], "ClampSize");
@@ -1045,6 +1279,11 @@ mod tests {
         assert_eq!(parsed["exit_code"], 1);
         assert_eq!(parsed["latency_ns"], 150);
         assert_eq!(parsed["duration_ms"], 2);
+        assert_eq!(parsed["expected"]["return"], "non-null");
+        assert!(parsed["actual"]["return"].is_null());
+        assert_eq!(parsed["source_commit"], "0123456789abcdef");
+        assert_eq!(parsed["target_dir"], "target/rch/bd-bp8fl.7.5");
+        assert_eq!(parsed["failure_signature"], "allocator_bounds_exceeded");
         assert!(parsed["artifact_refs"].is_array());
         assert!(parsed["details"].is_object());
     }
@@ -1115,6 +1354,19 @@ mod tests {
         let errors = result.unwrap_err();
         assert!(errors.iter().any(|e| e.field == "decision_id"));
         assert!(errors.iter().any(|e| e.field == "policy_id"));
+    }
+
+    #[test]
+    fn ambition_evidence_requires_full_contract_fields() {
+        let json = r#"{"timestamp":"2026-05-01T00:00:00Z","trace_id":"bd-bp8fl.7.5::run::001","level":"info","event":"ambition_evidence","bead_id":"bd-bp8fl.7.5","scenario_id":"unit-positive","mode":"strict","runtime_mode":"strict","replacement_level":"L0","api_family":"evidence","symbol":"structured_log","oracle_kind":"unit","expected":{"ok":true},"actual":{"ok":true},"errno":0,"decision_path":"schema->validator->pass","healing_action":"None","latency_ns":1,"source_commit":"0123456789abcdef","target_dir":"target/rch/bd-bp8fl.7.5","failure_signature":"none","artifact_refs":["tests/conformance/log_schema.json"],"outcome":"pass"}"#;
+        assert!(
+            validate_log_line(json, 1).is_ok(),
+            "complete ambition evidence row should pass"
+        );
+
+        let missing = r#"{"timestamp":"2026-05-01T00:00:00Z","trace_id":"bd-bp8fl.7.5::run::001","level":"info","event":"ambition_evidence","bead_id":"bd-bp8fl.7.5","scenario_id":"unit-negative","mode":"strict","replacement_level":"L0","api_family":"evidence","symbol":"structured_log","oracle_kind":"unit","expected":{"ok":true},"actual":{"ok":true},"errno":0,"decision_path":"schema->validator->fail","healing_action":"None","latency_ns":1,"source_commit":"0123456789abcdef","target_dir":"target/rch/bd-bp8fl.7.5","failure_signature":"none","artifact_refs":["tests/conformance/log_schema.json"],"outcome":"pass"}"#;
+        let errors = validate_log_line(missing, 1).expect_err("runtime_mode is required");
+        assert!(errors.iter().any(|e| e.field == "runtime_mode"));
     }
 
     #[test]

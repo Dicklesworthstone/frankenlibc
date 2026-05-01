@@ -202,6 +202,108 @@ fn malformed_log_line_reports_schema_violation() {
 }
 
 #[test]
+fn ambition_evidence_row_passes_with_full_contract() {
+    let run_dir = unique_tmp_dir("evidence-compliance-ambition-full");
+    let log_path = run_dir.join("log.jsonl");
+    let index_path = write_valid_index(&run_dir, "diag.txt", "run-ambition", "bd-bp8fl.7.5");
+
+    let line = LogEntry::new(
+        "bd-bp8fl.7.5::run-ambition::001",
+        LogLevel::Info,
+        "ambition_evidence",
+    )
+    .with_bead("bd-bp8fl.7.5")
+    .with_stream(StreamKind::E2e)
+    .with_gate("ambition_evidence")
+    .with_scenario_id("full-contract-positive")
+    .with_runtime_mode("strict")
+    .with_replacement_level("L0")
+    .with_api("evidence", "structured_log")
+    .with_oracle_kind("unit")
+    .with_expected_actual(
+        serde_json::json!({"required_fields":"present"}),
+        serde_json::json!({"required_fields":"present"}),
+    )
+    .with_errno(0)
+    .with_decision_path("schema->validator->pass")
+    .with_healing_action("None")
+    .with_latency_ns(1)
+    .with_source_commit("0123456789abcdef")
+    .with_target_dir("target/rch/bd-bp8fl.7.5")
+    .with_failure_signature("none")
+    .with_outcome(Outcome::Pass)
+    .with_artifacts(vec!["diag.txt".to_string()])
+    .to_jsonl()
+    .expect("serialize ambition evidence row");
+    std::fs::write(&log_path, format!("{line}\n")).expect("write log");
+
+    let report = validate_evidence_bundle(&run_dir, &log_path, &index_path);
+    assert!(
+        report.ok,
+        "complete ambition evidence row should pass bundle validation: {report:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(run_dir);
+}
+
+#[test]
+fn ambition_evidence_missing_runtime_mode_fails_deterministically() {
+    let run_dir = unique_tmp_dir("evidence-compliance-ambition-missing-mode");
+    let log_path = run_dir.join("log.jsonl");
+    let index_path = write_valid_index(
+        &run_dir,
+        "diag.txt",
+        "run-ambition-missing-mode",
+        "bd-bp8fl.7.5",
+    );
+
+    let line = serde_json::json!({
+        "timestamp": "2026-05-01T00:00:00.000Z",
+        "trace_id": "bd-bp8fl.7.5::run-ambition-missing-mode::001",
+        "level": "info",
+        "event": "ambition_evidence",
+        "bead_id": "bd-bp8fl.7.5",
+        "stream": "e2e",
+        "gate": "ambition_evidence",
+        "scenario_id": "missing-runtime-mode",
+        "mode": "strict",
+        "replacement_level": "L0",
+        "api_family": "evidence",
+        "symbol": "structured_log",
+        "oracle_kind": "unit",
+        "expected": {"required_fields": "present"},
+        "actual": {"required_fields": "present"},
+        "errno": 0,
+        "decision_path": "schema->validator->fail",
+        "healing_action": "None",
+        "latency_ns": 1,
+        "source_commit": "0123456789abcdef",
+        "target_dir": "target/rch/bd-bp8fl.7.5",
+        "failure_signature": "none",
+        "outcome": "pass",
+        "artifact_refs": ["diag.txt"]
+    });
+    std::fs::write(&log_path, format!("{line}\n")).expect("write log");
+
+    let report = validate_evidence_bundle(&run_dir, &log_path, &index_path);
+    assert!(
+        !report.ok,
+        "missing runtime_mode must fail ambition evidence validation"
+    );
+    assert!(
+        report.violations.iter().any(|v| {
+            v.code == "log.schema_violation"
+                && v.remediation_hint
+                    .as_deref()
+                    .is_some_and(|hint| hint.contains("runtime_mode"))
+        }),
+        "schema violation should point at runtime_mode: {report:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(run_dir);
+}
+
+#[test]
 fn hash_mismatch_emits_debug_and_error_proof_logs() {
     let run_dir = unique_tmp_dir("evidence-compliance-hash-mismatch");
     let log_path = run_dir.join("log.jsonl");

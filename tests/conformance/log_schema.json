@@ -17,6 +17,7 @@
     "Prefer setting bead_id explicitly even though it can be derived from trace_id.",
     "Set stream and gate for joinable aggregation across workflows.",
     "When applicable, set mode (strict|hardened), api_family, and symbol.",
+    "For new ambition-wide evidence rows, emit event=ambition_evidence and include bead_id, scenario_id, runtime_mode, replacement_level, api_family, symbol, oracle_kind, expected, actual, errno, decision_path, healing_action, latency_ns, source_commit, target_dir, failure_signature, and non-empty artifact_refs.",
     "On membrane-related events, set decision and profile; on repairs set healing_action.",
     "On runtime_decision events (event=runtime_decision), always include controller_id, decision_action, and risk_inputs object.",
     "On failures, set outcome=fail and include artifact_refs pointing to diffs/backtraces/reports.",
@@ -64,7 +65,17 @@
     "mode": {
       "type": "string",
       "enum": ["strict", "hardened"],
-      "description": "TSM runtime mode under test"
+      "description": "Legacy TSM runtime mode under test"
+    },
+    "runtime_mode": {
+      "type": "string",
+      "enum": ["strict", "hardened"],
+      "description": "Canonical runtime mode for ambition evidence rows; when both mode and runtime_mode are present they must match"
+    },
+    "replacement_level": {
+      "type": "string",
+      "enum": ["L0", "L1", "L2", "L3"],
+      "description": "Replacement-readiness level proved by this row: L0 interpose, L1 hardened interpose, L2 standalone limited, L3 standalone broad"
     },
     "api_family": {
       "type": "string",
@@ -73,6 +84,19 @@
     "symbol": {
       "type": "string",
       "description": "Specific ABI symbol being tested (e.g., memcpy, malloc, strlen)"
+    },
+    "oracle_kind": {
+      "type": "string",
+      "enum": ["unit", "fixture", "host_glibc", "golden", "metamorphic", "e2e", "smoke", "benchmark", "proof", "snapshot", "static_analysis", "manual", "not_applicable"],
+      "description": "Oracle used to decide expected behavior for this row"
+    },
+    "expected": {
+      "type": "any",
+      "description": "Expected value or structured expectation for row-level comparison"
+    },
+    "actual": {
+      "type": "any",
+      "description": "Actual observed value or structured observation for row-level comparison"
     },
     "decision_path": {
       "type": "string",
@@ -145,6 +169,18 @@
     "duration_ms": {
       "type": "integer",
       "description": "Wall-clock duration for a higher-level gate step (milliseconds)"
+    },
+    "source_commit": {
+      "type": "string",
+      "description": "Git commit or source revision used to produce this evidence row"
+    },
+    "target_dir": {
+      "type": "string",
+      "description": "Build or run target directory, typically an isolated CARGO_TARGET_DIR for rch-backed gates"
+    },
+    "failure_signature": {
+      "type": "string",
+      "description": "Deterministic failure classifier; successful ambition rows use none when this field is required"
     },
     "artifact_refs": {
       "type": "array",
@@ -232,6 +268,39 @@
         "input_size": 256,
         "expected_return": 0
       }
+    },
+    "ambition_evidence": {
+      "timestamp": "2026-05-01T00:00:00.000Z",
+      "trace_id": "bd-bp8fl.7.5::run-001::001",
+      "level": "info",
+      "event": "ambition_evidence",
+      "bead_id": "bd-bp8fl.7.5",
+      "stream": "e2e",
+      "gate": "ambition_evidence",
+      "scenario_id": "strict-l0-positive",
+      "mode": "strict",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "api_family": "evidence",
+      "symbol": "structured_log",
+      "oracle_kind": "unit",
+      "expected": {
+        "required_fields": "present"
+      },
+      "actual": {
+        "required_fields": "present"
+      },
+      "errno": 0,
+      "decision_path": "schema->validator->pass",
+      "healing_action": "None",
+      "latency_ns": 1,
+      "source_commit": "0123456789abcdef",
+      "target_dir": "target/rch/bd-bp8fl.7.5",
+      "failure_signature": "none",
+      "outcome": "pass",
+      "artifact_refs": [
+        "tests/conformance/log_schema.json"
+      ]
     },
     "test_failure": {
       "timestamp": "2026-02-11T06:00:01.000Z",
