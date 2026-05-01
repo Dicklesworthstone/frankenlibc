@@ -5308,16 +5308,15 @@ pub unsafe extern "C" fn set_mempolicy(
     nodemask: *const c_ulong,
     maxnode: c_ulong,
 ) -> c_long {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_set_mempolicy,
-            mode as libc::c_long,
-            nodemask as libc::c_long,
-            maxnode as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno_long(rc) }
+    match unsafe {
+        syscall::sys_set_mempolicy(mode, nodemask as *const usize, maxnode as usize)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `get_mempolicy(*mode, *nodemask, maxnode, addr, flags) ->
@@ -5337,18 +5336,21 @@ pub unsafe extern "C" fn get_mempolicy(
     addr: *mut c_void,
     flags: c_ulong,
 ) -> c_long {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_get_mempolicy,
-            mode as libc::c_long,
-            nodemask as libc::c_long,
-            maxnode as libc::c_long,
-            addr as libc::c_long,
-            flags as libc::c_long,
+    match unsafe {
+        syscall::sys_get_mempolicy(
+            mode,
+            nodemask as *mut usize,
+            maxnode as usize,
+            addr as *const u8,
+            flags as u32,
         )
-    };
-    unsafe { raw_syscall_with_errno_long(rc) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `mbind(addr, len, mode, *nodemask, maxnode, flags) -> long`
@@ -5369,19 +5371,22 @@ pub unsafe extern "C" fn mbind(
     maxnode: c_ulong,
     flags: c_uint,
 ) -> c_long {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_mbind,
-            addr as libc::c_long,
-            len as libc::c_long,
-            mode as libc::c_long,
-            nodemask as libc::c_long,
-            maxnode as libc::c_long,
-            flags as libc::c_long,
+    match unsafe {
+        syscall::sys_mbind(
+            addr as *mut u8,
+            len as usize,
+            mode,
+            nodemask as *const usize,
+            maxnode as usize,
+            flags,
         )
-    };
-    unsafe { raw_syscall_with_errno_long(rc) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `migrate_pages(pid, maxnode, *old_nodes, *new_nodes) ->
@@ -5400,17 +5405,20 @@ pub unsafe extern "C" fn migrate_pages(
     old_nodes: *const c_ulong,
     new_nodes: *const c_ulong,
 ) -> c_long {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_migrate_pages,
-            pid as libc::c_long,
-            maxnode as libc::c_long,
-            old_nodes as libc::c_long,
-            new_nodes as libc::c_long,
+    match unsafe {
+        syscall::sys_migrate_pages(
+            pid,
+            maxnode as usize,
+            old_nodes as *const usize,
+            new_nodes as *const usize,
         )
-    };
-    unsafe { raw_syscall_with_errno_long(rc) }
+    } {
+        Ok(unmigrated) => unmigrated as c_long,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `move_pages(pid, count, **pages, *nodes, *status, flags) ->
@@ -5433,19 +5441,22 @@ pub unsafe extern "C" fn move_pages(
     status: *mut c_int,
     flags: c_int,
 ) -> c_long {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_move_pages,
-            pid as libc::c_long,
-            count as libc::c_long,
-            pages as libc::c_long,
-            nodes as libc::c_long,
-            status as libc::c_long,
-            flags as libc::c_long,
+    match unsafe {
+        syscall::sys_move_pages(
+            pid,
+            count as usize,
+            pages as *const *mut u8,
+            nodes,
+            status,
+            flags,
         )
-    };
-    unsafe { raw_syscall_with_errno_long(rc) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `set_mempolicy_home_node(start, len, home_node, flags) ->
@@ -5458,17 +5469,20 @@ pub unsafe extern "C" fn set_mempolicy_home_node(
     home_node: c_ulong,
     flags: c_ulong,
 ) -> c_long {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_set_mempolicy_home_node,
-            start as libc::c_long,
-            len as libc::c_long,
-            home_node as libc::c_long,
-            flags as libc::c_long,
+    match unsafe {
+        syscall::sys_set_mempolicy_home_node(
+            start as usize,
+            len as usize,
+            home_node as usize,
+            flags as u32,
         )
-    };
-    unsafe { raw_syscall_with_errno_long(rc) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

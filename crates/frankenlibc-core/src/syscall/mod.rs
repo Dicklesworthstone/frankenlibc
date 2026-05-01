@@ -570,6 +570,14 @@ pub const SYS_MSEAL: usize = 462;
 pub const SYS_RSEQ: usize = 334;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_CACHESTAT: usize = 451;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MBIND: usize = 237;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MIGRATE_PAGES: usize = 256;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MOVE_PAGES: usize = 279;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SET_MEMPOLICY_HOME_NODE: usize = 450;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -734,6 +742,14 @@ pub const SYS_MSEAL: usize = 462;
 pub const SYS_RSEQ: usize = 293;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_CACHESTAT: usize = 451;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MBIND: usize = 235;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MIGRATE_PAGES: usize = 238;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MOVE_PAGES: usize = 239;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SET_MEMPOLICY_HOME_NODE: usize = 450;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2025,6 +2041,124 @@ pub unsafe fn sys_cachestat(
             fd as usize,
             cstat_range as usize,
             cstat as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mbind(addr, len, mode, nodemask, maxnode, flags)` — set NUMA
+/// memory policy for a virtual memory range (Linux 2.6.7+, x86_64
+/// syscall 237).
+///
+/// # Safety
+///
+/// `addr` must point to a memory region of at least `len` bytes.
+/// `nodemask`, when non-NULL, must point to a node bitmap covering
+/// at least `maxnode` bits.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mbind(
+    addr: *mut u8,
+    len: usize,
+    mode: i32,
+    nodemask: *const usize,
+    maxnode: usize,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_MBIND,
+            addr as usize,
+            len,
+            mode as usize,
+            nodemask as usize,
+            maxnode,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `migrate_pages(pid, maxnode, old_nodes, new_nodes)` — migrate all
+/// pages of `pid` from `old_nodes` to `new_nodes` (Linux 2.6.16+,
+/// x86_64 syscall 256). Returns the number of pages that could not
+/// be migrated, or an errno on failure.
+///
+/// # Safety
+///
+/// `old_nodes` and `new_nodes`, when non-NULL, must each point to a
+/// node bitmap covering at least `maxnode` bits.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_migrate_pages(
+    pid: i32,
+    maxnode: usize,
+    old_nodes: *const usize,
+    new_nodes: *const usize,
+) -> Result<usize, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_MIGRATE_PAGES,
+            pid as usize,
+            maxnode,
+            old_nodes as usize,
+            new_nodes as usize,
+        )
+    };
+    syscall_result(ret)
+}
+
+/// `move_pages(pid, count, pages, nodes, status, flags)` — move
+/// individual pages of `pid` to specific NUMA nodes (Linux 2.6.18+,
+/// x86_64 syscall 279).
+///
+/// # Safety
+///
+/// `pages`, `nodes`, and `status`, when non-NULL, must each point to
+/// arrays of `count` elements with the kernel's expected element
+/// types.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_move_pages(
+    pid: i32,
+    count: usize,
+    pages: *const *mut u8,
+    nodes: *const i32,
+    status: *mut i32,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_MOVE_PAGES,
+            pid as usize,
+            count,
+            pages as usize,
+            nodes as usize,
+            status as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `set_mempolicy_home_node(start, len, home_node, flags)` —
+/// configure the preferred NUMA node for a virtual address range
+/// (Linux 6.1+, x86_64 syscall 450).
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_set_mempolicy_home_node(
+    start: usize,
+    len: usize,
+    home_node: usize,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_SET_MEMPOLICY_HOME_NODE,
+            start,
+            len,
+            home_node,
             flags as usize,
         )
     };
