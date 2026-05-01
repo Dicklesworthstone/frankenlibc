@@ -3382,6 +3382,7 @@ pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) 
         return core::ptr::null_mut();
     }
     let odst = dst;
+    let dst_limit = known_remaining(dst as usize).map_or(size, |remaining| remaining.min(size));
 
     let mut tmp = [0u8; 16];
     let mut cursor = 0usize;
@@ -3419,7 +3420,7 @@ pub unsafe extern "C" fn inet_neta(mut src: u32, dst: *mut c_char, size: usize) 
     }
 
     let needed = cursor + 1;
-    if size < needed {
+    if dst_limit < needed {
         unsafe { set_abi_errno(libc::EMSGSIZE) };
         return core::ptr::null_mut();
     }

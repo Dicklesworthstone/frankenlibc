@@ -2552,6 +2552,19 @@ fn inet_neta_zero_address_too_small_buffer_fails() {
     assert_eq!(errno, libc::EMSGSIZE);
 }
 
+#[test]
+fn inet_neta_rejects_tracked_short_dst() {
+    use frankenlibc_abi::resolv_abi::inet_neta;
+    let mut dst = malloc_filled_bytes(4, 0xAA);
+
+    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+    let p = unsafe { inet_neta(0, dst.as_mut_ptr() as *mut c_char, 32) };
+    assert!(p.is_null());
+    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+    assert_eq!(errno, libc::EMSGSIZE);
+    assert_eq!(dst.as_slice(), &[0xAA; 4]);
+}
+
 // ---------------------------------------------------------------------------
 // ns_sprintrr / ns_sprintrrf
 // ---------------------------------------------------------------------------
