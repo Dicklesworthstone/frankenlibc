@@ -587,12 +587,13 @@ unsafe fn write_reentrant_hostent(
     if !is_aligned_for::<libc::hostent>(result_buf) {
         return Err(libc::EINVAL);
     }
+    let buf_limit = known_remaining(buf as usize).map_or(buflen, |remaining| remaining.min(buflen));
 
     let name_len = name_bytes.len().checked_add(1).ok_or(libc::ERANGE)?;
-    if name_len > buflen {
+    if name_len > buf_limit {
         return Err(libc::ERANGE);
     }
-    // SAFETY: bounds checked above against buflen.
+    // SAFETY: bounds checked above against the effective writable buffer limit.
     unsafe {
         ptr::copy_nonoverlapping(name_bytes.as_ptr().cast::<c_char>(), buf, name_bytes.len());
         *buf.add(name_bytes.len()) = 0;
@@ -602,7 +603,7 @@ unsafe fn write_reentrant_hostent(
 
     offset = aligned_buffer_offset(buf, offset, align_of::<u8>()).ok_or(libc::ERANGE)?;
     let addr_end = offset.checked_add(4).ok_or(libc::ERANGE)?;
-    if addr_end > buflen {
+    if addr_end > buf_limit {
         return Err(libc::ERANGE);
     }
     // SAFETY: bounds checked above.
@@ -615,7 +616,7 @@ unsafe fn write_reentrant_hostent(
     offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
     let aliases_bytes = size_of::<*mut c_char>();
     let aliases_end = offset.checked_add(aliases_bytes).ok_or(libc::ERANGE)?;
-    if aliases_end > buflen {
+    if aliases_end > buf_limit {
         return Err(libc::ERANGE);
     }
     // SAFETY: bounds checked above and alignment enforced.
@@ -627,7 +628,7 @@ unsafe fn write_reentrant_hostent(
     offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
     let addr_list_bytes = size_of::<*mut c_char>() * 2;
     let addr_list_end = offset.checked_add(addr_list_bytes).ok_or(libc::ERANGE)?;
-    if addr_list_end > buflen {
+    if addr_list_end > buf_limit {
         return Err(libc::ERANGE);
     }
     // SAFETY: bounds checked above and alignment enforced.

@@ -478,6 +478,62 @@ fn gethostbyaddr_r_rejects_tracked_short_addr_even_when_len_claims_ipv4() {
 }
 
 #[test]
+fn gethostbyname_r_rejects_tracked_short_scratch_even_when_buflen_is_large() {
+    let query = CString::new("10.20.30.40").expect("query should be valid C string");
+    let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+    let mut scratch = malloc_filled_bytes(4, 0xAA);
+    let mut result_ptr: *mut c_void = ptr::null_mut();
+    const SENTINEL: i32 = -24680;
+    let mut h_errno = SENTINEL;
+
+    let rc = unsafe {
+        inet_abi::gethostbyname_r(
+            query.as_ptr(),
+            (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+            scratch.as_mut_ptr().cast::<c_char>(),
+            256,
+            &mut result_ptr,
+            &mut h_errno,
+        )
+    };
+
+    assert_eq!(rc, libc::ERANGE);
+    assert!(result_ptr.is_null());
+    assert_eq!(h_errno, SENTINEL);
+    assert_eq!(scratch.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
+fn gethostbyaddr_r_rejects_tracked_short_scratch_even_when_buflen_is_large() {
+    with_resolver_backends(Some(b"10.0.0.42 somehost\n"), None, |_| {
+        let octets: [u8; 4] = [10, 0, 0, 42];
+        let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+        let mut scratch = malloc_filled_bytes(4, 0xBB);
+        let mut result_ptr: *mut c_void = ptr::null_mut();
+        const SENTINEL: i32 = -13579;
+        let mut h_errno = SENTINEL;
+
+        let rc = unsafe {
+            inet_abi::gethostbyaddr_r(
+                octets.as_ptr().cast::<c_void>(),
+                octets.len() as libc::socklen_t,
+                libc::AF_INET,
+                (&mut hostent as *mut libc::hostent).cast::<c_void>(),
+                scratch.as_mut_ptr().cast::<c_char>(),
+                256,
+                &mut result_ptr,
+                &mut h_errno,
+            )
+        };
+
+        assert_eq!(rc, libc::ERANGE);
+        assert!(result_ptr.is_null());
+        assert_eq!(h_errno, SENTINEL);
+        assert_eq!(scratch.as_slice(), &[0xBB; 4]);
+    });
+}
+
+#[test]
 fn gethostbyname_r_small_buffer_returns_erange_preserves_h_errno() {
     // glibc parity (bd-a892): when the caller buffer is too small, the
     // reentrant ABI returns ERANGE and leaves *h_errnop untouched so
