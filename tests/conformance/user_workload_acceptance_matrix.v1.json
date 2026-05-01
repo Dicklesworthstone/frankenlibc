@@ -1,0 +1,1304 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.10.1",
+  "generated_at_utc": "2026-05-01T17:45:00Z",
+  "purpose": "Define representative user personas, workload acceptance rows, failure taxonomy, diagnostics, and negative claim tests for L0 interpose and future standalone replacement planning.",
+  "inputs": {
+    "workload_matrix": "tests/conformance/workload_matrix.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "e2e_manifest": "tests/conformance/e2e_scenario_manifest.v1.json",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "semantic_contract_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json"
+  },
+  "required_domains": [
+    "shell_coreutils",
+    "build_tools",
+    "language_runtimes",
+    "package_manager",
+    "threaded_services",
+    "resolver_nss",
+    "locale_iconv",
+    "stdio_libio",
+    "allocator",
+    "startup_linking",
+    "performance_sensitive"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "runtime_mode",
+    "replacement_level",
+    "api_family",
+    "symbol",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "replacement_level_policy": {
+    "must_not_overclaim": true,
+    "l0_l1_rows_require_strict_and_hardened_modes": true,
+    "l2_l3_rows_are_claim_blocked_until_host_dependency_and_startup_evidence_are_current": true,
+    "missing_evidence_result": "claim_blocked"
+  },
+  "personas": [
+    {
+      "id": "persona-shell-operator",
+      "name": "Shell and coreutils operator",
+      "goal": "Run ordinary interactive and scripted Unix commands under L0/L1 without surprising stdout, stderr, exit status, or diagnostics.",
+      "success_condition": "Pinned shell/coreutils commands pass strict and hardened mode pair checks, and unsupported standalone claims remain blocked."
+    },
+    {
+      "id": "persona-build-engineer",
+      "name": "Build and package engineer",
+      "goal": "Compile, link, install, and package software while libc interposition preserves process, filesystem, stdio, allocator, and dynamic-linker behavior.",
+      "success_condition": "Build and package style commands have deterministic replay scripts, clear failure classes, and no L2/L3 claim without startup and host-dependency evidence."
+    },
+    {
+      "id": "persona-runtime-owner",
+      "name": "Language runtime owner",
+      "goal": "Run broad libc consumers such as Python-like runtimes with threads, dlopen, resolver, locale, malloc, stdio, and signal behavior intact.",
+      "success_condition": "Mode-pair failures identify the responsible subsystem and artifact bundle instead of collapsing into generic unsupported status."
+    },
+    {
+      "id": "persona-service-operator",
+      "name": "Threaded service operator",
+      "goal": "Run server workloads with stable threading, resolver, socket, allocator, signal, and performance behavior.",
+      "success_condition": "Threaded and performance-sensitive rows enforce strict/hardened behavior plus latency budget evidence before claims advance."
+    },
+    {
+      "id": "persona-i18n-network-user",
+      "name": "Locale, iconv, and resolver user",
+      "goal": "Use name lookup, NSS, locale, collation, and encoding paths with deterministic compatibility diagnostics.",
+      "success_condition": "Resolver/NSS and locale/iconv rows have specific semantic-divergence signatures and user-facing next steps."
+    }
+  ],
+  "failure_taxonomy": [
+    {
+      "id": "startup_linking_failure",
+      "class": "startup/linking",
+      "user_impact": "Program cannot start or load required symbols before main.",
+      "oracle_kind": "direct_process_replay",
+      "representative_signatures": [
+        "dynamic loader error",
+        "versioned symbol not found",
+        "TLS or init/fini ordering failure"
+      ],
+      "diagnostic_expectations": [
+        "replacement_level",
+        "runtime_mode",
+        "loader_phase",
+        "symbol_or_object",
+        "artifact_bundle"
+      ]
+    },
+    {
+      "id": "symbol_missing",
+      "class": "symbol-missing",
+      "user_impact": "Program starts but fails when a required libc symbol is unresolved or advertised without support evidence.",
+      "oracle_kind": "symbol_coverage_gate",
+      "representative_signatures": [
+        "missing exported symbol",
+        "unsupported version node",
+        "support matrix claim lacks fixture evidence"
+      ],
+      "diagnostic_expectations": [
+        "symbol",
+        "version",
+        "support_status",
+        "fixture_artifact",
+        "claim_block_reason"
+      ]
+    },
+    {
+      "id": "semantic_divergence",
+      "class": "semantic-divergence",
+      "user_impact": "Program completes but stdout, stderr, errno, return value, file state, or timing semantics differ from host glibc contract.",
+      "oracle_kind": "glibc_fixture_oracle",
+      "representative_signatures": [
+        "stdout mismatch",
+        "errno mismatch",
+        "return value mismatch",
+        "filesystem state mismatch"
+      ],
+      "diagnostic_expectations": [
+        "api_family",
+        "symbol",
+        "expected",
+        "actual",
+        "errno",
+        "fixture_ref"
+      ]
+    },
+    {
+      "id": "allocator_ownership",
+      "class": "allocator/ownership",
+      "user_impact": "Program corrupts, leaks, double-frees, or mixes ownership domains across host and FrankenLibC allocators.",
+      "oracle_kind": "membrane_allocator_oracle",
+      "representative_signatures": [
+        "foreign free denied",
+        "double free ignored or denied",
+        "allocation fingerprint mismatch",
+        "quarantine generation mismatch"
+      ],
+      "diagnostic_expectations": [
+        "pointer_class",
+        "allocation_id",
+        "healing_action",
+        "runtime_mode",
+        "membrane_metric"
+      ]
+    },
+    {
+      "id": "resolver_nss_failure",
+      "class": "resolver/NSS",
+      "user_impact": "Networking, identity lookup, package fetch, or service discovery fails or returns different answers.",
+      "oracle_kind": "resolver_fixture_or_replay",
+      "representative_signatures": [
+        "getaddrinfo status mismatch",
+        "nsswitch source mismatch",
+        "hosts database mismatch",
+        "timeout policy mismatch"
+      ],
+      "diagnostic_expectations": [
+        "lookup_name",
+        "nss_source",
+        "expected_records",
+        "actual_records",
+        "timeout_ms"
+      ]
+    },
+    {
+      "id": "locale_iconv_divergence",
+      "class": "locale/iconv",
+      "user_impact": "Sort order, character classification, formatting, transliteration, or conversion differs from glibc.",
+      "oracle_kind": "locale_iconv_fixture",
+      "representative_signatures": [
+        "setlocale mismatch",
+        "strcoll ordering mismatch",
+        "iconv conversion mismatch",
+        "mb/wc boundary mismatch"
+      ],
+      "diagnostic_expectations": [
+        "locale",
+        "encoding",
+        "input_bytes",
+        "expected_bytes",
+        "actual_bytes"
+      ]
+    },
+    {
+      "id": "pthread_cancellation",
+      "class": "pthread/cancellation",
+      "user_impact": "Threaded workloads hang, race, deadlock, or diverge around cancellation and synchronization contracts.",
+      "oracle_kind": "threaded_mode_pair_replay",
+      "representative_signatures": [
+        "deadlock timeout",
+        "mutex state mismatch",
+        "condition variable wake mismatch",
+        "cancellation cleanup mismatch"
+      ],
+      "diagnostic_expectations": [
+        "thread_count",
+        "primitive",
+        "timeout_ms",
+        "strict_result",
+        "hardened_result"
+      ]
+    },
+    {
+      "id": "stdio_libio_divergence",
+      "class": "stdio/libio",
+      "user_impact": "Programs that rely on buffered IO, printf/scanf, FILE state, or stream errors observe glibc-incompatible behavior.",
+      "oracle_kind": "stdio_fixture_or_replay",
+      "representative_signatures": [
+        "formatted output mismatch",
+        "scanner parse mismatch",
+        "FILE error flag mismatch",
+        "buffer flush ordering mismatch"
+      ],
+      "diagnostic_expectations": [
+        "format_string",
+        "stream_state",
+        "expected_output",
+        "actual_output",
+        "ferror_feof_state"
+      ]
+    },
+    {
+      "id": "performance_regression",
+      "class": "performance-regression",
+      "user_impact": "Interposition or safety membrane overhead makes otherwise correct workloads too slow for practical use.",
+      "oracle_kind": "benchmark_budget_gate",
+      "representative_signatures": [
+        "strict latency budget exceeded",
+        "hardened latency budget exceeded",
+        "throughput regression",
+        "contention budget exceeded"
+      ],
+      "diagnostic_expectations": [
+        "operation",
+        "baseline_ns",
+        "actual_ns",
+        "budget_ns",
+        "hardware_profile"
+      ]
+    },
+    {
+      "id": "diagnostics_gap",
+      "class": "diagnostics-gap",
+      "user_impact": "A failure is detected but logs do not tell users or agents what to fix next.",
+      "oracle_kind": "structured_log_gate",
+      "representative_signatures": [
+        "missing trace_id",
+        "missing artifact_refs",
+        "missing failure_signature",
+        "ambiguous unsupported message"
+      ],
+      "diagnostic_expectations": [
+        "trace_id",
+        "failure_signature",
+        "artifact_refs",
+        "next_action",
+        "claim_block_reason"
+      ]
+    },
+    {
+      "id": "unsupported_claim",
+      "class": "unsupported-or-missing-evidence-claim",
+      "user_impact": "README, release, or support artifacts advertise support that current evidence does not prove.",
+      "oracle_kind": "claim_reconciliation_gate",
+      "representative_signatures": [
+        "claim references stale artifact",
+        "replacement level overclaim",
+        "fixture coverage missing",
+        "host dependency unproven"
+      ],
+      "diagnostic_expectations": [
+        "claim_text_ref",
+        "required_artifact",
+        "actual_artifact_state",
+        "blocked_level",
+        "owner_bead"
+      ]
+    }
+  ],
+  "workloads": [
+    {
+      "id": "uwm-shell-coreutils",
+      "persona_id": "persona-shell-operator",
+      "title": "Interactive shell plus coreutils file and text commands",
+      "primary_domain": "shell_coreutils",
+      "coverage_domains": [
+        "shell_coreutils",
+        "stdio_libio",
+        "locale_iconv",
+        "startup_linking"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "shell.echo-cat-ls",
+          "command": "bash -lc 'printf %s frankenlibc | cat && ls -la /tmp >/dev/null'",
+          "deterministic_inputs": "Pinned argv, /tmp listing, and fixed locale C.UTF-8."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "mode_pair_process_replay",
+      "subsystems": [
+        "process",
+        "stdio",
+        "unistd",
+        "dirent",
+        "locale",
+        "startup"
+      ],
+      "required_unit_tests": [
+        "stdio formatting and flush boundary tests when stdio code changes",
+        "locale and ctype boundary tests when shell-visible locale code changes",
+        "process errno and wait status tests when process code changes"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh",
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "startup_linking_failure",
+          "expected_failure_signature": "shell command fails before executing argv",
+          "diagnostic_expectation": "Report loader phase, replacement level, runtime mode, and artifact bundle.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ]
+        },
+        {
+          "taxonomy_id": "stdio_libio_divergence",
+          "expected_failure_signature": "stdout, stderr, ferror, or buffered flush order differs",
+          "diagnostic_expectation": "Report stream state, expected output, actual output, and FILE flags.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show failed command and runtime mode",
+        "show nearest failing symbol family",
+        "show artifact bundle path",
+        "show whether standalone replacement claims are blocked"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-shell-standalone-without-loader-evidence",
+          "unsupported_condition": "L2/L3 startup and host-dependency evidence is missing or stale",
+          "advertised_claim_blocked": "standalone shell/coreutils replacement",
+          "evidence_probe": "replacement_levels plus host dependency inventory freshness",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-build-toolchain",
+      "persona_id": "persona-build-engineer",
+      "title": "Build tools compiling and linking small C/Rust projects",
+      "primary_domain": "build_tools",
+      "coverage_domains": [
+        "build_tools",
+        "startup_linking",
+        "allocator",
+        "stdio_libio",
+        "performance_sensitive"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "build.cc-link-run",
+          "command": "sh -lc 'cc smoke.c -o smoke && ./smoke'",
+          "deterministic_inputs": "Pinned smoke.c fixture, clean temp directory, fixed compiler argv."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "compile_link_run_replay",
+      "subsystems": [
+        "malloc",
+        "stdio",
+        "unistd",
+        "process",
+        "dlfcn",
+        "startup"
+      ],
+      "required_unit_tests": [
+        "allocator ownership and realloc edge tests when allocator code changes",
+        "process spawn and exit-status tests when process code changes",
+        "dlfcn and symbol version tests when ABI loader code changes"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/conformance_matrix.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "symbol_missing",
+          "expected_failure_signature": "link or runtime loader reports missing symbol or unsupported version node",
+          "diagnostic_expectation": "Report symbol, version, owning ABI module, and support evidence.",
+          "blocks_claim_levels": [
+            "L1",
+            "L2",
+            "L3"
+          ]
+        },
+        {
+          "taxonomy_id": "allocator_ownership",
+          "expected_failure_signature": "foreign free, realloc ownership, or allocator fingerprint failure",
+          "diagnostic_expectation": "Report pointer class, generation, healing action, and mode.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show compile, link, or run phase",
+        "show first missing or divergent symbol",
+        "show generated temp artifact bundle",
+        "show whether issue is toolchain, loader, or allocator owned"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-build-l2-with-callthrough",
+          "unsupported_condition": "toolchain row still depends on host-glibc-backed startup or call-through evidence",
+          "advertised_claim_blocked": "partial standalone build-tool replacement",
+          "evidence_probe": "replacement_levels L2 obligations plus host dependency inventory",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-language-runtime",
+      "persona_id": "persona-runtime-owner",
+      "title": "Language runtime with threads, dlopen, resolver, locale, and stdio",
+      "primary_domain": "language_runtimes",
+      "coverage_domains": [
+        "language_runtimes",
+        "threaded_services",
+        "resolver_nss",
+        "locale_iconv",
+        "allocator",
+        "stdio_libio"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "runtime.python-lite",
+          "command": "python3 -c 'import ctypes, locale, socket, threading; print(locale.setlocale(locale.LC_CTYPE, \"\")); print(socket.getaddrinfo(\"localhost\", 80)[0][0]); t=threading.Thread(target=lambda: None); t.start(); t.join()'",
+          "deterministic_inputs": "localhost lookup, fixed locale environment, no network egress."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "runtime_mode_pair_replay",
+      "subsystems": [
+        "pthread",
+        "dlfcn",
+        "resolver",
+        "locale",
+        "malloc",
+        "stdio",
+        "signal"
+      ],
+      "required_unit_tests": [
+        "pthread lifecycle and cancellation tests when thread code changes",
+        "resolver localhost and invalid-name tests when resolver code changes",
+        "locale mb/wc boundary tests when locale or iconv code changes"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/workload_matrix.json",
+        "tests/conformance/hard_parts_e2e_catalog.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "pthread_cancellation",
+          "expected_failure_signature": "thread lifecycle, mutex, condvar, or cancellation result differs",
+          "diagnostic_expectation": "Report primitive, thread count, strict result, hardened result, and timeout.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2"
+          ]
+        },
+        {
+          "taxonomy_id": "resolver_nss_failure",
+          "expected_failure_signature": "localhost or NSS-backed lookup differs from host glibc",
+          "diagnostic_expectation": "Report lookup name, source, expected records, actual records, and timeout.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show failing imported module or subsystem",
+        "separate resolver, pthread, locale, dlfcn, and allocator failures",
+        "show strict versus hardened mode pair result",
+        "show artifact bundle and owner bead"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-runtime-supported-without-hard-parts",
+          "unsupported_condition": "thread, resolver, locale, or dlfcn hard-parts evidence is absent",
+          "advertised_claim_blocked": "language runtime fully supported",
+          "evidence_probe": "hard-parts e2e catalog and mode-pair report freshness",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-package-manager",
+      "persona_id": "persona-build-engineer",
+      "title": "Package-manager style metadata, fetch, verify, unpack, and install workflow",
+      "primary_domain": "package_manager",
+      "coverage_domains": [
+        "package_manager",
+        "resolver_nss",
+        "stdio_libio",
+        "allocator",
+        "startup_linking",
+        "performance_sensitive"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "pkg.fetch-verify-unpack",
+          "command": "sh -lc 'mkdir -p pkgroot && printf metadata > pkgroot/METADATA && cat pkgroot/METADATA >/dev/null'",
+          "deterministic_inputs": "Local-only package fixture; no network egress unless resolver row is explicitly selected."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "package_workflow_replay",
+      "subsystems": [
+        "resolver",
+        "stdio",
+        "unistd",
+        "malloc",
+        "process",
+        "time"
+      ],
+      "required_unit_tests": [
+        "filesystem errno and partial write tests when unistd/io code changes",
+        "resolver timeout and hosts-file tests when resolver code changes",
+        "time and file metadata boundary tests when time/resource code changes"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/feature_parity_gap_groups.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "semantic_divergence",
+          "expected_failure_signature": "metadata file state, errno, or process status differs",
+          "diagnostic_expectation": "Report command phase, file path, expected state, actual state, and errno.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1"
+          ]
+        },
+        {
+          "taxonomy_id": "resolver_nss_failure",
+          "expected_failure_signature": "package source lookup differs or times out",
+          "diagnostic_expectation": "Report lookup source, timeout policy, expected records, and actual records.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show workflow phase: metadata, fetch, verify, unpack, install",
+        "show deterministic replay directory",
+        "show resolver and filesystem divergence separately",
+        "show claim block reason when only local fixture evidence exists"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-package-network-without-resolver-evidence",
+          "unsupported_condition": "networked package fetch lacks resolver/NSS fixture evidence",
+          "advertised_claim_blocked": "package-manager network workflow supported",
+          "evidence_probe": "resolver/NSS artifact references and e2e mode-pair logs",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-threaded-service",
+      "persona_id": "persona-service-operator",
+      "title": "Threaded TCP-like service lifecycle",
+      "primary_domain": "threaded_services",
+      "coverage_domains": [
+        "threaded_services",
+        "allocator",
+        "resolver_nss",
+        "performance_sensitive"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "service.threaded-loopback",
+          "command": "service-harness --threads 4 --loopback --requests 32",
+          "deterministic_inputs": "Loopback-only socket workload with fixed request count and timeout."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "threaded_service_replay",
+      "subsystems": [
+        "pthread",
+        "socket",
+        "poll",
+        "malloc",
+        "signal",
+        "time"
+      ],
+      "required_unit_tests": [
+        "mutex, condvar, rwlock, and TLS tests when pthread code changes",
+        "socket lifecycle and poll timeout tests when socket or poll code changes",
+        "thread-cache allocator tests when allocator code changes"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/hard_parts_e2e_catalog.v1.json",
+        "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "pthread_cancellation",
+          "expected_failure_signature": "service hangs, deadlocks, or mismatches strict/hardened thread outcome",
+          "diagnostic_expectation": "Report primitive, timeout, thread count, and mode-pair classification.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2"
+          ]
+        },
+        {
+          "taxonomy_id": "performance_regression",
+          "expected_failure_signature": "service latency or contention budget exceeded",
+          "diagnostic_expectation": "Report baseline, actual, budget, and hardware profile.",
+          "blocks_claim_levels": [
+            "L1",
+            "L2",
+            "L3"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show service phase and thread primitive",
+        "show strict/hardened mode pair result",
+        "show latency budget deltas",
+        "show whether failure is correctness or performance"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-service-without-thread-mode-pair",
+          "unsupported_condition": "threaded service mode-pair replay has not passed",
+          "advertised_claim_blocked": "threaded service supported",
+          "evidence_probe": "hard-parts e2e mode-pair report",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-resolver-nss",
+      "persona_id": "persona-i18n-network-user",
+      "title": "Resolver and NSS identity/name lookup",
+      "primary_domain": "resolver_nss",
+      "coverage_domains": [
+        "resolver_nss",
+        "startup_linking",
+        "stdio_libio"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "resolver.localhost-passwd",
+          "command": "resolver-harness --getaddrinfo localhost --getpwnam root",
+          "deterministic_inputs": "Pinned localhost and root lookups with captured host oracle fixtures."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "resolver_nss_fixture_oracle",
+      "subsystems": [
+        "resolv",
+        "nss",
+        "socket",
+        "stdio",
+        "errno"
+      ],
+      "required_unit_tests": [
+        "getaddrinfo localhost and invalid host tests when resolver code changes",
+        "passwd/group positive and missing-record tests when NSS code changes",
+        "timeout and errno mapping tests for resolver failure paths"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/hard_parts_e2e_catalog.v1.json",
+        "tests/conformance/hard_parts_dependency_matrix.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "resolver_nss_failure",
+          "expected_failure_signature": "lookup status, canonical name, records, passwd entry, or errno mismatch",
+          "diagnostic_expectation": "Report source, query, expected records, actual records, timeout, and errno.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show query type and source",
+        "show expected versus actual record set",
+        "show timeout and errno mapping",
+        "show whether NSS backend is implemented, call-through, or unsupported"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-resolver-claim-without-host-oracle",
+          "unsupported_condition": "resolver/NSS row has no current host oracle fixture",
+          "advertised_claim_blocked": "resolver/NSS compatible",
+          "evidence_probe": "fixture freshness and hard-parts dependency matrix",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-locale-iconv",
+      "persona_id": "persona-i18n-network-user",
+      "title": "Locale, collation, multibyte, wide-char, and iconv conversion",
+      "primary_domain": "locale_iconv",
+      "coverage_domains": [
+        "locale_iconv",
+        "stdio_libio",
+        "language_runtimes"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "locale.iconv-collate",
+          "command": "locale-harness --locale C.UTF-8 --strcoll a b --iconv UTF-8 ISO-8859-1",
+          "deterministic_inputs": "Pinned locale, encoding pair, and byte vectors."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "locale_iconv_fixture_oracle",
+      "subsystems": [
+        "locale",
+        "iconv",
+        "wcsmbs",
+        "ctype",
+        "stdio"
+      ],
+      "required_unit_tests": [
+        "setlocale positive, invalid, and default-locale tests when locale code changes",
+        "iconv valid, invalid, and partial-sequence tests when iconv code changes",
+        "wide-char boundary tests when wcsmbs code changes"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/workload_matrix.json",
+        "tests/conformance/semantic_contract_inventory.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "locale_iconv_divergence",
+          "expected_failure_signature": "collation, multibyte, wide-char, or conversion bytes differ",
+          "diagnostic_expectation": "Report locale, encoding, input bytes, expected bytes, and actual bytes.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show locale and encoding",
+        "show exact byte vector divergence",
+        "show fallback or unsupported semantic contract",
+        "show claim block reason for language-runtime rows"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-locale-claim-without-fixture",
+          "unsupported_condition": "locale/iconv fixture coverage is missing for the advertised locale or encoding",
+          "advertised_claim_blocked": "locale/iconv compatible",
+          "evidence_probe": "semantic contract inventory and locale/iconv fixture refs",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-stdio-libio",
+      "persona_id": "persona-shell-operator",
+      "title": "stdio/libio formatting, scanning, buffering, and stream state",
+      "primary_domain": "stdio_libio",
+      "coverage_domains": [
+        "stdio_libio",
+        "shell_coreutils",
+        "build_tools",
+        "package_manager"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "stdio.printf-scanf-file",
+          "command": "stdio-harness --printf --scanf --tmpfile --flush-order",
+          "deterministic_inputs": "Pinned format strings, byte streams, and temporary file contents."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "stdio_golden_fixture_oracle",
+      "subsystems": [
+        "stdio",
+        "libio",
+        "errno",
+        "locale",
+        "unistd"
+      ],
+      "required_unit_tests": [
+        "printf flags, width, precision, NaN, inf, and length-modifier tests when printf code changes",
+        "scanf tokenization and error recovery tests when scanner code changes",
+        "FILE state, buffering, ferror, and feof tests when stream code changes"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "docs/plans/stdio-native-replacement-plan.md",
+        "tests/conformance/semantic_contract_inventory.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "stdio_libio_divergence",
+          "expected_failure_signature": "printf, scanf, FILE state, buffering, or errno mismatch",
+          "diagnostic_expectation": "Report format string, stream state, expected output, actual output, and flags.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show format string or stream operation",
+        "show expected versus actual bytes",
+        "show ferror/feof and errno",
+        "show which user workflows are blocked by stdio/libio"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-stdio-native-without-stream-fixtures",
+          "unsupported_condition": "stdio/libio native claim lacks stream-state fixture coverage",
+          "advertised_claim_blocked": "stdio/libio native replacement complete",
+          "evidence_probe": "semantic contract inventory and stdio fixture refs",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-allocator-stress",
+      "persona_id": "persona-service-operator",
+      "title": "Allocator ownership, realloc, free, and membrane healing under stress",
+      "primary_domain": "allocator",
+      "coverage_domains": [
+        "allocator",
+        "threaded_services",
+        "performance_sensitive"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "alloc.mixed-sizes-threaded",
+          "command": "allocator-harness --threads 4 --mixed-sizes --foreign-free-negative",
+          "deterministic_inputs": "Pinned allocation sequence, thread count, and invalid-pointer cases."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "membrane_allocator_oracle",
+      "subsystems": [
+        "malloc",
+        "membrane",
+        "pthread",
+        "metrics"
+      ],
+      "required_unit_tests": [
+        "zero-size, max-size, align, realloc, and free tests when allocator code changes",
+        "foreign free, double free, quarantine, and generation tests when membrane allocator logic changes",
+        "thread-cache contention tests when allocator fast paths change"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "allocator_ownership",
+          "expected_failure_signature": "foreign free, double free, generation, or canary/fingerprint check diverges",
+          "diagnostic_expectation": "Report pointer class, allocation metadata, healing action, and metric counters.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ]
+        },
+        {
+          "taxonomy_id": "performance_regression",
+          "expected_failure_signature": "allocator or membrane latency exceeds strict or hardened budget",
+          "diagnostic_expectation": "Report baseline, actual latency, budget, and contention profile.",
+          "blocks_claim_levels": [
+            "L1",
+            "L2",
+            "L3"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show allocation operation and pointer class",
+        "show strict versus hardened healing behavior",
+        "show membrane metric deltas",
+        "show latency budget impact"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-allocator-hardened-without-invalid-cases",
+          "unsupported_condition": "allocator row lacks invalid-pointer strict/hardened evidence",
+          "advertised_claim_blocked": "hardened allocator safety complete",
+          "evidence_probe": "hardened repair/deny matrix and allocator oracle logs",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-startup-linking",
+      "persona_id": "persona-build-engineer",
+      "title": "Startup, dynamic linking, symbol versioning, TLS, and init/fini",
+      "primary_domain": "startup_linking",
+      "coverage_domains": [
+        "startup_linking",
+        "build_tools",
+        "language_runtimes"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "startup.versioned-symbols",
+          "command": "startup-harness --versioned-symbols --tls --init-fini",
+          "deterministic_inputs": "Pinned shared object fixtures and version script expectations."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "loader_symbol_replay",
+      "subsystems": [
+        "abi",
+        "rtld",
+        "dlfcn",
+        "tls",
+        "startup",
+        "version_script"
+      ],
+      "required_unit_tests": [
+        "version-script export tests when ABI maps change",
+        "TLS and init/fini order tests when startup code changes",
+        "dlopen/dlsym/dlclose edge tests when dlfcn code changes"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "tests/conformance/replacement_levels.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "startup_linking_failure",
+          "expected_failure_signature": "loader, TLS, init/fini, or symbol version failure before user code",
+          "diagnostic_expectation": "Report object, symbol, version, phase, and replacement level.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ]
+        },
+        {
+          "taxonomy_id": "symbol_missing",
+          "expected_failure_signature": "expected versioned ABI symbol is absent or incorrectly advertised",
+          "diagnostic_expectation": "Report symbol, version node, support status, and fixture coverage.",
+          "blocks_claim_levels": [
+            "L1",
+            "L2",
+            "L3"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show failing loader phase",
+        "show symbol and version node",
+        "show whether host glibc is still required",
+        "show exact replacement-level claim that is blocked"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-startup-l3-without-rtld-crt",
+          "unsupported_condition": "custom rtld, CRT, TLS, and init/fini evidence is absent",
+          "advertised_claim_blocked": "full standalone replacement",
+          "evidence_probe": "replacement_levels L3 blockers and host dependency inventory",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "uwm-performance-hotpaths",
+      "persona_id": "persona-service-operator",
+      "title": "Performance-sensitive hot paths for string, malloc, stdio, pthread, syscall, and membrane",
+      "primary_domain": "performance_sensitive",
+      "coverage_domains": [
+        "performance_sensitive",
+        "allocator",
+        "stdio_libio",
+        "threaded_services"
+      ],
+      "representative_commands": [
+        {
+          "scenario_id": "perf.hotpath-budget",
+          "command": "bench-harness --families string,malloc,stdio,pthread,syscall,membrane --modes strict,hardened",
+          "deterministic_inputs": "Pinned benchmark families, iteration budget, and hardware metadata."
+        }
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "oracle_kind": "benchmark_budget_gate",
+      "subsystems": [
+        "string",
+        "malloc",
+        "stdio",
+        "pthread",
+        "unistd",
+        "membrane"
+      ],
+      "required_unit_tests": [
+        "semantic parity tests before any hot-path optimization",
+        "strict and hardened membrane decision tests when validation fast paths change",
+        "regression tests for empty, boundary, and adversarial inputs after optimization"
+      ],
+      "deterministic_e2e_scripts": [
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/e2e_suite.sh",
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "artifact_paths": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "target/conformance/user_workload_acceptance_matrix.report.json",
+        "target/conformance/user_workload_acceptance_matrix.log.jsonl"
+      ],
+      "failure_scenarios": [
+        {
+          "taxonomy_id": "performance_regression",
+          "expected_failure_signature": "strict or hardened latency budget exceeded for a hot-path family",
+          "diagnostic_expectation": "Report operation, baseline, actual, budget, hardware profile, and artifact refs.",
+          "blocks_claim_levels": [
+            "L1",
+            "L2",
+            "L3"
+          ]
+        },
+        {
+          "taxonomy_id": "semantic_divergence",
+          "expected_failure_signature": "optimized path passes faster but breaks return, errno, output, or memory semantics",
+          "diagnostic_expectation": "Report parity oracle, expected, actual, and optimized decision path.",
+          "blocks_claim_levels": [
+            "L0",
+            "L1",
+            "L2",
+            "L3"
+          ]
+        }
+      ],
+      "structured_log_fields": "required_log_fields",
+      "user_facing_diagnostics": [
+        "show benchmark family and mode",
+        "show strict and hardened budget deltas",
+        "show linked parity proof",
+        "show whether optimization is blocked by missing evidence"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "neg-perf-optimized-without-parity-proof",
+          "unsupported_condition": "hot-path speedup lacks current parity proof and budget artifact",
+          "advertised_claim_blocked": "optimized production-ready hot path",
+          "evidence_probe": "perf budget plus parity fixture artifacts",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "persona_count": 5,
+    "failure_taxonomy_count": 11,
+    "workload_count": 11,
+    "negative_claim_test_count": 11,
+    "rows_with_strict_and_hardened": 11,
+    "rows_with_l0_l1_l2_l3": 11,
+    "required_domain_coverage": {
+      "shell_coreutils": 2,
+      "build_tools": 3,
+      "language_runtimes": 3,
+      "package_manager": 2,
+      "threaded_services": 4,
+      "resolver_nss": 4,
+      "locale_iconv": 3,
+      "stdio_libio": 8,
+      "allocator": 6,
+      "startup_linking": 5,
+      "performance_sensitive": 5
+    },
+    "claim_block_policy": "Every workload row includes at least one negative claim test proving unsupported or missing-evidence cases remain claim_blocked."
+  }
+}
