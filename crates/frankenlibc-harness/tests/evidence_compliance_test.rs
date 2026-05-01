@@ -79,10 +79,12 @@ fn harness_bin() -> PathBuf {
         return inferred;
     }
 
-    panic!(
+    assert!(
+        inferred.exists(),
         "harness binary not found; build it with `cargo build -p frankenlibc-harness --bin harness` before running CLI compliance tests; inferred path was {}",
         inferred.display()
     );
+    inferred
 }
 
 fn write_legacy_index(run_dir: &Path, artifact_rel: &str, bead_id: &str) -> PathBuf {
