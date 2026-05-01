@@ -2836,19 +2836,22 @@ pub unsafe extern "C" fn ns_name_ntol(src: *const u8, dst: *mut u8, dstsiz: usiz
     if src.is_null() || dst.is_null() {
         return -1;
     }
+    let src_limit = known_remaining(src as usize).map_or(256, |remaining| remaining.min(256));
+    let dst_limit = known_remaining(dst as usize).map_or(dstsiz, |remaining| remaining.min(dstsiz));
     let mut total = 0usize;
     loop {
-        if total >= 256 {
+        if total >= src_limit {
             return -1;
         }
-        // SAFETY: caller-supplied wire-format name; we cap traversal at 256.
+        // SAFETY: caller-supplied wire-format name; traversal is capped by
+        // DNS length and any tracked allocation size.
         let len = unsafe { *src.add(total) };
-        if total >= dstsiz {
+        if total >= dst_limit {
             return -1;
         }
         // Lowercase ASCII letters in the LABEL bytes; the length byte
         // itself is copied verbatim.
-        // SAFETY: dst has dstsiz bytes; we verified total < dstsiz.
+        // SAFETY: dst has dst_limit bytes; we verified total < dst_limit.
         unsafe { *dst.add(total) = len };
         total += 1;
         if len == 0 {
@@ -2860,21 +2863,26 @@ pub unsafe extern "C" fn ns_name_ntol(src: *const u8, dst: *mut u8, dstsiz: usiz
             // of the remainder, but lowercase only labels we can see.
             // For simplicity, refuse compressed names.
             if len & 0xC0 == 0xC0 {
-                if total >= dstsiz {
+                if total >= src_limit || total >= dst_limit {
                     return -1;
                 }
                 // Copy the second pointer byte verbatim.
-                // SAFETY: caller-supplied 256-byte cap on input.
+                // SAFETY: total is within both tracked source and
+                // destination limits.
                 unsafe { *dst.add(total) = *src.add(total) };
                 return 0;
             }
             return -1;
         }
-        if total + (len as usize) > dstsiz {
+        let label_end = match total.checked_add(len as usize) {
+            Some(end) => end,
+            None => return -1,
+        };
+        if label_end > src_limit || label_end > dst_limit {
             return -1;
         }
         for _ in 0..len {
-            // SAFETY: bounded by total + len ≤ dstsiz.
+            // SAFETY: bounded by label_end within source and destination.
             let b = unsafe { *src.add(total) };
             let lowered = if b.is_ascii_uppercase() { b | 0x20 } else { b };
             unsafe { *dst.add(total) = lowered };

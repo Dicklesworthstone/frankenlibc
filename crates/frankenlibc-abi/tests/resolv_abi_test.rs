@@ -2104,6 +2104,33 @@ fn ns_name_ntol_handles_empty_root_name() {
 }
 
 #[test]
+fn ns_name_ntol_rejects_tracked_short_src_label() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src = malloc_bytes(&[3]);
+    let mut dst = [0u8; 4];
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_name_ntol_rejects_tracked_short_src_compression_pointer() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src = malloc_bytes(&[0xC0]);
+    let mut dst = [0u8; 2];
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
+fn ns_name_ntol_rejects_tracked_short_dst() {
+    use frankenlibc_abi::resolv_abi::ns_name_ntol;
+    let src: [u8; 5] = [3, b'F', b'O', b'O', 0];
+    let mut dst = malloc_filled_bytes(2, 0xAA);
+    let rc = unsafe { ns_name_ntol(src.as_ptr(), dst.as_mut_ptr(), 64) };
+    assert_eq!(rc, -1);
+}
+
+#[test]
 fn ns_name_rollback_clears_ptrs_at_or_past_threshold() {
     use frankenlibc_abi::resolv_abi::ns_name_rollback;
 
