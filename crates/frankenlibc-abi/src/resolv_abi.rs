@@ -3635,6 +3635,7 @@ pub unsafe extern "C" fn ns_sprintrrf(
     if buf.is_null() || name.is_null() || buflen == 0 {
         return -1;
     }
+    let buf_limit = known_remaining(buf as usize).map_or(buflen, |remaining| remaining.min(buflen));
     let Some(name_bytes) = (unsafe { required_cstr_bytes(name) }) else {
         return -1;
     };
@@ -3669,10 +3670,10 @@ pub unsafe extern "C" fn ns_sprintrrf(
 
     let bytes = out.as_bytes();
     let needed = bytes.len() + 1;
-    if needed > buflen {
+    if needed > buf_limit {
         return -1;
     }
-    // SAFETY: buf has buflen >= needed bytes.
+    // SAFETY: buf has buf_limit >= needed writable bytes.
     unsafe {
         core::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, buf, bytes.len());
         *buf.add(bytes.len()) = 0;

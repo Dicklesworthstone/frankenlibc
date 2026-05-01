@@ -2712,6 +2712,31 @@ fn ns_sprintrrf_returns_minus_one_on_buffer_overflow() {
 }
 
 #[test]
+fn ns_sprintrrf_rejects_tracked_short_dst() {
+    use frankenlibc_abi::resolv_abi::ns_sprintrrf;
+    let cname = std::ffi::CString::new("foo.com").unwrap();
+    let mut buf = malloc_filled_bytes(4, 0xAA);
+    let n = unsafe {
+        ns_sprintrrf(
+            std::ptr::null(),
+            0,
+            cname.as_ptr(),
+            1,
+            1,
+            3600,
+            [127u8, 0, 0, 1].as_ptr(),
+            4,
+            std::ptr::null(),
+            std::ptr::null(),
+            buf.as_mut_ptr() as *mut c_char,
+            128,
+        )
+    };
+    assert_eq!(n, -1);
+    assert_eq!(buf.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
 fn ns_sprintrrf_rejects_tracked_unterminated_name() {
     use frankenlibc_abi::resolv_abi::ns_sprintrrf;
     let cname = malloc_unterminated(b"foo.com");
