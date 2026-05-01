@@ -2568,6 +2568,10 @@ pub unsafe extern "C" fn ns_format_ttl(
     if dst.is_null() || dstlen == 0 {
         return -1;
     }
+    let dst_limit = known_remaining(dst as usize).map_or(dstlen, |remaining| remaining.min(dstlen));
+    if dst_limit == 0 {
+        return -1;
+    }
     // Match glibc: u_long input, decomposed across u64 to avoid truncation
     // for values > u32::MAX. Since `src` is unsigned, modular arithmetic is
     // exact at every cascade level. On Linux x86_64 c_ulong is u64; the
@@ -2585,7 +2589,7 @@ pub unsafe extern "C" fn ns_format_ttl(
     let weeks = s;
 
     // Need NUL-terminator slot; reserve one.
-    let mut buf = vec![0u8; dstlen];
+    let mut buf = vec![0u8; dst_limit];
     let mut pos = 0usize;
     let mut units = 0;
     if weeks != 0 && ttl_emit_unit(weeks, b'W', &mut buf, &mut pos) {
@@ -2616,7 +2620,7 @@ pub unsafe extern "C" fn ns_format_ttl(
         units += 1;
     }
 
-    if pos + 1 > dstlen {
+    if pos + 1 > dst_limit {
         return -1;
     }
 
@@ -2629,7 +2633,7 @@ pub unsafe extern "C" fn ns_format_ttl(
         }
     }
 
-    // SAFETY: dst points to dstlen writable bytes; we wrote `pos` <= dstlen-1.
+    // SAFETY: dst has dst_limit writable bytes; we wrote `pos` <= dst_limit - 1.
     unsafe {
         core::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, dst, pos);
         *dst.add(pos) = 0;
