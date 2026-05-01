@@ -3261,6 +3261,99 @@ fn bd_dcfj5_sym_helpers_return_decimal_on_null_table() {
     assert_eq!(success, 0);
 }
 
+#[repr(C)]
+#[allow(dead_code)]
+struct TestResSym {
+    number: c_int,
+    name: *const c_char,
+    humanname: *const c_char,
+}
+
+#[test]
+fn bd_dcfj5_sym_ston_matches_case_insensitive_name() {
+    use frankenlibc_abi::resolv_abi::*;
+    let alpha = CString::new("ALPHA").unwrap();
+    let human = CString::new("alpha long name").unwrap();
+    let miss = CString::new("missing").unwrap();
+    let table = [
+        TestResSym {
+            number: 17,
+            name: alpha.as_ptr(),
+            humanname: human.as_ptr(),
+        },
+        TestResSym {
+            number: 255,
+            name: std::ptr::null(),
+            humanname: std::ptr::null(),
+        },
+    ];
+    let mut success: c_int = 99;
+
+    assert_eq!(
+        unsafe { __sym_ston(table.as_ptr().cast(), c"alpha".as_ptr(), &mut success) },
+        17
+    );
+    assert_eq!(success, 1);
+
+    success = 99;
+    assert_eq!(
+        unsafe { __sym_ston(table.as_ptr().cast(), miss.as_ptr(), &mut success) },
+        255
+    );
+    assert_eq!(success, 0);
+}
+
+#[test]
+fn bd_dcfj5_sym_ston_rejects_tracked_unterminated_key() {
+    use frankenlibc_abi::resolv_abi::*;
+    let alpha = CString::new("ALPHA").unwrap();
+    let table = [
+        TestResSym {
+            number: 17,
+            name: alpha.as_ptr(),
+            humanname: std::ptr::null(),
+        },
+        TestResSym {
+            number: 255,
+            name: std::ptr::null(),
+            humanname: std::ptr::null(),
+        },
+    ];
+    let key = malloc_unterminated(b"ALPHA");
+    let mut success: c_int = 99;
+
+    assert_eq!(
+        unsafe { __sym_ston(table.as_ptr().cast(), key.as_ptr(), &mut success) },
+        0
+    );
+    assert_eq!(success, 0);
+}
+
+#[test]
+fn bd_dcfj5_sym_ston_rejects_tracked_unterminated_table_name() {
+    use frankenlibc_abi::resolv_abi::*;
+    let bad_name = malloc_unterminated(b"ALPHA");
+    let table = [
+        TestResSym {
+            number: 17,
+            name: bad_name.as_ptr(),
+            humanname: std::ptr::null(),
+        },
+        TestResSym {
+            number: 255,
+            name: std::ptr::null(),
+            humanname: std::ptr::null(),
+        },
+    ];
+    let mut success: c_int = 99;
+
+    assert_eq!(
+        unsafe { __sym_ston(table.as_ptr().cast(), c"alpha".as_ptr(), &mut success) },
+        0
+    );
+    assert_eq!(success, 0);
+}
+
 #[test]
 fn bd_dcfj5_res_close_is_void_noop() {
     use frankenlibc_abi::resolv_abi::*;

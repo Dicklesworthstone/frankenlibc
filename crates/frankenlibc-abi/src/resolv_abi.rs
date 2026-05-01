@@ -4878,7 +4878,12 @@ pub unsafe extern "C" fn __sym_ston(
     success: *mut c_int,
 ) -> c_int {
     if !tab.is_null() && !str.is_null() {
-        let needle = unsafe { CStr::from_ptr(str) }.to_bytes();
+        let Some(needle) = (unsafe { required_cstr_bytes(str) }) else {
+            if !success.is_null() {
+                unsafe { *success = 0 };
+            }
+            return 0;
+        };
         let mut p = tab as *const ResSym;
         loop {
             let entry = unsafe { &*p };
@@ -4890,7 +4895,12 @@ pub unsafe extern "C" fn __sym_ston(
                 }
                 return entry.number;
             }
-            let name_bytes = unsafe { CStr::from_ptr(entry.name) }.to_bytes();
+            let Some(name_bytes) = (unsafe { required_cstr_bytes(entry.name) }) else {
+                if !success.is_null() {
+                    unsafe { *success = 0 };
+                }
+                return 0;
+            };
             if name_bytes.eq_ignore_ascii_case(needle) {
                 if !success.is_null() {
                     unsafe { *success = 1 };
