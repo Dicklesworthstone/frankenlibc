@@ -50,6 +50,41 @@ fn read_jsonl(path: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+fn harness_bin() -> PathBuf {
+    let runtime_env = std::env::var("CARGO_BIN_EXE_harness")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.exists());
+    if let Some(path) = runtime_env {
+        return path;
+    }
+
+    let compile_env = option_env!("CARGO_BIN_EXE_harness")
+        .map(PathBuf::from)
+        .filter(|path| path.exists());
+    if let Some(path) = compile_env {
+        return path;
+    }
+
+    let current_exe = std::env::current_exe().expect("current test executable path");
+    let mut target_debug = current_exe
+        .parent()
+        .expect("test executable should have parent")
+        .to_path_buf();
+    if target_debug.file_name().is_some_and(|name| name == "deps") {
+        target_debug.pop();
+    }
+    let inferred = target_debug.join("harness");
+    if inferred.exists() {
+        return inferred;
+    }
+
+    panic!(
+        "harness binary not found; build it with `cargo build -p frankenlibc-harness --bin harness` before running CLI compliance tests; inferred path was {}",
+        inferred.display()
+    );
+}
+
 fn write_legacy_index(run_dir: &Path, artifact_rel: &str, bead_id: &str) -> PathBuf {
     let artifact_path = run_dir.join(artifact_rel);
     std::fs::write(&artifact_path, "legacy-diagnostic-bytes").expect("write legacy artifact");
@@ -386,7 +421,7 @@ fn cli_emits_triage_format_with_required_fields() {
         .expect("serialize log entry");
     std::fs::write(&log_path, format!("{line}\n")).expect("write log");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_harness"))
+    let output = Command::new(harness_bin())
         .arg("evidence-compliance")
         .arg("--workspace-root")
         .arg(&run_dir)
