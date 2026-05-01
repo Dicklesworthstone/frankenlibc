@@ -590,6 +590,10 @@ pub const SYS_GETXATTRAT: usize = 464;
 pub const SYS_LISTXATTRAT: usize = 465;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_REMOVEXATTRAT: usize = 466;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FINIT_MODULE: usize = 313;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_QUOTACTL_FD: usize = 443;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -774,6 +778,10 @@ pub const SYS_GETXATTRAT: usize = 464;
 pub const SYS_LISTXATTRAT: usize = 465;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_REMOVEXATTRAT: usize = 466;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FINIT_MODULE: usize = 273;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_QUOTACTL_FD: usize = 443;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2357,6 +2365,57 @@ pub unsafe fn sys_removexattrat(
             path as usize,
             at_flags as usize,
             name as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `finit_module(fd, param_values, flags)` — load a kernel module
+/// from an open fd (Linux 3.8+, x86_64 syscall 313).
+///
+/// # Safety
+///
+/// `param_values`, when non-NULL, must be a NUL-terminated C string.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_finit_module(
+    fd: i32,
+    param_values: *const u8,
+    flags: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_FINIT_MODULE,
+            fd as usize,
+            param_values as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `quotactl_fd(fd, cmd, id, addr)` — quota control by open fd
+/// (Linux 5.14+, x86_64 syscall 443).
+///
+/// # Safety
+///
+/// `addr` is interpreted per `cmd`; when non-NULL it must point to
+/// storage matching the cmd's expected struct.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_quotactl_fd(
+    fd: u32,
+    cmd: i32,
+    id: u32,
+    addr: *mut u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_QUOTACTL_FD,
+            fd as usize,
+            cmd as usize,
+            id as usize,
+            addr as usize,
         )
     };
     syscall_result(ret).map(|_| ())

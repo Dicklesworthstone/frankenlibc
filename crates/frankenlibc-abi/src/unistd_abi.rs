@@ -5566,16 +5566,13 @@ pub unsafe extern "C" fn finit_module(
     param_values: *const c_char,
     flags: c_int,
 ) -> c_int {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_finit_module,
-            fd as libc::c_long,
-            param_values as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_finit_module(fd, param_values as *const u8, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `quotactl_fd(fd, cmd, id, *addr) -> int` (Linux 5.14+,
@@ -5595,17 +5592,13 @@ pub unsafe extern "C" fn quotactl_fd(
     id: c_uint,
     addr: *mut c_void,
 ) -> c_int {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_quotactl_fd,
-            fd as libc::c_long,
-            cmd as libc::c_long,
-            id as libc::c_long,
-            addr as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_quotactl_fd(fd, cmd, id, addr as *mut u8) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `map_shadow_stack(addr, size, flags) -> long` (Linux
