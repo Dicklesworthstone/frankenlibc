@@ -3242,6 +3242,31 @@ fn bd_dcfj5_loc_aton_rejects_tracked_unterminated_ascii() {
 }
 
 #[test]
+fn bd_dcfj5_loc_ntoa_rejects_tracked_short_binary() {
+    use frankenlibc_abi::resolv_abi::*;
+    let binary = malloc_filled_bytes(4, 0);
+    let mut out = [0x7F_i8; 96];
+
+    assert!(unsafe { __loc_ntoa(binary.as_ptr(), out.as_mut_ptr()) }.is_null());
+    assert_eq!(out, [0x7F_i8; 96]);
+}
+
+#[test]
+fn bd_dcfj5_loc_ntoa_rejects_tracked_short_ascii() {
+    use frankenlibc_abi::resolv_abi::*;
+    let ascii = CString::new("42 21 30 N 71 6 18 W -24m 30m").unwrap();
+    let mut binary = [0u8; 16];
+    assert_eq!(
+        unsafe { __loc_aton(ascii.as_ptr(), binary.as_mut_ptr()) },
+        16
+    );
+    let mut out = malloc_filled_bytes(4, 0xAA);
+
+    assert!(unsafe { __loc_ntoa(binary.as_ptr(), out.as_mut_ptr().cast::<c_char>()) }.is_null());
+    assert_eq!(out.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
 fn bd_dcfj5_sym_helpers_return_decimal_on_null_table() {
     use frankenlibc_abi::resolv_abi::*;
     let mut success: c_int = 99;

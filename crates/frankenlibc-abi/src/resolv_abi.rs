@@ -4655,6 +4655,9 @@ pub unsafe extern "C" fn __loc_ntoa(binary: *const u8, ascii: *mut c_char) -> *c
     if binary.is_null() {
         return core::ptr::null();
     }
+    if !tracked_region_fits(binary.cast(), 16) {
+        return core::ptr::null();
+    }
     let bytes = unsafe { std::slice::from_raw_parts(binary, 16) };
     let formatted = loc_ntoa_format(bytes);
     let formatted_bytes = formatted.as_bytes();
@@ -4669,7 +4672,14 @@ pub unsafe extern "C" fn __loc_ntoa(binary: *const u8, ascii: *mut c_char) -> *c
             buf.as_ptr() as *const c_char
         });
     }
-    // Write into caller-provided buffer (assumed >= 90 bytes).
+    let Some(needed) = formatted_bytes.len().checked_add(1) else {
+        return core::ptr::null();
+    };
+    if !tracked_region_fits(ascii.cast(), needed) {
+        return core::ptr::null();
+    }
+
+    // Write into caller-provided buffer.
     unsafe {
         let dst = ascii as *mut u8;
         std::ptr::copy_nonoverlapping(formatted_bytes.as_ptr(), dst, formatted_bytes.len());
