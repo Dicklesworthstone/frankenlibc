@@ -1069,6 +1069,62 @@ fn getnameinfo_unsupported_family_returns_eai_family() {
     assert_eq!(rc, libc::EAI_FAMILY);
 }
 
+#[test]
+fn getnameinfo_rejects_tracked_short_host_buffer() {
+    let sin = libc::sockaddr_in {
+        sin_family: libc::AF_INET as u16,
+        sin_port: 80u16.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes([192, 168, 1, 1]),
+        },
+        sin_zero: [0; 8],
+    };
+
+    let mut host = malloc_filled_bytes(4, 0xAA);
+    let mut serv = [0u8; 16];
+    let rc = unsafe {
+        resolv_abi::getnameinfo(
+            (&sin as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
+            mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            host.as_mut_ptr().cast::<c_char>(),
+            64,
+            serv.as_mut_ptr().cast::<c_char>(),
+            serv.len() as libc::socklen_t,
+            libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        )
+    };
+    assert_eq!(rc, libc::EAI_OVERFLOW);
+    assert_eq!(host.as_slice(), &[0xAA; 4]);
+}
+
+#[test]
+fn getnameinfo_rejects_tracked_short_service_buffer() {
+    let sin = libc::sockaddr_in {
+        sin_family: libc::AF_INET as u16,
+        sin_port: 80u16.to_be(),
+        sin_addr: libc::in_addr {
+            s_addr: u32::from_ne_bytes([192, 168, 1, 1]),
+        },
+        sin_zero: [0; 8],
+    };
+
+    let mut host = [0u8; 64];
+    let mut serv = malloc_filled_bytes(2, 0xBB);
+    let rc = unsafe {
+        resolv_abi::getnameinfo(
+            (&sin as *const libc::sockaddr_in).cast::<libc::sockaddr>(),
+            mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            host.as_mut_ptr().cast::<c_char>(),
+            host.len() as libc::socklen_t,
+            serv.as_mut_ptr().cast::<c_char>(),
+            16,
+            libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        )
+    };
+    assert_eq!(rc, libc::EAI_OVERFLOW);
+    assert_eq!(serv.as_slice(), &[0xBB; 2]);
+}
+
 // ===========================================================================
 // gethostbyaddr
 // ===========================================================================

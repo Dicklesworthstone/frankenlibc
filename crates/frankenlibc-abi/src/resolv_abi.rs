@@ -797,7 +797,12 @@ unsafe fn write_c_buffer(
     if out.is_null() || out_len == 0 {
         return Ok(false);
     }
-    let capacity = out_len as usize;
+    let advertised = out_len as usize;
+    let capacity =
+        known_remaining(out as usize).map_or(advertised, |remaining| remaining.min(advertised));
+    if capacity == 0 {
+        return Err(libc::EAI_OVERFLOW);
+    }
     let bytes = text.as_bytes();
 
     if bytes.len() + 1 <= capacity {
