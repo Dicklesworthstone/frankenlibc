@@ -6741,6 +6741,12 @@ pub unsafe extern "C" fn __argz_count(argz: *const c_char, argz_len: SizeT) -> S
     if argz.is_null() || argz_len == 0 {
         return 0;
     }
+    if argz_len > isize::MAX as usize
+        || (argz as usize).checked_add(argz_len).is_none()
+        || tracked_region_too_short_addr(argz as usize, argz_len)
+    {
+        return 0;
+    }
     let slice = unsafe { std::slice::from_raw_parts(argz.cast::<u8>(), argz_len) };
     slice.iter().filter(|&&b| b == 0).count()
 }
@@ -6754,9 +6760,20 @@ pub unsafe extern "C" fn __argz_next(
     if argz.is_null() || argz_len == 0 {
         return std::ptr::null_mut();
     }
+    let base_addr = argz as usize;
+    let Some(end_addr) = base_addr.checked_add(argz_len) else {
+        return std::ptr::null_mut();
+    };
+    if argz_len > isize::MAX as usize || tracked_region_too_short_addr(base_addr, argz_len) {
+        return std::ptr::null_mut();
+    }
     let end = unsafe { argz.add(argz_len) };
     if entry.is_null() {
         return argz as *mut c_char;
+    }
+    let entry_addr = entry as usize;
+    if entry_addr < base_addr || entry_addr >= end_addr {
+        return std::ptr::null_mut();
     }
     // Find NUL after current entry, then advance past it
     let mut p = entry;
@@ -6776,6 +6793,12 @@ pub unsafe extern "C" fn __argz_next(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __argz_stringify(argz: *mut c_char, argz_len: SizeT, sep: c_int) {
     if argz.is_null() || argz_len < 2 {
+        return;
+    }
+    if argz_len > isize::MAX as usize
+        || (argz as usize).checked_add(argz_len).is_none()
+        || tracked_region_too_short_addr(argz as usize, argz_len)
+    {
         return;
     }
     let slice = unsafe { std::slice::from_raw_parts_mut(argz.cast::<u8>(), argz_len) };

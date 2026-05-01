@@ -4,6 +4,9 @@
 
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::glibc_internal_abi::{
+    __argz_count,
+    __argz_next,
+    __argz_stringify,
     __asprintf,
     __call_tls_dtors,
     __copy_grp,
@@ -1625,6 +1628,44 @@ fn xprt_register_noop() {
 #[test]
 fn xprt_unregister_noop() {
     unsafe { xprt_unregister(ptr::null_mut()) };
+}
+
+// ===========================================================================
+// GNU argz internal aliases
+// ===========================================================================
+
+#[test]
+fn argz_internals_handle_valid_tracked_buffer() {
+    unsafe {
+        const ARGZ: [u8; 8] = [b'o', b'n', b'e', 0, b't', b'w', b'o', 0];
+        const STRINGIFIED: [u8; 8] = [b'o', b'n', b'e', b':', b't', b'w', b'o', 0];
+        let raw = malloc_tracked_zeroed_bytes(8).cast::<c_char>();
+        std::ptr::copy_nonoverlapping(ARGZ.as_ptr(), raw.cast::<u8>(), ARGZ.len());
+
+        assert_eq!(__argz_count(raw, 8), 2);
+        assert_eq!(__argz_next(raw, 8, ptr::null()), raw);
+        assert_eq!(__argz_next(raw, 8, raw), raw.add(4));
+        assert!(__argz_next(raw, 8, raw.add(4)).is_null());
+
+        __argz_stringify(raw, 8, b':' as c_int);
+        assert_eq!(std::slice::from_raw_parts(raw.cast::<u8>(), 8), STRINGIFIED);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
+fn argz_internals_reject_tracked_short_buffers() {
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(3).cast::<c_char>();
+        std::ptr::copy_nonoverlapping(b"a\0b".as_ptr(), raw.cast::<u8>(), 3);
+
+        assert_eq!(__argz_count(raw, 4), 0);
+        assert!(__argz_next(raw, 4, ptr::null()).is_null());
+
+        __argz_stringify(raw, 4, b':' as c_int);
+        assert_eq!(std::slice::from_raw_parts(raw.cast::<u8>(), 3), b"a\0b");
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
 }
 
 // ===========================================================================
