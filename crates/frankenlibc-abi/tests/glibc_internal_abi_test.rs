@@ -1193,6 +1193,26 @@ fn ns_name_unpack_copies_uncompressed_name() {
 }
 
 #[test]
+fn ns_name_unpack_rejects_tracked_short_message_span() {
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *raw = 0;
+        let oversized_eom = raw.wrapping_add(2).cast::<c_void>();
+        let mut dst = [0x7eu8; 8];
+        let ret = ns_name_unpack(
+            raw.cast(),
+            oversized_eom,
+            raw.cast(),
+            dst.as_mut_ptr().cast(),
+            dst.len(),
+        );
+        assert_eq!(ret, -1);
+        assert_eq!(dst[0], 0x7e);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
 fn ns_name_pack_copies_labels() {
     let wire = make_wire_name("hello.world");
     let mut dst = [0u8; 64];
@@ -2370,6 +2390,22 @@ fn ns_name_unpack_with_compression() {
     // Result should be the uncompressed name
     assert_eq!(buf[0], 7);
     assert_eq!(&buf[1..8], b"example");
+}
+
+#[test]
+fn internal_ns_name_unpack_rejects_tracked_short_message_span() {
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *raw = 0;
+        let oversized_eom = raw.wrapping_add(2);
+        let mut dst = [0x7eu8; 8];
+        clear_errno();
+        let ret = __ns_name_unpack(raw, oversized_eom, raw, dst.as_mut_ptr(), dst.len());
+        assert_eq!(ret, -1);
+        assert_eq!(errno_value(), libc::EMSGSIZE);
+        assert_eq!(dst[0], 0x7e);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
 }
 
 #[test]

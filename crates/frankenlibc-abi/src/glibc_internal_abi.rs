@@ -132,6 +132,25 @@ unsafe fn bounded_dns_wire_name_len(ptr: *const u8, max_scan: usize) -> Option<u
     None
 }
 
+#[inline]
+fn dns_message_span_offsets(
+    msg: *const u8,
+    eom: *const u8,
+    src: *const u8,
+) -> Option<(usize, usize)> {
+    let msg_addr = msg as usize;
+    let eom_addr = eom as usize;
+    let src_addr = src as usize;
+    if eom_addr <= msg_addr || src_addr < msg_addr || src_addr >= eom_addr {
+        return None;
+    }
+    let msg_len = eom_addr.checked_sub(msg_addr)?;
+    if msg_len > isize::MAX as usize || tracked_region_too_short_addr(msg_addr, msg_len) {
+        return None;
+    }
+    Some((msg_len, src_addr - msg_addr))
+}
+
 // ==========================================================================
 // Native math helpers
 // ==========================================================================
@@ -1718,11 +1737,9 @@ pub unsafe extern "C" fn ns_name_unpack(
     if msg.is_null() || eom.is_null() || src.is_null() || dst.is_null() || dstsiz == 0 {
         return -1;
     }
-    if src < msg || src >= eom {
+    let Some((msg_len, src_offset)) = dns_message_span_offsets(msg, eom, src) else {
         return -1;
-    }
-    let msg_len = unsafe { eom.offset_from(msg) } as usize;
-    let src_offset = unsafe { src.offset_from(msg) } as usize;
+    };
     let msg_slice = unsafe { std::slice::from_raw_parts(msg, msg_len) };
     let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
     let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstsiz) };
@@ -8168,12 +8185,10 @@ pub unsafe extern "C" fn __ns_name_unpack(
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    if src < msg || src >= eom {
+    let Some((msg_len, src_offset)) = dns_message_span_offsets(msg, eom, src) else {
         unsafe { crate::errno_abi::set_abi_errno(libc::EMSGSIZE) };
         return -1;
-    }
-    let msg_len = unsafe { eom.offset_from(msg) } as usize;
-    let src_offset = unsafe { src.offset_from(msg) } as usize;
+    };
     let msg_slice = unsafe { std::slice::from_raw_parts(msg, msg_len) };
     let effective_dstsiz = effective_output_len(dst.cast(), dstsiz);
     let out = unsafe { std::slice::from_raw_parts_mut(dst, effective_dstsiz) };
