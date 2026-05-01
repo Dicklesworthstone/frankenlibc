@@ -1674,7 +1674,11 @@ use frankenlibc_core::string::{wchar as wchar_core, wide as wide_core};
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> c_int {
     if s.is_null() {
-        return 0; // stateless encoding
+        return 0; // state query: stateless encoding (returns 0)
+    }
+    if n == 0 {
+        // Zero bytes cannot constitute a complete multibyte character.
+        return -1;
     }
     let slice = unsafe { std::slice::from_raw_parts(s, n) };
     match wchar_core::mblen(slice) {
@@ -1692,7 +1696,11 @@ pub unsafe extern "C" fn mblen(s: *const u8, n: usize) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mbtowc(pwc: *mut u32, s: *const u8, n: usize) -> c_int {
     if s.is_null() {
-        return 0; // stateless encoding
+        return 0; // state query: stateless encoding (returns 0)
+    }
+    if n == 0 {
+        // Zero bytes cannot constitute a complete multibyte character.
+        return -1;
     }
     let slice = unsafe { std::slice::from_raw_parts(s, n) };
     if !slice.is_empty() && slice[0] == 0 {
