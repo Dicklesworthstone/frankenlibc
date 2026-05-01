@@ -1,0 +1,514 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.6.6",
+  "generated_at_utc": "2026-05-01T17:55:00Z",
+  "purpose": "Define the L2 and L3 standalone replacement readiness proof matrix so standalone claims require artifact-level evidence, not symbol-count evidence alone.",
+  "inputs": {
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "packaging_spec": "tests/conformance/packaging_spec.json",
+    "closure_contract": "tests/conformance/closure_contract.v1.json",
+    "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "support_matrix": "support_matrix.json",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map"
+  },
+  "required_dimensions": [
+    "loader_startup_crt_tls_init_fini_secure",
+    "versioned_symbol_exports",
+    "host_glibc_free_execution",
+    "syscall_arch_obligations",
+    "failure_diagnostics",
+    "real_program_standalone_smoke",
+    "performance_budget",
+    "resolver_nss_locale_iconv",
+    "pthread_stdio_native"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "runtime_mode",
+    "replacement_level",
+    "api_family",
+    "symbol",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "current_level_must_remain": "L0",
+    "l2_current_claim_status": "blocked",
+    "l3_current_claim_status": "blocked",
+    "symbol_counts_are_insufficient": true,
+    "missing_evidence_result": "claim_blocked",
+    "interpose_value_is_not_standalone_readiness": true
+  },
+  "readiness_levels": [
+    {
+      "level": "L2",
+      "name": "Partial standalone replacement",
+      "allowed_claim_when": "A declared standalone subset has direct-link evidence, no unapproved host-glibc dependency, current versioned-symbol proof, real-program subset smoke, and budgeted strict/hardened behavior.",
+      "current_claim_status": "blocked",
+      "blocked_reason": "Current replacement_levels.json keeps current_level and release_tag_policy.current_release_level at L0; L2 host-dependency, direct-link, and standalone subset evidence is not complete."
+    },
+    {
+      "level": "L3",
+      "name": "Full standalone replacement",
+      "allowed_claim_when": "The full libc artifact boots without host glibc, owns CRT/rtld/TLS/init/fini/secure-mode obligations, has native NSS/resolver/locale/iconv/stdio/pthread coverage, and passes full real-program workload, diagnostics, and performance gates.",
+      "current_claim_status": "blocked",
+      "blocked_reason": "Current replacement_levels.json marks L3 as roadmap and explicitly lists CRT, rtld, NSS, resolver, and system-libc deployment evidence blockers."
+    }
+  ],
+  "obligations": [
+    {
+      "id": "l2-subset-manifest",
+      "level": "L2",
+      "dimension": "loader_startup_crt_tls_init_fini_secure",
+      "title": "Declared standalone subset and artifact profile",
+      "requirement": "Declare the exact symbol families, artifact name, feature flags, loader assumptions, TLS assumptions, secure-mode assumptions, and unsupported exclusions for the L2 subset.",
+      "current_state": "blocked",
+      "blocker_reason": "No current machine-checked standalone subset manifest is tied to replacement_levels.json.",
+      "evidence_artifacts": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/packaging_spec.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh",
+        "scripts/check_replacement_levels.sh"
+      ],
+      "unit_tests_required": [
+        "subset manifest parser rejects missing symbol families",
+        "subset manifest parser rejects missing loader/TLS/secure-mode assumptions"
+      ],
+      "e2e_or_smoke_required": [
+        "direct-link subset smoke with strict and hardened mode metadata"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l2-without-subset-manifest",
+          "unsupported_condition": "L2 claim lacks a current standalone subset manifest",
+          "advertised_claim_blocked": "partial standalone replacement",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l2-versioned-symbol-subset",
+      "level": "L2",
+      "dimension": "versioned_symbol_exports",
+      "title": "Versioned symbol subset export proof",
+      "requirement": "Prove every L2 subset symbol has the expected exported name, version node, calling convention, and fixture-backed semantic status.",
+      "current_state": "blocked",
+      "blocker_reason": "Current symbol counts do not prove subset version-node compatibility or semantic fixture coverage.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "support_matrix.json",
+        "tests/conformance/symbol_fixture_coverage.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh",
+        "scripts/check_replacement_guard.sh interpose"
+      ],
+      "unit_tests_required": [
+        "ABI map test proves every subset symbol has the expected version node",
+        "fixture coverage test rejects symbols advertised without semantic evidence"
+      ],
+      "e2e_or_smoke_required": [
+        "direct-link C fixture resolves all subset symbols without missing-symbol diagnostics"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l2-symbol-count-only",
+          "unsupported_condition": "implemented/raw-syscall count is high but versioned subset evidence is absent",
+          "advertised_claim_blocked": "L2 subset ABI-compatible",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l2-host-dependency-allowlist",
+      "level": "L2",
+      "dimension": "host_glibc_free_execution",
+      "title": "L2 host dependency allowlist and runtime audit",
+      "requirement": "Inventory every host libc, loader, CRT, startup, and dlsym/dlopen dependency reachable from the L2 artifact and block unapproved dependencies.",
+      "current_state": "blocked",
+      "blocker_reason": "Host-dependency inventory is not yet a current release gate for standalone claims.",
+      "evidence_artifacts": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/semantic_contract_inventory.v1.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh"
+      ],
+      "unit_tests_required": [
+        "dependency inventory parser rejects unapproved libc symbol dependencies",
+        "dependency inventory parser rejects stale source_commit evidence"
+      ],
+      "e2e_or_smoke_required": [
+        "ldd/readelf/nm-style deterministic audit for release artifact"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l2-unapproved-host-dependency",
+          "unsupported_condition": "L2 artifact still reaches an unapproved host glibc dependency",
+          "advertised_claim_blocked": "host-glibc-free partial replacement",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l2-direct-link-smoke",
+      "level": "L2",
+      "dimension": "real_program_standalone_smoke",
+      "title": "Direct-link C and real-program subset smoke",
+      "requirement": "Run direct-link C fixtures and at least one representative real-program subset smoke without relying on LD_PRELOAD-only interpose behavior.",
+      "current_state": "blocked",
+      "blocker_reason": "Current green smoke evidence is interpose-oriented and cannot by itself promote L2.",
+      "evidence_artifacts": [
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "unit_tests_required": [
+        "direct-link fixture runner rejects missing stdout/stderr/status artifacts",
+        "mode-pair runner rejects incomplete strict/hardened pairs"
+      ],
+      "e2e_or_smoke_required": [
+        "direct-link C compile/link/run",
+        "real-program subset smoke with structured log bundle"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l2-interpose-smoke-only",
+          "unsupported_condition": "only LD_PRELOAD smoke evidence exists",
+          "advertised_claim_blocked": "direct-link partial replacement",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l2-mode-perf-budget",
+      "level": "L2",
+      "dimension": "performance_budget",
+      "title": "Strict/hardened mode and performance budget proof",
+      "requirement": "Prove L2 subset behavior in strict and hardened modes and enforce strict/hardened latency budgets for subset hot paths.",
+      "current_state": "blocked",
+      "blocker_reason": "Performance budgets and standalone subset behavior are not yet coupled to an L2 release gate.",
+      "evidence_artifacts": [
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh"
+      ],
+      "unit_tests_required": [
+        "strict and hardened decision tests for every optimized subset family",
+        "regression tests for boundary and adversarial optimized inputs"
+      ],
+      "e2e_or_smoke_required": [
+        "budgeted subset benchmark replay with hardware metadata"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l2-without-budget",
+          "unsupported_condition": "subset passes correctness checks but lacks current budget evidence",
+          "advertised_claim_blocked": "production-ready L2 hot path",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l2-diagnostics-claim-gate",
+      "level": "L2",
+      "dimension": "failure_diagnostics",
+      "title": "L2 diagnostics and claim-control gate",
+      "requirement": "Failures must include structured logs, failure signatures, artifact references, and a claim-control rule that blocks stale or missing L2 evidence.",
+      "current_state": "blocked",
+      "blocker_reason": "L2 diagnostics exist as planned requirements but are not yet an enforced release-promotion gate.",
+      "evidence_artifacts": [
+        "tests/conformance/log_schema.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/claim_reconciliation_report.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh",
+        "scripts/check_replacement_levels.sh"
+      ],
+      "unit_tests_required": [
+        "claim gate rejects stale evidence",
+        "log schema test rejects missing failure_signature or artifact_refs"
+      ],
+      "e2e_or_smoke_required": [
+        "intentional missing-evidence replay that emits claim_blocked"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l2-missing-diagnostics",
+          "unsupported_condition": "L2 failure lacks artifact refs or failure signature",
+          "advertised_claim_blocked": "user-ready L2 support",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l3-crt-startup-tls-secure",
+      "level": "L3",
+      "dimension": "loader_startup_crt_tls_init_fini_secure",
+      "title": "Custom CRT, startup, TLS, init/fini, and secure-mode ownership",
+      "requirement": "Own process entry, CRT objects, TLS model, init/fini ordering, auxv/env handling, and secure-mode behavior without host glibc startup.",
+      "current_state": "blocked",
+      "blocker_reason": "replacement_levels.json lists CRT bootstrap as not started for L3.",
+      "evidence_artifacts": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/closure_contract.v1.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh"
+      ],
+      "unit_tests_required": [
+        "startup parser tests for argv/envp/auxv",
+        "TLS model tests for thread-local errno and runtime mode",
+        "secure-mode tests reject unsafe env-driven behavior"
+      ],
+      "e2e_or_smoke_required": [
+        "direct exec standalone binary reaches main and exits with expected status"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l3-without-crt",
+          "unsupported_condition": "custom CRT/startup/TLS evidence is absent",
+          "advertised_claim_blocked": "full standalone replacement",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l3-rtld-symbol-relocation",
+      "level": "L3",
+      "dimension": "versioned_symbol_exports",
+      "title": "rtld, symbol lookup, relocation, IFUNC, and namespace proof",
+      "requirement": "Provide a minimal loader path or explicitly proved replacement mechanism for dynamic loading, symbol resolution, relocation, IFUNC, and namespace behavior.",
+      "current_state": "blocked",
+      "blocker_reason": "replacement_levels.json lists rtld as not started for L3.",
+      "evidence_artifacts": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/closure_contract.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh"
+      ],
+      "unit_tests_required": [
+        "versioned symbol export tests",
+        "relocation and IFUNC fixture tests",
+        "namespace isolation tests for dlfcn behavior"
+      ],
+      "e2e_or_smoke_required": [
+        "standalone dynamic-loading smoke with deterministic shared objects"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l3-without-rtld",
+          "unsupported_condition": "loader/relocation/IFUNC evidence is absent",
+          "advertised_claim_blocked": "full dynamic libc replacement",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l3-zero-host-glibc",
+      "level": "L3",
+      "dimension": "host_glibc_free_execution",
+      "title": "Zero host-glibc dependency proof",
+      "requirement": "Prove the full replacement artifact has no host glibc dependency in build metadata, dynamic dependencies, runtime symbol resolution, or fallback paths.",
+      "current_state": "blocked",
+      "blocker_reason": "The current artifact is explicitly interpose-first and host glibc remains part of the deployment story.",
+      "evidence_artifacts": [
+        "README.md",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/packaging_spec.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh"
+      ],
+      "unit_tests_required": [
+        "host dependency inventory rejects libc.so.6 and host pthread/stdio fallback",
+        "host symbol resolver audit rejects replacement profile fallback"
+      ],
+      "e2e_or_smoke_required": [
+        "readelf/ldd/nm audit plus runtime trace proving no host glibc dependency"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l3-host-glibc-present",
+          "unsupported_condition": "any host glibc dependency remains reachable",
+          "advertised_claim_blocked": "full standalone replacement",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l3-syscall-arch-matrix",
+      "level": "L3",
+      "dimension": "syscall_arch_obligations",
+      "title": "Syscall and architecture obligation matrix",
+      "requirement": "Bind every raw syscall, ABI layout, time64 behavior, errno mapping, signal frame, futex path, and architecture-specific assumption to tests and documented support targets.",
+      "current_state": "blocked",
+      "blocker_reason": "No full L3 architecture/syscall proof matrix is current.",
+      "evidence_artifacts": [
+        "support_matrix.json",
+        "tests/conformance/conformance_matrix.v1.json",
+        "tests/conformance/closure_contract.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh"
+      ],
+      "unit_tests_required": [
+        "errno mapping boundary tests",
+        "time64 and ABI layout tests",
+        "signal and futex architecture tests"
+      ],
+      "e2e_or_smoke_required": [
+        "architecture-tagged standalone syscall smoke with structured logs"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l3-without-arch-matrix",
+          "unsupported_condition": "architecture or syscall obligation lacks evidence",
+          "advertised_claim_blocked": "portable full replacement",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l3-native-hard-parts",
+      "level": "L3",
+      "dimension": "resolver_nss_locale_iconv",
+      "secondary_dimensions": [
+        "pthread_stdio_native"
+      ],
+      "title": "Native NSS, resolver, locale, iconv, stdio, and pthread ownership",
+      "requirement": "Implement and prove native hard-parts behavior for NSS, resolver, locale/iconv/wcsmbs, stdio/libio FILE ownership, and pthread/futex behavior without host fallbacks.",
+      "current_state": "blocked",
+      "blocker_reason": "replacement_levels.json lists NSS and resolver as not started for L3, and full native hard-parts evidence is not complete.",
+      "evidence_artifacts": [
+        "tests/conformance/hard_parts_e2e_catalog.v1.json",
+        "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh",
+        "scripts/check_hard_parts_e2e.sh"
+      ],
+      "unit_tests_required": [
+        "NSS passwd/group positive and missing-record tests",
+        "resolver UDP timeout and hosts-file tests",
+        "locale/iconv conversion and collation tests",
+        "stdio FILE state tests",
+        "pthread futex synchronization and cancellation tests"
+      ],
+      "e2e_or_smoke_required": [
+        "strict and hardened hard-parts mode-pair replay",
+        "standalone hard-parts real-program smoke"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l3-hard-parts-incomplete",
+          "unsupported_condition": "any hard-parts family lacks native fixture and e2e evidence",
+          "advertised_claim_blocked": "full real-workload replacement",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    },
+    {
+      "id": "l3-workload-release-gate",
+      "level": "L3",
+      "dimension": "real_program_standalone_smoke",
+      "secondary_dimensions": [
+        "performance_budget",
+        "failure_diagnostics"
+      ],
+      "title": "Full real-program workload, performance, diagnostics, and release gate",
+      "requirement": "Pass the full user workload matrix as a standalone artifact, enforce performance budgets, emit structured diagnostics, and block README/release claims unless all L3 evidence is current.",
+      "current_state": "blocked",
+      "blocker_reason": "Current user workload and release gates are planning/interpose gates, not standalone L3 promotion evidence.",
+      "evidence_artifacts": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/release_gate_dag.v1.json",
+        "tests/conformance/claim_reconciliation_report.v1.json",
+        "README.md"
+      ],
+      "check_commands": [
+        "scripts/check_standalone_readiness_matrix.sh",
+        "scripts/check_user_workload_acceptance_matrix.sh",
+        "scripts/check_replacement_levels.sh"
+      ],
+      "unit_tests_required": [
+        "release gate rejects stale L3 artifacts",
+        "claim reconciliation rejects README/release standalone overclaims",
+        "structured log tests reject missing diagnostic fields"
+      ],
+      "e2e_or_smoke_required": [
+        "full standalone real-program workload matrix",
+        "performance budget replay for hot paths",
+        "intentional failure replay with actionable diagnostics"
+      ],
+      "log_fields": "required_log_fields",
+      "negative_claim_tests": [
+        {
+          "id": "neg-l3-release-overclaim",
+          "unsupported_condition": "README or release tag claims L3 while any proof obligation is blocked",
+          "advertised_claim_blocked": "L3 release tag or README standalone claim",
+          "expected_result": "claim_blocked"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "readiness_level_count": 2,
+    "obligation_count": 12,
+    "negative_claim_test_count": 12,
+    "blocked_obligation_count": 12,
+    "by_level": {
+      "L2": 6,
+      "L3": 6
+    },
+    "dimension_coverage": {
+      "loader_startup_crt_tls_init_fini_secure": 2,
+      "versioned_symbol_exports": 2,
+      "host_glibc_free_execution": 2,
+      "syscall_arch_obligations": 1,
+      "failure_diagnostics": 2,
+      "real_program_standalone_smoke": 2,
+      "performance_budget": 2,
+      "resolver_nss_locale_iconv": 1,
+      "pthread_stdio_native": 1
+    }
+  }
+}
