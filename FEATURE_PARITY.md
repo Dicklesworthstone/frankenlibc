@@ -4,7 +4,7 @@
 
 Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (generated `2026-02-18T04:49:26Z`).
 Reality snapshot: total_exported=4119, implemented=3705, raw_syscall=414, glibc_call_through=0, stub=0.
-Counts below reflect that generated snapshot and will change as matrix drift fixes land.
+Counts below reflect that generated snapshot and will change as matrix drift fixes land. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; `Stub: 0` means zero support-taxonomy rows with status `Stub`, not zero no-op/fallback/bootstrap contracts in the codebase.
 Regenerate deterministically with:
 
 ```bash
@@ -73,8 +73,12 @@ Source of truth: `tests/conformance/hard_parts_truth_table.v1.json` (generated `
 
 ## Deterministic Stub Surface
 
-Current stubbed symbols (explicit deterministic contracts):
+Current support-taxonomy `Stub` rows:
 - none
+
+Current semantic fallback/no-op/bootstrap contracts:
+- Representative, non-exhaustive overlay: `tests/conformance/support_semantic_overlay.v1.json`
+- This overlay blocks treating support-matrix `Stub: 0` as proof of full semantic replacement until it becomes exhaustive and gated.
 
 ## Mode-Specific Parity Matrix
 

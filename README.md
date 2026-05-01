@@ -44,7 +44,7 @@ Current source of truth: `tests/conformance/reality_report.v1.json`.
 |---|---|
 | Large classified ABI surface | `4119` exported symbols classified |
 | Native ownership is already broad | `3705 Implemented` + `414 RawSyscall` = `100.0%` native coverage |
-| No exported stubs right now | `0 Stub` |
+| No support-taxonomy stub rows right now | `0 Stub`; semantic no-op/fallback/bootstrap contracts are tracked separately in `tests/conformance/support_semantic_overlay.v1.json` |
 | Interposition is already usable on many workloads | `target/release/libfrankenlibc_abi.so` via `LD_PRELOAD`, with broader smoke and hardened-mode stability still in progress |
 | Hardened mode exists now | `FRANKENLIBC_MODE=hardened` |
 | Verification is first-class | harness CLI, conformance fixtures, maintenance gates, smoke scripts, perf scripts |
@@ -878,6 +878,7 @@ The repo has many report artifacts. This table maps them to the questions they a
 | Artifact | Role |
 |---|---|
 | `support_matrix.json` | Per-symbol source of truth for implementation taxonomy |
+| `tests/conformance/support_semantic_overlay.v1.json` | Semantic overlay that distinguishes full behavior from no-op, fallback, bootstrap, unsupported, and proof-gap contracts |
 | `tests/conformance/support_matrix_maintenance_report.v1.json` | Canonical maintenance snapshot derived from the support matrix |
 | `tests/conformance/fixtures/` | Host-libc fixture corpus used for differential verification |
 | `tests/conformance/c_fixture_spec.json` | Integration-fixture coverage contract |

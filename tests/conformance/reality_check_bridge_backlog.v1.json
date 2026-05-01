@@ -1,0 +1,275 @@
+{
+  "schema_version": "v1",
+  "generated_at_utc": "2026-05-01T03:40:03Z",
+  "purpose": "Granular bridge TODO list from the 2026-05-01 reality-check pass. This persists the work queue because live br bead creation timed out in this session.",
+  "tracker_health": {
+    "bv_robot_triage": {
+      "status": "usable",
+      "open_count": 0,
+      "actionable_count": 0,
+      "blocked_count": 0,
+      "in_progress_count": 0,
+      "closed_count": 1425
+    },
+    "br_ready_json": {
+      "status": "timed_out",
+      "timeout_seconds": 20
+    },
+    "br_list_open_no_db_json": {
+      "status": "timed_out",
+      "timeout_seconds": 20
+    },
+    "br_create_no_db_dry_run_json": {
+      "status": "timed_out",
+      "timeout_seconds": 20
+    },
+    "agent_mail": {
+      "status": "database_error",
+      "impact": "File reservations and coordination mail were unavailable for this pass."
+    },
+    "followup_policy": "When br recovers, create or reopen beads from this artifact rather than treating the closed tracker as proof that all reality-check gaps are done."
+  },
+  "current_artifact_snapshot": {
+    "support_matrix_total_exported": 4119,
+    "support_matrix_status_counts": {
+      "Implemented": 3705,
+      "RawSyscall": 414,
+      "WrapsHostLibc": 0,
+      "GlibcCallThrough": 0,
+      "Stub": 0
+    },
+    "fixture_coverage": {
+      "symbols_with_fixtures": 389,
+      "coverage_pct": 9,
+      "fixture_files": 57,
+      "fixture_cases": 1264,
+      "families": 47
+    },
+    "symbol_fixture_coverage": {
+      "covered_exported_symbols": 391,
+      "uncovered_exported_symbols": 3728,
+      "coverage_pct": 9.49
+    },
+    "feature_parity_gap_ledger": {
+      "rows": 170,
+      "gaps": 111,
+      "status_counts": {
+        "DONE": 60,
+        "IN_PROGRESS": 64,
+        "PLANNED": 46
+      }
+    },
+    "replacement_level_gate": {
+      "current_level": "L0",
+      "status": "pass",
+      "policy": "Do not promote to L1 until current_level and release_tag_policy advance together with fresh evidence."
+    }
+  },
+  "validation_evidence": {
+    "targeted_fmt": "pass: cargo fmt --check --package frankenlibc_conformance --package frankenlibc-harness",
+    "targeted_check": "pass: rch cargo check -p frankenlibc_conformance -p frankenlibc-harness --tests",
+    "targeted_clippy": "pass after fixing crates/frankenlibc-harness/src/shadow_run.rs byte_char_slices lint",
+    "targeted_c11threads_test": "pass: 6 tests in c11threads_ops_conformance_test",
+    "json_parse": "pass: new semantic overlay, bridge backlog, and C11 fixture parse as JSON",
+    "artifact_gates": "pass: support matrix maintenance, symbol fixture coverage, per-symbol fixture tests, feature parity gap ledger, feature parity gap-bead coverage, replacement levels",
+    "workspace_check": "pass: rch cargo check --workspace --all-targets",
+    "workspace_fmt": "blocked_by_existing_drift: cargo fmt --check reports broad pre-existing formatting drift in frankenlibc-abi tests and wchar_abi.rs",
+    "workspace_clippy": "blocked_by_existing_drift: rch cargo clippy --workspace --all-targets -- -D warnings fails on pre-existing unused unsafe blocks in crates/frankenlibc-abi/tests/conformance_diff_dprintf.rs"
+  },
+  "work_items": [
+    {
+      "id": "rchk-001",
+      "title": "Make semantic contract overlay exhaustive and gated",
+      "priority": "P0",
+      "status": "started",
+      "owner_when_imported_to_br": "reality-check",
+      "why": "support_matrix.json reports Stub=0, but code still contains no-op, fallback, unsupported, and bootstrap semantic contracts under Implemented/RawSyscall taxonomy rows.",
+      "subtasks": [
+        "Inventory every no-op, ENOSYS, abort-only, unsupported, bootstrap, and deterministic fallback contract in frankenlibc-abi and frankenlibc-core.",
+        "Join each contract to support_matrix.json by symbol name, module, and version-script export status.",
+        "Classify each row as full_semantics, compat_noop, deterministic_fallback, limited_bootstrap, unsupported_platform_contract, or proof_gap.",
+        "Add a check script that fails when new fallback/no-op text appears without an overlay entry.",
+        "Update README and FEATURE_PARITY to make taxonomy status and semantic parity status distinct claims."
+      ],
+      "evidence_paths": [
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "support_matrix.json",
+        "crates/frankenlibc-abi/src/",
+        "crates/frankenlibc-core/src/"
+      ]
+    },
+    {
+      "id": "rchk-002",
+      "title": "Keep reality and coverage artifacts freshly regenerated",
+      "priority": "P0",
+      "status": "done_for_this_pass",
+      "why": "The reality check depends on machine artifacts, not prose or stale tracker closure counts.",
+      "subtasks": [
+        "Regenerate tests/conformance/reality_report.v1.json from support_matrix.json.",
+        "Regenerate tests/conformance/support_matrix_maintenance_report.v1.json.",
+        "Regenerate tests/conformance/conformance_coverage_snapshot.v1.json.",
+        "Regenerate tests/conformance/symbol_fixture_coverage.v1.json.",
+        "Regenerate tests/conformance/per_symbol_fixture_tests.v1.json.",
+        "Regenerate tests/conformance/feature_parity_gap_ledger.v1.json.",
+        "Regenerate tests/conformance/feature_parity_gap_bead_coverage.v1.json and dashboard markdown."
+      ],
+      "evidence_paths": [
+        "tests/conformance/reality_report.v1.json",
+        "tests/conformance/support_matrix_maintenance_report.v1.json",
+        "tests/conformance/conformance_coverage_snapshot.v1.json",
+        "tests/conformance/symbol_fixture_coverage.v1.json",
+        "tests/conformance/per_symbol_fixture_tests.v1.json",
+        "tests/conformance/feature_parity_gap_ledger.v1.json",
+        "tests/conformance/feature_parity_gap_bead_coverage.v1.json"
+      ]
+    },
+    {
+      "id": "rchk-003",
+      "title": "Recover live br backlog from reality-check gaps",
+      "priority": "P0",
+      "status": "blocked_on_br",
+      "why": "bv reports zero open/in-progress work while the feature parity gap ledger still reports 111 gaps.",
+      "subtasks": [
+        "Repair or rebuild the br database/source-of-truth state until br ready/list/create complete without hanging.",
+        "Import this backlog as real beads with dependency structure.",
+        "Create one bead per high-level gap class and child beads for fixture, proof, semantic, performance, and release-gate closure.",
+        "Mark tracker health failure separately from code quality failure.",
+        "Keep one-bead-at-a-time execution once live beads exist again."
+      ],
+      "evidence_paths": [
+        "tests/conformance/reality_check_bridge_backlog.v1.json",
+        "tests/conformance/feature_parity_gap_ledger.v1.json",
+        ".beads/issues.jsonl"
+      ]
+    },
+    {
+      "id": "rchk-004",
+      "title": "Close feature parity verification gaps",
+      "priority": "P0",
+      "status": "pending",
+      "why": "The gap ledger reports 111 unfinished rows even though all beads are closed.",
+      "subtasks": [
+        "Group the 111 ledger gaps by section and owner bead.",
+        "Identify closed beads whose promised evidence is missing or stale.",
+        "Reopen or recreate beads for each missing proof, fixture, or gate row.",
+        "Make every DONE row point at current machine-verifiable evidence.",
+        "Fail CI when feature parity prose advances without matching evidence artifacts."
+      ],
+      "evidence_paths": [
+        "tests/conformance/feature_parity_gap_ledger.v1.json",
+        "tests/conformance/feature_parity_gap_bead_coverage.v1.json"
+      ]
+    },
+    {
+      "id": "rchk-005",
+      "title": "Expand fixture coverage beyond single-digit symbol coverage",
+      "priority": "P1",
+      "status": "started",
+      "why": "The refreshed coverage snapshot has 389 symbols with fixtures and 3728 exported symbols uncovered by symbol-fixture coverage.",
+      "subtasks": [
+        "Prioritize high-surface families with low or zero fixture coverage.",
+        "Add focused host-parity fixture packs for one family at a time.",
+        "Add harness tests that execute fixtures directly and through isolated subprocess mode.",
+        "Regenerate coverage artifacts after every fixture slice.",
+        "Track family-level coverage thresholds separately from global coverage percent."
+      ],
+      "evidence_paths": [
+        "tests/conformance/fixtures/c11threads_ops.json",
+        "crates/frankenlibc-harness/tests/c11threads_ops_conformance_test.rs",
+        "tests/conformance/conformance_coverage_snapshot.v1.json",
+        "tests/conformance/symbol_fixture_coverage.v1.json"
+      ]
+    },
+    {
+      "id": "rchk-006",
+      "title": "Maintain L1 claim-control honesty",
+      "priority": "P0",
+      "status": "done_for_this_pass",
+      "why": "Replacement levels must not advance faster than verified standalone behavior, release-tag policy, fixture evidence, and smoke readiness.",
+      "subtasks": [
+        "Run scripts/check_replacement_levels.sh.",
+        "Confirm README and release-tag policy remain aligned to current_level.",
+        "Leave current_level at L0 until L1 obligations are evidence-backed.",
+        "Add L1 blockers to the live backlog once br recovers."
+      ],
+      "evidence_paths": [
+        "tests/conformance/replacement_levels.json",
+        "target/conformance/replacement_levels_l1_gate.report.json"
+      ]
+    },
+    {
+      "id": "rchk-007",
+      "title": "Separate L0 interpose evidence from L1 standalone replacement evidence",
+      "priority": "P1",
+      "status": "pending",
+      "why": "README positions FrankenLibC as an LD_PRELOAD/interposition artifact; standalone libc replacement needs stronger loader, CRT, dependency, and bootstrap evidence.",
+      "subtasks": [
+        "List every host libc dependency reachable from the release artifact.",
+        "Add standalone link/run fixtures that do not rely on host glibc behavior beyond the loader boundary being tested.",
+        "Gate CRT/startup/TLS/init/fini behavior separately from LD_PRELOAD smoke.",
+        "Document exactly which claims belong to L0, L1, L2, and L3."
+      ],
+      "evidence_paths": [
+        "README.md",
+        "tests/conformance/replacement_levels.json",
+        "scripts/ld_preload_smoke.sh"
+      ]
+    },
+    {
+      "id": "rchk-008",
+      "title": "Broaden hard-parts fixtures for resolver, NSS, locale, iconv, loader, stdio, and pthread",
+      "priority": "P1",
+      "status": "pending",
+      "why": "These are the surfaces most likely to make an apparently broad symbol inventory fail real workload parity.",
+      "subtasks": [
+        "Resolver: add retry, timeout, nameserver rotation, malformed packet, and cache-behavior fixtures.",
+        "NSS: add nsswitch order, files backend, missing record, concurrent lookup, and private module-entry fixtures.",
+        "Locale/iconv: add collation, transliteration, stateful conversion, and invalid sequence fixtures.",
+        "Loader/startup: add relocation, TLS, destructor, audit, and symbol-version fixtures.",
+        "Stdio/libio: add _IO helper, buffering, locking, wide I/O, and error-state fixtures.",
+        "Pthread: add cancellation, robust mutex, cleanup handler, fork interaction, and TLS destructor fixtures."
+      ],
+      "evidence_paths": [
+        "FEATURE_PARITY.md",
+        "tests/conformance/fixtures/",
+        "tests/conformance/hard_parts_truth_table.v1.json"
+      ]
+    },
+    {
+      "id": "rchk-009",
+      "title": "Fix or quarantine repo-wide fmt/clippy/test drift",
+      "priority": "P1",
+      "status": "isolated_for_this_pass",
+      "why": "Substantive changes must leave a clear validation state; known gate drift must be separated from new failures.",
+      "subtasks": [
+        "Run targeted fmt/check/clippy/test for changed crates and tests.",
+        "Run repo-wide fmt/check/clippy where practical and record exact unrelated failures.",
+        "Fix any failure introduced by this pass.",
+        "Open or update backlog rows for unrelated pre-existing drift."
+      ],
+      "evidence_paths": [
+        "crates/frankenlibc_conformance/src/lib.rs",
+        "crates/frankenlibc-harness/tests/c11threads_ops_conformance_test.rs",
+        "tests/conformance/fixtures/c11threads_ops.json"
+      ]
+    },
+    {
+      "id": "rchk-010",
+      "title": "Add performance baselines for ported hot paths before optimizing",
+      "priority": "P1",
+      "status": "pending",
+      "why": "The performance vision requires proof-driven optimization, not unmeasured rewrites.",
+      "subtasks": [
+        "Rank current hot paths by real benchmark and smoke workload data.",
+        "Tie every optimization bead to a behavioral proof or fixture pack.",
+        "Add regression budgets for strict and hardened membrane hot paths.",
+        "Optimize only after baselines and parity checks are in place."
+      ],
+      "evidence_paths": [
+        "crates/frankenlibc-bench/",
+        "scripts/check_symbol_latency_baseline.sh",
+        "tests/conformance/symbol_fixture_coverage.v1.json"
+      ]
+    }
+  ]
+}

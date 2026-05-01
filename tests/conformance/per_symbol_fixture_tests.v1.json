@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-04-27T02:42:48Z",
-  "report_hash": "23b0a0ec818b7e3a",
+  "generated_at": "2026-05-01T03:44:51Z",
+  "report_hash": "52d34f2b593b76c5",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 366,
-    "symbols_without_fixtures": 3753,
-    "fixture_coverage_pct": 8.9,
-    "implemented_coverage_pct": 8.3,
-    "total_fixture_files": 56,
-    "total_cases": 1239,
+    "symbols_with_fixtures": 389,
+    "symbols_without_fixtures": 3730,
+    "fixture_coverage_pct": 9.4,
+    "implemented_coverage_pct": 9.0,
+    "total_fixture_files": 57,
+    "total_cases": 1263,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 282,
-    "symbols_with_errno_checks": 363,
-    "total_quality_issues": 3641,
-    "uncovered_action_count": 3753
+    "symbols_with_edge_cases": 288,
+    "symbols_with_errno_checks": 386,
+    "total_quality_issues": 3658,
+    "uncovered_action_count": 3730
   },
   "fixture_file_analyses": [
     {
@@ -32,6 +32,14 @@
       "valid": true,
       "total_cases": 5,
       "unique_symbols": 3,
+      "issues": []
+    },
+    {
+      "file": "c11threads_ops.json",
+      "family": "c11threads/ops",
+      "valid": true,
+      "total_cases": 23,
+      "unique_symbols": 23,
       "issues": []
     },
     {
@@ -302,7 +310,7 @@
       "file": "signal_ops.json",
       "family": "signal_ops",
       "valid": true,
-      "total_cases": 48,
+      "total_cases": 49,
       "unique_symbols": 11,
       "issues": []
     },
@@ -17029,14 +17037,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -19582,14 +19595,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -19597,14 +19615,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -19612,14 +19635,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -19627,14 +19655,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -19642,14 +19675,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -36328,7 +36366,7 @@
       "module": "signal_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
-      "case_count": 3,
+      "case_count": 4,
       "fixture_files": [
         "signal_ops.json"
       ],
@@ -36337,6 +36375,7 @@
         "strict"
       ],
       "edge_cases_covered": [
+        "max_int",
         "zero_length"
       ],
       "has_errno_check": true,
@@ -40530,14 +40569,20 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -40545,14 +40590,20 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -40560,14 +40611,20 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -40575,14 +40632,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -40590,14 +40652,20 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -40605,14 +40673,20 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -57395,14 +57469,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -57410,14 +57489,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -57425,14 +57509,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -57440,14 +57529,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -57470,14 +57564,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -57485,14 +57584,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -57500,14 +57604,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -58429,14 +58538,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -58444,14 +58558,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -58459,14 +58578,19 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases",
+        "no edge cases detected"
       ]
     },
     {
@@ -58474,14 +58598,20 @@
       "status": "Implemented",
       "module": "c11threads_abi",
       "perf_class": "cold",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 1,
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
+      "modes_tested": [
+        "both"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": [
-        "implemented symbol has no fixtures"
+        "fewer than 2 test cases"
       ]
     },
     {
@@ -70770,13 +70900,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "call_once",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "callrpc",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -71872,41 +71995,6 @@
       "symbol": "closelog",
       "status": "Implemented",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "cnd_broadcast",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "cnd_destroy",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "cnd_init",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "cnd_signal",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "cnd_timedwait",
-      "status": "Implemented",
-      "module": "c11threads_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -80787,48 +80875,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "mtx_destroy",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "mtx_init",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "mtx_lock",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
-      "symbol": "mtx_timedlock",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "mtx_trylock",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
-      "symbol": "mtx_unlock",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
       "symbol": "munlock",
       "status": "RawSyscall",
       "module": "mmap_abi",
@@ -87185,56 +87231,7 @@
       "priority": "normal"
     },
     {
-      "symbol": "thrd_create",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "thrd_current",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
-      "symbol": "thrd_detach",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "thrd_equal",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
       "symbol": "thrd_exit",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "thrd_join",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "thrd_sleep",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "thrd_yield",
       "status": "Implemented",
       "module": "c11threads_abi",
       "action": "create fixture cases",
@@ -87636,34 +87633,6 @@
       "symbol": "truncl",
       "status": "Implemented",
       "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "tss_create",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "tss_delete",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "tss_get",
-      "status": "Implemented",
-      "module": "c11threads_abi",
-      "action": "create fixture cases",
-      "priority": "high"
-    },
-    {
-      "symbol": "tss_set",
-      "status": "Implemented",
-      "module": "c11threads_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },

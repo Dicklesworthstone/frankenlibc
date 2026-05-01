@@ -620,6 +620,22 @@ pub fn execute_fixture_case(
         "pthread_getspecific" => execute_pthread_getspecific_case(inputs, mode),
         "pthread_setspecific" => execute_pthread_setspecific_case(inputs, mode),
         "teardown_thread_tls" => execute_teardown_thread_tls_case(inputs, mode),
+        // C11 threads
+        "thrd_create" | "thrd_join" => execute_c11_thread_join_case(inputs, mode),
+        "thrd_detach" => execute_c11_thread_detach_case(mode),
+        "thrd_current" => execute_c11_thread_current_case(mode),
+        "thrd_equal" => execute_c11_thread_equal_case(inputs, mode),
+        "thrd_sleep" => execute_c11_thread_sleep_case(inputs, mode),
+        "thrd_yield" => execute_c11_thread_yield_case(mode),
+        "mtx_init" | "mtx_lock" | "mtx_trylock" | "mtx_timedlock" | "mtx_unlock"
+        | "mtx_destroy" => execute_c11_mutex_case(function, inputs, mode),
+        "cnd_init" | "cnd_signal" | "cnd_broadcast" | "cnd_timedwait" | "cnd_destroy" => {
+            execute_c11_cond_case(function, mode)
+        }
+        "tss_create" | "tss_set" | "tss_get" | "tss_delete" => {
+            execute_c11_tss_case(function, inputs, mode)
+        }
+        "call_once" => execute_c11_call_once_case(mode),
         // unistd
         "getpid" => execute_getpid_case(mode),
         "getppid" => execute_getppid_case(mode),
@@ -12483,6 +12499,317 @@ fn execute_teardown_thread_tls_case(
         host_parity: true,
         note: None,
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C11 threads conformance executors
+// ─────────────────────────────────────────────────────────────────────────────
+
+const C11_THRD_SUCCESS: c_int = 0;
+const C11_THRD_ERROR: c_int = 2;
+const C11_THRD_NOMEM: c_int = 3;
+const C11_THRD_TIMEDOUT: c_int = 4;
+const C11_THRD_BUSY: c_int = 5;
+
+static C11_ONCE_FIXTURE_CALLS: AtomicI32 = AtomicI32::new(0);
+
+fn format_c11_status(rc: c_int) -> String {
+    match rc {
+        C11_THRD_SUCCESS => String::from("thrd_success"),
+        C11_THRD_ERROR => String::from("thrd_error"),
+        C11_THRD_NOMEM => String::from("thrd_nomem"),
+        C11_THRD_TIMEDOUT => String::from("thrd_timedout"),
+        C11_THRD_BUSY => String::from("thrd_busy"),
+        other => other.to_string(),
+    }
+}
+
+unsafe extern "C" fn c11_fixture_return_plus_seven(arg: *mut c_void) -> c_int {
+    arg as usize as c_int + 7
+}
+
+extern "C" fn c11_once_fixture_callback() {
+    C11_ONCE_FIXTURE_CALLS.fetch_add(1, Ordering::SeqCst);
+}
+
+fn execute_c11_thread_join_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let value = parse_i32(inputs, "value").unwrap_or(5);
+    let mut thread: libc::pthread_t = 0;
+    let create_rc = unsafe {
+        frankenlibc_abi::c11threads_abi::thrd_create(
+            &mut thread,
+            Some(c11_fixture_return_plus_seven),
+            value as usize as *mut c_void,
+        )
+    };
+    if create_rc != C11_THRD_SUCCESS {
+        return Ok(non_host_execution(format!(
+            "create:{}",
+            format_c11_status(create_rc)
+        )));
+    }
+
+    let mut result = 0;
+    let join_rc = unsafe { frankenlibc_abi::c11threads_abi::thrd_join(thread, &mut result) };
+    if join_rc == C11_THRD_SUCCESS {
+        Ok(non_host_execution(format!("join_result:{result}")))
+    } else {
+        Ok(non_host_execution(format!(
+            "join:{}",
+            format_c11_status(join_rc)
+        )))
+    }
+}
+
+fn execute_c11_thread_detach_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let mut thread: libc::pthread_t = 0;
+    let create_rc = unsafe {
+        frankenlibc_abi::c11threads_abi::thrd_create(
+            &mut thread,
+            Some(c11_fixture_return_plus_seven),
+            std::ptr::null_mut(),
+        )
+    };
+    if create_rc != C11_THRD_SUCCESS {
+        return Ok(non_host_execution(format!(
+            "create:{}",
+            format_c11_status(create_rc)
+        )));
+    }
+    let detach_rc = unsafe { frankenlibc_abi::c11threads_abi::thrd_detach(thread) };
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    Ok(non_host_execution(format_c11_status(detach_rc)))
+}
+
+fn execute_c11_thread_current_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let thread = frankenlibc_abi::c11threads_abi::thrd_current();
+    let output = if thread == 0 { "0" } else { "NONZERO" };
+    Ok(non_host_execution(output.to_string()))
+}
+
+fn execute_c11_thread_equal_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let relation = parse_string(inputs, "relation").unwrap_or_else(|_| String::from("same"));
+    let current = frankenlibc_abi::c11threads_abi::thrd_current();
+    let rhs = if relation == "different_zero" {
+        0
+    } else {
+        current
+    };
+    let equal = frankenlibc_abi::c11threads_abi::thrd_equal(current, rhs) != 0;
+    Ok(non_host_execution(if equal {
+        String::from("equal")
+    } else {
+        String::from("not_equal")
+    }))
+}
+
+fn execute_c11_thread_sleep_case(
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let duration = parse_string(inputs, "duration").unwrap_or_else(|_| String::from("zero"));
+    let timespec = match duration.as_str() {
+        "zero" => libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        "one_ms" => libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 1_000_000,
+        },
+        other => {
+            return Err(format!(
+                "unsupported C11 thrd_sleep duration alias: {other}"
+            ));
+        }
+    };
+    let rc = unsafe {
+        frankenlibc_abi::c11threads_abi::thrd_sleep(
+            &timespec as *const libc::timespec,
+            std::ptr::null_mut(),
+        )
+    };
+    Ok(non_host_execution(format_c11_status(rc)))
+}
+
+fn execute_c11_thread_yield_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    frankenlibc_abi::c11threads_abi::thrd_yield();
+    Ok(non_host_execution(String::from("returned")))
+}
+
+fn execute_c11_mutex_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let typ = parse_i32(inputs, "type").unwrap_or(0);
+    let mut mutex: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+    let init_rc = unsafe { frankenlibc_abi::c11threads_abi::mtx_init(&mut mutex, typ) };
+
+    if function == "mtx_init" || init_rc != C11_THRD_SUCCESS {
+        if init_rc == C11_THRD_SUCCESS {
+            unsafe { frankenlibc_abi::c11threads_abi::mtx_destroy(&mut mutex) };
+        }
+        return Ok(non_host_execution(format_c11_status(init_rc)));
+    }
+
+    let output = match function {
+        "mtx_lock" => {
+            let rc = unsafe { frankenlibc_abi::c11threads_abi::mtx_lock(&mut mutex) };
+            if rc == C11_THRD_SUCCESS {
+                let _ = unsafe { frankenlibc_abi::c11threads_abi::mtx_unlock(&mut mutex) };
+            }
+            format_c11_status(rc)
+        }
+        "mtx_trylock" => {
+            let rc = unsafe { frankenlibc_abi::c11threads_abi::mtx_trylock(&mut mutex) };
+            if rc == C11_THRD_SUCCESS {
+                let _ = unsafe { frankenlibc_abi::c11threads_abi::mtx_unlock(&mut mutex) };
+            }
+            format_c11_status(rc)
+        }
+        "mtx_timedlock" => {
+            let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+            unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+            ts.tv_sec += 1;
+            let rc = unsafe { frankenlibc_abi::c11threads_abi::mtx_timedlock(&mut mutex, &ts) };
+            if rc == C11_THRD_SUCCESS {
+                let _ = unsafe { frankenlibc_abi::c11threads_abi::mtx_unlock(&mut mutex) };
+            }
+            format_c11_status(rc)
+        }
+        "mtx_unlock" => {
+            let lock_rc = unsafe { frankenlibc_abi::c11threads_abi::mtx_lock(&mut mutex) };
+            if lock_rc != C11_THRD_SUCCESS {
+                format!("lock:{}", format_c11_status(lock_rc))
+            } else {
+                let rc = unsafe { frankenlibc_abi::c11threads_abi::mtx_unlock(&mut mutex) };
+                format_c11_status(rc)
+            }
+        }
+        "mtx_destroy" => String::from("destroyed"),
+        other => return Err(format!("unsupported C11 mutex function: {other}")),
+    };
+
+    unsafe { frankenlibc_abi::c11threads_abi::mtx_destroy(&mut mutex) };
+    Ok(non_host_execution(output))
+}
+
+fn execute_c11_cond_case(function: &str, mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let mut cond: libc::pthread_cond_t = unsafe { std::mem::zeroed() };
+    let init_rc = unsafe { frankenlibc_abi::c11threads_abi::cnd_init(&mut cond) };
+    if function == "cnd_init" || init_rc != C11_THRD_SUCCESS {
+        if init_rc == C11_THRD_SUCCESS {
+            unsafe { frankenlibc_abi::c11threads_abi::cnd_destroy(&mut cond) };
+        }
+        return Ok(non_host_execution(format_c11_status(init_rc)));
+    }
+
+    let output = match function {
+        "cnd_signal" => {
+            let rc = unsafe { frankenlibc_abi::c11threads_abi::cnd_signal(&mut cond) };
+            format_c11_status(rc)
+        }
+        "cnd_broadcast" => {
+            let rc = unsafe { frankenlibc_abi::c11threads_abi::cnd_broadcast(&mut cond) };
+            format_c11_status(rc)
+        }
+        "cnd_timedwait" => {
+            let mut mutex: libc::pthread_mutex_t = unsafe { std::mem::zeroed() };
+            let init_mutex_rc = unsafe { frankenlibc_abi::c11threads_abi::mtx_init(&mut mutex, 0) };
+            if init_mutex_rc != C11_THRD_SUCCESS {
+                format!("mtx_init:{}", format_c11_status(init_mutex_rc))
+            } else {
+                let lock_rc = unsafe { frankenlibc_abi::c11threads_abi::mtx_lock(&mut mutex) };
+                let rc = if lock_rc == C11_THRD_SUCCESS {
+                    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+                    unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
+                    if ts.tv_sec > 0 {
+                        ts.tv_sec -= 1;
+                    }
+                    unsafe {
+                        frankenlibc_abi::c11threads_abi::cnd_timedwait(&mut cond, &mut mutex, &ts)
+                    }
+                } else {
+                    lock_rc
+                };
+                if lock_rc == C11_THRD_SUCCESS {
+                    let _ = unsafe { frankenlibc_abi::c11threads_abi::mtx_unlock(&mut mutex) };
+                }
+                unsafe { frankenlibc_abi::c11threads_abi::mtx_destroy(&mut mutex) };
+                format_c11_status(rc)
+            }
+        }
+        "cnd_destroy" => String::from("destroyed"),
+        other => return Err(format!("unsupported C11 condition function: {other}")),
+    };
+
+    unsafe { frankenlibc_abi::c11threads_abi::cnd_destroy(&mut cond) };
+    Ok(non_host_execution(output))
+}
+
+fn execute_c11_tss_case(
+    function: &str,
+    inputs: &serde_json::Value,
+    mode: &str,
+) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    let mut key: libc::pthread_key_t = 0;
+    let create_rc = unsafe { frankenlibc_abi::c11threads_abi::tss_create(&mut key, None) };
+    if function == "tss_create" || create_rc != C11_THRD_SUCCESS {
+        if create_rc == C11_THRD_SUCCESS {
+            unsafe { frankenlibc_abi::c11threads_abi::tss_delete(key) };
+        }
+        return Ok(non_host_execution(format_c11_status(create_rc)));
+    }
+
+    let output = match function {
+        "tss_set" | "tss_get" => {
+            let value = parse_u64_or_hex(inputs, "value").unwrap_or(0x1234);
+            let set_rc =
+                unsafe { frankenlibc_abi::c11threads_abi::tss_set(key, value as *mut c_void) };
+            if set_rc != C11_THRD_SUCCESS {
+                format!("set:{}", format_c11_status(set_rc))
+            } else {
+                let got = frankenlibc_abi::c11threads_abi::tss_get(key) as usize as u64;
+                format!("roundtrip:{got}")
+            }
+        }
+        "tss_delete" => String::from("deleted"),
+        other => return Err(format!("unsupported C11 tss function: {other}")),
+    };
+
+    unsafe { frankenlibc_abi::c11threads_abi::tss_delete(key) };
+    Ok(non_host_execution(output))
+}
+
+fn execute_c11_call_once_case(mode: &str) -> Result<DifferentialExecution, String> {
+    ensure_supported_mode(mode)?;
+    C11_ONCE_FIXTURE_CALLS.store(0, Ordering::SeqCst);
+    let mut flag: libc::pthread_once_t = libc::PTHREAD_ONCE_INIT;
+    unsafe {
+        frankenlibc_abi::c11threads_abi::call_once(&mut flag, Some(c11_once_fixture_callback));
+        frankenlibc_abi::c11threads_abi::call_once(&mut flag, Some(c11_once_fixture_callback));
+        frankenlibc_abi::c11threads_abi::call_once(&mut flag, Some(c11_once_fixture_callback));
+    }
+    Ok(non_host_execution(format!(
+        "called:{}",
+        C11_ONCE_FIXTURE_CALLS.load(Ordering::SeqCst)
+    )))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

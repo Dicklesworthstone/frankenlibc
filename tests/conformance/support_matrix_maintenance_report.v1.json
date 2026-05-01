@@ -1,17 +1,17 @@
 {
   "schema_version": "v1",
   "bead": "bd-3g4p",
-  "generated_at": "2026-04-27T02:39:09Z",
+  "generated_at": "2026-05-01T03:38:13Z",
   "summary": {
     "total_symbols": 4119,
-    "status_validated": 4119,
-    "status_invalid": 0,
+    "status_validated": 4118,
+    "status_invalid": 1,
     "status_skipped": 0,
     "status_valid_pct": 100.0,
-    "fixture_linked": 366,
-    "fixture_unlinked": 3753,
-    "fixture_coverage_pct": 8.9,
-    "total_warnings": 162
+    "fixture_linked": 389,
+    "fixture_unlinked": 3730,
+    "fixture_coverage_pct": 9.4,
+    "total_warnings": 163
   },
   "coverage_dashboard": {
     "total_symbols": 4119,
@@ -32,32 +32,21 @@
     "native_coverage_pct": 100.0
   },
   "trend": {
-    "baseline_report_path": "tests/conformance/support_matrix_maintenance_report.v1.json",
+    "baseline_report_path": "/data/projects/frankenlibc/tests/conformance/support_matrix_maintenance_report.v1.json",
     "baseline_loaded": true,
     "baseline_symbol_map_loaded": true,
     "status_count_delta": {
       "GlibcCallThrough": 0,
-      "Implemented": 6,
-      "RawSyscall": 4,
+      "Implemented": 0,
+      "RawSyscall": 0,
       "Stub": 0,
       "WrapsHostLibc": 0
     },
     "native_coverage_pct_delta": 0.0,
     "reclassified_symbol_count": 0,
-    "new_symbol_count": 10,
+    "new_symbol_count": 0,
     "removed_symbol_count": 0,
-    "new_symbols": [
-      "consttime_bcmp",
-      "consttime_memequal",
-      "explicit_memset",
-      "futex_requeue",
-      "futex_wait",
-      "futex_waitv",
-      "futex_wake",
-      "memset_explicit",
-      "pidfile_signal",
-      "reallocarr"
-    ],
+    "new_symbols": [],
     "removed_symbols": []
   },
   "policy_checks": {
@@ -77,7 +66,7 @@
   "status_distribution": {
     "Implemented": {
       "count": 3705,
-      "fixture_linked": 309
+      "fixture_linked": 332
     },
     "RawSyscall": {
       "count": 414,
@@ -87,8 +76,8 @@
   "module_coverage": {
     "c11threads_abi": {
       "total": 25,
-      "linked": 0,
-      "coverage_pct": 0.0
+      "linked": 23,
+      "coverage_pct": 92.0
     },
     "ctype_abi": {
       "total": 49,
@@ -5330,6 +5319,18 @@
       ]
     },
     {
+      "symbol": "getcwd",
+      "status": "RawSyscall",
+      "module": "unistd_abi",
+      "valid": false,
+      "findings": [
+        "RawSyscall but calls glibc::{free, malloc}"
+      ],
+      "warnings": [
+        "WrapsHostLibc candidate (host delegation detected)"
+      ]
+    },
+    {
       "symbol": "getdelim",
       "status": "Implemented",
       "module": "stdio_abi",
@@ -10346,7 +10347,6 @@
     "c16rtomb",
     "c32rtomb",
     "c8rtomb",
-    "call_once",
     "canonicalize_file_name",
     "capget",
     "capset",
@@ -10375,11 +10375,6 @@
     "close_range",
     "closefrom",
     "closelog",
-    "cnd_broadcast",
-    "cnd_destroy",
-    "cnd_init",
-    "cnd_signal",
-    "cnd_timedwait",
     "cnd_wait",
     "confstr",
     "connect",
@@ -10996,12 +10991,6 @@
     "msgsnd",
     "msync",
     "mtrace",
-    "mtx_destroy",
-    "mtx_init",
-    "mtx_lock",
-    "mtx_timedlock",
-    "mtx_trylock",
-    "mtx_unlock",
     "munlock",
     "munlockall",
     "muntrace",
@@ -11509,14 +11498,7 @@
     "textdomain",
     "tgammaf",
     "tgkill",
-    "thrd_create",
-    "thrd_current",
-    "thrd_detach",
-    "thrd_equal",
     "thrd_exit",
-    "thrd_join",
-    "thrd_sleep",
-    "thrd_yield",
     "timingsafe_bcmp",
     "timingsafe_memcmp",
     "timegm",
@@ -11548,10 +11530,6 @@
     "truncate",
     "truncate64",
     "truncf",
-    "tss_create",
-    "tss_delete",
-    "tss_get",
-    "tss_set",
     "ttyname",
     "ttyname_r",
     "twalk_r",

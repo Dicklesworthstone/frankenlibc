@@ -3925,57 +3925,6 @@
       "workload_ids": []
     },
     {
-      "covered_symbols": 0,
-      "milestone_beads": [],
-      "module": "c11threads_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "severity_score": 2503,
-      "status_breakdown": {
-        "Implemented": 25
-      },
-      "target_coverage_pct": 0.0,
-      "target_covered": 0,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "target_total": 25,
-      "target_uncovered": 25,
-      "target_uncovered_symbols": [
-        "call_once",
-        "cnd_broadcast",
-        "cnd_destroy",
-        "cnd_init",
-        "cnd_signal",
-        "cnd_timedwait",
-        "cnd_wait",
-        "mtx_destroy",
-        "mtx_init",
-        "mtx_lock",
-        "mtx_timedlock",
-        "mtx_trylock",
-        "mtx_unlock",
-        "thrd_create",
-        "thrd_current",
-        "thrd_detach",
-        "thrd_equal",
-        "thrd_exit",
-        "thrd_join",
-        "thrd_sleep",
-        "thrd_yield",
-        "tss_create",
-        "tss_delete",
-        "tss_get",
-        "tss_set"
-      ],
-      "total_symbols": 25,
-      "track": "c11threads",
-      "uncovered_symbols": 25,
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
       "covered_symbols": 4,
       "milestone_beads": [],
       "module": "pwd_abi",
@@ -4650,6 +4599,34 @@
       ]
     },
     {
+      "covered_symbols": 23,
+      "milestone_beads": [],
+      "module": "c11threads_abi",
+      "recommended_bead": null,
+      "severity": "medium",
+      "severity_score": 201,
+      "status_breakdown": {
+        "Implemented": 25
+      },
+      "target_coverage_pct": 92.0,
+      "target_covered": 23,
+      "target_statuses": [
+        "Implemented",
+        "RawSyscall"
+      ],
+      "target_total": 25,
+      "target_uncovered": 2,
+      "target_uncovered_symbols": [
+        "cnd_wait",
+        "thrd_exit"
+      ],
+      "total_symbols": 25,
+      "track": "c11threads",
+      "uncovered_symbols": 2,
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
       "covered_symbols": 0,
       "milestone_beads": [],
       "module": "runtime_policy",
@@ -4835,9 +4812,9 @@
     "c_fixture_spec_fixtures": 13,
     "c_fixture_spec_symbol_mentions": 97,
     "c_fixture_spec_unique_symbols": 84,
-    "fixture_json_cases": 1239,
-    "fixture_json_files": 56,
-    "fixture_json_unique_functions": 383,
+    "fixture_json_cases": 1263,
+    "fixture_json_files": 57,
+    "fixture_json_unique_functions": 406,
     "non_symbol_fixture_function_count": 17,
     "non_symbol_fixture_functions": [
       "DnsHeader::new_query",
@@ -4858,7 +4835,7 @@
       "lookup_hosts",
       "teardown_thread_tls"
     ],
-    "unique_fixture_functions_total": 385
+    "unique_fixture_functions_total": 408
   },
   "generated_at_utc": "2026-02-18T04:49:26Z",
   "inputs": {
@@ -8591,43 +8568,6 @@
     },
     {
       "milestone_beads": [],
-      "module": "c11threads_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 25,
-      "target_uncovered_symbols": [
-        "call_once",
-        "cnd_broadcast",
-        "cnd_destroy",
-        "cnd_init",
-        "cnd_signal",
-        "cnd_timedwait",
-        "cnd_wait",
-        "mtx_destroy",
-        "mtx_init",
-        "mtx_lock",
-        "mtx_timedlock",
-        "mtx_trylock",
-        "mtx_unlock",
-        "thrd_create",
-        "thrd_current",
-        "thrd_detach",
-        "thrd_equal",
-        "thrd_exit",
-        "thrd_join",
-        "thrd_sleep",
-        "thrd_yield",
-        "tss_create",
-        "tss_delete",
-        "tss_get",
-        "tss_set"
-      ],
-      "track": "c11threads",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
-    {
-      "milestone_beads": [],
       "module": "pwd_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -9047,6 +8987,20 @@
     },
     {
       "milestone_beads": [],
+      "module": "c11threads_abi",
+      "recommended_bead": null,
+      "severity": "medium",
+      "target_uncovered_count": 2,
+      "target_uncovered_symbols": [
+        "cnd_wait",
+        "thrd_exit"
+      ],
+      "track": "c11threads",
+      "workload_blocked_count": 0,
+      "workload_ids": []
+    },
+    {
+      "milestone_beads": [],
       "module": "resource_abi",
       "recommended_bead": null,
       "severity": "high",
@@ -9088,10 +9042,10 @@
   "schema_version": 1,
   "status_coverage": {
     "Implemented": {
-      "coverage_pct": 8.34,
-      "covered": 309,
+      "coverage_pct": 8.96,
+      "covered": 332,
       "total": 3705,
-      "uncovered": 3396
+      "uncovered": 3373
     },
     "RawSyscall": {
       "coverage_pct": 14.25,
@@ -9101,32 +9055,40 @@
     }
   },
   "summary": {
-    "coverage_pct": 8.93,
-    "covered_exported_symbols": 368,
-    "target_coverage_pct": 8.93,
-    "target_covered_symbols": 368,
+    "coverage_pct": 9.49,
+    "covered_exported_symbols": 391,
+    "target_coverage_pct": 9.49,
+    "target_covered_symbols": 391,
     "target_statuses": [
       "Implemented",
       "RawSyscall"
     ],
     "target_total_symbols": 4119,
-    "target_uncovered_symbols": 3751,
+    "target_uncovered_symbols": 3728,
     "total_exported_symbols": 4119,
-    "uncovered_exported_symbols": 3751,
-    "uncovered_target_families": 7,
+    "uncovered_exported_symbols": 3728,
+    "uncovered_target_families": 6,
     "weak_family_threshold_pct": 80.0,
     "weak_target_families": 29
   },
   "symbols": [
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9134,13 +9096,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9148,13 +9118,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9162,13 +9140,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9176,13 +9162,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9190,13 +9184,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9218,13 +9220,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9232,13 +9242,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9246,13 +9264,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -9260,13 +9286,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9274,13 +9308,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -9288,13 +9330,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -9302,13 +9352,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9316,13 +9374,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -9330,13 +9396,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9344,13 +9418,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -9372,13 +9454,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9386,13 +9476,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9400,13 +9498,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9414,13 +9520,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9428,13 +9542,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -9442,13 +9564,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "strict_hotpath",
       "status": "Implemented",
@@ -9456,13 +9586,21 @@
     },
     {
       "c_fixture_mentions": 0,
-      "covered": false,
-      "fixture_case_count": 0,
-      "fixture_families": [],
-      "fixture_files": [],
+      "covered": true,
+      "fixture_case_count": 1,
+      "fixture_families": [
+        "c11threads/ops"
+      ],
+      "fixture_files": [
+        "c11threads_ops.json"
+      ],
       "fixture_ids": [],
-      "fixture_modes": [],
-      "fixture_sources": [],
+      "fixture_modes": [
+        "both"
+      ],
+      "fixture_sources": [
+        "fixture_json"
+      ],
       "module": "c11threads_abi",
       "perf_class": "cold",
       "status": "Implemented",
@@ -47646,7 +47784,7 @@
     {
       "c_fixture_mentions": 0,
       "covered": true,
-      "fixture_case_count": 3,
+      "fixture_case_count": 4,
       "fixture_families": [
         "signal_ops"
       ],
@@ -70250,42 +70388,6 @@
   ],
   "trace_id": "bd-15n.1-symbol-fixture-coverage-v1",
   "uncovered_target_families": [
-    {
-      "module": "c11threads_abi",
-      "recommended_bead": null,
-      "severity": "critical",
-      "target_uncovered_count": 25,
-      "target_uncovered_symbols": [
-        "call_once",
-        "cnd_broadcast",
-        "cnd_destroy",
-        "cnd_init",
-        "cnd_signal",
-        "cnd_timedwait",
-        "cnd_wait",
-        "mtx_destroy",
-        "mtx_init",
-        "mtx_lock",
-        "mtx_timedlock",
-        "mtx_trylock",
-        "mtx_unlock",
-        "thrd_create",
-        "thrd_current",
-        "thrd_detach",
-        "thrd_equal",
-        "thrd_exit",
-        "thrd_join",
-        "thrd_sleep",
-        "thrd_yield",
-        "tss_create",
-        "tss_delete",
-        "tss_get",
-        "tss_set"
-      ],
-      "track": "c11threads",
-      "workload_blocked_count": 0,
-      "workload_ids": []
-    },
     {
       "module": "err_abi",
       "recommended_bead": null,

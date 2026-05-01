@@ -1,0 +1,263 @@
+{
+  "version": "v1",
+  "family": "c11threads/ops",
+  "captured_at": "2026-05-01T00:00:00Z",
+  "description": "Executable C11 <threads.h> fixture coverage for thread lifecycle, mutex, condition variable, TLS, and once primitives.",
+  "spec_reference": "ISO C11 7.26 <threads.h>",
+  "cases": [
+    {
+      "name": "thrd_create_join_result",
+      "function": "thrd_create",
+      "spec_section": "ISO C11 7.26.5.1",
+      "inputs": {
+        "value": 5
+      },
+      "expected_output": "join_result:12",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "thrd_create publishes a joinable C11 thread whose int return is collected by thrd_join"
+    },
+    {
+      "name": "thrd_join_collects_int_result",
+      "function": "thrd_join",
+      "spec_section": "ISO C11 7.26.5.6",
+      "inputs": {
+        "value": 8
+      },
+      "expected_output": "join_result:15",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "thrd_join stores the C11 start routine int result"
+    },
+    {
+      "name": "thrd_detach_joinless_thread",
+      "function": "thrd_detach",
+      "spec_section": "ISO C11 7.26.5.2",
+      "inputs": {},
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "detaching a newly-created C11 thread succeeds"
+    },
+    {
+      "name": "thrd_current_nonzero",
+      "function": "thrd_current",
+      "spec_section": "ISO C11 7.26.5.4",
+      "inputs": {},
+      "expected_output": "NONZERO",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "current thread identifier is non-zero on Linux pthread-backed C11 threads"
+    },
+    {
+      "name": "thrd_equal_self",
+      "function": "thrd_equal",
+      "spec_section": "ISO C11 7.26.5.5",
+      "inputs": {
+        "relation": "same"
+      },
+      "expected_output": "equal",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "a thread identifier compares equal to itself"
+    },
+    {
+      "name": "thrd_sleep_zero_duration",
+      "function": "thrd_sleep",
+      "spec_section": "ISO C11 7.26.5.7",
+      "inputs": {
+        "duration": "zero"
+      },
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "zero-duration sleep is a successful no-op"
+    },
+    {
+      "name": "thrd_yield_returns",
+      "function": "thrd_yield",
+      "spec_section": "ISO C11 7.26.5.8",
+      "inputs": {},
+      "expected_output": "returned",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "thrd_yield has no return value and must return control"
+    },
+    {
+      "name": "mtx_init_plain",
+      "function": "mtx_init",
+      "spec_section": "ISO C11 7.26.4.2",
+      "inputs": {
+        "type": 0
+      },
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "plain C11 mutex initialization succeeds"
+    },
+    {
+      "name": "mtx_lock_plain",
+      "function": "mtx_lock",
+      "spec_section": "ISO C11 7.26.4.3",
+      "inputs": {
+        "type": 0
+      },
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "locking an initialized uncontended mutex succeeds"
+    },
+    {
+      "name": "mtx_trylock_plain",
+      "function": "mtx_trylock",
+      "spec_section": "ISO C11 7.26.4.5",
+      "inputs": {
+        "type": 0
+      },
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "trylock succeeds on an unlocked mutex"
+    },
+    {
+      "name": "mtx_timedlock_available",
+      "function": "mtx_timedlock",
+      "spec_section": "ISO C11 7.26.4.4",
+      "inputs": {
+        "type": 1
+      },
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "timedlock succeeds immediately when the mutex is available"
+    },
+    {
+      "name": "mtx_unlock_after_lock",
+      "function": "mtx_unlock",
+      "spec_section": "ISO C11 7.26.4.6",
+      "inputs": {
+        "type": 0
+      },
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "unlock succeeds after this fixture has locked the mutex"
+    },
+    {
+      "name": "mtx_destroy_initialized",
+      "function": "mtx_destroy",
+      "spec_section": "ISO C11 7.26.4.1",
+      "inputs": {
+        "type": 0
+      },
+      "expected_output": "destroyed",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "destroying an initialized unlocked mutex returns no value"
+    },
+    {
+      "name": "cnd_init_basic",
+      "function": "cnd_init",
+      "spec_section": "ISO C11 7.26.3.2",
+      "inputs": {},
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "condition variable initialization succeeds"
+    },
+    {
+      "name": "cnd_signal_no_waiters",
+      "function": "cnd_signal",
+      "spec_section": "ISO C11 7.26.3.5",
+      "inputs": {},
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "signaling with no waiters is a successful no-op"
+    },
+    {
+      "name": "cnd_broadcast_no_waiters",
+      "function": "cnd_broadcast",
+      "spec_section": "ISO C11 7.26.3.1",
+      "inputs": {},
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "broadcasting with no waiters is a successful no-op"
+    },
+    {
+      "name": "cnd_timedwait_past_deadline",
+      "function": "cnd_timedwait",
+      "spec_section": "ISO C11 7.26.3.6",
+      "inputs": {},
+      "expected_output": "thrd_timedout",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "timed wait with a past absolute deadline returns thrd_timedout"
+    },
+    {
+      "name": "cnd_destroy_initialized",
+      "function": "cnd_destroy",
+      "spec_section": "ISO C11 7.26.3.3",
+      "inputs": {},
+      "expected_output": "destroyed",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "destroying an initialized condition variable returns no value"
+    },
+    {
+      "name": "tss_create_basic",
+      "function": "tss_create",
+      "spec_section": "ISO C11 7.26.6.1",
+      "inputs": {},
+      "expected_output": "thrd_success",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "thread-specific storage key creation succeeds"
+    },
+    {
+      "name": "tss_set_roundtrip",
+      "function": "tss_set",
+      "spec_section": "ISO C11 7.26.6.4",
+      "inputs": {
+        "value": 4660
+      },
+      "expected_output": "roundtrip:4660",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "setting a TLS value can be read back in the same thread"
+    },
+    {
+      "name": "tss_get_roundtrip",
+      "function": "tss_get",
+      "spec_section": "ISO C11 7.26.6.3",
+      "inputs": {
+        "value": 48879
+      },
+      "expected_output": "roundtrip:48879",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "getting a TLS value returns the value most recently set"
+    },
+    {
+      "name": "tss_delete_created_key",
+      "function": "tss_delete",
+      "spec_section": "ISO C11 7.26.6.2",
+      "inputs": {},
+      "expected_output": "deleted",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "deleting a freshly created TLS key returns no value"
+    },
+    {
+      "name": "call_once_three_invocations",
+      "function": "call_once",
+      "spec_section": "ISO C11 7.26.2.1",
+      "inputs": {},
+      "expected_output": "called:1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "call_once invokes the callback exactly once for repeated calls on the same flag"
+    }
+  ]
+}

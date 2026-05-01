@@ -1,20 +1,20 @@
 {
   "schema_version": "v1",
   "bead": "bd-15n.3",
-  "generated_at": "2026-04-27T03:55:58Z",
+  "generated_at": "2026-05-01T03:37:44Z",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 366,
+    "symbols_with_fixtures": 389,
     "coverage_pct": 9,
-    "total_fixture_files": 56,
-    "total_fixture_cases": 1240,
-    "total_families": 46
+    "total_fixture_files": 57,
+    "total_fixture_cases": 1264,
+    "total_families": 47
   },
   "module_coverage": {
     "c11threads_abi": {
       "total": 25,
-      "covered": 0,
-      "pct": 0
+      "covered": 23,
+      "pct": 92
     },
     "ctype_abi": {
       "total": 49,
@@ -228,6 +228,34 @@
         "backtrace",
         "backtrace_symbols",
         "backtrace_symbols_fd"
+      ]
+    },
+    "c11threads": {
+      "function_count": 23,
+      "functions": [
+        "call_once",
+        "cnd_broadcast",
+        "cnd_destroy",
+        "cnd_init",
+        "cnd_signal",
+        "cnd_timedwait",
+        "mtx_destroy",
+        "mtx_init",
+        "mtx_lock",
+        "mtx_timedlock",
+        "mtx_trylock",
+        "mtx_unlock",
+        "thrd_create",
+        "thrd_current",
+        "thrd_detach",
+        "thrd_equal",
+        "thrd_join",
+        "thrd_sleep",
+        "thrd_yield",
+        "tss_create",
+        "tss_delete",
+        "tss_get",
+        "tss_set"
       ]
     },
     "ctype": {
@@ -869,6 +897,39 @@
         "backtrace"
       ]
     },
+    "c11threads_ops": {
+      "file": "c11threads_ops.json",
+      "sha256": "be2677f42d40cbcd6d31f44b322b4ea2bcda3a47a3224e2195676dfe48823151",
+      "case_count": 23,
+      "functions": [
+        "call_once",
+        "cnd_broadcast",
+        "cnd_destroy",
+        "cnd_init",
+        "cnd_signal",
+        "cnd_timedwait",
+        "mtx_destroy",
+        "mtx_init",
+        "mtx_lock",
+        "mtx_timedlock",
+        "mtx_trylock",
+        "mtx_unlock",
+        "thrd_create",
+        "thrd_current",
+        "thrd_detach",
+        "thrd_equal",
+        "thrd_join",
+        "thrd_sleep",
+        "thrd_yield",
+        "tss_create",
+        "tss_delete",
+        "tss_get",
+        "tss_set"
+      ],
+      "families": [
+        "c11threads"
+      ]
+    },
     "ctype_ops": {
       "file": "ctype_ops.json",
       "sha256": "7540e1c019d23d15a7ed8c6df8bf46c82d0227a59dbcc1b1bdaeac9571c0d45e",
@@ -1391,8 +1452,8 @@
     },
     "signal_ops": {
       "file": "signal_ops.json",
-      "sha256": "1f408cf13058bfa1062a7cb8843367f5c50cc4005bb18882c715ae3389f93827",
-      "case_count": 48,
+      "sha256": "a770e49a3002bc1eb277d24915bd2b6ec1438e1dd13601a63e1906ae0c06f5a7",
+      "case_count": 49,
       "functions": [
         "gsignal",
         "kill",

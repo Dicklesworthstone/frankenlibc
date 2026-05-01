@@ -1,0 +1,199 @@
+{
+  "schema_version": "v1",
+  "generated_at_utc": "2026-05-01T03:40:03Z",
+  "purpose": "Overlay semantic contract classes on top of support_matrix.json status labels. The support taxonomy answers whether an exported symbol has a native/raw-syscall implementation class; this overlay records representative cases where that status is not equivalent to full POSIX/GNU/glibc semantic parity.",
+  "support_matrix_snapshot": {
+    "artifact": "support_matrix.json",
+    "total_exported": 4119,
+    "status_counts": {
+      "Implemented": 3705,
+      "RawSyscall": 414,
+      "WrapsHostLibc": 0,
+      "GlibcCallThrough": 0,
+      "Stub": 0
+    }
+  },
+  "semantic_contract_classes": {
+    "full_semantics": "Behavior is intended to match the relevant POSIX, ISO C, GNU, or glibc contract for the supported scope and has fixture/proof/perf evidence elsewhere.",
+    "compat_noop": "A symbol intentionally accepts the call and returns success or no observable action for compatibility, but does not implement the full upstream behavior.",
+    "deterministic_fallback": "A symbol returns a deterministic fallback/error/fail-stop contract rather than the complete upstream behavior.",
+    "limited_bootstrap": "A subsystem path implements a useful bootstrap subset while broader upstream semantics remain deferred.",
+    "unsupported_platform_contract": "A historical or non-Linux surface deliberately returns ENOSYS or an equivalent unavailable status.",
+    "proof_gap": "The status taxonomy may be correct, but there is insufficient fixture/proof/performance evidence for release-level parity claims."
+  },
+  "coverage_policy": {
+    "is_exhaustive": false,
+    "why_not_exhaustive": "This artifact was created from the current reality-check pass and records high-signal representative drift between taxonomy and semantic completeness. It is intended to become exhaustive in a follow-up gate.",
+    "release_blocker": "Do not treat support_matrix.json Stub=0 as proof of full replacement semantics until this overlay is exhaustive and gated."
+  },
+  "audited_entries": [
+    {
+      "id": "sem-elf-relocation-support",
+      "surface": "ELF relocation support classification",
+      "symbols": [],
+      "support_matrix_status": "not_symbol_level",
+      "semantic_class": "limited_bootstrap",
+      "source_path": "crates/frankenlibc-core/src/elf/mod.rs",
+      "source_line": 129,
+      "evidence": "RelocationSupport keeps a Stub variant described as documented deterministic behavior even while exported-symbol status counts report Stub=0.",
+      "required_followup": "Add per-relocation support coverage and gate any README replacement claims on relocation class coverage, not only exported-symbol taxonomy."
+    },
+    {
+      "id": "sem-pthread-cancel-private",
+      "surface": "glibc private pthread cancellation helpers",
+      "symbols": [
+        "__pthread_register_cancel",
+        "__pthread_unregister_cancel",
+        "__pthread_register_cancel_defer",
+        "__pthread_unregister_cancel_restore",
+        "__pthread_cleanup_routine",
+        "__pthread_unwind_next"
+      ],
+      "support_matrix_status": "Implemented",
+      "semantic_class": "compat_noop",
+      "source_path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "source_line": 6316,
+      "evidence": "Cancellation register/unregister helpers are documented no-op stubs and __pthread_unwind_next aborts.",
+      "required_followup": "Split implemented symbol presence from cancellation semantics; add cancellation cleanup/unwind fixtures before any L1 replacement promotion."
+    },
+    {
+      "id": "sem-libcrypt-des",
+      "surface": "obsolete libcrypt DES helpers",
+      "symbols": [
+        "encrypt",
+        "encrypt_r"
+      ],
+      "support_matrix_status": "Implemented",
+      "semantic_class": "compat_noop",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "source_line": 7234,
+      "evidence": "DES encrypt/decrypt helpers are intentionally documented as no-op because DES support is obsolete and unsupported.",
+      "required_followup": "Keep no-op contract explicit in conformance fixtures and exclude it from full crypt semantic parity counts unless DES behavior is implemented."
+    },
+    {
+      "id": "sem-nss-files-plugin",
+      "surface": "NSS files module private plugin entries",
+      "symbols": [
+        "_nss_files_end*",
+        "_nss_files_set*",
+        "_nss_files_get*_r",
+        "_nss_files_parse_*"
+      ],
+      "support_matrix_status": "mixed_or_not_listed_by_exact_name",
+      "semantic_class": "deterministic_fallback",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "source_line": 8889,
+      "evidence": "Private NSS plugin entry families return SUCCESS/NOTFOUND/ENOENT style deterministic contracts without opening or parsing the full backing NSS data source.",
+      "required_followup": "Create an exhaustive NSS private-entry inventory and fixtures that distinguish bootstrap fallthrough behavior from full files/compat/hesiod/systemd backends."
+    },
+    {
+      "id": "sem-nss-configure-lookup",
+      "surface": "NSS lookup configuration internals",
+      "symbols": [
+        "__nss_configure_lookup",
+        "__nss_next2"
+      ],
+      "support_matrix_status": "Implemented",
+      "semantic_class": "limited_bootstrap",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "source_line": 1463,
+      "evidence": "Code documents direct file parsing and unavailable-style NSS dispatch stubs instead of a complete glibc NSS module system.",
+      "required_followup": "Gate NSS maturity on nsswitch, module ordering, backend fallthrough, concurrency, and cache-coherence fixtures."
+    },
+    {
+      "id": "sem-obstack-printf-chk",
+      "surface": "obstack fortified printf helpers",
+      "symbols": [
+        "__obstack_printf_chk",
+        "__obstack_vprintf_chk"
+      ],
+      "support_matrix_status": "Implemented",
+      "semantic_class": "deterministic_fallback",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "source_line": 2147,
+      "evidence": "The variadic obstack helpers set ENOSYS rather than implementing obstack formatting semantics.",
+      "required_followup": "Add obstack layout and formatting fixtures or reclassify these rows away from full semantic parity."
+    },
+    {
+      "id": "sem-stdio-vtable-helpers",
+      "surface": "glibc stdio vtable helper fallbacks",
+      "symbols": [
+        "__overflow",
+        "__uflow",
+        "__underflow",
+        "__wuflow",
+        "__woverflow",
+        "__wunderflow"
+      ],
+      "support_matrix_status": "Implemented",
+      "semantic_class": "deterministic_fallback",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "source_line": 3434,
+      "evidence": "Internal stdio vtable helpers are documented deterministic fallback stubs and set ENOSYS.",
+      "required_followup": "Separate link-compatibility from libio semantic parity and add fixture coverage for reachable _IO helper paths."
+    },
+    {
+      "id": "sem-historical-linux-syscalls",
+      "surface": "removed or unsupported historical syscall wrappers",
+      "symbols": [
+        "__sysctl",
+        "bdflush",
+        "create_module",
+        "get_kernel_syms",
+        "query_module"
+      ],
+      "support_matrix_status": "Implemented",
+      "semantic_class": "unsupported_platform_contract",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "source_line": 3707,
+      "evidence": "Removed or unsupported Linux interfaces deliberately return ENOSYS-style contracts.",
+      "required_followup": "Keep these rows explicit as unsupported platform contracts and ensure they do not count toward behavior-complete replacement claims."
+    },
+    {
+      "id": "sem-malloc-debug-hooks",
+      "surface": "malloc debug hook compatibility",
+      "symbols": [
+        "mcheck",
+        "mcheck_pedantic",
+        "mcheck_check_all",
+        "mtrace",
+        "muntrace"
+      ],
+      "support_matrix_status": "Implemented",
+      "semantic_class": "compat_noop",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "source_line": 18555,
+      "evidence": "Malloc debug hooks are documented as safe no-ops because the membrane supplies allocation safety rather than glibc mcheck/mtrace behavior.",
+      "required_followup": "Track these as membrane-substituted compatibility contracts with explicit tests and exclude them from glibc debug-hook parity counts."
+    },
+    {
+      "id": "sem-argp-help-family",
+      "surface": "GNU argp help and reporting helpers",
+      "symbols": [
+        "argp_help",
+        "argp_usage",
+        "argp_error",
+        "argp_failure",
+        "argp_state_help"
+      ],
+      "support_matrix_status": "Implemented",
+      "semantic_class": "compat_noop",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "source_line": 20799,
+      "evidence": "Argp help/reporting helpers are documented no-op stubs.",
+      "required_followup": "Add argp parser/help fixtures or classify this family as link-compatible only."
+    }
+  ],
+  "audited_summary": {
+    "entries": 10,
+    "by_semantic_class": {
+      "compat_noop": 4,
+      "deterministic_fallback": 3,
+      "limited_bootstrap": 2,
+      "unsupported_platform_contract": 1,
+      "proof_gap": 0,
+      "full_semantics": 0
+    },
+    "blocked_claim": "The current support taxonomy can honestly say there are zero rows with status Stub. It cannot honestly say there are zero no-op, fallback, bootstrap, unsupported, or under-proven semantic surfaces."
+  }
+}
