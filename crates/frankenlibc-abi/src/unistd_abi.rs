@@ -24970,10 +24970,8 @@ pub unsafe extern "C" fn _xdr_nis_result(_xdrs: *mut c_void, _res: *mut c_void) 
 // frankenlibc is the canonical entrypoint. All forward via the host
 // syscall trampoline with errno propagation.
 
-const SYS_SETXATTRAT: libc::c_long = 463;
-const SYS_GETXATTRAT: libc::c_long = 464;
-const SYS_LISTXATTRAT: libc::c_long = 465;
-const SYS_REMOVEXATTRAT: libc::c_long = 466;
+// Linux 6.13+ AT-relative xattr syscall numbers live in
+// frankenlibc_core::syscall as SYS_SETXATTRAT/GETXATTRAT/LISTXATTRAT/REMOVEXATTRAT.
 const SYS_OPEN_TREE_ATTR: libc::c_long = 467;
 const SYS_FILE_GETATTR: libc::c_long = 468;
 const SYS_FILE_SETATTR: libc::c_long = 469;
@@ -24999,18 +24997,22 @@ pub unsafe extern "C" fn setxattrat(
     uargs: *const c_void,
     usize_: usize,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_SETXATTRAT,
-            dirfd as libc::c_long,
-            path as libc::c_long,
-            at_flags as libc::c_long,
-            name as libc::c_long,
-            uargs as libc::c_long,
-            usize_ as libc::c_long,
+    match unsafe {
+        syscall::sys_setxattrat(
+            dirfd,
+            path as *const u8,
+            at_flags,
+            name as *const u8,
+            uargs as *const u8,
+            usize_,
         )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `getxattrat(dirfd, path, at_flags, name, *uargs, usize) ->
@@ -25029,18 +25031,22 @@ pub unsafe extern "C" fn getxattrat(
     uargs: *mut c_void,
     usize_: usize,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_GETXATTRAT,
-            dirfd as libc::c_long,
-            path as libc::c_long,
-            at_flags as libc::c_long,
-            name as libc::c_long,
-            uargs as libc::c_long,
-            usize_ as libc::c_long,
+    match unsafe {
+        syscall::sys_getxattrat(
+            dirfd,
+            path as *const u8,
+            at_flags,
+            name as *const u8,
+            uargs as *mut u8,
+            usize_,
         )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `listxattrat(dirfd, path, at_flags, list, size) -> int`
@@ -25059,17 +25065,15 @@ pub unsafe extern "C" fn listxattrat(
     list: *mut c_char,
     size: usize,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_LISTXATTRAT,
-            dirfd as libc::c_long,
-            path as libc::c_long,
-            at_flags as libc::c_long,
-            list as libc::c_long,
-            size as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_listxattrat(dirfd, path as *const u8, at_flags, list as *mut u8, size)
+    } {
+        Ok(n) => n as c_int,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `removexattrat(dirfd, path, at_flags, name) -> int`
@@ -25086,16 +25090,15 @@ pub unsafe extern "C" fn removexattrat(
     at_flags: c_uint,
     name: *const c_char,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_REMOVEXATTRAT,
-            dirfd as libc::c_long,
-            path as libc::c_long,
-            at_flags as libc::c_long,
-            name as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_removexattrat(dirfd, path as *const u8, at_flags, name as *const u8)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `open_tree_attr(dirfd, path, flags, *attr, size) -> int`

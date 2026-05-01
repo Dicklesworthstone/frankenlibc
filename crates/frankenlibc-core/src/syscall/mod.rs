@@ -582,6 +582,14 @@ pub const SYS_SET_MEMPOLICY_HOME_NODE: usize = 450;
 pub const SYS_STATMOUNT: usize = 457;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_LISTMOUNT: usize = 458;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SETXATTRAT: usize = 463;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GETXATTRAT: usize = 464;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LISTXATTRAT: usize = 465;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_REMOVEXATTRAT: usize = 466;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -758,6 +766,14 @@ pub const SYS_SET_MEMPOLICY_HOME_NODE: usize = 450;
 pub const SYS_STATMOUNT: usize = 457;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_LISTMOUNT: usize = 458;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SETXATTRAT: usize = 463;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GETXATTRAT: usize = 464;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LISTXATTRAT: usize = 465;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_REMOVEXATTRAT: usize = 466;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2226,6 +2242,124 @@ pub unsafe fn sys_listmount(
         )
     };
     syscall_result(ret)
+}
+
+/// `setxattrat(dirfd, path, at_flags, name, uargs, usize)` —
+/// AT-relative extended-attribute setter (Linux 6.13+, syscall 463).
+///
+/// # Safety
+///
+/// `path` and `name` must be NUL-terminated C strings; `uargs` must
+/// describe a valid `struct xattr_args`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_setxattrat(
+    dirfd: i32,
+    path: *const u8,
+    at_flags: u32,
+    name: *const u8,
+    uargs: *const u8,
+    args_size: usize,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_SETXATTRAT,
+            dirfd as usize,
+            path as usize,
+            at_flags as usize,
+            name as usize,
+            uargs as usize,
+            args_size,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `getxattrat(dirfd, path, at_flags, name, uargs, usize)` —
+/// AT-relative extended-attribute getter (Linux 6.13+, syscall 464).
+///
+/// # Safety
+///
+/// Same as [`sys_setxattrat`].
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_getxattrat(
+    dirfd: i32,
+    path: *const u8,
+    at_flags: u32,
+    name: *const u8,
+    uargs: *mut u8,
+    args_size: usize,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_GETXATTRAT,
+            dirfd as usize,
+            path as usize,
+            at_flags as usize,
+            name as usize,
+            uargs as usize,
+            args_size,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `listxattrat(dirfd, path, at_flags, list, size)` — AT-relative
+/// extended-attribute name listing (Linux 6.13+, syscall 465).
+/// Returns the byte length of the (possibly truncated) listing.
+///
+/// # Safety
+///
+/// `path` must be a NUL-terminated C string; `list`/`size` must
+/// describe a writable buffer (NULL/0 is allowed for size-query
+/// mode).
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_listxattrat(
+    dirfd: i32,
+    path: *const u8,
+    at_flags: u32,
+    list: *mut u8,
+    size: usize,
+) -> Result<usize, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_LISTXATTRAT,
+            dirfd as usize,
+            path as usize,
+            at_flags as usize,
+            list as usize,
+            size,
+        )
+    };
+    syscall_result(ret)
+}
+
+/// `removexattrat(dirfd, path, at_flags, name)` — AT-relative
+/// extended-attribute removal (Linux 6.13+, syscall 466).
+///
+/// # Safety
+///
+/// `path` and `name` must be NUL-terminated C strings.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_removexattrat(
+    dirfd: i32,
+    path: *const u8,
+    at_flags: u32,
+    name: *const u8,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_REMOVEXATTRAT,
+            dirfd as usize,
+            path as usize,
+            at_flags as usize,
+            name as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
 }
 
 /// `futex(uaddr, futex_op, val, timeout, uaddr2, val3)` — fast userspace mutex.
