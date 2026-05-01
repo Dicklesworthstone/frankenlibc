@@ -114,6 +114,39 @@ fn tracked_void_output_capacity(ptr: *mut c_void, requested: usize) -> usize {
     known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
 }
 
+#[inline]
+fn dns_wire_span_len(start: *const u8, eom: *const u8) -> Option<usize> {
+    let start_addr = start as usize;
+    let eom_addr = eom as usize;
+    if eom_addr <= start_addr {
+        return None;
+    }
+    let span_len = eom_addr.checked_sub(start_addr)?;
+    if span_len > isize::MAX as usize || !tracked_region_fits(start_addr, span_len) {
+        return None;
+    }
+    Some(span_len)
+}
+
+#[inline]
+fn dns_message_span_offsets(
+    msg: *const u8,
+    eom: *const u8,
+    src: *const u8,
+) -> Option<(usize, usize)> {
+    let msg_addr = msg as usize;
+    let eom_addr = eom as usize;
+    let src_addr = src as usize;
+    if eom_addr <= msg_addr || src_addr < msg_addr || src_addr >= eom_addr {
+        return None;
+    }
+    let msg_len = eom_addr.checked_sub(msg_addr)?;
+    if msg_len > isize::MAX as usize || !tracked_region_fits(msg_addr, msg_len) {
+        return None;
+    }
+    Some((msg_len, src_addr - msg_addr))
+}
+
 fn aligned_output_offset(base: *const c_char, min_offset: usize, align: usize) -> Option<usize> {
     if align <= 1 {
         return Some(min_offset);
@@ -19015,10 +19048,13 @@ pub unsafe extern "C" fn gnu_dev_makedev(major: libc::c_uint, minor: libc::c_uin
 /// or pointer indirections, and returns the number of bytes consumed from `comp_dn`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dn_skipname(comp_dn: *const u8, eom: *const u8) -> c_int {
-    if comp_dn.is_null() || eom.is_null() || comp_dn >= eom {
+    if comp_dn.is_null() || eom.is_null() {
         return -1;
     }
-    let buf = unsafe { std::slice::from_raw_parts(comp_dn, eom.offset_from(comp_dn) as usize) };
+    let Some(span_len) = dns_wire_span_len(comp_dn, eom) else {
+        return -1;
+    };
+    let buf = unsafe { std::slice::from_raw_parts(comp_dn, span_len) };
     let mut i = 0usize;
     loop {
         if i >= buf.len() {
@@ -19062,14 +19098,17 @@ pub unsafe extern "C" fn dn_expand(
     if msg.is_null() || eomorig.is_null() || comp_dn.is_null() || exp_dn.is_null() || length < 1 {
         return -1;
     }
-    if comp_dn < msg || comp_dn >= eomorig {
+    let Some((msg_len, comp_offset)) = dns_message_span_offsets(msg, eomorig, comp_dn) else {
+        return -1;
+    };
+    let msg_slice = unsafe { std::slice::from_raw_parts(msg, msg_len) };
+    let effective_length = tracked_output_capacity(exp_dn, length as usize);
+    if effective_length == 0 {
         return -1;
     }
-    let msg_len = unsafe { eomorig.offset_from(msg) } as usize;
-    let msg_slice = unsafe { std::slice::from_raw_parts(msg, msg_len) };
-    let out = unsafe { std::slice::from_raw_parts_mut(exp_dn as *mut u8, length as usize) };
+    let out = unsafe { std::slice::from_raw_parts_mut(exp_dn as *mut u8, effective_length) };
 
-    let mut pos = unsafe { comp_dn.offset_from(msg) } as usize; // current read position in msg
+    let mut pos = comp_offset; // current read position in msg
     let mut out_off = 0usize; // write offset in output
     let mut wire_len: Option<usize> = None; // bytes consumed from comp_dn (set on first pointer)
     let mut jumps = 0u32;
@@ -19083,7 +19122,7 @@ pub unsafe extern "C" fn dn_expand(
         if b == 0 {
             // Root label. If we haven't followed any pointers, wire_len includes this byte.
             if wire_len.is_none() {
-                wire_len = Some(pos + 1 - (unsafe { comp_dn.offset_from(msg) } as usize));
+                wire_len = Some(pos + 1 - comp_offset);
             }
             break;
         }
@@ -19094,7 +19133,7 @@ pub unsafe extern "C" fn dn_expand(
             }
             // Record wire consumption before first jump.
             if wire_len.is_none() {
-                wire_len = Some(pos + 2 - (unsafe { comp_dn.offset_from(msg) } as usize));
+                wire_len = Some(pos + 2 - comp_offset);
             }
             let target = ((b as usize & 0x3F) << 8) | msg_slice[pos + 1] as usize;
             if target >= msg_len {

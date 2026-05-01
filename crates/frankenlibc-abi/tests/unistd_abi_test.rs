@@ -1550,6 +1550,61 @@ fn dn_comp_rejects_tracked_unterminated_name() {
 }
 
 #[test]
+fn dn_skipname_rejects_tracked_short_message_span() {
+    use frankenlibc_abi::unistd_abi::dn_skipname;
+
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *raw = 0;
+        let rc = dn_skipname(raw, raw.wrapping_add(2));
+        assert_eq!(rc, -1);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
+fn dn_expand_rejects_tracked_short_message_span() {
+    use frankenlibc_abi::unistd_abi::dn_expand;
+
+    unsafe {
+        let raw = malloc_tracked_zeroed_bytes(1).cast::<u8>();
+        *raw = 0;
+        let mut out = [0x7eu8; 8];
+        let rc = dn_expand(
+            raw,
+            raw.wrapping_add(2),
+            raw,
+            out.as_mut_ptr().cast(),
+            out.len() as c_int,
+        );
+        assert_eq!(rc, -1);
+        assert_eq!(out[0], 0x7e);
+        frankenlibc_abi::malloc_abi::free(raw.cast());
+    }
+}
+
+#[test]
+fn dn_expand_caps_tracked_short_output_buffer() {
+    use frankenlibc_abi::unistd_abi::dn_expand;
+
+    let msg = [1, b'a', 0];
+    unsafe {
+        let out = malloc_tracked_zeroed_bytes(1).cast::<c_char>();
+        out.cast::<u8>().write(0x7e);
+        let rc = dn_expand(
+            msg.as_ptr(),
+            msg.as_ptr().add(msg.len()),
+            msg.as_ptr(),
+            out,
+            256,
+        );
+        assert_eq!(rc, -1);
+        assert_eq!(out.cast::<u8>().read(), 0x7e);
+        frankenlibc_abi::malloc_abi::free(out.cast());
+    }
+}
+
+#[test]
 fn herror_rejects_tracked_unterminated_prefix() {
     use frankenlibc_abi::unistd_abi::herror;
 
