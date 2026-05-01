@@ -5206,9 +5206,13 @@ pub unsafe extern "C" fn mseal(addr: *mut c_void, len: usize, flags: c_uint) -> 
 /// Returns the new fd or -1 with errno.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn memfd_secret(flags: c_uint) -> c_int {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe { libc::syscall(libc::SYS_memfd_secret, flags as libc::c_long) };
-    unsafe { raw_syscall_with_errno(rc) }
+    match syscall::sys_memfd_secret(flags) {
+        Ok(fd) => fd,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `rseq(*rseq, rseq_len, flags, sig) -> int` (Linux 4.18+,
@@ -5231,17 +5235,13 @@ pub unsafe extern "C" fn rseq(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_rseq,
-            rseq_ptr as libc::c_long,
-            rseq_len as libc::c_long,
-            flags as libc::c_long,
-            sig as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_rseq(rseq_ptr as *mut u8, rseq_len, flags, sig) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `cachestat(fd, *cstat_range, *cstat, flags) -> int`

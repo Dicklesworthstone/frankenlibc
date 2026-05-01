@@ -566,6 +566,8 @@ pub const SYS_SET_MEMPOLICY: usize = 238;
 pub const SYS_GET_MEMPOLICY: usize = 239;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_MSEAL: usize = 462;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_RSEQ: usize = 334;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -726,6 +728,8 @@ pub const SYS_SET_MEMPOLICY: usize = 237;
 pub const SYS_GET_MEMPOLICY: usize = 236;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_MSEAL: usize = 462;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_RSEQ: usize = 293;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -1965,6 +1969,34 @@ pub unsafe fn sys_mprotect(addr: *mut u8, length: usize, prot: i32) -> Result<()
 #[allow(unsafe_code)]
 pub unsafe fn sys_mseal(addr: *mut u8, length: usize, flags: u32) -> Result<(), i32> {
     let ret = unsafe { raw::syscall3(SYS_MSEAL, addr as usize, length, flags as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `rseq(*rseq, rseq_len, flags, sig)` — register or unregister a
+/// per-thread restartable-sequence struct (Linux 4.18+, x86_64
+/// syscall 334).
+///
+/// # Safety
+///
+/// `rseq_ptr` must point to writable storage of at least `rseq_len`
+/// bytes describing a valid `struct rseq`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_rseq(
+    rseq_ptr: *mut u8,
+    rseq_len: u32,
+    flags: i32,
+    sig: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_RSEQ,
+            rseq_ptr as usize,
+            rseq_len as usize,
+            flags as usize,
+            sig as usize,
+        )
+    };
     syscall_result(ret).map(|_| ())
 }
 
