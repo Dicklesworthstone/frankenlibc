@@ -564,6 +564,8 @@ pub const SYS_SCHED_GETAFFINITY: usize = 204;
 pub const SYS_SET_MEMPOLICY: usize = 238;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_GET_MEMPOLICY: usize = 239;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MSEAL: usize = 462;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -722,6 +724,8 @@ pub const SYS_SCHED_GETAFFINITY: usize = 123;
 pub const SYS_SET_MEMPOLICY: usize = 237;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_GET_MEMPOLICY: usize = 236;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MSEAL: usize = 462;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -1948,6 +1952,19 @@ pub unsafe fn sys_munmap(addr: *mut u8, length: usize) -> Result<(), i32> {
 pub unsafe fn sys_mprotect(addr: *mut u8, length: usize, prot: i32) -> Result<(), i32> {
     // SAFETY: caller guarantees addr/length validity.
     let ret = unsafe { raw::syscall3(SYS_MPROTECT, addr as usize, length, prot as usize) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `mseal(addr, length, flags)` — seal a memory region against further
+/// permission/munmap changes (Linux 6.10+, x86_64 syscall 462).
+///
+/// # Safety
+///
+/// `addr` must be page-aligned and the range must be mapped.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_mseal(addr: *mut u8, length: usize, flags: u32) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall3(SYS_MSEAL, addr as usize, length, flags as usize) };
     syscall_result(ret).map(|_| ())
 }
 

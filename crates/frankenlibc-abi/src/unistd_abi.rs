@@ -5191,16 +5191,13 @@ unsafe fn raw_syscall_with_errno(rc: libc::c_long) -> c_int {
 /// kernel rejects unaligned or non-VM-area addresses.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mseal(addr: *mut c_void, len: usize, flags: c_uint) -> c_int {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_mseal,
-            addr as libc::c_long,
-            len as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_mseal(addr as *mut u8, len, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `memfd_secret(flags) -> int` (Linux 5.14+, `SYS_memfd_secret
