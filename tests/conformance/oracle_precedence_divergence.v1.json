@@ -1,0 +1,531 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.1.6",
+  "generated_at_utc": "2026-05-02T13:04:39Z",
+  "purpose": "Define the oracle precedence and divergence classification contract for conformance work so fixture packs, semantic-overlay gates, and user-facing claims classify behavior honestly instead of treating every host-glibc difference as either a failure or support.",
+  "inputs": {
+    "semantic_contract_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
+    "semantic_contract_symbol_join": "tests/conformance/semantic_contract_symbol_join.v1.json",
+    "support_matrix": "support_matrix.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "healing_oracle": "tests/conformance/healing_oracle_report.v1.json",
+    "fixture_coverage": "tests/conformance/symbol_fixture_coverage.v1.json",
+    "workload_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "runtime_mode",
+    "replacement_level",
+    "api_family",
+    "symbol",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "oracle_kinds": [
+    {
+      "id": "frankenlibc_contract",
+      "precedence_rank": 10,
+      "authoritative_when": [
+        "semantic_contract_symbol_join records a documented no-op, fallback, bootstrap-only, unsupported, or abort-only contract",
+        "replacement_levels.json declares a narrower replacement claim than a host-glibc parity fixture would imply"
+      ],
+      "claim_rule": "Authoritative for the current honest claim boundary, but never sufficient for full POSIX/GNU replacement without follow-up fixture evidence."
+    },
+    {
+      "id": "hardened_safety_policy",
+      "precedence_rank": 20,
+      "authoritative_when": [
+        "FRANKENLIBC_MODE=hardened intentionally repairs or denies invalid input",
+        "strict mode preserves the POSIX/glibc error contract but hardened mode emits a HealingAction"
+      ],
+      "claim_rule": "Authoritative only for safety_repair classifications; must not be advertised as strict semantic parity."
+    },
+    {
+      "id": "posix_text",
+      "precedence_rank": 30,
+      "authoritative_when": [
+        "the API is standardized and no FrankenLibC-specific documented contract narrows behavior",
+        "host glibc behavior is implementation-specific or environment-sensitive"
+      ],
+      "claim_rule": "Authoritative for normative POSIX semantics, with host glibc used as a compatibility fixture where applicable."
+    },
+    {
+      "id": "linux_syscall",
+      "precedence_rank": 40,
+      "authoritative_when": [
+        "the ABI wrapper is classified RawSyscall or exposes kernel-specific errno and feature availability",
+        "kernel version, seccomp, namespace, or capability state determines the observable result"
+      ],
+      "claim_rule": "Authoritative for kernel contract and errno shape; host glibc is only an adapter reference."
+    },
+    {
+      "id": "host_glibc",
+      "precedence_rank": 50,
+      "authoritative_when": [
+        "the scenario is a GNU/glibc compatibility fixture with no narrower FrankenLibC contract",
+        "captured fixtures record deterministic host behavior for the same process environment"
+      ],
+      "claim_rule": "Authoritative for parity_match fixtures inside their captured environment, not for unsupported or deliberately repaired cases."
+    },
+    {
+      "id": "environment_probe",
+      "precedence_rank": 60,
+      "authoritative_when": [
+        "the observed result depends on DNS, NSS, locale database, filesystem state, kernel policy, time, installed helpers, or external services"
+      ],
+      "claim_rule": "May classify flaky_environment and block claims; it cannot promote a support claim by itself."
+    }
+  ],
+  "divergence_classifications": [
+    {
+      "id": "parity_match",
+      "claim_effect": "supports_scoped_claim",
+      "required_evidence": [
+        "primary oracle output matches",
+        "strict and hardened modes agree unless hardened safety policy is explicitly involved",
+        "fixture or e2e log records expected and actual values"
+      ],
+      "user_message": "Behavior matched the selected oracle for this scenario and replacement level."
+    },
+    {
+      "id": "allowed_divergence",
+      "claim_effect": "supports_link_or_bootstrap_claim_only",
+      "required_evidence": [
+        "FrankenLibC documented contract names the allowed divergence",
+        "negative claim test blocks full parity wording",
+        "follow-up fixture owner is recorded"
+      ],
+      "user_message": "Behavior intentionally differs under a documented compatibility contract; it is not full semantic parity."
+    },
+    {
+      "id": "safety_repair",
+      "claim_effect": "supports_hardened_safety_claim_only",
+      "required_evidence": [
+        "strict mode remains ABI compatible",
+        "hardened mode emits the expected HealingAction",
+        "the repair is deterministic and logged"
+      ],
+      "user_message": "Hardened mode repaired or denied unsafe input; strict parity and hardened safety are separate claims."
+    },
+    {
+      "id": "unsupported_contract",
+      "claim_effect": "blocks_support_claim",
+      "required_evidence": [
+        "unsupported scope is named",
+        "errno or fail-stop result is deterministic",
+        "user-facing diagnostic or artifact tells agents not to advertise support"
+      ],
+      "user_message": "The scenario is intentionally unsupported or platform-gated right now."
+    },
+    {
+      "id": "flaky_environment",
+      "claim_effect": "blocks_claim_until_replayed",
+      "required_evidence": [
+        "environment inputs are logged",
+        "the replay command or probe is named",
+        "the result does not advance support claims"
+      ],
+      "user_message": "The result depends on external or host state and must be replayed before making a claim."
+    },
+    {
+      "id": "proof_gap",
+      "claim_effect": "blocks_claim_until_evidence_exists",
+      "required_evidence": [
+        "missing oracle or fixture is named",
+        "owner artifact or bead is named",
+        "claim remains blocked even if support_matrix taxonomy says Implemented"
+      ],
+      "user_message": "The implementation may exist, but the evidence needed for the claim is still missing."
+    }
+  ],
+  "decision_rules": [
+    {
+      "id": "documented_contract_precedes_host_glibc",
+      "when": "semantic_contract_symbol_join lists a blocked semantic contract for the scenario",
+      "primary_oracle": "frankenlibc_contract",
+      "allowed_divergence_classes": [
+        "allowed_divergence",
+        "unsupported_contract",
+        "proof_gap"
+      ],
+      "claim_guard": "A host-glibc fixture cannot promote full parity until the documented contract row is retired or reclassified with evidence."
+    },
+    {
+      "id": "strict_mode_prefers_normative_or_host_parity",
+      "when": "runtime_mode=strict and no project-specific contract applies",
+      "primary_oracle": "posix_text",
+      "fallback_oracles": [
+        "host_glibc",
+        "linux_syscall"
+      ],
+      "claim_guard": "Strict failures classify as proof_gap or unsupported_contract unless an explicit allowed divergence exists."
+    },
+    {
+      "id": "hardened_mode_separates_repairs_from_parity",
+      "when": "runtime_mode=hardened and invalid input triggers TSM repair or denial",
+      "primary_oracle": "hardened_safety_policy",
+      "fallback_oracles": [
+        "frankenlibc_contract",
+        "host_glibc"
+      ],
+      "claim_guard": "Safety repair supports hardened safety claims only; it does not advance strict or replacement-level parity."
+    },
+    {
+      "id": "raw_syscall_prefers_kernel_contract",
+      "when": "support_matrix status is RawSyscall or behavior is kernel-feature-gated",
+      "primary_oracle": "linux_syscall",
+      "fallback_oracles": [
+        "posix_text",
+        "host_glibc"
+      ],
+      "claim_guard": "Kernel unavailable, EPERM, ENOSYS, or namespace-sensitive behavior must be logged before any user-facing support claim."
+    },
+    {
+      "id": "environment_probe_never_promotes_claims",
+      "when": "DNS, NSS, locale, filesystem, time, process privileges, or installed helpers affect outcome",
+      "primary_oracle": "environment_probe",
+      "fallback_oracles": [
+        "host_glibc",
+        "frankenlibc_contract"
+      ],
+      "claim_guard": "Environment evidence can downgrade to flaky_environment or proof_gap, but cannot promote parity by itself."
+    }
+  ],
+  "semantic_class_mappings": [
+    {
+      "semantic_class": "compat_noop",
+      "divergence_class": "allowed_divergence",
+      "primary_oracle": "frankenlibc_contract",
+      "claim_effect": "blocks_full_parity_claim",
+      "required_followup": "Add targeted fixtures proving the no-op is either retired or explicitly acceptable for the advertised workload."
+    },
+    {
+      "semantic_class": "deterministic_fallback",
+      "divergence_class": "allowed_divergence",
+      "primary_oracle": "frankenlibc_contract",
+      "claim_effect": "blocks_full_parity_claim",
+      "required_followup": "Add strict and hardened fixture rows comparing fallback behavior against the chosen normative or host oracle."
+    },
+    {
+      "semantic_class": "limited_bootstrap",
+      "divergence_class": "proof_gap",
+      "primary_oracle": "posix_text",
+      "claim_effect": "blocks_claim_until_evidence_exists",
+      "required_followup": "Expand fixture and workload evidence beyond bootstrap behavior before advertising replacement readiness."
+    },
+    {
+      "semantic_class": "unsupported_platform_contract",
+      "divergence_class": "unsupported_contract",
+      "primary_oracle": "linux_syscall",
+      "claim_effect": "blocks_support_claim",
+      "required_followup": "Keep unsupported/platform-gated behavior documented with deterministic errno, fail-stop, or diagnostic output."
+    },
+    {
+      "semantic_class": "abort_only",
+      "divergence_class": "allowed_divergence",
+      "primary_oracle": "frankenlibc_contract",
+      "claim_effect": "blocks_full_parity_claim",
+      "required_followup": "Cover process-exit or fail-stop behavior with isolated subprocess fixtures before compatibility claims mention the surface."
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "strict-string-host-parity",
+      "description": "A standard string operation where host glibc and POSIX-compatible behavior should match in strict mode.",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "api_family": "string",
+      "symbols": [
+        "strlen",
+        "strcmp"
+      ],
+      "primary_oracle": "host_glibc",
+      "fallback_oracles": [
+        "posix_text"
+      ],
+      "divergence_class": "parity_match",
+      "expected_claim_effect": "supports scoped L0/L1 parity only for this fixture family after logs pass",
+      "artifact_refs": [
+        "tests/conformance/fixtures/string_ops.json",
+        "tests/conformance/symbol_fixture_coverage.v1.json",
+        "support_matrix.json"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "string-fixture-does-not-imply-full-libc",
+          "claim": "String fixture parity proves full libc replacement readiness.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "overbroad_claim_from_single_fixture_family"
+        },
+        {
+          "id": "missing-hardened-log-blocks-claim",
+          "claim": "Strict-only fixture logs prove both runtime modes.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "missing_runtime_mode_evidence"
+        }
+      ]
+    },
+    {
+      "scenario_id": "hardened-invalid-pointer-repair",
+      "description": "Invalid pointer or buffer input where hardened mode may repair or deny while strict mode preserves ABI-compatible error behavior.",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "api_family": "membrane",
+      "symbols": [
+        "strlen",
+        "memcpy"
+      ],
+      "primary_oracle": "hardened_safety_policy",
+      "fallback_oracles": [
+        "frankenlibc_contract",
+        "host_glibc"
+      ],
+      "divergence_class": "safety_repair",
+      "expected_claim_effect": "supports hardened safety claim only when HealingAction and strict-mode behavior are logged separately",
+      "artifact_refs": [
+        "tests/conformance/healing_oracle_report.v1.json",
+        "tests/conformance/fixtures/membrane_mode_split.json"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "hardened-repair-not-strict-parity",
+          "claim": "A hardened repair is strict glibc parity.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "mode_claim_conflation"
+        },
+        {
+          "id": "missing-healing-action-blocks-safety-claim",
+          "claim": "A repaired result without HealingAction evidence proves safety repair.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "missing_healing_action_log"
+        }
+      ]
+    },
+    {
+      "scenario_id": "semantic-compat-noop-contract",
+      "description": "A compatibility no-op or deterministic fallback listed in the semantic contract inventory.",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "api_family": "semantic_contract",
+      "symbols": [
+        "mtrace",
+        "muntrace",
+        "argp_usage"
+      ],
+      "primary_oracle": "frankenlibc_contract",
+      "fallback_oracles": [
+        "host_glibc"
+      ],
+      "divergence_class": "allowed_divergence",
+      "expected_claim_effect": "allows link or bootstrap compatibility wording but blocks full semantic parity wording",
+      "artifact_refs": [
+        "tests/conformance/semantic_contract_inventory.v1.json",
+        "tests/conformance/semantic_contract_symbol_join.v1.json"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "implemented-status-not-semantic-parity",
+          "claim": "support_matrix Implemented means the semantic contract is fully equivalent to glibc.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "taxonomy_promoted_to_semantic_parity"
+        },
+        {
+          "id": "allowed-divergence-needs-user-diagnostic",
+          "claim": "Allowed divergence can be hidden from users.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "missing_user_facing_diagnostic"
+        }
+      ]
+    },
+    {
+      "scenario_id": "historical-syscall-unsupported",
+      "description": "Historical or removed Linux syscall wrappers with deterministic unsupported behavior.",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "api_family": "unistd",
+      "symbols": [
+        "__sysctl",
+        "bdflush",
+        "create_module"
+      ],
+      "primary_oracle": "linux_syscall",
+      "fallback_oracles": [
+        "frankenlibc_contract"
+      ],
+      "divergence_class": "unsupported_contract",
+      "expected_claim_effect": "blocks support claims while allowing deterministic unsupported errno or fail-stop evidence",
+      "artifact_refs": [
+        "tests/conformance/fixtures/unistd_ops.json",
+        "tests/conformance/semantic_contract_symbol_join.v1.json"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "unsupported-syscall-not-replacement-ready",
+          "claim": "A deterministic unsupported errno proves replacement support.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "unsupported_contract_promoted_to_support"
+        },
+        {
+          "id": "kernel-gated-result-needs-kernel-log",
+          "claim": "Kernel-gated syscall behavior can be advertised without kernel/env evidence.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "missing_kernel_environment_evidence"
+        }
+      ]
+    },
+    {
+      "scenario_id": "resolver-nss-environment-sensitive",
+      "description": "Resolver or NSS behavior that depends on host files, DNS, NSS modules, cache state, or installed helpers.",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "api_family": "resolver_nss",
+      "symbols": [
+        "getaddrinfo",
+        "__nss_next",
+        "_nss_files_gethostbyname_r"
+      ],
+      "primary_oracle": "environment_probe",
+      "fallback_oracles": [
+        "host_glibc",
+        "frankenlibc_contract"
+      ],
+      "divergence_class": "flaky_environment",
+      "expected_claim_effect": "blocks parity claim until environment inputs and replay command are captured",
+      "artifact_refs": [
+        "tests/conformance/fixtures/resolver.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/semantic_contract_symbol_join.v1.json"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "dns-success-not-general-nss-support",
+          "claim": "A DNS success on one host proves resolver and NSS replacement support.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "environment_specific_success_overclaimed"
+        },
+        {
+          "id": "flaky-result-needs-replay",
+          "claim": "Environment-sensitive failure can be closed without replay metadata.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "missing_replay_environment"
+        }
+      ]
+    },
+    {
+      "scenario_id": "bootstrap-surface-proof-gap",
+      "description": "A bootstrap-only implementation where source and taxonomy exist but evidence is insufficient for semantic replacement claims.",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "api_family": "loader_iconv_stdio",
+      "symbols": [
+        "__gconv_open",
+        "__nss_configure_lookup",
+        "__overflow"
+      ],
+      "primary_oracle": "posix_text",
+      "fallback_oracles": [
+        "frankenlibc_contract",
+        "host_glibc"
+      ],
+      "divergence_class": "proof_gap",
+      "expected_claim_effect": "blocks claim until the missing fixture, workload, or proof artifact exists",
+      "artifact_refs": [
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "tests/conformance/semantic_contract_symbol_join.v1.json",
+        "tests/conformance/fixture_coverage_prioritizer.v1.json"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "taxonomy-implemented-not-proof",
+          "claim": "Implemented taxonomy without fixture evidence proves semantic support.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "missing_machine_verifiable_evidence"
+        },
+        {
+          "id": "bootstrap-not-full-workload",
+          "claim": "Bootstrap-only behavior proves real workload compatibility.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "bootstrap_contract_overclaimed"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "oracle_kind_count": 6,
+    "divergence_class_count": 6,
+    "decision_rule_count": 5,
+    "semantic_class_mapping_count": 5,
+    "scenario_count": 6,
+    "negative_claim_test_count": 12,
+    "by_divergence_class": {
+      "allowed_divergence": 1,
+      "flaky_environment": 1,
+      "parity_match": 1,
+      "proof_gap": 1,
+      "safety_repair": 1,
+      "unsupported_contract": 1
+    },
+    "by_primary_oracle": {
+      "environment_probe": 1,
+      "frankenlibc_contract": 1,
+      "hardened_safety_policy": 1,
+      "host_glibc": 1,
+      "linux_syscall": 1,
+      "posix_text": 1
+    },
+    "semantic_classes_mapped": [
+      "abort_only",
+      "compat_noop",
+      "deterministic_fallback",
+      "limited_bootstrap",
+      "unsupported_platform_contract"
+    ]
+  }
+}
