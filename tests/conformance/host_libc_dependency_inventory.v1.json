@@ -9,6 +9,31 @@
     "replacement_levels": "tests/conformance/replacement_levels.json",
     "release_artifact": "target/release/libfrankenlibc_abi.so"
   },
+  "artifact_inventory": {
+    "cdylib_output": "target/release/libfrankenlibc_abi.so",
+    "staticlib_output": "target/release/libfrankenlibc_abi.a",
+    "staticlib_current_state": "frankenlibc-abi currently emits cdylib+rlib, so missing staticlib output is inventoried as an L2/L3 standalone blocker rather than hidden."
+  },
+  "source_surfaces": {
+    "build_scripts": [
+      "crates/frankenlibc-abi/build.rs",
+      "crates/frankenlibc-core/build.rs",
+      "crates/frankenlibc-membrane/build.rs"
+    ],
+    "test_roots": [
+      "crates/frankenlibc-abi/tests",
+      "crates/frankenlibc-harness/tests",
+      "tests/integration"
+    ],
+    "generated_docs": [
+      "README.md",
+      "DEPLOYMENT.md",
+      "FEATURE_PARITY.md",
+      "tests/conformance/replacement_levels.json",
+      "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+      "tests/release/dossier_validation_report.v1.json"
+    ]
+  },
   "generated_outputs": {
     "report": "target/conformance/host_libc_dependency_inventory.report.json",
     "log_jsonl": "target/conformance/host_libc_dependency_inventory.log.jsonl"
@@ -18,6 +43,8 @@
     "strict_behavior": "Set FRANKENLIBC_REQUIRE_RELEASE_ARTIFACT=1 to require target/release/libfrankenlibc_abi.so and fail when it is missing.",
     "dynamic_audit_tools": [
       "readelf -d",
+      "ldd",
+      "objdump -p",
       "nm -D --undefined-only"
     ],
     "replacement_blocking_rule": "Any remaining host glibc, loader, CRT, startup, dlsym/dlopen, or dynamic runtime dependency is allowed only for L0/L1 interpose unless explicitly approved by a later replacement bead."
@@ -54,13 +81,38 @@
     "direct_call_rule": "Every source-level libc::function call other than libc::syscall must be in an allowlisted interpose module or a documented resolver module.",
     "failure_signature": "unapproved_source_callthrough"
   },
+  "stale_artifact_policy": {
+    "strict_behavior": "Strict release-artifact mode rejects artifacts older than configured source inputs. Source-only CI remains usable when no release artifact exists.",
+    "failure_signature": "stale_release_artifact",
+    "reference_inputs": [
+      "crates/frankenlibc-abi/src",
+      "crates/frankenlibc-abi/Cargo.toml",
+      "crates/frankenlibc-abi/build.rs",
+      "support_matrix.json",
+      "tests/conformance/replacement_profile.json",
+      "tests/conformance/replacement_levels.json",
+      "tests/conformance/host_libc_dependency_inventory.v1.json"
+    ]
+  },
+  "false_positive_suppression": {
+    "self_reference_paths": [
+      "scripts/check_host_libc_dependency_inventory.sh",
+      "crates/frankenlibc-harness/tests/host_libc_dependency_inventory_test.rs",
+      "tests/conformance/host_libc_dependency_inventory.v1.json"
+    ],
+    "rule": "The generic build/test/docs surface scan suppresses the checker, its tests, and this contract so self-references cannot satisfy inventory coverage."
+  },
   "required_inventory_categories": [
     "host_symbol_resolution",
     "direct_libc_call",
     "host_pthread_resolver",
     "loader_boundary",
     "crt_startup",
-    "release_dynamic_dependency"
+    "release_dynamic_dependency",
+    "static_artifact_configuration",
+    "build_script_host_dependency",
+    "test_host_oracle_reference",
+    "generated_doc_host_dependency"
   ],
   "required_anchor_symbols": [
     "__libc_start_main",
@@ -98,6 +150,9 @@
     "replacement_level",
     "api_family",
     "symbol",
+    "artifact_path",
+    "dependency_kind",
+    "library",
     "oracle_kind",
     "expected",
     "actual",

@@ -2395,8 +2395,8 @@ mod x86_64_tests {
 
     #[test]
     fn clone3_zero_size_rejected_or_unavailable() {
-        let err =
-            unsafe { sys_clone3(core::ptr::null(), 0) }.expect_err("clone3(null, 0) must fail");
+        let err = unsafe { sys_clone3(core::ptr::null::<CloneArgs>(), 0) }
+            .expect_err("clone3(null, 0) must fail");
         assert!(
             matches!(err, EINVAL | ENOSYS | EPERM),
             "expected EINVAL/ENOSYS/EPERM, got {err}"
@@ -2405,8 +2405,13 @@ mod x86_64_tests {
 
     #[test]
     fn clone3_null_args_with_struct_size_faults_or_unavailable() {
-        let err = unsafe { sys_clone3(core::ptr::null(), core::mem::size_of::<CloneArgs>()) }
-            .expect_err("clone3(null, sizeof(CloneArgs)) must fail");
+        let err = unsafe {
+            sys_clone3(
+                core::ptr::null::<CloneArgs>(),
+                core::mem::size_of::<CloneArgs>(),
+            )
+        }
+        .expect_err("clone3(null, sizeof(CloneArgs)) must fail");
         assert!(
             matches!(err, EFAULT | ENOSYS | EPERM),
             "expected EFAULT/ENOSYS/EPERM, got {err}"

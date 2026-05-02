@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 type TestResult<T = ()> = Result<T, String>;
 
@@ -18,6 +19,9 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "replacement_level",
     "api_family",
     "symbol",
+    "artifact_path",
+    "dependency_kind",
+    "library",
     "oracle_kind",
     "expected",
     "actual",
@@ -108,8 +112,30 @@ fn run_gate_with_env(envs: &[(&str, &str)]) -> TestResult<(std::process::Output,
     Ok((output, root))
 }
 
-fn run_gate() -> TestResult<serde_json::Value> {
-    let (output, root) = run_gate_with_env(&[])?;
+fn unique_suffix(label: &str) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{}-{nanos}", label, std::process::id())
+}
+
+fn run_gate_named(label: &str) -> TestResult<(serde_json::Value, PathBuf)> {
+    let root = workspace_root()?;
+    let suffix = unique_suffix(label);
+    let report_path = root.join(format!(
+        "target/conformance/host_libc_dependency_inventory.{suffix}.report.json"
+    ));
+    let log_path = root.join(format!(
+        "target/conformance/host_libc_dependency_inventory.{suffix}.log.jsonl"
+    ));
+    let report_path_s = report_path.to_string_lossy().into_owned();
+    let log_path_s = log_path.to_string_lossy().into_owned();
+
+    let (output, _) = run_gate_with_env(&[
+        ("FRANKENLIBC_HOST_DEP_REPORT", report_path_s.as_str()),
+        ("FRANKENLIBC_HOST_DEP_LOG", log_path_s.as_str()),
+    ])?;
     if !output.status.success() {
         return Err(format!(
             "inventory gate failed\nstdout:\n{}\nstderr:\n{}",
@@ -117,7 +143,11 @@ fn run_gate() -> TestResult<serde_json::Value> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    load_json(&root.join("target/conformance/host_libc_dependency_inventory.report.json"))
+    Ok((load_json(&report_path)?, log_path))
+}
+
+fn run_gate() -> TestResult<serde_json::Value> {
+    run_gate_named("report").map(|(report, _)| report)
 }
 
 #[test]
@@ -137,6 +167,22 @@ fn contract_has_required_shape_and_fields() -> TestResult {
         "release artifact policy must be present",
     )?;
     require(
+        contract["artifact_inventory"].is_object(),
+        "artifact inventory policy must be present",
+    )?;
+    require(
+        contract["source_surfaces"].is_object(),
+        "source surface inventory policy must be present",
+    )?;
+    require(
+        contract["stale_artifact_policy"].is_object(),
+        "stale artifact policy must be present",
+    )?;
+    require(
+        contract["false_positive_suppression"].is_object(),
+        "false positive suppression policy must be present",
+    )?;
+    require(
         json_array(&contract, "negative_claim_tests")?.len() >= 3,
         "negative standalone-claim tests must be documented",
     )?;
@@ -148,6 +194,13 @@ fn contract_has_required_shape_and_fields() -> TestResult {
         contract["profile_allowlist_policy"].is_object(),
         "profile allowlist policy must be documented",
     )?;
+    let dynamic_tools = string_array(&contract["release_artifact_policy"], "dynamic_audit_tools")?;
+    for tool in ["readelf -d", "ldd", "objdump -p", "nm -D --undefined-only"] {
+        require(
+            dynamic_tools.iter().any(|seen| seen == tool),
+            format!("dynamic audit tools must include {tool}"),
+        )?;
+    }
 
     let log_fields = string_array(&contract, "required_log_fields")?;
     require(
@@ -159,7 +212,7 @@ fn contract_has_required_shape_and_fields() -> TestResult {
 
 #[test]
 fn gate_emits_complete_inventory_report_and_log() -> TestResult {
-    let report = run_gate()?;
+    let (report, log_path) = run_gate_named("complete-log")?;
     require(
         report["schema_version"].as_str() == Some("v1"),
         "report schema_version must be v1",
@@ -180,9 +233,15 @@ fn gate_emits_complete_inventory_report_and_log() -> TestResult {
         report["summary"]["l2_l3_blocker_count"].as_u64() > Some(0),
         "current inventory must identify L2/L3 blockers rather than silently approving replacement",
     )?;
+    require(
+        report["summary"]["dependency_counts_by_category"].is_object(),
+        "report must include dependency_counts_by_category",
+    )?;
+    require(
+        report["summary"]["library_counts"].is_object(),
+        "report must include library_counts",
+    )?;
 
-    let root = workspace_root()?;
-    let log_path = root.join("target/conformance/host_libc_dependency_inventory.log.jsonl");
     let log = std::fs::read_to_string(&log_path)
         .map_err(|err| format!("{}: {err}", log_path.display()))?;
     let first_line = log
@@ -197,6 +256,18 @@ fn gate_emits_complete_inventory_report_and_log() -> TestResult {
             format!("first log row missing required field {field}"),
         )?;
     }
+    require(
+        first_row["artifact_path"].is_string(),
+        "log row artifact_path must be a string",
+    )?;
+    require(
+        first_row["dependency_kind"].is_string(),
+        "log row dependency_kind must be a string",
+    )?;
+    require(
+        first_row["library"].is_string(),
+        "log row library must be a string",
+    )?;
     Ok(())
 }
 
@@ -284,6 +355,10 @@ fn present_release_artifact_mode_uses_readelf_or_nm_evidence() -> TestResult {
         report["release_artifact"]["required"].as_bool() == Some(true),
         "present ELF report must record strict artifact requirement",
     )?;
+    require(
+        report["release_artifact"]["stale"].as_bool() == Some(false),
+        "present ELF fixture should not be treated as stale without explicit stale enforcement",
+    )?;
     let log = std::fs::read_to_string(&log_path)
         .map_err(|err| format!("{}: {err}", log_path.display()))?;
     require(
@@ -294,6 +369,59 @@ fn present_release_artifact_mode_uses_readelf_or_nm_evidence() -> TestResult {
         log.contains("\"tool\":\"readelf -d\"")
             || log.contains("\"tool\":\"nm -D --undefined-only\""),
         "present ELF log must include readelf or nm evidence",
+    )?;
+    require(
+        log.contains("\"tool\":\"objdump -p\"") || log.contains("\"tool\":\"ldd\""),
+        "present ELF log must include objdump or ldd evidence",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn strict_stale_release_artifact_mode_fails_with_signature() -> TestResult {
+    let root = workspace_root()?;
+    let report_path =
+        root.join("target/conformance/host_libc_dependency_inventory.stale.report.json");
+    let log_path = root.join("target/conformance/host_libc_dependency_inventory.stale.log.jsonl");
+    let report_path_s = report_path.to_string_lossy().into_owned();
+    let log_path_s = log_path.to_string_lossy().into_owned();
+
+    let (output, _) = run_gate_with_env(&[
+        ("FRANKENLIBC_REQUIRE_RELEASE_ARTIFACT", "1"),
+        ("FRANKENLIBC_ENFORCE_RELEASE_STALENESS", "1"),
+        ("FRANKENLIBC_RELEASE_ARTIFACT", "/bin/true"),
+        ("FRANKENLIBC_HOST_DEP_REPORT", report_path_s.as_str()),
+        ("FRANKENLIBC_HOST_DEP_LOG", log_path_s.as_str()),
+    ])?;
+    require(
+        !output.status.success(),
+        "strict stale release artifact mode should fail",
+    )?;
+
+    let report = load_json(&report_path)?;
+    require(
+        report["status"].as_str() == Some("fail"),
+        format!("stale report should fail: {report:?}"),
+    )?;
+    require(
+        report["release_artifact"]["stale"].as_bool() == Some(true),
+        "stale report must mark release artifact stale",
+    )?;
+    require(
+        report["errors"].as_array().is_some_and(|errors| {
+            errors.iter().any(|err| {
+                err.as_str()
+                    .is_some_and(|text| text.contains("release artifact stale"))
+            })
+        }),
+        "stale report must include a release artifact stale error",
+    )?;
+
+    let log = std::fs::read_to_string(&log_path)
+        .map_err(|err| format!("{}: {err}", log_path.display()))?;
+    require(
+        log.contains("\"failure_signature\":\"stale_release_artifact\""),
+        "stale log must preserve the stale_release_artifact failure signature",
     )?;
     Ok(())
 }
@@ -324,6 +452,41 @@ fn required_categories_and_anchor_symbols_are_present() -> TestResult {
         seen_symbols == required_symbols,
         format!("required symbol mismatch: {seen_symbols:?}"),
     )?;
+    Ok(())
+}
+
+#[test]
+fn source_surfaces_are_inventoried_without_self_reference_noise() -> TestResult {
+    let (report, log_path) = run_gate_named("surface-noise")?;
+    let counts = report["summary"]["source_surface_counts"]
+        .as_object()
+        .ok_or_else(|| "summary.source_surface_counts must be an object".to_string())?;
+    for category in [
+        "build_script_host_dependency",
+        "test_host_oracle_reference",
+        "generated_doc_host_dependency",
+    ] {
+        require(
+            counts
+                .get(category)
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|count| count > 0),
+            format!("source surface category {category} must have rows"),
+        )?;
+    }
+
+    let log = std::fs::read_to_string(&log_path)
+        .map_err(|err| format!("{}: {err}", log_path.display()))?;
+    for suppressed in [
+        "scripts/check_host_libc_dependency_inventory.sh",
+        "crates/frankenlibc-harness/tests/host_libc_dependency_inventory_test.rs",
+        "tests/conformance/host_libc_dependency_inventory.v1.json",
+    ] {
+        require(
+            !log.contains(suppressed),
+            format!("generic source-surface scan must suppress self-reference path {suppressed}"),
+        )?;
+    }
     Ok(())
 }
 
