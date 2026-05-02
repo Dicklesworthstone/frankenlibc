@@ -604,6 +604,14 @@ pub const SYS_KEXEC_FILE_LOAD: usize = 320;
 pub const SYS_SET_ROBUST_LIST: usize = 273;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_GET_ROBUST_LIST: usize = 274;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LSM_GET_SELF_ATTR: usize = 459;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LSM_SET_SELF_ATTR: usize = 460;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_LSM_LIST_MODULES: usize = 461;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_IO_PGETEVENTS: usize = 333;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -802,6 +810,14 @@ pub const SYS_KEXEC_FILE_LOAD: usize = 294;
 pub const SYS_SET_ROBUST_LIST: usize = 99;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_GET_ROBUST_LIST: usize = 100;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LSM_GET_SELF_ATTR: usize = 459;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LSM_SET_SELF_ATTR: usize = 460;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_LSM_LIST_MODULES: usize = 461;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_IO_PGETEVENTS: usize = 292;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2197,6 +2213,11 @@ pub unsafe fn sys_move_pages(
 /// `set_mempolicy_home_node(start, len, home_node, flags)` —
 /// configure the preferred NUMA node for a virtual address range
 /// (Linux 6.1+, x86_64 syscall 450).
+///
+/// # Safety
+///
+/// `start..start + len` must describe a valid mapped virtual address
+/// range for the calling process.
 #[inline]
 #[allow(unsafe_code)]
 pub unsafe fn sys_set_mempolicy_home_node(
@@ -2547,6 +2568,116 @@ pub unsafe fn sys_get_robust_list(
         )
     };
     syscall_result(ret).map(|_| ())
+}
+
+/// `lsm_get_self_attr(attr_id, ctx, size, flags)` — read an LSM
+/// attribute for the calling thread (Linux 6.8+, syscall 459).
+///
+/// # Safety
+///
+/// `size` must point to writable `u32` storage; `ctx`, when
+/// non-NULL, must point to at least `*size` writable bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_lsm_get_self_attr(
+    attr_id: u32,
+    ctx: *mut u8,
+    size: *mut u32,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_LSM_GET_SELF_ATTR,
+            attr_id as usize,
+            ctx as usize,
+            size as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `lsm_set_self_attr(attr_id, ctx, size, flags)` — write an LSM
+/// attribute for the calling thread (Linux 6.8+, syscall 460).
+///
+/// # Safety
+///
+/// `ctx` must point to at least `size` readable bytes describing the
+/// LSM-specific attribute payload.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_lsm_set_self_attr(
+    attr_id: u32,
+    ctx: *const u8,
+    size: u32,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_LSM_SET_SELF_ATTR,
+            attr_id as usize,
+            ctx as usize,
+            size as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `lsm_list_modules(ids, size, flags)` — enumerate LSM module IDs
+/// (Linux 6.8+, syscall 461).
+///
+/// # Safety
+///
+/// `size` must point to writable `u32` storage; `ids`, when
+/// non-NULL, must point to at least `*size` writable bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_lsm_list_modules(
+    ids: *mut u64,
+    size: *mut u32,
+    flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_LSM_LIST_MODULES,
+            ids as usize,
+            size as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `io_pgetevents(ctx_id, min_nr, nr, events, timeout, sig)` —
+/// `io_getevents` with a sigmask (Linux 4.18+, x86_64 syscall 333).
+///
+/// # Safety
+///
+/// `events`, when `nr > 0`, must point to writable storage for `nr`
+/// `struct io_event` entries.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_io_pgetevents(
+    ctx_id: usize,
+    min_nr: isize,
+    nr: isize,
+    events: *mut u8,
+    timeout: *const u8,
+    sig: *const u8,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_IO_PGETEVENTS,
+            ctx_id,
+            min_nr as usize,
+            nr as usize,
+            events as usize,
+            timeout as usize,
+            sig as usize,
+        )
+    };
+    syscall_result(ret).map(|n| n as i32)
 }
 
 /// `futex(uaddr, futex_op, val, timeout, uaddr2, val3)` — fast userspace mutex.
@@ -3772,7 +3903,7 @@ pub fn sys_clone_fork(flags: usize) -> Result<i32, i32> {
 /// must be prepared to handle both control-flow paths.
 #[inline]
 #[allow(unsafe_code)]
-pub unsafe fn sys_clone3(args: *const CloneArgs, size: usize) -> Result<i32, i32> {
+pub unsafe fn sys_clone3<T>(args: *const T, size: usize) -> Result<i32, i32> {
     let ret = unsafe { raw::syscall2(SYS_CLONE3, args as usize, size) };
     syscall_result(ret).map(|v| v as i32)
 }

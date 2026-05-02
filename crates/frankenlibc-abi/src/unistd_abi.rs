@@ -5789,18 +5789,13 @@ pub unsafe extern "C" fn lsm_get_self_attr(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    const SYS_LSM_GET_SELF_ATTR: libc::c_long = 459;
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            SYS_LSM_GET_SELF_ATTR,
-            attr_id as libc::c_long,
-            ctx as libc::c_long,
-            size as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_lsm_get_self_attr(attr_id, ctx as *mut u8, size, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `lsm_set_self_attr(attr_id, *ctx, size, flags) -> int`
@@ -5822,18 +5817,13 @@ pub unsafe extern "C" fn lsm_set_self_attr(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    const SYS_LSM_SET_SELF_ATTR: libc::c_long = 460;
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            SYS_LSM_SET_SELF_ATTR,
-            attr_id as libc::c_long,
-            ctx as libc::c_long,
-            size as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_lsm_set_self_attr(attr_id, ctx as *const u8, size, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `lsm_list_modules(*ids, *size, flags) -> int` (Linux 6.8+,
@@ -5851,17 +5841,13 @@ pub unsafe extern "C" fn lsm_list_modules(ids: *mut u64, size: *mut u32, flags: 
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    const SYS_LSM_LIST_MODULES: libc::c_long = 461;
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            SYS_LSM_LIST_MODULES,
-            ids as libc::c_long,
-            size as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_lsm_list_modules(ids, size, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5884,17 +5870,13 @@ pub unsafe extern "C" fn faccessat2(
     mode: c_int,
     flags: c_int,
 ) -> c_int {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_faccessat2,
-            dirfd as libc::c_long,
-            pathname as libc::c_long,
-            mode as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_faccessat2(dirfd, pathname as *const u8, mode, flags) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `io_pgetevents(ctx_id, min_nr, nr, *events, *timeout, *sig)
@@ -5922,20 +5904,22 @@ pub unsafe extern "C" fn io_pgetevents(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    const SYS_IO_PGETEVENTS: libc::c_long = 333;
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            SYS_IO_PGETEVENTS,
-            ctx_id as libc::c_long,
-            min_nr,
-            nr,
-            events as libc::c_long,
-            timeout as libc::c_long,
-            sig as libc::c_long,
+    match unsafe {
+        syscall::sys_io_pgetevents(
+            ctx_id as usize,
+            min_nr as isize,
+            nr as isize,
+            events as *mut u8,
+            timeout as *const u8,
+            sig as *const u8,
         )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `clone3(*cl_args, size) -> pid_t` (Linux 5.3+,
@@ -5959,20 +5943,13 @@ pub unsafe extern "C" fn clone3(cl_args: *mut c_void, size: usize) -> libc::pid_
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_clone3,
-            cl_args as libc::c_long,
-            size as libc::c_long,
-        )
-    };
-    if rc < 0 {
-        let e = unsafe { *libc::__errno_location() };
-        unsafe { set_abi_errno(e) };
-        return -1;
+    match unsafe { syscall::sys_clone3(cl_args as *const c_void, size) } {
+        Ok(n) => n as libc::pid_t,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
     }
-    rc as libc::pid_t
 }
 
 // ---------------------------------------------------------------------------
