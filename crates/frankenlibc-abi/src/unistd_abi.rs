@@ -5606,17 +5606,13 @@ pub unsafe extern "C" fn quotactl_fd(
 /// thread on x86_64. `addr == 0` lets the kernel pick.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn map_shadow_stack(addr: c_ulong, size: c_ulong, flags: c_uint) -> c_long {
-    const SYS_MAP_SHADOW_STACK: libc::c_long = 453;
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            SYS_MAP_SHADOW_STACK,
-            addr as libc::c_long,
-            size as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno_long(rc) }
+    match unsafe { syscall::sys_map_shadow_stack(addr as usize, size as usize, flags) } {
+        Ok(p) => p as c_long,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `bpf(cmd, *attr, size) -> int` (`SYS_bpf = 321`) —
@@ -25167,9 +25163,8 @@ pub unsafe extern "C" fn file_setattr(
 // implementation stays on the multiplexed syscall), so frankenlibc is
 // the canonical entrypoint for futex2-style synchronization primitives.
 
-const SYS_FUTEX_WAKE: libc::c_long = 454;
-const SYS_FUTEX_WAIT: libc::c_long = 455;
-const SYS_FUTEX_REQUEUE: libc::c_long = 456;
+// Linux 6.7+ futex2 syscall numbers live in
+// frankenlibc_core::syscall::SYS_FUTEX_WAKE / WAIT / REQUEUE.
 
 /// Linux `futex_wake(*uaddr, mask, nr, flags) -> int` (Linux 6.7+,
 /// `SYS_futex_wake = 454`) — wake up to `nr` waiters whose
@@ -25187,16 +25182,13 @@ pub unsafe extern "C" fn futex_wake(
     nr: c_int,
     flags: c_uint,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_FUTEX_WAKE,
-            uaddr as libc::c_long,
-            mask as libc::c_long,
-            nr as libc::c_long,
-            flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_futex_wake(uaddr as *mut u8, mask as usize, nr, flags) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `futex_wait(*uaddr, val, mask, flags, *timeout, clockid) ->
@@ -25218,18 +25210,22 @@ pub unsafe extern "C" fn futex_wait(
     timeout: *const libc::timespec,
     clockid: libc::clockid_t,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_FUTEX_WAIT,
-            uaddr as libc::c_long,
-            val as libc::c_long,
-            mask as libc::c_long,
-            flags as libc::c_long,
-            timeout as libc::c_long,
-            clockid as libc::c_long,
+    match unsafe {
+        syscall::sys_futex_wait(
+            uaddr as *mut u8,
+            val as usize,
+            mask as usize,
+            flags,
+            timeout as *const u8,
+            clockid,
         )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `futex_requeue(*waiters, flags, nr_wake, nr_requeue) ->
@@ -25249,14 +25245,13 @@ pub unsafe extern "C" fn futex_requeue(
     nr_wake: c_int,
     nr_requeue: c_int,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_FUTEX_REQUEUE,
-            waiters as libc::c_long,
-            flags as libc::c_long,
-            nr_wake as libc::c_long,
-            nr_requeue as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_futex_requeue(waiters as *const u8, flags, nr_wake, nr_requeue)
+    } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }

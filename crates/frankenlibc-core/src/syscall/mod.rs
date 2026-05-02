@@ -612,6 +612,14 @@ pub const SYS_LSM_SET_SELF_ATTR: usize = 460;
 pub const SYS_LSM_LIST_MODULES: usize = 461;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_IO_PGETEVENTS: usize = 333;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FUTEX_WAKE: usize = 454;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FUTEX_WAIT: usize = 455;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FUTEX_REQUEUE: usize = 456;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_MAP_SHADOW_STACK: usize = 453;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -818,6 +826,14 @@ pub const SYS_LSM_SET_SELF_ATTR: usize = 460;
 pub const SYS_LSM_LIST_MODULES: usize = 461;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_IO_PGETEVENTS: usize = 292;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FUTEX_WAKE: usize = 454;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FUTEX_WAIT: usize = 455;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FUTEX_REQUEUE: usize = 456;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_MAP_SHADOW_STACK: usize = 453;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2678,6 +2694,109 @@ pub unsafe fn sys_io_pgetevents(
         )
     };
     syscall_result(ret).map(|n| n as i32)
+}
+
+/// `futex_wake(uaddr, mask, nr, flags)` — Linux 6.7+ futex2 wake
+/// (syscall 454). Returns the number of waiters woken.
+///
+/// # Safety
+///
+/// `uaddr` must point to a valid aligned futex word.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_futex_wake(
+    uaddr: *mut u8,
+    mask: usize,
+    nr: i32,
+    flags: u32,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_FUTEX_WAKE,
+            uaddr as usize,
+            mask,
+            nr as usize,
+            flags as usize,
+        )
+    };
+    syscall_result(ret).map(|n| n as i32)
+}
+
+/// `futex_wait(uaddr, val, mask, flags, timeout, clockid)` — Linux
+/// 6.7+ futex2 wait (syscall 455).
+///
+/// # Safety
+///
+/// `uaddr` must point to a valid aligned futex word; `timeout`,
+/// when non-NULL, must point to a `struct __kernel_timespec`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_futex_wait(
+    uaddr: *mut u8,
+    val: usize,
+    mask: usize,
+    flags: u32,
+    timeout: *const u8,
+    clockid: i32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall6(
+            SYS_FUTEX_WAIT,
+            uaddr as usize,
+            val,
+            mask,
+            flags as usize,
+            timeout as usize,
+            clockid as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `futex_requeue(waiters, flags, nr_wake, nr_requeue)` — Linux 6.7+
+/// futex2 requeue (syscall 456).
+///
+/// # Safety
+///
+/// `waiters` must point to a 2-element array of `struct futex_waitv`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_futex_requeue(
+    waiters: *const u8,
+    flags: u32,
+    nr_wake: i32,
+    nr_requeue: i32,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_FUTEX_REQUEUE,
+            waiters as usize,
+            flags as usize,
+            nr_wake as usize,
+            nr_requeue as usize,
+        )
+    };
+    syscall_result(ret).map(|n| n as i32)
+}
+
+/// `map_shadow_stack(addr, size, flags)` — allocate a CET shadow
+/// stack (Linux 6.6+, x86_64 syscall 453).
+///
+/// # Safety
+///
+/// `addr` may be NULL or page-aligned; the kernel chooses an address
+/// otherwise.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_map_shadow_stack(
+    addr: usize,
+    size: usize,
+    flags: u32,
+) -> Result<usize, i32> {
+    let ret = unsafe {
+        raw::syscall3(SYS_MAP_SHADOW_STACK, addr, size, flags as usize)
+    };
+    syscall_result(ret)
 }
 
 /// `futex(uaddr, futex_op, val, timeout, uaddr2, val3)` — fast userspace mutex.
