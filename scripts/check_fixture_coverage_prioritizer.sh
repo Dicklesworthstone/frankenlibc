@@ -12,13 +12,14 @@ COVERAGE="${ROOT}/tests/conformance/symbol_fixture_coverage.v1.json"
 PER_SYMBOL="${ROOT}/tests/conformance/per_symbol_fixture_tests.v1.json"
 SUPPORT="${ROOT}/support_matrix.json"
 WORKLOADS="${ROOT}/tests/conformance/user_workload_acceptance_matrix.v1.json"
+FEATURE_GAPS="${ROOT}/tests/conformance/feature_parity_gap_groups.v1.json"
 OUT_DIR="${ROOT}/target/conformance"
 REPORT="${OUT_DIR}/fixture_coverage_prioritizer.report.json"
 LOG="${OUT_DIR}/fixture_coverage_prioritizer.log.jsonl"
 
 mkdir -p "${OUT_DIR}"
 
-python3 - "${ROOT}" "${ARTIFACT}" "${COVERAGE}" "${PER_SYMBOL}" "${SUPPORT}" "${WORKLOADS}" "${REPORT}" "${LOG}" <<'PY'
+python3 - "${ROOT}" "${ARTIFACT}" "${COVERAGE}" "${PER_SYMBOL}" "${SUPPORT}" "${WORKLOADS}" "${FEATURE_GAPS}" "${REPORT}" "${LOG}" <<'PY'
 import json
 import subprocess
 import sys
@@ -31,12 +32,20 @@ coverage_path = Path(sys.argv[3])
 per_symbol_path = Path(sys.argv[4])
 support_path = Path(sys.argv[5])
 workloads_path = Path(sys.argv[6])
-report_path = Path(sys.argv[7])
-log_path = Path(sys.argv[8])
+feature_gaps_path = Path(sys.argv[7])
+report_path = Path(sys.argv[8])
+log_path = Path(sys.argv[9])
 
 errors = []
 checks = {}
 
+EXPECTED_INPUTS = {
+    "support_matrix": "support_matrix.json",
+    "symbol_fixture_coverage": "tests/conformance/symbol_fixture_coverage.v1.json",
+    "per_symbol_fixture_tests": "tests/conformance/per_symbol_fixture_tests.v1.json",
+    "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+}
 REQUIRED_LOG_FIELDS = [
     "trace_id",
     "bead_id",
@@ -78,6 +87,16 @@ REQUIRED_CAMPAIGN_FIELDS = [
     "structured_log_fields",
     "next_step",
 ]
+REQUIRED_DEFERRED_FIELDS = [
+    "module",
+    "target_total",
+    "target_covered",
+    "target_uncovered",
+    "current_coverage_pct",
+    "status_breakdown",
+    "deferral_reason",
+    "next_step",
+]
 
 def load_json(path):
     try:
@@ -91,7 +110,8 @@ coverage = load_json(coverage_path)
 per_symbol = load_json(per_symbol_path)
 support = load_json(support_path)
 workloads = load_json(workloads_path)
-checks["json_parse"] = "pass" if all(isinstance(x, dict) for x in [artifact, coverage, per_symbol, support, workloads]) else "fail"
+feature_gaps = load_json(feature_gaps_path)
+checks["json_parse"] = "pass" if all(isinstance(x, dict) for x in [artifact, coverage, per_symbol, support, workloads, feature_gaps]) else "fail"
 if not isinstance(artifact, dict):
     artifact = {}
 if not isinstance(coverage, dict):
@@ -102,6 +122,8 @@ if not isinstance(support, dict):
     support = {}
 if not isinstance(workloads, dict):
     workloads = {}
+if not isinstance(feature_gaps, dict):
+    feature_gaps = {}
 
 if artifact.get("schema_version") == "v1" and artifact.get("bead") == "bd-bp8fl.4.1":
     checks["top_level_shape"] = "pass"
@@ -114,6 +136,25 @@ if artifact.get("required_log_fields") == REQUIRED_LOG_FIELDS:
 else:
     checks["required_log_fields"] = "fail"
     errors.append("required_log_fields must match the standard structured log contract")
+
+inputs_ok = artifact.get("inputs") == EXPECTED_INPUTS
+for key, rel_path in EXPECTED_INPUTS.items():
+    if not (root / rel_path).exists():
+        inputs_ok = False
+        errors.append(f"declared input does not exist: {key}={rel_path}")
+feature_axes = set(feature_gaps.get("required_grouping_axes", []))
+feature_gap_summary = feature_gaps.get("summary", {})
+feature_gap_ok = (
+    feature_gaps.get("schema_version") == "v1"
+    and feature_gaps.get("bead") == "bd-bp8fl.3.1"
+    and feature_gap_summary.get("ledger_gap_count", 0) > 0
+    and {"symbol_family", "source_owner", "evidence_artifacts", "priority"}.issubset(feature_axes)
+)
+if not inputs_ok:
+    errors.append("inputs must exactly name the current coverage, support, workload, and feature-gap artifacts")
+if not feature_gap_ok:
+    errors.append("feature_parity_gap_groups input must be a live v1 gap grouping artifact with symbol/source/evidence/priority axes")
+checks["inputs_and_feature_gap_refs"] = "pass" if inputs_ok and feature_gap_ok else "fail"
 
 families = {family.get("module"): family for family in coverage.get("families", [])}
 per_symbol_rows = per_symbol.get("per_symbol_report", [])
@@ -129,6 +170,7 @@ ranks = [campaign.get("rank") for campaign in campaigns]
 modules = []
 domain_coverage = Counter()
 first_wave_total = 0
+selected_target_uncovered = 0
 campaign_ok = bool(campaigns) and len(campaign_ids) == len(set(campaign_ids)) and ranks == list(range(1, len(campaigns) + 1))
 
 for campaign in campaigns:
@@ -225,8 +267,73 @@ for campaign in campaigns:
     if not campaign.get("risk_tags"):
         campaign_ok = False
         errors.append(f"{cid}: risk_tags must not be empty")
+    selected_target_uncovered += campaign.get("target_uncovered", 0)
 
 checks["campaign_schema"] = "pass" if campaign_ok else "fail"
+
+raw_deferred_modules = artifact.get("deferred_modules", [])
+deferred_modules = raw_deferred_modules if isinstance(raw_deferred_modules, list) else []
+uncovered_modules = {
+    module
+    for module, family in families.items()
+    if family.get("target_uncovered", 0) > 0
+}
+selected_modules = set(modules)
+expected_deferred_modules = sorted(
+    uncovered_modules - selected_modules,
+    key=lambda module: (-families[module].get("target_uncovered", 0), module),
+)
+actual_deferred_modules = [
+    row.get("module") for row in deferred_modules if isinstance(row, dict)
+]
+deferred_target_uncovered = 0
+deferred_ok = isinstance(raw_deferred_modules, list) and actual_deferred_modules == expected_deferred_modules
+if not isinstance(raw_deferred_modules, list):
+    errors.append("deferred_modules must be an array")
+if actual_deferred_modules != expected_deferred_modules:
+    deferred_ok = False
+    errors.append("deferred_modules must cover every uncovered non-campaign module in target_uncovered desc order")
+
+for row in deferred_modules:
+    if not isinstance(row, dict):
+        deferred_ok = False
+        errors.append("deferred_modules entries must be objects")
+        continue
+    module = row.get("module", "<missing module>")
+    for field in REQUIRED_DEFERRED_FIELDS:
+        if field not in row:
+            deferred_ok = False
+            errors.append(f"{module}: missing deferred field {field}")
+    if module in selected_modules:
+        deferred_ok = False
+        errors.append(f"{module}: selected campaign module cannot also be deferred")
+    family = families.get(module)
+    if family is None:
+        deferred_ok = False
+        errors.append(f"{module}: deferred module not found in symbol fixture coverage")
+        continue
+    if family.get("target_uncovered", 0) <= 0:
+        deferred_ok = False
+        errors.append(f"{module}: deferred module must still have uncovered target symbols")
+    for src_key, row_key in [
+        ("target_total", "target_total"),
+        ("target_covered", "target_covered"),
+        ("target_uncovered", "target_uncovered"),
+        ("target_coverage_pct", "current_coverage_pct"),
+        ("status_breakdown", "status_breakdown"),
+    ]:
+        if row.get(row_key) != family.get(src_key):
+            deferred_ok = False
+            errors.append(f"{module}: {row_key} does not match symbol_fixture_coverage")
+    if not str(row.get("deferral_reason", "")).strip():
+        deferred_ok = False
+        errors.append(f"{module}: deferral_reason must be non-empty")
+    if not str(row.get("next_step", "")).strip():
+        deferred_ok = False
+        errors.append(f"{module}: next_step must be non-empty")
+    deferred_target_uncovered += row.get("target_uncovered", 0)
+
+checks["deferred_module_inventory"] = "pass" if deferred_ok else "fail"
 
 expected_order = sorted(
     campaigns,
@@ -250,9 +357,14 @@ else:
     errors.append("missing required workload domains: " + ", ".join(missing_required_domains))
 
 summary = artifact.get("summary", {})
+all_uncovered_target_symbols = selected_target_uncovered + deferred_target_uncovered
 summary_ok = (
     summary.get("campaign_count") == len(campaigns)
+    and summary.get("deferred_module_count") == len(deferred_modules)
     and summary.get("total_first_wave_fixture_count") == first_wave_total
+    and summary.get("selected_target_uncovered_symbols") == selected_target_uncovered
+    and summary.get("deferred_target_uncovered_symbols") == deferred_target_uncovered
+    and summary.get("all_uncovered_target_symbols") == all_uncovered_target_symbols
     and summary.get("covered_modules") == sorted(modules)
     and summary.get("required_workload_domains_covered") == sorted(required_domains)
     and summary.get("highest_priority_campaign") == campaigns[0].get("campaign_id")
@@ -277,6 +389,7 @@ artifact_refs = [
     "tests/conformance/fixture_coverage_prioritizer.v1.json",
     "tests/conformance/symbol_fixture_coverage.v1.json",
     "tests/conformance/per_symbol_fixture_tests.v1.json",
+    "tests/conformance/feature_parity_gap_groups.v1.json",
     "target/conformance/fixture_coverage_prioritizer.report.json",
     "target/conformance/fixture_coverage_prioritizer.log.jsonl",
 ]
@@ -286,7 +399,11 @@ report = {
     "status": status,
     "checks": checks,
     "campaign_count": len(campaigns),
+    "deferred_module_count": len(deferred_modules) if isinstance(deferred_modules, list) else 0,
     "total_first_wave_fixture_count": first_wave_total,
+    "selected_target_uncovered_symbols": selected_target_uncovered,
+    "deferred_target_uncovered_symbols": deferred_target_uncovered,
+    "all_uncovered_target_symbols": all_uncovered_target_symbols,
     "covered_modules": sorted(modules),
     "required_workload_domains_covered": sorted(required_domains),
     "missing_required_domains": missing_required_domains,
@@ -325,7 +442,10 @@ event = {
     "target_dir": str(root / "target/conformance"),
     "failure_signature": "; ".join(errors),
     "campaign_count": len(campaigns),
+    "deferred_module_count": len(deferred_modules) if isinstance(deferred_modules, list) else 0,
     "total_first_wave_fixture_count": first_wave_total,
+    "selected_target_uncovered_symbols": selected_target_uncovered,
+    "deferred_target_uncovered_symbols": deferred_target_uncovered,
 }
 log_path.write_text(json.dumps(event, sort_keys=True) + "\n", encoding="utf-8")
 

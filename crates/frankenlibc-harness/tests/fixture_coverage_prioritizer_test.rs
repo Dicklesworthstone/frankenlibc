@@ -27,6 +27,25 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "target_dir",
     "failure_signature",
 ];
+const EXPECTED_INPUTS: &[(&str, &str)] = &[
+    ("support_matrix", "support_matrix.json"),
+    (
+        "symbol_fixture_coverage",
+        "tests/conformance/symbol_fixture_coverage.v1.json",
+    ),
+    (
+        "per_symbol_fixture_tests",
+        "tests/conformance/per_symbol_fixture_tests.v1.json",
+    ),
+    (
+        "user_workload_acceptance_matrix",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    ),
+    (
+        "feature_parity_gap_groups",
+        "tests/conformance/feature_parity_gap_groups.v1.json",
+    ),
+];
 
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
@@ -58,7 +77,25 @@ fn artifact_exists_and_has_required_shape() {
         "scoring_policy must be object"
     );
     assert!(artifact["campaigns"].is_array(), "campaigns must be array");
+    assert!(
+        artifact["deferred_modules"].is_array(),
+        "deferred_modules must be array"
+    );
     assert!(artifact["summary"].is_object(), "summary must be object");
+
+    let root = workspace_root();
+    let inputs = artifact["inputs"].as_object().unwrap();
+    for (key, rel_path) in EXPECTED_INPUTS {
+        assert_eq!(
+            inputs.get(*key).and_then(|value| value.as_str()),
+            Some(*rel_path),
+            "inputs.{key} must point at the expected artifact"
+        );
+        assert!(
+            root.join(rel_path).exists(),
+            "declared input {rel_path} should exist"
+        );
+    }
 
     let log_fields: Vec<_> = artifact["required_log_fields"]
         .as_array()
@@ -67,6 +104,41 @@ fn artifact_exists_and_has_required_shape() {
         .map(|field| field.as_str().unwrap())
         .collect();
     assert_eq!(log_fields, REQUIRED_LOG_FIELDS);
+}
+
+#[test]
+fn feature_gap_input_is_live_and_grouped_for_prioritization() {
+    let root = workspace_root();
+    let artifact = load_prioritizer();
+    let feature_gap_path = artifact["inputs"]["feature_parity_gap_groups"]
+        .as_str()
+        .expect("feature gap input should be a path");
+    let feature_gaps = load_json(&root.join(feature_gap_path));
+
+    assert_eq!(feature_gaps["schema_version"].as_str(), Some("v1"));
+    assert_eq!(feature_gaps["bead"].as_str(), Some("bd-bp8fl.3.1"));
+    assert!(
+        feature_gaps["summary"]["ledger_gap_count"]
+            .as_u64()
+            .unwrap()
+            > 0,
+        "feature parity gap grouping input should contain live ledger gaps"
+    );
+
+    let axes: HashSet<_> = feature_gaps["required_grouping_axes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|axis| axis.as_str().unwrap())
+        .collect();
+    for axis in [
+        "symbol_family",
+        "source_owner",
+        "evidence_artifacts",
+        "priority",
+    ] {
+        assert!(axes.contains(axis), "missing grouping axis {axis}");
+    }
 }
 
 #[test]
@@ -87,21 +159,21 @@ fn campaign_stats_match_fixture_coverage_inputs() {
             )
         })
         .collect();
-    let per_symbol_rows: HashMap<(String, String), serde_json::Value> = per_symbol
-        ["per_symbol_report"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|row| {
-            (
+    let per_symbol_rows: HashMap<(String, String), serde_json::Value> =
+        per_symbol["per_symbol_report"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
                 (
-                    row["module"].as_str().unwrap().to_string(),
-                    row["symbol"].as_str().unwrap().to_string(),
-                ),
-                row.clone(),
-            )
-        })
-        .collect();
+                    (
+                        row["module"].as_str().unwrap().to_string(),
+                        row["symbol"].as_str().unwrap().to_string(),
+                    ),
+                    row.clone(),
+                )
+            })
+            .collect();
 
     for campaign in artifact["campaigns"].as_array().unwrap() {
         let id = campaign["campaign_id"].as_str().unwrap();
@@ -156,6 +228,85 @@ fn campaign_stats_match_fixture_coverage_inputs() {
             );
         }
     }
+}
+
+#[test]
+fn deferred_modules_cover_every_unselected_uncovered_family() {
+    let root = workspace_root();
+    let artifact = load_prioritizer();
+    let coverage = load_json(&root.join("tests/conformance/symbol_fixture_coverage.v1.json"));
+
+    let campaign_modules: HashSet<String> = artifact["campaigns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|campaign| campaign["module"].as_str().unwrap().to_string())
+        .collect();
+
+    let mut expected = Vec::new();
+    for family in coverage["families"].as_array().unwrap() {
+        let module = family["module"].as_str().unwrap();
+        let target_uncovered = family["target_uncovered"].as_u64().unwrap();
+        if target_uncovered > 0 && !campaign_modules.contains(module) {
+            expected.push((module.to_string(), family.clone()));
+        }
+    }
+    expected.sort_by(|left, right| {
+        let left_uncovered = left.1["target_uncovered"].as_u64().unwrap();
+        let right_uncovered = right.1["target_uncovered"].as_u64().unwrap();
+        right_uncovered
+            .cmp(&left_uncovered)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    let deferred = artifact["deferred_modules"].as_array().unwrap();
+    assert_eq!(
+        deferred.len(),
+        expected.len(),
+        "every uncovered non-campaign family should be explicitly deferred"
+    );
+
+    let mut deferred_uncovered = 0_u64;
+    for (row, (expected_module, family)) in deferred.iter().zip(expected.iter()) {
+        assert_eq!(row["module"].as_str(), Some(expected_module.as_str()));
+        assert_eq!(row["target_total"], family["target_total"]);
+        assert_eq!(row["target_covered"], family["target_covered"]);
+        assert_eq!(row["target_uncovered"], family["target_uncovered"]);
+        assert_eq!(row["current_coverage_pct"], family["target_coverage_pct"]);
+        assert_eq!(row["status_breakdown"], family["status_breakdown"]);
+        assert!(
+            !row["deferral_reason"].as_str().unwrap().trim().is_empty(),
+            "{expected_module}: deferral_reason must explain why the family is not first-wave"
+        );
+        assert!(
+            !row["next_step"].as_str().unwrap().trim().is_empty(),
+            "{expected_module}: next_step must keep the family actionable"
+        );
+        deferred_uncovered += row["target_uncovered"].as_u64().unwrap();
+    }
+
+    let selected_uncovered: u64 = artifact["campaigns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|campaign| campaign["target_uncovered"].as_u64().unwrap())
+        .sum();
+    assert_eq!(
+        artifact["summary"]["deferred_module_count"].as_u64(),
+        Some(deferred.len() as u64)
+    );
+    assert_eq!(
+        artifact["summary"]["selected_target_uncovered_symbols"].as_u64(),
+        Some(selected_uncovered)
+    );
+    assert_eq!(
+        artifact["summary"]["deferred_target_uncovered_symbols"].as_u64(),
+        Some(deferred_uncovered)
+    );
+    assert_eq!(
+        artifact["summary"]["all_uncovered_target_symbols"].as_u64(),
+        Some(selected_uncovered + deferred_uncovered)
+    );
 }
 
 #[test]
@@ -287,7 +438,9 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "json_parse",
         "top_level_shape",
         "required_log_fields",
+        "inputs_and_feature_gap_refs",
         "campaign_schema",
+        "deferred_module_inventory",
         "priority_order",
         "workload_domain_coverage",
         "summary_counts",

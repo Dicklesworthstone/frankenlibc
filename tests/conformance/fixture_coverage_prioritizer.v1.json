@@ -967,9 +967,233 @@
       "next_step": "Add deterministic compatibility/unsupported fixtures before claiming RPC-related coverage."
     }
   ],
+  "deferred_modules": [
+    {
+      "module": "stdlib_abi",
+      "target_total": 154,
+      "target_covered": 16,
+      "target_uncovered": 138,
+      "current_coverage_pct": 10.39,
+      "status_breakdown": {
+        "Implemented": 154
+      },
+      "deferral_reason": "Lower workload and parity risk than the first-wave campaigns, but still tracked to prevent silent loss of stdlib conversion, random, exit, and environment fixture coverage.",
+      "next_step": "Create a follow-up stdlib fixture campaign after the current process, stdio, string, pthread, malloc, resolver, loader, and math waves have generated closure evidence."
+    },
+    {
+      "module": "io_internal_abi",
+      "target_total": 114,
+      "target_covered": 27,
+      "target_uncovered": 87,
+      "current_coverage_pct": 23.68,
+      "status_breakdown": {
+        "Implemented": 114
+      },
+      "deferral_reason": "Internal I/O coverage is related to stdio and low-level I/O waves but needs a narrower oracle plan before it should displace user-facing campaigns.",
+      "next_step": "Split internal I/O fixtures by public behavior proxy and add them once stdio and syscall fixture logs identify the shared surface."
+    },
+    {
+      "module": "ctype_abi",
+      "target_total": 49,
+      "target_covered": 11,
+      "target_uncovered": 38,
+      "current_coverage_pct": 22.45,
+      "status_breakdown": {
+        "Implemented": 49
+      },
+      "deferral_reason": "Character classification is important for locale users but has less immediate standalone replacement risk than the selected locale, wchar, and stdio campaigns.",
+      "next_step": "Add ctype boundary fixtures alongside the next locale and transliteration evidence wave."
+    },
+    {
+      "module": "io_abi",
+      "target_total": 28,
+      "target_covered": 1,
+      "target_uncovered": 27,
+      "current_coverage_pct": 3.57,
+      "status_breakdown": {
+        "Implemented": 3,
+        "RawSyscall": 25
+      },
+      "deferral_reason": "Low-level I/O is partially represented by unistd, process, poll, socket, and stdio campaigns; a separate wave should avoid duplicate syscall fixture coverage.",
+      "next_step": "Derive an io_abi campaign from syscall coverage deltas after the unistd and poll waves land."
+    },
+    {
+      "module": "pwd_abi",
+      "target_total": 27,
+      "target_covered": 4,
+      "target_uncovered": 23,
+      "current_coverage_pct": 14.81,
+      "status_breakdown": {
+        "Implemented": 27
+      },
+      "deferral_reason": "Password database behavior belongs with NSS and resolver hard-parts but needs controlled host database fixtures before first-wave expansion.",
+      "next_step": "Add pwd/group/NSS fixtures with deterministic passwd and group databases after resolver campaign evidence is in place."
+    },
+    {
+      "module": "err_abi",
+      "target_total": 12,
+      "target_covered": 0,
+      "target_uncovered": 12,
+      "current_coverage_pct": 0.0,
+      "status_breakdown": {
+        "Implemented": 12
+      },
+      "deferral_reason": "Err/warn helpers are user-visible diagnostics but low breadth compared with the selected high-risk runtime and syscall campaigns.",
+      "next_step": "Create a compact stderr and errno formatting fixture pack once stdio buffering evidence is stable."
+    },
+    {
+      "module": "fenv_abi",
+      "target_total": 11,
+      "target_covered": 0,
+      "target_uncovered": 11,
+      "current_coverage_pct": 0.0,
+      "status_breakdown": {
+        "Implemented": 11
+      },
+      "deferral_reason": "Floating-point environment behavior is high precision work but should be paired with the math exceptional-path fixture pack instead of this broad first queue.",
+      "next_step": "Add fenv fixtures with soft-fp and math exception cases in the dedicated math/fenv wave."
+    },
+    {
+      "module": "inet_abi",
+      "target_total": 17,
+      "target_covered": 7,
+      "target_uncovered": 10,
+      "current_coverage_pct": 41.18,
+      "status_breakdown": {
+        "Implemented": 17
+      },
+      "deferral_reason": "inet address helpers are partially covered and have lower workload risk than resolver, socket, and NSS behavior.",
+      "next_step": "Extend network conversion fixtures after resolver and socket campaigns expose shared address-family gaps."
+    },
+    {
+      "module": "dirent_abi",
+      "target_total": 14,
+      "target_covered": 7,
+      "target_uncovered": 7,
+      "current_coverage_pct": 50.0,
+      "status_breakdown": {
+        "Implemented": 11,
+        "RawSyscall": 3
+      },
+      "deferral_reason": "Directory operations have partial coverage and should be tied to filesystem state fixtures from the unistd/process wave.",
+      "next_step": "Add deterministic directory traversal fixtures after filesystem metadata and cwd cases are expanded."
+    },
+    {
+      "module": "mmap_abi",
+      "target_total": 10,
+      "target_covered": 4,
+      "target_uncovered": 6,
+      "current_coverage_pct": 40.0,
+      "status_breakdown": {
+        "RawSyscall": 10
+      },
+      "deferral_reason": "Memory mapping behavior is critical but needs allocator, membrane, and syscall interaction evidence before isolated fixture prioritization.",
+      "next_step": "Create mmap fixtures after malloc/membrane and syscall campaign logs identify strict versus hardened expectations."
+    },
+    {
+      "module": "isoc_abi",
+      "target_total": 5,
+      "target_covered": 0,
+      "target_uncovered": 5,
+      "current_coverage_pct": 0.0,
+      "status_breakdown": {
+        "Implemented": 5
+      },
+      "deferral_reason": "ISOC compatibility surface is small and lower impact than the selected broad ABI families.",
+      "next_step": "Add the ISOC fixture pack as a compact cleanup campaign after high-risk exported families have threshold coverage."
+    },
+    {
+      "module": "termios_abi",
+      "target_total": 10,
+      "target_covered": 5,
+      "target_uncovered": 5,
+      "current_coverage_pct": 50.0,
+      "status_breakdown": {
+        "RawSyscall": 10
+      },
+      "deferral_reason": "Terminal controls matter for interactive programs but have partial coverage and require pseudo-terminal fixture isolation.",
+      "next_step": "Add termios pty fixtures once process and stdio fixture infrastructure has stable subprocess logging."
+    },
+    {
+      "module": "grp_abi",
+      "target_total": 8,
+      "target_covered": 4,
+      "target_uncovered": 4,
+      "current_coverage_pct": 50.0,
+      "status_breakdown": {
+        "Implemented": 8
+      },
+      "deferral_reason": "Group database behavior should be verified with pwd and NSS fixtures rather than as an isolated first-wave campaign.",
+      "next_step": "Fold group fixtures into the follow-up deterministic passwd/group/NSS campaign."
+    },
+    {
+      "module": "setjmp_abi",
+      "target_total": 7,
+      "target_covered": 3,
+      "target_uncovered": 4,
+      "current_coverage_pct": 42.86,
+      "status_breakdown": {
+        "Implemented": 7
+      },
+      "deferral_reason": "Setjmp semantics belong with signal and cancellation boundary tests and should not be decoupled from async-control evidence.",
+      "next_step": "Add setjmp fixtures in the signal and async-cancellation boundary fixture pack."
+    },
+    {
+      "module": "c11threads_abi",
+      "target_total": 25,
+      "target_covered": 23,
+      "target_uncovered": 2,
+      "current_coverage_pct": 92.0,
+      "status_breakdown": {
+        "Implemented": 25
+      },
+      "deferral_reason": "C11 thread coverage is already high and lower marginal gain than pthread synchronization and cancellation fixtures.",
+      "next_step": "Add remaining C11 thread edge fixtures after pthread robust mutex and TLS destructor coverage lands."
+    },
+    {
+      "module": "resource_abi",
+      "target_total": 2,
+      "target_covered": 1,
+      "target_uncovered": 1,
+      "current_coverage_pct": 50.0,
+      "status_breakdown": {
+        "RawSyscall": 2
+      },
+      "deferral_reason": "Resource-limit surface is tiny and lower priority than broad process, allocator, and runtime replacement blockers.",
+      "next_step": "Add resource fixtures as part of syscall tail cleanup after first-wave campaigns complete."
+    },
+    {
+      "module": "runtime_policy",
+      "target_total": 1,
+      "target_covered": 0,
+      "target_uncovered": 1,
+      "current_coverage_pct": 0.0,
+      "status_breakdown": {
+        "Implemented": 1
+      },
+      "deferral_reason": "Runtime policy is a control-plane surface rather than a user-facing exported symbol family and needs dedicated strict/hardened mode evidence.",
+      "next_step": "Add runtime-policy fixtures with replacement-level gates after mode-pair workload evidence is refreshed."
+    },
+    {
+      "module": "startup_abi",
+      "target_total": 4,
+      "target_covered": 3,
+      "target_uncovered": 1,
+      "current_coverage_pct": 75.0,
+      "status_breakdown": {
+        "Implemented": 4
+      },
+      "deferral_reason": "Startup coverage has a small residual gap and is already represented in loader, process, and user workload smoke evidence.",
+      "next_step": "Close the remaining startup fixture in the L0/L1 real-program smoke suite."
+    }
+  ],
   "summary": {
     "campaign_count": 18,
+    "deferred_module_count": 18,
     "total_first_wave_fixture_count": 196,
+    "selected_target_uncovered_symbols": 3346,
+    "deferred_target_uncovered_symbols": 382,
+    "all_uncovered_target_symbols": 3728,
     "covered_modules": [
       "dlfcn_abi",
       "fortify_abi",
