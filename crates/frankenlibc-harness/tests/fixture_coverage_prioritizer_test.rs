@@ -22,13 +22,34 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "decision_path",
     "healing_action",
     "latency_ns",
+    "symbol_family",
+    "score",
+    "rank",
+    "coverage_state",
+    "risk_factors",
     "artifact_refs",
     "source_commit",
     "target_dir",
     "failure_signature",
 ];
 const EXPECTED_INPUTS: &[(&str, &str)] = &[
+    (
+        "version_script",
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+    ),
+    (
+        "abi_symbol_universe",
+        "tests/conformance/symbol_universe_normalization.v1.json",
+    ),
     ("support_matrix", "support_matrix.json"),
+    (
+        "semantic_overlay",
+        "tests/conformance/support_semantic_overlay.v1.json",
+    ),
+    (
+        "semantic_contract_join",
+        "tests/conformance/semantic_contract_symbol_join.v1.json",
+    ),
     (
         "symbol_fixture_coverage",
         "tests/conformance/symbol_fixture_coverage.v1.json",
@@ -40,6 +61,14 @@ const EXPECTED_INPUTS: &[(&str, &str)] = &[
     (
         "user_workload_acceptance_matrix",
         "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    ),
+    (
+        "hard_parts_truth_table",
+        "tests/conformance/hard_parts_truth_table.v1.json",
+    ),
+    (
+        "hard_parts_failure_matrix",
+        "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
     ),
     (
         "feature_parity_gap_groups",
@@ -64,6 +93,45 @@ fn load_json(path: &Path) -> serde_json::Value {
 
 fn load_prioritizer() -> serde_json::Value {
     load_json(&workspace_root().join("tests/conformance/fixture_coverage_prioritizer.v1.json"))
+}
+
+#[test]
+fn generator_self_test_and_canonical_check_pass() {
+    let root = workspace_root();
+    let generator = root.join("scripts/generate_fixture_coverage_prioritizer.py");
+    assert!(
+        generator.exists(),
+        "missing {}",
+        generator.strip_prefix(&root).unwrap().display()
+    );
+
+    let self_test = Command::new("python3")
+        .arg(&generator)
+        .arg("--self-test")
+        .current_dir(&root)
+        .output()
+        .expect("failed to run generator self-test");
+    assert!(
+        self_test.status.success(),
+        "generator self-test failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&self_test.stdout),
+        String::from_utf8_lossy(&self_test.stderr)
+    );
+
+    let check = Command::new("python3")
+        .arg(&generator)
+        .arg("--check")
+        .arg("--output")
+        .arg(root.join("tests/conformance/fixture_coverage_prioritizer.v1.json"))
+        .current_dir(&root)
+        .output()
+        .expect("failed to run generator check");
+    assert!(
+        check.status.success(),
+        "generator canonical check failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
 }
 
 #[test]

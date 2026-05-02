@@ -7,6 +7,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GEN="${ROOT}/scripts/generate_fixture_coverage_prioritizer.py"
 ARTIFACT="${ROOT}/tests/conformance/fixture_coverage_prioritizer.v1.json"
 COVERAGE="${ROOT}/tests/conformance/symbol_fixture_coverage.v1.json"
 PER_SYMBOL="${ROOT}/tests/conformance/per_symbol_fixture_tests.v1.json"
@@ -14,10 +15,19 @@ SUPPORT="${ROOT}/support_matrix.json"
 WORKLOADS="${ROOT}/tests/conformance/user_workload_acceptance_matrix.v1.json"
 FEATURE_GAPS="${ROOT}/tests/conformance/feature_parity_gap_groups.v1.json"
 OUT_DIR="${ROOT}/target/conformance"
+GENERATED="${OUT_DIR}/fixture_coverage_prioritizer.regenerated.v1.json"
 REPORT="${OUT_DIR}/fixture_coverage_prioritizer.report.json"
 LOG="${OUT_DIR}/fixture_coverage_prioritizer.log.jsonl"
 
 mkdir -p "${OUT_DIR}"
+
+python3 "${GEN}" --self-test >/dev/null
+python3 "${GEN}" --output "${GENERATED}" >/dev/null
+if ! cmp -s "${ARTIFACT}" "${GENERATED}"; then
+    echo "ERROR: fixture coverage prioritizer artifact drift detected" >&2
+    echo "       regenerate with: python3 scripts/generate_fixture_coverage_prioritizer.py --output tests/conformance/fixture_coverage_prioritizer.v1.json" >&2
+    exit 1
+fi
 
 python3 - "${ROOT}" "${ARTIFACT}" "${COVERAGE}" "${PER_SYMBOL}" "${SUPPORT}" "${WORKLOADS}" "${FEATURE_GAPS}" "${REPORT}" "${LOG}" <<'PY'
 import json
@@ -40,10 +50,16 @@ errors = []
 checks = {}
 
 EXPECTED_INPUTS = {
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "abi_symbol_universe": "tests/conformance/symbol_universe_normalization.v1.json",
     "support_matrix": "support_matrix.json",
+    "semantic_overlay": "tests/conformance/support_semantic_overlay.v1.json",
+    "semantic_contract_join": "tests/conformance/semantic_contract_symbol_join.v1.json",
     "symbol_fixture_coverage": "tests/conformance/symbol_fixture_coverage.v1.json",
     "per_symbol_fixture_tests": "tests/conformance/per_symbol_fixture_tests.v1.json",
     "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "hard_parts_truth_table": "tests/conformance/hard_parts_truth_table.v1.json",
+    "hard_parts_failure_matrix": "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
     "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
 }
 REQUIRED_LOG_FIELDS = [
@@ -61,6 +77,11 @@ REQUIRED_LOG_FIELDS = [
     "decision_path",
     "healing_action",
     "latency_ns",
+    "symbol_family",
+    "score",
+    "rank",
+    "coverage_state",
+    "risk_factors",
     "artifact_refs",
     "source_commit",
     "target_dir",
@@ -390,6 +411,7 @@ artifact_refs = [
     "tests/conformance/symbol_fixture_coverage.v1.json",
     "tests/conformance/per_symbol_fixture_tests.v1.json",
     "tests/conformance/feature_parity_gap_groups.v1.json",
+    "target/conformance/fixture_coverage_prioritizer.regenerated.v1.json",
     "target/conformance/fixture_coverage_prioritizer.report.json",
     "target/conformance/fixture_coverage_prioritizer.log.jsonl",
 ]
@@ -422,32 +444,61 @@ report = {
 }
 report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-event = {
-    "trace_id": "bd-bp8fl.4.1-fixture-coverage-prioritizer",
-    "bead_id": "bd-bp8fl.4.1",
-    "scenario_id": "fixture-coverage-prioritizer-gate",
-    "runtime_mode": "not_applicable",
-    "replacement_level": "L0,L1_planning",
-    "api_family": "fixture_coverage_prioritizer",
-    "symbol": "*",
-    "oracle_kind": "coverage_gain_workload_risk_ranker",
-    "expected": "campaigns rank uncovered exported-symbol fixture work by coverage gain and real workload risk",
-    "actual": status,
-    "errno": None,
-    "decision_path": list(checks.keys()),
-    "healing_action": "none",
-    "latency_ns": 0,
-    "artifact_refs": artifact_refs,
-    "source_commit": source_commit,
-    "target_dir": str(root / "target/conformance"),
-    "failure_signature": "; ".join(errors),
-    "campaign_count": len(campaigns),
-    "deferred_module_count": len(deferred_modules) if isinstance(deferred_modules, list) else 0,
-    "total_first_wave_fixture_count": first_wave_total,
-    "selected_target_uncovered_symbols": selected_target_uncovered,
-    "deferred_target_uncovered_symbols": deferred_target_uncovered,
-}
-log_path.write_text(json.dumps(event, sort_keys=True) + "\n", encoding="utf-8")
+def campaign_coverage_state(campaign):
+    uncovered = campaign.get("target_uncovered", 0)
+    covered = campaign.get("target_covered", 0)
+    if uncovered == 0:
+        return "covered"
+    if covered == 0:
+        return "uncovered"
+    if campaign.get("current_coverage_pct", 0) < 80:
+        return "weak"
+    return "partial"
+
+events = []
+for campaign in campaigns:
+    scores = campaign.get("scores", {})
+    events.append(
+        {
+            "trace_id": "bd-bp8fl.4.1-fixture-coverage-prioritizer",
+            "bead_id": "bd-bp8fl.4.1",
+            "scenario_id": campaign.get("campaign_id"),
+            "runtime_mode": "not_applicable",
+            "replacement_level": "L0,L1_planning",
+            "api_family": campaign.get("module"),
+            "symbol": "*",
+            "oracle_kind": campaign.get("oracle_kind"),
+            "expected": "campaign ranks uncovered exported-symbol fixture work by coverage gain and real workload risk",
+            "actual": status,
+            "errno": None,
+            "decision_path": list(checks.keys()),
+            "healing_action": "none",
+            "latency_ns": 0,
+            "symbol_family": campaign.get("symbol_family"),
+            "score": scores.get("priority_score"),
+            "rank": campaign.get("rank"),
+            "coverage_state": campaign_coverage_state(campaign),
+            "risk_factors": {
+                "risk_tags": campaign.get("risk_tags", []),
+                "scores": scores,
+                "workload_domains": campaign.get("workload_domains", []),
+            },
+            "artifact_refs": artifact_refs,
+            "source_commit": source_commit,
+            "target_dir": str(root / "target/conformance"),
+            "failure_signature": "; ".join(errors),
+            "campaign_count": len(campaigns),
+            "deferred_module_count": len(deferred_modules) if isinstance(deferred_modules, list) else 0,
+            "total_first_wave_fixture_count": first_wave_total,
+            "selected_target_uncovered_symbols": selected_target_uncovered,
+            "deferred_target_uncovered_symbols": deferred_target_uncovered,
+        }
+    )
+
+log_path.write_text(
+    "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
+    encoding="utf-8",
+)
 
 print(json.dumps(report, indent=2, sort_keys=True))
 sys.exit(0 if status == "pass" else 1)

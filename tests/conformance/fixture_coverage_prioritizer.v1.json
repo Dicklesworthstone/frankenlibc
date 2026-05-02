@@ -1,32 +1,1250 @@
 {
-  "schema_version": "v1",
   "bead": "bd-bp8fl.4.1",
-  "generated_at_utc": "2026-05-01T18:10:00Z",
-  "purpose": "Rank fixture campaigns by exported-symbol coverage gain, real workload risk, semantic parity risk, and implementation complexity so coverage expansion is countable and user-driven.",
+  "campaigns": [
+    {
+      "campaign_id": "fcq-unistd-process-filesystem",
+      "current_coverage_pct": 4.45,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 6.06,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "_Exit",
+        "_Fork",
+        "__cxa_atexit",
+        "__cxa_finalize",
+        "__fxstat",
+        "__fxstat64",
+        "__fxstatat",
+        "__fxstatat64",
+        "__gmtime_r",
+        "__lxstat",
+        "__lxstat64",
+        "__progname"
+      ],
+      "module": "unistd_abi",
+      "next_step": "Add strict/hardened fixtures for process, stat-family, and exit-path symbols before broad syscall tail work.",
+      "oracle_kind": "glibc_fixture_oracle",
+      "rank": 1,
+      "risk_tags": [
+        "errno_mapping",
+        "filesystem_state",
+        "semantic_divergence",
+        "startup_linking_failure"
+      ],
+      "scores": {
+        "coverage_gap_score": 200,
+        "feature_gap_risk_score": 0,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 3,
+        "parity_risk_score": 5,
+        "priority_score": 2550,
+        "semantic_risk_score": 3,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
+      "target_covered": 33,
+      "target_total": 742,
+      "target_uncovered": 709,
+      "title": "unistd/process/filesystem syscall fixture wave",
+      "workload_domains": [
+        "shell_coreutils",
+        "build_tools",
+        "package_manager",
+        "startup_linking"
+      ]
+    },
+    {
+      "campaign_id": "fcq-string-memory-hotpaths",
+      "current_coverage_pct": 17.12,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 25.34,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "__memcmpeq",
+        "__mempcpy",
+        "__rawmemchr",
+        "__stpcpy",
+        "__stpcpy_small",
+        "__stpncpy",
+        "__strcasecmp",
+        "__strcasecmp_l",
+        "__strcasestr",
+        "__strcoll_l",
+        "__strcpy_small",
+        "__strcspn_c1"
+      ],
+      "module": "string_abi",
+      "next_step": "Grow boundary, overlap, empty, invalid pointer, locale, and perf guard fixtures for uncovered string families.",
+      "oracle_kind": "glibc_fixture_oracle",
+      "rank": 2,
+      "risk_tags": [
+        "buffer_boundary",
+        "locale_sensitive",
+        "performance_regression",
+        "semantic_divergence"
+      ],
+      "scores": {
+        "coverage_gap_score": 121,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 2,
+        "parity_risk_score": 5,
+        "priority_score": 2521,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "mem*, str*, collation-adjacent string helpers, and GNU string extensions",
+      "target_covered": 25,
+      "target_total": 146,
+      "target_uncovered": 121,
+      "title": "string and memory hot-path fixture wave",
+      "workload_domains": [
+        "performance_sensitive",
+        "shell_coreutils",
+        "allocator",
+        "language_runtimes"
+      ]
+    },
+    {
+      "campaign_id": "fcq-stdio-libio",
+      "current_coverage_pct": 23.02,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 32.54,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "_IO_2_1_stderr_",
+        "_IO_2_1_stdin_",
+        "_IO_2_1_stdout_",
+        "_IO_feof",
+        "_IO_ferror",
+        "_IO_flockfile",
+        "_IO_ftrylockfile",
+        "_IO_funlockfile",
+        "_IO_getc",
+        "_IO_padn",
+        "_IO_peekc_locked",
+        "_IO_putc"
+      ],
+      "module": "stdio_abi",
+      "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
+      "oracle_kind": "stdio_fixture_or_replay",
+      "rank": 3,
+      "risk_tags": [
+        "buffering_order",
+        "diagnostics_gap",
+        "semantic_divergence",
+        "stdio_libio_divergence"
+      ],
+      "scores": {
+        "coverage_gap_score": 97,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 3,
+        "parity_risk_score": 5,
+        "priority_score": 2447,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "FILE state, _IO compatibility names, locking, formatted IO, buffering, and stream errors",
+      "target_covered": 29,
+      "target_total": 126,
+      "target_uncovered": 97,
+      "title": "stdio/libio stream semantics fixture wave",
+      "workload_domains": [
+        "stdio_libio",
+        "shell_coreutils",
+        "build_tools",
+        "package_manager"
+      ]
+    },
+    {
+      "campaign_id": "fcq-pthread-sync",
+      "current_coverage_pct": 19.15,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 27.66,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "__pthread_cleanup_routine",
+        "__pthread_get_minstack",
+        "__pthread_getspecific",
+        "__pthread_key_create",
+        "__pthread_mutex_destroy",
+        "__pthread_mutex_init",
+        "__pthread_mutex_lock",
+        "__pthread_mutexattr_destroy",
+        "__pthread_mutexattr_init",
+        "__pthread_mutexattr_settype",
+        "__pthread_once",
+        "__pthread_register_cancel"
+      ],
+      "module": "pthread_abi",
+      "next_step": "Prioritize deterministic mode-pair tests for pthread primitives that real runtimes and services depend on.",
+      "oracle_kind": "threaded_mode_pair_replay",
+      "rank": 4,
+      "risk_tags": [
+        "deadlock_timeout",
+        "mode_pair_mismatch",
+        "performance_regression",
+        "pthread_cancellation",
+        "threading"
+      ],
+      "scores": {
+        "coverage_gap_score": 114,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [
+          "threading"
+        ],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 5,
+        "priority_score": 2414,
+        "semantic_risk_score": 2,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "pthread lifecycle, mutex, condvar, TLS keys, cancellation, and GNU extensions",
+      "target_covered": 27,
+      "target_total": 141,
+      "target_uncovered": 114,
+      "title": "pthread synchronization and cancellation fixture wave",
+      "workload_domains": [
+        "threaded_services",
+        "language_runtimes",
+        "performance_sensitive"
+      ]
+    },
+    {
+      "campaign_id": "fcq-malloc-membrane",
+      "current_coverage_pct": 19.05,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 76.19,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "__libc_allocate_rtsig",
+        "__libc_freeres",
+        "__libc_init_first",
+        "__libc_sa_len",
+        "aligned_alloc",
+        "cfree",
+        "mallinfo",
+        "mallinfo2",
+        "malloc_info",
+        "malloc_stats",
+        "malloc_trim",
+        "malloc_usable_size"
+      ],
+      "module": "malloc_abi",
+      "next_step": "Add allocator parity and hardened invalid-pointer fixtures before optimizing allocator or membrane hot paths.",
+      "oracle_kind": "membrane_allocator_oracle",
+      "rank": 5,
+      "risk_tags": [
+        "allocator_ownership",
+        "foreign_free",
+        "hardened_repair",
+        "performance_regression"
+      ],
+      "scores": {
+        "coverage_gap_score": 17,
+        "feature_gap_risk_score": 0,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 3,
+        "parity_risk_score": 5,
+        "priority_score": 2367,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "malloc, alignment, usable-size, stats, trimming, and hardened ownership behavior",
+      "target_covered": 4,
+      "target_total": 21,
+      "target_uncovered": 17,
+      "title": "allocator ownership and membrane fixture wave",
+      "workload_domains": [
+        "allocator",
+        "threaded_services",
+        "performance_sensitive",
+        "language_runtimes"
+      ]
+    },
+    {
+      "campaign_id": "fcq-process-spawn",
+      "current_coverage_pct": 13.33,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 53.33,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "_exit",
+        "acct",
+        "chroot",
+        "clone",
+        "closefrom",
+        "execvp",
+        "execvpe",
+        "getresgid",
+        "getresuid",
+        "posix_spawn_file_actions_addchdir_np",
+        "posix_spawn_file_actions_addclose",
+        "posix_spawn_file_actions_adddup2"
+      ],
+      "module": "process_abi",
+      "next_step": "Add exec/spawn/action fixtures with exact status, errno, and file-action diagnostics.",
+      "oracle_kind": "mode_pair_process_replay",
+      "rank": 6,
+      "risk_tags": [
+        "errno_mapping",
+        "process_status",
+        "semantic_divergence",
+        "startup_linking_failure"
+      ],
+      "scores": {
+        "coverage_gap_score": 26,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 5,
+        "priority_score": 2326,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "exit, clone, exec, spawn actions, chroot, and uid/gid result contracts",
+      "target_covered": 4,
+      "target_total": 30,
+      "target_uncovered": 26,
+      "title": "process spawn and privilege-sensitive fixture wave",
+      "workload_domains": [
+        "shell_coreutils",
+        "build_tools",
+        "package_manager",
+        "startup_linking"
+      ]
+    },
+    {
+      "campaign_id": "fcq-resolver-nss-core",
+      "current_coverage_pct": 27.27,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 8,
+      "first_wave_symbols": [
+        "__h_errno_location",
+        "gai_strerror",
+        "gethostbyaddr",
+        "getnameinfo",
+        "getprotobyname",
+        "getprotobynumber",
+        "getservbyname",
+        "getservbyport"
+      ],
+      "module": "resolv_abi",
+      "next_step": "Finish resolver fixture coverage with localhost, invalid, service, protocol, reverse, and h_errno cases.",
+      "oracle_kind": "resolver_nss_fixture_oracle",
+      "rank": 7,
+      "risk_tags": [
+        "claim_blocked",
+        "resolver",
+        "resolver_nss_failure",
+        "semantic_divergence",
+        "timeout_policy"
+      ],
+      "scores": {
+        "coverage_gap_score": 8,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [
+          "resolver"
+        ],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 5,
+        "priority_score": 2308,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "getaddrinfo-adjacent status, host/service/protocol lookup, and h_errno behavior",
+      "target_covered": 3,
+      "target_total": 11,
+      "target_uncovered": 8,
+      "title": "resolver service lookup fixture wave",
+      "workload_domains": [
+        "resolver_nss",
+        "language_runtimes",
+        "package_manager",
+        "threaded_services"
+      ]
+    },
+    {
+      "campaign_id": "fcq-dlfcn-loader",
+      "current_coverage_pct": 71.43,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 2,
+      "first_wave_symbols": [
+        "dl_iterate_phdr",
+        "dlvsym"
+      ],
+      "module": "dlfcn_abi",
+      "next_step": "Close the small but high-risk dlfcn fixture gap with versioned-symbol and phdr iteration tests.",
+      "oracle_kind": "loader_symbol_replay",
+      "rank": 8,
+      "risk_tags": [
+        "standalone_blocker",
+        "startup_linking_failure",
+        "symbol_missing",
+        "version_node"
+      ],
+      "scores": {
+        "coverage_gap_score": 2,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 5,
+        "priority_score": 2302,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "dl_iterate_phdr, dlvsym, loader namespace, and versioned symbol behavior",
+      "target_covered": 5,
+      "target_total": 7,
+      "target_uncovered": 2,
+      "title": "loader symbol versioning fixture wave",
+      "workload_domains": [
+        "startup_linking",
+        "language_runtimes",
+        "build_tools"
+      ]
+    },
+    {
+      "campaign_id": "fcq-poll-event-loop",
+      "current_coverage_pct": 13.33,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 93.33,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "epoll_create",
+        "epoll_create1",
+        "epoll_ctl",
+        "epoll_pwait",
+        "epoll_wait",
+        "eventfd",
+        "ppoll",
+        "prctl",
+        "pselect",
+        "sched_yield",
+        "timerfd_create",
+        "timerfd_gettime"
+      ],
+      "module": "poll_abi",
+      "next_step": "Add deterministic timeout, readiness, invalid-fd, and mode-pair cases for event-loop syscalls.",
+      "oracle_kind": "threaded_service_replay",
+      "rank": 9,
+      "risk_tags": [
+        "event_loop",
+        "mode_pair_mismatch",
+        "performance_regression",
+        "timeout_policy"
+      ],
+      "scores": {
+        "coverage_gap_score": 13,
+        "feature_gap_risk_score": 0,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 3,
+        "parity_risk_score": 4,
+        "priority_score": 2163,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "poll, select, epoll, eventfd, timerfd, pselect, ppoll, and scheduler-yield contracts",
+      "target_covered": 2,
+      "target_total": 15,
+      "target_uncovered": 13,
+      "title": "poll/epoll/eventfd/timerfd fixture wave",
+      "workload_domains": [
+        "threaded_services",
+        "performance_sensitive",
+        "package_manager"
+      ]
+    },
+    {
+      "campaign_id": "fcq-wchar-locale-encoding",
+      "current_coverage_pct": 12.33,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 20.55,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "__islower_l",
+        "__isoc23_fwscanf",
+        "__isoc23_swscanf",
+        "__isoc23_vfwscanf",
+        "__isoc23_vswscanf",
+        "__isoc23_vwscanf",
+        "__isoc23_wcstoimax",
+        "__isoc23_wcstol",
+        "__isoc23_wcstol_l",
+        "__isoc23_wcstoll",
+        "__isoc23_wcstoll_l",
+        "__isoc23_wcstoul"
+      ],
+      "module": "wchar_abi",
+      "next_step": "Add stateful mb/wchar fixtures with invalid sequence, short buffer, and locale variation cases.",
+      "oracle_kind": "locale_mode_pair_oracle",
+      "rank": 10,
+      "risk_tags": [
+        "buffer_boundary",
+        "locale_sensitive",
+        "semantic_divergence",
+        "stateful_encoding"
+      ],
+      "scores": {
+        "coverage_gap_score": 128,
+        "feature_gap_risk_score": 0,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 5,
+        "priority_score": 2128,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 4
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "wchar, mbstate, wcs*, wcsto*, and locale-sensitive multibyte conversion behavior",
+      "target_covered": 18,
+      "target_total": 146,
+      "target_uncovered": 128,
+      "title": "wide-character and multibyte fixture wave",
+      "workload_domains": [
+        "locale_iconv",
+        "language_runtimes",
+        "shell_coreutils"
+      ]
+    },
+    {
+      "campaign_id": "fcq-socket-network",
+      "current_coverage_pct": 44.44,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 10,
+      "first_wave_symbols": [
+        "accept",
+        "accept4",
+        "connect",
+        "getpeername",
+        "recvfrom",
+        "recvmsg",
+        "sendmsg",
+        "sendto",
+        "setsockopt",
+        "socketpair"
+      ],
+      "module": "socket_abi",
+      "next_step": "Add loopback-only socket fixtures with deterministic peer, timeout, and errno normalization.",
+      "oracle_kind": "loopback_network_replay",
+      "rank": 11,
+      "risk_tags": [
+        "errno_mapping",
+        "mode_pair_mismatch",
+        "network_semantics",
+        "timeout_policy"
+      ],
+      "scores": {
+        "coverage_gap_score": 10,
+        "feature_gap_risk_score": 0,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 4,
+        "priority_score": 2110,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 5
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "accept/connect/socketpair/send/recv/socket options with loopback-only deterministic behavior",
+      "target_covered": 8,
+      "target_total": 18,
+      "target_uncovered": 10,
+      "title": "socket send/recv/connect fixture wave",
+      "workload_domains": [
+        "threaded_services",
+        "package_manager",
+        "language_runtimes",
+        "resolver_nss"
+      ]
+    },
+    {
+      "campaign_id": "fcq-fortify-bounds",
+      "current_coverage_pct": 0.0,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 15.38,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "__asprintf_chk",
+        "__chk_fail",
+        "__confstr_chk",
+        "__dprintf_chk",
+        "__explicit_bzero_chk",
+        "__fdelt_chk",
+        "__fgets_chk",
+        "__fgets_unlocked_chk",
+        "__fgetws_chk",
+        "__fgetws_unlocked_chk",
+        "__fortify_fail",
+        "__fprintf_chk"
+      ],
+      "module": "fortify_abi",
+      "next_step": "Add positive and negative checked-wrapper fixtures before fortify safety claims expand.",
+      "oracle_kind": "hardened_bounds_oracle",
+      "rank": 12,
+      "risk_tags": [
+        "buffer_boundary",
+        "claim_blocked",
+        "diagnostics_gap",
+        "hardened_repair"
+      ],
+      "scores": {
+        "coverage_gap_score": 78,
+        "feature_gap_risk_score": 0,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 5,
+        "priority_score": 2078,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 4
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "__*_chk fortified wrappers, object-size behavior, and deny/repair diagnostics",
+      "target_covered": 0,
+      "target_total": 78,
+      "target_uncovered": 78,
+      "title": "fortify and checked-variant fixture wave",
+      "workload_domains": [
+        "performance_sensitive",
+        "shell_coreutils",
+        "build_tools"
+      ]
+    },
+    {
+      "campaign_id": "fcq-locale-collation",
+      "current_coverage_pct": 50.0,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 100.0,
+      "first_wave_fixture_count": 8,
+      "first_wave_symbols": [
+        "bindtextdomain",
+        "catclose",
+        "catgets",
+        "catopen",
+        "dgettext",
+        "gettext",
+        "ngettext",
+        "textdomain"
+      ],
+      "module": "locale_abi",
+      "next_step": "Add pinned-locale fixtures before user-facing locale or transliteration support claims advance.",
+      "oracle_kind": "locale_fixture_oracle",
+      "rank": 13,
+      "risk_tags": [
+        "claim_blocked",
+        "locale",
+        "locale_sensitive",
+        "semantic_divergence",
+        "transliteration"
+      ],
+      "scores": {
+        "coverage_gap_score": 8,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [
+          "locale"
+        ],
+        "implementation_complexity_score": 5,
+        "parity_risk_score": 5,
+        "priority_score": 1958,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 4
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "locale_t, nl_langinfo, gettext-adjacent catalog, collation, and transliteration behavior",
+      "target_covered": 8,
+      "target_total": 16,
+      "target_uncovered": 8,
+      "title": "locale catalog and collation fixture wave",
+      "workload_domains": [
+        "locale_iconv",
+        "shell_coreutils",
+        "language_runtimes",
+        "package_manager"
+      ]
+    },
+    {
+      "campaign_id": "fcq-time-clock",
+      "current_coverage_pct": 15.38,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 61.54,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "asctime",
+        "asctime_r",
+        "clock_adjtime",
+        "clock_getres",
+        "clock_nanosleep",
+        "clock_settime",
+        "ctime",
+        "ctime_r",
+        "difftime",
+        "environ",
+        "gettimeofday",
+        "gmtime"
+      ],
+      "module": "time_abi",
+      "next_step": "Add pinned-time and invalid-clock fixtures with deterministic tolerance rules.",
+      "oracle_kind": "pinned_time_fixture_oracle",
+      "rank": 14,
+      "risk_tags": [
+        "errno_mapping",
+        "semantic_divergence",
+        "temporal_discontinuity",
+        "threading",
+        "timeout_policy"
+      ],
+      "scores": {
+        "coverage_gap_score": 22,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [
+          "threading"
+        ],
+        "implementation_complexity_score": 3,
+        "parity_risk_score": 4,
+        "priority_score": 1872,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 4
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "clock_gettime, timers, tz-sensitive calendar conversion, and pinned-time behavior",
+      "target_covered": 4,
+      "target_total": 26,
+      "target_uncovered": 22,
+      "title": "time clock and calendar fixture wave",
+      "workload_domains": [
+        "build_tools",
+        "language_runtimes",
+        "package_manager"
+      ]
+    },
+    {
+      "campaign_id": "fcq-math-special",
+      "current_coverage_pct": 1.5,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 2.45,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "_LIB_VERSION",
+        "__acos_finite",
+        "__acosf128_finite",
+        "__acosf_finite",
+        "__acosh_finite",
+        "__acoshf128_finite",
+        "__acoshf_finite",
+        "__acoshl_finite",
+        "__acosl_finite",
+        "__asin_finite",
+        "__asinf128_finite",
+        "__asinf_finite"
+      ],
+      "module": "math_abi",
+      "next_step": "Start with finite aliases and fpclassification before expanding to the long libm tail.",
+      "oracle_kind": "glibc_fixture_oracle",
+      "rank": 15,
+      "risk_tags": [
+        "fenv_adjacent",
+        "numeric_boundary",
+        "performance_regression",
+        "semantic_divergence",
+        "threading"
+      ],
+      "scores": {
+        "coverage_gap_score": 200,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [
+          "threading"
+        ],
+        "implementation_complexity_score": 5,
+        "parity_risk_score": 5,
+        "priority_score": 1850,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 3
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "finite aliases, special functions, fpclassify/signbit, libm edge cases, and exception-adjacent behavior",
+      "target_covered": 19,
+      "target_total": 1265,
+      "target_uncovered": 1246,
+      "title": "math finite/special-function fixture wave",
+      "workload_domains": [
+        "language_runtimes",
+        "performance_sensitive",
+        "build_tools"
+      ]
+    },
+    {
+      "campaign_id": "fcq-signal-async",
+      "current_coverage_pct": 32.14,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh",
+        "scripts/e2e_suite.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 75.0,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "__libc_current_sigrtmax",
+        "__libc_current_sigrtmin",
+        "killpg",
+        "pause",
+        "psiginfo",
+        "pthread_sigmask",
+        "sigabbrev_np",
+        "sigaltstack",
+        "sigandset",
+        "sighold",
+        "sigignore",
+        "siginterrupt"
+      ],
+      "module": "signal_abi",
+      "next_step": "Add deterministic signal-mask and alternate-stack fixtures before broader async-cancellation campaigns.",
+      "oracle_kind": "mode_pair_process_replay",
+      "rank": 16,
+      "risk_tags": [
+        "async_signal",
+        "diagnostics_gap",
+        "pthread_cancellation",
+        "semantic_divergence"
+      ],
+      "scores": {
+        "coverage_gap_score": 19,
+        "feature_gap_risk_score": 3,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 4,
+        "priority_score": 1819,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 4
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "signal masks, alternate stacks, RT min/max, pause, and async-visible diagnostics",
+      "target_covered": 9,
+      "target_total": 28,
+      "target_uncovered": 19,
+      "title": "signal and async-observable fixture wave",
+      "workload_domains": [
+        "threaded_services",
+        "shell_coreutils",
+        "language_runtimes"
+      ]
+    },
+    {
+      "campaign_id": "fcq-glibc-internal-compat",
+      "current_coverage_pct": 0.18,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 2.28,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "_IO_enable_locks",
+        "__abort_msg",
+        "__adjtimex",
+        "__after_morecore_hook",
+        "__arch_prctl",
+        "__argz_count",
+        "__argz_next",
+        "__argz_stringify",
+        "__asprintf",
+        "__b64_ntop",
+        "__b64_pton",
+        "__backtrace"
+      ],
+      "module": "glibc_internal_abi",
+      "next_step": "Split compatibility internals into supported, deterministic-fallback, and claim-blocked fixture groups.",
+      "oracle_kind": "symbol_coverage_gate",
+      "rank": 17,
+      "risk_tags": [
+        "compatibility_internal",
+        "diagnostics_gap",
+        "symbol_missing",
+        "unsupported_claim"
+      ],
+      "scores": {
+        "coverage_gap_score": 200,
+        "feature_gap_risk_score": 0,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 5,
+        "parity_risk_score": 4,
+        "priority_score": 1350,
+        "semantic_risk_score": 3,
+        "workload_risk_score": 2
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "exported glibc internals, compatibility names, diagnostics, backtrace, argz, and resolver helpers",
+      "target_covered": 1,
+      "target_total": 570,
+      "target_uncovered": 569,
+      "title": "glibc internal compatibility triage fixture wave",
+      "workload_domains": [
+        "startup_linking",
+        "build_tools",
+        "diagnostics"
+      ]
+    },
+    {
+      "campaign_id": "fcq-rpc-legacy-network",
+      "current_coverage_pct": 0.0,
+      "deterministic_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh"
+      ],
+      "expected_coverage_after_first_wave_pct": 7.55,
+      "first_wave_fixture_count": 12,
+      "first_wave_symbols": [
+        "__rpc_thread_createerr",
+        "__rpc_thread_svc_fdset",
+        "__rpc_thread_svc_max_pollfd",
+        "__rpc_thread_svc_pollfd",
+        "_authenticate",
+        "_null_auth",
+        "_rpc_dtablesize",
+        "_seterr_reply",
+        "authdes_create",
+        "authdes_getucred",
+        "authdes_pk_create",
+        "authnone_create"
+      ],
+      "module": "rpc_abi",
+      "next_step": "Add deterministic compatibility/unsupported fixtures before claiming RPC-related coverage.",
+      "oracle_kind": "claim_reconciliation_gate",
+      "rank": 18,
+      "risk_tags": [
+        "deterministic_fallback",
+        "legacy_network",
+        "semantic_divergence",
+        "unsupported_claim"
+      ],
+      "scores": {
+        "coverage_gap_score": 159,
+        "feature_gap_risk_score": 0,
+        "hard_parts_risk_tags": [],
+        "implementation_complexity_score": 4,
+        "parity_risk_score": 3,
+        "priority_score": 1159,
+        "semantic_risk_score": 0,
+        "workload_risk_score": 2
+      },
+      "structured_log_fields": "required_log_fields",
+      "symbol_family": "sunrpc/auth/xdr compatibility and deterministic unsupported behavior",
+      "target_covered": 0,
+      "target_total": 159,
+      "target_uncovered": 159,
+      "title": "legacy RPC compatibility fixture wave",
+      "workload_domains": [
+        "resolver_nss",
+        "package_manager",
+        "legacy_network"
+      ]
+    }
+  ],
+  "deferred_modules": [
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 10.39,
+      "deferral_reason": "Lower workload and parity risk than the first-wave campaigns, but still tracked to prevent silent loss of stdlib conversion, random, exit, and environment fixture coverage.",
+      "module": "stdlib_abi",
+      "next_step": "Create a follow-up stdlib fixture campaign after current process, stdio, string, pthread, malloc, resolver, loader, and math waves have generated closure evidence.",
+      "status_breakdown": {
+        "Implemented": 154
+      },
+      "target_covered": 16,
+      "target_total": 154,
+      "target_uncovered": 138
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 23.68,
+      "deferral_reason": "Internal I/O coverage is related to stdio and low-level I/O waves but needs a narrower oracle plan before it should displace user-facing campaigns.",
+      "module": "io_internal_abi",
+      "next_step": "Split internal I/O fixtures by public behavior proxy after stdio and syscall fixture logs identify the shared surface.",
+      "status_breakdown": {
+        "Implemented": 114
+      },
+      "target_covered": 27,
+      "target_total": 114,
+      "target_uncovered": 87
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 22.45,
+      "deferral_reason": "Character classification is important for locale users but has less immediate standalone replacement risk than the selected locale, wchar, and stdio campaigns.",
+      "module": "ctype_abi",
+      "next_step": "Add ctype boundary fixtures alongside the next locale and transliteration evidence wave.",
+      "status_breakdown": {
+        "Implemented": 49
+      },
+      "target_covered": 11,
+      "target_total": 49,
+      "target_uncovered": 38
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 3.57,
+      "deferral_reason": "Low-level I/O is partially represented by unistd, process, poll, socket, and stdio campaigns; a separate wave should avoid duplicate syscall fixture coverage.",
+      "module": "io_abi",
+      "next_step": "Derive an io_abi campaign from syscall coverage deltas after the unistd and poll waves land.",
+      "status_breakdown": {
+        "Implemented": 3,
+        "RawSyscall": 25
+      },
+      "target_covered": 1,
+      "target_total": 28,
+      "target_uncovered": 27
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 14.81,
+      "deferral_reason": "Password database behavior belongs with NSS and resolver hard-parts but needs controlled host database fixtures before first-wave expansion.",
+      "module": "pwd_abi",
+      "next_step": "Add pwd/group/NSS fixtures with deterministic passwd and group databases after resolver campaign evidence is in place.",
+      "status_breakdown": {
+        "Implemented": 27
+      },
+      "target_covered": 4,
+      "target_total": 27,
+      "target_uncovered": 23
+    },
+    {
+      "coverage_state": "uncovered",
+      "current_coverage_pct": 0.0,
+      "deferral_reason": "Err/warn helpers are user-visible diagnostics but low breadth compared with selected high-risk runtime and syscall campaigns.",
+      "module": "err_abi",
+      "next_step": "Create a compact stderr and errno formatting fixture pack once stdio buffering evidence is stable.",
+      "status_breakdown": {
+        "Implemented": 12
+      },
+      "target_covered": 0,
+      "target_total": 12,
+      "target_uncovered": 12
+    },
+    {
+      "coverage_state": "uncovered",
+      "current_coverage_pct": 0.0,
+      "deferral_reason": "Floating-point environment behavior is high precision work but should be paired with the math exceptional-path fixture pack instead of this broad first queue.",
+      "module": "fenv_abi",
+      "next_step": "Add fenv fixtures with soft-fp and math exception cases in the dedicated math/fenv wave.",
+      "status_breakdown": {
+        "Implemented": 11
+      },
+      "target_covered": 0,
+      "target_total": 11,
+      "target_uncovered": 11
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 41.18,
+      "deferral_reason": "inet address helpers are partially covered and have lower workload risk than resolver, socket, and NSS behavior.",
+      "module": "inet_abi",
+      "next_step": "Extend network conversion fixtures after resolver and socket campaigns expose shared address-family gaps.",
+      "status_breakdown": {
+        "Implemented": 17
+      },
+      "target_covered": 7,
+      "target_total": 17,
+      "target_uncovered": 10
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 50.0,
+      "deferral_reason": "Directory operations have partial coverage and should be tied to filesystem state fixtures from the unistd/process wave.",
+      "module": "dirent_abi",
+      "next_step": "Add deterministic directory traversal fixtures after filesystem metadata and cwd cases are expanded.",
+      "status_breakdown": {
+        "Implemented": 11,
+        "RawSyscall": 3
+      },
+      "target_covered": 7,
+      "target_total": 14,
+      "target_uncovered": 7
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 40.0,
+      "deferral_reason": "Memory mapping behavior is critical but needs allocator, membrane, and syscall interaction evidence before isolated fixture prioritization.",
+      "module": "mmap_abi",
+      "next_step": "Create mmap fixtures after malloc/membrane and syscall campaign logs identify strict versus hardened expectations.",
+      "status_breakdown": {
+        "RawSyscall": 10
+      },
+      "target_covered": 4,
+      "target_total": 10,
+      "target_uncovered": 6
+    },
+    {
+      "coverage_state": "uncovered",
+      "current_coverage_pct": 0.0,
+      "deferral_reason": "ISOC compatibility surface is small and lower impact than the selected broad ABI families.",
+      "module": "isoc_abi",
+      "next_step": "Add the ISOC fixture pack as a compact cleanup campaign after high-risk exported families have threshold coverage.",
+      "status_breakdown": {
+        "Implemented": 5
+      },
+      "target_covered": 0,
+      "target_total": 5,
+      "target_uncovered": 5
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 50.0,
+      "deferral_reason": "Terminal controls matter for interactive programs but have partial coverage and require pseudo-terminal fixture isolation.",
+      "module": "termios_abi",
+      "next_step": "Add termios pty fixtures once process and stdio fixture infrastructure has stable subprocess logging.",
+      "status_breakdown": {
+        "RawSyscall": 10
+      },
+      "target_covered": 5,
+      "target_total": 10,
+      "target_uncovered": 5
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 50.0,
+      "deferral_reason": "Group database behavior should be verified with pwd and NSS fixtures rather than as an isolated first-wave campaign.",
+      "module": "grp_abi",
+      "next_step": "Fold group fixtures into the follow-up deterministic passwd/group/NSS campaign.",
+      "status_breakdown": {
+        "Implemented": 8
+      },
+      "target_covered": 4,
+      "target_total": 8,
+      "target_uncovered": 4
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 42.86,
+      "deferral_reason": "Setjmp semantics belong with signal and cancellation boundary tests and should not be decoupled from async-control evidence.",
+      "module": "setjmp_abi",
+      "next_step": "Add setjmp fixtures in the signal and async-cancellation boundary fixture pack.",
+      "status_breakdown": {
+        "Implemented": 7
+      },
+      "target_covered": 3,
+      "target_total": 7,
+      "target_uncovered": 4
+    },
+    {
+      "coverage_state": "partial",
+      "current_coverage_pct": 92.0,
+      "deferral_reason": "C11 thread coverage is already high and lower marginal gain than pthread synchronization and cancellation fixtures.",
+      "module": "c11threads_abi",
+      "next_step": "Add remaining C11 thread edge fixtures after pthread robust mutex and TLS destructor coverage lands.",
+      "status_breakdown": {
+        "Implemented": 25
+      },
+      "target_covered": 23,
+      "target_total": 25,
+      "target_uncovered": 2
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 50.0,
+      "deferral_reason": "Resource-limit surface is tiny and lower priority than broad process, allocator, and runtime replacement blockers.",
+      "module": "resource_abi",
+      "next_step": "Add resource fixtures as part of syscall tail cleanup after first-wave campaigns complete.",
+      "status_breakdown": {
+        "RawSyscall": 2
+      },
+      "target_covered": 1,
+      "target_total": 2,
+      "target_uncovered": 1
+    },
+    {
+      "coverage_state": "uncovered",
+      "current_coverage_pct": 0.0,
+      "deferral_reason": "Runtime policy is a control-plane surface rather than a user-facing exported symbol family and needs dedicated strict/hardened mode evidence.",
+      "module": "runtime_policy",
+      "next_step": "Add runtime-policy fixtures with replacement-level gates after mode-pair workload evidence is refreshed.",
+      "status_breakdown": {
+        "Implemented": 1
+      },
+      "target_covered": 0,
+      "target_total": 1,
+      "target_uncovered": 1
+    },
+    {
+      "coverage_state": "weak",
+      "current_coverage_pct": 75.0,
+      "deferral_reason": "Startup coverage has a small residual gap and is already represented in loader, process, and user workload smoke evidence.",
+      "module": "startup_abi",
+      "next_step": "Close the remaining startup fixture in the L0/L1 real-program smoke suite.",
+      "status_breakdown": {
+        "Implemented": 4
+      },
+      "target_covered": 3,
+      "target_total": 4,
+      "target_uncovered": 1
+    }
+  ],
+  "generated_at_utc": "2026-05-02T12:51:40Z",
   "inputs": {
+    "abi_symbol_universe": "tests/conformance/symbol_universe_normalization.v1.json",
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "hard_parts_failure_matrix": "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
+    "hard_parts_truth_table": "tests/conformance/hard_parts_truth_table.v1.json",
+    "per_symbol_fixture_tests": "tests/conformance/per_symbol_fixture_tests.v1.json",
+    "semantic_contract_join": "tests/conformance/semantic_contract_symbol_join.v1.json",
+    "semantic_overlay": "tests/conformance/support_semantic_overlay.v1.json",
     "support_matrix": "support_matrix.json",
     "symbol_fixture_coverage": "tests/conformance/symbol_fixture_coverage.v1.json",
-    "per_symbol_fixture_tests": "tests/conformance/per_symbol_fixture_tests.v1.json",
     "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
-    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json"
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map"
   },
-  "scoring_policy": {
-    "coverage_gap_score": "min(target_uncovered, 200)",
-    "priority_score": "coverage_gap_score + 300 * workload_risk_score + 200 * parity_risk_score - 50 * implementation_complexity_score",
-    "workload_risk_score_range": [
-      0,
-      5
-    ],
-    "parity_risk_score_range": [
-      0,
-      5
-    ],
-    "implementation_complexity_score_range": [
-      1,
-      5
-    ],
-    "sort_order": "priority_score_desc_then_target_uncovered_desc_then_module_asc"
-  },
+  "purpose": "Rank fixture campaigns by exported-symbol coverage gain, real workload risk, semantic parity risk, hard-parts exposure, and implementation complexity so coverage expansion is countable and user-driven.",
   "required_log_fields": [
     "trace_id",
     "bead_id",
@@ -42,1158 +1260,50 @@
     "decision_path",
     "healing_action",
     "latency_ns",
+    "symbol_family",
+    "score",
+    "rank",
+    "coverage_state",
+    "risk_factors",
     "artifact_refs",
     "source_commit",
     "target_dir",
     "failure_signature"
   ],
-  "campaigns": [
-    {
-      "rank": 1,
-      "campaign_id": "fcq-unistd-process-filesystem",
-      "module": "unistd_abi",
-      "title": "unistd/process/filesystem syscall fixture wave",
-      "symbol_family": "process control, filesystem metadata, cwd, exec, exit, and low-level unistd wrappers",
-      "target_total": 742,
-      "target_covered": 33,
-      "target_uncovered": 709,
-      "current_coverage_pct": 4.45,
-      "first_wave_symbols": [
-        "_Exit",
-        "_Fork",
-        "__cxa_atexit",
-        "__cxa_finalize",
-        "__fxstat",
-        "__fxstat64",
-        "__fxstatat",
-        "__fxstatat64",
-        "__gmtime_r",
-        "__lxstat",
-        "__lxstat64",
-        "__progname"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 6.06,
-      "workload_domains": [
-        "shell_coreutils",
-        "build_tools",
-        "package_manager",
-        "startup_linking"
-      ],
-      "risk_tags": [
-        "startup_linking_failure",
-        "semantic_divergence",
-        "filesystem_state",
-        "errno_mapping"
-      ],
-      "scores": {
-        "coverage_gap_score": 200,
-        "workload_risk_score": 5,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 3,
-        "priority_score": 2550
-      },
-      "oracle_kind": "glibc_fixture_oracle",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add strict/hardened fixtures for process, stat-family, and exit-path symbols before broad syscall tail work."
+  "schema_version": "v1",
+  "scoring_policy": {
+    "coverage_gap_score": "min(target_uncovered, 200)",
+    "implementation_complexity_score_range": [
+      1,
+      5
+    ],
+    "parity_risk_score_range": [
+      0,
+      5
+    ],
+    "priority_score": "coverage_gap_score + 300 * workload_risk_score + 200 * parity_risk_score - 50 * implementation_complexity_score",
+    "risk_inputs": {
+      "abi_symbol_universe": "tests/conformance/symbol_universe_normalization.v1.json",
+      "fixture_inventory": "tests/conformance/symbol_fixture_coverage.v1.json",
+      "hard_parts_failure_classes": "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
+      "hard_parts_truth": "tests/conformance/hard_parts_truth_table.v1.json",
+      "historical_failure_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+      "per_symbol_fixture_quality": "tests/conformance/per_symbol_fixture_tests.v1.json",
+      "semantic_contract_join": "tests/conformance/semantic_contract_symbol_join.v1.json",
+      "semantic_overlay": "tests/conformance/support_semantic_overlay.v1.json",
+      "support_matrix_statuses": "support_matrix.json",
+      "user_workload_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+      "version_script_exports": "crates/frankenlibc-abi/version_scripts/libc.map"
     },
-    {
-      "rank": 2,
-      "campaign_id": "fcq-string-memory-hotpaths",
-      "module": "string_abi",
-      "title": "string and memory hot-path fixture wave",
-      "symbol_family": "mem*, str*, collation-adjacent string helpers, and GNU string extensions",
-      "target_total": 146,
-      "target_covered": 25,
-      "target_uncovered": 121,
-      "current_coverage_pct": 17.12,
-      "first_wave_symbols": [
-        "__memcmpeq",
-        "__mempcpy",
-        "__rawmemchr",
-        "__stpcpy",
-        "__stpcpy_small",
-        "__stpncpy",
-        "__strcasecmp",
-        "__strcasecmp_l",
-        "__strcasestr",
-        "__strcoll_l",
-        "__strcpy_small",
-        "__strcspn_c1"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 25.34,
-      "workload_domains": [
-        "performance_sensitive",
-        "shell_coreutils",
-        "allocator",
-        "language_runtimes"
-      ],
-      "risk_tags": [
-        "semantic_divergence",
-        "buffer_boundary",
-        "locale_sensitive",
-        "performance_regression"
-      ],
-      "scores": {
-        "coverage_gap_score": 121,
-        "workload_risk_score": 5,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 2,
-        "priority_score": 2521
-      },
-      "oracle_kind": "glibc_fixture_oracle",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/ld_preload_smoke.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Grow boundary, overlap, empty, invalid pointer, locale, and perf guard fixtures for uncovered string families."
-    },
-    {
-      "rank": 3,
-      "campaign_id": "fcq-stdio-libio",
-      "module": "stdio_abi",
-      "title": "stdio/libio stream semantics fixture wave",
-      "symbol_family": "FILE state, _IO compatibility names, locking, formatted IO, buffering, and stream errors",
-      "target_total": 126,
-      "target_covered": 29,
-      "target_uncovered": 97,
-      "current_coverage_pct": 23.02,
-      "first_wave_symbols": [
-        "_IO_2_1_stderr_",
-        "_IO_2_1_stdin_",
-        "_IO_2_1_stdout_",
-        "_IO_feof",
-        "_IO_ferror",
-        "_IO_flockfile",
-        "_IO_ftrylockfile",
-        "_IO_funlockfile",
-        "_IO_getc",
-        "_IO_padn",
-        "_IO_peekc_locked",
-        "_IO_putc"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 32.54,
-      "workload_domains": [
-        "stdio_libio",
-        "shell_coreutils",
-        "build_tools",
-        "package_manager"
-      ],
-      "risk_tags": [
-        "stdio_libio_divergence",
-        "semantic_divergence",
-        "buffering_order",
-        "diagnostics_gap"
-      ],
-      "scores": {
-        "coverage_gap_score": 97,
-        "workload_risk_score": 5,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 3,
-        "priority_score": 2447
-      },
-      "oracle_kind": "stdio_fixture_or_replay",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance."
-    },
-    {
-      "rank": 4,
-      "campaign_id": "fcq-pthread-sync",
-      "module": "pthread_abi",
-      "title": "pthread synchronization and cancellation fixture wave",
-      "symbol_family": "pthread lifecycle, mutex, condvar, TLS keys, cancellation, and GNU extensions",
-      "target_total": 141,
-      "target_covered": 27,
-      "target_uncovered": 114,
-      "current_coverage_pct": 19.15,
-      "first_wave_symbols": [
-        "__pthread_cleanup_routine",
-        "__pthread_get_minstack",
-        "__pthread_getspecific",
-        "__pthread_key_create",
-        "__pthread_mutex_destroy",
-        "__pthread_mutex_init",
-        "__pthread_mutex_lock",
-        "__pthread_mutexattr_destroy",
-        "__pthread_mutexattr_init",
-        "__pthread_mutexattr_settype",
-        "__pthread_once",
-        "__pthread_register_cancel"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 27.66,
-      "workload_domains": [
-        "threaded_services",
-        "language_runtimes",
-        "performance_sensitive"
-      ],
-      "risk_tags": [
-        "pthread_cancellation",
-        "mode_pair_mismatch",
-        "deadlock_timeout",
-        "performance_regression"
-      ],
-      "scores": {
-        "coverage_gap_score": 114,
-        "workload_risk_score": 5,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 4,
-        "priority_score": 2414
-      },
-      "oracle_kind": "threaded_mode_pair_replay",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Prioritize deterministic mode-pair tests for pthread primitives that real runtimes and services depend on."
-    },
-    {
-      "rank": 5,
-      "campaign_id": "fcq-malloc-membrane",
-      "module": "malloc_abi",
-      "title": "allocator ownership and membrane fixture wave",
-      "symbol_family": "malloc, alignment, usable-size, stats, trimming, and hardened ownership behavior",
-      "target_total": 21,
-      "target_covered": 4,
-      "target_uncovered": 17,
-      "current_coverage_pct": 19.05,
-      "first_wave_symbols": [
-        "__libc_allocate_rtsig",
-        "__libc_freeres",
-        "__libc_init_first",
-        "__libc_sa_len",
-        "aligned_alloc",
-        "cfree",
-        "mallinfo",
-        "mallinfo2",
-        "malloc_info",
-        "malloc_stats",
-        "malloc_trim",
-        "malloc_usable_size"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 76.19,
-      "workload_domains": [
-        "allocator",
-        "threaded_services",
-        "performance_sensitive",
-        "language_runtimes"
-      ],
-      "risk_tags": [
-        "allocator_ownership",
-        "hardened_repair",
-        "foreign_free",
-        "performance_regression"
-      ],
-      "scores": {
-        "coverage_gap_score": 17,
-        "workload_risk_score": 5,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 3,
-        "priority_score": 2367
-      },
-      "oracle_kind": "membrane_allocator_oracle",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add allocator parity and hardened invalid-pointer fixtures before optimizing allocator or membrane hot paths."
-    },
-    {
-      "rank": 6,
-      "campaign_id": "fcq-process-spawn",
-      "module": "process_abi",
-      "title": "process spawn and privilege-sensitive fixture wave",
-      "symbol_family": "exit, clone, exec, spawn actions, chroot, and uid/gid result contracts",
-      "target_total": 30,
-      "target_covered": 4,
-      "target_uncovered": 26,
-      "current_coverage_pct": 13.33,
-      "first_wave_symbols": [
-        "_exit",
-        "acct",
-        "chroot",
-        "clone",
-        "closefrom",
-        "execvp",
-        "execvpe",
-        "getresgid",
-        "getresuid",
-        "posix_spawn_file_actions_addchdir_np",
-        "posix_spawn_file_actions_addclose",
-        "posix_spawn_file_actions_adddup2"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 53.33,
-      "workload_domains": [
-        "shell_coreutils",
-        "build_tools",
-        "package_manager",
-        "startup_linking"
-      ],
-      "risk_tags": [
-        "startup_linking_failure",
-        "process_status",
-        "errno_mapping",
-        "semantic_divergence"
-      ],
-      "scores": {
-        "coverage_gap_score": 26,
-        "workload_risk_score": 5,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 4,
-        "priority_score": 2326
-      },
-      "oracle_kind": "mode_pair_process_replay",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add exec/spawn/action fixtures with exact status, errno, and file-action diagnostics."
-    },
-    {
-      "rank": 7,
-      "campaign_id": "fcq-resolver-nss-core",
-      "module": "resolv_abi",
-      "title": "resolver service lookup fixture wave",
-      "symbol_family": "getaddrinfo-adjacent status, host/service/protocol lookup, and h_errno behavior",
-      "target_total": 11,
-      "target_covered": 3,
-      "target_uncovered": 8,
-      "current_coverage_pct": 27.27,
-      "first_wave_symbols": [
-        "__h_errno_location",
-        "gai_strerror",
-        "gethostbyaddr",
-        "getnameinfo",
-        "getprotobyname",
-        "getprotobynumber",
-        "getservbyname",
-        "getservbyport"
-      ],
-      "first_wave_fixture_count": 8,
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "workload_domains": [
-        "resolver_nss",
-        "language_runtimes",
-        "package_manager",
-        "threaded_services"
-      ],
-      "risk_tags": [
-        "resolver_nss_failure",
-        "semantic_divergence",
-        "timeout_policy",
-        "claim_blocked"
-      ],
-      "scores": {
-        "coverage_gap_score": 8,
-        "workload_risk_score": 5,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 4,
-        "priority_score": 2308
-      },
-      "oracle_kind": "resolver_nss_fixture_oracle",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Finish resolver fixture coverage with localhost, invalid, service, protocol, reverse, and h_errno cases."
-    },
-    {
-      "rank": 8,
-      "campaign_id": "fcq-dlfcn-loader",
-      "module": "dlfcn_abi",
-      "title": "loader symbol versioning fixture wave",
-      "symbol_family": "dl_iterate_phdr, dlvsym, loader namespace, and versioned symbol behavior",
-      "target_total": 7,
-      "target_covered": 5,
-      "target_uncovered": 2,
-      "current_coverage_pct": 71.43,
-      "first_wave_symbols": [
-        "dl_iterate_phdr",
-        "dlvsym"
-      ],
-      "first_wave_fixture_count": 2,
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "workload_domains": [
-        "startup_linking",
-        "language_runtimes",
-        "build_tools"
-      ],
-      "risk_tags": [
-        "startup_linking_failure",
-        "symbol_missing",
-        "version_node",
-        "standalone_blocker"
-      ],
-      "scores": {
-        "coverage_gap_score": 2,
-        "workload_risk_score": 5,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 4,
-        "priority_score": 2302
-      },
-      "oracle_kind": "loader_symbol_replay",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Close the small but high-risk dlfcn fixture gap with versioned-symbol and phdr iteration tests."
-    },
-    {
-      "rank": 9,
-      "campaign_id": "fcq-poll-event-loop",
-      "module": "poll_abi",
-      "title": "poll/epoll/eventfd/timerfd fixture wave",
-      "symbol_family": "poll, select, epoll, eventfd, timerfd, pselect, ppoll, and scheduler-yield contracts",
-      "target_total": 15,
-      "target_covered": 2,
-      "target_uncovered": 13,
-      "current_coverage_pct": 13.33,
-      "first_wave_symbols": [
-        "epoll_create",
-        "epoll_create1",
-        "epoll_ctl",
-        "epoll_pwait",
-        "epoll_wait",
-        "eventfd",
-        "ppoll",
-        "prctl",
-        "pselect",
-        "sched_yield",
-        "timerfd_create",
-        "timerfd_gettime"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 93.33,
-      "workload_domains": [
-        "threaded_services",
-        "performance_sensitive",
-        "package_manager"
-      ],
-      "risk_tags": [
-        "mode_pair_mismatch",
-        "timeout_policy",
-        "event_loop",
-        "performance_regression"
-      ],
-      "scores": {
-        "coverage_gap_score": 13,
-        "workload_risk_score": 5,
-        "parity_risk_score": 4,
-        "implementation_complexity_score": 3,
-        "priority_score": 2163
-      },
-      "oracle_kind": "threaded_service_replay",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add deterministic timeout, readiness, invalid-fd, and mode-pair cases for event-loop syscalls."
-    },
-    {
-      "rank": 10,
-      "campaign_id": "fcq-socket-network",
-      "module": "socket_abi",
-      "title": "socket send/recv/connect fixture wave",
-      "symbol_family": "accept/connect/socketpair/send/recv/socket options with loopback-only deterministic behavior",
-      "target_total": 18,
-      "target_covered": 8,
-      "target_uncovered": 10,
-      "current_coverage_pct": 44.44,
-      "first_wave_symbols": [
-        "accept",
-        "accept4",
-        "connect",
-        "getpeername",
-        "recvfrom",
-        "recvmsg",
-        "sendmsg",
-        "sendto",
-        "setsockopt",
-        "socketpair"
-      ],
-      "first_wave_fixture_count": 10,
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "workload_domains": [
-        "threaded_services",
-        "resolver_nss",
-        "package_manager"
-      ],
-      "risk_tags": [
-        "resolver_nss_failure",
-        "semantic_divergence",
-        "timeout_policy",
-        "errno_mapping"
-      ],
-      "scores": {
-        "coverage_gap_score": 10,
-        "workload_risk_score": 5,
-        "parity_risk_score": 4,
-        "implementation_complexity_score": 3,
-        "priority_score": 2160
-      },
-      "oracle_kind": "resolver_fixture_or_replay",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Complete loopback socket fixtures with exact errno, nonblocking, and option behavior."
-    },
-    {
-      "rank": 11,
-      "campaign_id": "fcq-wchar-locale",
-      "module": "wchar_abi",
-      "title": "wide-char and locale-sensitive parser fixture wave",
-      "symbol_family": "wide scanf, wcsto*, classification, multibyte, and locale-qualified variants",
-      "target_total": 146,
-      "target_covered": 18,
-      "target_uncovered": 128,
-      "current_coverage_pct": 12.33,
-      "first_wave_symbols": [
-        "__islower_l",
-        "__isoc23_fwscanf",
-        "__isoc23_swscanf",
-        "__isoc23_vfwscanf",
-        "__isoc23_vswscanf",
-        "__isoc23_vwscanf",
-        "__isoc23_wcstoimax",
-        "__isoc23_wcstol",
-        "__isoc23_wcstol_l",
-        "__isoc23_wcstoll",
-        "__isoc23_wcstoll_l",
-        "__isoc23_wcstoul"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 20.55,
-      "workload_domains": [
-        "locale_iconv",
-        "language_runtimes",
-        "stdio_libio"
-      ],
-      "risk_tags": [
-        "locale_iconv_divergence",
-        "stdio_libio_divergence",
-        "semantic_divergence",
-        "parser_boundary"
-      ],
-      "scores": {
-        "coverage_gap_score": 128,
-        "workload_risk_score": 4,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 4,
-        "priority_score": 2128
-      },
-      "oracle_kind": "locale_iconv_fixture_oracle",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add C.UTF-8 and invalid-sequence fixtures for wide parser and conversion boundaries."
-    },
-    {
-      "rank": 12,
-      "campaign_id": "fcq-locale-message-catalog",
-      "module": "locale_abi",
-      "title": "locale/message catalog fixture wave",
-      "symbol_family": "locale, gettext/catalog, textdomain, and message translation compatibility",
-      "target_total": 16,
-      "target_covered": 8,
-      "target_uncovered": 8,
-      "current_coverage_pct": 50.0,
-      "first_wave_symbols": [
-        "bindtextdomain",
-        "catclose",
-        "catgets",
-        "catopen",
-        "dgettext",
-        "gettext",
-        "ngettext",
-        "textdomain"
-      ],
-      "first_wave_fixture_count": 8,
-      "expected_coverage_after_first_wave_pct": 100.0,
-      "workload_domains": [
-        "locale_iconv",
-        "shell_coreutils",
-        "language_runtimes"
-      ],
-      "risk_tags": [
-        "locale_iconv_divergence",
-        "semantic_divergence",
-        "missing_catalog",
-        "unsupported_claim"
-      ],
-      "scores": {
-        "coverage_gap_score": 8,
-        "workload_risk_score": 4,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 3,
-        "priority_score": 2058
-      },
-      "oracle_kind": "locale_iconv_fixture_oracle",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Finish locale/message catalog fixtures with missing-domain, plural, and fallback behavior."
-    },
-    {
-      "rank": 13,
-      "campaign_id": "fcq-fortify-boundary",
-      "module": "fortify_abi",
-      "title": "fortify checked-wrapper fixture wave",
-      "symbol_family": "__*_chk wrappers, fortified string/stdio/env calls, and abort/diagnostic contracts",
-      "target_total": 78,
-      "target_covered": 0,
-      "target_uncovered": 78,
-      "current_coverage_pct": 0.0,
-      "first_wave_symbols": [
-        "__asprintf_chk",
-        "__chk_fail",
-        "__confstr_chk",
-        "__dprintf_chk",
-        "__explicit_bzero_chk",
-        "__fdelt_chk",
-        "__fgets_chk",
-        "__fgets_unlocked_chk",
-        "__fgetws_chk",
-        "__fgetws_unlocked_chk",
-        "__fortify_fail",
-        "__fprintf_chk"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 15.38,
-      "workload_domains": [
-        "build_tools",
-        "shell_coreutils",
-        "performance_sensitive"
-      ],
-      "risk_tags": [
-        "abort_only",
-        "buffer_boundary",
-        "diagnostics_gap",
-        "unsupported_claim"
-      ],
-      "scores": {
-        "coverage_gap_score": 78,
-        "workload_risk_score": 4,
-        "parity_risk_score": 4,
-        "implementation_complexity_score": 3,
-        "priority_score": 1928
-      },
-      "oracle_kind": "claim_reconciliation_gate",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add checked-wrapper fixtures that distinguish abort-only, deterministic fallback, and real glibc fortify behavior."
-    },
-    {
-      "rank": 14,
-      "campaign_id": "fcq-time-clock",
-      "module": "time_abi",
-      "title": "time and clock discontinuity fixture wave",
-      "symbol_family": "clock, ctime/asctime, gettimeofday, timezone, nanosleep, and adjustment contracts",
-      "target_total": 26,
-      "target_covered": 4,
-      "target_uncovered": 22,
-      "current_coverage_pct": 15.38,
-      "first_wave_symbols": [
-        "asctime",
-        "asctime_r",
-        "clock_adjtime",
-        "clock_getres",
-        "clock_nanosleep",
-        "clock_settime",
-        "ctime",
-        "ctime_r",
-        "difftime",
-        "environ",
-        "gettimeofday",
-        "gmtime"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 61.54,
-      "workload_domains": [
-        "package_manager",
-        "threaded_services",
-        "shell_coreutils"
-      ],
-      "risk_tags": [
-        "semantic_divergence",
-        "temporal_discontinuity",
-        "errno_mapping",
-        "determinism"
-      ],
-      "scores": {
-        "coverage_gap_score": 22,
-        "workload_risk_score": 4,
-        "parity_risk_score": 4,
-        "implementation_complexity_score": 3,
-        "priority_score": 1872
-      },
-      "oracle_kind": "glibc_fixture_oracle",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add pinned-time and invalid-clock fixtures with deterministic tolerance rules."
-    },
-    {
-      "rank": 15,
-      "campaign_id": "fcq-math-special",
-      "module": "math_abi",
-      "title": "math finite/special-function fixture wave",
-      "symbol_family": "finite aliases, special functions, fpclassify/signbit, libm edge cases, and exception-adjacent behavior",
-      "target_total": 1265,
-      "target_covered": 19,
-      "target_uncovered": 1246,
-      "current_coverage_pct": 1.5,
-      "first_wave_symbols": [
-        "_LIB_VERSION",
-        "__acos_finite",
-        "__acosf128_finite",
-        "__acosf_finite",
-        "__acosh_finite",
-        "__acoshf128_finite",
-        "__acoshf_finite",
-        "__acoshl_finite",
-        "__acosl_finite",
-        "__asin_finite",
-        "__asinf128_finite",
-        "__asinf_finite"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 2.45,
-      "workload_domains": [
-        "language_runtimes",
-        "performance_sensitive",
-        "build_tools"
-      ],
-      "risk_tags": [
-        "semantic_divergence",
-        "numeric_boundary",
-        "fenv_adjacent",
-        "performance_regression"
-      ],
-      "scores": {
-        "coverage_gap_score": 200,
-        "workload_risk_score": 3,
-        "parity_risk_score": 5,
-        "implementation_complexity_score": 5,
-        "priority_score": 1850
-      },
-      "oracle_kind": "glibc_fixture_oracle",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Start with finite aliases and fpclassification before expanding to the long libm tail."
-    },
-    {
-      "rank": 16,
-      "campaign_id": "fcq-signal-async",
-      "module": "signal_abi",
-      "title": "signal and async-observable fixture wave",
-      "symbol_family": "signal masks, alternate stacks, RT min/max, pause, and async-visible diagnostics",
-      "target_total": 28,
-      "target_covered": 9,
-      "target_uncovered": 19,
-      "current_coverage_pct": 32.14,
-      "first_wave_symbols": [
-        "__libc_current_sigrtmax",
-        "__libc_current_sigrtmin",
-        "killpg",
-        "pause",
-        "psiginfo",
-        "pthread_sigmask",
-        "sigabbrev_np",
-        "sigaltstack",
-        "sigandset",
-        "sighold",
-        "sigignore",
-        "siginterrupt"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 75.0,
-      "workload_domains": [
-        "threaded_services",
-        "shell_coreutils",
-        "language_runtimes"
-      ],
-      "risk_tags": [
-        "semantic_divergence",
-        "async_signal",
-        "pthread_cancellation",
-        "diagnostics_gap"
-      ],
-      "scores": {
-        "coverage_gap_score": 19,
-        "workload_risk_score": 4,
-        "parity_risk_score": 4,
-        "implementation_complexity_score": 4,
-        "priority_score": 1819
-      },
-      "oracle_kind": "mode_pair_process_replay",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh",
-        "scripts/e2e_suite.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add deterministic signal-mask and alternate-stack fixtures before broader async-cancellation campaigns."
-    },
-    {
-      "rank": 17,
-      "campaign_id": "fcq-glibc-internal-compat",
-      "module": "glibc_internal_abi",
-      "title": "glibc internal compatibility triage fixture wave",
-      "symbol_family": "exported glibc internals, compatibility names, diagnostics, backtrace, argz, and resolver helpers",
-      "target_total": 570,
-      "target_covered": 1,
-      "target_uncovered": 569,
-      "current_coverage_pct": 0.18,
-      "first_wave_symbols": [
-        "_IO_enable_locks",
-        "__abort_msg",
-        "__adjtimex",
-        "__after_morecore_hook",
-        "__arch_prctl",
-        "__argz_count",
-        "__argz_next",
-        "__argz_stringify",
-        "__asprintf",
-        "__b64_ntop",
-        "__b64_pton",
-        "__backtrace"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 2.28,
-      "workload_domains": [
-        "startup_linking",
-        "build_tools",
-        "diagnostics"
-      ],
-      "risk_tags": [
-        "unsupported_claim",
-        "symbol_missing",
-        "diagnostics_gap",
-        "compatibility_internal"
-      ],
-      "scores": {
-        "coverage_gap_score": 200,
-        "workload_risk_score": 2,
-        "parity_risk_score": 4,
-        "implementation_complexity_score": 5,
-        "priority_score": 1350
-      },
-      "oracle_kind": "symbol_coverage_gate",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Split compatibility internals into supported, deterministic-fallback, and claim-blocked fixture groups."
-    },
-    {
-      "rank": 18,
-      "campaign_id": "fcq-rpc-legacy-network",
-      "module": "rpc_abi",
-      "title": "legacy RPC compatibility fixture wave",
-      "symbol_family": "sunrpc/auth/xdr compatibility and deterministic unsupported behavior",
-      "target_total": 159,
-      "target_covered": 0,
-      "target_uncovered": 159,
-      "current_coverage_pct": 0.0,
-      "first_wave_symbols": [
-        "__rpc_thread_createerr",
-        "__rpc_thread_svc_fdset",
-        "__rpc_thread_svc_max_pollfd",
-        "__rpc_thread_svc_pollfd",
-        "_authenticate",
-        "_null_auth",
-        "_rpc_dtablesize",
-        "_seterr_reply",
-        "authdes_create",
-        "authdes_getucred",
-        "authdes_pk_create",
-        "authnone_create"
-      ],
-      "first_wave_fixture_count": 12,
-      "expected_coverage_after_first_wave_pct": 7.55,
-      "workload_domains": [
-        "resolver_nss",
-        "package_manager",
-        "legacy_network"
-      ],
-      "risk_tags": [
-        "unsupported_claim",
-        "legacy_network",
-        "semantic_divergence",
-        "deterministic_fallback"
-      ],
-      "scores": {
-        "coverage_gap_score": 159,
-        "workload_risk_score": 2,
-        "parity_risk_score": 3,
-        "implementation_complexity_score": 4,
-        "priority_score": 1159
-      },
-      "oracle_kind": "claim_reconciliation_gate",
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh"
-      ],
-      "structured_log_fields": "required_log_fields",
-      "next_step": "Add deterministic compatibility/unsupported fixtures before claiming RPC-related coverage."
-    }
-  ],
-  "deferred_modules": [
-    {
-      "module": "stdlib_abi",
-      "target_total": 154,
-      "target_covered": 16,
-      "target_uncovered": 138,
-      "current_coverage_pct": 10.39,
-      "status_breakdown": {
-        "Implemented": 154
-      },
-      "deferral_reason": "Lower workload and parity risk than the first-wave campaigns, but still tracked to prevent silent loss of stdlib conversion, random, exit, and environment fixture coverage.",
-      "next_step": "Create a follow-up stdlib fixture campaign after the current process, stdio, string, pthread, malloc, resolver, loader, and math waves have generated closure evidence."
-    },
-    {
-      "module": "io_internal_abi",
-      "target_total": 114,
-      "target_covered": 27,
-      "target_uncovered": 87,
-      "current_coverage_pct": 23.68,
-      "status_breakdown": {
-        "Implemented": 114
-      },
-      "deferral_reason": "Internal I/O coverage is related to stdio and low-level I/O waves but needs a narrower oracle plan before it should displace user-facing campaigns.",
-      "next_step": "Split internal I/O fixtures by public behavior proxy and add them once stdio and syscall fixture logs identify the shared surface."
-    },
-    {
-      "module": "ctype_abi",
-      "target_total": 49,
-      "target_covered": 11,
-      "target_uncovered": 38,
-      "current_coverage_pct": 22.45,
-      "status_breakdown": {
-        "Implemented": 49
-      },
-      "deferral_reason": "Character classification is important for locale users but has less immediate standalone replacement risk than the selected locale, wchar, and stdio campaigns.",
-      "next_step": "Add ctype boundary fixtures alongside the next locale and transliteration evidence wave."
-    },
-    {
-      "module": "io_abi",
-      "target_total": 28,
-      "target_covered": 1,
-      "target_uncovered": 27,
-      "current_coverage_pct": 3.57,
-      "status_breakdown": {
-        "Implemented": 3,
-        "RawSyscall": 25
-      },
-      "deferral_reason": "Low-level I/O is partially represented by unistd, process, poll, socket, and stdio campaigns; a separate wave should avoid duplicate syscall fixture coverage.",
-      "next_step": "Derive an io_abi campaign from syscall coverage deltas after the unistd and poll waves land."
-    },
-    {
-      "module": "pwd_abi",
-      "target_total": 27,
-      "target_covered": 4,
-      "target_uncovered": 23,
-      "current_coverage_pct": 14.81,
-      "status_breakdown": {
-        "Implemented": 27
-      },
-      "deferral_reason": "Password database behavior belongs with NSS and resolver hard-parts but needs controlled host database fixtures before first-wave expansion.",
-      "next_step": "Add pwd/group/NSS fixtures with deterministic passwd and group databases after resolver campaign evidence is in place."
-    },
-    {
-      "module": "err_abi",
-      "target_total": 12,
-      "target_covered": 0,
-      "target_uncovered": 12,
-      "current_coverage_pct": 0.0,
-      "status_breakdown": {
-        "Implemented": 12
-      },
-      "deferral_reason": "Err/warn helpers are user-visible diagnostics but low breadth compared with the selected high-risk runtime and syscall campaigns.",
-      "next_step": "Create a compact stderr and errno formatting fixture pack once stdio buffering evidence is stable."
-    },
-    {
-      "module": "fenv_abi",
-      "target_total": 11,
-      "target_covered": 0,
-      "target_uncovered": 11,
-      "current_coverage_pct": 0.0,
-      "status_breakdown": {
-        "Implemented": 11
-      },
-      "deferral_reason": "Floating-point environment behavior is high precision work but should be paired with the math exceptional-path fixture pack instead of this broad first queue.",
-      "next_step": "Add fenv fixtures with soft-fp and math exception cases in the dedicated math/fenv wave."
-    },
-    {
-      "module": "inet_abi",
-      "target_total": 17,
-      "target_covered": 7,
-      "target_uncovered": 10,
-      "current_coverage_pct": 41.18,
-      "status_breakdown": {
-        "Implemented": 17
-      },
-      "deferral_reason": "inet address helpers are partially covered and have lower workload risk than resolver, socket, and NSS behavior.",
-      "next_step": "Extend network conversion fixtures after resolver and socket campaigns expose shared address-family gaps."
-    },
-    {
-      "module": "dirent_abi",
-      "target_total": 14,
-      "target_covered": 7,
-      "target_uncovered": 7,
-      "current_coverage_pct": 50.0,
-      "status_breakdown": {
-        "Implemented": 11,
-        "RawSyscall": 3
-      },
-      "deferral_reason": "Directory operations have partial coverage and should be tied to filesystem state fixtures from the unistd/process wave.",
-      "next_step": "Add deterministic directory traversal fixtures after filesystem metadata and cwd cases are expanded."
-    },
-    {
-      "module": "mmap_abi",
-      "target_total": 10,
-      "target_covered": 4,
-      "target_uncovered": 6,
-      "current_coverage_pct": 40.0,
-      "status_breakdown": {
-        "RawSyscall": 10
-      },
-      "deferral_reason": "Memory mapping behavior is critical but needs allocator, membrane, and syscall interaction evidence before isolated fixture prioritization.",
-      "next_step": "Create mmap fixtures after malloc/membrane and syscall campaign logs identify strict versus hardened expectations."
-    },
-    {
-      "module": "isoc_abi",
-      "target_total": 5,
-      "target_covered": 0,
-      "target_uncovered": 5,
-      "current_coverage_pct": 0.0,
-      "status_breakdown": {
-        "Implemented": 5
-      },
-      "deferral_reason": "ISOC compatibility surface is small and lower impact than the selected broad ABI families.",
-      "next_step": "Add the ISOC fixture pack as a compact cleanup campaign after high-risk exported families have threshold coverage."
-    },
-    {
-      "module": "termios_abi",
-      "target_total": 10,
-      "target_covered": 5,
-      "target_uncovered": 5,
-      "current_coverage_pct": 50.0,
-      "status_breakdown": {
-        "RawSyscall": 10
-      },
-      "deferral_reason": "Terminal controls matter for interactive programs but have partial coverage and require pseudo-terminal fixture isolation.",
-      "next_step": "Add termios pty fixtures once process and stdio fixture infrastructure has stable subprocess logging."
-    },
-    {
-      "module": "grp_abi",
-      "target_total": 8,
-      "target_covered": 4,
-      "target_uncovered": 4,
-      "current_coverage_pct": 50.0,
-      "status_breakdown": {
-        "Implemented": 8
-      },
-      "deferral_reason": "Group database behavior should be verified with pwd and NSS fixtures rather than as an isolated first-wave campaign.",
-      "next_step": "Fold group fixtures into the follow-up deterministic passwd/group/NSS campaign."
-    },
-    {
-      "module": "setjmp_abi",
-      "target_total": 7,
-      "target_covered": 3,
-      "target_uncovered": 4,
-      "current_coverage_pct": 42.86,
-      "status_breakdown": {
-        "Implemented": 7
-      },
-      "deferral_reason": "Setjmp semantics belong with signal and cancellation boundary tests and should not be decoupled from async-control evidence.",
-      "next_step": "Add setjmp fixtures in the signal and async-cancellation boundary fixture pack."
-    },
-    {
-      "module": "c11threads_abi",
-      "target_total": 25,
-      "target_covered": 23,
-      "target_uncovered": 2,
-      "current_coverage_pct": 92.0,
-      "status_breakdown": {
-        "Implemented": 25
-      },
-      "deferral_reason": "C11 thread coverage is already high and lower marginal gain than pthread synchronization and cancellation fixtures.",
-      "next_step": "Add remaining C11 thread edge fixtures after pthread robust mutex and TLS destructor coverage lands."
-    },
-    {
-      "module": "resource_abi",
-      "target_total": 2,
-      "target_covered": 1,
-      "target_uncovered": 1,
-      "current_coverage_pct": 50.0,
-      "status_breakdown": {
-        "RawSyscall": 2
-      },
-      "deferral_reason": "Resource-limit surface is tiny and lower priority than broad process, allocator, and runtime replacement blockers.",
-      "next_step": "Add resource fixtures as part of syscall tail cleanup after first-wave campaigns complete."
-    },
-    {
-      "module": "runtime_policy",
-      "target_total": 1,
-      "target_covered": 0,
-      "target_uncovered": 1,
-      "current_coverage_pct": 0.0,
-      "status_breakdown": {
-        "Implemented": 1
-      },
-      "deferral_reason": "Runtime policy is a control-plane surface rather than a user-facing exported symbol family and needs dedicated strict/hardened mode evidence.",
-      "next_step": "Add runtime-policy fixtures with replacement-level gates after mode-pair workload evidence is refreshed."
-    },
-    {
-      "module": "startup_abi",
-      "target_total": 4,
-      "target_covered": 3,
-      "target_uncovered": 1,
-      "current_coverage_pct": 75.0,
-      "status_breakdown": {
-        "Implemented": 4
-      },
-      "deferral_reason": "Startup coverage has a small residual gap and is already represented in loader, process, and user workload smoke evidence.",
-      "next_step": "Close the remaining startup fixture in the L0/L1 real-program smoke suite."
-    }
-  ],
+    "sort_order": "priority_score_desc_then_target_uncovered_desc_then_module_asc",
+    "workload_risk_score_range": [
+      0,
+      5
+    ]
+  },
   "summary": {
-    "campaign_count": 18,
-    "deferred_module_count": 18,
-    "total_first_wave_fixture_count": 196,
-    "selected_target_uncovered_symbols": 3346,
-    "deferred_target_uncovered_symbols": 382,
     "all_uncovered_target_symbols": 3728,
+    "campaign_count": 18,
     "covered_modules": [
       "dlfcn_abi",
       "fortify_abi",
@@ -1214,6 +1324,10 @@
       "unistd_abi",
       "wchar_abi"
     ],
+    "deferred_module_count": 18,
+    "deferred_target_uncovered_symbols": 382,
+    "highest_priority_campaign": "fcq-unistd-process-filesystem",
+    "lowest_priority_campaign": "fcq-rpc-legacy-network",
     "required_workload_domains_covered": [
       "allocator",
       "build_tools",
@@ -1227,7 +1341,7 @@
       "stdio_libio",
       "threaded_services"
     ],
-    "highest_priority_campaign": "fcq-unistd-process-filesystem",
-    "lowest_priority_campaign": "fcq-rpc-legacy-network"
+    "selected_target_uncovered_symbols": 3346,
+    "total_first_wave_fixture_count": 196
   }
 }
