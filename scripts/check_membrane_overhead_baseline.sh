@@ -88,6 +88,53 @@ for bench in required_benchmarks:
     if bench not in benchmarks:
         errors.append(f"benchmarks missing {bench}")
 
+records = artifact.get("benchmark_records", [])
+if not isinstance(records, list):
+    errors.append("benchmark_records must be array")
+    records = []
+records_by_pair = {}
+for record in records:
+    if not isinstance(record, dict):
+        errors.append("benchmark_records entries must be objects")
+        continue
+    key = (record.get("benchmark"), record.get("runtime_mode"))
+    if key in records_by_pair:
+        errors.append(f"duplicate benchmark_record for {key[0]}/{key[1]}")
+    records_by_pair[key] = record
+
+required_record_fields = [
+    "trace_id",
+    "bead_id",
+    "benchmark_id",
+    "validation_path",
+    "runtime_mode",
+    "input_shape",
+    "sample_count",
+    "warmup_ms",
+    "latency_ns",
+    "variance",
+    "environment",
+    "source_commit",
+    "target_dir",
+    "threshold",
+    "decision",
+    "artifact_refs",
+    "failure_signature",
+]
+source_commit = artifact.get("source_commit")
+if not isinstance(source_commit, str) or len(source_commit) != 40:
+    errors.append("source_commit must be a 40-character git commit")
+target_dirs = artifact.get("measurement_environment", {}).get("target_dirs", {})
+criterion = artifact.get("measurement_environment", {}).get("criterion", {})
+if criterion.get("warm_up_time_ms") != 1:
+    errors.append("criterion warm_up_time_ms must be 1")
+
+def require_record_field(record, field, bench, mode):
+    if field not in record:
+        errors.append(f"{bench}/{mode}: benchmark_record missing {field}")
+        return None
+    return record[field]
+
 membrane_suite = None
 for suite in spec.get("benchmark_suites", {}).get("suites", []):
     if suite.get("id") == "membrane":
@@ -104,7 +151,10 @@ else:
         )
 
 def close_enough(a, b):
-    return math.isclose(float(a), float(b), rel_tol=0.0, abs_tol=0.0005)
+    try:
+        return math.isclose(float(a), float(b), rel_tol=0.0, abs_tol=0.0005)
+    except (TypeError, ValueError):
+        return False
 
 for bench in required_benchmarks:
     row = benchmarks.get(bench)
@@ -139,22 +189,89 @@ for bench in required_benchmarks:
         if target != expected_target:
             errors.append(f"{bench}/{mode}: target {target!r} != expected {expected_target!r}")
 
-        rows.append(
+        record = records_by_pair.get((bench, mode))
+        if not isinstance(record, dict):
+            errors.append(f"{bench}/{mode}: missing benchmark_record")
+            continue
+        for field in required_record_fields:
+            require_record_field(record, field, bench, mode)
+        expected_decision = (
+            "pass"
+            if float(p50) <= float(expected_target)
+            else "captured_over_target_for_optimization"
+        )
+        expected_failure_signature = (
+            "none" if expected_decision == "pass" else "target_exceeded_baseline_only"
+        )
+        expected_trace_id = f"bd-bp8fl.8.2::{mode}::{bench}"
+        expected_benchmark_id = f"membrane.{bench}.{mode}"
+        expected_target_dir = target_dirs.get(mode)
+        expected_variance_p95 = round(float(p95) - float(p50), 3)
+        expected_variance_p99 = round(float(p99) - float(p50), 3)
+        variance = record.get("variance", {})
+        if record.get("trace_id") != expected_trace_id:
+            errors.append(f"{bench}/{mode}: trace_id mismatch")
+        if record.get("bead_id") != "bd-bp8fl.8.2":
+            errors.append(f"{bench}/{mode}: bead_id mismatch")
+        if record.get("benchmark_id") != expected_benchmark_id:
+            errors.append(f"{bench}/{mode}: benchmark_id mismatch")
+        if record.get("validation_path") != row.get("stage"):
+            errors.append(f"{bench}/{mode}: validation_path mismatch")
+        if record.get("runtime_mode") != mode:
+            errors.append(f"{bench}/{mode}: runtime_mode mismatch")
+        if not isinstance(record.get("input_shape"), dict):
+            errors.append(f"{bench}/{mode}: input_shape must be object")
+        if record.get("sample_count") != metrics.get("samples"):
+            errors.append(f"{bench}/{mode}: sample_count mismatch")
+        if record.get("warmup_ms") != criterion.get("warm_up_time_ms"):
+            errors.append(f"{bench}/{mode}: warmup_ms mismatch")
+        if not close_enough(record.get("latency_ns"), p50):
+            errors.append(f"{bench}/{mode}: latency_ns mismatch")
+        if not isinstance(variance, dict):
+            errors.append(f"{bench}/{mode}: variance must be object")
+        else:
+            if variance.get("policy") != artifact.get("variance_policy", {}).get("kind"):
+                errors.append(f"{bench}/{mode}: variance policy mismatch")
+            if not close_enough(variance.get("p95_minus_p50_ns"), expected_variance_p95):
+                errors.append(f"{bench}/{mode}: p95 variance mismatch")
+            if not close_enough(variance.get("p99_minus_p50_ns"), expected_variance_p99):
+                errors.append(f"{bench}/{mode}: p99 variance mismatch")
+            if (
+                isinstance(variance.get("p95_minus_p50_ns"), (int, float))
+                and variance["p95_minus_p50_ns"] < 0
+            ):
+                errors.append(f"{bench}/{mode}: p95 variance must be non-negative")
+            if (
+                isinstance(variance.get("p99_minus_p50_ns"), (int, float))
+                and variance["p99_minus_p50_ns"] < 0
+            ):
+                errors.append(f"{bench}/{mode}: p99 variance must be non-negative")
+        if record.get("source_commit") != source_commit:
+            errors.append(f"{bench}/{mode}: source_commit is stale or mismatched")
+        if record.get("target_dir") != expected_target_dir:
+            errors.append(f"{bench}/{mode}: target_dir mismatch")
+        if record.get("threshold") != expected_target:
+            errors.append(f"{bench}/{mode}: threshold mismatch")
+        if record.get("decision") != expected_decision:
+            errors.append(f"{bench}/{mode}: decision mismatch")
+        refs = record.get("artifact_refs", [])
+        if not isinstance(refs, list) or len(refs) < 3:
+            errors.append(f"{bench}/{mode}: artifact_refs incomplete")
+        if record.get("failure_signature") != expected_failure_signature:
+            errors.append(f"{bench}/{mode}: failure_signature mismatch")
+
+        log_row = dict(record)
+        log_row.update(
             {
-                "bead_id": "bd-bp8fl.8.2",
                 "event": "membrane_overhead_baseline",
-                "mode": mode,
-                "benchmark": bench,
                 "coverage_kind": row.get("coverage_kind"),
-                "stage": row.get("stage"),
-                "p50_ns_op": p50,
-                "p95_ns_op": p95,
-                "p99_ns_op": p99,
-                "target_ns_op": expected_target,
-                "over_target_x": round(float(p50) / float(expected_target), 3),
-                "source": str(artifact_path),
+                "threshold": expected_target,
+                "latency_ns": p50,
+                "decision": expected_decision,
+                "failure_signature": expected_failure_signature,
             }
         )
+        rows.append(log_row)
 
 summary = artifact.get("summary", {})
 expected_summary = {
@@ -182,6 +299,9 @@ report = {
         "direct_stage_benchmarks": 7,
         "entrypoint_path_benchmarks": 3,
         "errors": len(errors),
+        "target_violations": sum(
+            1 for row in rows if row.get("decision") == "captured_over_target_for_optimization"
+        ),
     },
     "errors": errors,
 }
