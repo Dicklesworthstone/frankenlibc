@@ -21,33 +21,40 @@
   "required_grouping_axes": [
     "feature_parity_sections",
     "symbol_family",
+    "abi_modules",
+    "support_statuses",
+    "semantic_statuses",
+    "owner_beads",
+    "oracle_kind",
+    "replacement_levels",
     "evidence_artifacts",
+    "closure_blockers",
     "source_owner",
     "priority"
   ],
   "required_log_fields": [
     "trace_id",
     "bead_id",
+    "ledger_row_id",
+    "section",
+    "symbol_family",
+    "owner_bead",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "failure_signature",
     "scenario_id",
     "runtime_mode",
     "replacement_level",
     "api_family",
-    "symbol",
     "oracle_kind",
-    "expected",
-    "actual",
-    "errno",
-    "decision_path",
-    "healing_action",
-    "latency_ns",
-    "artifact_refs",
     "source_commit",
-    "target_dir",
-    "failure_signature"
+    "target_dir"
   ],
   "generated_outputs": {
     "report": "target/conformance/feature_parity_gap_groups.report.json",
-    "log_jsonl": "target/conformance/feature_parity_gap_groups.log.jsonl"
+    "log_jsonl": "target/conformance/feature_parity_gap_groups.log.jsonl",
+    "regenerated_groups": "target/conformance/feature_parity_gap_groups.regenerated.v1.json"
   },
   "batches": [
     {
@@ -58,6 +65,22 @@
         "machine_delta"
       ],
       "symbol_family": "global replacement claims, strict/hardened mode claims, conformance and benchmark gates",
+      "abi_modules": [
+        "crates/frankenlibc-abi",
+        "crates/frankenlibc-harness",
+        "tests/conformance"
+      ],
+      "support_statuses": [
+        "Implemented",
+        "RawSyscall",
+        "WrapsHostLibc",
+        "GlibcCallThrough",
+        "Stub"
+      ],
+      "semantic_statuses": [
+        "IN_PROGRESS",
+        "drift"
+      ],
       "evidence_artifacts": [
         "FEATURE_PARITY.md",
         "support_matrix.json",
@@ -66,7 +89,22 @@
         "tests/conformance/semantic_contract_inventory.v1.json"
       ],
       "source_owner": "docs/conformance release-gate owners",
+      "owner_beads": [
+        "bd-w2c3.1",
+        "bd-w2c3.1.2"
+      ],
       "priority": 0,
+      "oracle_kind": "claim_reconciliation_gate",
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "README, FEATURE_PARITY, replacement_levels, and release surfaces must fail closed until current machine evidence supports the claimed level.",
+        "Closed owner beads do not close unresolved FEATURE_PARITY gaps without fresh artifact evidence."
+      ],
       "gap_count": 8,
       "gap_ids": [
         "fp-macro-targets-fa7a23e18f01",
@@ -87,6 +125,20 @@
         "reverse_core"
       ],
       "symbol_family": "allocator, string/memory, pthread/cancellation, stdio/locale parsing, signal/setjmp, time, NSS/resolver, iconv/i18n, strict/hardened decisions",
+      "abi_modules": [
+        "crates/frankenlibc-core/src",
+        "crates/frankenlibc-abi/src",
+        "crates/frankenlibc-membrane/src"
+      ],
+      "support_statuses": [
+        "Implemented",
+        "RawSyscall",
+        "semantic_evidence_gap"
+      ],
+      "semantic_statuses": [
+        "IN_PROGRESS",
+        "PLANNED"
+      ],
       "evidence_artifacts": [
         "tests/conformance/fixtures/membrane_mode_split.json",
         "tests/conformance/symbol_fixture_coverage.v1.json",
@@ -94,7 +146,21 @@
         "tests/conformance/semantic_contract_inventory.v1.json"
       ],
       "source_owner": "frankenlibc-core and frankenlibc-abi subsystem owners",
+      "owner_beads": [
+        "bd-w2c3.4"
+      ],
       "priority": 0,
+      "oracle_kind": "fixture_and_semantic_overlay",
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "Runtime-family gaps need strict and hardened fixture evidence before status promotion.",
+        "Per-family semantic overlays must name unsupported, fallback, or proof-gap cases instead of relying on broad support counts."
+      ],
       "gap_count": 10,
       "gap_ids": [
         "fp-reverse-core-311e99aff4d6",
@@ -117,6 +183,19 @@
         "reverse_core"
       ],
       "symbol_family": "loader/symbol/IFUNC, ABI/time64/layout, VM transitions, process bootstrap, syscall glue, SysV IPC, diagnostics/unwinding, session accounting, profiling, floating-point/fenv",
+      "abi_modules": [
+        "crates/frankenlibc-abi/src",
+        "crates/frankenlibc-core/src",
+        "crates/frankenlibc-abi/version_scripts/libc.map"
+      ],
+      "support_statuses": [
+        "Implemented",
+        "RawSyscall",
+        "standalone_replacement_gap"
+      ],
+      "semantic_statuses": [
+        "PLANNED"
+      ],
       "evidence_artifacts": [
         "crates/frankenlibc-abi/version_scripts/libc.map",
         "tests/conformance/conformance_matrix.v1.json",
@@ -124,7 +203,20 @@
         "tests/conformance/hard_parts_e2e_failure_matrix.v1.json"
       ],
       "source_owner": "ABI, loader, syscall, process, and hard-parts harness owners",
+      "owner_beads": [
+        "bd-w2c3.4"
+      ],
       "priority": 0,
+      "oracle_kind": "link_run_and_versioned_symbol_gate",
+      "replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "Standalone link-run and versioned symbol evidence must exist before L1+ replacement claims.",
+        "Loader, startup, platform, and fenv gaps remain release blockers until executable negative and positive scenarios are current."
+      ],
       "gap_count": 10,
       "gap_ids": [
         "fp-reverse-core-0191894bf973",
@@ -147,13 +239,40 @@
         "proof_math"
       ],
       "symbol_family": "strict refinement, hardened safety, deterministic replay, barrier invariance, robust radius, secure-mode noninterference, conformal validity",
+      "abi_modules": [
+        "crates/frankenlibc-membrane/src",
+        "crates/frankenlibc-harness/src",
+        "tests/conformance"
+      ],
+      "support_statuses": [
+        "not_symbol_scoped",
+        "proof_gap"
+      ],
+      "semantic_statuses": [
+        "IN_PROGRESS",
+        "PLANNED"
+      ],
       "evidence_artifacts": [
         "tests/conformance/proof_obligations_binder.v1.json",
         "tests/conformance/proof_binder_validation.v1.json",
         "tests/conformance/mode_contract_lock.v1.json"
       ],
       "source_owner": "membrane proof and conformance-binder owners",
+      "owner_beads": [
+        "bd-w2c3.6"
+      ],
       "priority": 0,
+      "oracle_kind": "proof_binder_and_mode_contract",
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "Proof rows need executable strict/hardened witnesses and stale-proof rejection.",
+        "Safety theorem rows cannot be promoted by prose or closed tracker state alone."
+      ],
       "gap_count": 7,
       "gap_ids": [
         "fp-proof-math-b821b415a5d6",
@@ -173,6 +292,19 @@
         "proof_math"
       ],
       "symbol_family": "sequential regression, drift detection, CPOMDP, CHC/CEGAR, tail risk, HJI, mean-field, entropic transition, online optimizer, hybrid reachability, Stackelberg, observability, contention stability",
+      "abi_modules": [
+        "crates/frankenlibc-membrane/src/runtime_math",
+        "crates/frankenlibc-harness/src",
+        "tests/conformance"
+      ],
+      "support_statuses": [
+        "not_symbol_scoped",
+        "runtime_policy_gap"
+      ],
+      "semantic_statuses": [
+        "IN_PROGRESS",
+        "PLANNED"
+      ],
       "evidence_artifacts": [
         "tests/conformance/runtime_env_inventory.v1.json",
         "tests/conformance/perf_budget_policy.json",
@@ -180,7 +312,21 @@
         "tests/conformance/optimization_proof_ledger.v1.json"
       ],
       "source_owner": "runtime_math controller owners",
+      "owner_beads": [
+        "bd-w2c3.6"
+      ],
       "priority": 0,
+      "oracle_kind": "runtime_math_replay_and_budget_gate",
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "Runtime controller claims need deterministic replay logs, latency/risk thresholds, and missing-proof rejection.",
+        "Optimization work must consume current parity and baseline artifacts before changing hot paths."
+      ],
       "gap_count": 13,
       "gap_ids": [
         "fp-proof-math-df8f42355e99",
@@ -206,6 +352,21 @@
         "proof_math"
       ],
       "symbol_family": "superoptimization, concurrent linearizability, combinatorial interaction coverage, probabilistic coupling, tropical latency, async control, termios/ioctl safety, launch complexity, arithmetic compatibility, Clifford kernel equivalence",
+      "abi_modules": [
+        "crates/frankenlibc-core/src",
+        "crates/frankenlibc-abi/src",
+        "crates/frankenlibc-membrane/src/runtime_math",
+        "crates/frankenlibc-bench"
+      ],
+      "support_statuses": [
+        "Implemented",
+        "RawSyscall",
+        "proof_gap"
+      ],
+      "semantic_statuses": [
+        "IN_PROGRESS",
+        "PLANNED"
+      ],
       "evidence_artifacts": [
         "tests/conformance/branch_diversity_spec.v1.json",
         "tests/conformance/math_value_ablations.v1.json",
@@ -213,7 +374,21 @@
         "tests/conformance/symbol_latency_baseline.v1.json"
       ],
       "source_owner": "coverage, performance, ABI-layout, and low-level kernel owners",
+      "owner_beads": [
+        "bd-w2c3.6"
+      ],
       "priority": 1,
+      "oracle_kind": "coverage_latency_and_equivalence_gate",
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "Coverage claims need deterministic interaction matrices and ABI/kernel equivalence witnesses.",
+        "Performance claims need current symbol latency baselines and no behavior drift proof."
+      ],
       "gap_count": 10,
       "gap_ids": [
         "fp-proof-math-4577b75545e4",
@@ -236,6 +411,19 @@
         "proof_math"
       ],
       "symbol_family": "sheaf consistency, SOS invariant, topological anomaly, rough signatures, coalgebraic streams, codec factorization, loader namespace sheaves, spectral sequences, algebraic normal forms, Serre/Grothendieck descent, families index, Atiyah-Bott, derived t-structure",
+      "abi_modules": [
+        "crates/frankenlibc-membrane/src/runtime_math",
+        "crates/frankenlibc-harness/src",
+        "tests/conformance"
+      ],
+      "support_statuses": [
+        "not_symbol_scoped",
+        "proof_gap"
+      ],
+      "semantic_statuses": [
+        "IN_PROGRESS",
+        "PLANNED"
+      ],
       "evidence_artifacts": [
         "tests/conformance/proof_traceability_check.json",
         "tests/conformance/sheaf_coverage.v1.json",
@@ -243,7 +431,21 @@
         "tests/conformance/math_governance.json"
       ],
       "source_owner": "runtime_math algebraic/topological monitor owners",
+      "owner_beads": [
+        "bd-w2c3.6"
+      ],
       "priority": 1,
+      "oracle_kind": "proof_traceability_and_monitor_fixture_gate",
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "Advanced proof claims need concrete monitor-level fixtures and falsifiable drift signatures.",
+        "Branch-diversity obligations must remain visible and cannot be collapsed into a single proof family."
+      ],
       "gap_count": 15,
       "gap_ids": [
         "fp-proof-math-9c25ab032255",
@@ -271,6 +473,22 @@
         "gap_summary"
       ],
       "symbol_family": "fixtures, benchmarks, version scripts, proof artifacts, runtime math wiring, sequential guardrails, membrane-mode fixture evidence",
+      "abi_modules": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "crates/frankenlibc-harness",
+        "crates/frankenlibc-bench",
+        "tests/conformance"
+      ],
+      "support_statuses": [
+        "Implemented",
+        "RawSyscall",
+        "fixture_gap",
+        "benchmark_gap",
+        "proof_gap"
+      ],
+      "semantic_statuses": [
+        "IN_PROGRESS"
+      ],
       "evidence_artifacts": [
         "tests/conformance/fixtures/",
         "tests/conformance/perf_baseline_spec.json",
@@ -279,7 +497,21 @@
         "tests/conformance/fixtures/membrane_mode_split.json"
       ],
       "source_owner": "conformance, benchmark, ABI-symbol, and proof-binder owners",
+      "owner_beads": [
+        "bd-w2c3.10"
+      ],
       "priority": 0,
+      "oracle_kind": "artifact_freshness_and_foundation_gate",
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "Foundation rows require current fixtures, benchmarks, version scripts, and proof artifacts.",
+        "Missing or stale evidence must block dashboard and release claim advancement."
+      ],
       "gap_count": 7,
       "gap_ids": [
         "fp-gap-summary-7b67c9268b67",
@@ -299,6 +531,19 @@
         "gap_summary"
       ],
       "symbol_family": "allocator, stdlib, string/memory, math/fenv, dlfcn, POSIX batch 3, HTM hot paths",
+      "abi_modules": [
+        "crates/frankenlibc-core/src",
+        "crates/frankenlibc-abi/src",
+        "crates/frankenlibc-harness/tests"
+      ],
+      "support_statuses": [
+        "Implemented",
+        "RawSyscall",
+        "evidence_gap"
+      ],
+      "semantic_statuses": [
+        "IN_PROGRESS"
+      ],
       "evidence_artifacts": [
         "tests/conformance/symbol_fixture_coverage.v1.json",
         "tests/conformance/per_symbol_fixture_tests.v1.json",
@@ -306,7 +551,21 @@
         "tests/conformance/optimization_proof_ledger.v1.json"
       ],
       "source_owner": "ported core/ABI family owners",
+      "owner_beads": [
+        "bd-w2c3.10"
+      ],
       "priority": 0,
+      "oracle_kind": "per_symbol_fixture_and_performance_gate",
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "Ported rows need per-symbol fixture, strict/hardened behavior, and performance evidence before DONE status.",
+        "dlfcn, math/fenv, allocator, and HTM claims must remain blocked without current artifact references."
+      ],
       "gap_count": 10,
       "gap_ids": [
         "fp-gap-summary-0398e27f075e",
@@ -329,6 +588,18 @@
         "gap_summary"
       ],
       "symbol_family": "runtime_math monitors and controllers: tropical latency, spectral phase, rough path, persistent homology, Schrödinger bridge, large deviations, HJI, mean-field, D-optimal probes, sparse recovery, fusion, equivariance, p-adic, symplectic, higher-topos, commitment audit, change point, conformal risk, Malliavin/info-geometry/matrix/nerve/Wasserstein/MMD, Stein/POMDP/K-theory/SOS",
+      "abi_modules": [
+        "crates/frankenlibc-membrane/src/runtime_math",
+        "crates/frankenlibc-harness/src",
+        "tests/runtime_math"
+      ],
+      "support_statuses": [
+        "not_symbol_scoped",
+        "runtime_monitor_evidence_gap"
+      ],
+      "semantic_statuses": [
+        "IN_PROGRESS"
+      ],
       "evidence_artifacts": [
         "tests/conformance/runtime_env_inventory.v1.json",
         "tests/conformance/optimization_proof_ledger.v1.json",
@@ -336,7 +607,21 @@
         "tests/conformance/proof_traceability_check.json"
       ],
       "source_owner": "runtime_math monitor owners",
+      "owner_beads": [
+        "bd-w2c3.10"
+      ],
       "priority": 1,
+      "oracle_kind": "runtime_monitor_replay_and_calibration_gate",
+      "replacement_levels": [
+        "L0",
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "closure_blockers": [
+        "Each runtime monitor needs replay, calibration, failure signature, and strict/hardened decision-path logs.",
+        "Summary-level monitor evidence cannot satisfy individual monitor proof or performance obligations."
+      ],
       "gap_count": 21,
       "gap_ids": [
         "fp-gap-summary-db582a1956fa",
