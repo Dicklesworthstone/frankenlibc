@@ -7,116 +7,231 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn workspace_root() -> PathBuf {
+type TestResult<T = ()> = Result<T, String>;
+
+const REQUIRED_BATCH_FIELDS: &[&str] = &[
+    "title",
+    "feature_parity_sections",
+    "symbol_family",
+    "evidence_artifacts",
+    "source_owner",
+    "priority",
+    "gap_count",
+    "gap_ids",
+    "actionable_next_step",
+];
+
+const REQUIRED_GATE_CHECKS: &[&str] = &[
+    "json_parse",
+    "top_level_shape",
+    "batch_schema",
+    "unique_batch_ids",
+    "exact_gap_coverage",
+    "summary_counts",
+];
+
+const REQUIRED_LOG_FIELDS: &[&str] = &[
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "runtime_mode",
+    "replacement_level",
+    "api_family",
+    "symbol",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature",
+];
+
+fn workspace_root() -> TestResult<PathBuf> {
     let manifest = env!("CARGO_MANIFEST_DIR");
-    Path::new(manifest)
+    let root = Path::new(manifest)
         .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
+        .and_then(Path::parent)
+        .ok_or_else(|| format!("could not derive workspace root from {manifest}"))?
+        .to_path_buf();
+    Ok(root)
 }
 
-fn load_json(path: &Path) -> serde_json::Value {
-    let content = std::fs::read_to_string(path).expect("json should be readable");
-    serde_json::from_str(&content).expect("json should parse")
+fn load_json(path: &Path) -> TestResult<serde_json::Value> {
+    let content =
+        std::fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    serde_json::from_str(&content).map_err(|err| format!("{}: {err}", path.display()))
 }
 
-#[test]
-fn artifact_exists_and_has_required_shape() {
-    let root = workspace_root();
-    let artifact = load_json(&root.join("tests/conformance/feature_parity_gap_groups.v1.json"));
-    assert_eq!(artifact["schema_version"].as_str(), Some("v1"));
-    assert_eq!(artifact["bead"].as_str(), Some("bd-bp8fl.3.1"));
-    assert!(artifact["inputs"].is_object(), "inputs must be object");
-    assert!(
-        artifact["batch_policy"].is_object(),
-        "batch_policy must be object"
-    );
-    assert!(artifact["batches"].is_array(), "batches must be array");
-    assert!(artifact["summary"].is_object(), "summary must be object");
+fn json_array<'a>(
+    value: &'a serde_json::Value,
+    field: &str,
+) -> TestResult<&'a Vec<serde_json::Value>> {
+    value[field]
+        .as_array()
+        .ok_or_else(|| format!("{field} must be a JSON array"))
+}
 
-    let batches = artifact["batches"].as_array().unwrap();
-    assert!(batches.len() >= 10, "batches should not collapse the plan");
-    for batch in batches {
-        let batch_id = batch["batch_id"].as_str().unwrap_or("<missing batch_id>");
-        for field in [
-            "title",
-            "feature_parity_sections",
-            "symbol_family",
-            "evidence_artifacts",
-            "source_owner",
-            "priority",
-            "gap_count",
-            "gap_ids",
-            "actionable_next_step",
-        ] {
-            assert!(!batch[field].is_null(), "{batch_id}: missing {field}");
-        }
-        assert!(
-            !batch["feature_parity_sections"]
-                .as_array()
-                .unwrap()
-                .is_empty(),
-            "{batch_id}: feature_parity_sections must not be empty"
-        );
-        assert!(
-            !batch["evidence_artifacts"].as_array().unwrap().is_empty(),
-            "{batch_id}: evidence_artifacts must not be empty"
-        );
+fn json_object<'a>(
+    value: &'a serde_json::Value,
+    field: &str,
+) -> TestResult<&'a serde_json::Map<String, serde_json::Value>> {
+    value[field]
+        .as_object()
+        .ok_or_else(|| format!("{field} must be a JSON object"))
+}
+
+fn string_field<'a>(value: &'a serde_json::Value, field: &str) -> TestResult<&'a str> {
+    value[field]
+        .as_str()
+        .ok_or_else(|| format!("{field} must be a JSON string"))
+}
+
+fn require(condition: bool, message: impl Into<String>) -> TestResult {
+    if condition {
+        Ok(())
+    } else {
+        Err(message.into())
     }
 }
 
-#[test]
-fn batches_cover_every_ledger_gap_exactly_once() {
-    let root = workspace_root();
-    let artifact = load_json(&root.join("tests/conformance/feature_parity_gap_groups.v1.json"));
-    let ledger = load_json(&root.join("tests/conformance/feature_parity_gap_ledger.v1.json"));
+fn require_eq<T>(actual: T, expected: T, label: &str) -> TestResult
+where
+    T: std::fmt::Debug + PartialEq,
+{
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "{label} mismatch: actual={actual:?} expected={expected:?}"
+        ))
+    }
+}
 
-    let ledger_ids: HashSet<String> = ledger["gaps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|gap| gap["gap_id"].as_str().unwrap().to_string())
-        .collect();
+fn len_as_u64(len: usize, label: &str) -> TestResult<u64> {
+    u64::try_from(len).map_err(|err| format!("{label} length conversion failed: {err}"))
+}
+
+fn artifact_path(root: &Path) -> PathBuf {
+    root.join("tests/conformance/feature_parity_gap_groups.v1.json")
+}
+
+fn ledger_path(root: &Path) -> PathBuf {
+    root.join("tests/conformance/feature_parity_gap_ledger.v1.json")
+}
+
+fn load_artifact_and_ledger() -> TestResult<(PathBuf, serde_json::Value, serde_json::Value)> {
+    let root = workspace_root()?;
+    let artifact = load_json(&artifact_path(&root))?;
+    let ledger = load_json(&ledger_path(&root))?;
+    Ok((root, artifact, ledger))
+}
+
+fn gap_ids_from_ledger(ledger: &serde_json::Value) -> TestResult<HashSet<String>> {
+    let mut ids = HashSet::new();
+    for gap in json_array(ledger, "gaps")? {
+        let id = string_field(gap, "gap_id")?.to_owned();
+        require(
+            ids.insert(id.clone()),
+            format!("duplicate ledger gap id {id}"),
+        )?;
+    }
+    Ok(ids)
+}
+
+fn batch_id(batch: &serde_json::Value) -> &str {
+    batch["batch_id"].as_str().unwrap_or("<missing batch_id>")
+}
+
+#[test]
+fn artifact_exists_and_has_required_shape() -> TestResult {
+    let root = workspace_root()?;
+    let artifact = load_json(&artifact_path(&root))?;
+    require_eq(artifact["schema_version"].as_str(), Some("v1"), "schema")?;
+    require_eq(artifact["bead"].as_str(), Some("bd-bp8fl.3.1"), "bead")?;
+    require(artifact["inputs"].is_object(), "inputs must be object")?;
+    require(
+        artifact["batch_policy"].is_object(),
+        "batch_policy must be object",
+    )?;
+    require(artifact["batches"].is_array(), "batches must be array")?;
+    require(artifact["summary"].is_object(), "summary must be object")?;
+
+    let batches = json_array(&artifact, "batches")?;
+    require(
+        batches.len() >= 10,
+        format!("batches should not collapse the plan: {}", batches.len()),
+    )?;
+    for batch in batches {
+        let batch_id = batch_id(batch);
+        for field in REQUIRED_BATCH_FIELDS {
+            require(
+                !batch[*field].is_null(),
+                format!("{batch_id}: missing {field}"),
+            )?;
+        }
+        require(
+            !json_array(batch, "feature_parity_sections")?.is_empty(),
+            format!("{batch_id}: feature_parity_sections must not be empty"),
+        )?;
+        require(
+            !json_array(batch, "evidence_artifacts")?.is_empty(),
+            format!("{batch_id}: evidence_artifacts must not be empty"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn batches_cover_every_ledger_gap_exactly_once() -> TestResult {
+    let (_root, artifact, ledger) = load_artifact_and_ledger()?;
+    let ledger_ids = gap_ids_from_ledger(&ledger)?;
 
     let mut seen = HashSet::new();
     let mut duplicates = Vec::new();
-    for batch in artifact["batches"].as_array().unwrap() {
-        let gap_ids = batch["gap_ids"].as_array().unwrap();
-        assert_eq!(
+    for batch in json_array(&artifact, "batches")? {
+        let gap_ids = json_array(batch, "gap_ids")?;
+        require_eq(
             batch["gap_count"].as_u64(),
-            Some(gap_ids.len() as u64),
-            "{}: gap_count mismatch",
-            batch["batch_id"].as_str().unwrap()
-        );
+            Some(len_as_u64(gap_ids.len(), "gap_ids")?),
+            &format!("{} gap_count", batch_id(batch)),
+        )?;
         for gap_id in gap_ids {
-            let id = gap_id.as_str().unwrap().to_string();
+            let id = gap_id
+                .as_str()
+                .ok_or_else(|| format!("{} gap_ids must be strings", batch_id(batch)))?
+                .to_owned();
             if !seen.insert(id.clone()) {
                 duplicates.push(id);
             }
         }
     }
 
-    let missing: Vec<_> = ledger_ids.difference(&seen).collect();
-    let extra: Vec<_> = seen.difference(&ledger_ids).collect();
-    assert!(duplicates.is_empty(), "duplicate gap ids: {duplicates:?}");
-    assert!(missing.is_empty(), "missing gap ids: {missing:?}");
-    assert!(extra.is_empty(), "unknown gap ids: {extra:?}");
+    let missing: Vec<_> = ledger_ids.difference(&seen).cloned().collect();
+    let extra: Vec<_> = seen.difference(&ledger_ids).cloned().collect();
+    require(
+        duplicates.is_empty(),
+        format!("duplicate gap ids: {duplicates:?}"),
+    )?;
+    require(missing.is_empty(), format!("missing gap ids: {missing:?}"))?;
+    require(extra.is_empty(), format!("unknown gap ids: {extra:?}"))?;
+    Ok(())
 }
 
 #[test]
-fn summary_counts_match_ledger_and_batches() {
-    let root = workspace_root();
-    let artifact = load_json(&root.join("tests/conformance/feature_parity_gap_groups.v1.json"));
-    let ledger = load_json(&root.join("tests/conformance/feature_parity_gap_ledger.v1.json"));
+fn summary_counts_match_ledger_and_batches() -> TestResult {
+    let (_root, artifact, ledger) = load_artifact_and_ledger()?;
 
-    let batches = artifact["batches"].as_array().unwrap();
-    let batched_gap_count: usize = batches
-        .iter()
-        .map(|batch| batch["gap_ids"].as_array().unwrap().len())
-        .sum();
-    let ledger_gaps = ledger["gaps"].as_array().unwrap();
+    let batches = json_array(&artifact, "batches")?;
+    let mut batched_gap_count = 0usize;
+    for batch in batches {
+        batched_gap_count += json_array(batch, "gap_ids")?.len();
+    }
+    let ledger_gaps = json_array(&ledger, "gaps")?;
 
     let mut by_section: HashMap<String, u64> = HashMap::new();
     for gap in ledger_gaps {
@@ -124,103 +239,103 @@ fn summary_counts_match_ledger_and_batches() {
         *by_section.entry(section.to_string()).or_insert(0) += 1;
     }
 
-    let summary = artifact["summary"].as_object().unwrap();
-    assert_eq!(
+    let summary = json_object(&artifact, "summary")?;
+    require_eq(
         summary.get("ledger_gap_count").and_then(|v| v.as_u64()),
-        Some(ledger_gaps.len() as u64)
-    );
-    assert_eq!(
+        Some(len_as_u64(ledger_gaps.len(), "ledger_gaps")?),
+        "summary.ledger_gap_count",
+    )?;
+    require_eq(
         summary.get("batch_count").and_then(|v| v.as_u64()),
-        Some(batches.len() as u64)
-    );
-    assert_eq!(
+        Some(len_as_u64(batches.len(), "batches")?),
+        "summary.batch_count",
+    )?;
+    require_eq(
         summary.get("batched_gap_count").and_then(|v| v.as_u64()),
-        Some(batched_gap_count as u64)
-    );
-    assert_eq!(
-        summary.get("by_feature_parity_section").unwrap(),
-        &serde_json::to_value(by_section).unwrap()
-    );
+        Some(len_as_u64(batched_gap_count, "batched_gap_count")?),
+        "summary.batched_gap_count",
+    )?;
+    let expected_sections = serde_json::to_value(by_section)
+        .map_err(|err| format!("section count serialization failed: {err}"))?;
+    require_eq(
+        summary.get("by_feature_parity_section"),
+        Some(&expected_sections),
+        "summary.by_feature_parity_section",
+    )?;
+    Ok(())
 }
 
 #[test]
-fn gate_script_passes_and_emits_structured_report_and_log() {
-    let root = workspace_root();
+fn gate_script_passes_and_emits_structured_report_and_log() -> TestResult {
+    let root = workspace_root()?;
     let script = root.join("scripts/check_feature_parity_gap_groups.sh");
-    assert!(script.exists(), "missing {}", script.display());
+    require(
+        script.exists(),
+        format!("missing gate script {}", script.display()),
+    )?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::metadata(&script).unwrap().permissions();
-        assert!(
+        let perms = std::fs::metadata(&script)
+            .map_err(|err| format!("{}: {err}", script.display()))?
+            .permissions();
+        require(
             perms.mode() & 0o111 != 0,
-            "check_feature_parity_gap_groups.sh must be executable"
-        );
+            "check_feature_parity_gap_groups.sh must be executable",
+        )?;
     }
 
     let output = Command::new(&script)
         .current_dir(&root)
         .output()
-        .expect("failed to run feature parity gap groups gate");
-    assert!(
+        .map_err(|err| format!("failed to run feature parity gap groups gate: {err}"))?;
+    require(
         output.status.success(),
-        "feature parity gap groups gate failed:\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+        format!(
+            "feature parity gap groups gate failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )?;
 
     let report_path = root.join("target/conformance/feature_parity_gap_groups.report.json");
     let log_path = root.join("target/conformance/feature_parity_gap_groups.log.jsonl");
-    assert!(report_path.exists(), "missing {}", report_path.display());
-    assert!(log_path.exists(), "missing {}", log_path.display());
+    require(
+        report_path.exists(),
+        format!("missing {}", report_path.display()),
+    )?;
+    require(log_path.exists(), format!("missing {}", log_path.display()))?;
 
-    let report = load_json(&report_path);
-    assert_eq!(report["schema_version"].as_str(), Some("v1"));
-    assert_eq!(report["bead"].as_str(), Some("bd-bp8fl.3.1"));
-    assert_eq!(report["status"].as_str(), Some("pass"));
-    for check in [
-        "json_parse",
-        "top_level_shape",
-        "batch_schema",
-        "unique_batch_ids",
-        "exact_gap_coverage",
-        "summary_counts",
-    ] {
-        assert_eq!(
-            report["checks"][check].as_str(),
+    let report = load_json(&report_path)?;
+    require_eq(
+        report["schema_version"].as_str(),
+        Some("v1"),
+        "report schema",
+    )?;
+    require_eq(report["bead"].as_str(), Some("bd-bp8fl.3.1"), "report bead")?;
+    require_eq(report["status"].as_str(), Some("pass"), "report status")?;
+    for check in REQUIRED_GATE_CHECKS {
+        require_eq(
+            report["checks"][*check].as_str(),
             Some("pass"),
-            "report checks.{check} should pass"
-        );
+            &format!("report checks.{check}"),
+        )?;
     }
 
-    let log_line = std::fs::read_to_string(&log_path)
-        .expect("log should be readable")
+    let log = std::fs::read_to_string(&log_path)
+        .map_err(|err| format!("{}: {err}", log_path.display()))?;
+    let log_line = log
         .lines()
         .find(|line| !line.trim().is_empty())
-        .expect("log should contain at least one row")
-        .to_string();
-    let event: serde_json::Value = serde_json::from_str(&log_line).expect("log row should parse");
-    for key in [
-        "trace_id",
-        "bead_id",
-        "scenario_id",
-        "runtime_mode",
-        "replacement_level",
-        "api_family",
-        "symbol",
-        "oracle_kind",
-        "expected",
-        "actual",
-        "errno",
-        "decision_path",
-        "healing_action",
-        "latency_ns",
-        "artifact_refs",
-        "source_commit",
-        "target_dir",
-        "failure_signature",
-    ] {
-        assert!(event.get(key).is_some(), "structured log row missing {key}");
+        .ok_or_else(|| format!("{} should contain at least one row", log_path.display()))?;
+    let event: serde_json::Value =
+        serde_json::from_str(log_line).map_err(|err| format!("log row should parse: {err}"))?;
+    for key in REQUIRED_LOG_FIELDS {
+        require(
+            event.get(*key).is_some(),
+            format!("structured log row missing {key}"),
+        )?;
     }
+    Ok(())
 }
