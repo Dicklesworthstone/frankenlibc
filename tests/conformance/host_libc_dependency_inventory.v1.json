@@ -22,6 +22,38 @@
     ],
     "replacement_blocking_rule": "Any remaining host glibc, loader, CRT, startup, dlsym/dlopen, or dynamic runtime dependency is allowed only for L0/L1 interpose unless explicitly approved by a later replacement bead."
   },
+  "artifact_presence_scenarios": [
+    {
+      "id": "source-only-ci",
+      "require_release_artifact": false,
+      "expected_status": "pass",
+      "expected_release_artifact_status": "missing",
+      "claim_effect": "source inventory may pass, but L2/L3 standalone claims stay blocked by the explicit release_artifact_missing row"
+    },
+    {
+      "id": "strict-missing-release",
+      "require_release_artifact": true,
+      "expected_status": "fail",
+      "expected_failure_signature": "release_artifact_missing",
+      "claim_effect": "release promotion evidence cannot be claimed without a concrete artifact"
+    },
+    {
+      "id": "present-release-or-elf-fixture",
+      "require_release_artifact": true,
+      "expected_status": "pass",
+      "expected_release_artifact_status": "present",
+      "claim_effect": "dynamic dependencies and undefined symbols are inventoried with readelf/nm evidence"
+    }
+  ],
+  "profile_allowlist_policy": {
+    "source": "tests/conformance/replacement_profile.json::interpose_allowlist.modules",
+    "explicit_sentinels": [
+      "None"
+    ],
+    "real_module_rule": "Every non-sentinel allowlist entry must name an existing crates/frankenlibc-abi/src/*.rs module.",
+    "direct_call_rule": "Every source-level libc::function call other than libc::syscall must be in an allowlisted interpose module or a documented resolver module.",
+    "failure_signature": "unapproved_source_callthrough"
+  },
   "required_inventory_categories": [
     "host_symbol_resolution",
     "direct_libc_call",
@@ -93,6 +125,11 @@
       "id": "neg-startup-host-delegation",
       "unsupported_condition": "__libc_start_main or __cxa_thread_atexit_impl delegates to host libc outside an explicitly interpose-only path",
       "advertised_claim_blocked": "standalone CRT/startup closure"
+    },
+    {
+      "id": "neg-unapproved-interpose-callthrough",
+      "unsupported_condition": "a source-level libc::function call appears in a module absent from the interpose allowlist and not covered by a documented resolver policy",
+      "advertised_claim_blocked": "documented L0/L1 interpose-only call-through inventory"
     }
   ]
 }

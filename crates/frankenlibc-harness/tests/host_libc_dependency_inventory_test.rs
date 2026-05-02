@@ -92,14 +92,24 @@ fn require(condition: bool, message: impl Into<String>) -> TestResult {
     }
 }
 
-fn run_gate() -> TestResult<serde_json::Value> {
+fn run_gate_with_env(envs: &[(&str, &str)]) -> TestResult<(std::process::Output, PathBuf)> {
     let root = workspace_root()?;
-    let output = Command::new("bash")
+    let mut command = Command::new("bash");
+    command
         .arg("scripts/check_host_libc_dependency_inventory.sh")
         .current_dir(&root)
-        .env("FRANKENLIBC_REQUIRE_RELEASE_ARTIFACT", "0")
+        .env("FRANKENLIBC_REQUIRE_RELEASE_ARTIFACT", "0");
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let output = command
         .output()
         .map_err(|err| format!("inventory gate did not run: {err}"))?;
+    Ok((output, root))
+}
+
+fn run_gate() -> TestResult<serde_json::Value> {
+    let (output, root) = run_gate_with_env(&[])?;
     if !output.status.success() {
         return Err(format!(
             "inventory gate failed\nstdout:\n{}\nstderr:\n{}",
@@ -129,6 +139,14 @@ fn contract_has_required_shape_and_fields() -> TestResult {
     require(
         json_array(&contract, "negative_claim_tests")?.len() >= 3,
         "negative standalone-claim tests must be documented",
+    )?;
+    require(
+        json_array(&contract, "artifact_presence_scenarios")?.len() == 3,
+        "artifact presence scenarios must cover source-only, strict-missing, and present-artifact",
+    )?;
+    require(
+        contract["profile_allowlist_policy"].is_object(),
+        "profile allowlist policy must be documented",
     )?;
 
     let log_fields = string_array(&contract, "required_log_fields")?;
@@ -183,6 +201,104 @@ fn gate_emits_complete_inventory_report_and_log() -> TestResult {
 }
 
 #[test]
+fn strict_missing_release_artifact_mode_fails_with_signature() -> TestResult {
+    let root = workspace_root()?;
+    let missing_artifact = root.join("target/conformance/definitely_missing_libfrankenlibc_abi.so");
+    let report_path =
+        root.join("target/conformance/host_libc_dependency_inventory.strict_missing.report.json");
+    let log_path =
+        root.join("target/conformance/host_libc_dependency_inventory.strict_missing.log.jsonl");
+    let missing_artifact_s = missing_artifact.to_string_lossy().into_owned();
+    let report_path_s = report_path.to_string_lossy().into_owned();
+    let log_path_s = log_path.to_string_lossy().into_owned();
+
+    let (output, _) = run_gate_with_env(&[
+        ("FRANKENLIBC_REQUIRE_RELEASE_ARTIFACT", "1"),
+        ("FRANKENLIBC_RELEASE_ARTIFACT", missing_artifact_s.as_str()),
+        ("FRANKENLIBC_HOST_DEP_REPORT", report_path_s.as_str()),
+        ("FRANKENLIBC_HOST_DEP_LOG", log_path_s.as_str()),
+    ])?;
+    require(
+        !output.status.success(),
+        "strict missing release artifact mode should fail",
+    )?;
+
+    let report = load_json(&report_path)?;
+    require(
+        report["status"].as_str() == Some("fail"),
+        format!("strict missing report should fail: {report:?}"),
+    )?;
+    require(
+        report["release_artifact"]["status"].as_str() == Some("missing"),
+        "strict missing report must record release artifact status",
+    )?;
+    require(
+        report["errors"].as_array().is_some_and(|errors| {
+            errors.iter().any(|err| {
+                err.as_str()
+                    .is_some_and(|text| text.contains("release artifact missing"))
+            })
+        }),
+        "strict missing report must include a release artifact error",
+    )?;
+
+    let log = std::fs::read_to_string(&log_path)
+        .map_err(|err| format!("{}: {err}", log_path.display()))?;
+    require(
+        log.contains("\"failure_signature\":\"release_artifact_missing\""),
+        "strict missing log must preserve the release_artifact_missing failure signature",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn present_release_artifact_mode_uses_readelf_or_nm_evidence() -> TestResult {
+    let root = workspace_root()?;
+    let report_path =
+        root.join("target/conformance/host_libc_dependency_inventory.present_elf.report.json");
+    let log_path =
+        root.join("target/conformance/host_libc_dependency_inventory.present_elf.log.jsonl");
+    let report_path_s = report_path.to_string_lossy().into_owned();
+    let log_path_s = log_path.to_string_lossy().into_owned();
+
+    let (output, _) = run_gate_with_env(&[
+        ("FRANKENLIBC_REQUIRE_RELEASE_ARTIFACT", "1"),
+        ("FRANKENLIBC_RELEASE_ARTIFACT", "/bin/true"),
+        ("FRANKENLIBC_HOST_DEP_REPORT", report_path_s.as_str()),
+        ("FRANKENLIBC_HOST_DEP_LOG", log_path_s.as_str()),
+    ])?;
+    if !output.status.success() {
+        return Err(format!(
+            "present ELF inventory gate failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let report = load_json(&report_path)?;
+    require(
+        report["release_artifact"]["status"].as_str() == Some("present"),
+        "present ELF report must record release artifact status",
+    )?;
+    require(
+        report["release_artifact"]["required"].as_bool() == Some(true),
+        "present ELF report must record strict artifact requirement",
+    )?;
+    let log = std::fs::read_to_string(&log_path)
+        .map_err(|err| format!("{}: {err}", log_path.display()))?;
+    require(
+        log.contains("\"release_artifact_status\":\"present\""),
+        "present ELF log must include present-artifact rows",
+    )?;
+    require(
+        log.contains("\"tool\":\"readelf -d\"")
+            || log.contains("\"tool\":\"nm -D --undefined-only\""),
+        "present ELF log must include readelf or nm evidence",
+    )?;
+    Ok(())
+}
+
+#[test]
 fn required_categories_and_anchor_symbols_are_present() -> TestResult {
     let contract = load_contract()?;
     let report = run_gate()?;
@@ -208,6 +324,59 @@ fn required_categories_and_anchor_symbols_are_present() -> TestResult {
         seen_symbols == required_symbols,
         format!("required symbol mismatch: {seen_symbols:?}"),
     )?;
+    Ok(())
+}
+
+#[test]
+fn allowlist_policy_is_enforced_and_negative_claims_are_resolved() -> TestResult {
+    let report = run_gate()?;
+    require(
+        report["summary"]["unapproved_direct_libc_call_count"].as_u64() == Some(0),
+        format!(
+            "unapproved direct libc callthroughs must fail the gate: {:?}",
+            report["summary"]["unapproved_direct_libc_call_count"]
+        ),
+    )?;
+    require(
+        report["summary"]["unresolved_allowlist_modules"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "allowlist entries must resolve to ABI modules or explicit sentinels",
+    )?;
+    require(
+        !summary_string_array(&report, "allowlist_modules_seen")?.is_empty(),
+        "report should name allowlisted modules where direct libc calls were observed",
+    )?;
+
+    let negative_results = json_array(&report, "negative_claim_results")?;
+    let result_ids: HashSet<_> = negative_results
+        .iter()
+        .map(|row| {
+            row["id"]
+                .as_str()
+                .ok_or_else(|| "negative claim result id must be a string".to_string())
+        })
+        .collect::<TestResult<HashSet<_>>>()?;
+    for id in [
+        "neg-l2-host-symbol-resolution",
+        "neg-l3-dynamic-glibc-needed",
+        "neg-startup-host-delegation",
+        "neg-unapproved-interpose-callthrough",
+    ] {
+        require(
+            result_ids.contains(id),
+            format!("missing negative claim result {id}"),
+        )?;
+    }
+    for row in negative_results {
+        let status = row["status"]
+            .as_str()
+            .ok_or_else(|| format!("negative claim status must be string: {row:?}"))?;
+        require(
+            status == "blocked_by_inventory" || status == "guard_clean",
+            format!("negative claim must be blocked or cleanly guarded: {row:?}"),
+        )?;
+    }
     Ok(())
 }
 

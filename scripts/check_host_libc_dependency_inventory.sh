@@ -67,8 +67,14 @@ host_pthread_call_re = re.compile(r"\bhost_pthread_([a-z0-9_]+)\s*\(")
 dlvsym_next_re = re.compile(r"\bdlvsym_next\s*\(")
 
 allowlist_modules = set(replacement_profile.get("interpose_allowlist", {}).get("modules", []))
+allowlist_sentinels = set(
+    contract.get("profile_allowlist_policy", {}).get("explicit_sentinels", [])
+)
+allowlist_real_modules = allowlist_modules - allowlist_sentinels
 required_categories = set(contract["required_inventory_categories"])
 required_anchor_symbols = set(contract["required_anchor_symbols"])
+declared_abi_modules = {path.stem for path in abi_src.rglob("*.rs")}
+implicit_allowlist_modules = {"host_resolve"}
 
 
 def rel(path: Path) -> str:
@@ -98,7 +104,7 @@ def profile_for(category: str, module: str, symbol: str) -> tuple[list[str], lis
     if category in {"loader_boundary", "crt_startup", "host_symbol_resolution", "host_pthread_resolver"}:
         return (["L0", "L1"], ["L2", "L3"], "interpose_host_resolution_only")
     if category == "direct_libc_call":
-        if module in allowlist_modules or module in {"host_resolve"}:
+        if module in allowlist_modules or module in implicit_allowlist_modules:
             return (["L0", "L1"], ["L2", "L3"], "interpose_allowlist")
         return ([], ["L0", "L1", "L2", "L3"], "unapproved_source_callthrough")
     return (["L0", "L1"], ["L2", "L3"], "inventory_default")
@@ -387,6 +393,13 @@ events.sort(key=lambda row: (row["category"], row["path"], row["line"], row["sym
 
 categories_seen = {row["category"] for row in events}
 symbols_seen = {row["symbol"] for row in events}
+direct_call_modules_seen = {
+    row["module"] for row in events if row["category"] == "direct_libc_call"
+}
+unapproved_callthroughs = [
+    row for row in events if row["profile_policy"] == "unapproved_source_callthrough"
+]
+unresolved_allowlist_modules = sorted(allowlist_real_modules - declared_abi_modules)
 errors: list[str] = []
 missing_categories = sorted(required_categories - categories_seen)
 missing_anchor_symbols = sorted(required_anchor_symbols - symbols_seen)
@@ -394,6 +407,14 @@ if missing_categories:
     errors.append(f"missing inventory categories: {missing_categories}")
 if missing_anchor_symbols:
     errors.append(f"missing required anchor symbols: {missing_anchor_symbols}")
+if unresolved_allowlist_modules:
+    errors.append(f"interpose allowlist names missing ABI modules: {unresolved_allowlist_modules}")
+if unapproved_callthroughs:
+    sample = [
+        f"{row['path']}:{row['line']}:{row['symbol']}"
+        for row in unapproved_callthroughs[:10]
+    ]
+    errors.append(f"unapproved source callthroughs: {sample}")
 if require_release and not release_artifact.exists():
     errors.append("release artifact missing while FRANKENLIBC_REQUIRE_RELEASE_ARTIFACT=1")
 
@@ -414,6 +435,68 @@ l2_l3_blockers = [
     if "L2" in row.get("blocked_replacement_levels", [])
     or "L3" in row.get("blocked_replacement_levels", [])
 ]
+negative_claim_results: list[dict] = []
+
+
+def add_negative_claim_result(
+    claim_id: str,
+    *,
+    blocked: bool,
+    evidence_count: int,
+    guard_status: str,
+    failure_signature: str = "",
+) -> None:
+    negative_claim_results.append(
+        {
+            "id": claim_id,
+            "status": "blocked_by_inventory" if blocked else guard_status,
+            "evidence_count": evidence_count,
+            "failure_signature": failure_signature,
+        }
+    )
+
+
+host_resolution_blockers = [
+    row
+    for row in l2_l3_blockers
+    if row["category"] in {"host_symbol_resolution", "loader_boundary", "host_pthread_resolver"}
+]
+startup_blockers = [row for row in l2_l3_blockers if row["category"] == "crt_startup"]
+release_dependency_rows = [
+    row for row in events if row["category"] == "release_dynamic_dependency"
+]
+add_negative_claim_result(
+    "neg-l2-host-symbol-resolution",
+    blocked=bool(host_resolution_blockers),
+    evidence_count=len(host_resolution_blockers),
+    guard_status="claim_not_blocked",
+)
+add_negative_claim_result(
+    "neg-l3-dynamic-glibc-needed",
+    blocked=bool(release_dependency_rows),
+    evidence_count=len(release_dependency_rows),
+    guard_status="claim_not_blocked",
+    failure_signature="release_artifact_missing" if release_status == "missing" else "",
+)
+add_negative_claim_result(
+    "neg-startup-host-delegation",
+    blocked=bool(startup_blockers),
+    evidence_count=len(startup_blockers),
+    guard_status="claim_not_blocked",
+)
+add_negative_claim_result(
+    "neg-unapproved-interpose-callthrough",
+    blocked=bool(unapproved_callthroughs),
+    evidence_count=len(unapproved_callthroughs),
+    guard_status="guard_clean",
+    failure_signature="unapproved_source_callthrough" if unapproved_callthroughs else "",
+)
+
+claim_not_blocked = [
+    row["id"] for row in negative_claim_results if row["status"] == "claim_not_blocked"
+]
+if claim_not_blocked:
+    errors.append(f"negative claim guard did not block: {claim_not_blocked}")
 
 by_symbol = defaultdict(int)
 for row in events:
@@ -449,9 +532,16 @@ report = {
         "policy_counts": dict(sorted(policy_counts.items())),
         "oracle_counts": dict(sorted(oracle_counts.items())),
         "l2_l3_blocker_count": len(l2_l3_blockers),
+        "unapproved_direct_libc_call_count": len(unapproved_callthroughs),
         "required_categories_seen": sorted(required_categories & categories_seen),
         "required_anchor_symbols_seen": sorted(required_anchor_symbols & symbols_seen),
+        "direct_call_modules_seen": sorted(direct_call_modules_seen),
+        "allowlist_modules_seen": sorted(direct_call_modules_seen & allowlist_modules),
+        "implicit_allowlist_modules_seen": sorted(direct_call_modules_seen & implicit_allowlist_modules),
+        "unused_interpose_allowlist_modules": sorted(allowlist_real_modules - direct_call_modules_seen),
+        "unresolved_allowlist_modules": unresolved_allowlist_modules,
     },
+    "negative_claim_results": negative_claim_results,
     "top_blockers": [
         {
             "category": row["category"],
@@ -475,6 +565,8 @@ report = {
     "replacement_level_contract": contract["replacement_levels"],
     "replacement_profile_summary": {
         "interpose_allowlist_modules": sorted(allowlist_modules),
+        "interpose_allowlist_sentinels": sorted(allowlist_sentinels),
+        "implicit_allowlist_modules": sorted(implicit_allowlist_modules),
         "replacement_level_count": len(replacement_levels.get("levels", replacement_levels)),
     },
     "errors": errors,
