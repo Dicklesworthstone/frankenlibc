@@ -4993,19 +4993,35 @@ pub unsafe extern "C" fn strtouq(
 }
 
 /// `glob_pattern_p` — check if string contains glob metacharacters.
+///
+/// Matches glibc's algorithm: '*' or '?' immediately return 1, but a
+/// bracket expression only counts when both '[' and ']' are seen
+/// (lone '[' or lone ']' return 0). When `quote != 0`, a backslash
+/// causes the next character to be treated literally (skipped).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn glob_pattern_p(pattern: *const c_char, _quote: c_int) -> c_int {
+pub unsafe extern "C" fn glob_pattern_p(pattern: *const c_char, quote: c_int) -> c_int {
     if pattern.is_null() {
         return 0;
     }
     let mut p = pattern;
+    let mut open = false;
     loop {
-        let ch = unsafe { *p };
+        let ch = unsafe { *p } as u8;
         if ch == 0 {
             return 0;
         }
-        if ch == b'*' as c_char || ch == b'?' as c_char || ch == b'[' as c_char {
-            return 1;
+        match ch {
+            b'?' | b'*' => return 1,
+            b'\\' if quote != 0 => {
+                // Skip the next byte if not NUL.
+                let next = unsafe { *p.add(1) };
+                if next != 0 {
+                    p = unsafe { p.add(1) };
+                }
+            }
+            b'[' => open = true,
+            b']' if open => return 1,
+            _ => {}
         }
         p = unsafe { p.add(1) };
     }
