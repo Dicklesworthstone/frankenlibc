@@ -9544,10 +9544,32 @@ pub unsafe extern "C" fn __nss_database_get(_db: c_int, _result: *mut *mut c_voi
 pub unsafe extern "C" fn __nss_disable_nscd(_cb: *mut c_void) {}
 
 /// `__nss_hash(name, len) -> u32` — string hash used by the NSS
-/// dispatcher. Stub returns 0 (a valid hash, just constant).
+/// dispatcher.
+///
+/// glibc uses XXH32 with seed 0xab1aac7c here (since glibc 2.36);
+/// the symbol is GLIBC_PRIVATE so external callers cannot depend
+/// on the exact algorithm. We provide a deterministic FNV-1a 32
+/// hash that satisfies the same distributional properties: same
+/// input → same output, distinct inputs of any reasonable length
+/// → distinct outputs with very high probability.
+///
+/// # Safety
+///
+/// `name` must point to at least `len` readable bytes (NUL termination
+/// is not required).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __nss_hash(_name: *const c_void, _len: usize) -> u32 {
-    0
+pub unsafe extern "C" fn __nss_hash(name: *const c_void, len: usize) -> u32 {
+    if name.is_null() || len == 0 {
+        return 0;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(name as *const u8, len) };
+    // FNV-1a 32-bit. Offset basis 0x811c9dc5, prime 0x01000193.
+    let mut h: u32 = 0x811c9dc5;
+    for &b in bytes {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x01000193);
+    }
+    h
 }
 
 /// `__nss_lookup(*ni, fct_name, *fct, **resp) -> int` — resolve an
