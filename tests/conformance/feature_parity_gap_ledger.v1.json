@@ -120,6 +120,2394 @@
       "status": "drift"
     }
   ],
+  "done_evidence_audit": [
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-gap-summary-a39363bd3b78",
+      "primary_key": "1",
+      "section": "gap_summary",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [
+          "tests/conformance/reality_report.v1.json"
+        ],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 3,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "python3 -m json.tool support_matrix.json >/dev/null",
+          "python3 -m json.tool tests/conformance/reality_report.v1.json >/dev/null",
+          "bash scripts/check_support_matrix_maintenance.sh"
+        ]
+      },
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/reality_report.v1.json",
+        "scripts/check_support_matrix_maintenance.sh"
+      ],
+      "audit_status": "pass",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "support_matrix.json",
+          "failure_signature": "none",
+          "generated_at": "2026-02-18T04:49:26Z",
+          "kind": "artifact",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "python3 -m json.tool support_matrix.json >/dev/null"
+        },
+        {
+          "archived_evidence_allowed": true,
+          "evidence_ref": "tests/conformance/reality_report.v1.json",
+          "failure_signature": "none",
+          "generated_at": "2026-02-18T04:49:26Z",
+          "kind": "artifact",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "python3 -m json.tool tests/conformance/reality_report.v1.json >/dev/null"
+        },
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "scripts/check_support_matrix_maintenance.sh",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "gate_or_test",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "bash scripts/check_support_matrix_maintenance.sh"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "none",
+      "freshness_state": "fresh",
+      "ledger_row_id": "fp-macro-targets-3a739065b069",
+      "primary_key": "Exported symbol classification",
+      "section": "macro_targets",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim is machine-verifiable"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/large_deviations.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/large_deviations.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/large_deviations.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-007e9d57face",
+      "primary_key": "large-deviations monitor (`large_deviations`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/mean_field_game.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/mean_field_game.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/mean_field_game.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-0f1d5d146a2a",
+      "primary_key": "mean-field game contention controller (`mean_field_game`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-1826bc090e04",
+      "primary_key": "`runtime_math::eprocess`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-1b7223dd7f66",
+      "primary_key": "socket integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-1b98c49992cb",
+      "primary_key": "Bayesian change-point detector (`changepoint`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-1c086347d0de",
+      "primary_key": "SOS invariant synthesizer (`sos_invariant`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/bandit.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/bandit.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/bandit.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-2252bcba664b",
+      "primary_key": "`runtime_math::bandit`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/quarantine_controller.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/quarantine_controller.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/quarantine_controller.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-268eee7aba9d",
+      "primary_key": "quarantine controller fusion (`quarantine_controller`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-26fa1843b2bd",
+      "primary_key": "pointer validator integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-2b8e721a86d1",
+      "primary_key": "Stein discrepancy monitor (`stein_discrepancy`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/design.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/design.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/design.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-2d308a9f541f",
+      "primary_key": "`runtime_math::design`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/control.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/control.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/control.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-2dfcc1b9ff38",
+      "primary_key": "`runtime_math::control`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-3350d65ab25e",
+      "primary_key": "stdio integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/risk.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/risk.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/risk.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-3781ffdeb99f",
+      "primary_key": "`runtime_math::risk`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-3c54a9874e9f",
+      "primary_key": "dlfcn integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-3c6b5f6c7257",
+      "primary_key": "pthread/futex integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/pareto.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/pareto.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/pareto.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-3e7761feb3e4",
+      "primary_key": "`runtime_math::pareto`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-42b59bcb8c96",
+      "primary_key": "process integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-4821dd26d181",
+      "primary_key": "Malliavin sensitivity controller (`malliavin_sensitivity`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/risk_engine.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/risk_engine.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/risk_engine.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-51c34b097aca",
+      "primary_key": "sampled conformal risk fusion (`risk_engine`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-5854a5928167",
+      "primary_key": "allocator integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/schrodinger_bridge.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/schrodinger_bridge.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/schrodinger_bridge.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-5f416da55fac",
+      "primary_key": "Schr\u00f6dinger bridge controller (`schrodinger_bridge`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/cvar.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/cvar.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/cvar.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-6291aac1b17b",
+      "primary_key": "`runtime_math::cvar`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/padic_valuation.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/padic_valuation.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/padic_valuation.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-6525ce1c9c73",
+      "primary_key": "p-adic valuation error calculus (`padic_valuation`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-69775144f57d",
+      "primary_key": "string/memory integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-70d1e3175860",
+      "primary_key": "higher-topos descent controller (`higher_topos`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-727b5a164922",
+      "primary_key": "termios integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-72878468431a",
+      "primary_key": "information geometry monitor (`info_geometry`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/spectral_monitor.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/spectral_monitor.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/spectral_monitor.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-74941fdad543",
+      "primary_key": "spectral phase monitor (`spectral_monitor`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/barrier.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/barrier.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/barrier.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-7d158ceef570",
+      "primary_key": "`runtime_math::barrier`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-7f953e76455e",
+      "primary_key": "inet integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-850ce9d24711",
+      "primary_key": "math/fenv integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/fusion.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/fusion.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/fusion.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-852b80c5f3e8",
+      "primary_key": "`runtime_math::fusion`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/equivariant.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/equivariant.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/equivariant.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-8dbd872ffa79",
+      "primary_key": "`runtime_math::equivariant`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-8ff0b9637eb6",
+      "primary_key": "`runtime_math::cohomology`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-914e63bf47d3",
+      "primary_key": "matrix concentration monitor (`matrix_concentration`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-9154f2cb685e",
+      "primary_key": "virtual memory integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-9342ffc7e184",
+      "primary_key": "commitment-audit controller (`commitment_audit`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-95e8b3dcc00b",
+      "primary_key": "K-theory contract monitor (`ktheory`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-a72309715c7d",
+      "primary_key": "spectral-sequence obstruction detector (`obstruction_detector`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-a94b6554ba63",
+      "primary_key": "resolver/NSS integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/rough_path.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/rough_path.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/rough_path.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-accb19360035",
+      "primary_key": "rough-path signature monitor (`rough_path`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/check_oracle.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/check_oracle.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/check_oracle.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-b6488991f4c3",
+      "primary_key": "sampled stage-order oracle fusion (`check_oracle`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/persistence.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/persistence.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/persistence.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-bcd0784d4038",
+      "primary_key": "persistent homology detector (`persistence`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-c4e302f5613b",
+      "primary_key": "nerve complex monitor (`nerve_complex`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-c69d7fd14a10",
+      "primary_key": "conformal risk controller (`conformal`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-c72e6405aac7",
+      "primary_key": "kernel MMD monitor (`kernel_mmd`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/tropical_latency.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/tropical_latency.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/tropical_latency.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-c82781a26331",
+      "primary_key": "tropical latency compositor (`tropical_latency`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-ce42fc35752f",
+      "primary_key": "locale integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-d59aa9ef67a2",
+      "primary_key": "unistd/POSIX integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/runtime_math/sparse.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/runtime_math/sparse.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/runtime_math/sparse.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-d643d17482cf",
+      "primary_key": "`runtime_math::sparse`",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/hji_reachability.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/hji_reachability.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/hji_reachability.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-d964aec7db4f",
+      "primary_key": "HJI reachability controller (`hji_reachability`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-e1660faa9226",
+      "primary_key": "Wasserstein drift monitor (`wasserstein_drift`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-e558f817c38f",
+      "primary_key": "POMDP repair controller (`pomdp_repair`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 1,
+        "missing_artifacts": [],
+        "source_only_artifacts": [
+          "crates/frankenlibc-membrane/src/symplectic_reduction.rs"
+        ],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": [
+          "cargo test --workspace --all-targets"
+        ]
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/symplectic_reduction.rs"
+      ],
+      "audit_status": "fail",
+      "evidence_refs": [
+        {
+          "archived_evidence_allowed": false,
+          "evidence_ref": "crates/frankenlibc-membrane/src/symplectic_reduction.rs",
+          "failure_signature": "none",
+          "generated_at": null,
+          "kind": "source",
+          "path_exists": true,
+          "source_commit": null,
+          "validation_command": "cargo test --workspace --all-targets"
+        }
+      ],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "source_only",
+      "freshness_state": "source_only",
+      "ledger_row_id": "fp-runtime-math-e82cd91e895b",
+      "primary_key": "symplectic reduction IPC guard (`symplectic_reduction`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-fa5438ef8702",
+      "primary_key": "ADMM budget allocator (`admm_budget`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-fadcc81f4d51",
+      "primary_key": "operator-norm spectral radius monitor (`operator_norm`)",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    },
+    {
+      "actual": {
+        "archived_artifacts": [],
+        "contradictory_artifacts": [],
+        "evidence_ref_count": 0,
+        "missing_artifacts": [],
+        "source_only_artifacts": [],
+        "stale_artifacts": [],
+        "status": "DONE",
+        "validation_commands": []
+      },
+      "artifact_refs": [],
+      "audit_status": "fail",
+      "evidence_refs": [],
+      "expected": {
+        "artifact_paths_exist": true,
+        "contradictory_artifacts": 0,
+        "evidence_refs": ">=1",
+        "fixture_or_e2e_coverage": true,
+        "source_commit": "present-or-archived",
+        "status": "DONE",
+        "validation_commands": "exact"
+      },
+      "failure_signature": "prose_only",
+      "freshness_state": "prose_only",
+      "ledger_row_id": "fp-runtime-math-fdc29c4fcb58",
+      "primary_key": "poll integration",
+      "section": "runtime_math",
+      "source_commit": "not-captured-in-canonical-artifact",
+      "status": "DONE",
+      "user_facing_claim_impact": "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+    }
+  ],
   "gaps": [
     {
       "gap_id": "fp-macro-targets-fa7a23e18f01",
@@ -3890,8 +6278,19 @@
   "status_transitions": [],
   "summary": {
     "delta_count": 5,
+    "done_evidence_audit_count": 60,
+    "done_evidence_audit_counts": {
+      "fail": 59,
+      "pass": 1
+    },
+    "done_evidence_freshness_counts": {
+      "fresh": 1,
+      "prose_only": 34,
+      "source_only": 25
+    },
     "drift_delta_count": 1,
     "gap_count": 111,
+    "invalid_done_evidence_count": 59,
     "parse_error_count": 0,
     "row_count": 170,
     "status_counts": {

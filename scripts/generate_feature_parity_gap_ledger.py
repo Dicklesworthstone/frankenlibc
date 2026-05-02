@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import sys
+import tempfile
 import unittest
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -47,6 +48,18 @@ SECTION_HEADERS: dict[str, tuple[str, list[str], int, int]] = {
 
 GAP_SUMMARY_HEADER = "## Gap Summary"
 GAP_SUMMARY_RE = re.compile(r"^(\d+)\.\s+(.*)$")
+PATH_TOKEN_RE = re.compile(
+    r"`?((?:\.beads/|crates/|docs/|scripts/|support_matrix\.json|tests/|FEATURE_PARITY\.md)"
+    r"[A-Za-z0-9_./@:+-]*(?:\.jsonl|\.json|\.md|\.rs|\.sh|\.py|\.toml|\.txt|\.c)?)`?"
+)
+SOURCE_COMMIT_KEYS = {"source_commit", "git_commit", "commit_sha"}
+CONTRADICTORY_STATUS_KEYS = {"fail", "failed", "failure", "error", "drift", "invalid"}
+ARCHIVED_EVIDENCE_PREFIXES = (
+    "tests/conformance/",
+    "tests/runtime_math/",
+    "tests/cve_arena/",
+    "docs/proofs/",
+)
 
 
 @dataclass(frozen=True)
@@ -322,6 +335,307 @@ def support_status_counts(summary: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def unique_preserving_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        normalized = value.strip().rstrip(".,;:")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
+
+
+def runtime_math_module_refs(primary_key: str) -> list[str]:
+    text = primary_key.strip("` ")
+    refs: list[str] = []
+    if text.startswith("runtime_math::"):
+        module = text.split("::", 1)[1].split("`", 1)[0].strip()
+        if module:
+            refs.append(f"crates/frankenlibc-membrane/src/runtime_math/{module}.rs")
+    for module in [
+        "risk_engine",
+        "check_oracle",
+        "quarantine_controller",
+        "tropical_latency",
+        "spectral_monitor",
+        "rough_path",
+        "persistence",
+        "schrodinger_bridge",
+        "large_deviations",
+        "hji_reachability",
+        "mean_field_game",
+        "padic_valuation",
+        "symplectic_reduction",
+    ]:
+        if f"({module})" in primary_key or f"`{module}`" in primary_key:
+            refs.append(f"crates/frankenlibc-membrane/src/{module}.rs")
+    return refs
+
+
+def claim_specific_evidence_refs(row: dict[str, Any]) -> list[str]:
+    section = str(row.get("section", ""))
+    primary = str(row.get("primary_key", ""))
+    lower = primary.lower()
+    refs: list[str] = []
+
+    if section == "macro_targets" and "exported symbol classification" in lower:
+        refs.extend(
+            [
+                "support_matrix.json",
+                "tests/conformance/reality_report.v1.json",
+                "scripts/check_support_matrix_maintenance.sh",
+            ]
+        )
+    if "dlfcn boundary" in lower:
+        refs.extend(
+            [
+                "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+                "tests/conformance/replacement_levels.json",
+            ]
+        )
+    refs.extend(runtime_math_module_refs(primary))
+    return refs
+
+
+def extract_evidence_refs(row: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for value in row.get("columns", {}).values():
+        text = str(value)
+        refs.extend(match.group(1) for match in PATH_TOKEN_RE.finditer(text))
+    refs.extend(claim_specific_evidence_refs(row))
+    return unique_preserving_order(refs)
+
+
+def first_recursive_value(value: Any, keys: set[str]) -> str | None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in keys and isinstance(child, str) and child.strip():
+                return child.strip()
+        for child in value.values():
+            found = first_recursive_value(child, keys)
+            if found is not None:
+                return found
+    if isinstance(value, list):
+        for child in value:
+            found = first_recursive_value(child, keys)
+            if found is not None:
+                return found
+    return None
+
+
+def first_recursive_number(value: Any, keys: set[str]) -> int | None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in keys:
+                if isinstance(child, int):
+                    return child
+                if isinstance(child, str) and child.strip().isdigit():
+                    return int(child.strip())
+        for child in value.values():
+            found = first_recursive_number(child, keys)
+            if found is not None:
+                return found
+    if isinstance(value, list):
+        for child in value:
+            found = first_recursive_number(child, keys)
+            if found is not None:
+                return found
+    return None
+
+
+def artifact_validation_command(ref: str) -> str:
+    if ref.endswith(".sh"):
+        return f"bash {ref}"
+    if ref.endswith(".py"):
+        if ref.startswith("scripts/generate_"):
+            return f"python3 {ref} --check"
+        return f"python3 -m py_compile {ref}"
+    if ref.endswith(".json") or ref.endswith(".jsonl"):
+        return f"python3 -m json.tool {ref} >/dev/null"
+    if ref.startswith("crates/frankenlibc-harness/tests/") and ref.endswith(".rs"):
+        name = Path(ref).stem
+        return f"cargo test -p frankenlibc-harness --test {name} -- --nocapture"
+    if ref.endswith(".md"):
+        return f"test -s {ref}"
+    if ref.endswith(".rs"):
+        return "cargo test --workspace --all-targets"
+    return f"test -e {ref}"
+
+
+def evidence_kind(ref: str) -> str:
+    if "/fixtures/" in ref or "fixture" in Path(ref).name:
+        return "fixture"
+    if ref.startswith("scripts/") or ref.startswith("crates/frankenlibc-harness/tests/"):
+        return "gate_or_test"
+    if ref.endswith(".json") or ref.endswith(".jsonl"):
+        return "artifact"
+    if ref.endswith(".rs"):
+        return "source"
+    return "artifact"
+
+
+def read_json_if_possible(path: Path) -> dict[str, Any] | None:
+    if not path.exists() or not path.is_file():
+        return None
+    if path.suffix not in {".json", ".jsonl"}:
+        return None
+    try:
+        if path.suffix == ".jsonl":
+            first = next((line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()), "")
+            return json.loads(first) if first else None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"_parse_error": True}
+    return payload if isinstance(payload, dict) else {"_non_object_json": True}
+
+
+def artifact_signals_contradiction(payload: dict[str, Any] | None) -> str | None:
+    if payload is None:
+        return None
+    if bool(payload.get("_parse_error")):
+        return "json_parse_error"
+    for key in ["status", "decision", "result"]:
+        value = payload.get(key)
+        if isinstance(value, str) and value.lower() in CONTRADICTORY_STATUS_KEYS:
+            return f"{key}={value}"
+    fail_count = first_recursive_number(payload, {"fail_count", "failure_count", "invalid_count"})
+    if fail_count is not None and fail_count > 0:
+        return f"fail_count={fail_count}"
+    unresolved = first_recursive_number(payload, {"unresolved_count", "missing_evidence_count"})
+    if unresolved is not None and unresolved > 0:
+        return f"unresolved_count={unresolved}"
+    return None
+
+
+def audit_done_row(
+    row: dict[str, Any],
+    *,
+    root: Path,
+    current_source_commit: str | None = None,
+) -> dict[str, Any]:
+    row_id = str(row.get("row_id", ""))
+    refs = extract_evidence_refs(row)
+    artifact_rows: list[dict[str, Any]] = []
+    missing_refs: list[str] = []
+    stale_refs: list[str] = []
+    contradictory_refs: list[str] = []
+    archived_refs: list[str] = []
+    source_only_refs: list[str] = []
+
+    for ref in refs:
+        path = root / ref
+        exists = path.exists()
+        payload = read_json_if_possible(path)
+        source_commit = first_recursive_value(payload, SOURCE_COMMIT_KEYS) if payload else None
+        generated_at = first_recursive_value(payload, {"generated_at", "generated_at_utc"}) if payload else None
+        kind = evidence_kind(ref)
+        if not exists:
+            missing_refs.append(ref)
+        if kind == "source":
+            source_only_refs.append(ref)
+        if (
+            current_source_commit
+            and source_commit
+            and source_commit != current_source_commit
+        ):
+            stale_refs.append(ref)
+        contradiction = artifact_signals_contradiction(payload)
+        if contradiction is not None:
+            contradictory_refs.append(f"{ref}:{contradiction}")
+        archived_allowed = (
+            source_commit is None
+            and generated_at is not None
+            and any(ref.startswith(prefix) for prefix in ARCHIVED_EVIDENCE_PREFIXES)
+        )
+        if archived_allowed:
+            archived_refs.append(ref)
+        artifact_rows.append(
+            {
+                "evidence_ref": ref,
+                "path_exists": exists,
+                "kind": kind,
+                "validation_command": artifact_validation_command(ref),
+                "source_commit": source_commit,
+                "generated_at": generated_at,
+                "archived_evidence_allowed": archived_allowed,
+                "failure_signature": contradiction or ("missing_artifact" if not exists else "none"),
+            }
+        )
+
+    if not refs:
+        freshness_state = "prose_only"
+    elif contradictory_refs:
+        freshness_state = "contradictory"
+    elif stale_refs:
+        freshness_state = "stale_commit"
+    elif missing_refs:
+        freshness_state = "missing_artifact"
+    elif archived_refs and len(archived_refs) == len(refs):
+        freshness_state = "archived"
+    elif source_only_refs and len(source_only_refs) == len(refs):
+        freshness_state = "source_only"
+    else:
+        freshness_state = "fresh"
+
+    audit_status = "pass" if freshness_state in {"fresh", "archived"} else "fail"
+    artifact_refs = [ref for ref in refs if (root / ref).exists()]
+    expected = {
+        "status": STATUS_DONE,
+        "evidence_refs": ">=1",
+        "artifact_paths_exist": True,
+        "contradictory_artifacts": 0,
+        "source_commit": current_source_commit or "present-or-archived",
+        "fixture_or_e2e_coverage": True,
+        "validation_commands": "exact",
+    }
+    actual = {
+        "status": row.get("status"),
+        "evidence_ref_count": len(refs),
+        "missing_artifacts": missing_refs,
+        "stale_artifacts": stale_refs,
+        "contradictory_artifacts": contradictory_refs,
+        "source_only_artifacts": source_only_refs,
+        "archived_artifacts": archived_refs,
+        "validation_commands": [artifact_validation_command(ref) for ref in refs],
+    }
+    failure_signature = "none" if audit_status == "pass" else freshness_state
+    return {
+        "ledger_row_id": row_id,
+        "section": str(row.get("section", "")),
+        "primary_key": str(row.get("primary_key", "")),
+        "status": str(row.get("status", "")),
+        "audit_status": audit_status,
+        "freshness_state": freshness_state,
+        "expected": expected,
+        "actual": actual,
+        "evidence_refs": artifact_rows,
+        "artifact_refs": artifact_refs,
+        "source_commit": current_source_commit or "not-captured-in-canonical-artifact",
+        "user_facing_claim_impact": (
+            "DONE claim is machine-verifiable"
+            if audit_status == "pass"
+            else "DONE claim remains blocked until fresh fixture/e2e/gate evidence is attached"
+        ),
+        "failure_signature": failure_signature,
+    }
+
+
+def audit_done_evidence(
+    rows: list[dict[str, Any]],
+    *,
+    root: Path,
+    current_source_commit: str | None = None,
+) -> list[dict[str, Any]]:
+    audits = [
+        audit_done_row(row, root=root, current_source_commit=current_source_commit)
+        for row in rows
+        if row.get("status") == STATUS_DONE
+    ]
+    return sorted(audits, key=lambda row: row["ledger_row_id"])
+
+
 def machine_deltas(
     support_matrix: dict[str, Any],
     reality_report: dict[str, Any],
@@ -467,6 +781,8 @@ def build_gap_ledger(
     base_deltas = machine_deltas(support, reality, replacement)
     macro_deltas = macro_delta_rows(sections["macro_targets"], support, reality)
     deltas = base_deltas + macro_deltas
+    root = feature_parity_path.parent if str(feature_parity_path.parent) else Path(".")
+    done_evidence_audit = audit_done_evidence(rows, root=root)
 
     previous_rows = []
     if previous_output and isinstance(previous_output.get("rows"), list):
@@ -513,6 +829,12 @@ def build_gap_ledger(
     status_counts: dict[str, int] = {}
     for row in rows:
         status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
+    done_audit_counts: dict[str, int] = {}
+    done_freshness_counts: dict[str, int] = {}
+    for row in done_evidence_audit:
+        done_audit_counts[row["audit_status"]] = done_audit_counts.get(row["audit_status"], 0) + 1
+        state = row["freshness_state"]
+        done_freshness_counts[state] = done_freshness_counts.get(state, 0) + 1
 
     generated_at = (
         str(reality.get("generated_at_utc", "")).strip()
@@ -533,6 +855,7 @@ def build_gap_ledger(
         },
         "rows": rows,
         "deltas": deltas,
+        "done_evidence_audit": done_evidence_audit,
         "status_transitions": transitions,
         "gaps": gaps,
         "parse_errors": [
@@ -546,6 +869,12 @@ def build_gap_ledger(
             "parse_error_count": len(parse_errors),
             "status_counts": status_counts,
             "transition_count": len(transitions),
+            "done_evidence_audit_count": len(done_evidence_audit),
+            "invalid_done_evidence_count": sum(
+                1 for row in done_evidence_audit if row["audit_status"] != "pass"
+            ),
+            "done_evidence_audit_counts": done_audit_counts,
+            "done_evidence_freshness_counts": done_freshness_counts,
         },
     }
 
@@ -650,6 +979,93 @@ class ParserUnitTests(unittest.TestCase):
         self.assertEqual(len(transitions), 1)
         self.assertEqual(transitions[0]["from_status"], STATUS_IN_PROGRESS)
         self.assertEqual(transitions[0]["to_status"], STATUS_DONE)
+
+    def done_row(self, evidence_text: str) -> dict[str, Any]:
+        return {
+            "row_id": "fp-test-done",
+            "section": "proof_math",
+            "primary_key": "synthetic proof row",
+            "status": STATUS_DONE,
+            "columns": {
+                "Obligation": "synthetic proof row",
+                "Evidence Artifact": evidence_text,
+                "Status": STATUS_DONE,
+            },
+            "provenance": {"path": "FEATURE_PARITY.md", "line": 1},
+        }
+
+    def temp_root(self) -> Path:
+        return Path(tempfile.mkdtemp(prefix="frankenlibc-feature-parity-audit-"))
+
+    def test_done_evidence_fresh_link_validation(self) -> None:
+        root = self.temp_root()
+        artifact = root / "tests/conformance/fresh_fixture.v1.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(
+            json.dumps({"source_commit": "abc123", "summary": {"fail_count": 0}}),
+            encoding="utf-8",
+        )
+
+        audit = audit_done_row(self.done_row("`tests/conformance/fresh_fixture.v1.json`"), root=root, current_source_commit="abc123")
+        self.assertEqual(audit["audit_status"], "pass")
+        self.assertEqual(audit["freshness_state"], "fresh")
+        self.assertEqual(audit["failure_signature"], "none")
+
+    def test_done_evidence_missing_artifact_is_reported(self) -> None:
+        root = self.temp_root()
+        audit = audit_done_row(self.done_row("`tests/conformance/missing_fixture.v1.json`"), root=root)
+        self.assertEqual(audit["audit_status"], "fail")
+        self.assertEqual(audit["freshness_state"], "missing_artifact")
+        self.assertEqual(audit["failure_signature"], "missing_artifact")
+
+    def test_done_evidence_stale_commit_is_reported(self) -> None:
+        root = self.temp_root()
+        artifact = root / "tests/conformance/stale_fixture.v1.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(
+            json.dumps({"source_commit": "old456", "summary": {"fail_count": 0}}),
+            encoding="utf-8",
+        )
+
+        audit = audit_done_row(self.done_row("`tests/conformance/stale_fixture.v1.json`"), root=root, current_source_commit="new789")
+        self.assertEqual(audit["audit_status"], "fail")
+        self.assertEqual(audit["freshness_state"], "stale_commit")
+
+    def test_done_evidence_contradictory_artifact_is_reported(self) -> None:
+        root = self.temp_root()
+        artifact = root / "tests/conformance/contradictory_fixture.v1.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(
+            json.dumps({"source_commit": "abc123", "summary": {"fail_count": 1}}),
+            encoding="utf-8",
+        )
+
+        audit = audit_done_row(
+            self.done_row("`tests/conformance/contradictory_fixture.v1.json`"),
+            root=root,
+            current_source_commit="abc123",
+        )
+        self.assertEqual(audit["audit_status"], "fail")
+        self.assertEqual(audit["freshness_state"], "contradictory")
+
+    def test_done_evidence_allows_archived_canonical_artifact(self) -> None:
+        root = self.temp_root()
+        artifact = root / "tests/conformance/archived_fixture.v1.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(
+            json.dumps({"generated_at": "2026-02-18T04:49:26Z", "summary": {"fail_count": 0}}),
+            encoding="utf-8",
+        )
+
+        audit = audit_done_row(self.done_row("`tests/conformance/archived_fixture.v1.json`"), root=root)
+        self.assertEqual(audit["audit_status"], "pass")
+        self.assertEqual(audit["freshness_state"], "archived")
+
+    def test_done_evidence_prose_only_is_blocked(self) -> None:
+        root = self.temp_root()
+        audit = audit_done_row(self.done_row("machine-verifiable evidence TBD"), root=root)
+        self.assertEqual(audit["audit_status"], "fail")
+        self.assertEqual(audit["freshness_state"], "prose_only")
 
 
 def run_self_tests() -> int:
