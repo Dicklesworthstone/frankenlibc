@@ -1,0 +1,446 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "standalone-link-run-smoke",
+  "bead": "bd-bp8fl.6.2",
+  "generated_utc": "2026-05-02T16:45:00Z",
+  "description": "Standalone direct-link smoke manifest for replacement-level evidence. These rows are intentionally distinct from LD_PRELOAD interpose smoke and fail closed when the standalone replacement artifact is absent, stale, or missing loader/startup obligations.",
+  "inputs": {
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "packaging_spec": "tests/conformance/packaging_spec.json",
+    "standalone_readiness_matrix": "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "smoke_id",
+    "compiler",
+    "link_args",
+    "runtime_mode",
+    "replacement_level",
+    "expected_status",
+    "actual_status",
+    "loader_error",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "current_claim_policy": {
+    "current_level_must_remain": "L0",
+    "standalone_evidence_starts_at": "L2",
+    "ld_preload_evidence_accepted": false,
+    "missing_or_stale_candidate_result": "claim_blocked",
+    "positive_rows_required_for_l2_claim": "all strict and hardened candidate runs must pass with a current standalone artifact",
+    "negative_rows_required_for_l2_claim": "all negative missing-obligation rows must remain claim_blocked"
+  },
+  "artifact_policy": {
+    "standalone_library_env": "FRANKENLIBC_STANDALONE_LIB",
+    "target_dir_env": "STANDALONE_SMOKE_TARGET_DIR",
+    "report_env": "STANDALONE_SMOKE_REPORT",
+    "log_env": "STANDALONE_SMOKE_LOG",
+    "required_artifact_name": "libfrankenlibc_replace.so",
+    "stale_if_older_than_head": true,
+    "case_dir_template": "target/standalone_link_run_smoke/${run_id}/${smoke_id}",
+    "required_artifacts": [
+      "source.c",
+      "baseline.bin",
+      "baseline.stdout.txt",
+      "baseline.stderr.txt",
+      "baseline.exit_code",
+      "candidate.link.txt",
+      "candidate.stdout.txt",
+      "candidate.stderr.txt",
+      "candidate.exit_code"
+    ]
+  },
+  "expected_failure_classifications": [
+    {
+      "failure_signature": "standalone_artifact_missing",
+      "expected_result": "claim_blocked",
+      "description": "No libfrankenlibc_replace.so path was supplied or discovered."
+    },
+    {
+      "failure_signature": "standalone_artifact_stale",
+      "expected_result": "claim_blocked",
+      "description": "The standalone artifact predates the source commit being evaluated."
+    },
+    {
+      "failure_signature": "wrong_artifact_profile",
+      "expected_result": "claim_blocked",
+      "description": "The supplied artifact is an interpose library or otherwise not named libfrankenlibc_replace.so."
+    },
+    {
+      "failure_signature": "missing_obligation",
+      "expected_result": "claim_blocked",
+      "description": "The row intentionally requires replacement obligations that the current artifact profile does not own."
+    },
+    {
+      "failure_signature": "loader_startup_failure",
+      "expected_result": "fail",
+      "description": "A current standalone artifact was available, but the direct-link binary failed startup or exited unexpectedly."
+    },
+    {
+      "failure_signature": "symbol_version_mismatch",
+      "expected_result": "fail",
+      "description": "A current standalone artifact was available, but required symbol/version evidence was missing."
+    }
+  ],
+  "smoke_rows": [
+    {
+      "smoke_id": "standalone.minimal_exit",
+      "category": "minimal",
+      "description": "Minimal C main reaches process startup and exits successfully.",
+      "source_filename": "minimal_exit.c",
+      "c_source": "int main(void) {\n    return 0;\n}\n",
+      "replacement_level": "L2",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}"
+        ],
+        "extra_flags": []
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "The directly linked binary reaches main without LD_PRELOAD or host-interpose semantics.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "__libc_start_main",
+          "version": "GLIBC_2.2.5",
+          "required_for": "startup"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": 0,
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
+    },
+    {
+      "smoke_id": "standalone.stdio_file_roundtrip",
+      "category": "stdio_file",
+      "description": "tmpfile, fputs, rewind, fgets, strcmp, and puts work in a direct-link binary.",
+      "source_filename": "stdio_file_roundtrip.c",
+      "c_source": "#include <stdio.h>\n#include <string.h>\n\nint main(void) {\n    FILE *file = tmpfile();\n    if (file == NULL) {\n        perror(\"tmpfile\");\n        return 2;\n    }\n    if (fputs(\"frankenlibc-stdio\\n\", file) < 0) {\n        return 3;\n    }\n    rewind(file);\n    char buffer[64];\n    if (fgets(buffer, sizeof(buffer), file) == NULL) {\n        return 4;\n    }\n    if (strcmp(buffer, \"frankenlibc-stdio\\n\") != 0) {\n        return 5;\n    }\n    puts(\"stdio-file-ok\");\n    return 0;\n}\n",
+      "replacement_level": "L2",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}"
+        ],
+        "extra_flags": []
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "Native stdio setup is present enough for tmpfile and buffered I/O without LD_PRELOAD.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "tmpfile",
+          "version": "GLIBC_2.2.5",
+          "required_for": "stdio"
+        },
+        {
+          "symbol": "fgets",
+          "version": "GLIBC_2.2.5",
+          "required_for": "stdio"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": 0,
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "stdio-file-ok",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
+    },
+    {
+      "smoke_id": "standalone.pthread_tls_errno",
+      "category": "pthread_tls",
+      "description": "pthread_create, pthread_join, C thread-local storage, and errno stay coherent in a direct-link binary.",
+      "source_filename": "pthread_tls_errno.c",
+      "c_source": "#include <errno.h>\n#include <pthread.h>\n#include <stdint.h>\n#include <stdio.h>\n\nstatic _Thread_local int tls_value;\n\nstatic void *worker(void *arg) {\n    (void)arg;\n    tls_value = 41;\n    errno = EDOM;\n    return (void *)(intptr_t)(tls_value + (errno == EDOM));\n}\n\nint main(void) {\n    pthread_t thread;\n    void *result = NULL;\n    if (pthread_create(&thread, NULL, worker, NULL) != 0) {\n        perror(\"pthread_create\");\n        return 2;\n    }\n    if (pthread_join(thread, &result) != 0) {\n        perror(\"pthread_join\");\n        return 3;\n    }\n    long value = (long)(intptr_t)result;\n    printf(\"pthread-tls-ok:%ld\\n\", value);\n    return value == 42 ? 0 : 4;\n}\n",
+      "replacement_level": "L2",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}",
+          "-pthread"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}",
+          "-pthread"
+        ],
+        "extra_flags": [
+          "-pthread"
+        ]
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "Thread creation, join, TLS, and errno work without host-pthread interpose assumptions.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "pthread_create",
+          "version": "GLIBC_2.34",
+          "required_for": "pthread"
+        },
+        {
+          "symbol": "__errno_location",
+          "version": "GLIBC_2.2.5",
+          "required_for": "tls_errno"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": 0,
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "pthread-tls-ok:42",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
+    },
+    {
+      "smoke_id": "standalone.resolver_locale",
+      "category": "resolver_locale",
+      "description": "C locale setup and localhost getaddrinfo resolution work in a direct-link binary where possible.",
+      "source_filename": "resolver_locale.c",
+      "c_source": "#include <locale.h>\n#include <netdb.h>\n#include <stdio.h>\n#include <string.h>\n\nint main(void) {\n    if (setlocale(LC_ALL, \"C\") == NULL) {\n        return 2;\n    }\n    struct addrinfo hints;\n    memset(&hints, 0, sizeof(hints));\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = SOCK_STREAM;\n    struct addrinfo *result = NULL;\n    int rc = getaddrinfo(\"localhost\", \"80\", &hints, &result);\n    if (rc != 0) {\n        fprintf(stderr, \"getaddrinfo:%s\\n\", gai_strerror(rc));\n        return 3;\n    }\n    freeaddrinfo(result);\n    printf(\"resolver-locale-ok:%s\\n\", localeconv()->decimal_point);\n    return 0;\n}\n",
+      "replacement_level": "L2",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}"
+        ],
+        "extra_flags": []
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}",
+          "LC_ALL": "C"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "Locale initialization and resolver/NSS calls are owned or explicitly blocked by standalone policy.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "setlocale",
+          "version": "GLIBC_2.2.5",
+          "required_for": "locale"
+        },
+        {
+          "symbol": "getaddrinfo",
+          "version": "GLIBC_2.2.5",
+          "required_for": "resolver"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": 0,
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "resolver-locale-ok:.",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
+    },
+    {
+      "smoke_id": "standalone.negative_missing_obligation",
+      "category": "negative_missing_obligation",
+      "description": "Intentional negative row proving L2/L3 claims stay blocked when CRT, rtld, and zero-host-glibc obligations are not current.",
+      "source_filename": "negative_missing_obligation.c",
+      "c_source": "int main(void) {\n    return 0;\n}\n",
+      "replacement_level": "L3",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "negative_case": true,
+      "missing_obligations": [
+        "custom_crt_startup",
+        "rtld_symbol_relocation",
+        "zero_host_glibc_dependency"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}"
+        ],
+        "extra_flags": []
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "This row must not be treated as standalone-ready until CRT, rtld, and zero-host-glibc evidence is current.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "_start",
+          "version": "crt-owned",
+          "required_for": "startup"
+        },
+        {
+          "symbol": "rtld",
+          "version": "frankenlibc-owned",
+          "required_for": "dynamic_loading"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": "claim_blocked",
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "row_count": 5,
+    "positive_row_count": 4,
+    "negative_row_count": 1,
+    "required_categories": [
+      "minimal",
+      "stdio_file",
+      "pthread_tls",
+      "resolver_locale",
+      "negative_missing_obligation"
+    ],
+    "standalone_claim_status": "blocked_until_current_artifact_and_obligations_pass",
+    "ld_preload_smoke_substitutes_for_standalone": false
+  }
+}
