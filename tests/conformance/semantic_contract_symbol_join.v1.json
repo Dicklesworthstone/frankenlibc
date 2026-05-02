@@ -1,0 +1,435 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.1.2",
+  "generated_at_utc": "2026-05-02T12:51:40Z",
+  "purpose": "Join every semantic-contract inventory row to support_matrix.json, the GNU ld version script, and exported ABI source modules while keeping support taxonomy separate from semantic parity.",
+  "source_artifacts": {
+    "semantic_contract_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
+    "seed_overlay": "tests/conformance/support_semantic_overlay.v1.json",
+    "support_matrix": "support_matrix.json",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "abi_source_root": "crates/frankenlibc-abi/src"
+  },
+  "claim_policy": {
+    "support_taxonomy_is_not_semantic_parity": true,
+    "implemented_status_may_still_have_semantic_blockers": true,
+    "wildcard_symbol_families_require_expanded_symbol_inventory": true,
+    "readme_feature_parity_release_notes_may_advance_without_machine_evidence": false,
+    "full_replacement_claim_requires_all_rows_semantic_parity_status_full": true,
+    "known_limitation": "This gate verifies source, support-matrix, and version-script joins for the current semantic inventory. It does not prove the underlying semantic contracts are implemented; those remain blocked until follow-up fixture and workload beads close."
+  },
+  "summary": {
+    "inventory_entry_count": 17,
+    "symbol_bearing_entry_count": 16,
+    "symbolless_contract_count": 1,
+    "symbol_reference_count": 81,
+    "exact_symbol_reference_count": 77,
+    "pattern_symbol_reference_count": 4,
+    "support_matrix_missing_exact_symbol_count": 6,
+    "version_script_missing_exact_symbol_count": 2,
+    "source_missing_exact_symbol_count": 0,
+    "wildcard_source_expansion_count": 69,
+    "wildcard_support_matrix_expansion_count": 0,
+    "wildcard_version_script_expansion_count": 0,
+    "semantic_parity_blocker_count": 17,
+    "rows_where_taxonomy_status_is_not_parity": 17,
+    "by_taxonomy_status": {
+      "Implemented": 15,
+      "mixed_or_not_listed_by_exact_name": 1,
+      "not_symbol_level": 1
+    },
+    "by_semantic_class": {
+      "abort_only": 1,
+      "compat_noop": 5,
+      "deterministic_fallback": 5,
+      "limited_bootstrap": 4,
+      "unsupported_platform_contract": 2
+    }
+  },
+  "entries": [
+    {
+      "inventory_id": "sem-elf-relocation-support",
+      "surface": "ELF relocation support classification",
+      "source_path": "crates/frankenlibc-core/src/elf/mod.rs",
+      "taxonomy_status": "not_symbol_level",
+      "semantic_class": "limited_bootstrap",
+      "semantic_parity_status": "blocked_limited_bootstrap",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-pthread-cancel-private",
+      "surface": "glibc private pthread cancellation helpers",
+      "source_path": "crates/frankenlibc-abi/src/pthread_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "compat_noop",
+      "semantic_parity_status": "blocked_compat_noop",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "__pthread_register_cancel",
+        "__pthread_unregister_cancel",
+        "__pthread_register_cancel_defer",
+        "__pthread_unregister_cancel_restore",
+        "__pthread_cleanup_routine",
+        "__pthread_unwind_next"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-libcrypt-des",
+      "surface": "obsolete libcrypt DES helpers",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "compat_noop",
+      "semantic_parity_status": "blocked_compat_noop",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "encrypt",
+        "encrypt_r",
+        "setkey",
+        "setkey_r"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-nss-files-plugin",
+      "surface": "NSS files module private plugin entries",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "taxonomy_status": "mixed_or_not_listed_by_exact_name",
+      "semantic_class": "deterministic_fallback",
+      "semantic_parity_status": "blocked_deterministic_fallback",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "_nss_files_end*",
+        "_nss_files_set*",
+        "_nss_files_get*_r",
+        "_nss_files_parse_*"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {
+        "_nss_files_end*": {
+          "source": 12,
+          "support_matrix": 0,
+          "version_script": 0
+        },
+        "_nss_files_set*": {
+          "source": 12,
+          "support_matrix": 0,
+          "version_script": 0
+        },
+        "_nss_files_get*_r": {
+          "source": 36,
+          "support_matrix": 0,
+          "version_script": 0
+        },
+        "_nss_files_parse_*": {
+          "source": 9,
+          "support_matrix": 0,
+          "version_script": 0
+        }
+      },
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-nss-configure-lookup",
+      "surface": "NSS lookup configuration internals",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "limited_bootstrap",
+      "semantic_parity_status": "blocked_limited_bootstrap",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "__nss_configure_lookup",
+        "__nss_next",
+        "__nss_next2",
+        "__nss_lookup_function"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [
+        "__nss_next2",
+        "__nss_lookup_function"
+      ],
+      "expected_missing_version_script_symbols": [
+        "__nss_next2",
+        "__nss_lookup_function"
+      ],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-obstack-printf-chk",
+      "surface": "obstack fortified printf helpers",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "deterministic_fallback",
+      "semantic_parity_status": "blocked_deterministic_fallback",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "__obstack_printf_chk",
+        "__obstack_vprintf_chk"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-stdio-vtable-helpers",
+      "surface": "glibc stdio vtable helper fallbacks",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "deterministic_fallback",
+      "semantic_parity_status": "blocked_deterministic_fallback",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "__overflow",
+        "__uflow",
+        "__underflow",
+        "__wuflow",
+        "__woverflow",
+        "__wunderflow"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-historical-linux-syscalls",
+      "surface": "removed or unsupported historical syscall wrappers",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "unsupported_platform_contract",
+      "semantic_parity_status": "blocked_unsupported_platform",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "__sysctl",
+        "bdflush",
+        "create_module",
+        "get_kernel_syms",
+        "query_module"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-malloc-debug-hooks",
+      "surface": "malloc debug hook compatibility",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "compat_noop",
+      "semantic_parity_status": "blocked_compat_noop",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "mcheck",
+        "mcheck_pedantic",
+        "mcheck_check_all",
+        "mtrace",
+        "muntrace"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-argp-help-family",
+      "surface": "GNU argp help and reporting helpers",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "compat_noop",
+      "semantic_parity_status": "blocked_compat_noop",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "argp_help",
+        "argp_usage",
+        "argp_error",
+        "argp_failure",
+        "argp_state_help"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-pthread-priority-protocol",
+      "surface": "pthread priority-ceiling protocol helpers",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "unsupported_platform_contract",
+      "semantic_parity_status": "blocked_unsupported_platform",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "pthread_mutex_getprioceiling",
+        "pthread_mutex_setprioceiling",
+        "pthread_mutexattr_getprioceiling",
+        "pthread_mutexattr_setprioceiling"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-profiling-hooks",
+      "surface": "profiling and instrumentation hooks",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "compat_noop",
+      "semantic_parity_status": "blocked_compat_noop",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "__fentry__",
+        "_mcleanup",
+        "_mcount",
+        "mcount",
+        "moncontrol",
+        "monstartup",
+        "profil"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-gconv-private-internals",
+      "surface": "gconv private iconv internals",
+      "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "limited_bootstrap",
+      "semantic_parity_status": "blocked_limited_bootstrap",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "__gconv_open",
+        "__gconv_create_spec",
+        "__gconv_destroy_spec",
+        "__gconv_get_alias_db",
+        "__gconv_get_cache",
+        "__gconv_get_modules_db",
+        "__gconv",
+        "__gconv_close",
+        "__gconv_transliterate"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-nis-yp-failsafe",
+      "surface": "NIS and Yellow Pages fail-safe libnsl entries",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "deterministic_fallback",
+      "semantic_parity_status": "blocked_deterministic_fallback",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "yp_get_default_domain",
+        "yp_bind",
+        "yp_unbind",
+        "yp_match",
+        "yp_first",
+        "yp_next",
+        "yp_all"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-nis-xdr-failsafe",
+      "surface": "NIS XDR encoder and decoder helpers",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "deterministic_fallback",
+      "semantic_parity_status": "blocked_deterministic_fallback",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "xdr_ypbind_resp",
+        "xdr_ypreq_key",
+        "xdr_ypresp_val",
+        "xdr_ypstat",
+        "xdr_ypxfrstat"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-async-resolver-partial",
+      "surface": "asynchronous resolver compatibility surface",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "limited_bootstrap",
+      "semantic_parity_status": "blocked_limited_bootstrap",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "getaddrinfo_a",
+        "gai_cancel",
+        "gai_error",
+        "gai_suspend"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    },
+    {
+      "inventory_id": "sem-cxx-abi-fail-stop",
+      "surface": "C++ ABI fail-stop hooks exported for compatibility",
+      "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "taxonomy_status": "Implemented",
+      "semantic_class": "abort_only",
+      "semantic_parity_status": "blocked_abort_only",
+      "taxonomy_status_is_semantic_parity": false,
+      "symbol_refs": [
+        "__cxa_pure_virtual",
+        "__cxa_deleted_virtual",
+        "__cxa_throw_bad_array_new_length",
+        "__cxa_call_unexpected"
+      ],
+      "expected_missing_source_symbols": [],
+      "expected_missing_support_matrix_symbols": [
+        "__cxa_pure_virtual",
+        "__cxa_deleted_virtual",
+        "__cxa_throw_bad_array_new_length",
+        "__cxa_call_unexpected"
+      ],
+      "expected_missing_version_script_symbols": [],
+      "expected_pattern_expansion_counts": {},
+      "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
+    }
+  ]
+}
