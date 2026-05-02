@@ -5170,16 +5170,6 @@ pub unsafe extern "C" fn futex_waitv(
 // mseal / memfd_secret / rseq / cachestat (modern Linux syscall wrappers)
 // ---------------------------------------------------------------------------
 
-#[inline]
-unsafe fn raw_syscall_with_errno(rc: libc::c_long) -> c_int {
-    if rc < 0 {
-        let e = unsafe { *libc::__errno_location() };
-        unsafe { set_abi_errno(e) };
-        return -1;
-    }
-    rc as c_int
-}
-
 /// Linux `mseal(addr, len, flags) -> int` (Linux 6.10+, glibc 2.40,
 /// `SYS_mseal = 462`) — seal a memory region against future
 /// `mprotect`, `munmap`, `mremap`, etc. Returns 0 on success or -1
@@ -5283,16 +5273,6 @@ pub unsafe extern "C" fn cachestat(
 // NUMA memory policy (set/get_mempolicy + mbind + migrate_pages + move_pages
 // + set_mempolicy_home_node)
 // ---------------------------------------------------------------------------
-
-#[inline]
-unsafe fn raw_syscall_with_errno_long(rc: libc::c_long) -> libc::c_long {
-    if rc < 0 {
-        let e = unsafe { *libc::__errno_location() };
-        unsafe { set_abi_errno(e) };
-        return -1;
-    }
-    rc
-}
 
 /// Linux `set_mempolicy(mode, *nodemask, maxnode) -> long`
 /// (`SYS_set_mempolicy = 238`) — set the calling thread's default
