@@ -25,6 +25,8 @@ const REQUIRED_GATE_CHECKS: &[&str] = &[
     "json_parse",
     "top_level_shape",
     "batch_schema",
+    "artifact_contract",
+    "evidence_artifacts_exist",
     "unique_batch_ids",
     "exact_gap_coverage",
     "summary_counts",
@@ -158,8 +160,41 @@ fn artifact_exists_and_has_required_shape() -> TestResult {
         artifact["batch_policy"].is_object(),
         "batch_policy must be object",
     )?;
+    require(
+        artifact["generated_outputs"].is_object(),
+        "generated_outputs must be object",
+    )?;
     require(artifact["batches"].is_array(), "batches must be array")?;
     require(artifact["summary"].is_object(), "summary must be object")?;
+    let required_log_fields = json_array(&artifact, "required_log_fields")?;
+    require_eq(
+        required_log_fields.len(),
+        REQUIRED_LOG_FIELDS.len(),
+        "required_log_fields length",
+    )?;
+    for field in REQUIRED_LOG_FIELDS {
+        require(
+            required_log_fields
+                .iter()
+                .any(|value| value.as_str() == Some(field)),
+            format!("artifact required_log_fields missing {field}"),
+        )?;
+    }
+    let grouping_axes = json_array(&artifact, "required_grouping_axes")?;
+    for axis in [
+        "feature_parity_sections",
+        "symbol_family",
+        "evidence_artifacts",
+        "source_owner",
+        "priority",
+    ] {
+        require(
+            grouping_axes
+                .iter()
+                .any(|value| value.as_str() == Some(axis)),
+            format!("artifact required_grouping_axes missing {axis}"),
+        )?;
+    }
 
     let batches = json_array(&artifact, "batches")?;
     require(
@@ -181,6 +216,28 @@ fn artifact_exists_and_has_required_shape() -> TestResult {
         require(
             !json_array(batch, "evidence_artifacts")?.is_empty(),
             format!("{batch_id}: evidence_artifacts must not be empty"),
+        )?;
+        for artifact_ref in json_array(batch, "evidence_artifacts")? {
+            let artifact_ref = artifact_ref
+                .as_str()
+                .ok_or_else(|| format!("{batch_id}: evidence artifact refs must be strings"))?;
+            let artifact_path = root.join(artifact_ref.trim_end_matches('/'));
+            require(
+                artifact_path.exists(),
+                format!("{batch_id}: missing evidence artifact {artifact_ref}"),
+            )?;
+        }
+        require(
+            batch["priority"].as_u64().is_some(),
+            format!("{batch_id}: priority must be numeric"),
+        )?;
+        require(
+            !string_field(batch, "symbol_family")?.trim().is_empty(),
+            format!("{batch_id}: symbol_family must not be empty"),
+        )?;
+        require(
+            !string_field(batch, "source_owner")?.trim().is_empty(),
+            format!("{batch_id}: source_owner must not be empty"),
         )?;
     }
     Ok(())
@@ -322,20 +379,78 @@ fn gate_script_passes_and_emits_structured_report_and_log() -> TestResult {
             &format!("report checks.{check}"),
         )?;
     }
+    require(
+        report["owner_counts"].is_object(),
+        "report must include owner_counts",
+    )?;
+    require(
+        report["evidence_artifact_counts"].is_object(),
+        "report must include evidence_artifact_counts",
+    )?;
+    require(
+        report["symbol_family_counts"].is_object(),
+        "report must include symbol_family_counts",
+    )?;
+    let batch_summaries = json_array(&report, "batch_summaries")?;
+    let artifact = load_json(&artifact_path(&root))?;
+    let batches = json_array(&artifact, "batches")?;
+    require_eq(
+        batch_summaries.len(),
+        batches.len(),
+        "report.batch_summaries length",
+    )?;
+    for summary in batch_summaries {
+        let batch_id = string_field(summary, "batch_id")?;
+        require(
+            summary["status_counts"].is_object(),
+            format!("{batch_id}: status_counts must be object"),
+        )?;
+        require(
+            summary["kind_counts"].is_object(),
+            format!("{batch_id}: kind_counts must be object"),
+        )?;
+        require(
+            summary["provenance_paths"].is_object(),
+            format!("{batch_id}: provenance_paths must be object"),
+        )?;
+        require(
+            !json_array(summary, "representative_primary_keys")?.is_empty(),
+            format!("{batch_id}: representative_primary_keys must not be empty"),
+        )?;
+    }
 
     let log = std::fs::read_to_string(&log_path)
         .map_err(|err| format!("{}: {err}", log_path.display()))?;
-    let log_line = log
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .ok_or_else(|| format!("{} should contain at least one row", log_path.display()))?;
-    let event: serde_json::Value =
-        serde_json::from_str(log_line).map_err(|err| format!("log row should parse: {err}"))?;
-    for key in REQUIRED_LOG_FIELDS {
-        require(
-            event.get(*key).is_some(),
-            format!("structured log row missing {key}"),
-        )?;
+    let log_rows: Vec<_> = log.lines().filter(|line| !line.trim().is_empty()).collect();
+    require_eq(
+        log_rows.len(),
+        batches.len() + 1,
+        "structured log row count",
+    )?;
+    let mut batch_log_rows = HashSet::new();
+    for line in log_rows {
+        let event: serde_json::Value =
+            serde_json::from_str(line).map_err(|err| format!("log row should parse: {err}"))?;
+        for key in REQUIRED_LOG_FIELDS {
+            require(
+                event.get(*key).is_some(),
+                format!("structured log row missing {key}"),
+            )?;
+        }
+        if let Some(scenario_id) = event["scenario_id"].as_str()
+            && let Some(batch_id) = scenario_id.strip_prefix("feature-parity-gap-batch:")
+        {
+            batch_log_rows.insert(batch_id.to_owned());
+            require(
+                event["source_owner"].as_str().is_some(),
+                format!("{batch_id}: batch log must include source_owner"),
+            )?;
+            require(
+                event["status_counts"].is_object(),
+                format!("{batch_id}: batch log must include status_counts"),
+            )?;
+        }
     }
+    require_eq(batch_log_rows.len(), batches.len(), "batch log coverage")?;
     Ok(())
 }

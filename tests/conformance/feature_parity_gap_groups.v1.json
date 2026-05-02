@@ -18,6 +18,37 @@
     "owner_status_closed_is_not_gap_closed": true,
     "unit_and_e2e_logging_required_for_followup_batches": true
   },
+  "required_grouping_axes": [
+    "feature_parity_sections",
+    "symbol_family",
+    "evidence_artifacts",
+    "source_owner",
+    "priority"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "runtime_mode",
+    "replacement_level",
+    "api_family",
+    "symbol",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "generated_outputs": {
+    "report": "target/conformance/feature_parity_gap_groups.report.json",
+    "log_jsonl": "target/conformance/feature_parity_gap_groups.log.jsonl"
+  },
   "batches": [
     {
       "batch_id": "fpg-claim-control",
@@ -177,7 +208,7 @@
       "symbol_family": "superoptimization, concurrent linearizability, combinatorial interaction coverage, probabilistic coupling, tropical latency, async control, termios/ioctl safety, launch complexity, arithmetic compatibility, Clifford kernel equivalence",
       "evidence_artifacts": [
         "tests/conformance/branch_diversity_spec.v1.json",
-        "tests/conformance/submodular_coverage.v1.json",
+        "tests/conformance/math_value_ablations.v1.json",
         "tests/conformance/perf_regression_prevention.v1.json",
         "tests/conformance/symbol_latency_baseline.v1.json"
       ],
