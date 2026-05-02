@@ -17,6 +17,12 @@ echo "=== Benchmark Coverage Inventory Gate (bd-bp8fl.8.1) ==="
 echo "report=${REPORT}"
 echo "log=${LOG}"
 
+python3 scripts/generate_benchmark_coverage_inventory.py --self-test
+python3 scripts/generate_benchmark_coverage_inventory.py \
+  --check \
+  --output tests/conformance/benchmark_coverage_inventory.v1.json \
+  --target-dir "$(dirname "$REPORT")"
+
 python3 scripts/generate_benchmark_coverage_inventory.py \
   --output "$REPORT" \
   --log "$LOG" \
@@ -50,6 +56,8 @@ expected_required_log_fields = {
     "replacement_level",
     "api_family",
     "symbol",
+    "benchmark_id",
+    "coverage_state",
     "oracle_kind",
     "expected",
     "actual",
@@ -67,6 +75,8 @@ if report.get("schema_version") != "v1":
     errors.append("schema_version must be v1")
 if report.get("bead") != "bd-bp8fl.8.1":
     errors.append("bead must be bd-bp8fl.8.1")
+if not report.get("artifact_hash"):
+    errors.append("artifact_hash must be present")
 
 families = report.get("families", [])
 family_ids = {row.get("family") for row in families}
@@ -103,6 +113,56 @@ for family in families:
 bench_targets = report.get("bench_targets", [])
 if summary.get("actual_bench_target_count") != len(bench_targets):
     errors.append("actual_bench_target_count does not match bench target rows")
+inventory_rows = report.get("inventory_rows", [])
+if summary.get("inventory_row_count") != len(inventory_rows):
+    errors.append("inventory_row_count does not match inventory rows")
+if summary.get("missing_owner_row_count") != 0:
+    errors.append("inventory rows must all have owner beads")
+if not summary.get("missing_inventory_row_count"):
+    errors.append("inventory should expose current missing benchmark rows")
+
+required_inventory_fields = set(report.get("required_inventory_row_fields", []))
+expected_inventory_fields = {
+    "row_id",
+    "api_family",
+    "symbol",
+    "crate/module",
+    "current_benchmark",
+    "missing_benchmark_reason",
+    "runtime_mode",
+    "replacement_level",
+    "user_workload_exposure",
+    "baseline_artifact",
+    "owner_bead",
+    "benchmark_id",
+    "coverage_state",
+    "artifact_refs",
+    "failure_signature",
+}
+if required_inventory_fields != expected_inventory_fields:
+    errors.append("required_inventory_row_fields mismatch")
+
+seen_rows = set()
+for row in inventory_rows:
+    missing = expected_inventory_fields - set(row)
+    if missing:
+        errors.append(f"{row.get('row_id', '<unknown>')}: missing inventory fields {sorted(missing)}")
+    row_id = row.get("row_id")
+    if row_id in seen_rows:
+        errors.append(f"duplicate inventory row: {row_id}")
+    seen_rows.add(row_id)
+    if not str(row.get("owner_bead", "")).startswith("bd-"):
+        errors.append(f"{row_id}: owner_bead must be present")
+    if row.get("runtime_mode") not in {"strict", "hardened"}:
+        errors.append(f"{row_id}: invalid runtime_mode")
+    if row.get("coverage_state") not in {"covered", "gap"}:
+        errors.append(f"{row_id}: invalid coverage_state")
+    if not isinstance(row.get("current_benchmark"), dict):
+        errors.append(f"{row_id}: current_benchmark must be object")
+    if not isinstance(row.get("baseline_artifact"), dict):
+        errors.append(f"{row_id}: baseline_artifact must be object")
+    if not isinstance(row.get("user_workload_exposure"), dict):
+        errors.append(f"{row_id}: user_workload_exposure must be object")
 
 required_log_fields = set(report.get("required_log_fields", []))
 if required_log_fields != expected_required_log_fields:
@@ -128,6 +188,10 @@ for row in rows:
         errors.append("log row oracle_kind mismatch")
     if row.get("runtime_mode") != "strict+hardened":
         errors.append("log row runtime_mode mismatch")
+    if "benchmark_id" not in row:
+        errors.append("log row benchmark_id missing")
+    if "coverage_state" not in row:
+        errors.append("log row coverage_state missing")
 
 if errors:
     for error in errors:
@@ -136,6 +200,7 @@ if errors:
 
 print(f"Families: {len(families)}")
 print(f"Bench targets: {len(bench_targets)}")
+print(f"Inventory rows: {len(inventory_rows)}")
 print("Fully baselined:", ", ".join(summary.get("fully_baselined_families", [])))
 print("Missing required baselines:", ", ".join(summary.get("missing_required_baseline_families", [])))
 print("check_benchmark_coverage_inventory: PASS")
