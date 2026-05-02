@@ -24938,9 +24938,8 @@ pub unsafe extern "C" fn _xdr_nis_result(_xdrs: *mut c_void, _res: *mut c_void) 
 
 // Linux 6.13+ AT-relative xattr syscall numbers live in
 // frankenlibc_core::syscall as SYS_SETXATTRAT/GETXATTRAT/LISTXATTRAT/REMOVEXATTRAT.
-const SYS_OPEN_TREE_ATTR: libc::c_long = 467;
-const SYS_FILE_GETATTR: libc::c_long = 468;
-const SYS_FILE_SETATTR: libc::c_long = 469;
+// Linux 6.15+/6.16+ syscall numbers live in
+// frankenlibc_core::syscall::SYS_OPEN_TREE_ATTR / FILE_GETATTR / FILE_SETATTR.
 
 /// Linux `setxattrat(dirfd, path, at_flags, name, *uargs, usize) ->
 /// int` (Linux 6.13+, `SYS_setxattrat = 463`) — AT-relative
@@ -25084,17 +25083,15 @@ pub unsafe extern "C" fn open_tree_attr(
     attr: *mut c_void,
     size: usize,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_OPEN_TREE_ATTR,
-            dirfd as libc::c_long,
-            path as libc::c_long,
-            flags as libc::c_long,
-            attr as libc::c_long,
-            size as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_open_tree_attr(dirfd, path as *const u8, flags, attr as *mut u8, size)
+    } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `file_getattr(dirfd, path, *uattr, usize, at_flags) -> int`
@@ -25113,17 +25110,15 @@ pub unsafe extern "C" fn file_getattr(
     usize_: usize,
     at_flags: c_uint,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_FILE_GETATTR,
-            dirfd as libc::c_long,
-            path as libc::c_long,
-            uattr as libc::c_long,
-            usize_ as libc::c_long,
-            at_flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_file_getattr(dirfd, path as *const u8, uattr as *mut u8, usize_, at_flags)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `file_setattr(dirfd, path, *uattr, usize, at_flags) -> int`
@@ -25141,17 +25136,15 @@ pub unsafe extern "C" fn file_setattr(
     usize_: usize,
     at_flags: c_uint,
 ) -> c_int {
-    let rc = unsafe {
-        libc::syscall(
-            SYS_FILE_SETATTR,
-            dirfd as libc::c_long,
-            path as libc::c_long,
-            uattr as libc::c_long,
-            usize_ as libc::c_long,
-            at_flags as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_file_setattr(dirfd, path as *const u8, uattr as *const u8, usize_, at_flags)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

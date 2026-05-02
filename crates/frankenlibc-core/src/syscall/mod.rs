@@ -620,6 +620,12 @@ pub const SYS_FUTEX_WAIT: usize = 455;
 pub const SYS_FUTEX_REQUEUE: usize = 456;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_MAP_SHADOW_STACK: usize = 453;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_OPEN_TREE_ATTR: usize = 467;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FILE_GETATTR: usize = 468;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_FILE_SETATTR: usize = 469;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -834,6 +840,12 @@ pub const SYS_FUTEX_WAIT: usize = 455;
 pub const SYS_FUTEX_REQUEUE: usize = 456;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_MAP_SHADOW_STACK: usize = 453;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_OPEN_TREE_ATTR: usize = 467;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FILE_GETATTR: usize = 468;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_FILE_SETATTR: usize = 469;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2797,6 +2809,93 @@ pub unsafe fn sys_map_shadow_stack(
         raw::syscall3(SYS_MAP_SHADOW_STACK, addr, size, flags as usize)
     };
     syscall_result(ret)
+}
+
+/// `open_tree_attr(dirfd, path, flags, attr, size)` — `open_tree`
+/// variant that sets a `struct mount_attr` in one syscall (Linux
+/// 6.15+, syscall 467).
+///
+/// # Safety
+///
+/// `path` must be a NUL-terminated C string; `attr` must point to a
+/// valid `struct mount_attr` of `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_open_tree_attr(
+    dirfd: i32,
+    path: *const u8,
+    flags: u32,
+    attr: *mut u8,
+    size: usize,
+) -> Result<i32, i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_OPEN_TREE_ATTR,
+            dirfd as usize,
+            path as usize,
+            flags as usize,
+            attr as usize,
+            size,
+        )
+    };
+    syscall_result(ret).map(|n| n as i32)
+}
+
+/// `file_getattr(dirfd, path, uattr, size, at_flags)` — uniform get
+/// for file attributes (Linux 6.16+, syscall 468).
+///
+/// # Safety
+///
+/// `path` must be a NUL-terminated C string; `uattr` must point to
+/// writable storage of at least `size` bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_file_getattr(
+    dirfd: i32,
+    path: *const u8,
+    uattr: *mut u8,
+    size: usize,
+    at_flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_FILE_GETATTR,
+            dirfd as usize,
+            path as usize,
+            uattr as usize,
+            size,
+            at_flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `file_setattr(dirfd, path, uattr, size, at_flags)` — uniform set
+/// for file attributes (Linux 6.16+, syscall 469).
+///
+/// # Safety
+///
+/// Same as [`sys_file_getattr`].
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_file_setattr(
+    dirfd: i32,
+    path: *const u8,
+    uattr: *const u8,
+    size: usize,
+    at_flags: u32,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_FILE_SETATTR,
+            dirfd as usize,
+            path as usize,
+            uattr as usize,
+            size,
+            at_flags as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
 }
 
 /// `futex(uaddr, futex_op, val, timeout, uaddr2, val3)` — fast userspace mutex.
