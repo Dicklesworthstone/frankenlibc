@@ -10,8 +10,23 @@
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::io::Write;
+use std::sync::{Mutex, MutexGuard};
 
 use frankenlibc_abi::resolv_abi as fl;
+
+// Tests in this file mutate the process-global HOSTALIASES env var.
+// Cargo runs them in parallel by default, so we serialize through a
+// process-wide Mutex to prevent test races. Regression gate for
+// [bd-929qz].
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn env_guard() -> MutexGuard<'static, ()> {
+    // poisoned mutex still gives us serialization
+    match ENV_LOCK.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
 
 #[link(name = "resolv")]
 unsafe extern "C" {
@@ -56,9 +71,10 @@ fn cstr_or_empty(p: *const c_char) -> Option<String> {
 
 fn lookup(file: &AliasFile, query: &str) -> (Option<String>, Option<String>) {
     // `__hostalias` is a static-buffer API — we copy out before swapping
-    // env so that the comparison is stable.
+    // env so that the comparison is stable. Serialize through ENV_LOCK
+    // so cargo's parallel test runner doesn't race us.
+    let _g = env_guard();
     let prev = std::env::var_os("HOSTALIASES");
-    // SAFETY: tests run single-threaded by default; we restore on exit.
     unsafe { std::env::set_var("HOSTALIASES", &file.path) };
     let q = CString::new(query).unwrap();
     let fl_p = unsafe { fl::__hostalias(q.as_ptr()) };
@@ -98,6 +114,7 @@ unsafe fn malloc_bytes(bytes: &[u8]) -> *mut c_char {
 
 #[test]
 fn res_hostalias_diff_match_and_truncate() {
+    let _g = env_guard();
     let (fd, path) = memfd_alias_file("short canonical.example.com\n");
     let prev = std::env::var_os("HOSTALIASES");
     unsafe { std::env::set_var("HOSTALIASES", &path) };
@@ -131,6 +148,7 @@ fn res_hostalias_diff_match_and_truncate() {
 
 #[test]
 fn res_hostalias_bounds_tracked_short_output_buffer() {
+    let _g = env_guard();
     let (fd, path) = memfd_alias_file("short canonical.example.com\n");
     let prev = std::env::var_os("HOSTALIASES");
     unsafe { std::env::set_var("HOSTALIASES", &path) };
@@ -151,6 +169,7 @@ fn res_hostalias_bounds_tracked_short_output_buffer() {
 
 #[test]
 fn res_hostalias_rejects_tracked_unterminated_name() {
+    let _g = env_guard();
     let (fd, path) = memfd_alias_file("short canonical.example.com\n");
     let prev = std::env::var_os("HOSTALIASES");
     unsafe { std::env::set_var("HOSTALIASES", &path) };
@@ -213,6 +232,7 @@ fn diff_hostalias_first_match_wins() {
 
 #[test]
 fn diff_hostalias_missing_file_returns_null() {
+    let _g = env_guard();
     // Point HOSTALIASES at a file that does not exist.
     let prev = std::env::var_os("HOSTALIASES");
     unsafe { std::env::set_var("HOSTALIASES", "/tmp/fl_hostalias_definitely_missing_xyz") };
@@ -229,6 +249,7 @@ fn diff_hostalias_missing_file_returns_null() {
 
 #[test]
 fn diff_hostalias_unset_env_returns_null() {
+    let _g = env_guard();
     let prev = std::env::var_os("HOSTALIASES");
     unsafe { std::env::remove_var("HOSTALIASES") };
     let q = CString::new("anything").unwrap();
