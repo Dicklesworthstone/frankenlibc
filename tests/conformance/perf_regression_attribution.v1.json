@@ -44,6 +44,15 @@
       "runtime_math/decide": "runtime_math/control+risk+pareto",
       "runtime_math/observe_fast": "runtime_math/observe_pipeline",
       "runtime_math/decide_observe": "runtime_math/decision_observe_coupling",
+      "membrane/stage_null_check": "membrane/null_check_stage",
+      "membrane/stage_tls_cache_hit": "membrane/tls_cache",
+      "membrane/stage_bloom_hit": "membrane/bloom_filter",
+      "membrane/stage_arena_lookup": "membrane/allocation_arena",
+      "membrane/stage_fingerprint_verify": "membrane/fingerprint_integrity",
+      "membrane/stage_canary_verify": "membrane/canary_integrity",
+      "membrane/stage_bounds_check": "membrane/bounds_admissibility",
+      "membrane/validate_null": "membrane/ptr_validator_null_path",
+      "membrane/validate_foreign": "membrane/ptr_validator_foreign_path",
       "membrane/validate_known": "membrane/ptr_validator_pipeline"
     },
     "unknown_component_label": "unknown_component"
@@ -168,7 +177,7 @@
     "required_detected_benchmark": "runtime_math/decide"
   },
   "summary": {
-    "mapped_benchmarks": 4,
+    "mapped_benchmarks": 13,
     "regression_classes": 5,
     "required_log_fields": 13,
     "triage_playbooks": 4,

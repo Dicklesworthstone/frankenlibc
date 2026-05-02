@@ -90,6 +90,15 @@ declare -a TARGET_MATRIX=(
     "runtime_math_bench|runtime_math/decide/${MODE}|runtime_math_decide_${MODE}"
     "runtime_math_bench|runtime_math/observe_fast/${MODE}|runtime_math_observe_fast_${MODE}"
     "runtime_math_bench|runtime_math/decide_observe/${MODE}|runtime_math_decide_observe_${MODE}"
+    "membrane_bench|stage_null_check|membrane_stage_null_check_${MODE}"
+    "membrane_bench|stage_tls_cache_hit|membrane_stage_tls_cache_hit_${MODE}"
+    "membrane_bench|stage_bloom_hit|membrane_stage_bloom_hit_${MODE}"
+    "membrane_bench|stage_arena_lookup|membrane_stage_arena_lookup_${MODE}"
+    "membrane_bench|stage_fingerprint_verify|membrane_stage_fingerprint_verify_${MODE}"
+    "membrane_bench|stage_canary_verify|membrane_stage_canary_verify_${MODE}"
+    "membrane_bench|stage_bounds_check|membrane_stage_bounds_check_${MODE}"
+    "membrane_bench|validate_null|membrane_validate_null_${MODE}"
+    "membrane_bench|validate_foreign|membrane_validate_foreign_${MODE}"
     "membrane_bench|validate_known|membrane_validate_known_${MODE}"
 )
 

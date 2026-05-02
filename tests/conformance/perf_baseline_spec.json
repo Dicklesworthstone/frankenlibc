@@ -30,11 +30,20 @@
       },
       {
         "id": "membrane",
-        "description": "Pointer validation pipeline overhead per stage.",
+        "description": "Pointer validation pipeline stage overhead plus full entrypoint overhead.",
         "crate": "frankenlibc-bench",
         "command": "cargo bench -p frankenlibc-bench --bench membrane_bench",
         "output_prefix": "MEMBRANE_BENCH",
         "benchmarks": [
+          {"name": "stage_null_check", "description": "Direct null-check stage predicate"},
+          {"name": "stage_tls_cache_hit", "description": "Direct TLS validation cache hit lookup"},
+          {"name": "stage_bloom_hit", "description": "Direct bloom-filter positive ownership pre-check"},
+          {"name": "stage_arena_lookup", "description": "Direct allocation arena lookup for a live pointer"},
+          {"name": "stage_fingerprint_verify", "description": "Direct fingerprint header load and verification"},
+          {"name": "stage_canary_verify", "description": "Direct trailing canary load and verification"},
+          {"name": "stage_bounds_check", "description": "Direct in-allocation bounds predicate"},
+          {"name": "validate_null", "description": "Full validation entrypoint null-pointer fast exit"},
+          {"name": "validate_foreign", "description": "Full validation entrypoint foreign-pointer fast path"},
           {"name": "validate_known", "description": "Hot-path validation for known-safe pointers"}
         ],
         "modes": ["strict", "hardened"],
@@ -214,6 +223,7 @@
     "perf_budget_policy": "tests/conformance/perf_budget_policy.json",
     "perf_baseline": "scripts/perf_baseline.json",
     "perf_gate": "scripts/perf_gate.sh",
+    "membrane_overhead_baseline": "tests/conformance/membrane_overhead_baseline.v1.json",
     "check_perf_budget": "scripts/check_perf_budget.sh",
     "bench_compare": "scripts/bench_compare.sh",
     "profile_pipeline": "scripts/profile_pipeline.sh",
@@ -222,7 +232,7 @@
   },
   "summary": {
     "total_suites": 4,
-    "total_benchmarks": 14,
+    "total_benchmarks": 23,
     "enforced_suites": 2,
     "planned_suites": 2,
     "modes": 2,

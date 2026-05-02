@@ -427,9 +427,18 @@ check_metric() {
 
 run_mode() {
     local mode="$1"
-    local out_rt out_mem out_kernels rt_decide rt_observe rt_decide_observe mem_validate_known
-    local b_decide b_observe b_decide_observe b_validate_known
-    local t_decide t_observe t_decide_observe t_validate_known
+    local out_rt out_mem out_kernels rt_decide rt_observe rt_decide_observe
+    local mem_stage_null_check mem_stage_tls_cache_hit mem_stage_bloom_hit
+    local mem_stage_arena_lookup mem_stage_fingerprint_verify mem_stage_canary_verify
+    local mem_stage_bounds_check mem_validate_null mem_validate_foreign mem_validate_known
+    local b_decide b_observe b_decide_observe
+    local b_stage_null_check b_stage_tls_cache_hit b_stage_bloom_hit
+    local b_stage_arena_lookup b_stage_fingerprint_verify b_stage_canary_verify
+    local b_stage_bounds_check b_validate_null b_validate_foreign b_validate_known
+    local t_decide t_observe t_decide_observe
+    local t_stage_null_check t_stage_tls_cache_hit t_stage_bloom_hit
+    local t_stage_arena_lookup t_stage_fingerprint_verify t_stage_canary_verify
+    local t_stage_bounds_check t_validate_null t_validate_foreign t_validate_known
     local failures=0 target_failures=0
 
     echo ""
@@ -443,6 +452,15 @@ run_mode() {
         rt_decide="$(inject_metric "${mode}" "runtime_math" "decide")"
         rt_observe="$(inject_metric "${mode}" "runtime_math" "observe_fast")"
         rt_decide_observe="$(inject_metric "${mode}" "runtime_math" "decide_observe")"
+        mem_stage_null_check="$(inject_metric "${mode}" "membrane" "stage_null_check")"
+        mem_stage_tls_cache_hit="$(inject_metric "${mode}" "membrane" "stage_tls_cache_hit")"
+        mem_stage_bloom_hit="$(inject_metric "${mode}" "membrane" "stage_bloom_hit")"
+        mem_stage_arena_lookup="$(inject_metric "${mode}" "membrane" "stage_arena_lookup")"
+        mem_stage_fingerprint_verify="$(inject_metric "${mode}" "membrane" "stage_fingerprint_verify")"
+        mem_stage_canary_verify="$(inject_metric "${mode}" "membrane" "stage_canary_verify")"
+        mem_stage_bounds_check="$(inject_metric "${mode}" "membrane" "stage_bounds_check")"
+        mem_validate_null="$(inject_metric "${mode}" "membrane" "validate_null")"
+        mem_validate_foreign="$(inject_metric "${mode}" "membrane" "validate_foreign")"
         mem_validate_known="$(inject_metric "${mode}" "membrane" "validate_known")"
         out_rt=""
         out_mem=""
@@ -482,10 +500,24 @@ run_mode() {
         rt_decide="$(printf "%s\n" "${out_rt}" | extract_p50 "RUNTIME_MATH_BENCH" "${mode}" "decide")"
         rt_observe="$(printf "%s\n" "${out_rt}" | extract_p50 "RUNTIME_MATH_BENCH" "${mode}" "observe_fast")"
         rt_decide_observe="$(printf "%s\n" "${out_rt}" | extract_p50 "RUNTIME_MATH_BENCH" "${mode}" "decide_observe")"
+        mem_stage_null_check="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "stage_null_check")"
+        mem_stage_tls_cache_hit="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "stage_tls_cache_hit")"
+        mem_stage_bloom_hit="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "stage_bloom_hit")"
+        mem_stage_arena_lookup="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "stage_arena_lookup")"
+        mem_stage_fingerprint_verify="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "stage_fingerprint_verify")"
+        mem_stage_canary_verify="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "stage_canary_verify")"
+        mem_stage_bounds_check="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "stage_bounds_check")"
+        mem_validate_null="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "validate_null")"
+        mem_validate_foreign="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "validate_foreign")"
         mem_validate_known="$(printf "%s\n" "${out_mem}" | extract_p50 "MEMBRANE_BENCH" "${mode}" "validate_known")"
     fi
 
-    if [[ -z "${rt_decide}" || -z "${rt_observe}" || -z "${rt_decide_observe}" || -z "${mem_validate_known}" ]]; then
+    if [[ -z "${rt_decide}" || -z "${rt_observe}" || -z "${rt_decide_observe}" \
+        || -z "${mem_stage_null_check}" || -z "${mem_stage_tls_cache_hit}" \
+        || -z "${mem_stage_bloom_hit}" || -z "${mem_stage_arena_lookup}" \
+        || -z "${mem_stage_fingerprint_verify}" || -z "${mem_stage_canary_verify}" \
+        || -z "${mem_stage_bounds_check}" || -z "${mem_validate_null}" \
+        || -z "${mem_validate_foreign}" || -z "${mem_validate_known}" ]]; then
         echo "perf_gate: missing metric values for mode=${mode}" >&2
         echo "--- runtime_math lines ---" >&2
         printf "%s\n" "${out_rt}" >&2
@@ -497,11 +529,29 @@ run_mode() {
     b_decide="$(jq -r ".baseline_p50_ns_op.runtime_math.${mode}.decide" "${BASELINE_FILE}")"
     b_observe="$(jq -r ".baseline_p50_ns_op.runtime_math.${mode}.observe_fast" "${BASELINE_FILE}")"
     b_decide_observe="$(jq -r ".baseline_p50_ns_op.runtime_math.${mode}.decide_observe" "${BASELINE_FILE}")"
+    b_stage_null_check="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.stage_null_check" "${BASELINE_FILE}")"
+    b_stage_tls_cache_hit="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.stage_tls_cache_hit" "${BASELINE_FILE}")"
+    b_stage_bloom_hit="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.stage_bloom_hit" "${BASELINE_FILE}")"
+    b_stage_arena_lookup="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.stage_arena_lookup" "${BASELINE_FILE}")"
+    b_stage_fingerprint_verify="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.stage_fingerprint_verify" "${BASELINE_FILE}")"
+    b_stage_canary_verify="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.stage_canary_verify" "${BASELINE_FILE}")"
+    b_stage_bounds_check="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.stage_bounds_check" "${BASELINE_FILE}")"
+    b_validate_null="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.validate_null" "${BASELINE_FILE}")"
+    b_validate_foreign="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.validate_foreign" "${BASELINE_FILE}")"
     b_validate_known="$(jq -r ".baseline_p50_ns_op.membrane.${mode}.validate_known" "${BASELINE_FILE}")"
 
     t_decide="$(jq -r ".targets_ns_op.${mode}.decide" "${BASELINE_FILE}")"
     t_observe="$(jq -r ".targets_ns_op.${mode}.observe_fast" "${BASELINE_FILE}")"
     t_decide_observe="$(jq -r ".targets_ns_op.${mode}.decide_observe" "${BASELINE_FILE}")"
+    t_stage_null_check="$(jq -r ".targets_ns_op.${mode}.stage_null_check" "${BASELINE_FILE}")"
+    t_stage_tls_cache_hit="$(jq -r ".targets_ns_op.${mode}.stage_tls_cache_hit" "${BASELINE_FILE}")"
+    t_stage_bloom_hit="$(jq -r ".targets_ns_op.${mode}.stage_bloom_hit" "${BASELINE_FILE}")"
+    t_stage_arena_lookup="$(jq -r ".targets_ns_op.${mode}.stage_arena_lookup" "${BASELINE_FILE}")"
+    t_stage_fingerprint_verify="$(jq -r ".targets_ns_op.${mode}.stage_fingerprint_verify" "${BASELINE_FILE}")"
+    t_stage_canary_verify="$(jq -r ".targets_ns_op.${mode}.stage_canary_verify" "${BASELINE_FILE}")"
+    t_stage_bounds_check="$(jq -r ".targets_ns_op.${mode}.stage_bounds_check" "${BASELINE_FILE}")"
+    t_validate_null="$(jq -r ".targets_ns_op.${mode}.validate_null" "${BASELINE_FILE}")"
+    t_validate_foreign="$(jq -r ".targets_ns_op.${mode}.validate_foreign" "${BASELINE_FILE}")"
     t_validate_known="$(jq -r ".targets_ns_op.${mode}.validate_known" "${BASELINE_FILE}")"
 
     check_metric "runtime_math" "${mode}" "decide" "${b_decide}" "${t_decide}" "${rt_decide}" || {
@@ -513,6 +563,42 @@ run_mode() {
         if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
     }
     check_metric "runtime_math" "${mode}" "decide_observe" "${b_decide_observe}" "${t_decide_observe}" "${rt_decide_observe}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "membrane" "${mode}" "stage_null_check" "${b_stage_null_check}" "${t_stage_null_check}" "${mem_stage_null_check}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "membrane" "${mode}" "stage_tls_cache_hit" "${b_stage_tls_cache_hit}" "${t_stage_tls_cache_hit}" "${mem_stage_tls_cache_hit}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "membrane" "${mode}" "stage_bloom_hit" "${b_stage_bloom_hit}" "${t_stage_bloom_hit}" "${mem_stage_bloom_hit}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "membrane" "${mode}" "stage_arena_lookup" "${b_stage_arena_lookup}" "${t_stage_arena_lookup}" "${mem_stage_arena_lookup}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "membrane" "${mode}" "stage_fingerprint_verify" "${b_stage_fingerprint_verify}" "${t_stage_fingerprint_verify}" "${mem_stage_fingerprint_verify}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "membrane" "${mode}" "stage_canary_verify" "${b_stage_canary_verify}" "${t_stage_canary_verify}" "${mem_stage_canary_verify}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "membrane" "${mode}" "stage_bounds_check" "${b_stage_bounds_check}" "${t_stage_bounds_check}" "${mem_stage_bounds_check}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "membrane" "${mode}" "validate_null" "${b_validate_null}" "${t_validate_null}" "${mem_validate_null}" || {
+        rc=$?
+        if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
+    }
+    check_metric "membrane" "${mode}" "validate_foreign" "${b_validate_foreign}" "${t_validate_foreign}" "${mem_validate_foreign}" || {
         rc=$?
         if [[ "${rc}" == "1" ]]; then failures=$((failures + 1)); else target_failures=$((target_failures + 1)); fi
     }

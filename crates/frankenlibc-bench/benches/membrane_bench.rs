@@ -8,8 +8,13 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use frankenlibc_membrane::arena::AllocationArena;
+use frankenlibc_membrane::bloom::PointerBloomFilter;
 use frankenlibc_membrane::config::safety_level;
+use frankenlibc_membrane::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
+use frankenlibc_membrane::lattice::SafetyState;
 use frankenlibc_membrane::ptr_validator::ValidationPipeline;
+use frankenlibc_membrane::tls_cache::{CachedValidation, TlsValidationCache};
 
 #[derive(Default)]
 struct BenchStats {
@@ -123,6 +128,202 @@ fn bench_membrane(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("membrane");
     group.throughput(Throughput::Elements(1));
+
+    // stage_null_check
+    {
+        let addr = 0usize;
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_function(BenchmarkId::new("stage_null_check", mode_label), |b| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(black_box(addr) == 0);
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        stats.borrow().report(mode_label, "stage_null_check");
+    }
+
+    // stage_tls_cache_hit
+    {
+        let addr = 0x1000_0040usize;
+        let mut cache = TlsValidationCache::new();
+        cache.insert(
+            addr,
+            CachedValidation {
+                user_base: addr,
+                user_size: 256,
+                generation: 7,
+                state: SafetyState::Readable,
+            },
+            1,
+        );
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_function(BenchmarkId::new("stage_tls_cache_hit", mode_label), |b| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(cache.lookup(addr));
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        stats.borrow().report(mode_label, "stage_tls_cache_hit");
+    }
+
+    // stage_bloom_hit
+    {
+        let filter = PointerBloomFilter::new();
+        let addr = 0x2000_0080usize;
+        filter.insert(addr);
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_function(BenchmarkId::new("stage_bloom_hit", mode_label), |b| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(filter.might_contain(addr));
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        stats.borrow().report(mode_label, "stage_bloom_hit");
+    }
+
+    // stage_arena_lookup
+    {
+        let arena = AllocationArena::new();
+        let res = arena.allocate(256).expect("alloc");
+        let addr = res.ptr as usize;
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_function(BenchmarkId::new("stage_arena_lookup", mode_label), |b| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    black_box(arena.lookup(addr));
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        stats.borrow().report(mode_label, "stage_arena_lookup");
+
+        arena.free(res.ptr);
+    }
+
+    // stage_fingerprint_verify
+    {
+        let arena = AllocationArena::new();
+        let res = arena.allocate(256).expect("alloc");
+        let slot = arena.lookup(res.ptr as usize).expect("slot");
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_function(
+            BenchmarkId::new("stage_fingerprint_verify", mode_label),
+            |b| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        let mut fp_bytes = [0u8; FINGERPRINT_SIZE];
+                        // SAFETY: slot comes from a live arena allocation; the fingerprint
+                        // header is immediately before the user-visible base pointer.
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                (slot.user_base - FINGERPRINT_SIZE) as *const u8,
+                                fp_bytes.as_mut_ptr(),
+                                FINGERPRINT_SIZE,
+                            );
+                        }
+                        let fp = AllocationFingerprint::from_bytes(&fp_bytes);
+                        black_box(
+                            fp.generation == slot.generation
+                                && fp.size == slot.user_size as u64
+                                && fp.verify(slot.user_base),
+                        );
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        stats
+            .borrow()
+            .report(mode_label, "stage_fingerprint_verify");
+
+        arena.free(res.ptr);
+    }
+
+    // stage_canary_verify
+    {
+        let arena = AllocationArena::new();
+        let res = arena.allocate(256).expect("alloc");
+        let slot = arena.lookup(res.ptr as usize).expect("slot");
+        let expected =
+            AllocationFingerprint::compute(slot.user_base, slot.user_size as u64, slot.generation)
+                .canary();
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_function(BenchmarkId::new("stage_canary_verify", mode_label), |b| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let mut actual = [0u8; CANARY_SIZE];
+                    // SAFETY: slot comes from a live arena allocation; the trailing canary
+                    // occupies CANARY_SIZE bytes immediately after the user allocation.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            (slot.user_base + slot.user_size) as *const u8,
+                            actual.as_mut_ptr(),
+                            CANARY_SIZE,
+                        );
+                    }
+                    black_box(expected.verify(&actual));
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        stats.borrow().report(mode_label, "stage_canary_verify");
+
+        arena.free(res.ptr);
+    }
+
+    // stage_bounds_check
+    {
+        let arena = AllocationArena::new();
+        let res = arena.allocate(256).expect("alloc");
+        let addr = res.ptr as usize + 128;
+        let slot = arena.lookup(addr).expect("slot");
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_function(BenchmarkId::new("stage_bounds_check", mode_label), |b| {
+            b.iter_custom(|iters| {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let end = slot.user_base.saturating_add(slot.user_size);
+                    black_box(addr >= slot.user_base && addr < end);
+                }
+                let dur = start.elapsed().max(Duration::from_nanos(1));
+                stats.borrow_mut().record(iters, dur);
+                dur
+            });
+        });
+        stats.borrow().report(mode_label, "stage_bounds_check");
+
+        arena.free(res.ptr);
+    }
 
     // validate_null
     {

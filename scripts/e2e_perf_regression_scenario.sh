@@ -39,10 +39,28 @@ cat >"${INJECTED}" <<'JSON'
   },
   "membrane": {
     "strict": {
-      "validate_known": 1910.433
+      "stage_null_check": 0.515,
+      "stage_tls_cache_hit": 7.885,
+      "stage_bloom_hit": 9.174,
+      "stage_arena_lookup": 10.258,
+      "stage_fingerprint_verify": 13.930,
+      "stage_canary_verify": 0.507,
+      "stage_bounds_check": 0.611,
+      "validate_null": 4274.183,
+      "validate_foreign": 4396.357,
+      "validate_known": 4331.049
     },
     "hardened": {
-      "validate_known": 5966.235
+      "stage_null_check": 0.392,
+      "stage_tls_cache_hit": 5.370,
+      "stage_bloom_hit": 9.985,
+      "stage_arena_lookup": 17.491,
+      "stage_fingerprint_verify": 14.382,
+      "stage_canary_verify": 0.482,
+      "stage_bounds_check": 0.589,
+      "validate_null": 3406.037,
+      "validate_foreign": 3570.812,
+      "validate_known": 3499.877
     }
   }
 }

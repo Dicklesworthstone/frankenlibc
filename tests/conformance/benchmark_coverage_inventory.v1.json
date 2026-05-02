@@ -507,8 +507,8 @@
         {
           "suite_id": "membrane",
           "status": "complete",
-          "total_slots": 2,
-          "present_slots": 2,
+          "total_slots": 20,
+          "present_slots": 20,
           "missing_slots": [],
           "coverage_pct": 100.0
         }
