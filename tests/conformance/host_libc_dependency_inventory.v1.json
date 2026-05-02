@@ -1,0 +1,98 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.6.1",
+  "title": "Host libc dependency inventory contract for release-artifact promotion gates",
+  "description": "Machine-checkable contract for inventorying host glibc dependencies reachable from the interpose release artifact and source-level escape hatches before L1/L2/L3 promotion.",
+  "inputs": {
+    "abi_source_dir": "crates/frankenlibc-abi/src",
+    "replacement_profile": "tests/conformance/replacement_profile.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "release_artifact": "target/release/libfrankenlibc_abi.so"
+  },
+  "generated_outputs": {
+    "report": "target/conformance/host_libc_dependency_inventory.report.json",
+    "log_jsonl": "target/conformance/host_libc_dependency_inventory.log.jsonl"
+  },
+  "release_artifact_policy": {
+    "default_behavior": "If the release artifact is absent, the checker emits a release_artifact_missing row and still validates the source inventory.",
+    "strict_behavior": "Set FRANKENLIBC_REQUIRE_RELEASE_ARTIFACT=1 to require target/release/libfrankenlibc_abi.so and fail when it is missing.",
+    "dynamic_audit_tools": [
+      "readelf -d",
+      "nm -D --undefined-only"
+    ],
+    "replacement_blocking_rule": "Any remaining host glibc, loader, CRT, startup, dlsym/dlopen, or dynamic runtime dependency is allowed only for L0/L1 interpose unless explicitly approved by a later replacement bead."
+  },
+  "required_inventory_categories": [
+    "host_symbol_resolution",
+    "direct_libc_call",
+    "host_pthread_resolver",
+    "loader_boundary",
+    "crt_startup",
+    "release_dynamic_dependency"
+  ],
+  "required_anchor_symbols": [
+    "__libc_start_main",
+    "__cxa_thread_atexit_impl",
+    "dlopen",
+    "dlsym",
+    "dlvsym",
+    "dlclose",
+    "dlinfo",
+    "_IO_list_all"
+  ],
+  "replacement_levels": {
+    "L0": {
+      "name": "interpose",
+      "host_dependency_policy": "allowed_when_documented"
+    },
+    "L1": {
+      "name": "hardened_interpose",
+      "host_dependency_policy": "allowed_when_documented"
+    },
+    "L2": {
+      "name": "partial_standalone_replace",
+      "host_dependency_policy": "unapproved_dependencies_block_claim"
+    },
+    "L3": {
+      "name": "full_standalone_replace",
+      "host_dependency_policy": "zero_host_glibc_dependency"
+    }
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "runtime_mode",
+    "replacement_level",
+    "api_family",
+    "symbol",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "negative_claim_tests": [
+    {
+      "id": "neg-l2-host-symbol-resolution",
+      "unsupported_condition": "resolve_host_symbol_raw or resolve_host_symbol_cached remains reachable from the L2 artifact without an allowlisted standalone substitute",
+      "advertised_claim_blocked": "host-glibc-free partial replacement"
+    },
+    {
+      "id": "neg-l3-dynamic-glibc-needed",
+      "unsupported_condition": "release artifact has a dynamic NEEDED entry or undefined symbol requiring host glibc or host loader services",
+      "advertised_claim_blocked": "full standalone libc replacement"
+    },
+    {
+      "id": "neg-startup-host-delegation",
+      "unsupported_condition": "__libc_start_main or __cxa_thread_atexit_impl delegates to host libc outside an explicitly interpose-only path",
+      "advertised_claim_blocked": "standalone CRT/startup closure"
+    }
+  ]
+}
