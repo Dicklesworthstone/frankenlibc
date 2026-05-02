@@ -594,6 +594,16 @@ pub const SYS_REMOVEXATTRAT: usize = 466;
 pub const SYS_FINIT_MODULE: usize = 313;
 #[cfg(target_arch = "x86_64")]
 pub const SYS_QUOTACTL_FD: usize = 443;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_BPF: usize = 321;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_KEXEC_LOAD: usize = 246;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_KEXEC_FILE_LOAD: usize = 320;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_SET_ROBUST_LIST: usize = 273;
+#[cfg(target_arch = "x86_64")]
+pub const SYS_GET_ROBUST_LIST: usize = 274;
 
 #[cfg(target_arch = "aarch64")]
 pub const SYS_READ: usize = 63;
@@ -782,6 +792,16 @@ pub const SYS_REMOVEXATTRAT: usize = 466;
 pub const SYS_FINIT_MODULE: usize = 273;
 #[cfg(target_arch = "aarch64")]
 pub const SYS_QUOTACTL_FD: usize = 443;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_BPF: usize = 280;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_KEXEC_LOAD: usize = 104;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_KEXEC_FILE_LOAD: usize = 294;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_SET_ROBUST_LIST: usize = 99;
+#[cfg(target_arch = "aarch64")]
+pub const SYS_GET_ROBUST_LIST: usize = 100;
 
 // Signal syscalls - x86_64
 #[cfg(target_arch = "x86_64")]
@@ -2416,6 +2436,114 @@ pub unsafe fn sys_quotactl_fd(
             cmd as usize,
             id as usize,
             addr as usize,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `bpf(cmd, attr, size)` — BPF subsystem control (Linux 3.18+).
+///
+/// # Safety
+///
+/// `attr`, when `size > 0`, must point to a `union bpf_attr` of the
+/// shape required by `cmd`.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_bpf(cmd: i32, attr: *mut u8, size: u32) -> Result<i32, i32> {
+    let ret = unsafe { raw::syscall3(SYS_BPF, cmd as usize, attr as usize, size as usize) };
+    syscall_result(ret).map(|n| n as i32)
+}
+
+/// `kexec_load(entry, nr_segments, segments, flags)` — load a kernel
+/// image for a future `reboot(LINUX_REBOOT_CMD_KEXEC)` (Linux 2.6.13+).
+///
+/// # Safety
+///
+/// `segments`, when `nr_segments > 0`, must point to an array of
+/// `nr_segments` `struct kexec_segment` entries.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_kexec_load(
+    entry: usize,
+    nr_segments: usize,
+    segments: *const u8,
+    flags: usize,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall4(
+            SYS_KEXEC_LOAD,
+            entry,
+            nr_segments,
+            segments as usize,
+            flags,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `kexec_file_load(kernel_fd, initrd_fd, cmdline_len, cmdline, flags)`
+/// — load a kernel image from open fds (Linux 3.17+).
+///
+/// # Safety
+///
+/// `cmdline`, when `cmdline_len > 0`, must point to at least
+/// `cmdline_len` readable bytes.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_kexec_file_load(
+    kernel_fd: i32,
+    initrd_fd: i32,
+    cmdline_len: usize,
+    cmdline: *const u8,
+    flags: usize,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall5(
+            SYS_KEXEC_FILE_LOAD,
+            kernel_fd as usize,
+            initrd_fd as usize,
+            cmdline_len,
+            cmdline as usize,
+            flags,
+        )
+    };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `set_robust_list(head, len)` — register a per-thread robust futex
+/// list head (Linux 2.6.17+).
+///
+/// # Safety
+///
+/// `head`, when non-NULL, must point to a valid
+/// `struct robust_list_head` of `len` bytes that lives until the
+/// thread exits.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_set_robust_list(head: *mut u8, len: usize) -> Result<(), i32> {
+    let ret = unsafe { raw::syscall2(SYS_SET_ROBUST_LIST, head as usize, len) };
+    syscall_result(ret).map(|_| ())
+}
+
+/// `get_robust_list(pid, head_ptr, len_ptr)` — read the robust-futex
+/// list head + length previously registered for `pid`.
+///
+/// # Safety
+///
+/// `head_ptr` and `len_ptr` must point to writable storage.
+#[inline]
+#[allow(unsafe_code)]
+pub unsafe fn sys_get_robust_list(
+    pid: i32,
+    head_ptr: *mut *mut u8,
+    len_ptr: *mut usize,
+) -> Result<(), i32> {
+    let ret = unsafe {
+        raw::syscall3(
+            SYS_GET_ROBUST_LIST,
+            pid as usize,
+            head_ptr as usize,
+            len_ptr as usize,
         )
     };
     syscall_result(ret).map(|_| ())

@@ -5633,16 +5633,13 @@ pub unsafe extern "C" fn bpf(cmd: c_int, attr: *mut c_void, size: c_uint) -> c_i
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_bpf,
-            cmd as libc::c_long,
-            attr as libc::c_long,
-            size as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_bpf(cmd, attr as *mut u8, size) } {
+        Ok(n) => n,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `kexec_load(entry, nr_segments, *segments, flags) -> long`
@@ -5664,17 +5661,20 @@ pub unsafe extern "C" fn kexec_load(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_kexec_load,
-            entry as libc::c_long,
-            nr_segments as libc::c_long,
-            segments as libc::c_long,
-            flags as libc::c_long,
+    match unsafe {
+        syscall::sys_kexec_load(
+            entry as usize,
+            nr_segments as usize,
+            segments as *const u8,
+            flags as usize,
         )
-    };
-    unsafe { raw_syscall_with_errno_long(rc) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `kexec_file_load(kernel_fd, initrd_fd, cmdline_len,
@@ -5698,18 +5698,21 @@ pub unsafe extern "C" fn kexec_file_load(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_kexec_file_load,
-            kernel_fd as libc::c_long,
-            initrd_fd as libc::c_long,
-            cmdline_len as libc::c_long,
-            cmdline as libc::c_long,
-            flags as libc::c_long,
+    match unsafe {
+        syscall::sys_kexec_file_load(
+            kernel_fd,
+            initrd_fd,
+            cmdline_len as usize,
+            cmdline as *const u8,
+            flags as usize,
         )
-    };
-    unsafe { raw_syscall_with_errno_long(rc) }
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5728,15 +5731,13 @@ pub unsafe extern "C" fn kexec_file_load(
 /// until the thread exits.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn set_robust_list(head: *mut c_void, len: usize) -> c_int {
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_set_robust_list,
-            head as libc::c_long,
-            len as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe { syscall::sys_set_robust_list(head as *mut u8, len) } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `get_robust_list(pid, **head_ptr, *len_ptr) -> int`
@@ -5756,16 +5757,15 @@ pub unsafe extern "C" fn get_robust_list(
         unsafe { set_abi_errno(libc::EFAULT) };
         return -1;
     }
-    // SAFETY: forwarding to the kernel.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_get_robust_list,
-            pid as libc::c_long,
-            head_ptr as libc::c_long,
-            len_ptr as libc::c_long,
-        )
-    };
-    unsafe { raw_syscall_with_errno(rc) }
+    match unsafe {
+        syscall::sys_get_robust_list(pid, head_ptr as *mut *mut u8, len_ptr)
+    } {
+        Ok(()) => 0,
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            -1
+        }
+    }
 }
 
 /// Linux `lsm_get_self_attr(attr_id, *ctx, *size, flags) -> int`
