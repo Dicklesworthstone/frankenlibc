@@ -1,0 +1,698 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.8.1",
+  "generated_at_utc": "2026-05-02T12:11:35Z",
+  "source_commit": "7328294f",
+  "purpose": "Inventory current benchmark coverage for ported hot paths and membrane gates before optimization work advances.",
+  "inputs": {
+    "support_matrix": "support_matrix.json",
+    "perf_baseline_spec": "tests/conformance/perf_baseline_spec.json",
+    "perf_baseline": "scripts/perf_baseline.json",
+    "bench_dir": "crates/frankenlibc-bench/benches",
+    "smoke_workload_artifacts": [
+      "tests/conformance/ld_preload_smoke_summary.v1.json",
+      "tests/conformance/workload_matrix.json",
+      "tests/conformance/e2e_scenario_manifest.v1.json",
+      "tests/conformance/user_workload_acceptance_matrix.v1.json"
+    ]
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "runtime_mode",
+    "replacement_level",
+    "api_family",
+    "symbol",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "summary": {
+    "family_count": 7,
+    "required_family_count": 6,
+    "actual_bench_target_count": 12,
+    "mapped_bench_target_count": 9,
+    "unmapped_bench_target_count": 3,
+    "hot_symbol_count_in_scope": 384,
+    "fully_baselined_families": [
+      "membrane",
+      "runtime_math"
+    ],
+    "missing_required_baseline_families": [
+      "string",
+      "malloc",
+      "stdio",
+      "pthread",
+      "syscall"
+    ],
+    "required_families_without_bench_files": [
+      "syscall"
+    ],
+    "strict_hardened_modes_required": [
+      "strict",
+      "hardened"
+    ]
+  },
+  "families": [
+    {
+      "family": "string",
+      "required_for_bd_bp8fl_8_1": true,
+      "support_modules": [
+        "string_abi",
+        "wchar_abi"
+      ],
+      "support_symbol_count": 292,
+      "hot_symbol_count": 107,
+      "hot_symbol_sample": [
+        "argz_count",
+        "argz_next",
+        "bcmp",
+        "bcopy",
+        "bzero",
+        "consttime_bcmp",
+        "consttime_memequal",
+        "explicit_bzero",
+        "explicit_memset",
+        "index",
+        "memccpy",
+        "memchr"
+      ],
+      "bench_files": [
+        {
+          "bench": "string_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/string_bench.rs",
+          "benchmark_function_count": 16,
+          "mode_aware": true
+        },
+        {
+          "bench": "baseline_capture_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/baseline_capture_bench.rs",
+          "benchmark_function_count": 14,
+          "mode_aware": true
+        }
+      ],
+      "has_bench_file": true,
+      "has_mode_aware_bench": true,
+      "baseline_coverage": [
+        {
+          "suite_id": "string",
+          "status": "incomplete",
+          "total_slots": 16,
+          "present_slots": 0,
+          "missing_slots": [
+            "strict/memcpy_16",
+            "strict/memcpy_64",
+            "strict/memcpy_256",
+            "strict/memcpy_1024",
+            "strict/memcpy_4096",
+            "strict/memcpy_65536",
+            "strict/strlen_16",
+            "strict/strlen_256",
+            "hardened/memcpy_16",
+            "hardened/memcpy_64",
+            "hardened/memcpy_256",
+            "hardened/memcpy_1024",
+            "hardened/memcpy_4096",
+            "hardened/memcpy_65536",
+            "hardened/strlen_16",
+            "hardened/strlen_256"
+          ],
+          "coverage_pct": 0.0
+        }
+      ],
+      "full_strict_hardened_baseline": false,
+      "missing_spec_suites": [],
+      "missing_baseline_slots": [
+        "string:strict/memcpy_16",
+        "string:strict/memcpy_64",
+        "string:strict/memcpy_256",
+        "string:strict/memcpy_1024",
+        "string:strict/memcpy_4096",
+        "string:strict/memcpy_65536",
+        "string:strict/strlen_16",
+        "string:strict/strlen_256",
+        "string:hardened/memcpy_16",
+        "string:hardened/memcpy_64",
+        "string:hardened/memcpy_256",
+        "string:hardened/memcpy_1024",
+        "string:hardened/memcpy_4096",
+        "string:hardened/memcpy_65536",
+        "string:hardened/strlen_16",
+        "string:hardened/strlen_256"
+      ],
+      "workload_artifacts": [
+        {
+          "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
+          "exists": true,
+          "row_count": 64
+        },
+        {
+          "path": "tests/conformance/workload_matrix.json",
+          "exists": true,
+          "row_count": 10
+        }
+      ],
+      "coverage_state": "gap",
+      "next_action": "Collect p50 baselines for 16 strict/hardened string slots."
+    },
+    {
+      "family": "malloc",
+      "required_for_bd_bp8fl_8_1": true,
+      "support_modules": [
+        "malloc_abi"
+      ],
+      "support_symbol_count": 21,
+      "hot_symbol_count": 11,
+      "hot_symbol_sample": [
+        "aligned_alloc",
+        "calloc",
+        "cfree",
+        "free",
+        "malloc",
+        "malloc_usable_size",
+        "memalign",
+        "posix_memalign",
+        "pvalloc",
+        "realloc",
+        "valloc"
+      ],
+      "bench_files": [
+        {
+          "bench": "malloc_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/malloc_bench.rs",
+          "benchmark_function_count": 5,
+          "mode_aware": false
+        }
+      ],
+      "has_bench_file": true,
+      "has_mode_aware_bench": false,
+      "baseline_coverage": [
+        {
+          "suite_id": "malloc",
+          "status": "incomplete",
+          "total_slots": 4,
+          "present_slots": 0,
+          "missing_slots": [
+            "strict/alloc_free_cycle",
+            "strict/alloc_burst",
+            "hardened/alloc_free_cycle",
+            "hardened/alloc_burst"
+          ],
+          "coverage_pct": 0.0
+        }
+      ],
+      "full_strict_hardened_baseline": false,
+      "missing_spec_suites": [],
+      "missing_baseline_slots": [
+        "malloc:strict/alloc_free_cycle",
+        "malloc:strict/alloc_burst",
+        "malloc:hardened/alloc_free_cycle",
+        "malloc:hardened/alloc_burst"
+      ],
+      "workload_artifacts": [
+        {
+          "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
+          "exists": true,
+          "row_count": 64
+        },
+        {
+          "path": "tests/conformance/workload_matrix.json",
+          "exists": true,
+          "row_count": 10
+        }
+      ],
+      "coverage_state": "gap",
+      "next_action": "Collect p50 baselines for 4 strict/hardened malloc slots."
+    },
+    {
+      "family": "stdio",
+      "required_for_bd_bp8fl_8_1": true,
+      "support_modules": [
+        "stdio_abi"
+      ],
+      "support_symbol_count": 126,
+      "hot_symbol_count": 22,
+      "hot_symbol_sample": [
+        "feof_unlocked",
+        "ferror_unlocked",
+        "fflush_unlocked",
+        "fgetc_unlocked",
+        "fgets_unlocked",
+        "flockfile",
+        "fmemopen",
+        "fopencookie",
+        "fputc_unlocked",
+        "fputs_unlocked",
+        "fread_unlocked",
+        "ftrylockfile"
+      ],
+      "bench_files": [
+        {
+          "bench": "stdio_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+          "benchmark_function_count": 3,
+          "mode_aware": false
+        }
+      ],
+      "has_bench_file": true,
+      "has_mode_aware_bench": false,
+      "baseline_coverage": [
+        {
+          "suite_id": "stdio",
+          "status": "missing_spec_suite",
+          "total_slots": 0,
+          "present_slots": 0,
+          "missing_slots": [
+            "strict/<suite-missing>",
+            "hardened/<suite-missing>"
+          ],
+          "coverage_pct": 0.0
+        }
+      ],
+      "full_strict_hardened_baseline": false,
+      "missing_spec_suites": [
+        "stdio"
+      ],
+      "missing_baseline_slots": [
+        "stdio:strict/<suite-missing>",
+        "stdio:hardened/<suite-missing>"
+      ],
+      "workload_artifacts": [
+        {
+          "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
+          "exists": true,
+          "row_count": 64
+        },
+        {
+          "path": "tests/conformance/workload_matrix.json",
+          "exists": true,
+          "row_count": 10
+        },
+        {
+          "path": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+          "exists": true,
+          "row_count": 11
+        }
+      ],
+      "coverage_state": "gap",
+      "next_action": "Add perf_baseline_spec suites for stdio and collect strict/hardened baselines."
+    },
+    {
+      "family": "pthread",
+      "required_for_bd_bp8fl_8_1": true,
+      "support_modules": [
+        "pthread_abi",
+        "c11threads_abi"
+      ],
+      "support_symbol_count": 166,
+      "hot_symbol_count": 26,
+      "hot_symbol_sample": [
+        "pthread_cond_broadcast",
+        "pthread_cond_destroy",
+        "pthread_cond_init",
+        "pthread_cond_signal",
+        "pthread_cond_wait",
+        "pthread_create",
+        "pthread_detach",
+        "pthread_equal",
+        "pthread_join",
+        "pthread_mutex_destroy",
+        "pthread_mutex_init",
+        "pthread_mutex_lock"
+      ],
+      "bench_files": [
+        {
+          "bench": "mutex_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+          "benchmark_function_count": 2,
+          "mode_aware": true
+        },
+        {
+          "bench": "condvar_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/condvar_bench.rs",
+          "benchmark_function_count": 6,
+          "mode_aware": true
+        },
+        {
+          "bench": "baseline_capture_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/baseline_capture_bench.rs",
+          "benchmark_function_count": 14,
+          "mode_aware": true
+        }
+      ],
+      "has_bench_file": true,
+      "has_mode_aware_bench": true,
+      "baseline_coverage": [
+        {
+          "suite_id": "pthread_mutex",
+          "status": "missing_spec_suite",
+          "total_slots": 0,
+          "present_slots": 0,
+          "missing_slots": [
+            "strict/<suite-missing>",
+            "hardened/<suite-missing>"
+          ],
+          "coverage_pct": 0.0
+        },
+        {
+          "suite_id": "pthread_condvar",
+          "status": "missing_spec_suite",
+          "total_slots": 0,
+          "present_slots": 0,
+          "missing_slots": [
+            "strict/<suite-missing>",
+            "hardened/<suite-missing>"
+          ],
+          "coverage_pct": 0.0
+        }
+      ],
+      "full_strict_hardened_baseline": false,
+      "missing_spec_suites": [
+        "pthread_mutex",
+        "pthread_condvar"
+      ],
+      "missing_baseline_slots": [
+        "pthread_mutex:strict/<suite-missing>",
+        "pthread_mutex:hardened/<suite-missing>",
+        "pthread_condvar:strict/<suite-missing>",
+        "pthread_condvar:hardened/<suite-missing>"
+      ],
+      "workload_artifacts": [
+        {
+          "path": "tests/conformance/workload_matrix.json",
+          "exists": true,
+          "row_count": 10
+        },
+        {
+          "path": "tests/conformance/condvar_perf_validation.v1.json",
+          "exists": true,
+          "row_count": 0
+        },
+        {
+          "path": "tests/conformance/thread_hotpath_optimization.v1.json",
+          "exists": true,
+          "row_count": 0
+        }
+      ],
+      "coverage_state": "gap",
+      "next_action": "Add perf_baseline_spec suites for pthread_mutex, pthread_condvar and collect strict/hardened baselines."
+    },
+    {
+      "family": "syscall",
+      "required_for_bd_bp8fl_8_1": true,
+      "support_modules": [
+        "unistd_abi",
+        "io_abi",
+        "dirent_abi",
+        "resource_abi",
+        "socket_abi",
+        "poll_abi",
+        "time_abi"
+      ],
+      "support_symbol_count": 845,
+      "hot_symbol_count": 218,
+      "hot_symbol_sample": [
+        "_Exit",
+        "_Fork",
+        "__xpg_basename",
+        "adjtimex",
+        "aio_cancel",
+        "aio_error",
+        "aio_fsync",
+        "aio_read",
+        "aio_return",
+        "aio_suspend",
+        "aio_write",
+        "alarm"
+      ],
+      "bench_files": [],
+      "has_bench_file": false,
+      "has_mode_aware_bench": false,
+      "baseline_coverage": [
+        {
+          "suite_id": "syscall",
+          "status": "missing_spec_suite",
+          "total_slots": 0,
+          "present_slots": 0,
+          "missing_slots": [
+            "strict/<suite-missing>",
+            "hardened/<suite-missing>"
+          ],
+          "coverage_pct": 0.0
+        }
+      ],
+      "full_strict_hardened_baseline": false,
+      "missing_spec_suites": [
+        "syscall"
+      ],
+      "missing_baseline_slots": [
+        "syscall:strict/<suite-missing>",
+        "syscall:hardened/<suite-missing>"
+      ],
+      "workload_artifacts": [
+        {
+          "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
+          "exists": true,
+          "row_count": 64
+        },
+        {
+          "path": "tests/conformance/e2e_scenario_manifest.v1.json",
+          "exists": true,
+          "row_count": 19
+        },
+        {
+          "path": "tests/conformance/workload_matrix.json",
+          "exists": true,
+          "row_count": 10
+        }
+      ],
+      "coverage_state": "gap",
+      "next_action": "Add a Criterion benchmark target for syscall before collecting baselines."
+    },
+    {
+      "family": "membrane",
+      "required_for_bd_bp8fl_8_1": true,
+      "support_modules": [],
+      "support_symbol_count": 0,
+      "hot_symbol_count": 0,
+      "hot_symbol_sample": [],
+      "bench_files": [
+        {
+          "bench": "membrane_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/membrane_bench.rs",
+          "benchmark_function_count": 1,
+          "mode_aware": true
+        }
+      ],
+      "has_bench_file": true,
+      "has_mode_aware_bench": true,
+      "baseline_coverage": [
+        {
+          "suite_id": "membrane",
+          "status": "complete",
+          "total_slots": 2,
+          "present_slots": 2,
+          "missing_slots": [],
+          "coverage_pct": 100.0
+        }
+      ],
+      "full_strict_hardened_baseline": true,
+      "missing_spec_suites": [],
+      "missing_baseline_slots": [],
+      "workload_artifacts": [
+        {
+          "path": "tests/conformance/perf_budget_policy.json",
+          "exists": true,
+          "row_count": 0
+        },
+        {
+          "path": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+          "exists": true,
+          "row_count": 0
+        }
+      ],
+      "coverage_state": "complete",
+      "next_action": "Keep current bench and baseline slots wired into regression gates."
+    },
+    {
+      "family": "runtime_math",
+      "required_for_bd_bp8fl_8_1": false,
+      "support_modules": [],
+      "support_symbol_count": 0,
+      "hot_symbol_count": 0,
+      "hot_symbol_sample": [],
+      "bench_files": [
+        {
+          "bench": "runtime_math_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/runtime_math_bench.rs",
+          "benchmark_function_count": 1,
+          "mode_aware": true
+        },
+        {
+          "bench": "runtime_math_kernels_bench",
+          "exists": true,
+          "path": "crates/frankenlibc-bench/benches/runtime_math_kernels_bench.rs",
+          "benchmark_function_count": 1,
+          "mode_aware": true
+        }
+      ],
+      "has_bench_file": true,
+      "has_mode_aware_bench": true,
+      "baseline_coverage": [
+        {
+          "suite_id": "runtime_math",
+          "status": "complete",
+          "total_slots": 6,
+          "present_slots": 6,
+          "missing_slots": [],
+          "coverage_pct": 100.0
+        }
+      ],
+      "full_strict_hardened_baseline": true,
+      "missing_spec_suites": [],
+      "missing_baseline_slots": [],
+      "workload_artifacts": [
+        {
+          "path": "tests/runtime_math/runtime_math_classification_matrix.v1.json",
+          "exists": true,
+          "row_count": 0
+        },
+        {
+          "path": "tests/runtime_math/golden/kernel_snapshot_smoke.v1.json",
+          "exists": true,
+          "row_count": 0
+        }
+      ],
+      "coverage_state": "complete",
+      "next_action": "Keep current bench and baseline slots wired into regression gates."
+    }
+  ],
+  "bench_targets": [
+    {
+      "bench": "alien_cs_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/alien_cs_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 10,
+      "emits_structured_marker": false,
+      "mentions_strict_or_hardened": false
+    },
+    {
+      "bench": "baseline_capture_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/baseline_capture_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 14,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": true
+    },
+    {
+      "bench": "condvar_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/condvar_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 6,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": true
+    },
+    {
+      "bench": "elimination_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/elimination_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 1,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": false
+    },
+    {
+      "bench": "malloc_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/malloc_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 5,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": false
+    },
+    {
+      "bench": "membrane_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/membrane_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 1,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": true
+    },
+    {
+      "bench": "metadata_read_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/metadata_read_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 1,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": false
+    },
+    {
+      "bench": "mutex_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 2,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": true
+    },
+    {
+      "bench": "runtime_math_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/runtime_math_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 1,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": true
+    },
+    {
+      "bench": "runtime_math_kernels_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/runtime_math_kernels_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 1,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": true
+    },
+    {
+      "bench": "stdio_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 3,
+      "emits_structured_marker": false,
+      "mentions_strict_or_hardened": false
+    },
+    {
+      "bench": "string_bench",
+      "bench_file": "crates/frankenlibc-bench/benches/string_bench.rs",
+      "exists": true,
+      "benchmark_function_count": 16,
+      "emits_structured_marker": true,
+      "mentions_strict_or_hardened": true
+    }
+  ],
+  "unmapped_bench_targets": [
+    "alien_cs_bench",
+    "elimination_bench",
+    "metadata_read_bench"
+  ],
+  "closure_evidence": {
+    "generator": "scripts/generate_benchmark_coverage_inventory.py",
+    "gate": "scripts/check_benchmark_coverage_inventory.sh",
+    "committed_artifact": "tests/conformance/benchmark_coverage_inventory.v1.json",
+    "target_report": "target/conformance/benchmark_coverage_inventory.report.json",
+    "target_log": "target/conformance/benchmark_coverage_inventory.log.jsonl"
+  }
+}
