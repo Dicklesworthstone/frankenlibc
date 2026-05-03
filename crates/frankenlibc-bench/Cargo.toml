@@ -64,3 +64,7 @@ harness = false
 [[bench]]
 name = "metadata_read_bench"
 harness = false
+
+[[bench]]
+name = "glibc_baseline_bench"
+harness = false

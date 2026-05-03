@@ -10,6 +10,8 @@ use std::path::Path;
 
 pub const METADATA_BENCH_SCHEMA_VERSION: &str = "v1";
 pub const METADATA_BENCH_BEAD_ID: &str = "bd-3aof.3";
+pub const GLIBC_BASELINE_SCHEMA_VERSION: &str = "v1";
+pub const GLIBC_BASELINE_BEAD_ID: &str = "bd-bp8fl.8.3";
 
 /// Concrete implementation under comparison for metadata-read benchmarks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -451,6 +453,119 @@ fn write_file(path: &Path, body: &str) -> io::Result<()> {
     file.write_all(body.as_bytes())
 }
 
+/// One profile row comparing a FrankenLibC hot path with an explicit host glibc baseline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlibcBaselineRecord {
+    pub profile_id: String,
+    pub api_family: String,
+    pub symbol: String,
+    pub workload: String,
+    pub runtime_mode: String,
+    pub replacement_level: String,
+    pub profile_tool: String,
+    pub sample_count: usize,
+    pub frankenlibc_ns_op: f64,
+    pub host_glibc_ns_op: f64,
+    pub hotness_score: f64,
+    pub baseline_artifact: String,
+    pub parity_proof_ref: String,
+    pub source_commit: String,
+    pub target_dir: String,
+    pub generated_at_unix: u64,
+}
+
+/// Validate that a committed glibc-baseline report is current enough to support claims.
+///
+/// The caller supplies the expected source commit and the oldest acceptable
+/// generation timestamp, so tests and gates can reject stale copied reports.
+pub fn validate_glibc_baseline_records(
+    records: &[GlibcBaselineRecord],
+    expected_source_commit: &str,
+    min_generated_at_unix: u64,
+) -> Result<(), String> {
+    if records.is_empty() {
+        return Err(String::from("profile record set is empty"));
+    }
+
+    for record in records {
+        if record.source_commit != expected_source_commit {
+            return Err(format!(
+                "{} source_commit mismatch: expected {}, actual {}",
+                record.profile_id, expected_source_commit, record.source_commit
+            ));
+        }
+        if record.generated_at_unix < min_generated_at_unix {
+            return Err(format!("{} profile is stale", record.profile_id));
+        }
+        if record.parity_proof_ref.trim().is_empty() {
+            return Err(format!("{} missing parity_proof_ref", record.profile_id));
+        }
+        if record.baseline_artifact.trim().is_empty() {
+            return Err(format!("{} missing baseline_artifact", record.profile_id));
+        }
+        if record.sample_count == 0 {
+            return Err(format!("{} has zero samples", record.profile_id));
+        }
+        if !record.hotness_score.is_finite()
+            || !record.frankenlibc_ns_op.is_finite()
+            || !record.host_glibc_ns_op.is_finite()
+        {
+            return Err(format!("{} contains non-finite metric", record.profile_id));
+        }
+    }
+
+    Ok(())
+}
+
+/// Rank profile records by optimization priority, with stable tie-breaks for reproducibility.
+#[must_use]
+pub fn rank_glibc_baseline_records(records: &[GlibcBaselineRecord]) -> Vec<GlibcBaselineRecord> {
+    let mut ranked = records.to_vec();
+    ranked.sort_by(|left, right| {
+        right
+            .hotness_score
+            .partial_cmp(&left.hotness_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.api_family.cmp(&right.api_family))
+            .then_with(|| left.symbol.cmp(&right.symbol))
+            .then_with(|| left.profile_id.cmp(&right.profile_id))
+    });
+    ranked
+}
+
+#[must_use]
+pub fn glibc_baseline_markdown(records: &[GlibcBaselineRecord]) -> String {
+    let ranked = rank_glibc_baseline_records(records);
+    let mut body = format!(
+        "# Host glibc baseline profile\n\nSchema: `{}`  \nBead: `{}`\n\n",
+        GLIBC_BASELINE_SCHEMA_VERSION, GLIBC_BASELINE_BEAD_ID
+    );
+    body.push_str("| Rank | Profile | API family | Symbol | Workload | FL ns/op | glibc ns/op | Ratio | Hotness | Samples | Parity proof |\n");
+    body.push_str("|---:|---|---|---|---|---:|---:|---:|---:|---:|---|\n");
+    for (idx, record) in ranked.iter().enumerate() {
+        let ratio = if record.host_glibc_ns_op <= f64::EPSILON {
+            0.0
+        } else {
+            record.frankenlibc_ns_op / record.host_glibc_ns_op
+        };
+        body.push_str(&format!(
+            "| {} | `{}` | `{}` | `{}` | {} | {:.3} | {:.3} | {:.2}x | {:.3} | {} | {} |\n",
+            idx + 1,
+            record.profile_id,
+            record.api_family,
+            record.symbol,
+            record.workload,
+            record.frankenlibc_ns_op,
+            record.host_glibc_ns_op,
+            ratio,
+            record.hotness_score,
+            record.sample_count,
+            record.parity_proof_ref
+        ));
+    }
+    body
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,5 +671,78 @@ mod tests {
         assert!(throughput_gnuplot_script().contains("set terminal svg"));
         assert!(latency_gnuplot_script().contains("latency_percentiles.svg"));
         assert!(break_even_gnuplot_script().contains("break_even_ratio.svg"));
+    }
+
+    fn sample_glibc_records() -> Vec<GlibcBaselineRecord> {
+        vec![
+            GlibcBaselineRecord {
+                profile_id: String::from("strlen_4096"),
+                api_family: String::from("string"),
+                symbol: String::from("strlen"),
+                workload: String::from("4096 byte nul-terminated scan"),
+                runtime_mode: String::from("strict"),
+                replacement_level: String::from("L0"),
+                profile_tool: String::from("criterion"),
+                sample_count: 12,
+                frankenlibc_ns_op: 120.0,
+                host_glibc_ns_op: 24.0,
+                hotness_score: 5.0,
+                baseline_artifact: String::from("artifacts/perf/glibc-baseline.md"),
+                parity_proof_ref: String::from("tests/conformance/fixtures/string_ops"),
+                source_commit: String::from("abc123"),
+                target_dir: String::from("/tmp/target"),
+                generated_at_unix: 1_777_000_000,
+            },
+            GlibcBaselineRecord {
+                profile_id: String::from("memcpy_4096"),
+                api_family: String::from("string"),
+                symbol: String::from("memcpy"),
+                workload: String::from("4096 byte copy"),
+                runtime_mode: String::from("strict"),
+                replacement_level: String::from("L0"),
+                profile_tool: String::from("criterion"),
+                sample_count: 12,
+                frankenlibc_ns_op: 48.0,
+                host_glibc_ns_op: 24.0,
+                hotness_score: 2.0,
+                baseline_artifact: String::from("artifacts/perf/glibc-baseline.md"),
+                parity_proof_ref: String::from("tests/conformance/fixtures/string_memory_full"),
+                source_commit: String::from("abc123"),
+                target_dir: String::from("/tmp/target"),
+                generated_at_unix: 1_777_000_000,
+            },
+        ]
+    }
+
+    #[test]
+    fn glibc_baseline_ranking_is_deterministic() {
+        let ranked = rank_glibc_baseline_records(&sample_glibc_records());
+        assert_eq!(ranked[0].profile_id, "strlen_4096");
+        assert_eq!(ranked[1].profile_id, "memcpy_4096");
+    }
+
+    #[test]
+    fn glibc_baseline_validation_rejects_stale_source_commit() {
+        let err = validate_glibc_baseline_records(&sample_glibc_records(), "def456", 1)
+            .expect_err("source commit mismatch should be rejected");
+        assert!(err.contains("source_commit mismatch"));
+    }
+
+    #[test]
+    fn glibc_baseline_validation_requires_parity_proof() {
+        let mut records = sample_glibc_records();
+        records[0].parity_proof_ref.clear();
+        let err = validate_glibc_baseline_records(&records, "abc123", 1)
+            .expect_err("missing parity proof should be rejected");
+        assert!(err.contains("missing parity_proof_ref"));
+    }
+
+    #[test]
+    fn glibc_baseline_markdown_contains_required_columns() {
+        let report = glibc_baseline_markdown(&sample_glibc_records());
+        assert!(report.contains(GLIBC_BASELINE_BEAD_ID));
+        assert!(report.contains("| Rank | Profile | API family | Symbol |"));
+        assert!(report.contains("`strlen_4096`"));
+        assert!(report.contains("tests/conformance/fixtures/string_ops"));
     }
 }
