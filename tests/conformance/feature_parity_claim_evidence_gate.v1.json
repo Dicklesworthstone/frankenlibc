@@ -1,0 +1,271 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "feature-parity-claim-evidence-gate",
+  "bead": "bd-bp8fl.3.4",
+  "generated_utc": "2026-05-03T22:10:00Z",
+  "purpose": "Fail CI when README, FEATURE_PARITY, support taxonomy, semantic overlay, replacement-level, or compatibility claim surfaces advance without current machine-verifiable evidence artifacts.",
+  "inputs": {
+    "readme": "README.md",
+    "feature_parity": "FEATURE_PARITY.md",
+    "support_matrix": "support_matrix.json",
+    "semantic_overlay": "tests/conformance/support_semantic_overlay.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "reality_report": "tests/conformance/reality_report.v1.json",
+    "claim_control_gate": "tests/conformance/fpg_claim_control_gate.v1.json",
+    "claim_reconciliation_report": "tests/conformance/claim_reconciliation_report.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "claim_surface",
+    "claim_id",
+    "expected_decision",
+    "actual_decision",
+    "evidence_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_advancement_decision": "block_until_machine_evidence_current",
+    "allowed_without_advancement": "current_source_claims_may_remain_if_bound_to_evidence",
+    "blocked_signatures": [
+      "claim_advancement_missing_evidence",
+      "claim_advancement_stale_evidence",
+      "claim_advancement_contradictory_evidence",
+      "claim_surface_missing_binding",
+      "ci_hook_missing"
+    ],
+    "claim_surfaces_must_remain_machine_backed": true
+  },
+  "ci_integration": {
+    "ci_file": "scripts/ci.sh",
+    "gate_script": "scripts/check_feature_parity_claim_evidence.sh",
+    "suite": "extended-gates",
+    "required": true
+  },
+  "claim_surfaces": [
+    {
+      "claim_id": "readme-current-source-of-truth",
+      "claim_surface": "README.md",
+      "required_tokens": [
+        "Current source of truth",
+        "Declared replacement level claim",
+        "L0"
+      ],
+      "evidence_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/support_matrix_maintenance_report.v1.json",
+        "support_matrix.json"
+      ]
+    },
+    {
+      "claim_id": "feature-parity-current-reality",
+      "claim_surface": "FEATURE_PARITY.md",
+      "required_tokens": [
+        "Source of truth for implementation parity",
+        "support_matrix.json",
+        "support_semantic_overlay.v1.json"
+      ],
+      "evidence_refs": [
+        "tests/conformance/reality_report.v1.json",
+        "support_matrix.json",
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ]
+    },
+    {
+      "claim_id": "feature-parity-macro-targets",
+      "claim_surface": "FEATURE_PARITY.md",
+      "required_tokens": [
+        "Macro Coverage Targets",
+        "IN_PROGRESS"
+      ],
+      "evidence_refs": [
+        "tests/conformance/fpg_claim_control_gate.v1.json",
+        "tests/conformance/feature_parity_gap_ledger.v1.json",
+        "tests/conformance/feature_parity_gap_groups.v1.json"
+      ]
+    },
+    {
+      "claim_id": "support-taxonomy-counts",
+      "claim_surface": "support_matrix.json",
+      "required_tokens": [
+        "\"summary\"",
+        "\"symbols\"",
+        "\"mode_contract\""
+      ],
+      "evidence_refs": [
+        "support_matrix.json",
+        "tests/conformance/support_matrix_maintenance_report.v1.json"
+      ]
+    },
+    {
+      "claim_id": "semantic-overlay-blocker",
+      "claim_surface": "tests/conformance/support_semantic_overlay.v1.json",
+      "required_tokens": [
+        "release_blocker",
+        "audited_entries",
+        "semantic_contract_classes"
+      ],
+      "evidence_refs": [
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "tests/conformance/semantic_contract_symbol_join.v1.json",
+        "tests/conformance/semantic_contract_inventory.v1.json"
+      ]
+    },
+    {
+      "claim_id": "replacement-level-current-l0",
+      "claim_surface": "tests/conformance/replacement_levels.json",
+      "required_tokens": [
+        "\"current_level\": \"L0\"",
+        "\"release_tag_policy\"",
+        "\"current_release_level\": \"L0\""
+      ],
+      "evidence_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/claim_reconciliation_report.v1.json",
+        "scripts/check_replacement_levels.sh"
+      ]
+    },
+    {
+      "claim_id": "compatibility-reality-report",
+      "claim_surface": "tests/conformance/reality_report.v1.json",
+      "required_tokens": [
+        "total_exported",
+        "implemented",
+        "raw_syscall"
+      ],
+      "evidence_refs": [
+        "tests/conformance/reality_report.v1.json",
+        "tests/conformance/conformance_matrix.v1.json",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json"
+      ]
+    },
+    {
+      "claim_id": "generated-claim-control-gate",
+      "claim_surface": "tests/conformance/fpg_claim_control_gate.v1.json",
+      "required_tokens": [
+        "fpg-claim-control",
+        "block_until_evidence_current",
+        "required_log_fields"
+      ],
+      "evidence_refs": [
+        "tests/conformance/fpg_claim_control_gate.v1.json",
+        "scripts/check_fpg_claim_control_gate.sh",
+        "crates/frankenlibc-harness/tests/fpg_claim_control_gate_test.rs"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "current-readme-l0-bound-to-evidence",
+      "claim_id": "readme-current-source-of-truth",
+      "claim_surface": "README.md",
+      "simulated_advancement": false,
+      "evidence_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/support_matrix_maintenance_report.v1.json",
+        "support_matrix.json"
+      ],
+      "required_evidence_refs": [
+        "tests/conformance/replacement_levels.json",
+        "support_matrix.json"
+      ],
+      "source_commit_state": "current",
+      "expected_decision": "allow",
+      "expected_failure_signature": "none"
+    },
+    {
+      "scenario_id": "feature-parity-done-without-claim-gate",
+      "claim_id": "feature-parity-macro-targets",
+      "claim_surface": "FEATURE_PARITY.md",
+      "simulated_advancement": true,
+      "simulated_claim": "Status moves from IN_PROGRESS to DONE",
+      "evidence_refs": [],
+      "required_evidence_refs": [
+        "tests/conformance/fpg_claim_control_gate.v1.json"
+      ],
+      "source_commit_state": "current",
+      "expected_decision": "block",
+      "expected_failure_signature": "claim_advancement_missing_evidence"
+    },
+    {
+      "scenario_id": "readme-l1-claim-without-replacement-promotion",
+      "claim_id": "readme-current-source-of-truth",
+      "claim_surface": "README.md",
+      "simulated_advancement": true,
+      "simulated_claim": "Declared replacement level claim changes from L0 to L1",
+      "evidence_refs": [
+        "README.md"
+      ],
+      "required_evidence_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/claim_reconciliation_report.v1.json"
+      ],
+      "source_commit_state": "current",
+      "expected_decision": "block",
+      "expected_failure_signature": "claim_advancement_missing_evidence"
+    },
+    {
+      "scenario_id": "support-matrix-stale-source-commit",
+      "claim_id": "support-taxonomy-counts",
+      "claim_surface": "support_matrix.json",
+      "simulated_advancement": true,
+      "simulated_claim": "Support taxonomy count is promoted without regenerated source commit",
+      "evidence_refs": [
+        "support_matrix.json",
+        "tests/conformance/support_matrix_maintenance_report.v1.json"
+      ],
+      "required_evidence_refs": [
+        "support_matrix.json",
+        "tests/conformance/support_matrix_maintenance_report.v1.json"
+      ],
+      "source_commit_state": "stale",
+      "expected_decision": "block",
+      "expected_failure_signature": "claim_advancement_stale_evidence"
+    },
+    {
+      "scenario_id": "semantic-overlay-contradicts-full-replacement",
+      "claim_id": "semantic-overlay-blocker",
+      "claim_surface": "tests/conformance/support_semantic_overlay.v1.json",
+      "simulated_advancement": true,
+      "simulated_claim": "README treats Stub=0 as full semantic replacement while overlay is non-exhaustive",
+      "evidence_refs": [
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "tests/conformance/semantic_contract_symbol_join.v1.json"
+      ],
+      "required_evidence_refs": [
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "tests/conformance/semantic_contract_symbol_join.v1.json"
+      ],
+      "source_commit_state": "current",
+      "contradiction_state": "contradictory",
+      "expected_decision": "block",
+      "expected_failure_signature": "claim_advancement_contradictory_evidence"
+    },
+    {
+      "scenario_id": "evidence-backed-current-claim-allowed",
+      "claim_id": "generated-claim-control-gate",
+      "claim_surface": "tests/conformance/fpg_claim_control_gate.v1.json",
+      "simulated_advancement": true,
+      "simulated_claim": "A claim-control gate row advances only after current generated evidence exists",
+      "evidence_refs": [
+        "tests/conformance/fpg_claim_control_gate.v1.json",
+        "scripts/check_fpg_claim_control_gate.sh",
+        "crates/frankenlibc-harness/tests/fpg_claim_control_gate_test.rs"
+      ],
+      "required_evidence_refs": [
+        "tests/conformance/fpg_claim_control_gate.v1.json",
+        "scripts/check_fpg_claim_control_gate.sh"
+      ],
+      "source_commit_state": "current",
+      "expected_decision": "allow",
+      "expected_failure_signature": "none"
+    }
+  ],
+  "summary": {
+    "claim_surface_count": 8,
+    "scenario_count": 6,
+    "blocked_scenario_count": 4,
+    "allowed_scenario_count": 2
+  }
+}
