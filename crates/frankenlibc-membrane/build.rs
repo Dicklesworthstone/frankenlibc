@@ -712,7 +712,7 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     MemoryModelSource {
         relative_path: "src/ptr_validator.rs",
         domain: "tsm",
-        expected_sites: 4,
+        expected_sites: 5,
         stop_at_cfg_test: false,
         optional: false,
     },

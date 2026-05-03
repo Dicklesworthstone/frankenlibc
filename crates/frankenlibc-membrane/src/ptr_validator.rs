@@ -624,10 +624,33 @@ impl ValidationPipeline {
     /// @separation-frame: `F` (caller-owned heap and non-membrane regions remain untouched).
     /// @separation-alias: `validate_pointer`.
     pub fn validate(&self, addr: usize) -> ValidationOutcome {
+        if addr == 0
+            && !self.validation_logging_enabled()
+            && !self.runtime_math.validation_feedback_enabled()
+        {
+            return self.validate_null_without_trace_feedback();
+        }
+
         self.validate_with_security_context(
             addr,
             ValidationSecurityContext::allow_pointer_validation(),
         )
+    }
+
+    #[inline]
+    fn validation_logging_enabled(&self) -> bool {
+        self.validation_logging_enabled.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    fn validate_null_without_trace_feedback(&self) -> ValidationOutcome {
+        let metrics = global_metrics();
+        MembraneMetrics::inc(&metrics.validations);
+        if safety_level().validation_enabled() {
+            ValidationOutcome::Null
+        } else {
+            ValidationOutcome::Bypassed
+        }
     }
 
     /// Run a pointer through the validation pipeline under an explicit security context.

@@ -2229,6 +2229,13 @@ impl RuntimeMathKernel {
         );
     }
 
+    /// Returns true when runtime validation observations should update online controllers.
+    #[must_use]
+    #[inline]
+    pub fn validation_feedback_enabled(&self) -> bool {
+        observe_feedback_enabled()
+    }
+
     /// Feed observed runtime outcome back into online controllers.
     pub fn observe_validation_result(
         &self,
