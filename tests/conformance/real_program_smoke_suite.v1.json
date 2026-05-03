@@ -42,6 +42,9 @@
     "artifact_refs",
     "source_commit",
     "target_dir",
+    "bundle_id",
+    "failure_class",
+    "next_safe_action",
     "failure_signature"
   ],
   "required_domains": [
@@ -88,6 +91,173 @@
     "default_timeout_ms": 5000,
     "max_timeout_ms": 15000,
     "timeout_failure_signature": "startup_timeout"
+  },
+  "failure_bundle_policy": {
+    "bead": "bd-bp8fl.10.3",
+    "bundle_filename": "failure.bundle.json",
+    "max_bundle_size_bytes": 262144,
+    "semantic_join_path": "tests/conformance/semantic_contract_symbol_join.v1.json",
+    "support_matrix_path": "support_matrix.json",
+    "required_bundle_fields": [
+      "schema_version",
+      "bundle_id",
+      "bead_id",
+      "workload_id",
+      "case_id",
+      "command",
+      "cwd",
+      "environment",
+      "loaded_libraries",
+      "replacement_level",
+      "runtime_mode",
+      "semantic_overlay_rows",
+      "missing_symbols",
+      "unsupported_symbols",
+      "fixture_diffs",
+      "logs",
+      "stdout",
+      "stderr",
+      "failure_signature",
+      "failure_class",
+      "next_safe_action",
+      "regeneration_command",
+      "source_commit",
+      "target_dir",
+      "artifact_refs",
+      "redaction"
+    ],
+    "redacted_env_key_patterns": [
+      "TOKEN",
+      "SECRET",
+      "PASSWORD",
+      "CREDENTIAL",
+      "AUTH",
+      "KEY"
+    ],
+    "required_failure_classes": [
+      "symbol_missing",
+      "semantic_divergence",
+      "resolver_nss",
+      "locale_iconv",
+      "allocator_ownership",
+      "timeout_failure"
+    ],
+    "next_safe_actions": {
+      "symbol_missing": {
+        "bead": "bd-bp8fl.10.6",
+        "action": "keep the workload blocked until the missing artifact or symbol is implemented and re-run this smoke gate"
+      },
+      "semantic_divergence": {
+        "bead": "bd-bp8fl.10.5",
+        "action": "inspect the semantic overlay rows and add or update a targeted conformance fixture before claiming support"
+      },
+      "resolver_nss": {
+        "bead": "bd-bp8fl.10.5",
+        "action": "route the failure through resolver/NSS diagnostics and compare against the semantic overlay before widening claims"
+      },
+      "locale_iconv": {
+        "bead": "bd-bp8fl.10.5",
+        "action": "route the failure through locale/iconv diagnostics and attach codec or locale fixture evidence"
+      },
+      "allocator_ownership": {
+        "bead": "bd-bp8fl.10.5",
+        "action": "route the failure through allocator ownership diagnostics and attach membrane evidence before retrying support"
+      },
+      "timeout_failure": {
+        "bead": "bd-bp8fl.10.6",
+        "action": "treat the workload as unsupported until the timeout is reproduced with bounded logs and a current artifact"
+      },
+      "runtime_failure": {
+        "bead": "bd-bp8fl.10.6",
+        "action": "preserve the bundle and open the next narrow diagnostic bead before changing support claims"
+      }
+    },
+    "synthetic_failure_cases": [
+      {
+        "case_id": "bundle_fixture_symbol_missing",
+        "workload_id": "bundle_fixture.symbol_missing",
+        "domain": "standalone_future",
+        "command": "standalone_link_run_smoke",
+        "argv": ["--run", "standalone.minimal_exit"],
+        "runtime_mode": "strict",
+        "replacement_level": "L1",
+        "actual_status": "claim_blocked",
+        "expected_status": "claim_blocked",
+        "failure_signature": "standalone_artifact_missing",
+        "failure_class": "symbol_missing",
+        "stderr": "missing libfrankenlibc_replace.so"
+      },
+      {
+        "case_id": "bundle_fixture_semantic_divergence",
+        "workload_id": "bundle_fixture.semantic_divergence",
+        "domain": "stdio_file",
+        "command": "/bin/sh",
+        "argv": ["-c", "printf semantic-divergence"],
+        "runtime_mode": "hardened",
+        "replacement_level": "L1",
+        "actual_status": "fail",
+        "expected_status": "0",
+        "failure_signature": "stdout_exact_mismatch",
+        "failure_class": "semantic_divergence",
+        "stdout": "unexpected"
+      },
+      {
+        "case_id": "bundle_fixture_resolver_nss",
+        "workload_id": "bundle_fixture.resolver_nss",
+        "domain": "resolver_nss",
+        "command": "getent",
+        "argv": ["hosts", "localhost"],
+        "runtime_mode": "strict",
+        "replacement_level": "L0",
+        "actual_status": "fail",
+        "expected_status": "0",
+        "failure_signature": "resolver_nss_lookup_mismatch",
+        "failure_class": "resolver_nss",
+        "stderr": "resolver lookup mismatch"
+      },
+      {
+        "case_id": "bundle_fixture_locale_iconv",
+        "workload_id": "bundle_fixture.locale_iconv",
+        "domain": "locale_iconv",
+        "command": "iconv",
+        "argv": ["-l"],
+        "runtime_mode": "hardened",
+        "replacement_level": "L1",
+        "actual_status": "fail",
+        "expected_status": "0",
+        "failure_signature": "locale_iconv_alias_mismatch",
+        "failure_class": "locale_iconv",
+        "stderr": "iconv alias mismatch"
+      },
+      {
+        "case_id": "bundle_fixture_allocator_ownership",
+        "workload_id": "bundle_fixture.allocator_ownership",
+        "domain": "allocator_ownership",
+        "command": "allocator_probe",
+        "argv": ["--double-free"],
+        "runtime_mode": "hardened",
+        "replacement_level": "L1",
+        "actual_status": "fail",
+        "expected_status": "safe_repair",
+        "failure_signature": "allocator_ownership_mismatch",
+        "failure_class": "allocator_ownership",
+        "stderr": "allocator ownership mismatch"
+      },
+      {
+        "case_id": "bundle_fixture_timeout_failure",
+        "workload_id": "bundle_fixture.timeout_failure",
+        "domain": "threaded",
+        "command": "python3",
+        "argv": ["-c", "import time; time.sleep(999)"],
+        "runtime_mode": "strict",
+        "replacement_level": "L0",
+        "actual_status": "fail",
+        "expected_status": "0",
+        "failure_signature": "startup_timeout",
+        "failure_class": "timeout_failure",
+        "stderr": "timeout"
+      }
+    ]
   },
   "cases": [
     {
@@ -740,6 +910,8 @@
     "l0_case_count": 8,
     "l1_case_count": 10,
     "non_support_claim_policy_rows": 4,
+    "failure_bundle_schema_fields": 26,
+    "failure_bundle_fixture_case_count": 6,
     "required_domain_coverage": {
       "shell_coreutils": 2,
       "build_tool": 2,

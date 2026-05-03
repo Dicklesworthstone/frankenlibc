@@ -52,7 +52,48 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "artifact_refs",
     "source_commit",
     "target_dir",
+    "bundle_id",
+    "failure_class",
+    "next_safe_action",
     "failure_signature",
+];
+
+const REQUIRED_FAILURE_CLASSES: &[&str] = &[
+    "symbol_missing",
+    "semantic_divergence",
+    "resolver_nss",
+    "locale_iconv",
+    "allocator_ownership",
+    "timeout_failure",
+];
+
+const REQUIRED_BUNDLE_FIELDS: &[&str] = &[
+    "schema_version",
+    "bundle_id",
+    "bead_id",
+    "workload_id",
+    "case_id",
+    "command",
+    "cwd",
+    "environment",
+    "loaded_libraries",
+    "replacement_level",
+    "runtime_mode",
+    "semantic_overlay_rows",
+    "missing_symbols",
+    "unsupported_symbols",
+    "fixture_diffs",
+    "logs",
+    "stdout",
+    "stderr",
+    "failure_signature",
+    "failure_class",
+    "next_safe_action",
+    "regeneration_command",
+    "source_commit",
+    "target_dir",
+    "artifact_refs",
+    "redaction",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -87,7 +128,7 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
 fn run_gate(
     mode: &str,
     prefix: &str,
-    extra_env: &[(&str, &Path)],
+    extra_env: &[(&str, String)],
     force_missing_artifacts: bool,
 ) -> (PathBuf, PathBuf, PathBuf, std::process::Output) {
     let root = workspace_root();
@@ -147,6 +188,57 @@ fn manifest_defines_case_schema_and_log_contract() {
         .map(|field| field.as_str().unwrap())
         .collect();
     assert_eq!(log_fields, REQUIRED_LOG_FIELDS);
+}
+
+#[test]
+fn manifest_defines_failure_bundle_schema_and_fixture_classes() {
+    let manifest = load_manifest();
+    let policy = &manifest["failure_bundle_policy"];
+    assert_eq!(policy["bead"].as_str(), Some("bd-bp8fl.10.3"));
+    assert_eq!(
+        policy["bundle_filename"].as_str(),
+        Some("failure.bundle.json")
+    );
+
+    let bundle_fields: Vec<_> = policy["required_bundle_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|field| field.as_str().unwrap())
+        .collect();
+    assert_eq!(bundle_fields, REQUIRED_BUNDLE_FIELDS);
+
+    let required_classes: HashSet<_> = policy["required_failure_classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|class| class.as_str().unwrap())
+        .collect();
+    let fixture_classes: HashSet<_> = policy["synthetic_failure_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|case| case["failure_class"].as_str().unwrap())
+        .collect();
+    for class in REQUIRED_FAILURE_CLASSES {
+        assert!(required_classes.contains(class), "missing class {class}");
+        assert!(
+            fixture_classes.contains(class),
+            "missing fixture for class {class}"
+        );
+        assert!(
+            policy["next_safe_actions"][*class]["bead"].is_string(),
+            "{class}: missing next safe bead"
+        );
+    }
+    assert_eq!(
+        manifest["summary"]["failure_bundle_schema_fields"].as_u64(),
+        Some(REQUIRED_BUNDLE_FIELDS.len() as u64)
+    );
+    assert_eq!(
+        manifest["summary"]["failure_bundle_fixture_case_count"].as_u64(),
+        Some(REQUIRED_FAILURE_CLASSES.len() as u64)
+    );
 }
 
 #[test]
@@ -231,6 +323,10 @@ fn run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts() {
         report["summary"]["claim_blocked"].as_u64().unwrap() >= 2,
         "missing artifacts should block at least standalone/interpose claim rows"
     );
+    assert!(
+        report["summary"]["failure_bundles"].as_u64().unwrap() >= 2,
+        "claim-blocked workload rows should emit failure bundles"
+    );
 
     let rows = report["rows"].as_array().unwrap();
     assert_eq!(rows.len(), 18);
@@ -254,6 +350,23 @@ fn run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts() {
                 "{} must not claim support from non-pass status",
                 row["case_id"].as_str().unwrap()
             );
+            assert!(
+                row["bundle_id"].as_str().unwrap_or_default() != "none",
+                "{} must point at a failure bundle",
+                row["case_id"].as_str().unwrap()
+            );
+            assert!(
+                row["artifact_refs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|value| value
+                        .as_str()
+                        .unwrap_or_default()
+                        .ends_with("failure.bundle.json")),
+                "{} must include the bundle artifact",
+                row["case_id"].as_str().unwrap()
+            );
         }
     }
 
@@ -272,6 +385,25 @@ fn run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts() {
             assert_eq!(event["support_claimed"].as_bool(), Some(false));
         }
     }
+
+    let first_bundle_ref = rows
+        .iter()
+        .flat_map(|row| row["artifact_refs"].as_array().unwrap())
+        .filter_map(|value| value.as_str())
+        .find(|path| path.ends_with("failure.bundle.json"))
+        .expect("at least one failure bundle should be referenced");
+    let bundle = load_json(&workspace_root().join(first_bundle_ref));
+    for field in REQUIRED_BUNDLE_FIELDS {
+        assert!(bundle.get(*field).is_some(), "bundle missing {field}");
+    }
+    assert_eq!(bundle["support_claimed"].as_bool(), None);
+    assert!(
+        bundle["next_safe_action"]["bead"]
+            .as_str()
+            .unwrap()
+            .starts_with("bd-"),
+        "bundle must name a next safe bead"
+    );
 }
 
 #[test]
@@ -287,7 +419,10 @@ fn validate_only_rejects_stale_prior_report() {
     let (_temp, report_path, log_path, output) = run_gate(
         "--validate-only",
         "real-program-validate",
-        &[("REAL_PROGRAM_SMOKE_PRIOR_REPORT", &prior)],
+        &[(
+            "REAL_PROGRAM_SMOKE_PRIOR_REPORT",
+            prior.display().to_string(),
+        )],
         true,
     );
     assert!(
@@ -316,6 +451,90 @@ fn validate_only_rejects_stale_prior_report() {
         }),
         "validate-only log should include stale_result_rejected"
     );
+}
+
+#[test]
+fn bundle_fixture_mode_covers_required_classes_and_redacts_runner_env() {
+    let (_temp, report_path, log_path, output) = run_gate(
+        "--bundle-fixtures",
+        "real-program-bundles",
+        &[(
+            "REAL_PROGRAM_SECRET_TOKEN",
+            "super-secret-value".to_string(),
+        )],
+        true,
+    );
+    assert!(
+        output.status.success(),
+        "bundle fixture gate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = load_json(&report_path);
+    assert_eq!(report["status"].as_str(), Some("pass"));
+    assert_eq!(
+        report["summary"]["failure_bundles"].as_u64(),
+        Some(REQUIRED_FAILURE_CLASSES.len() as u64)
+    );
+
+    let classes: HashSet<_> = report["summary"]["failure_classes"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    for class in REQUIRED_FAILURE_CLASSES {
+        assert!(classes.contains(class), "missing emitted class {class}");
+    }
+
+    for row in report["rows"].as_array().unwrap() {
+        assert_eq!(row["support_claimed"].as_bool(), Some(false));
+        assert_ne!(row["bundle_id"].as_str(), Some("none"));
+        let bundle_ref = row["artifact_refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .find(|path| path.ends_with("failure.bundle.json"))
+            .expect("bundle fixture row should reference failure.bundle.json");
+        let bundle = load_json(&workspace_root().join(bundle_ref));
+        for field in REQUIRED_BUNDLE_FIELDS {
+            assert!(bundle.get(*field).is_some(), "bundle missing {field}");
+        }
+        assert!(
+            bundle["redaction"]["redacted_keys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|key| key.as_str() == Some("REAL_PROGRAM_SECRET_TOKEN")),
+            "secret runner env key should be redacted"
+        );
+        assert!(
+            !serde_json::to_string(&bundle)
+                .unwrap()
+                .contains("super-secret-value"),
+            "bundle must not leak secret env values"
+        );
+        assert!(
+            !bundle["semantic_overlay_rows"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "bundle should include semantic overlay context"
+        );
+    }
+
+    let log = std::fs::read_to_string(&log_path).expect("log should be readable");
+    for line in log.lines().filter(|line| !line.trim().is_empty()) {
+        let row: serde_json::Value = serde_json::from_str(line).unwrap();
+        for field in REQUIRED_LOG_FIELDS {
+            assert!(row.get(*field).is_some(), "log row missing {field}");
+        }
+        assert_ne!(row["bundle_id"].as_str(), Some("none"));
+        assert!(classes.contains(row["failure_class"].as_str().unwrap()));
+        assert!(row["next_safe_action"].as_str().unwrap().contains(" "));
+    }
 }
 
 #[test]

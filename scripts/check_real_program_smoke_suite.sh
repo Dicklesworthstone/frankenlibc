@@ -2,8 +2,8 @@
 # check_real_program_smoke_suite.sh -- deterministic real-program smoke gate for bd-bp8fl.10.2
 #
 # Validates and optionally runs the L0/L1 real-program smoke manifest. Missing,
-# stale, optional, standalone, and dry-run rows produce structured blocked/skip
-# evidence and cannot be counted as supported cases.
+# stale, optional, standalone, dry-run, and diagnostic-fixture rows produce
+# structured blocked/skip evidence and cannot be counted as supported cases.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,8 +28,11 @@ case "${1:-}" in
   --validate-only)
     MODE="validate-only"
     ;;
+  --bundle-fixtures)
+    MODE="bundle-fixtures"
+    ;;
   *)
-    echo "usage: $0 [--run|--dry-run|--validate-only]" >&2
+    echo "usage: $0 [--run|--dry-run|--validate-only|--bundle-fixtures]" >&2
     exit 2
     ;;
 esac
@@ -39,6 +42,8 @@ mkdir -p "${RUN_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 python3 - "${ROOT}" "${MANIFEST}" "${RUN_DIR}" "${REPORT}" "${LOG}" "${MODE}" <<'PY'
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -85,6 +90,9 @@ REQUIRED_LOG_FIELDS = [
     "artifact_refs",
     "source_commit",
     "target_dir",
+    "bundle_id",
+    "failure_class",
+    "next_safe_action",
     "failure_signature",
 ]
 REQUIRED_DOMAINS = {
@@ -100,6 +108,16 @@ REQUIRED_DOMAINS = {
 REQUIRED_MODES = {"strict", "hardened"}
 REQUIRED_LEVELS = {"L0", "L1"}
 NON_SUPPORT_STATUSES = {"blocked", "claim_blocked", "dry_run", "skipped", "validated"}
+NO_BUNDLE = {
+    "bundle_id": "none",
+    "artifact_ref": None,
+    "failure_class": "none",
+    "next_safe_action": "none",
+}
+SYMBOL_RE = re.compile(
+    r"(?:undefined symbol|symbol lookup error|missing symbol)[:= ]+([A-Za-z_][A-Za-z0-9_@.]*)",
+    re.IGNORECASE,
+)
 
 errors = []
 checks = {}
@@ -170,12 +188,15 @@ def append_log(
     duration_ms,
     artifact_refs,
     failure_signature,
+    bundle_id="none",
+    failure_class="none",
+    next_safe_action="none",
     support_claimed=False,
     skip_reason=None,
     blocked_reason=None,
 ):
     trace_id = (
-        f"{manifest.get('bead', 'unknown')}::{run_dir.name}::"
+        f"{log_bead_id()}::{run_dir.name}::"
         f"{workload_id}::{runtime_mode}::{event}"
     )
     row = {
@@ -183,7 +204,7 @@ def append_log(
         "level": "error" if actual_status == "fail" else "info",
         "event": event,
         "trace_id": trace_id,
-        "bead_id": manifest.get("bead"),
+        "bead_id": log_bead_id(),
         "workload_id": workload_id,
         "command": command,
         "runtime_mode": runtime_mode,
@@ -196,6 +217,9 @@ def append_log(
         "artifact_refs": artifact_refs,
         "source_commit": source_commit,
         "target_dir": str(run_dir),
+        "bundle_id": bundle_id,
+        "failure_class": failure_class,
+        "next_safe_action": next_safe_action,
         "failure_signature": failure_signature,
         "support_claimed": support_claimed,
         "skip_reason": skip_reason,
@@ -266,10 +290,15 @@ def classify_library(env_name, required_name):
 
 
 artifact_policy = manifest.get("artifact_policy", {})
+failure_bundle_policy = manifest.get("failure_bundle_policy", {})
 interpose_state = classify_library(
     artifact_policy.get("interpose_library_env", "FRANKENLIBC_SMOKE_LIB_PATH"),
     artifact_policy.get("required_interpose_artifact_name", "libfrankenlibc_abi.so"),
 )
+
+
+def log_bead_id():
+    return failure_bundle_policy.get("bead") or manifest.get("bead")
 standalone_state = classify_library(
     artifact_policy.get("standalone_library_env", "FRANKENLIBC_STANDALONE_LIB"),
     artifact_policy.get("required_standalone_artifact_name", "libfrankenlibc_replace.so"),
@@ -371,6 +400,26 @@ def validate_manifest():
     if not no_overclaim:
         errors.append("result_policy must forbid support claims from skipped, blocked, or dry-run rows")
 
+    bundle_policy = manifest.get("failure_bundle_policy", {})
+    required_bundle_fields = bundle_policy.get("required_bundle_fields", [])
+    required_failure_classes = set(bundle_policy.get("required_failure_classes", []))
+    fixture_classes = {
+        fixture.get("failure_class")
+        for fixture in bundle_policy.get("synthetic_failure_cases", [])
+        if isinstance(fixture, dict)
+    }
+    bundle_policy_ok = (
+        bundle_policy.get("bead") == "bd-bp8fl.10.3"
+        and bundle_policy.get("bundle_filename") == "failure.bundle.json"
+        and isinstance(required_bundle_fields, list)
+        and len(required_bundle_fields) >= 20
+        and required_failure_classes <= fixture_classes
+        and bool(bundle_policy.get("next_safe_actions"))
+    )
+    checks["failure_bundle_policy"] = "pass" if bundle_policy_ok else "fail"
+    if not bundle_policy_ok:
+        errors.append("failure_bundle_policy must define schema fields, classes, actions, and fixtures for bd-bp8fl.10.3")
+
 
 def validate_prior_report():
     prior_path = os.environ.get(artifact_policy.get("prior_report_env", "REAL_PROGRAM_SMOKE_PRIOR_REPORT"))
@@ -425,6 +474,294 @@ def isolated_env(case, *, candidate=False, library_path=None):
         if library_path:
             env["LD_PRELOAD"] = library_path
     return env
+
+
+def redacted_env(env):
+    patterns = failure_bundle_policy.get("redacted_env_key_patterns", [])
+    redacted = {}
+    redacted_keys = []
+    for key in sorted(env):
+        value = env[key]
+        if any(re.search(pattern, key, re.IGNORECASE) for pattern in patterns):
+            redacted[key] = "<redacted>"
+            redacted_keys.append(key)
+        else:
+            redacted[key] = value
+    return redacted, redacted_keys
+
+
+def runner_env_subset():
+    selected = {}
+    for key, value in os.environ.items():
+        if (
+            key.startswith("FRANKENLIBC_")
+            or key.startswith("REAL_PROGRAM_")
+            or key in {"CARGO_TARGET_DIR", "LD_PRELOAD", "RUST_BACKTRACE"}
+        ):
+            selected[key] = value
+    return redacted_env(selected)
+
+
+def read_limited(path, limit=4096):
+    try:
+        content = Path(path).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return {"artifact_ref": rel(path), "available": False, "excerpt": ""}
+    truncated = len(content) > limit
+    return {
+        "artifact_ref": rel(path),
+        "available": True,
+        "excerpt": content[:limit],
+        "truncated": truncated,
+    }
+
+
+def semantic_keywords_for(case, failure_class):
+    domain = case.get("domain", "")
+    mapping = {
+        "resolver_nss": ["nss", "resolver", "resolv", "getaddrinfo", "gethost"],
+        "locale_iconv": ["locale", "iconv", "wcsmbs", "codec"],
+        "stdio_file": ["stdio", "libio", "_io", "stream"],
+        "threaded": ["pthread", "thread", "cancel", "futex"],
+        "standalone_future": ["standalone", "loader", "elf", "relocation", "startup"],
+        "shell_coreutils": ["startup", "elf", "dl", "relocation"],
+        "build_tool": ["startup", "elf", "dl", "relocation"],
+        "failure_unsupported": ["unsupported", "fallback", "compat_noop", "stub"],
+        "allocator_ownership": ["malloc", "allocator", "free", "realloc", "ownership"],
+    }
+    keywords = list(mapping.get(domain, []))
+    if failure_class == "symbol_missing":
+        keywords.extend(["missing", "version_script", "symbol"])
+    if failure_class == "semantic_divergence":
+        keywords.extend(["semantic", "fallback", "compat_noop"])
+    return [keyword.lower() for keyword in keywords]
+
+
+_semantic_entries = None
+
+
+def load_semantic_entries():
+    global _semantic_entries
+    if _semantic_entries is not None:
+        return _semantic_entries
+    path = root / failure_bundle_policy.get(
+        "semantic_join_path", "tests/conformance/semantic_contract_symbol_join.v1.json"
+    )
+    data = load_json(path)
+    entries = data.get("entries", []) if isinstance(data, dict) else []
+    _semantic_entries = entries if isinstance(entries, list) else []
+    return _semantic_entries
+
+
+def semantic_matches_for_case(case, failure_class):
+    keywords = semantic_keywords_for(case, failure_class)
+    matches = []
+    for row in load_semantic_entries():
+        haystack = " ".join(
+            [
+                str(row.get("inventory_id", "")),
+                str(row.get("surface", "")),
+                str(row.get("source_path", "")),
+                str(row.get("semantic_class", "")),
+                str(row.get("semantic_parity_status", "")),
+                " ".join(str(symbol) for symbol in row.get("symbol_refs", [])),
+            ]
+        ).lower()
+        if keywords and not any(keyword in haystack for keyword in keywords):
+            continue
+        matches.append(
+            {
+                "inventory_id": row.get("inventory_id"),
+                "surface": row.get("surface"),
+                "semantic_class": row.get("semantic_class"),
+                "semantic_parity_status": row.get("semantic_parity_status"),
+                "symbol_refs": row.get("symbol_refs", [])[:8],
+                "claim_effect": row.get("claim_effect"),
+            }
+        )
+        if len(matches) >= 5:
+            break
+    return matches
+
+
+def classify_failure(case, failure_signature, actual_status):
+    if actual_status in {"pass", "dry_run", "validated"} and failure_signature == "none":
+        return "none"
+    domain = case.get("domain")
+    if failure_signature == "startup_timeout":
+        return "timeout_failure"
+    if domain == "resolver_nss":
+        return "resolver_nss"
+    if domain == "locale_iconv":
+        return "locale_iconv"
+    if domain == "allocator_ownership" or "allocator" in failure_signature:
+        return "allocator_ownership"
+    if (
+        domain == "standalone_future"
+        or "symbol" in failure_signature
+        or "artifact" in failure_signature
+        or "command_unavailable" in failure_signature
+    ):
+        return "symbol_missing"
+    if (
+        "stdout" in failure_signature
+        or "stderr" in failure_signature
+        or "status_mismatch" in failure_signature
+        or domain == "failure_unsupported"
+    ):
+        return "semantic_divergence"
+    return "runtime_failure"
+
+
+def next_safe_action_for(failure_class):
+    actions = failure_bundle_policy.get("next_safe_actions", {})
+    return actions.get(failure_class) or actions.get("runtime_failure") or {
+        "bead": "bd-bp8fl.10.6",
+        "action": "preserve the bundle and keep the workload unsupported until a diagnostic bead closes",
+    }
+
+
+def parse_missing_symbols(*texts):
+    symbols = []
+    for text in texts:
+        for match in SYMBOL_RE.finditer(text or ""):
+            symbols.append(match.group(1))
+    return sorted(set(symbols))
+
+
+def fixture_diffs(case_dir):
+    baseline = load_json(case_dir / "baseline.result.json") if (case_dir / "baseline.result.json").exists() else {}
+    candidate = load_json(case_dir / "candidate.result.json") if (case_dir / "candidate.result.json").exists() else {}
+    if not baseline or not candidate:
+        return {
+            "status": "missing_candidate_or_baseline",
+            "baseline_ref": rel(case_dir / "baseline.result.json"),
+            "candidate_ref": rel(case_dir / "candidate.result.json"),
+        }
+    return {
+        "status_equal": baseline.get("returncode") == candidate.get("returncode"),
+        "stdout_equal": baseline.get("stdout") == candidate.get("stdout"),
+        "stderr_equal": baseline.get("stderr") == candidate.get("stderr"),
+        "baseline_ref": rel(case_dir / "baseline.result.json"),
+        "candidate_ref": rel(case_dir / "candidate.result.json"),
+    }
+
+
+def regeneration_command():
+    env_parts = [
+        f"REAL_PROGRAM_SMOKE_RUN_ID={shlex.quote(run_dir.name)}",
+        f"REAL_PROGRAM_SMOKE_TARGET_DIR={shlex.quote(str(run_dir.parent))}",
+        f"REAL_PROGRAM_SMOKE_REPORT={shlex.quote(str(report_path))}",
+        f"REAL_PROGRAM_SMOKE_LOG={shlex.quote(str(log_path))}",
+    ]
+    return " ".join(env_parts + ["bash", "scripts/check_real_program_smoke_suite.sh", "--run"])
+
+
+def emit_failure_bundle(
+    case,
+    *,
+    case_dir,
+    artifact_refs,
+    command_text,
+    actual_status,
+    failure_signature,
+    stdout_ref=None,
+    stderr_ref=None,
+    blocked_reason=None,
+    skip_reason=None,
+    forced_failure_class=None,
+):
+    if actual_status == "pass":
+        return dict(NO_BUNDLE)
+    failure_class = forced_failure_class or classify_failure(case, failure_signature, actual_status)
+    action = next_safe_action_for(failure_class)
+    semantic_rows = semantic_matches_for_case(case, failure_class)
+    unsupported_symbols = sorted(
+        {
+            str(symbol)
+            for row in semantic_rows
+            for symbol in row.get("symbol_refs", [])
+            if str(symbol)
+        }
+    )[:16]
+    stderr_text = ""
+    stdout_text = ""
+    if stderr_ref:
+        stderr_text = Path(stderr_ref).read_text(encoding="utf-8", errors="replace") if Path(stderr_ref).exists() else ""
+    if stdout_ref:
+        stdout_text = Path(stdout_ref).read_text(encoding="utf-8", errors="replace") if Path(stdout_ref).exists() else ""
+
+    candidate_env = isolated_env(
+        case,
+        candidate=case.get("artifact_kind") == "ld_preload_interpose",
+        library_path=interpose_state.get("path"),
+    )
+    case_env, case_redacted = redacted_env(candidate_env)
+    runner_env, runner_redacted = runner_env_subset()
+    bundle_id = f"{run_dir.name}::{case['case_id']}::{failure_class}"
+    bundle_path = case_dir / failure_bundle_policy.get("bundle_filename", "failure.bundle.json")
+    bundle_ref = rel(bundle_path)
+    bundle = {
+        "schema_version": "v1",
+        "bundle_id": bundle_id,
+        "bead_id": log_bead_id(),
+        "workload_id": case["workload_id"],
+        "case_id": case["case_id"],
+        "command": {
+            "line": command_text,
+            "argv": [case["command"], *case.get("argv", [])],
+        },
+        "cwd": str(case_dir),
+        "environment": {
+            "case_env": case_env,
+            "runner_env": runner_env,
+        },
+        "loaded_libraries": {
+            "interpose": interpose_state,
+            "standalone": standalone_state,
+        },
+        "replacement_level": case["replacement_level"],
+        "runtime_mode": case["runtime_mode"],
+        "semantic_overlay_rows": semantic_rows,
+        "missing_symbols": parse_missing_symbols(stderr_text, stdout_text),
+        "unsupported_symbols": unsupported_symbols,
+        "fixture_diffs": fixture_diffs(case_dir),
+        "logs": {
+            "log_path": rel(log_path),
+            "blocked_reason": blocked_reason,
+            "skip_reason": skip_reason,
+        },
+        "stdout": read_limited(stdout_ref or case_dir / "candidate.stdout.txt"),
+        "stderr": read_limited(stderr_ref or case_dir / "candidate.stderr.txt"),
+        "failure_signature": failure_signature,
+        "failure_class": failure_class,
+        "next_safe_action": action,
+        "regeneration_command": regeneration_command(),
+        "source_commit": source_commit,
+        "target_dir": str(run_dir),
+        "artifact_refs": [*artifact_refs, bundle_ref],
+        "redaction": {
+            "patterns": failure_bundle_policy.get("redacted_env_key_patterns", []),
+            "redacted_keys": sorted(set(case_redacted + runner_redacted)),
+        },
+    }
+    required = failure_bundle_policy.get("required_bundle_fields", [])
+    missing = [field for field in required if field not in bundle]
+    if missing:
+        errors.append(f"{case['case_id']}: failure bundle missing fields {missing}")
+    write_json(bundle_path, bundle)
+    max_size = int(failure_bundle_policy.get("max_bundle_size_bytes", 262144))
+    try:
+        if bundle_path.stat().st_size > max_size:
+            errors.append(f"{case['case_id']}: failure bundle exceeds max_bundle_size_bytes")
+    except OSError as exc:
+        errors.append(f"{case['case_id']}: failure bundle stat failed: {exc}")
+    return {
+        "bundle_id": bundle_id,
+        "artifact_ref": bundle_ref,
+        "failure_class": failure_class,
+        "next_safe_action": action.get("action", "none"),
+    }
 
 
 def run_command(argv, *, cwd, env, timeout_ms):
@@ -513,6 +850,9 @@ def run_case(case):
             "support_claimed": False,
             "artifact_refs": artifact_refs,
             "failure_signature": "none",
+            "bundle_id": "none",
+            "failure_class": "none",
+            "next_safe_action": "none",
         }
 
     if case["artifact_kind"] == "standalone_direct_link_future":
@@ -533,6 +873,17 @@ def run_case(case):
             },
         )
         artifact_refs.append(rel(case_dir / "candidate.blocked.json"))
+        bundle = emit_failure_bundle(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            actual_status=actual_status,
+            failure_signature=failure_signature,
+            blocked_reason=blocked_reason,
+        )
+        if bundle["artifact_ref"]:
+            artifact_refs.append(bundle["artifact_ref"])
         append_log(
             event="standalone_future_blocked",
             workload_id=case["workload_id"],
@@ -546,6 +897,9 @@ def run_case(case):
             duration_ms=0,
             artifact_refs=artifact_refs,
             failure_signature=failure_signature,
+            bundle_id=bundle["bundle_id"],
+            failure_class=bundle["failure_class"],
+            next_safe_action=bundle["next_safe_action"],
             support_claimed=False,
             blocked_reason=blocked_reason,
         )
@@ -557,6 +911,9 @@ def run_case(case):
             "artifact_refs": artifact_refs,
             "failure_signature": failure_signature,
             "blocked_reason": blocked_reason,
+            "bundle_id": bundle["bundle_id"],
+            "failure_class": bundle["failure_class"],
+            "next_safe_action": bundle["next_safe_action"],
         }
 
     resolved = resolve_command(case["command"])
@@ -573,6 +930,18 @@ def run_case(case):
             },
         )
         artifact_refs.append(rel(case_dir / "command_unavailable.json"))
+        bundle = emit_failure_bundle(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            actual_status=actual_status,
+            failure_signature=failure_signature,
+            skip_reason=failure_signature if actual_status == "skipped" else None,
+            blocked_reason=failure_signature if actual_status == "blocked" else None,
+        )
+        if bundle["artifact_ref"]:
+            artifact_refs.append(bundle["artifact_ref"])
         append_log(
             event="command_unavailable",
             workload_id=case["workload_id"],
@@ -586,6 +955,9 @@ def run_case(case):
             duration_ms=0,
             artifact_refs=artifact_refs,
             failure_signature=failure_signature,
+            bundle_id=bundle["bundle_id"],
+            failure_class=bundle["failure_class"],
+            next_safe_action=bundle["next_safe_action"],
             support_claimed=False,
             skip_reason=failure_signature if actual_status == "skipped" else None,
             blocked_reason=failure_signature if actual_status == "blocked" else None,
@@ -597,6 +969,9 @@ def run_case(case):
             "support_claimed": False,
             "artifact_refs": artifact_refs,
             "failure_signature": failure_signature,
+            "bundle_id": bundle["bundle_id"],
+            "failure_class": bundle["failure_class"],
+            "next_safe_action": bundle["next_safe_action"],
         }
 
     argv = [resolved, *case.get("argv", [])]
@@ -660,6 +1035,9 @@ def run_case(case):
             "support_claimed": False,
             "artifact_refs": artifact_refs,
             "failure_signature": "none",
+            "bundle_id": "none",
+            "failure_class": "none",
+            "next_safe_action": "none",
         }
 
     if interpose_state["status"] != "current":
@@ -679,6 +1057,19 @@ def run_case(case):
             },
         )
         artifact_refs.append(rel(case_dir / "candidate.blocked.json"))
+        bundle = emit_failure_bundle(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            actual_status=actual_status,
+            failure_signature=failure_signature,
+            stdout_ref=case_dir / "baseline.stdout.txt",
+            stderr_ref=case_dir / "baseline.stderr.txt",
+            blocked_reason=interpose_state["detail"],
+        )
+        if bundle["artifact_ref"]:
+            artifact_refs.append(bundle["artifact_ref"])
         append_log(
             event="candidate_claim_blocked",
             workload_id=case["workload_id"],
@@ -692,6 +1083,9 @@ def run_case(case):
             duration_ms=baseline_result["duration_ms"],
             artifact_refs=artifact_refs,
             failure_signature=failure_signature,
+            bundle_id=bundle["bundle_id"],
+            failure_class=bundle["failure_class"],
+            next_safe_action=bundle["next_safe_action"],
             support_claimed=False,
             blocked_reason=interpose_state["detail"],
         )
@@ -703,6 +1097,9 @@ def run_case(case):
             "artifact_refs": artifact_refs,
             "failure_signature": failure_signature,
             "blocked_reason": interpose_state["detail"],
+            "bundle_id": bundle["bundle_id"],
+            "failure_class": bundle["failure_class"],
+            "next_safe_action": bundle["next_safe_action"],
         }
 
     candidate_result = run_command(
@@ -744,6 +1141,20 @@ def run_case(case):
             rel(case_dir / "candidate.exit_code"),
         ]
     )
+    bundle = dict(NO_BUNDLE)
+    if actual_status == "fail":
+        bundle = emit_failure_bundle(
+            case,
+            case_dir=case_dir,
+            artifact_refs=artifact_refs,
+            command_text=command_text,
+            actual_status=actual_status,
+            failure_signature=failure_signature,
+            stdout_ref=case_dir / "candidate.stdout.txt",
+            stderr_ref=case_dir / "candidate.stderr.txt",
+        )
+        if bundle["artifact_ref"]:
+            artifact_refs.append(bundle["artifact_ref"])
     append_log(
         event="candidate_run",
         workload_id=case["workload_id"],
@@ -757,6 +1168,9 @@ def run_case(case):
         duration_ms=candidate_result["duration_ms"],
         artifact_refs=artifact_refs,
         failure_signature=failure_signature,
+        bundle_id=bundle["bundle_id"],
+        failure_class=bundle["failure_class"],
+        next_safe_action=bundle["next_safe_action"],
         support_claimed=support_claimed,
     )
     if actual_status == "fail":
@@ -768,20 +1182,127 @@ def run_case(case):
         "support_claimed": support_claimed,
         "artifact_refs": artifact_refs,
         "failure_signature": failure_signature,
+        "bundle_id": bundle["bundle_id"],
+        "failure_class": bundle["failure_class"],
+        "next_safe_action": bundle["next_safe_action"],
+    }
+
+
+def run_bundle_fixture_case(fixture):
+    case = {
+        "case_id": fixture["case_id"],
+        "workload_id": fixture["workload_id"],
+        "domain": fixture["domain"],
+        "command": fixture["command"],
+        "argv": fixture.get("argv", []),
+        "env": {"set": {"LC_ALL": "C"}, "unset": ["LD_PRELOAD"]},
+        "timeout_ms": 1000,
+        "runtime_mode": fixture["runtime_mode"],
+        "replacement_level": fixture["replacement_level"],
+        "artifact_kind": "failure_bundle_fixture",
+        "expected": {"status": fixture.get("expected_status"), "errno": None},
+        "allowed_divergence": [],
+        "cleanup": {"policy": "case_dir_scoped"},
+        "oracle_kind": "failure_bundle_fixture",
+        "support_claim": "never",
+    }
+    case_dir = run_dir / case["case_id"]
+    case_dir.mkdir(parents=True, exist_ok=True)
+    write_json(case_dir / "case.json", case)
+    command_text = " ".join([case["command"], *case.get("argv", [])])
+    stdout_text = fixture.get("stdout", "")
+    stderr_text = fixture.get("stderr", "")
+    actual_status = fixture["actual_status"]
+    failure_signature = fixture["failure_signature"]
+    write_json(
+        case_dir / "candidate.result.json",
+        {
+            "argv": [case["command"], *case.get("argv", [])],
+            "returncode": 124 if failure_signature == "startup_timeout" else 1,
+            "stdout": stdout_text,
+            "stderr": stderr_text,
+            "timed_out": failure_signature == "startup_timeout",
+            "duration_ms": 1000 if failure_signature == "startup_timeout" else 0,
+            "actual_status": actual_status,
+            "support_claimed": False,
+            "failure_signature": failure_signature,
+        },
+    )
+    write_text(case_dir / "candidate.stdout.txt", stdout_text)
+    write_text(case_dir / "candidate.stderr.txt", stderr_text)
+    artifact_refs = [
+        rel(case_dir / "case.json"),
+        rel(case_dir / "candidate.result.json"),
+        rel(case_dir / "candidate.stdout.txt"),
+        rel(case_dir / "candidate.stderr.txt"),
+    ]
+    bundle = emit_failure_bundle(
+        case,
+        case_dir=case_dir,
+        artifact_refs=artifact_refs,
+        command_text=command_text,
+        actual_status=actual_status,
+        failure_signature=failure_signature,
+        stdout_ref=case_dir / "candidate.stdout.txt",
+        stderr_ref=case_dir / "candidate.stderr.txt",
+        forced_failure_class=fixture["failure_class"],
+    )
+    if bundle["artifact_ref"]:
+        artifact_refs.append(bundle["artifact_ref"])
+    append_log(
+        event="failure_bundle_fixture",
+        workload_id=case["workload_id"],
+        command=command_text,
+        runtime_mode=case["runtime_mode"],
+        replacement_level=case["replacement_level"],
+        oracle_kind=case["oracle_kind"],
+        expected_status=str(fixture.get("expected_status")),
+        actual_status=actual_status,
+        errno=None,
+        duration_ms=0,
+        artifact_refs=artifact_refs,
+        failure_signature=failure_signature,
+        bundle_id=bundle["bundle_id"],
+        failure_class=bundle["failure_class"],
+        next_safe_action=bundle["next_safe_action"],
+        support_claimed=False,
+    )
+    return {
+        "case_id": case["case_id"],
+        "workload_id": case["workload_id"],
+        "actual_status": actual_status,
+        "support_claimed": False,
+        "artifact_refs": artifact_refs,
+        "failure_signature": failure_signature,
+        "bundle_id": bundle["bundle_id"],
+        "failure_class": bundle["failure_class"],
+        "next_safe_action": bundle["next_safe_action"],
     }
 
 
 validate_manifest()
 stale_prior_result_rejected = validate_prior_report()
 
-if mode not in {"run", "dry-run", "validate-only"}:
+if mode not in {"run", "dry-run", "validate-only", "bundle-fixtures"}:
     errors.append(f"unknown mode {mode}")
 
 if not errors or mode == "validate-only":
-    for case in manifest.get("cases", []):
-        case_results.append(run_case(case))
+    if mode == "bundle-fixtures":
+        for fixture in failure_bundle_policy.get("synthetic_failure_cases", []):
+            case_results.append(run_bundle_fixture_case(fixture))
+    else:
+        for case in manifest.get("cases", []):
+            case_results.append(run_case(case))
 
 summary = Counter(result["actual_status"] for result in case_results)
+failure_class_summary = Counter(
+    result.get("failure_class", "none")
+    for result in case_results
+    if result.get("bundle_id") not in {None, "none"}
+)
+failure_bundle_count = sum(
+    1 for result in case_results if result.get("bundle_id") not in {None, "none"}
+)
 support_claimed_count = sum(1 for result in case_results if result.get("support_claimed"))
 bad_support_rows = [
     result["case_id"]
@@ -816,6 +1337,9 @@ report = {
         "claim_blocked": summary.get("claim_blocked", 0),
         "dry_run": summary.get("dry_run", 0),
         "validated": summary.get("validated", 0),
+        "bundle_fixture": summary.get("bundle_fixture", 0),
+        "failure_bundles": failure_bundle_count,
+        "failure_classes": dict(failure_class_summary),
         "support_claimed": support_claimed_count,
         "non_support_statuses_do_not_claim_support": not bad_support_rows,
         "stale_prior_result_rejected": stale_prior_result_rejected,
