@@ -96,6 +96,10 @@ jobs:
         run: |
           bash scripts/check_replacement_guard.sh interpose 2>&1 | tee artifacts/ci/replacement-guard-interpose.log
 
+      - name: Check release replacement-level claim evidence
+        run: |
+          bash scripts/release/check_replacement_claim_evidence.sh 2>&1 | tee artifacts/ci/release-claim-evidence.log
+
       - name: Build standalone replacement artifact when feature exists
         run: |
           if grep -Eq '(^|[[:space:]])standalone([[:space:]]*=|[[:space:]])' crates/frankenlibc-abi/Cargo.toml; then
@@ -112,6 +116,8 @@ jobs:
           path: |
             artifacts/ci/release-*.log
             artifacts/ci/replacement-guard-interpose.log
+            target/conformance/release_claim_evidence_gate.report.json
+            target/conformance/release_claim_evidence_gate.log.jsonl
             target/release/libfrankenlibc_abi.so
             target/conformance/replacement_guard.report.json
             target/conformance/replacement_guard.log.jsonl
