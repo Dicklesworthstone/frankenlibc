@@ -1266,6 +1266,9 @@ impl RuntimeMathKernel {
         if do_resample {
             self.resample_high_order_kernels(mode, ctx);
         }
+        if let Some(decision) = self.try_hardened_nominal_pointer_decision(mode, sequence, ctx) {
+            return decision;
+        }
 
         let base_risk_ppm = self.risk.upper_bound_ppm(ctx.family);
         let sampled_bonus = self.cached_risk_bonus_ppm.load(Ordering::Relaxed) as u32;
@@ -1773,6 +1776,7 @@ impl RuntimeMathKernel {
 
         let risk_upper_bound_ppm =
             (u64::from(pre_design_risk_ppm) + u64::from(design_bonus)).min(1_000_000) as u32;
+        let limits = self.controller.limits(mode);
 
         // Pressure sensing is cadence-gated to preserve strict fast-path latency.
         // Under elevated pressure or risky contexts, we still observe every call.
@@ -1912,7 +1916,6 @@ impl RuntimeMathKernel {
                 .store(u64::from(augmented_mask ^ base_mask), Ordering::Relaxed);
         }
 
-        let limits = self.controller.limits(mode);
         let mut profile =
             self.router
                 .select_profile(ctx.family, mode, risk_upper_bound_ppm, ctx.contention_hint);
@@ -2175,6 +2178,86 @@ impl RuntimeMathKernel {
         }
 
         decision
+    }
+
+    fn try_hardened_nominal_pointer_decision(
+        &self,
+        mode: SafetyLevel,
+        sequence: u64,
+        ctx: RuntimeContext,
+    ) -> Option<RuntimeDecision> {
+        if !matches!(mode, SafetyLevel::Hardened) {
+            return None;
+        }
+        if observe_feedback_enabled() {
+            return None;
+        }
+        if !matches!(ctx.family, ApiFamily::PointerValidation)
+            || ctx.bloom_negative
+            || ctx.is_write
+            || ctx.requested_bytes != 0
+            || ctx.contention_hint != 0
+        {
+            return None;
+        }
+        if self.policy_lookup.is_some()
+            || self.cached_risk_bonus_ppm.load(Ordering::Relaxed) != 0
+            || self.cohomology.fault_count() != 0
+            || self.cached_pressure_regime.load(Ordering::Relaxed) != PRESSURE_REGIME_NOMINAL
+            || self.cached_pressure_epoch.load(Ordering::Relaxed) == 0
+            || self.cached_sos_barrier_state.load(Ordering::Relaxed)
+                >= SosBarrierState::Violated as u8
+            || self.cached_design_budget_ns.load(Ordering::Relaxed) == 0
+        {
+            return None;
+        }
+        if sequence <= 4
+            || sequence.is_multiple_of(16)
+            || sequence.is_multiple_of(512)
+            || sequence.is_multiple_of(4096)
+            || sequence.is_multiple_of(16384)
+        {
+            return None;
+        }
+        let fast_wcl = TROPICAL_METRICS.fast_wcl_ns.load(Ordering::Relaxed);
+        let full_wcl = TROPICAL_METRICS.full_wcl_ns.load(Ordering::Relaxed);
+        if fast_wcl > FAST_PATH_BUDGET_NS || full_wcl > FULL_PATH_BUDGET_NS {
+            return None;
+        }
+
+        let base_risk_ppm = self.risk.upper_bound_ppm(ctx.family);
+        let ident_ppm = self.cached_design_ident_ppm.load(Ordering::Relaxed) as u32;
+        let design_bonus = if ident_ppm < 150_000 {
+            95_000u32
+        } else if ident_ppm < 300_000 {
+            40_000u32
+        } else {
+            0u32
+        };
+        let risk_upper_bound_ppm =
+            (u64::from(base_risk_ppm) + u64::from(design_bonus)).min(1_000_000) as u32;
+        let limits = self.controller.limits(mode);
+        if risk_upper_bound_ppm < limits.full_validation_trigger_ppm
+            || risk_upper_bound_ppm >= limits.repair_trigger_ppm
+        {
+            return None;
+        }
+
+        self.cached_overload_policy_tag
+            .store(OVERLOAD_POLICY_NONE, Ordering::Relaxed);
+        self.cached_policy_action_dist[1].fetch_add(1, Ordering::Relaxed);
+        Some(RuntimeDecision {
+            profile: ValidationProfile::Full,
+            action: MembraneAction::FullValidate,
+            policy_id: compute_policy_id(
+                mode,
+                ctx.family,
+                ValidationProfile::Full,
+                MembraneAction::FullValidate,
+            ),
+            risk_upper_bound_ppm,
+            evidence_seqno: 0,
+        })
     }
 
     /// Return the current contextual check ordering for a given family/context.
@@ -7792,6 +7875,34 @@ mod tests {
             "hardened mode with risk {} ppm (above repair_trigger) must not Allow",
             decision.risk_upper_bound_ppm,
         );
+    }
+
+    #[test]
+    fn hardened_nominal_pointer_shortcut_preserves_visible_state() {
+        let kernel = RuntimeMathKernel::new_for_mode(SafetyLevel::Hardened);
+        let ctx = RuntimeContext::pointer_validation(0x1000, false);
+
+        for _ in 0..4 {
+            let _ = kernel.decide(SafetyLevel::Hardened, ctx);
+        }
+
+        let before = kernel.snapshot(SafetyLevel::Hardened);
+        let decision = kernel.decide(SafetyLevel::Hardened, ctx);
+        let after = kernel.snapshot(SafetyLevel::Hardened);
+
+        assert_eq!(decision.profile, ValidationProfile::Full);
+        assert_eq!(decision.action, MembraneAction::FullValidate);
+        assert_eq!(decision.evidence_seqno, 0);
+        assert!(decision.risk_upper_bound_ppm >= before.full_validation_trigger_ppm);
+        assert!(decision.risk_upper_bound_ppm < before.repair_trigger_ppm);
+        assert_eq!(after.decisions, before.decisions + 1);
+        assert_eq!(
+            after.policy_action_dist[1],
+            before.policy_action_dist[1] + 1,
+            "shortcut must preserve FullValidate action accounting"
+        );
+        assert_eq!(after.overload_policy_tag, OVERLOAD_POLICY_NONE);
+        assert_eq!(after.evidence_seqno, before.evidence_seqno);
     }
 
     /// Fusion SIGNALS consistency: the number of severity vector slots assigned
