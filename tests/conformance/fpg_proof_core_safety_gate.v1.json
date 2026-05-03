@@ -1,0 +1,295 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fpg-proof-core-safety-gate",
+  "bead": "bd-bp8fl.3.8",
+  "owner_family_group": "fpg-proof-core-safety",
+  "evidence_owner": "membrane proof and conformance-binder owners",
+  "generated_utc": "2026-05-03T17:30:00Z",
+  "source_commit": "d6f0f48d6833bab542f6d3d756aa8b5b193c450c",
+  "purpose": "Fail-closed gate for the seven `fpg-proof-core-safety` proof_math gaps drawn from tests/conformance/feature_parity_gap_ledger.v1.json. Every safety-theorem row in FEATURE_PARITY.md (lines 229-263) must remain bound to executable witnesses in tests/conformance/proof_obligations_binder.v1.json, tests/conformance/proof_binder_validation.v1.json, and tests/conformance/mode_contract_lock.v1.json. Prose-only or closed-tracker-state advancement is rejected; PLANNED/IN_PROGRESS rows cannot promote to DONE without the cited proof obligation reporting valid=true and the binder validation reporting binder_valid=true at every replacement level.",
+  "inputs": {
+    "feature_parity": "FEATURE_PARITY.md",
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "proof_obligations_binder": "tests/conformance/proof_obligations_binder.v1.json",
+    "proof_binder_validation": "tests/conformance/proof_binder_validation.v1.json",
+    "mode_contract_lock": "tests/conformance/mode_contract_lock.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "gap_id",
+    "section",
+    "feature_parity_line",
+    "claimed_status",
+    "expected_status",
+    "actual_status",
+    "evidence_artifact",
+    "evidence_anchor",
+    "expected_value",
+    "actual_value",
+    "claim_decision",
+    "replacement_level",
+    "obligation_id",
+    "obligation_status",
+    "binder_valid",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_until_proof_witness_current",
+    "allow_status": ["IN_PROGRESS", "PLANNED"],
+    "block_status_without_evidence": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "fail_closed_message": "Safety-theorem rows cannot promote to DONE or advance replacement_level without the bound proof_obligations_binder row reporting status in_progress|done with executable evidence and proof_binder_validation reporting binder_valid=true.",
+    "rejected_evidence_kinds": [
+      "prose_only",
+      "tracker_closure_only",
+      "stale_obligation",
+      "missing_obligation",
+      "binder_invalid",
+      "missing_mode_contract"
+    ]
+  },
+  "rows": [
+    {
+      "gap_id": "fp-proof-math-b821b415a5d6",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "strict refinement theorem",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 229
+      },
+      "claim_target": "SMT/proof notes + differential fixtures",
+      "claimed_status": "PLANNED",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/proof_obligations_binder.v1.json",
+          "field": "obligation.statement",
+          "obligation_id": "PO-01",
+          "expected_value_contains": "Strict Refinement Theorem",
+          "rationale": "Strict refinement theorem must remain a tracked proof obligation."
+        },
+        {
+          "artifact": "tests/conformance/proof_obligations_binder.v1.json",
+          "field": "obligation.category",
+          "obligation_id": "PO-01",
+          "expected_value": "core_safety",
+          "rationale": "Strict refinement is a core_safety obligation."
+        },
+        {
+          "artifact": "tests/conformance/proof_binder_validation.v1.json",
+          "field": "obligation.valid",
+          "obligation_id": "PO-01",
+          "expected_value": true,
+          "rationale": "Binder validation must report PO-01 as valid (evidence and source refs resolve) before any DONE advancement."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-f3e03ea48a96",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "hardened safety theorem",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 230
+      },
+      "claim_target": "invariant checks + policy proof notes",
+      "claimed_status": "IN_PROGRESS",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/proof_obligations_binder.v1.json",
+          "field": "obligation.statement",
+          "obligation_id": "PO-02",
+          "expected_value_contains": "Hardened Safety Theorem",
+          "rationale": "Hardened safety theorem must remain a tracked proof obligation."
+        },
+        {
+          "artifact": "tests/conformance/proof_obligations_binder.v1.json",
+          "field": "obligation.category",
+          "obligation_id": "PO-02",
+          "expected_value": "core_safety",
+          "rationale": "Hardened safety is a core_safety obligation."
+        },
+        {
+          "artifact": "tests/conformance/proof_binder_validation.v1.json",
+          "field": "obligation.valid",
+          "obligation_id": "PO-02",
+          "expected_value": true,
+          "rationale": "Binder validation must report PO-02 as valid before any DONE advancement."
+        },
+        {
+          "artifact": "tests/conformance/mode_contract_lock.v1.json",
+          "field": "env_contract.allowed_values",
+          "expected_keys_subset": ["strict", "hardened"],
+          "rationale": "Hardened-mode contract must remain locked alongside strict in mode_contract_lock."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-0dbb786935af",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "deterministic replay theorem",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 231
+      },
+      "claim_target": "reproducibility campaign logs",
+      "claimed_status": "PLANNED",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/proof_obligations_binder.v1.json",
+          "field": "obligation.statement",
+          "obligation_id": "PO-03",
+          "expected_value_contains": "Deterministic Replay Theorem",
+          "rationale": "Deterministic replay theorem must remain a tracked proof obligation."
+        },
+        {
+          "artifact": "tests/conformance/proof_obligations_binder.v1.json",
+          "field": "obligation.category",
+          "obligation_id": "PO-03",
+          "expected_value": "determinism",
+          "rationale": "Deterministic replay is a determinism category obligation."
+        },
+        {
+          "artifact": "tests/conformance/proof_binder_validation.v1.json",
+          "field": "obligation.valid",
+          "obligation_id": "PO-03",
+          "expected_value": true,
+          "rationale": "Binder validation must report PO-03 as valid before any DONE advancement."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-8c76410adba7",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "barrier invariance",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 238
+      },
+      "claim_target": "barrier-certificate proof artifacts + runtime checks",
+      "claimed_status": "PLANNED",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/proof_obligations_binder.v1.json",
+          "field": "obligation.statement",
+          "obligation_id": "PO-07",
+          "expected_value_contains": "Barrier Invariance Theorem",
+          "rationale": "Barrier invariance must remain a tracked proof obligation."
+        },
+        {
+          "artifact": "tests/conformance/proof_binder_validation.v1.json",
+          "field": "obligation.valid",
+          "obligation_id": "PO-07",
+          "expected_value": true,
+          "rationale": "Binder validation must report PO-07 as valid before any DONE advancement."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-2a49b40113a6",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "robust-radius guarantee",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 239
+      },
+      "claim_target": "Wasserstein robustness reports + constraint audits",
+      "claimed_status": "PLANNED",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/proof_obligations_binder.v1.json",
+          "field": "obligation.statement",
+          "obligation_id": "PO-08",
+          "expected_value_contains": "Robustness Radius Theorem",
+          "rationale": "Robustness radius must remain a tracked proof obligation."
+        },
+        {
+          "artifact": "tests/conformance/proof_binder_validation.v1.json",
+          "field": "obligation.valid",
+          "obligation_id": "PO-08",
+          "expected_value": true,
+          "rationale": "Binder validation must report PO-08 as valid before any DONE advancement."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-f4c99678233a",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "secure-mode noninterference",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 262
+      },
+      "claim_target": "relational proof notes + leak-budget test reports",
+      "claimed_status": "PLANNED",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/proof_binder_validation.v1.json",
+          "field": "binder_valid",
+          "expected_value": true,
+          "rationale": "Without a dedicated noninterference obligation row in the binder yet, the gate at minimum requires the global binder validation to remain green so a future PO can land without contradicting existing evidence."
+        },
+        {
+          "artifact": "tests/conformance/mode_contract_lock.v1.json",
+          "field": "env_contract.mutability",
+          "expected_value": "process-immutable after first resolution",
+          "rationale": "Noninterference proof depends on mode immutability post-resolution; the mode contract lock must enforce this."
+        },
+        {
+          "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
+          "field": "self.status",
+          "expected_value": "PLANNED",
+          "rationale": "Until a dedicated PO row is captured, the ledger gap must remain PLANNED so the row cannot be claimed DONE by tracker closure alone."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-498e3ada4658",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "conformal decision validity",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 263
+      },
+      "claim_target": "coverage/risk-control reports + calibration replay logs",
+      "claimed_status": "PLANNED",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/proof_binder_validation.v1.json",
+          "field": "binder_valid",
+          "expected_value": true,
+          "rationale": "Conformal validity is currently captured at the binder envelope level; the global binder validation must remain green before any DONE advancement."
+        },
+        {
+          "artifact": "tests/conformance/proof_binder_validation.v1.json",
+          "field": "total_violations",
+          "expected_value": 0,
+          "rationale": "Outstanding binder violations imply unresolved coverage/risk obligations and block conformal validity claim advancement."
+        },
+        {
+          "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
+          "field": "self.status",
+          "expected_value": "PLANNED",
+          "rationale": "Until a dedicated PO row is captured, the ledger gap must remain PLANNED so the row cannot be claimed DONE by tracker closure alone."
+        }
+      ]
+    }
+  ]
+}
