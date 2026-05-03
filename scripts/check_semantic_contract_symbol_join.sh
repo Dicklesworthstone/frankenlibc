@@ -20,6 +20,7 @@ mkdir -p "${OUT_DIR}"
 
 python3 - "${ROOT}" "${ARTIFACT}" "${INVENTORY}" "${SUPPORT_MATRIX}" "${VERSION_SCRIPT}" "${ABI_SRC}" "${REPORT}" "${LOG}" <<'PY'
 import json
+import hashlib
 import re
 import subprocess
 import sys
@@ -52,6 +53,96 @@ def load_json(path, label):
         errors.append(f"{label}: failed to parse {path}: {exc}")
         return None
 
+def file_sha256(path):
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception:
+        return None
+
+def parse_version_script(text):
+    version_nodes_by_symbol = {}
+    current_node = None
+    in_global = False
+    for raw_line in text.splitlines():
+        line = re.sub(r"/\*.*?\*/", "", raw_line).strip()
+        if not line:
+            continue
+        node_match = re.match(r"^([A-Za-z_][A-Za-z0-9_.]*)\s*\{", line)
+        if node_match:
+            current_node = node_match.group(1)
+            in_global = False
+            continue
+        if current_node and line.startswith("global:"):
+            in_global = True
+            continue
+        if current_node and line.startswith("local:"):
+            in_global = False
+            continue
+        if current_node and line.startswith("};"):
+            current_node = None
+            in_global = False
+            continue
+        if current_node and in_global:
+            symbol_match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*;", line)
+            if symbol_match:
+                version_nodes_by_symbol.setdefault(symbol_match.group(1), []).append(
+                    current_node
+                )
+    return {symbol: sorted(set(nodes)) for symbol, nodes in version_nodes_by_symbol.items()}
+
+def join_schema_fields(schema):
+    fields = set()
+    if not isinstance(schema, dict):
+        return fields
+    for value in schema.values():
+        if isinstance(value, list):
+            fields.update(str(item) for item in value)
+    return fields
+
+def namespace_header_for(row):
+    haystack = " ".join(
+        str(row.get(key, ""))
+        for key in ("module", "surface", "source_path", "contract_kind")
+    ).lower()
+    if "pthread" in haystack:
+        return "pthread.h"
+    if "stdio" in haystack or "obstack" in haystack or "libio" in haystack:
+        return "stdio.h/libio"
+    if "nss" in haystack:
+        return "nss/glibc-private"
+    if "gconv" in haystack or "iconv" in haystack:
+        return "iconv.h/glibc-private"
+    if "nis" in haystack or "yellow pages" in haystack or "xdr" in haystack:
+        return "rpcsvc/yp_prot.h"
+    if "resolver" in haystack or "getaddrinfo" in haystack:
+        return "netdb.h"
+    if "c++" in haystack or "__cxa" in haystack:
+        return "cxxabi/glibc-compat"
+    if "elf" in haystack or "relocation" in haystack:
+        return "elf/internal"
+    return "glibc-internal"
+
+def abi_family_for(row):
+    module = str(row.get("module", ""))
+    if "::" in module:
+        return module.split("::")[-1]
+    source_path = str(row.get("source_path", ""))
+    if source_path:
+        return Path(source_path).stem
+    return "semantic_contract"
+
+def exact_join_decision(symbol, missing_source, missing_support, missing_version):
+    missing = []
+    if symbol in missing_source:
+        missing.append("source_export")
+    if symbol in missing_support:
+        missing.append("support_matrix")
+    if symbol in missing_version:
+        missing.append("version_script")
+    if not missing:
+        return "joined_exact"
+    return "joined_with_missing_" + "_and_".join(missing)
+
 artifact = load_json(artifact_path, "artifact")
 inventory = load_json(inventory_path, "inventory")
 support = load_json(support_matrix_path, "support_matrix")
@@ -66,6 +157,30 @@ if artifact and artifact.get("schema_version") == "v1" and artifact.get("bead") 
 else:
     checks["artifact_shape"] = "fail"
     errors.append("artifact must declare schema_version=v1 and bead=bd-bp8fl.1.2")
+
+required_join_fields = {
+    "symbol",
+    "version_node",
+    "namespace_header",
+    "abi_family",
+    "support_status",
+    "semantic_contract",
+    "semantic_parity_status",
+    "oracle_kind",
+    "replacement_level",
+    "source_artifact",
+    "freshness_metadata",
+    "artifact_refs",
+    "join_decision",
+    "failure_signature",
+}
+declared_join_fields = join_schema_fields(artifact.get("join_schema", {}) if artifact else {})
+if required_join_fields <= declared_join_fields:
+    checks["join_schema_declared"] = "pass"
+else:
+    checks["join_schema_declared"] = "fail"
+    missing = sorted(required_join_fields - declared_join_fields)
+    errors.append(f"join_schema missing required fields: {missing}")
 
 entries = inventory.get("entries", []) if isinstance(inventory, dict) else []
 rows = artifact.get("entries", []) if isinstance(artifact, dict) else []
@@ -92,12 +207,20 @@ else:
 
 try:
     version_text = version_script_path.read_text(encoding="utf-8")
-    version_symbols = set(re.findall(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*;", version_text, re.M))
+    version_nodes_by_symbol = parse_version_script(version_text)
+    version_symbols = set(version_nodes_by_symbol)
     checks["version_script_read"] = "pass"
 except Exception as exc:
+    version_nodes_by_symbol = {}
     version_symbols = set()
     checks["version_script_read"] = "fail"
     errors.append(f"failed to read version script {version_script_path}: {exc}")
+
+if version_nodes_by_symbol:
+    checks["version_node_map_loaded"] = "pass"
+else:
+    checks["version_node_map_loaded"] = "fail"
+    errors.append("version script did not yield any version-node symbol mappings")
 
 support_rows = support.get("symbols", []) if isinstance(support, dict) else []
 support_by_symbol = {
@@ -184,7 +307,25 @@ wildcard_counts = {
     "version_script": 0,
 }
 
+artifact_refs = [
+    rel(artifact_path),
+    rel(inventory_path),
+    rel(support_matrix_path),
+    rel(version_script_path),
+]
 row_join_summaries = []
+resolved_symbol_join_rows = []
+exact_symbol_metadata = {}
+conflicting_exact_symbols = []
+artifact_freshness = {
+    "generated_at_utc": artifact.get("generated_at_utc") if isinstance(artifact, dict) else None,
+    "inventory_generated_at_utc": inventory.get("generated_at_utc") if isinstance(inventory, dict) else None,
+    "input_sha256": {
+        rel(inventory_path): file_sha256(inventory_path),
+        rel(support_matrix_path): file_sha256(support_matrix_path),
+        rel(version_script_path): file_sha256(version_script_path),
+    },
+}
 for inventory_row in entries:
     row_id = inventory_row.get("id")
     artifact_row = row_by_id.get(row_id)
@@ -255,6 +396,87 @@ for inventory_row in entries:
             f"{sorted(present_statuses)}"
         )
 
+    namespace_header = namespace_header_for(inventory_row)
+    abi_family = abi_family_for(inventory_row)
+    semantic_contract = inventory_row.get("contract_kind") or inventory_row.get("semantic_class")
+    source_artifact = inventory_row.get("source_path")
+    source_path_hash = file_sha256(root / str(source_artifact or ""))
+    row_freshness = {
+        "artifact_generated_at_utc": artifact_freshness["generated_at_utc"],
+        "inventory_generated_at_utc": artifact_freshness["inventory_generated_at_utc"],
+        "source_sha256": source_path_hash,
+    }
+
+    if not symbols:
+        resolved_symbol_join_rows.append(
+            {
+                "inventory_id": row_id,
+                "symbol": "<subsystem-contract>",
+                "symbol_ref_kind": "not_symbol_level",
+                "version_node": "not_symbol_level",
+                "namespace_header": namespace_header,
+                "abi_family": abi_family,
+                "support_status": inventory_row.get("support_matrix_status"),
+                "semantic_contract": semantic_contract,
+                "semantic_parity_status": artifact_row.get("semantic_parity_status"),
+                "oracle_kind": "support_matrix_version_script_abi_source_join",
+                "replacement_level": "L0_interpose_and_L1_planning",
+                "source_artifact": source_artifact,
+                "freshness_metadata": row_freshness,
+                "artifact_refs": artifact_refs,
+                "join_decision": "joined_subsystem_contract",
+                "failure_signature": "",
+            }
+        )
+
+    for symbol in exact_symbols:
+        metadata = (
+            inventory_row.get("semantic_class"),
+            inventory_row.get("support_matrix_status"),
+            artifact_row.get("semantic_parity_status"),
+        )
+        previous = exact_symbol_metadata.get(symbol)
+        if previous and previous != metadata:
+            conflicting_exact_symbols.append(symbol)
+            errors.append(
+                f"{row_id}: exact symbol {symbol} has conflicting semantic join metadata"
+            )
+        else:
+            exact_symbol_metadata[symbol] = metadata
+
+        nodes = version_nodes_by_symbol.get(symbol, ["missing_version_script"])
+        support_row = support_by_symbol.get(symbol, {})
+        for version_node in nodes:
+            decision = exact_join_decision(
+                symbol, missing_source, missing_support, missing_version
+            )
+            resolved_symbol_join_rows.append(
+                {
+                    "inventory_id": row_id,
+                    "symbol": symbol,
+                    "symbol_ref_kind": "exact",
+                    "version_node": version_node,
+                    "namespace_header": namespace_header,
+                    "abi_family": support_row.get("module") or abi_family,
+                    "support_status": support_row.get("status")
+                    or inventory_row.get("support_matrix_status"),
+                    "semantic_contract": semantic_contract,
+                    "semantic_parity_status": artifact_row.get("semantic_parity_status"),
+                    "oracle_kind": "support_matrix_version_script_abi_source_join",
+                    "replacement_level": "L0_interpose_and_L1_planning",
+                    "source_artifact": source_artifact,
+                    "freshness_metadata": row_freshness,
+                    "artifact_refs": [
+                        rel(artifact_path),
+                        rel(inventory_path),
+                        rel(support_matrix_path),
+                        rel(version_script_path),
+                    ],
+                    "join_decision": decision,
+                    "failure_signature": "" if decision == "joined_exact" else decision,
+                }
+            )
+
     expected_patterns = artifact_row.get("expected_pattern_expansion_counts", {})
     if not isinstance(expected_patterns, dict):
         errors.append(f"{row_id}: expected_pattern_expansion_counts must be object")
@@ -280,6 +502,32 @@ for inventory_row in entries:
             errors.append(f"{row_id}: wildcard {pattern} stale; expected {counts}")
         if counts["source"] == 0:
             errors.append(f"{row_id}: wildcard {pattern} has no ABI source expansion")
+        resolved_symbol_join_rows.append(
+            {
+                "inventory_id": row_id,
+                "symbol": pattern,
+                "symbol_ref_kind": "wildcard",
+                "version_node": "pattern_expansion",
+                "namespace_header": namespace_header,
+                "abi_family": abi_family,
+                "support_status": inventory_row.get("support_matrix_status"),
+                "semantic_contract": semantic_contract,
+                "semantic_parity_status": artifact_row.get("semantic_parity_status"),
+                "oracle_kind": "support_matrix_version_script_abi_source_join",
+                "replacement_level": "L0_interpose_and_L1_planning",
+                "source_artifact": source_artifact,
+                "freshness_metadata": row_freshness,
+                "artifact_refs": [
+                    rel(artifact_path),
+                    rel(inventory_path),
+                    rel(support_matrix_path),
+                    rel(version_script_path),
+                ],
+                "join_decision": "wildcard_expansion_accounted",
+                "failure_signature": "",
+                "pattern_expansion_counts": counts,
+            }
+        )
 
     row_join_summaries.append(
         {
@@ -303,6 +551,8 @@ summary_actual.update(
         "wildcard_source_expansion_count": wildcard_counts["source"],
         "wildcard_support_matrix_expansion_count": wildcard_counts["support_matrix"],
         "wildcard_version_script_expansion_count": wildcard_counts["version_script"],
+        "resolved_symbol_join_row_count": len(resolved_symbol_join_rows),
+        "conflicting_exact_symbol_join_count": len(set(conflicting_exact_symbols)),
     }
 )
 
@@ -338,6 +588,16 @@ if len(total_missing_support) == summary_actual["support_matrix_missing_exact_sy
 else:
     checks["support_matrix_missing_symbols_are_accounted"] = "fail"
 
+if summary_actual["resolved_symbol_join_row_count"] >= summary_actual["symbol_reference_count"]:
+    checks["resolved_join_rows_complete"] = "pass"
+else:
+    checks["resolved_join_rows_complete"] = "fail"
+
+if summary_actual["conflicting_exact_symbol_join_count"] == 0:
+    checks["conflicting_symbol_rows"] = "pass"
+else:
+    checks["conflicting_symbol_rows"] = "fail"
+
 try:
     source_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],
@@ -349,19 +609,16 @@ except Exception:
     source_commit = "unknown"
 
 status = "pass" if not errors else "fail"
-artifact_refs = [
-    rel(artifact_path),
-    rel(inventory_path),
-    rel(support_matrix_path),
-    rel(version_script_path),
-]
 report = {
     "schema_version": "v1",
     "bead": "bd-bp8fl.1.2",
     "status": status,
     "checks": checks,
+    "join_schema": artifact.get("join_schema", {}) if isinstance(artifact, dict) else {},
+    "freshness_metadata": artifact_freshness,
     "summary": summary_actual,
     "row_join_summaries": row_join_summaries,
+    "resolved_symbol_join_rows": resolved_symbol_join_rows,
     "errors": errors,
     "artifact_refs": artifact_refs,
     "source_commit": source_commit,

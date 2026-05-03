@@ -10,6 +10,28 @@
     "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
     "abi_source_root": "crates/frankenlibc-abi/src"
   },
+  "join_schema": {
+    "key_fields": [
+      "symbol",
+      "version_node",
+      "namespace_header",
+      "abi_family"
+    ],
+    "status_fields": [
+      "support_status",
+      "semantic_contract",
+      "semantic_parity_status",
+      "oracle_kind",
+      "replacement_level"
+    ],
+    "evidence_fields": [
+      "source_artifact",
+      "freshness_metadata",
+      "artifact_refs",
+      "join_decision",
+      "failure_signature"
+    ]
+  },
   "claim_policy": {
     "support_taxonomy_is_not_semantic_parity": true,
     "implemented_status_may_still_have_semantic_blockers": true,
@@ -31,6 +53,8 @@
     "wildcard_source_expansion_count": 69,
     "wildcard_support_matrix_expansion_count": 0,
     "wildcard_version_script_expansion_count": 0,
+    "resolved_symbol_join_row_count": 82,
+    "conflicting_exact_symbol_join_count": 0,
     "semantic_parity_blocker_count": 17,
     "rows_where_taxonomy_status_is_not_parity": 17,
     "by_taxonomy_status": {

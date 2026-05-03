@@ -59,10 +59,48 @@ fn artifact_preserves_inventory_rows_and_blocks_claim_promotion() {
         Some(true)
     );
     assert_eq!(
-        artifact["claim_policy"]["full_replacement_claim_requires_all_rows_semantic_parity_status_full"]
+        artifact["claim_policy"]
+            ["full_replacement_claim_requires_all_rows_semantic_parity_status_full"]
             .as_bool(),
         Some(true)
     );
+    let join_schema = artifact["join_schema"]
+        .as_object()
+        .expect("artifact must declare join_schema");
+    for (section, expected_fields) in [
+        (
+            "key_fields",
+            vec!["symbol", "version_node", "namespace_header", "abi_family"],
+        ),
+        (
+            "status_fields",
+            vec![
+                "support_status",
+                "semantic_contract",
+                "semantic_parity_status",
+                "oracle_kind",
+                "replacement_level",
+            ],
+        ),
+        (
+            "evidence_fields",
+            vec![
+                "source_artifact",
+                "freshness_metadata",
+                "artifact_refs",
+                "join_decision",
+                "failure_signature",
+            ],
+        ),
+    ] {
+        let fields: Vec<_> = join_schema[section]
+            .as_array()
+            .expect("join_schema sections must be arrays")
+            .iter()
+            .map(|value| value.as_str().expect("join_schema field names"))
+            .collect();
+        assert_eq!(fields, expected_fields, "join_schema.{section}");
+    }
 
     let rows = artifact["entries"]
         .as_array()
@@ -185,8 +223,10 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
     for check in [
         "json_parse",
         "artifact_shape",
+        "join_schema_declared",
         "inventory_row_coverage",
         "version_script_read",
+        "version_node_map_loaded",
         "support_matrix_symbols_loaded",
         "abi_source_symbols_loaded",
         "summary_matches_current_join",
@@ -194,6 +234,8 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "row_join_expectations",
         "source_exports_cover_exact_symbols",
         "support_matrix_missing_symbols_are_accounted",
+        "resolved_join_rows_complete",
+        "conflicting_symbol_rows",
     ] {
         assert_eq!(
             report["checks"][check].as_str(),
@@ -214,6 +256,33 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         report["summary"]["source_missing_exact_symbol_count"].as_u64(),
         Some(0)
     );
+    assert_eq!(
+        report["summary"]["resolved_symbol_join_row_count"].as_u64(),
+        Some(82)
+    );
+    assert_eq!(
+        report["summary"]["conflicting_exact_symbol_join_count"].as_u64(),
+        Some(0)
+    );
+
+    let resolved_rows = report["resolved_symbol_join_rows"]
+        .as_array()
+        .expect("report must include resolved per-symbol join rows");
+    let pthread_row = resolved_rows
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("__pthread_register_cancel"))
+        .expect("resolved rows must include exact pthread cancellation symbol");
+    assert_eq!(pthread_row["version_node"].as_str(), Some("GLIBC_2.2.5"));
+    assert_eq!(pthread_row["namespace_header"].as_str(), Some("pthread.h"));
+    assert_eq!(
+        pthread_row["oracle_kind"].as_str(),
+        Some("support_matrix_version_script_abi_source_join")
+    );
+    assert_eq!(
+        pthread_row["replacement_level"].as_str(),
+        Some("L0_interpose_and_L1_planning")
+    );
+    assert_eq!(pthread_row["join_decision"].as_str(), Some("joined_exact"));
 
     let report_path = root.join("target/conformance/semantic_contract_symbol_join.report.json");
     let log_path = root.join("target/conformance/semantic_contract_symbol_join.log.jsonl");
@@ -249,6 +318,44 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
     ] {
         assert!(event.get(key).is_some(), "structured log row missing {key}");
     }
+}
+
+#[test]
+fn alternate_version_script_nodes_are_reflected_in_resolved_rows() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_semantic_contract_symbol_join.sh");
+    let canonical_version_script = root.join("crates/frankenlibc-abi/version_scripts/libc.map");
+    let mutated_version_script = unique_temp_path("semantic-contract-version-script.map");
+    let text = std::fs::read_to_string(&canonical_version_script)
+        .expect("canonical version script should be readable");
+    let mutated = text.replacen("GLIBC_2.2.5 {", "GLIBC_JOIN_TEST_1.0 {", 1);
+    std::fs::write(&mutated_version_script, mutated)
+        .expect("failed to write mutated version script");
+
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .env("FLC_SEMANTIC_JOIN_VERSION_SCRIPT", &mutated_version_script)
+        .output()
+        .expect("failed to run semantic contract symbol-join gate with version node fixture");
+    assert!(
+        output.status.success(),
+        "version-node fixture should preserve joins while changing node labels:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = parse_stdout_report(&output);
+    let resolved_rows = report["resolved_symbol_join_rows"]
+        .as_array()
+        .expect("report must include resolved per-symbol join rows");
+    let pthread_row = resolved_rows
+        .iter()
+        .find(|row| row["symbol"].as_str() == Some("__pthread_register_cancel"))
+        .expect("resolved rows must include exact pthread cancellation symbol");
+    assert_eq!(
+        pthread_row["version_node"].as_str(),
+        Some("GLIBC_JOIN_TEST_1.0")
+    );
 }
 
 #[test]
