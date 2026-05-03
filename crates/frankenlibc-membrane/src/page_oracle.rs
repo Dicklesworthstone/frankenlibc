@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::bravo::BravoRwLock;
 
@@ -21,11 +21,20 @@ const PAGE_SIZE: usize = 4096;
 
 /// Number of pages per L2 bitmap (512 bytes * 8 bits = 4096 pages = 16MB).
 const PAGES_PER_L2: usize = 4096;
+/// Lock-free approximate filter over L1 chunks.
+///
+/// Each bit means "some chunk hashing here has had an L2 bitmap published."
+/// The filter is monotone: removals never clear bits, so it can only produce
+/// false positives. A zero bit is enough to skip the read-side map lock.
+const L1_FILTER_WORDS: usize = 1024;
+const L1_FILTER_BITS: usize = L1_FILTER_WORDS * u64::BITS as usize;
 
 /// Two-level page ownership bitmap.
 pub struct PageOracle {
     /// L2 bitmaps keyed by L1 index (chunk number).
     l2_maps: BravoRwLock<HashMap<usize, Arc<L2Bitmap>>>,
+    /// Approximate lock-free L1 presence filter for fast negative queries.
+    l1_presence_filter: Box<[AtomicU64; L1_FILTER_WORDS]>,
     /// Number of pages currently marked owned across all L2 bitmaps.
     owned_pages: AtomicUsize,
 }
@@ -79,6 +88,7 @@ impl PageOracle {
     pub fn new() -> Self {
         Self {
             l2_maps: BravoRwLock::new(HashMap::new()),
+            l1_presence_filter: std::array::from_fn(|_| AtomicU64::new(0)).into(),
             owned_pages: AtomicUsize::new(0),
         }
     }
@@ -99,8 +109,13 @@ impl PageOracle {
         let start_page = base / PAGE_SIZE;
         let end_page = (base + size - 1) / PAGE_SIZE;
 
+        let mut last_marked_l1 = None;
         for page in start_page..=end_page {
             let (l1_idx, l2_page) = Self::decompose(page);
+            if last_marked_l1 != Some(l1_idx) {
+                self.mark_l1_chunk_maybe_present(l1_idx);
+                last_marked_l1 = Some(l1_idx);
+            }
 
             // Fast path: check if L2 already exists
             {
@@ -130,8 +145,15 @@ impl PageOracle {
     /// No false negatives: if we inserted it, we'll find it.
     #[must_use]
     pub fn query(&self, addr: usize) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+
         let page = addr / PAGE_SIZE;
         let (l1_idx, l2_page) = Self::decompose(page);
+        if !self.l1_chunk_may_be_present(l1_idx) {
+            return false;
+        }
 
         let maps = self.l2_maps.read();
         maps.get(&l1_idx).is_some_and(|bitmap| bitmap.get(l2_page))
@@ -162,6 +184,33 @@ impl PageOracle {
         let l1_idx = page / PAGES_PER_L2;
         let l2_page = page % PAGES_PER_L2;
         (l1_idx, l2_page)
+    }
+
+    fn mark_l1_chunk_maybe_present(&self, l1_idx: usize) {
+        let (word, mask) = Self::l1_filter_word_and_mask(l1_idx);
+        self.l1_presence_filter[word].fetch_or(mask, Ordering::Release);
+    }
+
+    fn l1_chunk_may_be_present(&self, l1_idx: usize) -> bool {
+        let (word, mask) = Self::l1_filter_word_and_mask(l1_idx);
+        self.l1_presence_filter[word].load(Ordering::Acquire) & mask != 0
+    }
+
+    fn l1_filter_word_and_mask(l1_idx: usize) -> (usize, u64) {
+        let bit = Self::mix_l1_index(l1_idx) & (L1_FILTER_BITS - 1);
+        (
+            bit / u64::BITS as usize,
+            1_u64 << (bit % u64::BITS as usize),
+        )
+    }
+
+    fn mix_l1_index(value: usize) -> usize {
+        let mut value = value as u64;
+        value ^= value >> 33;
+        value = value.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        value ^= value >> 33;
+        value = value.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        (value ^ (value >> 33)) as usize
     }
 }
 
@@ -233,5 +282,19 @@ mod tests {
         let oracle = PageOracle::new();
         assert!(!oracle.query(0x1000));
         assert!(!oracle.query(0xDEAD_BEEF));
+    }
+
+    #[test]
+    fn l1_presence_filter_is_monotone() {
+        let oracle = PageOracle::new();
+        let base = 0x4000_0000;
+        let (l1_idx, _) = PageOracle::decompose(base / PAGE_SIZE);
+
+        assert!(!oracle.l1_chunk_may_be_present(l1_idx));
+        oracle.insert(base, 4096);
+        assert!(oracle.l1_chunk_may_be_present(l1_idx));
+        oracle.remove(base, 4096);
+        assert!(oracle.l1_chunk_may_be_present(l1_idx));
+        assert!(!oracle.query(base));
     }
 }

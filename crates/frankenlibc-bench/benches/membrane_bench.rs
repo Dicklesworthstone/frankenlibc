@@ -13,6 +13,7 @@ use frankenlibc_membrane::bloom::PointerBloomFilter;
 use frankenlibc_membrane::config::safety_level;
 use frankenlibc_membrane::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use frankenlibc_membrane::lattice::SafetyState;
+use frankenlibc_membrane::page_oracle::PageOracle;
 use frankenlibc_membrane::ptr_validator::ValidationPipeline;
 use frankenlibc_membrane::tls_cache::{CachedValidation, TlsValidationCache};
 
@@ -221,6 +222,32 @@ fn bench_membrane(c: &mut Criterion) {
         arena.free(res.ptr);
     }
 
+    // stage_page_oracle_foreign_nonempty
+    {
+        let oracle = PageOracle::new();
+        oracle.insert(0x1000_0000, 4096);
+        let addr = 0xDEAD_BEEF_0000usize;
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_function(
+            BenchmarkId::new("stage_page_oracle_foreign_nonempty", mode_label),
+            |b| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(oracle.query(addr));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        stats
+            .borrow()
+            .report(mode_label, "stage_page_oracle_foreign_nonempty");
+    }
+
     // stage_fingerprint_verify
     {
         let arena = AllocationArena::new();
@@ -368,6 +395,38 @@ fn bench_membrane(c: &mut Criterion) {
             });
         });
         stats.borrow().report(mode_label, "validate_foreign");
+    }
+
+    // validate_foreign_nonempty_oracle
+    {
+        let pipeline = ValidationPipeline::new();
+        let res = pipeline.arena.allocate(256).expect("alloc");
+        pipeline.register_allocation(res.ptr as usize, res.raw_base, res.total_size);
+        let addr = 0xDEAD_BEEF_0000usize;
+        for _ in 0..10_000 {
+            black_box(pipeline.validate(addr));
+        }
+
+        let stats = RefCell::new(BenchStats::default());
+        group.bench_function(
+            BenchmarkId::new("validate_foreign_nonempty_oracle", mode_label),
+            |b| {
+                b.iter_custom(|iters| {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        black_box(pipeline.validate(addr));
+                    }
+                    let dur = start.elapsed().max(Duration::from_nanos(1));
+                    stats.borrow_mut().record(iters, dur);
+                    dur
+                });
+            },
+        );
+        stats
+            .borrow()
+            .report(mode_label, "validate_foreign_nonempty_oracle");
+
+        pipeline.arena.free(res.ptr);
     }
 
     // validate_known
