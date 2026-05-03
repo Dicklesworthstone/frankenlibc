@@ -1,0 +1,260 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fpg-online-control-gate",
+  "bead": "bd-bp8fl.3.9",
+  "owner_family_group": "fpg-proof-online-control",
+  "evidence_owner": "runtime_math controller owners",
+  "generated_utc": "2026-05-03T21:49:55Z",
+  "source_commit": "feee325456d39b89c6974984f0c3f97e75fde3af",
+  "purpose": "Fail-closed gate for the thirteen online controller, decision, and risk proof rows in FEATURE_PARITY.md. Runtime controller claims may remain PLANNED or IN_PROGRESS, but they cannot advance to DONE or replacement level L1/L2/L3 without deterministic calibration/replay evidence, latency/risk budget policy, current runtime-math source anchors, and missing-proof rejection.",
+  "inputs": {
+    "feature_parity": "FEATURE_PARITY.md",
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "runtime_env_inventory": "tests/conformance/runtime_env_inventory.v1.json",
+    "perf_budget_policy": "tests/conformance/perf_budget_policy.json",
+    "anytime_valid_monitor_spec": "tests/conformance/anytime_valid_monitor_spec.json",
+    "optimization_proof_ledger": "tests/conformance/optimization_proof_ledger.v1.json",
+    "risk_pareto_calibration": "tests/runtime_math/risk_pareto_calibration.v1.json",
+    "runtime_math_linkage": "tests/runtime_math/runtime_math_linkage.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "gap_id",
+    "section",
+    "feature_parity_line",
+    "controller_surface",
+    "expected",
+    "actual",
+    "evidence_artifact",
+    "evidence_anchor",
+    "evidence_verdict",
+    "replacement_level",
+    "claim_decision",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_done_until_online_control_evidence_current",
+    "allow_status_without_full_closure": ["PLANNED", "IN_PROGRESS"],
+    "block_status_without_all_anchors": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "missing_or_stale_result": "claim_blocked",
+    "fail_closed_message": "Online-control proof rows cannot advertise DONE or advance beyond L0 unless deterministic replay, budget, runtime-source, and proof-ledger anchors resolve."
+  },
+  "rows": [
+    {
+      "gap_id": "fp-proof-math-df8f42355e99",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "sequential regression control",
+      "controller_surface": "eprocess_sequential_regression",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 232, "line_contains": "sequential regression control"},
+      "claim_target": "Sequential regression control remains tied to anytime-valid monitor and calibration evidence.",
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs", "kind": "path_exists", "rationale": "Sequential e-process controller source must exist."},
+        {"artifact": "tests/conformance/anytime_valid_monitor_spec.json", "kind": "json_field_min", "field": "summary.eprocess_parameters", "expected_value_min": 1, "rationale": "Anytime-valid e-process policy must enumerate parameters."},
+        {"artifact": "tests/runtime_math/risk_pareto_calibration.v1.json", "kind": "json_field_min", "field": "strict.action_summary.decisions", "expected_value_min": 1, "rationale": "Strict-mode replay must include decisions."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-6d3837dc2cdd",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "drift detection reliability",
+      "controller_surface": "changepoint_drift_detection",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 233, "line_contains": "drift detection reliability"},
+      "claim_target": "Drift detection reliability remains tied to change-point source and runtime environment inventory.",
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/changepoint.rs", "kind": "path_exists", "rationale": "Change-point controller source must exist."},
+        {"artifact": "tests/conformance/runtime_env_inventory.v1.json", "kind": "json_field_equals", "field": "summary.unknown_or_ambiguous_count", "expected_value": 0, "rationale": "Drift replay cannot depend on ambiguous runtime environment keys."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-1a1ed91c6ee8",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "CPOMDP admissibility",
+      "controller_surface": "cpomdp_admissibility",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 234, "line_contains": "CPOMDP admissibility"},
+      "claim_target": "CPOMDP admissibility remains tied to repair-policy source and hardened-mode replay.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/pomdp_repair.rs", "kind": "path_exists", "rationale": "CPOMDP repair controller source must exist."},
+        {"artifact": "tests/runtime_math/risk_pareto_calibration.v1.json", "kind": "json_field_min", "field": "hardened.action_summary.decisions", "expected_value_min": 1, "rationale": "Hardened-mode replay must include decisions."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-5a7ebb15c2f5",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "CHC/CEGAR convergence",
+      "controller_surface": "cegar_missing_proof_rejection",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 235, "line_contains": "CHC/CEGAR convergence"},
+      "claim_target": "CHC/CEGAR convergence remains blocked until proof-ledger evidence is present.",
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/optimization_proof_ledger.v1.json", "kind": "json_field_min", "field": "summary.total_candidates", "expected_value_min": 1, "rationale": "Missing-proof rejection requires a populated proof ledger."},
+        {"artifact": "tests/conformance/optimization_proof_ledger.v1.json", "kind": "json_field_equals", "field": "summary.waived", "expected_value": 0, "rationale": "Proof gaps cannot be waived silently."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-b9be3da6001d",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "tail-risk control",
+      "controller_surface": "cvar_tail_risk",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 237, "line_contains": "tail-risk control"},
+      "claim_target": "Tail-risk control remains tied to CVaR source and performance budget policy.",
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/cvar.rs", "kind": "path_exists", "rationale": "CVaR controller source must exist."},
+        {"artifact": "tests/conformance/perf_budget_policy.json", "kind": "json_object_min", "field": "budgets", "expected_value_min": 1, "rationale": "Tail-risk claims require current budget policy rows."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-eb51f3bf762d",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "HJI viability",
+      "controller_surface": "hji_viability",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 241, "line_contains": "HJI viability"},
+      "claim_target": "HJI viability remains tied to HJI source and runtime linkage evidence.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/hji_reachability.rs", "kind": "path_exists", "rationale": "HJI reachability source must exist."},
+        {"artifact": "tests/runtime_math/runtime_math_linkage.v1.json", "kind": "json_object_min", "field": "modules", "expected_value_min": 1, "rationale": "Runtime-math linkage map must be non-empty."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-96c6e9c65324",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "mean-field stability",
+      "controller_surface": "mean_field_stability",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 245, "line_contains": "mean-field stability"},
+      "claim_target": "Mean-field stability remains tied to contention source and hardened replay evidence.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/mean_field_game.rs", "kind": "path_exists", "rationale": "Mean-field game source must exist."},
+        {"artifact": "tests/runtime_math/risk_pareto_calibration.v1.json", "kind": "json_field_min", "field": "hardened.action_summary.action_full_validate", "expected_value_min": 1, "rationale": "Contention stability must be reflected in hardened full-validation replay."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-f929ecc9dcd6",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "entropic transition safety",
+      "controller_surface": "schrodinger_bridge_transition",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 246, "line_contains": "entropic transition safety"},
+      "claim_target": "Entropic transition safety remains tied to Schrodinger bridge source and replay evidence.",
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/schrodinger_bridge.rs", "kind": "path_exists", "rationale": "Schrodinger bridge transition controller source must exist."},
+        {"artifact": "tests/runtime_math/risk_pareto_calibration.v1.json", "kind": "json_field_min", "field": "strict.action_summary.action_full_validate", "expected_value_min": 1, "rationale": "Strict replay must include full-validation decisions."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-c215c413371b",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "online optimizer convergence",
+      "controller_surface": "control_admm_optimizer",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 252, "line_contains": "online optimizer convergence"},
+      "claim_target": "Online optimizer convergence remains tied to controller source and budget policy.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/control.rs", "kind": "path_exists", "rationale": "Primal-dual control source must exist."},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/admm_budget.rs", "kind": "path_exists", "rationale": "ADMM budget allocator source must exist."},
+        {"artifact": "tests/conformance/perf_budget_policy.json", "kind": "json_object_min", "field": "budgets", "expected_value_min": 1, "rationale": "Optimizer convergence claims must consume current budgets."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-050acfed5d6f",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "hybrid temporal reachability",
+      "controller_surface": "hybrid_reachability",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 255, "line_contains": "hybrid temporal reachability"},
+      "claim_target": "Hybrid temporal reachability remains tied to HJI source and runtime decision surfaces.",
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/hji_reachability.rs", "kind": "path_exists", "rationale": "Hybrid reachability source must exist."},
+        {"artifact": "tests/runtime_math/runtime_math_linkage.v1.json", "kind": "json_array_min", "field": "decision_surfaces", "expected_value_min": 1, "rationale": "Runtime decision surfaces must be listed."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-fa21b6b68812",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "Stackelberg cache-security equilibria",
+      "controller_surface": "approachability_equilibria",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 256, "line_contains": "Stackelberg cache-security equilibria"},
+      "claim_target": "Stackelberg cache-security equilibria remain tied to game/control source and budget policy.",
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/approachability.rs", "kind": "path_exists", "rationale": "Approachability controller source must exist."},
+        {"artifact": "tests/conformance/perf_budget_policy.json", "kind": "json_object_min", "field": "budgets", "expected_value_min": 1, "rationale": "Cache-security equilibrium claims must consume current budget rows."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-76ad47f58ff9",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "observability-rate optimality",
+      "controller_surface": "observability_probe_rate",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 257, "line_contains": "observability-rate optimality"},
+      "claim_target": "Observability-rate optimality remains tied to environment inventory and runtime linkage evidence.",
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/runtime_env_inventory.v1.json", "kind": "json_field_min", "field": "summary.keys_with_reads", "expected_value_min": 1, "rationale": "Observability claims require runtime environment read inventory."},
+        {"artifact": "tests/runtime_math/runtime_math_linkage.v1.json", "kind": "json_array_min", "field": "decision_surfaces", "expected_value_min": 1, "rationale": "Observability claims must remain tied to decision surfaces."}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-10bc920debc7",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "noncommutative contention stability",
+      "controller_surface": "contention_stability",
+      "feature_parity_provenance": {"path": "FEATURE_PARITY.md", "line": 266, "line_contains": "noncommutative contention stability"},
+      "claim_target": "Noncommutative contention stability remains tied to concentration/controller source and replay evidence.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.6",
+      "evidence_anchors": [
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/matrix_concentration.rs", "kind": "path_exists", "rationale": "Matrix concentration monitor source must exist."},
+        {"artifact": "tests/runtime_math/risk_pareto_calibration.v1.json", "kind": "json_field_min", "field": "hardened.action_summary.decisions", "expected_value_min": 1, "rationale": "Contention stability requires hardened replay evidence."}
+      ]
+    }
+  ]
+}
