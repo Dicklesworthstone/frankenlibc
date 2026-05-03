@@ -59,6 +59,8 @@ import os
 import re
 import subprocess
 import sys
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -68,10 +70,34 @@ report_path = Path(sys.argv[4])
 log_path = Path(sys.argv[5])
 
 bead_id = "bd-bp8fl.6.4"
-levels_path = root / "tests/conformance/replacement_levels.json"
-l1_matrix_path = root / "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
-standalone_matrix_path = root / "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+default_max_evidence_age_days = 180
 level_rank = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
+
+
+def artifact_path(env_name, default):
+    override = os.environ.get(env_name)
+    path = Path(override) if override else Path(default)
+    return path if path.is_absolute() else root / path
+
+
+levels_path = artifact_path(
+    "FRANKENLIBC_REPLACEMENT_LEVELS",
+    "tests/conformance/replacement_levels.json",
+)
+l1_matrix_path = artifact_path(
+    "FRANKENLIBC_L1_PROOF_MATRIX",
+    "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+)
+standalone_matrix_path = artifact_path(
+    "FRANKENLIBC_STANDALONE_PROOF_MATRIX",
+    "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+)
+support_matrix_path = artifact_path("FRANKENLIBC_SUPPORT_MATRIX", "support_matrix.json")
+compatibility_report_path = artifact_path(
+    "FRANKENLIBC_COMPATIBILITY_REPORT",
+    "tests/conformance/claim_reconciliation_report.v1.json",
+)
+readme_path = artifact_path("FRANKENLIBC_README", "README.md")
 
 
 def load_json(path):
@@ -135,7 +161,107 @@ def load_claims(levels):
 
 def cited(claim, artifact):
     refs = claim.get("artifact_refs", [])
-    return artifact in refs
+    return artifact in refs or str(root / artifact) in refs
+
+
+def parse_timestamp(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def generated_at(data):
+    for key in ("generated_at_utc", "generated_at", "source_generated_at_utc"):
+        parsed = parse_timestamp(data.get(key))
+        if parsed is not None:
+            return parsed
+    ground_truth = data.get("ground_truth")
+    if isinstance(ground_truth, dict):
+        parsed = parse_timestamp(ground_truth.get("generated_at"))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def stale_evidence_errors(data, label, max_age_days):
+    stamp = generated_at(data)
+    if stamp is None:
+        return []
+    now = datetime.now(timezone.utc)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    age_days = (now - stamp).total_seconds() / 86400
+    if age_days > max_age_days:
+        return [f"release_claim_stale_{label}_evidence"]
+    return []
+
+
+def support_matrix_counts(data):
+    counts = Counter()
+    if isinstance(data.get("counts"), dict):
+        for key, value in data["counts"].items():
+            normalized = {
+                "implemented": "Implemented",
+                "raw_syscall": "RawSyscall",
+                "wraps_host_libc": "WrapsHostLibc",
+                "glibc_call_through": "GlibcCallThrough",
+                "stub": "Stub",
+            }.get(str(key), str(key))
+            counts[normalized] += int(value)
+    for symbol in data.get("symbols", []):
+        status = symbol.get("status")
+        if status is not None:
+            counts[str(status)] += 1
+    return counts
+
+
+def support_matrix_errors(claim, level):
+    errors = []
+    support_ref = rel(support_matrix_path)
+    if not cited(claim, support_ref):
+        return ["release_claim_missing_support_matrix_evidence"]
+    matrix = load_json(support_matrix_path)
+    errors.extend(
+        stale_evidence_errors(matrix, "support_matrix", default_max_evidence_age_days)
+    )
+    counts = support_matrix_counts(matrix)
+    if counts.get("Stub", 0) > 0:
+        errors.append("release_claim_support_matrix_stubs_present")
+    if level in ("L2", "L3"):
+        host_bound = counts.get("WrapsHostLibc", 0) + counts.get("GlibcCallThrough", 0)
+        if host_bound > 0:
+            errors.append("release_claim_support_matrix_host_bound_symbols_present")
+    return errors
+
+
+def compatibility_report_errors(claim):
+    compatibility_ref = rel(compatibility_report_path)
+    if not cited(claim, compatibility_ref):
+        return ["release_claim_missing_compatibility_report_evidence"]
+    report = load_json(compatibility_report_path)
+    errors = stale_evidence_errors(
+        report, "compatibility_report", default_max_evidence_age_days
+    )
+    if report.get("status") != "pass":
+        errors.append("release_claim_compatibility_report_not_pass")
+    summary = report.get("summary", {})
+    if summary.get("critical", 0) != 0 or summary.get("errors", 0) != 0:
+        errors.append("release_claim_compatibility_report_findings_present")
+    return errors
+
+
+def readme_claim_errors(current_release_level):
+    if not readme_path.exists():
+        return ["release_claim_readme_missing"]
+    text = readme_path.read_text(encoding="utf-8")
+    matches = re.findall(r"Declared replacement level claim: \*\*(L[0-3])", text)
+    for level in matches:
+        if level_rank[level] > level_rank[current_release_level]:
+            return ["release_claim_readme_overclaims_current_release_level"]
+    return []
 
 
 def l1_evidence_errors(claim, current_level, current_release_level):
@@ -151,6 +277,8 @@ def l1_evidence_errors(claim, current_level, current_release_level):
     matrix = load_json(l1_matrix_path)
     policy = matrix.get("claim_policy", {})
     summary = matrix.get("summary", {})
+    max_age_days = int(policy.get("max_evidence_age_days", default_max_evidence_age_days))
+    errors.extend(stale_evidence_errors(matrix, "l1", max_age_days))
     if policy.get("current_claim_status") == "blocked":
         errors.append("release_claim_l1_policy_blocked")
     if summary.get("current_gate_status") != "pass":
@@ -173,6 +301,13 @@ def standalone_evidence_errors(claim, level, current_level, current_release_leve
     matrix = load_json(standalone_matrix_path)
     policy = matrix.get("claim_policy", {})
     summary = matrix.get("summary", {})
+    errors.extend(
+        stale_evidence_errors(
+            matrix,
+            level.lower(),
+            int(policy.get("max_evidence_age_days", default_max_evidence_age_days)),
+        )
+    )
     policy_key = f"{level.lower()}_current_claim_status"
     if policy.get(policy_key) == "blocked":
         errors.append(f"release_claim_{level.lower()}_policy_blocked")
@@ -200,7 +335,10 @@ for claim in claims:
     if claimed_level not in level_rank:
         failure_signatures.append("release_claim_level_unparseable")
     else:
+        failure_signatures.extend(readme_claim_errors(current_release_level))
         if level_rank[claimed_level] >= level_rank["L1"]:
+            failure_signatures.extend(support_matrix_errors(claim, claimed_level))
+            failure_signatures.extend(compatibility_report_errors(claim))
             failure_signatures.extend(
                 l1_evidence_errors(claim, current_level, current_release_level)
             )
@@ -219,7 +357,9 @@ for claim in claims:
 
     required_evidence = [rel(levels_path)]
     if claimed_level in ("L1", "L2", "L3"):
-        required_evidence.append(rel(l1_matrix_path))
+        required_evidence.extend(
+            [rel(support_matrix_path), rel(compatibility_report_path), rel(l1_matrix_path)]
+        )
     if claimed_level in ("L2", "L3"):
         required_evidence.append(rel(standalone_matrix_path))
 
@@ -251,6 +391,8 @@ report = {
     "failed_claim_count": len(failures),
     "claims": rows,
     "required_evidence_files": {
+        "support_matrix": rel(support_matrix_path),
+        "compatibility_report": rel(compatibility_report_path),
         "L1": rel(l1_matrix_path),
         "L2": rel(standalone_matrix_path),
         "L3": rel(standalone_matrix_path),
