@@ -93,17 +93,17 @@
       "expected_outcome": "forbidden"
     },
     {
-      "id": "stdio_abi_interpose_strlen_allowed",
+      "id": "stdio_abi_interpose_getenv_allowed",
       "mode": "interpose",
       "module": "stdio_abi",
-      "symbol": "strlen",
+      "symbol": "getenv",
       "expected_outcome": "allowed"
     },
     {
-      "id": "stdio_abi_replacement_strlen_forbidden",
+      "id": "stdio_abi_replacement_getenv_forbidden",
       "mode": "replacement",
       "module": "stdio_abi",
-      "symbol": "strlen",
+      "symbol": "getenv",
       "expected_outcome": "forbidden"
     },
     {

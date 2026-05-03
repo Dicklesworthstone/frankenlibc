@@ -186,7 +186,7 @@
         "note": "Directory-entry allocation helpers intentionally pair host malloc/free in interpose mode."
       },
       "glibc_internal_abi": {
-        "count": 13,
+        "count": 11,
         "functions": [
           "abort",
           "fcntl",
@@ -233,12 +233,11 @@
         "note": "Signal compatibility helpers still delegate selected sigset/action paths to host libc in interpose mode."
       },
       "stdio_abi": {
-        "count": 4,
+        "count": 1,
         "functions": [
-          "getenv",
-          "strlen"
+          "getenv"
         ],
-        "note": "Stdio compatibility helpers retain selected host environment/string probes in interpose mode."
+        "note": "Stdio compatibility helpers retain a selected host environment probe in interpose mode."
       },
       "stdlib_abi": {
         "count": 2,
@@ -257,7 +256,7 @@
         "note": "strdup/strndup and GNU argz APIs use host malloc/free so caller-owned buffers pair with libc::free in interpose and test builds."
       },
       "unistd_abi": {
-        "count": 25,
+        "count": 24,
         "functions": [
           "__errno_location",
           "abort",
@@ -275,7 +274,7 @@
         "note": "Wide-string duplication returns a host-freeable allocation in interpose mode."
       }
     },
-    "total_call_throughs": 84,
+    "total_call_throughs": 78,
     "note": "Census tracks direct host call-through scan patterns used by scripts/check_replacement_guard.sh."
   }
 }
