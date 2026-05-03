@@ -65,6 +65,7 @@ const FFI_PCC_STATE_VERIFYING: u8 = 1;
 const FFI_PCC_STATE_VERIFIED: u8 = 2;
 const FFI_PCC_STATE_REJECTED: u8 = 3;
 const FFI_PCC_POLICY_BASE: u32 = 0x5043_4300;
+const FFI_PCC_NO_INDEX: u8 = u8::MAX;
 
 // Manual init guard that avoids OnceLock's internal futex.
 // OnceLock::get_or_init uses a futex wait when it sees init-in-progress,
@@ -357,6 +358,34 @@ const FFI_PCC_CERTIFICATES: [FfiPccCertificate; 12] = [
     ),
 ];
 
+#[inline]
+fn ffi_pcc_certificate_index_for_symbol(symbol: &'static str) -> u8 {
+    match symbol {
+        "malloc" => 0,
+        "calloc" => 1,
+        "realloc" => 2,
+        "posix_memalign" => 3,
+        "memalign" => 4,
+        "aligned_alloc" => 5,
+        "free" => 6,
+        "memcmp" => 7,
+        "strlen" => 8,
+        "memcpy" => 9,
+        "snprintf" => 10,
+        "vsnprintf" => 11,
+        _ => FFI_PCC_NO_INDEX,
+    }
+}
+
+#[inline]
+fn ffi_pcc_certificate_by_index(
+    index: u8,
+    symbol: &'static str,
+) -> Option<&'static FfiPccCertificate> {
+    let row = FFI_PCC_CERTIFICATES.get(usize::from(index))?;
+    (row.symbol == symbol).then_some(row)
+}
+
 fn ffi_pcc_verify_and_hash() -> Result<u64, &'static str> {
     if FFI_PCC_CERTIFICATES.is_empty() {
         return Err("ffi_pcc: certificate table must not be empty");
@@ -447,14 +476,9 @@ fn lookup_active_ffi_pcc_certificate(
     is_write: bool,
     bloom_negative: bool,
 ) -> Option<&'static FfiPccCertificate> {
-    if !ensure_ffi_pcc_verified() {
-        return None;
-    }
-    let trace = active_trace_context();
-    FFI_PCC_CERTIFICATES.iter().find(|row| {
-        row.symbol == trace.symbol
-            && row.matches_request(family, requested_bytes, is_write, bloom_negative)
-    })
+    let row = active_ffi_pcc_symbol_certificate()?;
+    row.matches_request(family, requested_bytes, is_write, bloom_negative)
+        .then_some(row)
 }
 
 fn active_ffi_pcc_symbol_certificate() -> Option<&'static FfiPccCertificate> {
@@ -462,9 +486,7 @@ fn active_ffi_pcc_symbol_certificate() -> Option<&'static FfiPccCertificate> {
         return None;
     }
     let trace = active_trace_context();
-    FFI_PCC_CERTIFICATES
-        .iter()
-        .find(|row| row.symbol == trace.symbol)
+    ffi_pcc_certificate_by_index(trace.pcc_index, trace.symbol)
 }
 
 fn ffi_pcc_decision(cert: &FfiPccCertificate) -> RuntimeDecision {
@@ -707,6 +729,7 @@ struct TraceContext {
     trace_seq: u64,
     symbol: &'static str,
     parent_span_seq: u64,
+    pcc_index: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -823,6 +846,7 @@ pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
         trace_seq,
         symbol,
         parent_span_seq: trace_seq,
+        pcc_index: ffi_pcc_certificate_index_for_symbol(symbol),
     };
 
     let previous = TRACE_CONTEXT
@@ -885,6 +909,7 @@ fn fallback_trace_context() -> TraceContext {
         trace_seq,
         symbol: TRACE_UNKNOWN_SYMBOL,
         parent_span_seq: trace_seq,
+        pcc_index: FFI_PCC_NO_INDEX,
     }
 }
 
@@ -1648,6 +1673,8 @@ mod tests {
     use super::*;
     use parking_lot::ReentrantMutexGuard;
     use std::ffi::OsString;
+    use std::hint::black_box;
+    use std::time::Instant;
 
     struct ModeSwitchCounterGuard {
         previous: u64,
@@ -2169,6 +2196,39 @@ mod tests {
     }
 
     #[test]
+    fn ffi_pcc_trace_index_matches_certificate_table_order() {
+        for (idx, row) in FFI_PCC_CERTIFICATES.iter().enumerate() {
+            assert_eq!(
+                ffi_pcc_certificate_index_for_symbol(row.symbol),
+                idx as u8,
+                "trace index hint must match certificate table order for {}",
+                row.symbol
+            );
+        }
+        assert_eq!(
+            ffi_pcc_certificate_index_for_symbol("fputc"),
+            FFI_PCC_NO_INDEX,
+            "uncertified symbols must not receive PCC index hints"
+        );
+    }
+
+    #[test]
+    fn ffi_pcc_active_certificate_uses_trace_index_hint() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
+
+        let _scope = entrypoint_scope("memcpy");
+        let trace = active_trace_context();
+        assert_eq!(trace.pcc_index, 9);
+
+        let cert =
+            active_ffi_pcc_symbol_certificate().expect("memcpy certificate should be active");
+        assert_eq!(cert.symbol, "memcpy");
+        assert_eq!(cert.policy_id, FFI_PCC_POLICY_BASE + 10);
+    }
+
+    #[test]
     fn ffi_pcc_decide_uses_certificate_gate_for_malloc() {
         let _lock = ffi_pcc_lock();
         reset_ffi_pcc_state_for_tests();
@@ -2248,6 +2308,52 @@ mod tests {
         let _scope = entrypoint_scope("strlen");
         let ordering = check_ordering(ApiFamily::StringMemory, true, false);
         assert_eq!(ordering, PASSTHROUGH_ORDERING);
+    }
+
+    #[test]
+    #[ignore = "microbenchmark for PCC fast-path regression evidence"]
+    fn ffi_pcc_memcpy_decide_observe_microbench() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope("memcpy");
+
+        const WARMUP_ITERS: u64 = 10_000;
+        const MEASURE_ITERS: u64 = 250_000;
+
+        for _ in 0..WARMUP_ITERS {
+            let (_, decision) = decide(ApiFamily::StringMemory, 0x2000, 64, true, true, 0);
+            observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                scaled_cost(7, 64),
+                false,
+            );
+            black_box(decision.policy_id);
+        }
+
+        let start = Instant::now();
+        for _ in 0..MEASURE_ITERS {
+            let (_, decision) = decide(ApiFamily::StringMemory, 0x2000, 64, true, true, 0);
+            observe(
+                ApiFamily::StringMemory,
+                decision.profile,
+                scaled_cost(7, 64),
+                false,
+            );
+            black_box(decision.policy_id);
+        }
+        let elapsed = start.elapsed().as_nanos().max(1);
+        let ns_per_op = elapsed as f64 / MEASURE_ITERS as f64;
+
+        let explain = peek_last_explainability().expect("explainability should be recorded");
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 10);
+        println!(
+            "RUNTIME_POLICY_PCC_MICROBENCH bench=memcpy_decide_observe mode=hardened iters={MEASURE_ITERS} ns_op={ns_per_op:.3}"
+        );
     }
 
     #[test]
