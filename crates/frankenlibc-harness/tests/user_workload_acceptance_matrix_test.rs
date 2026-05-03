@@ -42,6 +42,20 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "failure_signature",
 ];
 
+const REQUIRED_TAXONOMY_IDS: &[&str] = &[
+    "startup_linking_failure",
+    "symbol_missing",
+    "semantic_divergence",
+    "allocator_ownership",
+    "resolver_nss_failure",
+    "locale_iconv_divergence",
+    "pthread_cancellation",
+    "stdio_libio_divergence",
+    "performance_regression",
+    "diagnostics_gap",
+    "unsupported_claim",
+];
+
 fn workspace_root() -> PathBuf {
     let manifest = env!("CARGO_MANIFEST_DIR");
     Path::new(manifest)
@@ -82,6 +96,14 @@ fn artifact_exists_and_has_required_shape() {
         .map(|field| field.as_str().unwrap())
         .collect();
     assert_eq!(required, REQUIRED_LOG_FIELDS);
+
+    let domains: Vec<_> = matrix["required_domains"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|domain| domain.as_str().unwrap())
+        .collect();
+    assert_eq!(domains, REQUIRED_DOMAINS);
 }
 
 #[test]
@@ -163,6 +185,20 @@ fn workloads_cover_required_domains_modes_and_levels() {
             "{id}: structured_log_fields should reference the top-level log contract"
         );
 
+        let artifact_paths = workload["artifact_paths"].as_array().unwrap();
+        assert!(
+            !artifact_paths.is_empty(),
+            "{id}: artifact_paths must not be empty"
+        );
+        for artifact_ref in artifact_paths {
+            let artifact_ref = artifact_ref.as_str().unwrap();
+            assert!(!artifact_ref.is_empty(), "{id}: empty artifact ref");
+            assert!(
+                artifact_ref.starts_with("target/") || workspace_root().join(artifact_ref).exists(),
+                "{id}: static artifact ref must exist: {artifact_ref}"
+            );
+        }
+
         for negative in workload["negative_claim_tests"].as_array().unwrap() {
             assert_eq!(
                 negative["expected_result"].as_str(),
@@ -199,14 +235,12 @@ fn failure_taxonomy_and_workload_scenarios_are_consistent() {
         .map(|entry| entry["id"].as_str().unwrap())
         .collect();
 
-    assert!(
-        taxonomy.contains("unsupported_claim"),
-        "taxonomy must include unsupported_claim"
-    );
-    assert!(
-        taxonomy.contains("diagnostics_gap"),
-        "taxonomy must include diagnostics_gap"
-    );
+    for taxonomy_id in REQUIRED_TAXONOMY_IDS {
+        assert!(
+            taxonomy.contains(taxonomy_id),
+            "taxonomy must include {taxonomy_id}"
+        );
+    }
 
     for workload in matrix["workloads"].as_array().unwrap() {
         let id = workload["id"].as_str().unwrap();

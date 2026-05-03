@@ -70,6 +70,32 @@ REQUIRED_WORKLOAD_FIELDS = [
 ]
 REQUIRED_LEVELS = {"L0", "L1", "L2", "L3"}
 REQUIRED_MODES = {"strict", "hardened"}
+REQUIRED_DOMAINS = [
+    "shell_coreutils",
+    "build_tools",
+    "language_runtimes",
+    "package_manager",
+    "threaded_services",
+    "resolver_nss",
+    "locale_iconv",
+    "stdio_libio",
+    "allocator",
+    "startup_linking",
+    "performance_sensitive",
+]
+REQUIRED_TAXONOMY_IDS = {
+    "startup_linking_failure",
+    "symbol_missing",
+    "semantic_divergence",
+    "allocator_ownership",
+    "resolver_nss_failure",
+    "locale_iconv_divergence",
+    "pthread_cancellation",
+    "stdio_libio_divergence",
+    "performance_regression",
+    "diagnostics_gap",
+    "unsupported_claim",
+}
 
 def load_json(path):
     try:
@@ -119,6 +145,11 @@ if not taxonomy_ok:
     errors.append("failure taxonomy must be non-empty, unique, and diagnostic-rich")
 
 required_domains = artifact.get("required_domains", [])
+if required_domains == REQUIRED_DOMAINS:
+    checks["required_domains"] = "pass"
+else:
+    checks["required_domains"] = "fail"
+    errors.append("required_domains must match the canonical user workload acceptance domain set")
 required_domain_set = set(required_domains)
 workloads = artifact.get("workloads", [])
 workload_ids = [w.get("id") for w in workloads]
@@ -166,6 +197,19 @@ for workload in workloads:
     if workload.get("structured_log_fields") != "required_log_fields":
         workload_ok = False
         errors.append(f"{wid}: structured_log_fields must reference required_log_fields")
+
+    artifact_paths = workload.get("artifact_paths", [])
+    if not artifact_paths:
+        workload_ok = False
+        errors.append(f"{wid}: artifact_paths must not be empty")
+    for artifact_ref in artifact_paths:
+        if not isinstance(artifact_ref, str) or not artifact_ref.strip():
+            workload_ok = False
+            errors.append(f"{wid}: artifact_paths contains an empty or non-string ref")
+            continue
+        if not artifact_ref.startswith("target/") and not (root / artifact_ref).exists():
+            workload_ok = False
+            errors.append(f"{wid}: static artifact ref does not exist: {artifact_ref}")
 
     for script in workload.get("deterministic_e2e_scripts", []):
         if not (root / script).exists():
@@ -220,6 +264,13 @@ if not missing_domains:
 else:
     checks["domain_coverage"] = "fail"
     errors.append("missing required workload domains: " + ", ".join(missing_domains))
+
+missing_taxonomy = sorted(REQUIRED_TAXONOMY_IDS - taxonomy_set)
+if not missing_taxonomy:
+    checks["taxonomy_coverage"] = "pass"
+else:
+    checks["taxonomy_coverage"] = "fail"
+    errors.append("missing required failure taxonomy IDs: " + ", ".join(missing_taxonomy))
 
 summary = artifact.get("summary", {})
 summary_ok = (
