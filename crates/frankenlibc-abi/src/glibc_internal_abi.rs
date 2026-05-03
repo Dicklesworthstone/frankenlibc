@@ -6103,8 +6103,7 @@ pub unsafe extern "C" fn scandirat(
     // Same caller-frees contract for the array.
     let arr = unsafe {
         crate::malloc_abi::malloc(entries.len() * std::mem::size_of::<*mut libc::dirent>())
-    }
-        as *mut *mut c_void;
+    } as *mut *mut c_void;
     if arr.is_null() && !entries.is_empty() {
         for e in &entries {
             unsafe { crate::malloc_abi::free(*e as *mut c_void) };
@@ -9521,8 +9520,8 @@ pub unsafe extern "C" fn __libc_fcntl64(fd: c_int, cmd: c_int, arg: std::ffi::c_
 }
 
 /// `__libc_mallinfo() -> struct mallinfo` — GLIBC_2.2.5 alias for
-/// `mallinfo()`. Forwards to libc's `mallinfo` so the returned
-/// counters reflect actual host allocator state.
+/// `mallinfo()`. Reports FrankenLibC allocator counters without
+/// re-entering host libc from replacement mode.
 ///
 /// # Safety
 ///

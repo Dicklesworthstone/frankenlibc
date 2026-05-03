@@ -4676,10 +4676,15 @@ fn libc_fcntl64_invalid_fd_returns_minus_one() {
 #[test]
 fn libc_mallinfo_reports_nonzero_arena_or_uordblks() {
     use frankenlibc_abi::glibc_internal_abi::__libc_mallinfo;
-    // Ensure the allocator has been touched.
-    let bumper: Vec<u8> = vec![0u8; 65536];
-    std::hint::black_box(&bumper);
+    use frankenlibc_abi::malloc_abi::{free, malloc, malloc_stats_init_for_tests};
+
+    // Ensure FrankenLibC's allocator stats, not Rust's allocator, have live bytes.
+    malloc_stats_init_for_tests();
+    let bumper = unsafe { malloc(65536) };
+    assert!(!bumper.is_null());
     let info = unsafe { __libc_mallinfo() };
+    unsafe { free(bumper) };
+
     assert!(info.arena > 0 || info.uordblks > 0);
 }
 
