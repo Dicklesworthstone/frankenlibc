@@ -1,0 +1,251 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.2.6",
+  "generated_at_utc": "2026-05-03T21:55:00Z",
+  "trace_id": "bd-bp8fl-2-6-ambition-graph-readiness-lint-v1",
+  "purpose": "Run a recurring pre-implementation lint over the ambition graph so weak, stale, or malformed beads become actionable findings without hiding unrelated claimable work.",
+  "source_of_truth_policy": {
+    "primary": ".beads/issues.jsonl",
+    "tracker_probe_required": [
+      "br list --status open --no-db --json",
+      "br show <bead> --no-db --json",
+      "br dep cycles --no-db --json",
+      "bv --robot-triage",
+      "bv --robot-insights"
+    ],
+    "failure_classification": "Tool timeouts and br/bv disagreement are tracker failures; invalid labels and dependency cycles are graph failures; weak tests, logs, and artifacts are code/evidence readiness findings.",
+    "implementation_rule": "Findings must name a next_safe_action and must not auto-delete, auto-close, or narrow any bead."
+  },
+  "required_report_fields": [
+    "schema_version",
+    "bead",
+    "generated_at_utc",
+    "trace_id",
+    "source_commit",
+    "status",
+    "mode",
+    "tracker_state",
+    "issue_count",
+    "finding_count",
+    "severity_counts",
+    "findings_by_rule",
+    "next_safe_actions",
+    "summary",
+    "artifact_refs"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "lint_run_id",
+    "bead_id",
+    "rule_id",
+    "severity",
+    "expected",
+    "actual",
+    "dependency_state",
+    "tracker_state",
+    "evidence_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "rule_catalog": [
+    {
+      "rule_id": "label_syntax",
+      "severity": "error",
+      "expected": "Every label matches ^[A-Za-z0-9_:-]+$ so br --no-db can parse the graph.",
+      "next_safe_action": "repair_tracker_label_before_claiming_work",
+      "failure_signature": "invalid_label_syntax"
+    },
+    {
+      "rule_id": "acceptance_contract",
+      "severity": "warning",
+      "expected": "Open tasks carry bead-specific acceptance criteria with tests, e2e or harness coverage, logs, artifacts, closure commands, and no-feature-loss language.",
+      "next_safe_action": "add_specific_acceptance_before_or_during_claim",
+      "failure_signature": "weak_acceptance_contract"
+    },
+    {
+      "rule_id": "dependency_sanity",
+      "severity": "error",
+      "expected": "Dependencies reference existing beads, avoid self edges, and contain no blocker cycles.",
+      "next_safe_action": "fix_dependency_graph_before_claiming_blocked_surface",
+      "failure_signature": "dependency_graph_failure"
+    },
+    {
+      "rule_id": "tracker_state",
+      "severity": "warning",
+      "expected": "br and bv probe failures are recorded as tracker failures with exact command evidence.",
+      "next_safe_action": "use_jsonl_no_db_or_file_tracker_repair_bead",
+      "failure_signature": "tracker_probe_degraded"
+    },
+    {
+      "rule_id": "already_shipped_but_open",
+      "severity": "warning",
+      "expected": "Open beads that claim shipped evidence must name the remaining blocker or be reconciled with current proof.",
+      "next_safe_action": "reconcile_status_with_current_evidence",
+      "failure_signature": "already_shipped_but_open"
+    },
+    {
+      "rule_id": "scope_specificity",
+      "severity": "info",
+      "expected": "Open implementation beads name a concrete work surface and user-visible or conformance impact.",
+      "next_safe_action": "tighten_scope_before_parallel_work",
+      "failure_signature": "weak_scope_specificity"
+    }
+  ],
+  "fixture_graph": {
+    "tracker_state": "tracker_failure",
+    "tracker_probes": [
+      {
+        "name": "br_ready_no_db",
+        "command": "br ready --no-db --json",
+        "exit_status": 124,
+        "expected": "ready rows or explicit blockers",
+        "actual": "timeout waiting for tracker lock",
+        "failure_signature": "timeout"
+      },
+      {
+        "name": "bv_robot_triage",
+        "command": "bv --robot-triage",
+        "exit_status": 0,
+        "expected": "open JSONL work remains visible",
+        "actual": "reported zero actionable despite open fixture work",
+        "failure_signature": "conflicting_ready_lists"
+      }
+    ],
+    "issues": [
+      {
+        "id": "bd-fixture.parent",
+        "title": "EPIC: Fixture parent for graph readiness lint",
+        "description": "Parent fixture that keeps graph-readiness examples grouped.",
+        "status": "open",
+        "priority": 0,
+        "issue_type": "epic",
+        "labels": [
+          "fixture",
+          "graph-quality"
+        ],
+        "acceptance_criteria": "Preserve every fixture issue and dependency intention. Closure must list exact commands, artifact paths, structured logs, and remaining limitations."
+      },
+      {
+        "id": "bd-fixture.good",
+        "title": "Add fixture-backed readiness lint report",
+        "description": "Implement a deterministic graph-quality report that protects conformance and user-visible claim surfaces before implementation waves.",
+        "status": "open",
+        "priority": 1,
+        "issue_type": "task",
+        "labels": [
+          "fixture",
+          "readiness",
+          "graph-quality"
+        ],
+        "acceptance_criteria": "Preserve all existing graph ambition; include unit tests, deterministic e2e harness replay, structured JSONL logs with trace_id and failure_signature, artifact freshness checks, closure commands, and explicit limitations.",
+        "dependencies": [
+          {
+            "issue_id": "bd-fixture.good",
+            "depends_on_id": "bd-fixture.parent",
+            "type": "parent-child"
+          }
+        ]
+      },
+      {
+        "id": "bd-fixture.missing-acceptance",
+        "title": "Weak fixture bead",
+        "description": "TODO",
+        "status": "open",
+        "priority": 2,
+        "issue_type": "task",
+        "labels": [
+          "fixture"
+        ],
+        "dependencies": [
+          {
+            "issue_id": "bd-fixture.missing-acceptance",
+            "depends_on_id": "bd-fixture.parent",
+            "type": "parent-child"
+          }
+        ]
+      },
+      {
+        "id": "bd-fixture.invalid-label",
+        "title": "Closed bead with invalid label syntax",
+        "description": "Old closed tracker row that should still remain parseable by no-db tooling.",
+        "status": "closed",
+        "priority": 2,
+        "issue_type": "task",
+        "labels": [
+          "fixture",
+          "sys/stat"
+        ],
+        "close_reason": "Fixture shipped."
+      },
+      {
+        "id": "bd-fixture.cycle-a",
+        "title": "Cycle fixture A",
+        "description": "Dependency cycle fixture that should be classified as a graph failure.",
+        "status": "open",
+        "priority": 1,
+        "issue_type": "task",
+        "labels": [
+          "fixture",
+          "graph-quality"
+        ],
+        "acceptance_criteria": "Preserve the cycle example; include unit tests, deterministic e2e replay, structured logs, artifact paths, closure commands, and known limitation notes.",
+        "dependencies": [
+          {
+            "issue_id": "bd-fixture.cycle-a",
+            "depends_on_id": "bd-fixture.cycle-b",
+            "type": "blocks"
+          }
+        ]
+      },
+      {
+        "id": "bd-fixture.cycle-b",
+        "title": "Cycle fixture B",
+        "description": "Dependency cycle fixture that should be classified as a graph failure.",
+        "status": "open",
+        "priority": 1,
+        "issue_type": "task",
+        "labels": [
+          "fixture",
+          "graph-quality"
+        ],
+        "acceptance_criteria": "Preserve the cycle example; include unit tests, deterministic e2e replay, structured logs, artifact paths, closure commands, and known limitation notes.",
+        "dependencies": [
+          {
+            "issue_id": "bd-fixture.cycle-b",
+            "depends_on_id": "bd-fixture.cycle-a",
+            "type": "blocks"
+          }
+        ]
+      },
+      {
+        "id": "bd-fixture.shipped-open",
+        "title": "Open bead that says shipped",
+        "description": "Harness shipped in commit deadbeef but the row is still open and has no reconciliation note.",
+        "status": "open",
+        "priority": 2,
+        "issue_type": "task",
+        "labels": [
+          "fixture",
+          "tracker"
+        ],
+        "acceptance_criteria": "Preserve status evidence; include unit tests, e2e replay, structured JSONL logs, artifact refs, closure commands, and limitations before closing.",
+        "dependencies": [
+          {
+            "issue_id": "bd-fixture.shipped-open",
+            "depends_on_id": "bd-fixture.parent",
+            "type": "parent-child"
+          }
+        ]
+      }
+    ]
+  },
+  "expected_fixture_rules": [
+    "label_syntax",
+    "acceptance_contract",
+    "dependency_sanity",
+    "tracker_state",
+    "already_shipped_but_open",
+    "scope_specificity"
+  ],
+  "expected_current_hard_failures": []
+}
