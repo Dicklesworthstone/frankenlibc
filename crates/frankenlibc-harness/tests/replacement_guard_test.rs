@@ -653,12 +653,14 @@ fn fixture_pack_covers_all_callthrough_families_in_both_modes() {
         let expected = row["expected_outcome"]
             .as_str()
             .expect("fixture.expected_outcome must be string");
+        assert!(
+            mode == "interpose" || mode == "replacement",
+            "unexpected fixture mode: {mode}"
+        );
         if mode == "interpose" {
             assert_eq!(expected, "allowed");
-        } else if mode == "replacement" {
-            assert_eq!(expected, "forbidden");
         } else {
-            assert!(false, "unexpected fixture mode: {mode}");
+            assert_eq!(expected, "forbidden");
         }
         *mode_counts.entry(mode.to_string()).or_default() += 1;
         module_modes
@@ -668,10 +670,11 @@ fn fixture_pack_covers_all_callthrough_families_in_both_modes() {
     }
 
     for module in &profile_modules {
-        let Some(modes) = module_modes.get(module) else {
-            assert!(false, "missing fixture coverage for module {module}");
-            continue;
-        };
+        assert!(
+            module_modes.contains_key(module),
+            "missing fixture coverage for module {module}"
+        );
+        let modes = &module_modes[module];
         assert!(
             modes.contains("interpose") && modes.contains("replacement"),
             "module {module} must be covered in both interpose and replacement fixtures"
@@ -745,22 +748,22 @@ fn guard_emits_symbol_module_path_diagnostics() {
         report["non_threading_backlog"].is_object(),
         "non_threading_backlog must be object"
     );
-    let Some(top_modules) = report["non_threading_backlog"]["top_modules"].as_array() else {
-        assert!(false, "top_modules must be array");
-        return;
-    };
-    let Some(total_call_throughs) = report["total_call_throughs"].as_u64() else {
-        assert!(false, "total_call_throughs must be u64");
-        return;
-    };
+    assert!(
+        report["non_threading_backlog"]["top_modules"].is_array(),
+        "top_modules must be array"
+    );
+    let top_modules = report["non_threading_backlog"]["top_modules"]
+        .as_array()
+        .expect("top_modules array was asserted");
+    assert!(
+        report["total_call_throughs"].is_u64(),
+        "total_call_throughs must be u64"
+    );
+    let total_call_throughs = report["total_call_throughs"]
+        .as_u64()
+        .expect("total_call_throughs u64 was asserted");
     if total_call_throughs == 0 {
-        let log_content = match std::fs::read_to_string(&log_path) {
-            Ok(content) => content,
-            Err(err) => {
-                assert!(false, "log should be readable: {err}");
-                String::new()
-            }
-        };
+        let log_content = std::fs::read_to_string(&log_path).expect("log should be readable");
         assert!(
             top_modules.is_empty(),
             "zero-callthrough report must have empty non_threading top_modules"
