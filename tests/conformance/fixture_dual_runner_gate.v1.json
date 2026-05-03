@@ -1,0 +1,380 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fixture-dual-runner-gate",
+  "bead": "bd-bp8fl.4.2",
+  "generated_utc": "2026-05-03T22:24:00Z",
+  "purpose": "Fail CI when a conformance fixture family has only a direct in-process executor path or only an isolated harness subprocess path without an explicit blocked reason.",
+  "inputs": {
+    "fixture_pipeline": "tests/conformance/fixture_pipeline.v1.json",
+    "symbol_fixture_coverage": "tests/conformance/symbol_fixture_coverage.v1.json",
+    "workstream_templates": "tests/conformance/workstream_done_templates.v1.json",
+    "log_schema": "tests/conformance/log_schema.json"
+  },
+  "required_manifest_fields": [
+    "direct_runner",
+    "isolated_runner",
+    "runtime_mode",
+    "replacement_level",
+    "oracle_kind",
+    "expected",
+    "timeout_ms",
+    "environment",
+    "cleanup",
+    "artifact_paths"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "fixture_id",
+    "runner_kind",
+    "runtime_mode",
+    "replacement_level",
+    "expected",
+    "actual",
+    "errno",
+    "duration_ms",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "runner_policy": {
+    "direct_runner_required": true,
+    "isolated_runner_required": true,
+    "strict_and_hardened_modes_required": true,
+    "default_missing_runner_decision": "block",
+    "allowed_waiver_field": "blocked_reason",
+    "blocked_signatures": [
+      "direct_runner_missing",
+      "isolated_runner_missing",
+      "direct_runner_mismatch",
+      "isolated_runner_mismatch",
+      "isolated_runner_timeout",
+      "stale_artifact",
+      "env_cleanup_missing"
+    ]
+  },
+  "fixture_families": [
+    {
+      "fixture_id": "ctype_ops",
+      "fixture_manifest": "tests/conformance/fixtures/ctype_ops.json",
+      "test_file": "crates/frankenlibc-harness/tests/ctype_ops_conformance_test.rs",
+      "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
+      "isolated_runner": "harness conformance-matrix-case",
+      "runtime_mode": "strict+hardened",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": "impl_output matches fixture expected_output and host_parity remains true or explicitly UB",
+      "timeout_ms": 5000,
+      "environment": {
+        "FRANKENLIBC_MODE": "${runtime_mode}"
+      },
+      "cleanup": {
+        "stdin_closed": true,
+        "stderr_captured": true,
+        "env_restored": true
+      },
+      "artifact_paths": [
+        "tests/conformance/fixtures/ctype_ops.json",
+        "crates/frankenlibc-harness/tests/ctype_ops_conformance_test.rs"
+      ],
+      "required_direct_tokens": [
+        "frankenlibc_fixture_exec::execute_fixture_case",
+        "execute_fixture_case(&case.function",
+        "expected_output"
+      ],
+      "required_isolated_tokens": [
+        "execute_case_via_harness",
+        "conformance-matrix-case",
+        "failed to wait on harness subprocess"
+      ]
+    },
+    {
+      "fixture_id": "dirent_ops",
+      "fixture_manifest": "tests/conformance/fixtures/dirent_ops.json",
+      "test_file": "crates/frankenlibc-harness/tests/dirent_ops_conformance_test.rs",
+      "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
+      "isolated_runner": "harness conformance-matrix-case",
+      "runtime_mode": "strict+hardened",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": "direct and isolated fixture results normalize stdout, stderr, status, errno, and host parity",
+      "timeout_ms": 5000,
+      "environment": {
+        "FRANKENLIBC_MODE": "${runtime_mode}"
+      },
+      "cleanup": {
+        "stdin_closed": true,
+        "stderr_captured": true,
+        "env_restored": true
+      },
+      "artifact_paths": [
+        "tests/conformance/fixtures/dirent_ops.json",
+        "crates/frankenlibc-harness/tests/dirent_ops_conformance_test.rs"
+      ],
+      "required_direct_tokens": [
+        "frankenlibc_fixture_exec::execute_fixture_case",
+        "execute_fixture_case(&case.function",
+        "expected_output"
+      ],
+      "required_isolated_tokens": [
+        "execute_case_via_harness",
+        "conformance-matrix-case",
+        "failed to wait on harness subprocess"
+      ]
+    },
+    {
+      "fixture_id": "memory_ops",
+      "fixture_manifest": "tests/conformance/fixtures/memory_ops.json",
+      "test_file": "crates/frankenlibc-harness/tests/memory_ops_conformance_test.rs",
+      "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
+      "isolated_runner": "harness conformance-matrix-case",
+      "runtime_mode": "strict+hardened",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": "direct and isolated memory fixtures agree with expected_output and host parity",
+      "timeout_ms": 5000,
+      "environment": {
+        "FRANKENLIBC_MODE": "${runtime_mode}"
+      },
+      "cleanup": {
+        "stdin_closed": true,
+        "stderr_captured": true,
+        "env_restored": true
+      },
+      "artifact_paths": [
+        "tests/conformance/fixtures/memory_ops.json",
+        "crates/frankenlibc-harness/tests/memory_ops_conformance_test.rs"
+      ],
+      "required_direct_tokens": [
+        "frankenlibc_fixture_exec::execute_fixture_case",
+        "execute_fixture_case(&case.function",
+        "expected_output"
+      ],
+      "required_isolated_tokens": [
+        "execute_case_via_harness",
+        "conformance-matrix-case",
+        "failed to wait on harness subprocess"
+      ]
+    },
+    {
+      "fixture_id": "socket_ops",
+      "fixture_manifest": "tests/conformance/fixtures/socket_ops.json",
+      "test_file": "crates/frankenlibc-harness/tests/socket_ops_conformance_test.rs",
+      "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
+      "isolated_runner": "harness conformance-matrix-case",
+      "runtime_mode": "strict+hardened",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": "socket fixture rows preserve direct and isolated subprocess parity",
+      "timeout_ms": 5000,
+      "environment": {
+        "FRANKENLIBC_MODE": "${runtime_mode}"
+      },
+      "cleanup": {
+        "stdin_closed": true,
+        "stderr_captured": true,
+        "env_restored": true
+      },
+      "artifact_paths": [
+        "tests/conformance/fixtures/socket_ops.json",
+        "crates/frankenlibc-harness/tests/socket_ops_conformance_test.rs"
+      ],
+      "required_direct_tokens": [
+        "frankenlibc_fixture_exec::execute_fixture_case",
+        "execute_fixture_case(&case.function",
+        "expected_output"
+      ],
+      "required_isolated_tokens": [
+        "execute_case_via_harness",
+        "conformance-matrix-case",
+        "failed to wait on harness subprocess"
+      ]
+    },
+    {
+      "fixture_id": "time_ops",
+      "fixture_manifest": "tests/conformance/fixtures/time_ops.json",
+      "test_file": "crates/frankenlibc-harness/tests/time_ops_conformance_test.rs",
+      "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
+      "isolated_runner": "harness conformance-matrix-case",
+      "runtime_mode": "strict+hardened",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": "time fixture direct and subprocess paths normalize status and output deterministically",
+      "timeout_ms": 5000,
+      "environment": {
+        "FRANKENLIBC_MODE": "${runtime_mode}"
+      },
+      "cleanup": {
+        "stdin_closed": true,
+        "stderr_captured": true,
+        "env_restored": true
+      },
+      "artifact_paths": [
+        "tests/conformance/fixtures/time_ops.json",
+        "crates/frankenlibc-harness/tests/time_ops_conformance_test.rs"
+      ],
+      "required_direct_tokens": [
+        "frankenlibc_fixture_exec::execute_fixture_case",
+        "execute_fixture_case(&case.function",
+        "expected_output"
+      ],
+      "required_isolated_tokens": [
+        "execute_case_via_harness",
+        "conformance-matrix-case",
+        "failed to wait on harness subprocess"
+      ]
+    },
+    {
+      "fixture_id": "wide_string_ops",
+      "fixture_manifest": "tests/conformance/fixtures/wide_string_ops.json",
+      "test_file": "crates/frankenlibc-harness/tests/wide_string_ops_conformance_test.rs",
+      "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
+      "isolated_runner": "harness conformance-matrix-case",
+      "runtime_mode": "strict+hardened",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": "wide string fixtures execute in-process and through harness subprocess with host parity",
+      "timeout_ms": 5000,
+      "environment": {
+        "FRANKENLIBC_MODE": "${runtime_mode}"
+      },
+      "cleanup": {
+        "stdin_closed": true,
+        "stderr_captured": true,
+        "env_restored": true
+      },
+      "artifact_paths": [
+        "tests/conformance/fixtures/wide_string_ops.json",
+        "crates/frankenlibc-harness/tests/wide_string_ops_conformance_test.rs"
+      ],
+      "required_direct_tokens": [
+        "frankenlibc_fixture_exec::execute_fixture_case",
+        "execute_fixture_case(&case.function",
+        "expected_output"
+      ],
+      "required_isolated_tokens": [
+        "execute_case_via_harness",
+        "conformance-matrix-case",
+        "failed to wait on harness subprocess"
+      ]
+    }
+  ],
+  "replay_scenarios": [
+    {
+      "scenario_id": "direct-pass-isolated-pass",
+      "fixture_id": "memory_ops",
+      "runner_kind": "direct+isolated",
+      "direct_expected": "pass",
+      "direct_actual": "pass",
+      "isolated_expected": "pass",
+      "isolated_actual": "pass",
+      "artifact_state": "current",
+      "env_cleanup_state": "clean",
+      "expected_decision": "allow",
+      "expected_failure_signature": "none"
+    },
+    {
+      "scenario_id": "direct-fail-isolated-pass",
+      "fixture_id": "ctype_ops",
+      "runner_kind": "direct",
+      "direct_expected": "pass",
+      "direct_actual": "fail",
+      "isolated_expected": "pass",
+      "isolated_actual": "pass",
+      "artifact_state": "current",
+      "env_cleanup_state": "clean",
+      "expected_decision": "block",
+      "expected_failure_signature": "direct_runner_mismatch"
+    },
+    {
+      "scenario_id": "isolated-timeout",
+      "fixture_id": "socket_ops",
+      "runner_kind": "isolated",
+      "direct_expected": "pass",
+      "direct_actual": "pass",
+      "isolated_expected": "pass",
+      "isolated_actual": "timeout",
+      "artifact_state": "current",
+      "env_cleanup_state": "clean",
+      "expected_decision": "block",
+      "expected_failure_signature": "isolated_runner_timeout"
+    },
+    {
+      "scenario_id": "stale-artifact",
+      "fixture_id": "time_ops",
+      "runner_kind": "direct+isolated",
+      "direct_expected": "pass",
+      "direct_actual": "pass",
+      "isolated_expected": "pass",
+      "isolated_actual": "pass",
+      "artifact_state": "stale",
+      "env_cleanup_state": "clean",
+      "expected_decision": "block",
+      "expected_failure_signature": "stale_artifact"
+    },
+    {
+      "scenario_id": "isolated-path-missing",
+      "fixture_id": "wide_string_ops",
+      "runner_kind": "isolated",
+      "direct_expected": "pass",
+      "direct_actual": "pass",
+      "isolated_expected": "pass",
+      "isolated_actual": "missing",
+      "artifact_state": "current",
+      "env_cleanup_state": "clean",
+      "expected_decision": "block",
+      "expected_failure_signature": "isolated_runner_missing"
+    },
+    {
+      "scenario_id": "env-cleanup-missing",
+      "fixture_id": "dirent_ops",
+      "runner_kind": "direct+isolated",
+      "direct_expected": "pass",
+      "direct_actual": "pass",
+      "isolated_expected": "pass",
+      "isolated_actual": "pass",
+      "artifact_state": "current",
+      "env_cleanup_state": "dirty",
+      "expected_decision": "block",
+      "expected_failure_signature": "env_cleanup_missing"
+    }
+  ],
+  "ci_integration": {
+    "ci_file": "scripts/ci.sh",
+    "gate_script": "scripts/check_fixture_dual_runner_gate.sh",
+    "suite": "extended-gates",
+    "required": true
+  },
+  "summary": {
+    "fixture_family_count": 6,
+    "runtime_mode_count": 2,
+    "scenario_count": 6,
+    "allowed_scenario_count": 1,
+    "blocked_scenario_count": 5
+  }
+}

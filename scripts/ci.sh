@@ -297,6 +297,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- fixture direct+isolated subprocess runner gate ---"
+    scripts/check_fixture_dual_runner_gate.sh
+    echo "PASS"
+    echo ""
+
     echo "--- bd-13ya iconv deterministic table generation gate ---"
     scripts/check_iconv_table_generation.sh
     echo "PASS"
