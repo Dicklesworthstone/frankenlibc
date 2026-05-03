@@ -1,0 +1,400 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.10.5",
+  "purpose": "User-visible diagnostic catalog for semantic fallback and runtime-mode decisions. The catalog explains why a call used native behavior, a raw syscall, a historical host-delegation fixture, a deterministic fallback, a hardened repair, a denial, an unsupported contract, or a no-op compatibility path without exposing unsafe internals.",
+  "inputs": {
+    "support_matrix": "support_matrix.json",
+    "semantic_join": "tests/conformance/semantic_contract_symbol_join.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "hardened_repair_deny_matrix": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+    "real_program_smoke_suite": "tests/conformance/real_program_smoke_suite.v1.json",
+    "host_libc_dependency_inventory": "tests/conformance/host_libc_dependency_inventory.v1.json"
+  },
+  "required_record_fields": [
+    "scenario_id",
+    "diagnostic_type",
+    "symbol",
+    "api_family",
+    "runtime_mode",
+    "replacement_level",
+    "support_status",
+    "semantic_join_inventory_id",
+    "semantic_class",
+    "decision_path",
+    "healing_action",
+    "diagnostic_code",
+    "user_message_id",
+    "user_message",
+    "support_claim",
+    "artifact_refs",
+    "evidence_status",
+    "source_commit",
+    "failure_signature",
+    "expected_output"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "symbol",
+    "api_family",
+    "runtime_mode",
+    "replacement_level",
+    "decision_path",
+    "healing_action",
+    "diagnostic_code",
+    "user_message_id",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "diagnostic_policy": {
+    "stable_output_template": "{diagnostic_code} {symbol} {runtime_mode} {replacement_level}: {user_message}",
+    "support_taxonomy_alone_is_not_semantic_parity": true,
+    "unsupported_or_blocked_claims_support": false,
+    "host_delegation_without_current_support_matrix_row_claims_support": false,
+    "redaction": {
+      "forbidden_user_message_fragments": [
+        "0x",
+        "raw pointer",
+        "heap address",
+        "secret",
+        "token",
+        "password"
+      ],
+      "no_internal_addresses": true,
+      "no_environment_secrets": true
+    }
+  },
+  "diagnostic_types": [
+    {
+      "id": "native_behavior",
+      "diagnostic_code": "FLC-DIAG-NATIVE",
+      "user_message_id": "diag.native_behavior",
+      "claim_policy": "may_claim_support_only_when current support matrix and fixture evidence agree",
+      "meaning": "FrankenLibC selected native Rust-owned behavior for the call."
+    },
+    {
+      "id": "host_delegation",
+      "diagnostic_code": "FLC-DIAG-DELEGATED",
+      "user_message_id": "diag.host_delegation",
+      "claim_policy": "never claim support when the symbol is absent from the current support matrix or marked as staged only",
+      "meaning": "A diagnostic fixture for a path that would delegate to host glibc; current releases must make the claim-blocking state explicit."
+    },
+    {
+      "id": "raw_syscall",
+      "diagnostic_code": "FLC-DIAG-RAWSYSCALL",
+      "user_message_id": "diag.raw_syscall",
+      "claim_policy": "may claim support only for the declared syscall-backed scope and current fixtures",
+      "meaning": "FrankenLibC selected direct Linux syscall marshaling."
+    },
+    {
+      "id": "deterministic_fallback",
+      "diagnostic_code": "FLC-DIAG-FALLBACK",
+      "user_message_id": "diag.deterministic_fallback",
+      "claim_policy": "block full semantic parity claims until the semantic overlay row is closed",
+      "meaning": "The symbol has a deterministic fallback contract rather than full upstream behavior."
+    },
+    {
+      "id": "hardened_repair",
+      "diagnostic_code": "FLC-DIAG-REPAIR",
+      "user_message_id": "diag.hardened_repair",
+      "claim_policy": "may claim hardened repair only for a current repair/deny matrix row and fixture reference",
+      "meaning": "Hardened mode selected a deterministic repair action."
+    },
+    {
+      "id": "denial",
+      "diagnostic_code": "FLC-DIAG-DENY",
+      "user_message_id": "diag.denial",
+      "claim_policy": "do not count denied unsupported inputs as successful support",
+      "meaning": "Hardened mode denied an unsafe or unsupported input class."
+    },
+    {
+      "id": "unsupported_symbol",
+      "diagnostic_code": "FLC-DIAG-UNSUPPORTED",
+      "user_message_id": "diag.unsupported_symbol",
+      "claim_policy": "never claim behavior support from link-compatible unsupported platform contracts",
+      "meaning": "The exported symbol exists for compatibility but the semantic overlay marks the behavior unsupported."
+    },
+    {
+      "id": "noop_fallback",
+      "diagnostic_code": "FLC-DIAG-NOOP",
+      "user_message_id": "diag.noop_fallback",
+      "claim_policy": "never treat no-op compatibility as full semantic parity",
+      "meaning": "The symbol intentionally returns a no-op compatibility result."
+    }
+  ],
+  "records": [
+    {
+      "scenario_id": "diag_native_strlen_strict",
+      "diagnostic_type": "native_behavior",
+      "symbol": "strlen",
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "support_status": "Implemented",
+      "semantic_join_inventory_id": null,
+      "semantic_class": "full_semantics",
+      "decision_path": "support_matrix>abi_boundary>native_core",
+      "healing_action": "None",
+      "diagnostic_code": "FLC-DIAG-NATIVE",
+      "user_message_id": "diag.native_behavior",
+      "user_message": "strlen uses FrankenLibC native string behavior in strict mode; the claim still depends on current fixture evidence.",
+      "support_claim": "on_current_evidence",
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/fixtures/strlen_strict.json"
+      ],
+      "evidence_status": "current",
+      "source_commit": "HEAD",
+      "failure_signature": "none",
+      "expected_output": "FLC-DIAG-NATIVE strlen strict L0: strlen uses FrankenLibC native string behavior in strict mode; the claim still depends on current fixture evidence."
+    },
+    {
+      "scenario_id": "diag_native_memcpy_strict",
+      "diagnostic_type": "native_behavior",
+      "symbol": "memcpy",
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "support_status": "Implemented",
+      "semantic_join_inventory_id": null,
+      "semantic_class": "full_semantics",
+      "decision_path": "support_matrix>abi_boundary>native_core",
+      "healing_action": "None",
+      "diagnostic_code": "FLC-DIAG-NATIVE",
+      "user_message_id": "diag.native_behavior",
+      "user_message": "memcpy uses FrankenLibC native string behavior in strict mode with no repair rewrite.",
+      "support_claim": "on_current_evidence",
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/fixtures/memcpy_strict.json"
+      ],
+      "evidence_status": "current",
+      "source_commit": "HEAD",
+      "failure_signature": "none",
+      "expected_output": "FLC-DIAG-NATIVE memcpy strict L0: memcpy uses FrankenLibC native string behavior in strict mode with no repair rewrite."
+    },
+    {
+      "scenario_id": "diag_raw_syscall_write_strict",
+      "diagnostic_type": "raw_syscall",
+      "symbol": "write",
+      "api_family": "unistd",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "support_status": "RawSyscall",
+      "semantic_join_inventory_id": null,
+      "semantic_class": "full_semantics",
+      "decision_path": "support_matrix>abi_boundary>linux_syscall",
+      "healing_action": "None",
+      "diagnostic_code": "FLC-DIAG-RAWSYSCALL",
+      "user_message_id": "diag.raw_syscall",
+      "user_message": "write is routed through FrankenLibC raw Linux syscall marshaling for the declared POSIX I/O scope.",
+      "support_claim": "on_current_evidence",
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/fixtures/unistd_ops.json"
+      ],
+      "evidence_status": "current",
+      "source_commit": "HEAD",
+      "failure_signature": "none",
+      "expected_output": "FLC-DIAG-RAWSYSCALL write strict L0: write is routed through FrankenLibC raw Linux syscall marshaling for the declared POSIX I/O scope."
+    },
+    {
+      "scenario_id": "diag_host_delegation_fixture_strict",
+      "diagnostic_type": "host_delegation",
+      "symbol": "legacy_host_callthrough_fixture",
+      "api_family": "abi-interposition",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "support_status": "GlibcCallThrough",
+      "semantic_join_inventory_id": null,
+      "semantic_class": "proof_gap",
+      "decision_path": "staged_diagnostic>host_glibc_delegation",
+      "healing_action": "None",
+      "diagnostic_code": "FLC-DIAG-DELEGATED",
+      "user_message_id": "diag.host_delegation",
+      "user_message": "This staged fixture represents host-glibc delegation; the current support matrix has no such symbol row, so it is blocked from support claims.",
+      "support_claim": "never",
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/host_libc_dependency_inventory.v1.json"
+      ],
+      "evidence_status": "not_current_support_matrix",
+      "source_commit": "HEAD",
+      "failure_signature": "host_delegation_not_current_support_matrix",
+      "expected_output": "FLC-DIAG-DELEGATED legacy_host_callthrough_fixture strict L0: This staged fixture represents host-glibc delegation; the current support matrix has no such symbol row, so it is blocked from support claims."
+    },
+    {
+      "scenario_id": "diag_deterministic_fallback_overflow_strict",
+      "diagnostic_type": "deterministic_fallback",
+      "symbol": "__overflow",
+      "api_family": "stdio",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "support_status": "Implemented",
+      "semantic_join_inventory_id": "sem-stdio-vtable-helpers",
+      "semantic_class": "deterministic_fallback",
+      "decision_path": "semantic_overlay>deterministic_fallback",
+      "healing_action": "None",
+      "diagnostic_code": "FLC-DIAG-FALLBACK",
+      "user_message_id": "diag.deterministic_fallback",
+      "user_message": "__overflow has a deterministic compatibility fallback and cannot advance full stdio semantic parity without targeted fixture evidence.",
+      "support_claim": "never",
+      "artifact_refs": [
+        "tests/conformance/semantic_contract_symbol_join.v1.json",
+        "support_matrix.json"
+      ],
+      "evidence_status": "current",
+      "source_commit": "HEAD",
+      "failure_signature": "semantic_fallback_blocks_full_claim",
+      "expected_output": "FLC-DIAG-FALLBACK __overflow strict L0: __overflow has a deterministic compatibility fallback and cannot advance full stdio semantic parity without targeted fixture evidence."
+    },
+    {
+      "scenario_id": "diag_repair_memcpy_hardened",
+      "diagnostic_type": "hardened_repair",
+      "symbol": "memcpy",
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "support_status": "Implemented",
+      "semantic_join_inventory_id": null,
+      "semantic_class": "full_semantics",
+      "decision_path": "membrane>hardened>Repair",
+      "healing_action": "ClampSize",
+      "diagnostic_code": "FLC-DIAG-REPAIR",
+      "user_message_id": "diag.hardened_repair",
+      "user_message": "memcpy entered hardened repair for an oversized copy and used ClampSize according to the repair matrix.",
+      "support_claim": "on_current_evidence",
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json",
+        "tests/conformance/fixtures/membrane_mode_split.json"
+      ],
+      "evidence_status": "current",
+      "source_commit": "HEAD",
+      "failure_signature": "none",
+      "expected_output": "FLC-DIAG-REPAIR memcpy hardened L1: memcpy entered hardened repair for an oversized copy and used ClampSize according to the repair matrix."
+    },
+    {
+      "scenario_id": "diag_denial_iconv_hardened",
+      "diagnostic_type": "denial",
+      "symbol": "iconv_open",
+      "api_family": "iconv",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "support_status": "Implemented",
+      "semantic_join_inventory_id": null,
+      "semantic_class": "full_semantics",
+      "decision_path": "membrane>hardened>Deny",
+      "healing_action": "None",
+      "diagnostic_code": "FLC-DIAG-DENY",
+      "user_message_id": "diag.denial",
+      "user_message": "iconv_open denied an unsupported encoding input; the denial is evidence of bounded behavior, not a successful codec support claim.",
+      "support_claim": "never",
+      "artifact_refs": [
+        "support_matrix.json",
+        "tests/conformance/hardened_repair_deny_matrix.v1.json",
+        "tests/conformance/fixtures/iconv_phase1.json"
+      ],
+      "evidence_status": "current",
+      "source_commit": "HEAD",
+      "failure_signature": "unsupported_encoding_denied",
+      "expected_output": "FLC-DIAG-DENY iconv_open hardened L1: iconv_open denied an unsupported encoding input; the denial is evidence of bounded behavior, not a successful codec support claim."
+    },
+    {
+      "scenario_id": "diag_unsupported_sysctl_strict",
+      "diagnostic_type": "unsupported_symbol",
+      "symbol": "__sysctl",
+      "api_family": "glibc-internal",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "support_status": "Implemented",
+      "semantic_join_inventory_id": "sem-historical-linux-syscalls",
+      "semantic_class": "unsupported_platform_contract",
+      "decision_path": "support_matrix>semantic_overlay>unsupported_platform_contract",
+      "healing_action": "None",
+      "diagnostic_code": "FLC-DIAG-UNSUPPORTED",
+      "user_message_id": "diag.unsupported_symbol",
+      "user_message": "__sysctl is link-compatible but semantically unsupported on this platform and must not count as behavior-complete support.",
+      "support_claim": "never",
+      "artifact_refs": [
+        "tests/conformance/semantic_contract_symbol_join.v1.json",
+        "support_matrix.json"
+      ],
+      "evidence_status": "current",
+      "source_commit": "HEAD",
+      "failure_signature": "unsupported_platform_contract",
+      "expected_output": "FLC-DIAG-UNSUPPORTED __sysctl strict L0: __sysctl is link-compatible but semantically unsupported on this platform and must not count as behavior-complete support."
+    },
+    {
+      "scenario_id": "diag_noop_pthread_cancel_strict",
+      "diagnostic_type": "noop_fallback",
+      "symbol": "__pthread_register_cancel",
+      "api_family": "pthread",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "support_status": "Implemented",
+      "semantic_join_inventory_id": "sem-pthread-cancel-private",
+      "semantic_class": "compat_noop",
+      "decision_path": "semantic_overlay>compat_noop",
+      "healing_action": "None",
+      "diagnostic_code": "FLC-DIAG-NOOP",
+      "user_message_id": "diag.noop_fallback",
+      "user_message": "__pthread_register_cancel is a no-op compatibility path and blocks full cancellation semantics claims until cleanup fixtures exist.",
+      "support_claim": "never",
+      "artifact_refs": [
+        "tests/conformance/semantic_contract_symbol_join.v1.json",
+        "support_matrix.json"
+      ],
+      "evidence_status": "current",
+      "source_commit": "HEAD",
+      "failure_signature": "compat_noop_blocks_full_claim",
+      "expected_output": "FLC-DIAG-NOOP __pthread_register_cancel strict L0: __pthread_register_cancel is a no-op compatibility path and blocks full cancellation semantics claims until cleanup fixtures exist."
+    }
+  ],
+  "mode_pairs": [
+    {
+      "strict_record": "diag_native_memcpy_strict",
+      "hardened_record": "diag_repair_memcpy_hardened",
+      "expected_difference": "strict native behavior emits no repair rewrite; hardened invalid-input replay emits ClampSize repair"
+    }
+  ],
+  "negative_claim_tests": [
+    {
+      "scenario_id": "negative_delegation_claim",
+      "record": "diag_host_delegation_fixture_strict",
+      "expected_result": "claim_blocked",
+      "failure_signature": "host_delegation_not_current_support_matrix"
+    },
+    {
+      "scenario_id": "negative_fallback_claim",
+      "record": "diag_deterministic_fallback_overflow_strict",
+      "expected_result": "claim_blocked",
+      "failure_signature": "semantic_fallback_blocks_full_claim"
+    },
+    {
+      "scenario_id": "negative_denial_claim",
+      "record": "diag_denial_iconv_hardened",
+      "expected_result": "claim_blocked",
+      "failure_signature": "unsupported_encoding_denied"
+    },
+    {
+      "scenario_id": "negative_noop_claim",
+      "record": "diag_noop_pthread_cancel_strict",
+      "expected_result": "claim_blocked",
+      "failure_signature": "compat_noop_blocks_full_claim"
+    }
+  ],
+  "summary": {
+    "diagnostic_type_count": 8,
+    "record_count": 9,
+    "stable_output_count": 9,
+    "required_log_field_count": 14,
+    "negative_claim_test_count": 4,
+    "strict_records": 7,
+    "hardened_records": 2,
+    "support_claim_never_count": 5,
+    "support_claim_on_current_evidence_count": 4
+  }
+}
