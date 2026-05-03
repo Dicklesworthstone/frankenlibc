@@ -2,9 +2,12 @@
 
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::error::Error;
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
 const REQUIRED_MANIFEST_FIELDS: &[&str] = &[
     "direct_runner",
@@ -65,20 +68,24 @@ fn script_path() -> PathBuf {
     workspace_root().join("scripts/check_fixture_dual_runner_gate.sh")
 }
 
-fn load_json(path: &Path) -> Value {
-    let content = std::fs::read_to_string(path).expect("json artifact should be readable");
-    serde_json::from_str(&content).expect("json artifact should parse")
+fn invalid_data(message: impl Into<String>) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, message.into())
 }
 
-fn unique_temp_dir(name: &str) -> PathBuf {
+fn load_json(path: &Path) -> TestResult<Value> {
+    let content = std::fs::read_to_string(path)?;
+    Ok(serde_json::from_str(&content)?)
+}
+
+fn unique_temp_dir(name: &str) -> TestResult<PathBuf> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|err| invalid_data(format!("system time before UNIX_EPOCH: {err}")))?
         .as_nanos();
-    std::env::temp_dir().join(format!("frankenlibc-{name}-{stamp}-{}", std::process::id()))
+    Ok(std::env::temp_dir().join(format!("frankenlibc-{name}-{stamp}-{}", std::process::id())))
 }
 
-fn run_gate(config: Option<&Path>, out_dir: &Path) -> std::process::Output {
+fn run_gate(config: Option<&Path>, out_dir: &Path) -> TestResult<Output> {
     let root = workspace_root();
     let mut command = Command::new("bash");
     command
@@ -100,85 +107,153 @@ fn run_gate(config: Option<&Path>, out_dir: &Path) -> std::process::Output {
     if let Some(config) = config {
         command.env("FRANKENLIBC_FIXTURE_DUAL_RUNNER_GATE", config);
     }
-    command
-        .output()
-        .expect("failed to run fixture dual-runner gate")
+    Ok(command.output()?)
+}
+
+fn field<'a>(value: &'a Value, name: &str) -> TestResult<&'a Value> {
+    value
+        .get(name)
+        .ok_or_else(|| invalid_data(format!("missing JSON field {name:?}")).into())
+}
+
+fn field_str<'a>(value: &'a Value, name: &str) -> TestResult<&'a str> {
+    field(value, name)?
+        .as_str()
+        .ok_or_else(|| invalid_data(format!("JSON field {name:?} must be a string")).into())
+}
+
+fn field_array<'a>(value: &'a Value, name: &str) -> TestResult<&'a Vec<Value>> {
+    field(value, name)?
+        .as_array()
+        .ok_or_else(|| invalid_data(format!("JSON field {name:?} must be an array")).into())
+}
+
+fn field_array_mut<'a>(value: &'a mut Value, name: &str) -> TestResult<&'a mut Vec<Value>> {
+    value
+        .get_mut(name)
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| invalid_data(format!("JSON field {name:?} must be an array")).into())
+}
+
+fn field_object<'a>(
+    value: &'a Value,
+    name: &str,
+) -> TestResult<&'a serde_json::Map<String, Value>> {
+    field(value, name)?
+        .as_object()
+        .ok_or_else(|| invalid_data(format!("JSON field {name:?} must be an object")).into())
+}
+
+fn field_u64(value: &Value, name: &str) -> TestResult<u64> {
+    field(value, name)?
+        .as_u64()
+        .ok_or_else(|| invalid_data(format!("JSON field {name:?} must be a u64")).into())
+}
+
+fn workspace_file(relative: &str) -> TestResult<PathBuf> {
+    let relative_path = Path::new(relative);
+    if relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(invalid_data(format!("workspace path {relative:?} is not relative")).into());
+    }
+    Ok(workspace_root().join(relative_path))
 }
 
 #[test]
-fn artifact_requires_direct_and_isolated_fixture_paths() {
+fn artifact_requires_direct_and_isolated_fixture_paths() -> TestResult {
     let root = workspace_root();
-    let gate = load_json(&gate_path());
-    assert_eq!(gate["schema_version"].as_str(), Some("v1"));
-    assert_eq!(gate["bead"].as_str(), Some("bd-bp8fl.4.2"));
+    let gate = load_json(&gate_path())?;
+    assert_eq!(field_str(&gate, "schema_version")?, "v1");
+    assert_eq!(field_str(&gate, "bead")?, "bd-bp8fl.4.2");
+
+    let expected_manifest_fields = REQUIRED_MANIFEST_FIELDS
+        .iter()
+        .map(|field| Value::String((*field).to_owned()))
+        .collect::<Vec<_>>();
     assert_eq!(
-        gate["required_manifest_fields"].as_array().unwrap(),
-        &REQUIRED_MANIFEST_FIELDS
-            .iter()
-            .map(|field| Value::String((*field).to_owned()))
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        gate["required_log_fields"].as_array().unwrap(),
-        &REQUIRED_LOG_FIELDS
-            .iter()
-            .map(|field| Value::String((*field).to_owned()))
-            .collect::<Vec<_>>()
+        field_array(&gate, "required_manifest_fields")?,
+        &expected_manifest_fields
     );
 
-    let ci = gate["ci_integration"].as_object().unwrap();
-    assert_eq!(ci["required"].as_bool(), Some(true));
-    let ci_file = ci["ci_file"].as_str().unwrap();
-    let gate_script = ci["gate_script"].as_str().unwrap();
-    assert!(root.join(gate_script).exists(), "{gate_script} must exist");
-    let ci_text = std::fs::read_to_string(root.join(ci_file)).unwrap();
+    let expected_log_fields = REQUIRED_LOG_FIELDS
+        .iter()
+        .map(|field| Value::String((*field).to_owned()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        field_array(&gate, "required_log_fields")?,
+        &expected_log_fields
+    );
+
+    let ci = field_object(&gate, "ci_integration")?;
+    assert_eq!(ci.get("required").and_then(Value::as_bool), Some(true));
+    let ci_file = ci
+        .get("ci_file")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_data("ci_file must be a string"))?;
+    let gate_script = ci
+        .get("gate_script")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_data("gate_script must be a string"))?;
+    assert!(
+        workspace_file(gate_script)?.exists(),
+        "{gate_script} must exist"
+    );
+    let ci_text = std::fs::read_to_string(workspace_file(ci_file)?)?;
     assert!(
         ci_text.contains(gate_script),
         "{ci_file} must invoke {gate_script}"
     );
 
-    let fixtures = gate["fixture_families"].as_array().unwrap();
+    let fixtures = field_array(&gate, "fixture_families")?;
     assert_eq!(fixtures.len(), EXPECTED_FIXTURES.len());
     let ids = fixtures
         .iter()
-        .map(|family| family["fixture_id"].as_str().unwrap())
-        .collect::<BTreeSet<_>>();
+        .map(|family| field_str(family, "fixture_id"))
+        .collect::<TestResult<BTreeSet<_>>>()?;
     assert_eq!(
         ids,
         EXPECTED_FIXTURES.iter().copied().collect::<BTreeSet<_>>()
     );
 
     for family in fixtures {
-        let fixture_id = family["fixture_id"].as_str().unwrap();
+        let fixture_id = field_str(family, "fixture_id")?;
         for field in REQUIRED_MANIFEST_FIELDS {
             assert!(family.get(*field).is_some(), "{fixture_id} missing {field}");
         }
-        let modes = family["runtime_modes"]
-            .as_array()
-            .unwrap()
+        let modes = field_array(family, "runtime_modes")?
             .iter()
-            .map(|mode| mode.as_str().unwrap())
-            .collect::<BTreeSet<_>>();
+            .map(|mode| {
+                mode.as_str()
+                    .ok_or_else(|| invalid_data("runtime mode must be a string").into())
+            })
+            .collect::<TestResult<BTreeSet<_>>>()?;
         assert_eq!(modes, ["hardened", "strict"].into_iter().collect());
 
-        let fixture_manifest = family["fixture_manifest"].as_str().unwrap();
-        let fixture_doc = load_json(&root.join(fixture_manifest));
+        let fixture_manifest = field_str(family, "fixture_manifest")?;
+        let fixture_doc = load_json(&workspace_file(fixture_manifest)?)?;
         assert!(
-            !fixture_doc["cases"].as_array().unwrap().is_empty(),
+            !field_array(&fixture_doc, "cases")?.is_empty(),
             "{fixture_id} fixture cases must not be empty"
         );
 
-        let test_file = family["test_file"].as_str().unwrap();
-        let test_text = std::fs::read_to_string(root.join(test_file)).unwrap();
-        for fragment in family["required_direct_tokens"].as_array().unwrap() {
-            let fragment = fragment.as_str().unwrap();
+        let test_file = field_str(family, "test_file")?;
+        let test_text = std::fs::read_to_string(workspace_file(test_file)?)?;
+        for fragment in field_array(family, "required_direct_tokens")? {
+            let fragment = fragment
+                .as_str()
+                .ok_or_else(|| invalid_data("direct token must be a string"))?;
             assert!(
                 test_text.contains(fragment),
                 "{fixture_id} missing direct fragment {fragment:?}"
             );
         }
-        for fragment in family["required_isolated_tokens"].as_array().unwrap() {
-            let fragment = fragment.as_str().unwrap();
+        for fragment in field_array(family, "required_isolated_tokens")? {
+            let fragment = fragment
+                .as_str()
+                .ok_or_else(|| invalid_data("isolated token must be a string"))?;
             assert!(
                 test_text.contains(fragment),
                 "{fixture_id} missing isolated fragment {fragment:?}"
@@ -186,47 +261,50 @@ fn artifact_requires_direct_and_isolated_fixture_paths() {
         }
     }
 
-    let scenarios = gate["replay_scenarios"].as_array().unwrap();
+    let scenarios = field_array(&gate, "replay_scenarios")?;
     assert_eq!(scenarios.len(), 6);
     let allowed = scenarios
         .iter()
-        .filter(|scenario| scenario["expected_decision"].as_str() == Some("allow"))
+        .filter(|scenario| matches!(field_str(scenario, "expected_decision"), Ok("allow")))
         .count();
     let blocked = scenarios
         .iter()
-        .filter(|scenario| scenario["expected_decision"].as_str() == Some("block"))
+        .filter(|scenario| matches!(field_str(scenario, "expected_decision"), Ok("block")))
         .count();
     assert_eq!(allowed, 1);
     assert_eq!(blocked, 5);
     let failures = scenarios
         .iter()
-        .map(|scenario| scenario["expected_failure_signature"].as_str().unwrap())
-        .collect::<BTreeSet<_>>();
+        .map(|scenario| field_str(scenario, "expected_failure_signature"))
+        .collect::<TestResult<BTreeSet<_>>>()?;
     for failure in EXPECTED_FAILURES {
         assert!(
             failures.contains(failure),
             "scenario set must exercise {failure}"
         );
     }
+
+    assert!(root.exists(), "workspace root must exist");
+    Ok(())
 }
 
 #[test]
-fn gate_script_passes_and_emits_dual_runner_log_rows() {
+fn gate_script_passes_and_emits_dual_runner_log_rows() -> TestResult {
     let script = script_path();
     assert!(script.exists(), "missing {}", script.display());
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::metadata(&script).unwrap().permissions();
+        let perms = std::fs::metadata(&script)?.permissions();
         assert!(
             perms.mode() & 0o111 != 0,
             "check_fixture_dual_runner_gate.sh must be executable"
         );
     }
 
-    let out_dir = unique_temp_dir("fixture-dual-runner-pass");
-    let output = run_gate(None, &out_dir);
+    let out_dir = unique_temp_dir("fixture-dual-runner-pass")?;
+    let output = run_gate(None, &out_dir)?;
     assert!(
         output.status.success(),
         "gate should pass\nstdout={}\nstderr={}",
@@ -234,24 +312,29 @@ fn gate_script_passes_and_emits_dual_runner_log_rows() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let report = load_json(&out_dir.join("fixture-dual-runner.report.json"));
-    assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["summary"]["fixture_family_count"].as_u64(), Some(6));
-    assert_eq!(report["summary"]["scenario_count"].as_u64(), Some(6));
+    let report = load_json(&out_dir.join("fixture-dual-runner.report.json"))?;
+    assert_eq!(field_str(&report, "status")?, "pass");
+    let summary = field_object(&report, "summary")?;
     assert_eq!(
-        report["summary"]["allowed_scenario_count"].as_u64(),
-        Some(1)
+        field_u64(field(&report, "summary")?, "fixture_family_count")?,
+        6
+    );
+    assert_eq!(field_u64(field(&report, "summary")?, "scenario_count")?, 6);
+    assert_eq!(
+        field_u64(field(&report, "summary")?, "allowed_scenario_count")?,
+        1
     );
     assert_eq!(
-        report["summary"]["blocked_scenario_count"].as_u64(),
-        Some(5)
+        field_u64(field(&report, "summary")?, "blocked_scenario_count")?,
+        5
     );
-    assert!(report["errors"].as_array().unwrap().is_empty());
+    assert!(summary.contains_key("fixture_family_count"));
+    assert!(field_array(&report, "errors")?.is_empty());
 
-    let log_text = std::fs::read_to_string(out_dir.join("fixture-dual-runner.log.jsonl")).unwrap();
+    let log_text = std::fs::read_to_string(out_dir.join("fixture-dual-runner.log.jsonl"))?;
     let mut rows = Vec::new();
     for line in log_text.lines().filter(|line| !line.trim().is_empty()) {
-        rows.push(serde_json::from_str::<Value>(line).expect("log row should parse"));
+        rows.push(serde_json::from_str::<Value>(line)?);
     }
     assert!(rows.len() >= 18, "family and replay rows must be logged");
     let mut runner_kinds = BTreeSet::new();
@@ -260,10 +343,10 @@ fn gate_script_passes_and_emits_dual_runner_log_rows() {
         for field in REQUIRED_LOG_FIELDS {
             assert!(row.get(*field).is_some(), "log row missing {field}");
         }
-        runner_kinds.insert(row["runner_kind"].as_str().unwrap());
-        failure_signatures.insert(row["failure_signature"].as_str().unwrap());
-        assert_eq!(row["bead_id"].as_str(), Some("bd-bp8fl.4.2"));
-        assert_eq!(row["target_dir"].as_str(), Some("test-target-dir"));
+        runner_kinds.insert(field_str(row, "runner_kind")?);
+        failure_signatures.insert(field_str(row, "failure_signature")?);
+        assert_eq!(field_str(row, "bead_id")?, "bd-bp8fl.4.2");
+        assert_eq!(field_str(row, "target_dir")?, "test-target-dir");
     }
     assert!(runner_kinds.contains("direct"));
     assert!(runner_kinds.contains("isolated"));
@@ -274,40 +357,48 @@ fn gate_script_passes_and_emits_dual_runner_log_rows() {
             "log must include {failure}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn gate_fails_closed_when_isolated_runner_binding_disappears() {
-    let mut gate = load_json(&gate_path());
-    let families = gate["fixture_families"].as_array_mut().unwrap();
+fn gate_fails_closed_when_isolated_runner_binding_disappears() -> TestResult {
+    let mut gate = load_json(&gate_path())?;
+    let families = field_array_mut(&mut gate, "fixture_families")?;
     let family = families
         .iter_mut()
-        .find(|family| family["fixture_id"].as_str() == Some("memory_ops"))
-        .expect("memory_ops fixture family must exist");
-    family["required_isolated_tokens"] = Value::Array(vec![Value::String(
-        "missing-isolated-subprocess-fragment".to_owned(),
-    )]);
+        .find(|family| matches!(field_str(family, "fixture_id"), Ok("memory_ops")))
+        .ok_or_else(|| invalid_data("memory_ops fixture family must exist"))?;
+    let family_object = family
+        .as_object_mut()
+        .ok_or_else(|| invalid_data("fixture family must be an object"))?;
+    family_object.insert(
+        "required_isolated_tokens".to_owned(),
+        Value::Array(vec![Value::String(
+            "missing-isolated-subprocess-fragment".to_owned(),
+        )]),
+    );
 
-    let out_dir = unique_temp_dir("fixture-dual-runner-fail");
-    std::fs::create_dir_all(&out_dir).unwrap();
+    let out_dir = unique_temp_dir("fixture-dual-runner-fail")?;
+    std::fs::create_dir_all(&out_dir)?;
     let mutated_gate = out_dir.join("mutated-fixture-dual-runner.json");
-    std::fs::write(&mutated_gate, serde_json::to_string_pretty(&gate).unwrap()).unwrap();
+    std::fs::write(&mutated_gate, serde_json::to_string_pretty(&gate)?)?;
 
-    let output = run_gate(Some(&mutated_gate), &out_dir);
+    let output = run_gate(Some(&mutated_gate), &out_dir)?;
     assert!(
         !output.status.success(),
         "gate should fail when isolated runner evidence disappears\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report = load_json(&out_dir.join("fixture-dual-runner.report.json"));
-    assert_eq!(report["status"].as_str(), Some("fail"));
-    let errors = report["errors"].as_array().unwrap();
+    let report = load_json(&out_dir.join("fixture-dual-runner.report.json"))?;
+    assert_eq!(field_str(&report, "status")?, "fail");
+    let errors = field_array(&report, "errors")?;
     assert!(
-        errors.iter().any(|error| error
-            .as_str()
-            .unwrap_or_default()
-            .contains("isolated_runner_missing")),
+        errors.iter().any(|error| matches!(
+            error.as_str(),
+            Some(message) if message.contains("isolated_runner_missing")
+        )),
         "missing isolated subprocess evidence must fail closed"
     );
+    Ok(())
 }
