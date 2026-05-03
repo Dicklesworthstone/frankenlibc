@@ -1,0 +1,754 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "real-program-smoke-suite",
+  "bead": "bd-bp8fl.10.2",
+  "generated_utc": "2026-05-03T05:20:00Z",
+  "purpose": "Deterministic real-program smoke rows for L0 LD_PRELOAD and L1 hardened-interpose evidence, plus fail-closed future standalone rows that cannot be reported as supported without current artifact evidence.",
+  "inputs": {
+    "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json"
+  },
+  "required_case_fields": [
+    "case_id",
+    "workload_id",
+    "domain",
+    "command",
+    "argv",
+    "env",
+    "timeout_ms",
+    "runtime_mode",
+    "replacement_level",
+    "artifact_kind",
+    "expected",
+    "allowed_divergence",
+    "cleanup",
+    "oracle_kind",
+    "support_claim"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "workload_id",
+    "command",
+    "runtime_mode",
+    "replacement_level",
+    "oracle_kind",
+    "expected_status",
+    "actual_status",
+    "errno",
+    "duration_ms",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "required_domains": [
+    "shell_coreutils",
+    "build_tool",
+    "resolver_nss",
+    "locale_iconv",
+    "stdio_file",
+    "threaded",
+    "failure_unsupported",
+    "standalone_future"
+  ],
+  "required_runtime_modes": [
+    "strict",
+    "hardened"
+  ],
+  "required_replacement_levels": [
+    "L0",
+    "L1"
+  ],
+  "artifact_policy": {
+    "interpose_library_env": "FRANKENLIBC_SMOKE_LIB_PATH",
+    "standalone_library_env": "FRANKENLIBC_STANDALONE_LIB",
+    "target_dir_env": "REAL_PROGRAM_SMOKE_TARGET_DIR",
+    "report_env": "REAL_PROGRAM_SMOKE_REPORT",
+    "log_env": "REAL_PROGRAM_SMOKE_LOG",
+    "prior_report_env": "REAL_PROGRAM_SMOKE_PRIOR_REPORT",
+    "required_interpose_artifact_name": "libfrankenlibc_abi.so",
+    "required_standalone_artifact_name": "libfrankenlibc_replace.so",
+    "case_dir_template": "target/real_program_smoke_suite/${run_id}/${case_id}",
+    "stale_if_source_commit_differs": true,
+    "stale_result": "claim_blocked"
+  },
+  "result_policy": {
+    "pass_status": "pass",
+    "claim_blocked_status": "claim_blocked",
+    "skip_status": "skipped",
+    "unsupported_or_skipped_claims_support": false,
+    "dry_run_claims_support": false,
+    "current_artifact_required_for_support": true,
+    "supported_case_requires_actual_status": "pass"
+  },
+  "timeout_policy": {
+    "default_timeout_ms": 5000,
+    "max_timeout_ms": 15000,
+    "timeout_failure_signature": "startup_timeout"
+  },
+  "cases": [
+    {
+      "case_id": "shell_coreutils_sort_pipeline_l0_strict",
+      "workload_id": "shell_coreutils.sort_pipeline",
+      "domain": "shell_coreutils",
+      "command": "/bin/sh",
+      "argv": [
+        "-c",
+        "printf '%s\\n' c a b | sort | tr -d '\\n'"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_exact": "abc",
+        "stderr_exact": "",
+        "errno": null
+      },
+      "allowed_divergence": [],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/shell_coreutils_sort_pipeline_l0_strict"
+      },
+      "oracle_kind": "status_stdout_stderr_exact",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "shell_coreutils_sort_pipeline_l1_hardened",
+      "workload_id": "shell_coreutils.sort_pipeline",
+      "domain": "shell_coreutils",
+      "command": "/bin/sh",
+      "argv": [
+        "-c",
+        "printf '%s\\n' c a b | sort | tr -d '\\n'"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_exact": "abc",
+        "stderr_exact": "",
+        "errno": null
+      },
+      "allowed_divergence": [],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/shell_coreutils_sort_pipeline_l1_hardened"
+      },
+      "oracle_kind": "status_stdout_stderr_exact",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "build_tool_compiler_version_l0_strict",
+      "workload_id": "build_tool.compiler_version",
+      "domain": "build_tool",
+      "command": "cc",
+      "argv": [
+        "--version"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "errno": null
+      },
+      "allowed_divergence": [
+        "compiler version banners may use stdout or stderr"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/build_tool_compiler_version_l0_strict"
+      },
+      "oracle_kind": "status_only",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "build_tool_compiler_version_l1_hardened",
+      "workload_id": "build_tool.compiler_version",
+      "domain": "build_tool",
+      "command": "cc",
+      "argv": [
+        "--version"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "errno": null
+      },
+      "allowed_divergence": [
+        "compiler version banners may use stdout or stderr"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/build_tool_compiler_version_l1_hardened"
+      },
+      "oracle_kind": "status_only",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "resolver_nss_localhost_l0_strict",
+      "workload_id": "resolver_nss.localhost",
+      "domain": "resolver_nss",
+      "command": "getent",
+      "argv": [
+        "hosts",
+        "localhost"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_contains": "localhost",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "IPv4 or IPv6 localhost ordering may vary"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/resolver_nss_localhost_l0_strict"
+      },
+      "oracle_kind": "status_stdout_contains",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "resolver_nss_localhost_l1_hardened",
+      "workload_id": "resolver_nss.localhost",
+      "domain": "resolver_nss",
+      "command": "getent",
+      "argv": [
+        "hosts",
+        "localhost"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_contains": "localhost",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "IPv4 or IPv6 localhost ordering may vary"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/resolver_nss_localhost_l1_hardened"
+      },
+      "oracle_kind": "status_stdout_contains",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "locale_iconv_list_utf_l0_strict",
+      "workload_id": "locale_iconv.iconv_list",
+      "domain": "locale_iconv",
+      "command": "iconv",
+      "argv": [
+        "-l"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_contains": "UTF",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "iconv aliases and case vary by host"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/locale_iconv_list_utf_l0_strict"
+      },
+      "oracle_kind": "status_stdout_contains",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "locale_iconv_list_utf_l1_hardened",
+      "workload_id": "locale_iconv.iconv_list",
+      "domain": "locale_iconv",
+      "command": "iconv",
+      "argv": [
+        "-l"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_contains": "UTF",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "iconv aliases and case vary by host"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/locale_iconv_list_utf_l1_hardened"
+      },
+      "oracle_kind": "status_stdout_contains",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "stdio_file_roundtrip_l0_strict",
+      "workload_id": "stdio_file.roundtrip",
+      "domain": "stdio_file",
+      "command": "/bin/sh",
+      "argv": [
+        "-c",
+        "printf 'stdio-ok\\n' > smoke-file.txt; cat smoke-file.txt"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_exact": "stdio-ok\n",
+        "stderr_exact": "",
+        "errno": null
+      },
+      "allowed_divergence": [],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/stdio_file_roundtrip_l0_strict"
+      },
+      "oracle_kind": "status_stdout_stderr_exact",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "stdio_file_roundtrip_l1_hardened",
+      "workload_id": "stdio_file.roundtrip",
+      "domain": "stdio_file",
+      "command": "/bin/sh",
+      "argv": [
+        "-c",
+        "printf 'stdio-ok\\n' > smoke-file.txt; cat smoke-file.txt"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_exact": "stdio-ok\n",
+        "stderr_exact": "",
+        "errno": null
+      },
+      "allowed_divergence": [],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/stdio_file_roundtrip_l1_hardened"
+      },
+      "oracle_kind": "status_stdout_stderr_exact",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "threaded_python_smoke_l0_strict",
+      "workload_id": "threaded.python_smoke",
+      "domain": "threaded",
+      "command": "python3",
+      "argv": [
+        "-c",
+        "import threading; value=[]; t=threading.Thread(target=lambda: value.append('thread-ok')); t.start(); t.join(); print(value[0])"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 10000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_exact": "thread-ok\n",
+        "stderr_exact": "",
+        "errno": null
+      },
+      "allowed_divergence": [],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/threaded_python_smoke_l0_strict"
+      },
+      "oracle_kind": "status_stdout_stderr_exact",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "threaded_python_smoke_l1_hardened",
+      "workload_id": "threaded.python_smoke",
+      "domain": "threaded",
+      "command": "python3",
+      "argv": [
+        "-c",
+        "import threading; value=[]; t=threading.Thread(target=lambda: value.append('thread-ok')); t.start(); t.join(); print(value[0])"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 10000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_exact": "thread-ok\n",
+        "stderr_exact": "",
+        "errno": null
+      },
+      "allowed_divergence": [],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/threaded_python_smoke_l1_hardened"
+      },
+      "oracle_kind": "status_stdout_stderr_exact",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "expected_failure_exit_l0_strict",
+      "workload_id": "failure_unsupported.expected_exit",
+      "domain": "failure_unsupported",
+      "command": "/bin/sh",
+      "argv": [
+        "-c",
+        "printf 'intentional-failure\\n' >&2; exit 42"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 42,
+        "stderr_contains": "intentional-failure",
+        "errno": null
+      },
+      "allowed_divergence": [],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/expected_failure_exit_l0_strict"
+      },
+      "oracle_kind": "expected_nonzero_status",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "expected_failure_exit_l1_hardened",
+      "workload_id": "failure_unsupported.expected_exit",
+      "domain": "failure_unsupported",
+      "command": "/bin/sh",
+      "argv": [
+        "-c",
+        "printf 'intentional-failure\\n' >&2; exit 42"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 42,
+        "stderr_contains": "intentional-failure",
+        "errno": null
+      },
+      "allowed_divergence": [],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/expected_failure_exit_l1_hardened"
+      },
+      "oracle_kind": "expected_nonzero_status",
+      "support_claim": "on_pass"
+    },
+    {
+      "case_id": "unsupported_optional_sqlite_l0_strict",
+      "workload_id": "failure_unsupported.optional_sqlite",
+      "domain": "failure_unsupported",
+      "command": "sqlite3",
+      "argv": [
+        ":memory:",
+        "select 1;"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_contains": "1",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "optional external binary may be unavailable"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/unsupported_optional_sqlite_l0_strict"
+      },
+      "oracle_kind": "optional_real_program_probe",
+      "support_claim": "never"
+    },
+    {
+      "case_id": "unsupported_optional_sqlite_l1_hardened",
+      "workload_id": "failure_unsupported.optional_sqlite",
+      "domain": "failure_unsupported",
+      "command": "sqlite3",
+      "argv": [
+        ":memory:",
+        "select 1;"
+      ],
+      "optional": true,
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 5000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "ld_preload_interpose",
+      "expected": {
+        "status": 0,
+        "stdout_contains": "1",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "optional external binary may be unavailable"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/unsupported_optional_sqlite_l1_hardened"
+      },
+      "oracle_kind": "optional_real_program_probe",
+      "support_claim": "never"
+    },
+    {
+      "case_id": "standalone_future_minimal_l1_strict",
+      "workload_id": "standalone_future.minimal",
+      "domain": "standalone_future",
+      "command": "standalone_link_run_smoke",
+      "argv": [
+        "--run",
+        "standalone.minimal_exit"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 10000,
+      "runtime_mode": "strict",
+      "replacement_level": "L1",
+      "artifact_kind": "standalone_direct_link_future",
+      "expected": {
+        "status": "claim_blocked",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "current repo has no supported libfrankenlibc_replace.so artifact"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/standalone_future_minimal_l1_strict"
+      },
+      "oracle_kind": "standalone_future_claim_gate",
+      "support_claim": "never"
+    },
+    {
+      "case_id": "standalone_future_minimal_l1_hardened",
+      "workload_id": "standalone_future.minimal",
+      "domain": "standalone_future",
+      "command": "standalone_link_run_smoke",
+      "argv": [
+        "--run",
+        "standalone.minimal_exit"
+      ],
+      "env": {
+        "set": {
+          "LC_ALL": "C"
+        },
+        "unset": [
+          "LD_PRELOAD"
+        ]
+      },
+      "timeout_ms": 10000,
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "artifact_kind": "standalone_direct_link_future",
+      "expected": {
+        "status": "claim_blocked",
+        "errno": null
+      },
+      "allowed_divergence": [
+        "current repo has no supported libfrankenlibc_replace.so artifact"
+      ],
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "artifact_dir": "target/real_program_smoke_suite/${run_id}/standalone_future_minimal_l1_hardened"
+      },
+      "oracle_kind": "standalone_future_claim_gate",
+      "support_claim": "never"
+    }
+  ],
+  "summary": {
+    "case_count": 18,
+    "ld_preload_interpose_case_count": 16,
+    "standalone_future_case_count": 2,
+    "strict_case_count": 9,
+    "hardened_case_count": 9,
+    "l0_case_count": 8,
+    "l1_case_count": 10,
+    "non_support_claim_policy_rows": 4,
+    "required_domain_coverage": {
+      "shell_coreutils": 2,
+      "build_tool": 2,
+      "resolver_nss": 2,
+      "locale_iconv": 2,
+      "stdio_file": 2,
+      "threaded": 2,
+      "failure_unsupported": 4,
+      "standalone_future": 2
+    }
+  }
+}
