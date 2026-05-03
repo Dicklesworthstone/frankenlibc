@@ -1,0 +1,339 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.2.7",
+  "generated_at_utc": "2026-05-03T17:25:00Z",
+  "trace_id": "bd-bp8fl-2-7-br-bv-disagreement-dashboard-v1",
+  "purpose": "Make br and bv disagreement actionable in dashboard artifacts without hiding JSONL-visible work behind stale DB, timeout, or dashboard states.",
+  "source_of_truth_policy": {
+    "primary": "br --no-db list --status open --json",
+    "named_bead": "br --no-db show <bead> --json",
+    "cycle_gate": "br --no-db dep cycles --json",
+    "dashboard_rule": "A dashboard may report no work only when br no-db open rows are zero and no tracker command timed out.",
+    "implementation_rule": "Unrelated implementation may proceed when JSONL rows are visible, dependency cycles are zero, and the disagreement is classified as tracker_failure rather than code_failure."
+  },
+  "required_report_fields": [
+    "schema_version",
+    "bead",
+    "generated_at_utc",
+    "trace_id",
+    "source_commit",
+    "status",
+    "dashboard_rows",
+    "summary",
+    "artifact_refs"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "tracker_run_id",
+    "command",
+    "exit_status",
+    "duration_ms",
+    "source",
+    "bead_id",
+    "discrepancy_type",
+    "expected",
+    "actual",
+    "source_commit",
+    "artifact_refs",
+    "failure_signature"
+  ],
+  "discrepancy_types": [
+    "db_jsonl_count_mismatch",
+    "exact_id_split_brain",
+    "timeout",
+    "stale_blocked_cache",
+    "already_shipped_but_open_bead",
+    "conflicting_ready_lists",
+    "cycle_report_disagreement",
+    "missing_issue_record"
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "healthy_agreement",
+      "expected_discrepancies": [],
+      "expected_current_source_of_truth": "agreement",
+      "expected_next_safe_action": "continue_claimable_jsonl_beads",
+      "implementation_may_proceed": true,
+      "inputs": {
+        "jsonl_records": 1535,
+        "db_records": 1535,
+        "br_ready_count": 20,
+        "br_open_count": 72,
+        "bv_open_count": 72,
+        "cycles_count": 0,
+        "exact_id_split_brain": false,
+        "stale_blocked_cache": false,
+        "already_shipped_but_open": [],
+        "missing_records": []
+      },
+      "commands": [
+        {
+          "name": "br_open_no_db",
+          "source": "br",
+          "command": "br --no-db list --status open --json",
+          "exit_status": 0,
+          "duration_ms": 850,
+          "expected": "open rows visible",
+          "actual": "72 open rows",
+          "failure_signature": "ok"
+        },
+        {
+          "name": "bv_robot_triage",
+          "source": "bv",
+          "command": "bv --robot-triage",
+          "exit_status": 0,
+          "duration_ms": 510,
+          "expected": "same open count as br no-db",
+          "actual": "72 open rows",
+          "failure_signature": "ok"
+        }
+      ]
+    },
+    {
+      "scenario_id": "bv_zero_open_jsonl_open",
+      "expected_discrepancies": [
+        "conflicting_ready_lists"
+      ],
+      "expected_current_source_of_truth": "br_no_db_jsonl",
+      "expected_next_safe_action": "render_open_jsonl_rows_and_file_tracker_repair",
+      "implementation_may_proceed": true,
+      "inputs": {
+        "jsonl_records": 1535,
+        "db_records": 1535,
+        "br_ready_count": 0,
+        "br_open_count": 64,
+        "bv_open_count": 0,
+        "cycles_count": 0,
+        "exact_id_split_brain": false,
+        "stale_blocked_cache": false,
+        "already_shipped_but_open": [],
+        "missing_records": []
+      },
+      "commands": [
+        {
+          "name": "br_ready_no_db",
+          "source": "br",
+          "command": "br --no-db ready --json",
+          "exit_status": 0,
+          "duration_ms": 1240,
+          "expected": "ready rows or explicit blockers",
+          "actual": "0 ready rows",
+          "failure_signature": "zero_ready_nonzero_open"
+        },
+        {
+          "name": "bv_robot_triage",
+          "source": "bv",
+          "command": "bv --robot-triage",
+          "exit_status": 0,
+          "duration_ms": 430,
+          "expected": "must not hide br open rows",
+          "actual": "0 open rows despite br_open_count=64",
+          "failure_signature": "conflicting_ready_lists"
+        }
+      ]
+    },
+    {
+      "scenario_id": "db_jsonl_count_drift",
+      "expected_discrepancies": [
+        "conflicting_ready_lists",
+        "db_jsonl_count_mismatch",
+        "stale_blocked_cache"
+      ],
+      "expected_current_source_of_truth": "br_no_db_jsonl",
+      "expected_next_safe_action": "use_no_db_jsonl_and_repair_tracker_db",
+      "implementation_may_proceed": true,
+      "inputs": {
+        "jsonl_records": 1538,
+        "db_records": 1535,
+        "br_ready_count": 18,
+        "br_open_count": 70,
+        "bv_open_count": 0,
+        "cycles_count": 0,
+        "exact_id_split_brain": false,
+        "stale_blocked_cache": true,
+        "already_shipped_but_open": [],
+        "missing_records": []
+      },
+      "commands": [
+        {
+          "name": "br_doctor_db",
+          "source": "br_db",
+          "command": "br doctor --json",
+          "exit_status": 1,
+          "duration_ms": 220,
+          "expected": "db and JSONL counts agree",
+          "actual": "DB has 1535 rows, JSONL has 1538 rows",
+          "failure_signature": "db_jsonl_count_mismatch"
+        }
+      ]
+    },
+    {
+      "scenario_id": "exact_id_split_brain",
+      "expected_discrepancies": [
+        "exact_id_split_brain"
+      ],
+      "expected_current_source_of_truth": "br_no_db_show",
+      "expected_next_safe_action": "prefer_named_no_db_show_and_reconcile_duplicate_rows",
+      "implementation_may_proceed": false,
+      "inputs": {
+        "jsonl_records": 1535,
+        "db_records": 1535,
+        "br_ready_count": 12,
+        "br_open_count": 60,
+        "bv_open_count": 60,
+        "cycles_count": 0,
+        "exact_id_split_brain": true,
+        "already_shipped_but_open": [],
+        "missing_records": []
+      },
+      "commands": [
+        {
+          "name": "br_show_no_db",
+          "source": "br",
+          "command": "br --no-db show bd-split --json",
+          "exit_status": 0,
+          "duration_ms": 140,
+          "expected": "one canonical row",
+          "actual": "two rows disagree on status",
+          "failure_signature": "exact_id_split_brain"
+        }
+      ]
+    },
+    {
+      "scenario_id": "timeout_only",
+      "expected_discrepancies": [
+        "timeout"
+      ],
+      "expected_current_source_of_truth": "inconclusive",
+      "expected_next_safe_action": "retry_timed_out_command_with_tighter_scope",
+      "implementation_may_proceed": false,
+      "inputs": {
+        "jsonl_records": 1535,
+        "db_records": 1535,
+        "br_ready_count": null,
+        "br_open_count": null,
+        "bv_open_count": null,
+        "cycles_count": null,
+        "exact_id_split_brain": false,
+        "stale_blocked_cache": false,
+        "already_shipped_but_open": [],
+        "missing_records": []
+      },
+      "commands": [
+        {
+          "name": "br_open_no_db",
+          "source": "br",
+          "command": "timeout 30 br --no-db list --status open --json",
+          "exit_status": 124,
+          "duration_ms": 30000,
+          "expected": "open rows or structured timeout",
+          "actual": "command timed out",
+          "failure_signature": "timeout"
+        }
+      ]
+    },
+    {
+      "scenario_id": "cycle_report_disagreement",
+      "expected_discrepancies": [
+        "cycle_report_disagreement"
+      ],
+      "expected_current_source_of_truth": "blocked_graph",
+      "expected_next_safe_action": "fix_dependency_cycles_before_dashboard_claims",
+      "implementation_may_proceed": false,
+      "inputs": {
+        "jsonl_records": 1535,
+        "db_records": 1535,
+        "br_ready_count": 0,
+        "br_open_count": 52,
+        "bv_open_count": 52,
+        "cycles_count": 2,
+        "exact_id_split_brain": false,
+        "stale_blocked_cache": false,
+        "already_shipped_but_open": [],
+        "missing_records": []
+      },
+      "commands": [
+        {
+          "name": "br_dep_cycles_no_db",
+          "source": "br",
+          "command": "br --no-db dep cycles --json",
+          "exit_status": 0,
+          "duration_ms": 95,
+          "expected": "zero cycles",
+          "actual": "2 cycles",
+          "failure_signature": "cycle_report_disagreement"
+        }
+      ]
+    },
+    {
+      "scenario_id": "missing_issue_record",
+      "expected_discrepancies": [
+        "missing_issue_record"
+      ],
+      "expected_current_source_of_truth": "br_no_db_show",
+      "expected_next_safe_action": "repair_missing_issue_or_dependency_record",
+      "implementation_may_proceed": false,
+      "inputs": {
+        "jsonl_records": 1535,
+        "db_records": 1535,
+        "br_ready_count": 15,
+        "br_open_count": 58,
+        "bv_open_count": 58,
+        "cycles_count": 0,
+        "exact_id_split_brain": false,
+        "stale_blocked_cache": false,
+        "already_shipped_but_open": [],
+        "missing_records": [
+          "bd-missing-parent"
+        ]
+      },
+      "commands": [
+        {
+          "name": "br_show_no_db",
+          "source": "br",
+          "command": "br --no-db show bd-missing-parent --json",
+          "exit_status": 3,
+          "duration_ms": 88,
+          "expected": "referenced bead exists",
+          "actual": "ISSUE_NOT_FOUND",
+          "failure_signature": "missing_issue_record"
+        }
+      ]
+    },
+    {
+      "scenario_id": "already_shipped_but_open",
+      "expected_discrepancies": [
+        "already_shipped_but_open_bead"
+      ],
+      "expected_current_source_of_truth": "br_no_db_jsonl",
+      "expected_next_safe_action": "close_shipped_bead_or_reopen_with_current_blocker",
+      "implementation_may_proceed": true,
+      "inputs": {
+        "jsonl_records": 1535,
+        "db_records": 1535,
+        "br_ready_count": 14,
+        "br_open_count": 59,
+        "bv_open_count": 59,
+        "cycles_count": 0,
+        "exact_id_split_brain": false,
+        "stale_blocked_cache": false,
+        "already_shipped_but_open": [
+          "bd-shipped-open"
+        ],
+        "missing_records": []
+      },
+      "commands": [
+        {
+          "name": "git_log_probe",
+          "source": "git",
+          "command": "git log --grep bd-shipped-open --oneline",
+          "exit_status": 0,
+          "duration_ms": 40,
+          "expected": "open bead has no shipped commit",
+          "actual": "matching shipped commit exists",
+          "failure_signature": "already_shipped_but_open_bead"
+        }
+      ]
+    }
+  ]
+}
