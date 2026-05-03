@@ -1,0 +1,623 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fpg-algebraic-topological-gate",
+  "bead": "bd-bp8fl.3.11",
+  "owner_family_group": "fpg-proof-algebraic-topological",
+  "evidence_owner": "runtime_math algebraic/topological monitor owners",
+  "generated_utc": "2026-05-03T22:45:00Z",
+  "source_commit": "a4a73d2b375a2eb077e1a97d71cae11ed5498e64",
+  "inputs": {
+    "feature_parity": "FEATURE_PARITY.md",
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "proof_traceability_check": "tests/conformance/proof_traceability_check.json",
+    "sheaf_coverage": "tests/conformance/sheaf_coverage.v1.json",
+    "math_value_proof": "tests/conformance/math_value_proof.json",
+    "math_governance": "tests/conformance/math_governance.json",
+    "branch_diversity_spec": "tests/conformance/branch_diversity_spec.v1.json",
+    "reverse_round_contracts": "tests/conformance/reverse_round_contracts.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "gap_id",
+    "monitor_id",
+    "runtime_mode",
+    "expected_decision",
+    "actual_decision",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_done_until_monitor_fixture_and_drift_evidence_current",
+    "allow_status": ["PLANNED", "IN_PROGRESS"],
+    "block_status_without_all_anchors": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "minimum_branch_families": 3,
+    "required_runtime_modes": ["strict", "hardened"],
+    "required_drift_classes": [
+      "cocycle_obstruction",
+      "polynomial_certificate_failure",
+      "rare_event_tail_escape",
+      "homology_shape_shift",
+      "signature_roughness_drift",
+      "bisimulation_split",
+      "codec_normal_form_drift",
+      "namespace_gluing_failure",
+      "spectral_obstruction",
+      "normal_form_nonunique",
+      "serre_page_divergence",
+      "descent_noncoherence",
+      "index_localization_mismatch",
+      "fixed_point_weight_drift",
+      "filtration_order_violation"
+    ],
+    "rejected_evidence_kinds": [
+      "prose_only",
+      "tracker_closure_only",
+      "missing_monitor_fixture",
+      "missing_drift_signature",
+      "stale_source_commit",
+      "collapsed_branch_diversity",
+      "missing_source_anchor"
+    ]
+  },
+  "rows": [
+    {
+      "gap_id": "fp-proof-math-9c25ab032255",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "sheaf consistency detection",
+      "monitor_id": "cohomology",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 242, "line_contains": "sheaf consistency detection"},
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-cohomology-overlap",
+        "scenario": "allocator/string/stdio overlap witnesses must glue or emit obstruction evidence",
+        "input_classes": ["pairwise_overlap", "triple_overlap", "global_section"],
+        "expected_observation": "h1_zero remains true for compatible local sections",
+        "falsifiable_if": "a declared triple overlap has nonzero xor obstruction without a claim blocker"
+      },
+      "drift_signature": {
+        "signature_id": "drift-cocycle-obstruction",
+        "class": "cocycle_obstruction",
+        "signal": "triple_overlap_xor_nonzero",
+        "threshold": "any_nonzero_obstruction",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "algebraic_topology", "module": "cohomology"},
+        {"family": "grothendieck_serre", "module": "higher_topos"},
+        {"family": "abstract_algebra", "module": "grobner_normalizer"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/sheaf_coverage.v1.json", "kind": "json_field_equals", "field": "cohomology.h1_zero", "expected_value": true},
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_array_contains", "field": "obligations.*.obligation_id", "expected_value": "PO-11"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-5fa634c732ac",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "SOS invariant synthesis",
+      "monitor_id": "sos_invariant",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/sos_invariant.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 247, "line_contains": "SOS invariant synthesis"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-sos-invariant-certificate",
+        "scenario": "SOS certificate rows must stay tied to invariant and barrier evaluators",
+        "input_classes": ["polynomial_certificate", "controller_state", "barrier_margin"],
+        "expected_observation": "certificate validity remains machine-verifiable before proof promotion",
+        "falsifiable_if": "certificate source or barrier evaluator disappears while status advances"
+      },
+      "drift_signature": {
+        "signature_id": "drift-polynomial-certificate-failure",
+        "class": "polynomial_certificate_failure",
+        "signal": "negative_certificate_margin",
+        "threshold": "margin_below_zero",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "polynomial_optimization", "module": "sos_invariant"},
+        {"family": "algebraic_topology", "module": "cohomology"},
+        {"family": "abstract_algebra", "module": "grobner_normalizer"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_array_contains", "field": "obligations.*.obligation_id", "expected_value": "PO-15"},
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "sos_invariant"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/sos_invariant.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-d7e5810905ab",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "large-deviation catastrophe bounds",
+      "monitor_id": "large_deviations",
+      "monitor_path": "crates/frankenlibc-membrane/src/large_deviations.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 248, "line_contains": "large-deviation catastrophe bounds"},
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-large-deviation-tail",
+        "scenario": "rare-event tail estimates must block catastrophe-bound claims until replay artifacts exist",
+        "input_classes": ["tail_sample", "rate_function", "alarm_threshold"],
+        "expected_observation": "tail escape is classified before L1 promotion",
+        "falsifiable_if": "catastrophe claim lacks rare-event replay or threshold evidence"
+      },
+      "drift_signature": {
+        "signature_id": "drift-rare-event-tail-escape",
+        "class": "rare_event_tail_escape",
+        "signal": "empirical_tail_above_rate_bound",
+        "threshold": "any_budget_exceedance",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "concentration_bounds", "module": "large_deviations"},
+        {"family": "algebraic_topology", "module": "obstruction_detector"},
+        {"family": "grothendieck_serre", "module": "higher_topos"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/branch_diversity_spec.v1.json", "kind": "json_array_contains", "field": "math_families.concentration_bounds.modules", "expected_value": "large_deviations"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/large_deviations.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/large_deviations.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-f6429eb2d1c8",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "topological anomaly detection",
+      "monitor_id": "persistence",
+      "monitor_path": "crates/frankenlibc-membrane/src/persistence.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 249, "line_contains": "topological anomaly detection"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-persistence-shape-shift",
+        "scenario": "persistent-homology summaries must detect topology drift before anomaly claims advance",
+        "input_classes": ["point_cloud", "vietoris_rips_radius", "betti_summary"],
+        "expected_observation": "Betti-zero fragmentation remains replayable",
+        "falsifiable_if": "shape shift appears only as prose without persistence artifact refs"
+      },
+      "drift_signature": {
+        "signature_id": "drift-homology-shape-shift",
+        "class": "homology_shape_shift",
+        "signal": "betti_count_delta",
+        "threshold": "delta_nonzero_after_stable_radius",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "algebraic_topology", "module": "persistence"},
+        {"family": "abstract_algebra", "module": "clifford"},
+        {"family": "grothendieck_serre", "module": "higher_topos"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/branch_diversity_spec.v1.json", "kind": "json_array_contains", "field": "math_families.algebraic_topology.modules", "expected_value": "persistence"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/persistence.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/persistence.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-37337d818152",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "rough-signature feature stability",
+      "monitor_id": "rough_path",
+      "monitor_path": "crates/frankenlibc-membrane/src/rough_path.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 250, "line_contains": "rough-signature feature stability"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-rough-path-signature",
+        "scenario": "rough-path signatures must preserve perturbation stability evidence",
+        "input_classes": ["path_signature", "perturbation", "stability_radius"],
+        "expected_observation": "signature drift is replayable under bounded perturbation",
+        "falsifiable_if": "rough signature row advances without perturbation witness"
+      },
+      "drift_signature": {
+        "signature_id": "drift-signature-roughness",
+        "class": "signature_roughness_drift",
+        "signal": "signature_distance_above_radius",
+        "threshold": "distance_gt_stability_radius",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "algebraic_topology", "module": "persistence"},
+        {"family": "abstract_algebra", "module": "clifford"},
+        {"family": "concentration_bounds", "module": "large_deviations"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/rough_path.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/rough_path.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-a0873d9da0f5",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "coalgebraic stream bisimulation",
+      "monitor_id": "higher_topos",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 253, "line_contains": "coalgebraic stream bisimulation"},
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-coalgebraic-stream",
+        "scenario": "minimized stream-machine proofs must keep bisimulation splits observable",
+        "input_classes": ["stream_state", "transition_observation", "protocol_replay"],
+        "expected_observation": "equivalent streams remain observationally aligned",
+        "falsifiable_if": "protocol replay splits without a drift signature"
+      },
+      "drift_signature": {
+        "signature_id": "drift-bisimulation-split",
+        "class": "bisimulation_split",
+        "signal": "paired_stream_observation_divergence",
+        "threshold": "first_divergent_transition",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "grothendieck_serre", "module": "higher_topos"},
+        {"family": "abstract_algebra", "module": "derived_tstructure"},
+        {"family": "algebraic_topology", "module": "cohomology"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "higher_topos"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-bccf06e26bab",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "Krohn-Rhodes codec factorization",
+      "monitor_id": "grobner_normalizer",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 254, "line_contains": "Krohn-Rhodes codec factorization"},
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-codec-normal-form",
+        "scenario": "codec factorization claims must cite normal-form and iconv scope evidence",
+        "input_classes": ["codec_automaton", "normal_form", "equivalence_class"],
+        "expected_observation": "equivalent codec constraints reduce to one canonical form",
+        "falsifiable_if": "codec normal form changes without equivalence artifact"
+      },
+      "drift_signature": {
+        "signature_id": "drift-codec-normal-form",
+        "class": "codec_normal_form_drift",
+        "signal": "canonical_form_hash_delta",
+        "threshold": "any_unexplained_hash_delta",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "abstract_algebra", "module": "grobner_normalizer"},
+        {"family": "grothendieck_serre", "module": "ktheory"},
+        {"family": "algebraic_topology", "module": "obstruction_detector"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/iconv_codec_scope_ledger.v1.json", "kind": "path_exists"},
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "grobner_normalizer"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-fcb2fed207e1",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "loader namespace sheaf consistency",
+      "monitor_id": "grothendieck_glue",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 258, "line_contains": "loader namespace sheaf consistency"},
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-loader-namespace-sheaf",
+        "scenario": "loader namespace sheaves must expose nongluable namespace witnesses",
+        "input_classes": ["namespace_chart", "symbol_resolution", "restriction_map"],
+        "expected_observation": "compatible namespace charts glue before claim promotion",
+        "falsifiable_if": "namespace chart conflict is present but descent blocker is absent"
+      },
+      "drift_signature": {
+        "signature_id": "drift-namespace-gluing",
+        "class": "namespace_gluing_failure",
+        "signal": "restriction_map_conflict",
+        "threshold": "any_unresolved_conflict",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "grothendieck_serre", "module": "grothendieck_glue"},
+        {"family": "algebraic_topology", "module": "cohomology"},
+        {"family": "abstract_algebra", "module": "derived_tstructure"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "grothendieck_glue"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-76cb028ebd3b",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "spectral-sequence obstruction convergence",
+      "monitor_id": "obstruction_detector",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 264, "line_contains": "spectral-sequence obstruction convergence"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-obstruction-convergence",
+        "scenario": "spectral-sequence obstruction claims must keep localized witnesses replayable",
+        "input_classes": ["page_witness", "differential", "localized_obstruction"],
+        "expected_observation": "obstruction convergence is blocked until page witness is current",
+        "falsifiable_if": "obstruction page changes without localized witness trace"
+      },
+      "drift_signature": {
+        "signature_id": "drift-spectral-obstruction",
+        "class": "spectral_obstruction",
+        "signal": "page_differential_nonconvergence",
+        "threshold": "unresolved_page_after_budget",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "algebraic_topology", "module": "serre_spectral"},
+        {"family": "grothendieck_serre", "module": "higher_topos"},
+        {"family": "abstract_algebra", "module": "grobner_normalizer"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "obstruction_detector"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-7d4ac141f993",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "algebraic normal-form uniqueness",
+      "monitor_id": "grobner_normalizer",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 265, "line_contains": "algebraic normal-form uniqueness"},
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-normal-form-uniqueness",
+        "scenario": "constraint normal forms must be unique before rewrite certificates promote",
+        "input_classes": ["polynomial_constraint", "rewrite_certificate", "normal_form"],
+        "expected_observation": "equivalent constraints reduce to the same canonical remainder",
+        "falsifiable_if": "two canonical forms exist for one equivalence class"
+      },
+      "drift_signature": {
+        "signature_id": "drift-normal-form-nonunique",
+        "class": "normal_form_nonunique",
+        "signal": "canonical_remainder_split",
+        "threshold": "more_than_one_remainder",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "abstract_algebra", "module": "grobner_normalizer"},
+        {"family": "grothendieck_serre", "module": "ktheory"},
+        {"family": "algebraic_topology", "module": "obstruction_detector"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "grobner_normalizer"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-7c593b074cca",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "Serre spectral convergence integrity",
+      "monitor_id": "serre_spectral",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 268, "line_contains": "Serre spectral convergence integrity"},
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-serre-page-witness",
+        "scenario": "Serre page-wise ledgers must preserve extension-obstruction replay",
+        "input_classes": ["page_ledger", "extension_class", "obstruction_replay"],
+        "expected_observation": "page witness integrity blocks promotion on divergence",
+        "falsifiable_if": "page transition diverges without extension-obstruction signature"
+      },
+      "drift_signature": {
+        "signature_id": "drift-serre-page-divergence",
+        "class": "serre_page_divergence",
+        "signal": "page_witness_hash_delta",
+        "threshold": "unexplained_hash_delta",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "algebraic_topology", "module": "serre_spectral"},
+        {"family": "grothendieck_serre", "module": "higher_topos"},
+        {"family": "abstract_algebra", "module": "derived_tstructure"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "serre_spectral"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-cecd99919641",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "Grothendieck descent coherence",
+      "monitor_id": "grothendieck_glue",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 269, "line_contains": "Grothendieck descent coherence"},
+      "claimed_status": "PLANNED",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-grothendieck-descent",
+        "scenario": "site/topos/descent certificates must block nongluable case overclaims",
+        "input_classes": ["site_cover", "descent_data", "stackification_certificate"],
+        "expected_observation": "descent certificate stays coherent across cover refinements",
+        "falsifiable_if": "nongluable case exists without descent blocker"
+      },
+      "drift_signature": {
+        "signature_id": "drift-descent-noncoherence",
+        "class": "descent_noncoherence",
+        "signal": "cocycle_condition_failure",
+        "threshold": "any_descent_failure",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "grothendieck_serre", "module": "grothendieck_glue"},
+        {"family": "algebraic_topology", "module": "cohomology"},
+        {"family": "abstract_algebra", "module": "grobner_normalizer"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "grothendieck_glue"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-c9faf981c807",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "families-index nullity",
+      "monitor_id": "ktheory",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 270, "line_contains": "families-index nullity"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-families-index",
+        "scenario": "families-index ledgers must expose nonzero-index defect reports",
+        "input_classes": ["family_parameter", "index_ledger", "transport_witness"],
+        "expected_observation": "zero-index claim stays blocked until transport witness is current",
+        "falsifiable_if": "index ledger shows nonzero defect without claim blocker"
+      },
+      "drift_signature": {
+        "signature_id": "drift-index-localization-mismatch",
+        "class": "index_localization_mismatch",
+        "signal": "global_index_differs_from_localized_sum",
+        "threshold": "any_index_delta",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "atiyah_singer_ktheory", "module": "ktheory"},
+        {"family": "grothendieck_serre", "module": "ktheory"},
+        {"family": "abstract_algebra", "module": "clifford"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "ktheory"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-1cf962a06c67",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "Atiyah-Bott localization conservativity",
+      "monitor_id": "atiyah_bott",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/atiyah_bott.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 271, "line_contains": "Atiyah-Bott localization conservativity"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-atiyah-bott-fixed-point",
+        "scenario": "fixed-point localization must stay conservative against full-obligation reports",
+        "input_classes": ["fixed_point_component", "localized_weight", "full_obligation_bound"],
+        "expected_observation": "localized sum remains within declared error bound",
+        "falsifiable_if": "fixed-point compression disagrees with full obligation without blocker"
+      },
+      "drift_signature": {
+        "signature_id": "drift-fixed-point-weight",
+        "class": "fixed_point_weight_drift",
+        "signal": "localized_weight_sum_delta",
+        "threshold": "delta_above_error_bound",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "atiyah_singer_ktheory", "module": "atiyah_bott"},
+        {"family": "grothendieck_serre", "module": "ktheory"},
+        {"family": "abstract_algebra", "module": "clifford"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "atiyah_bott"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/atiyah_bott.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/atiyah_bott.rs", "kind": "path_exists"}
+      ]
+    },
+    {
+      "gap_id": "fp-proof-math-58baa463bee3",
+      "kind": "feature_parity_row_status",
+      "section": "proof_math",
+      "primary_key": "derived t-structure bootstrap ordering",
+      "monitor_id": "derived_tstructure",
+      "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs",
+      "runtime_mode": "strict+hardened",
+      "expected_decision": "keep_visible_block_promotion",
+      "feature_parity_provenance": {"line": 273, "line_contains": "derived t-structure bootstrap ordering"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "monitor_fixture": {
+        "fixture_id": "fpg-at-derived-tstructure-ordering",
+        "scenario": "t-structure filtration proofs must expose orthogonality violation traces",
+        "input_classes": ["filtration_step", "orthogonality_check", "bootstrap_order"],
+        "expected_observation": "bootstrap order stays monotone with no hidden orthogonality violation",
+        "falsifiable_if": "filtration order changes without violation trace"
+      },
+      "drift_signature": {
+        "signature_id": "drift-filtration-order",
+        "class": "filtration_order_violation",
+        "signal": "orthogonality_violation_after_reorder",
+        "threshold": "any_violation",
+        "blocked_when_missing": true
+      },
+      "branch_obligations": [
+        {"family": "abstract_algebra", "module": "derived_tstructure"},
+        {"family": "grothendieck_serre", "module": "higher_topos"},
+        {"family": "algebraic_topology", "module": "serre_spectral"}
+      ],
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "derived_tstructure"},
+        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs"},
+        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs", "kind": "path_exists"}
+      ]
+    }
+  ]
+}
