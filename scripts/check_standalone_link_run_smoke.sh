@@ -81,8 +81,17 @@ REQUIRED_CATEGORIES = {
     "pthread_tls",
     "resolver_locale",
     "negative_missing_obligation",
+    "loader_symbol_bootstrap",
+    "vm_syscall_ipc",
+    "diagnostics_session",
+    "profiling_fenv",
+    "loader_process_negative_missing_obligation",
 }
-POSITIVE_CATEGORIES = REQUIRED_CATEGORIES - {"negative_missing_obligation"}
+NEGATIVE_CATEGORIES = {
+    "negative_missing_obligation",
+    "loader_process_negative_missing_obligation",
+}
+POSITIVE_CATEGORIES = REQUIRED_CATEGORIES - NEGATIVE_CATEGORIES
 
 errors = []
 checks = {}
@@ -150,6 +159,7 @@ def append_log(
     *,
     event,
     smoke_id,
+    owner_bead=None,
     runtime_mode,
     replacement_level,
     expected_status,
@@ -159,13 +169,14 @@ def append_log(
     loader_error=None,
     artifact_refs=None,
 ):
-    trace_id = f"{manifest.get('bead', 'unknown')}::{run_dir.name}::{smoke_id}::{runtime_mode}::{event}"
+    bead_id = owner_bead or manifest.get("bead")
+    trace_id = f"{bead_id or 'unknown'}::{run_dir.name}::{smoke_id}::{runtime_mode}::{event}"
     row = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "level": "info" if actual_status in {"pass", "blocked", "claim_blocked", "validated"} else "error",
         "event": event,
         "trace_id": trace_id,
-        "bead_id": manifest.get("bead"),
+        "bead_id": bead_id,
         "smoke_id": smoke_id,
         "compiler": compiler_name,
         "link_args": link_args or [],
@@ -497,6 +508,7 @@ def run_rows():
         append_log(
             event="baseline_compile_run",
             smoke_id=smoke_id,
+            owner_bead=row.get("owner_bead"),
             runtime_mode="baseline",
             replacement_level="host-baseline",
             expected_status="exit_code=0",
@@ -582,6 +594,7 @@ def run_rows():
             append_log(
                 event="candidate_direct_link",
                 smoke_id=smoke_id,
+                owner_bead=row.get("owner_bead"),
                 runtime_mode=runtime_mode,
                 replacement_level=row["replacement_level"],
                 expected_status=str(expected_candidate),

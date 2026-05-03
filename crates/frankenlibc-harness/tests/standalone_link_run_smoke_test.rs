@@ -99,7 +99,7 @@ fn manifest_defines_required_rows_and_log_contract() {
     assert_eq!(log_fields, REQUIRED_LOG_FIELDS);
 
     let rows = manifest["smoke_rows"].as_array().unwrap();
-    assert_eq!(rows.len(), 5);
+    assert_eq!(rows.len(), 10);
     let categories: HashSet<_> = rows
         .iter()
         .map(|row| row["category"].as_str().unwrap())
@@ -110,6 +110,11 @@ fn manifest_defines_required_rows_and_log_contract() {
         "pthread_tls",
         "resolver_locale",
         "negative_missing_obligation",
+        "loader_symbol_bootstrap",
+        "vm_syscall_ipc",
+        "diagnostics_session",
+        "profiling_fenv",
+        "loader_process_negative_missing_obligation",
     ] {
         assert!(categories.contains(category), "missing category {category}");
     }
@@ -144,6 +149,63 @@ fn manifest_defines_required_rows_and_log_contract() {
             "{smoke_id}: LD_PRELOAD must be forbidden"
         );
     }
+}
+
+#[test]
+fn loader_process_owner_rows_cover_all_gap_ids() {
+    let manifest = load_manifest();
+    let owner_group = manifest["owner_family_groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| group["owner_bead"].as_str() == Some("bd-bp8fl.3.7"))
+        .expect("bd-bp8fl.3.7 owner group should be declared");
+    assert_eq!(
+        owner_group["batch_id"].as_str(),
+        Some("fpg-reverse-loader-process-abi")
+    );
+
+    let expected_gap_ids: HashSet<_> = owner_group["gap_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(expected_gap_ids.len(), 10);
+
+    let mut positive_gap_ids = HashSet::new();
+    let mut negative_gap_ids = HashSet::new();
+    let mut owner_rows = 0;
+    for row in manifest["smoke_rows"].as_array().unwrap() {
+        if row["owner_bead"].as_str() != Some("bd-bp8fl.3.7") {
+            continue;
+        }
+        owner_rows += 1;
+        assert_eq!(
+            row["runtime_modes"].as_array().unwrap().len(),
+            2,
+            "{} must cover strict+hardened",
+            row["smoke_id"].as_str().unwrap()
+        );
+        let target = if row["negative_case"].as_bool().unwrap_or(false) {
+            &mut negative_gap_ids
+        } else {
+            &mut positive_gap_ids
+        };
+        for gap_id in row["feature_gap_ids"].as_array().unwrap() {
+            target.insert(gap_id.as_str().unwrap());
+        }
+    }
+
+    assert_eq!(owner_rows, 5);
+    assert_eq!(
+        positive_gap_ids, expected_gap_ids,
+        "positive rows must preserve every loader/process ABI gap id"
+    );
+    assert_eq!(
+        negative_gap_ids, expected_gap_ids,
+        "negative row must fail closed for every loader/process ABI gap id"
+    );
 }
 
 #[test]
@@ -226,6 +288,7 @@ fn dry_run_blocks_l2_claim_without_candidate_artifact() {
     );
 
     let report = load_json(&report_path);
+    let expected_candidate_rows = load_manifest()["smoke_rows"].as_array().unwrap().len() * 2;
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["current_level"].as_str(), Some("L0"));
     assert_eq!(report["claim_status"].as_str(), Some("claim_blocked"));
@@ -236,8 +299,8 @@ fn dry_run_blocks_l2_claim_without_candidate_artifact() {
     assert_eq!(report["artifact_state"]["status"].as_str(), Some("missing"));
     assert_eq!(
         report["summary"]["candidate_blocked"].as_u64(),
-        Some(10),
-        "five rows times strict+hardened should fail closed without artifact"
+        Some(expected_candidate_rows as u64),
+        "all strict+hardened candidate rows should fail closed without artifact"
     );
 
     let log = std::fs::read_to_string(&log_path).expect("log should be readable");
@@ -259,7 +322,7 @@ fn dry_run_blocks_l2_claim_without_candidate_artifact() {
             assert_eq!(row["actual_status"].as_str(), Some("claim_blocked"));
         }
     }
-    assert_eq!(candidate_rows, 10);
+    assert_eq!(candidate_rows, expected_candidate_rows);
 }
 
 #[test]
@@ -277,15 +340,23 @@ fn run_mode_compiles_baseline_programs_and_emits_artifacts() {
     );
 
     let report = load_json(&report_path);
+    let expected_rows = load_manifest()["smoke_rows"].as_array().unwrap().len();
+    let expected_candidate_rows = expected_rows * 2;
     assert_eq!(report["status"].as_str(), Some("pass"));
-    assert_eq!(report["summary"]["rows"].as_u64(), Some(5));
+    assert_eq!(
+        report["summary"]["rows"].as_u64(),
+        Some(expected_rows as u64)
+    );
     assert_eq!(report["summary"]["baseline_failed"].as_u64(), Some(0));
     assert_eq!(
         report["summary"]["baseline_passed"].as_u64(),
-        Some(5),
+        Some(expected_rows as u64),
         "all C fixtures should compile and pass against the host baseline"
     );
-    assert_eq!(report["summary"]["candidate_blocked"].as_u64(), Some(10));
+    assert_eq!(
+        report["summary"]["candidate_blocked"].as_u64(),
+        Some(expected_candidate_rows as u64)
+    );
 
     let rows = report["rows"].as_array().unwrap();
     for row in rows {
@@ -313,6 +384,13 @@ fn run_mode_compiles_baseline_programs_and_emits_artifacts() {
         rows.iter()
             .any(|row| row["failure_signature"].as_str() == Some("standalone_artifact_missing")),
         "run log must explain missing standalone artifact"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row["bead_id"].as_str() == Some("bd-bp8fl.3.7")
+                && row["event"].as_str() == Some("candidate_direct_link")
+        }),
+        "run log must include bd-bp8fl.3.7 candidate evidence rows"
     );
 }
 

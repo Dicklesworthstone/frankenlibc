@@ -10,6 +10,48 @@
     "standalone_readiness_matrix": "tests/conformance/standalone_readiness_proof_matrix.v1.json",
     "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json"
   },
+  "owner_family_groups": [
+    {
+      "owner_bead": "bd-bp8fl.3.7",
+      "batch_id": "fpg-reverse-loader-process-abi",
+      "oracle_kind": "link_run_and_versioned_symbol_gate",
+      "gap_ids": [
+        "fp-reverse-core-0191894bf973",
+        "fp-reverse-core-c16c9c1ae7a4",
+        "fp-reverse-core-83ea12557c2f",
+        "fp-reverse-core-a764fe234295",
+        "fp-reverse-core-3ac0cb0d65a2",
+        "fp-reverse-core-757002295174",
+        "fp-reverse-core-8f05cebd7805",
+        "fp-reverse-core-b4b2f8e772cb",
+        "fp-reverse-core-44162ed23382",
+        "fp-reverse-core-a559b1461f71"
+      ],
+      "positive_smoke_rows": [
+        "standalone.loader_symbol_bootstrap",
+        "standalone.vm_syscall_ipc",
+        "standalone.diagnostics_session",
+        "standalone.profiling_fenv"
+      ],
+      "negative_smoke_rows": [
+        "standalone.loader_process_negative_missing_obligation"
+      ],
+      "required_log_fields": [
+        "trace_id",
+        "bead_id",
+        "smoke_id",
+        "runtime_mode",
+        "replacement_level",
+        "expected_status",
+        "actual_status",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "claim_policy": "L1/L2/L3 loader-process ABI claims stay blocked until positive rows pass with a current standalone artifact and the negative row remains claim_blocked."
+    }
+  ],
   "required_log_fields": [
     "trace_id",
     "bead_id",
@@ -427,18 +469,419 @@
           "remove_case_dir only when caller explicitly opts in"
         ]
       }
+    },
+    {
+      "smoke_id": "standalone.loader_symbol_bootstrap",
+      "owner_bead": "bd-bp8fl.3.7",
+      "category": "loader_symbol_bootstrap",
+      "description": "dlopen(NULL), dlsym(memcpy), getauxval, and time_t layout probes run in a direct-link binary.",
+      "source_filename": "loader_symbol_bootstrap.c",
+      "feature_gap_ids": [
+        "fp-reverse-core-0191894bf973",
+        "fp-reverse-core-c16c9c1ae7a4",
+        "fp-reverse-core-a764fe234295"
+      ],
+      "c_source": "#define _GNU_SOURCE\n#include <dlfcn.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <sys/auxv.h>\n#include <time.h>\n\nint main(void) {\n    void *handle = dlopen(NULL, RTLD_NOW);\n    if (handle == NULL) {\n        fprintf(stderr, \"dlopen:%s\\n\", dlerror());\n        return 2;\n    }\n    void *symbol = dlsym(handle, \"memcpy\");\n    if (symbol == NULL) {\n        fprintf(stderr, \"dlsym:%s\\n\", dlerror());\n        return 3;\n    }\n    if (sizeof(time_t) < 8) {\n        return 4;\n    }\n    unsigned long pagesz = getauxval(AT_PAGESZ);\n    unsigned long secure = getauxval(AT_SECURE);\n    if (pagesz == 0) {\n        return 5;\n    }\n    char dst[8] = {0};\n    ((void *(*)(void *, const void *, size_t))symbol)(dst, \"ok\", 3);\n    printf(\"loader-symbol-bootstrap-ok:%s:%lu\\n\", dst, secure);\n    return strcmp(dst, \"ok\") == 0 ? 0 : 6;\n}\n",
+      "replacement_level": "L2",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}",
+          "-ldl"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}",
+          "-ldl"
+        ],
+        "extra_flags": [
+          "-ldl"
+        ]
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "Versioned dynamic-linker, IFUNC-adjacent symbol lookup, auxv bootstrap, and time_t layout assumptions are checked before L2 claims.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "dlopen",
+          "version": "GLIBC_2.34",
+          "required_for": "loader"
+        },
+        {
+          "symbol": "memcpy",
+          "version": "GLIBC_2.14",
+          "required_for": "ifunc_symbol_lookup"
+        },
+        {
+          "symbol": "getauxval",
+          "version": "GLIBC_2.16",
+          "required_for": "process_bootstrap"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": 0,
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "loader-symbol-bootstrap-ok:ok:",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
+    },
+    {
+      "smoke_id": "standalone.vm_syscall_ipc",
+      "owner_bead": "bd-bp8fl.3.7",
+      "category": "vm_syscall_ipc",
+      "description": "mmap/munmap, raw syscall getpid, and ftok SysV IPC key generation stay coherent in a direct-link binary.",
+      "source_filename": "vm_syscall_ipc.c",
+      "feature_gap_ids": [
+        "fp-reverse-core-83ea12557c2f",
+        "fp-reverse-core-3ac0cb0d65a2",
+        "fp-reverse-core-757002295174"
+      ],
+      "c_source": "#define _GNU_SOURCE\n#include <errno.h>\n#include <stdio.h>\n#include <string.h>\n#include <sys/ipc.h>\n#include <sys/mman.h>\n#include <sys/syscall.h>\n#include <unistd.h>\n\nint main(void) {\n    void *page = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);\n    if (page == MAP_FAILED) {\n        perror(\"mmap\");\n        return 2;\n    }\n    strcpy((char *)page, \"vm-ok\");\n    long raw_pid = syscall(SYS_getpid);\n    if (raw_pid != (long)getpid()) {\n        return 3;\n    }\n    key_t key = ftok(\".\", 65);\n    int key_seen = key != (key_t)-1 || errno == ENOENT;\n    int unmap_rc = munmap(page, 4096);\n    if (unmap_rc != 0) {\n        perror(\"munmap\");\n        return 4;\n    }\n    printf(\"vm-syscall-ipc-ok:%ld:%d\\n\", raw_pid, key_seen);\n    return key_seen ? 0 : 5;\n}\n",
+      "replacement_level": "L2",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}"
+        ],
+        "extra_flags": []
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "VM transitions, raw syscall ABI glue, and SysV IPC key semantics must work or remain explicitly blocked for standalone replacement claims.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "mmap",
+          "version": "GLIBC_2.2.5",
+          "required_for": "vm_transition"
+        },
+        {
+          "symbol": "syscall",
+          "version": "GLIBC_2.2.5",
+          "required_for": "syscall_glue"
+        },
+        {
+          "symbol": "ftok",
+          "version": "GLIBC_2.2.5",
+          "required_for": "sysv_ipc"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": 0,
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "vm-syscall-ipc-ok:",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
+    },
+    {
+      "smoke_id": "standalone.diagnostics_session",
+      "owner_bead": "bd-bp8fl.3.7",
+      "category": "diagnostics_session",
+      "description": "GNU backtrace and utmpx session-accounting probes run without requiring mutable session records.",
+      "source_filename": "diagnostics_session.c",
+      "feature_gap_ids": [
+        "fp-reverse-core-8f05cebd7805",
+        "fp-reverse-core-b4b2f8e772cb"
+      ],
+      "c_source": "#define _GNU_SOURCE\n#include <execinfo.h>\n#include <stdio.h>\n#include <utmpx.h>\n\nint main(void) {\n    void *frames[8];\n    int frame_count = backtrace(frames, 8);\n    if (frame_count <= 0) {\n        return 2;\n    }\n    setutxent();\n    struct utmpx *entry = getutxent();\n    endutxent();\n    printf(\"diagnostics-session-ok:%d:%d\\n\", frame_count, entry != NULL);\n    return 0;\n}\n",
+      "replacement_level": "L2",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}"
+        ],
+        "extra_flags": []
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "Diagnostics/unwinding and session-accounting read paths must be executable before user-facing standalone compatibility claims advance.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "backtrace",
+          "version": "GLIBC_2.2.5",
+          "required_for": "diagnostics_unwinding"
+        },
+        {
+          "symbol": "getutxent",
+          "version": "GLIBC_2.2.5",
+          "required_for": "session_accounting"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": 0,
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "diagnostics-session-ok:",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
+    },
+    {
+      "smoke_id": "standalone.profiling_fenv",
+      "owner_bead": "bd-bp8fl.3.7",
+      "category": "profiling_fenv",
+      "description": "profil disable path and fenv exception round-trip run in a direct-link binary.",
+      "source_filename": "profiling_fenv.c",
+      "feature_gap_ids": [
+        "fp-reverse-core-44162ed23382",
+        "fp-reverse-core-a559b1461f71"
+      ],
+      "c_source": "#define _GNU_SOURCE\n#include <fenv.h>\n#include <stdio.h>\n#include <unistd.h>\n\nint main(void) {\n    int profil_rc = profil(NULL, 0, 0, 0);\n    if (profil_rc != 0) {\n        perror(\"profil\");\n        return 2;\n    }\n    if (feclearexcept(FE_ALL_EXCEPT) != 0) {\n        return 3;\n    }\n    if (feraiseexcept(FE_DIVBYZERO) != 0) {\n        return 4;\n    }\n    int raised = fetestexcept(FE_DIVBYZERO);\n    printf(\"profiling-fenv-ok:%d\\n\", raised != 0);\n    return raised ? 0 : 5;\n}\n",
+      "replacement_level": "L2",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}",
+          "-lm"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}",
+          "-lm"
+        ],
+        "extra_flags": [
+          "-lm"
+        ]
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "Profiling hooks and fenv exceptional paths must have direct-link executable witnesses before standalone claims advance.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "profil",
+          "version": "GLIBC_2.2.5",
+          "required_for": "profiling"
+        },
+        {
+          "symbol": "feraiseexcept",
+          "version": "GLIBC_2.2.5",
+          "required_for": "fenv_exception"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": 0,
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "profiling-fenv-ok:1",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
+    },
+    {
+      "smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "owner_bead": "bd-bp8fl.3.7",
+      "category": "loader_process_negative_missing_obligation",
+      "description": "Intentional negative row proving loader/process ABI L1/L2/L3 claims stay blocked without current rtld, IFUNC, time64, syscall, IPC, session, profiling, and fenv evidence.",
+      "source_filename": "loader_process_negative_missing_obligation.c",
+      "feature_gap_ids": [
+        "fp-reverse-core-0191894bf973",
+        "fp-reverse-core-c16c9c1ae7a4",
+        "fp-reverse-core-83ea12557c2f",
+        "fp-reverse-core-a764fe234295",
+        "fp-reverse-core-3ac0cb0d65a2",
+        "fp-reverse-core-757002295174",
+        "fp-reverse-core-8f05cebd7805",
+        "fp-reverse-core-b4b2f8e772cb",
+        "fp-reverse-core-44162ed23382",
+        "fp-reverse-core-a559b1461f71"
+      ],
+      "c_source": "int main(void) {\n    return 0;\n}\n",
+      "replacement_level": "L3",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "negative_case": true,
+      "missing_obligations": [
+        "owned_rtld_relocation",
+        "ifunc_hwcaps_resolution",
+        "time64_layout_bridge",
+        "process_bootstrap_auxv_secure_mode",
+        "cross_isa_syscall_glue",
+        "sysv_ipc_lifecycle",
+        "diagnostics_unwinding",
+        "session_accounting_records",
+        "profiling_output_contract",
+        "fenv_exception_semantics"
+      ],
+      "link_command": {
+        "profile": "standalone_direct_link",
+        "baseline_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "-o",
+          "${baseline_binary}"
+        ],
+        "candidate_template": [
+          "${CC}",
+          "-O2",
+          "${source}",
+          "${standalone_library}",
+          "-Wl,-rpath,${standalone_library_dir}",
+          "-o",
+          "${candidate_binary}"
+        ],
+        "extra_flags": []
+      },
+      "runtime_env": {
+        "required": {
+          "FRANKENLIBC_MODE": "${runtime_mode}"
+        },
+        "forbidden": [
+          "LD_PRELOAD"
+        ]
+      },
+      "expected_loader_startup": "This row must remain claim_blocked until every loader/process ABI gap ID has current positive evidence and unsupported cases are explicitly blocked.",
+      "symbol_version_requirements": [
+        {
+          "symbol": "rtld",
+          "version": "frankenlibc-owned",
+          "required_for": "loader_process_abi"
+        }
+      ],
+      "expected_output": {
+        "baseline_status": 0,
+        "candidate_status_when_artifact_current": "claim_blocked",
+        "candidate_status_when_missing_or_stale": "claim_blocked",
+        "stdout_contains": "",
+        "stderr_contains": ""
+      },
+      "cleanup": {
+        "policy": "case_dir_scoped",
+        "required_steps": [
+          "record artifact refs",
+          "remove_case_dir only when caller explicitly opts in"
+        ]
+      }
     }
   ],
   "summary": {
-    "row_count": 5,
-    "positive_row_count": 4,
-    "negative_row_count": 1,
+    "row_count": 10,
+    "positive_row_count": 8,
+    "negative_row_count": 2,
     "required_categories": [
       "minimal",
       "stdio_file",
       "pthread_tls",
       "resolver_locale",
-      "negative_missing_obligation"
+      "negative_missing_obligation",
+      "loader_symbol_bootstrap",
+      "vm_syscall_ipc",
+      "diagnostics_session",
+      "profiling_fenv",
+      "loader_process_negative_missing_obligation"
     ],
     "standalone_claim_status": "blocked_until_current_artifact_and_obligations_pass",
     "ld_preload_smoke_substitutes_for_standalone": false
