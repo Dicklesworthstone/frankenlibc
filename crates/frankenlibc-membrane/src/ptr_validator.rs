@@ -630,6 +630,15 @@ impl ValidationPipeline {
         {
             return self.validate_null_without_trace_feedback();
         }
+        if addr != 0
+            && self.page_oracle.is_empty()
+            && !self.validation_logging_enabled()
+            && !self.runtime_math.validation_feedback_enabled()
+            && let Some(outcome) =
+                self.try_validate_empty_oracle_foreign_without_trace_feedback(addr)
+        {
+            return outcome;
+        }
 
         self.validate_with_security_context(
             addr,
@@ -651,6 +660,30 @@ impl ValidationPipeline {
         } else {
             ValidationOutcome::Bypassed
         }
+    }
+
+    #[inline]
+    fn try_validate_empty_oracle_foreign_without_trace_feedback(
+        &self,
+        addr: usize,
+    ) -> Option<ValidationOutcome> {
+        let mode = safety_level();
+        if !mode.validation_enabled() {
+            let metrics = global_metrics();
+            MembraneMetrics::inc(&metrics.validations);
+            return Some(ValidationOutcome::Bypassed);
+        }
+
+        if self.bloom.might_contain(addr) {
+            return None;
+        }
+
+        let metrics = global_metrics();
+        MembraneMetrics::inc(&metrics.validations);
+        MembraneMetrics::inc(&metrics.bloom_misses);
+        Some(ValidationOutcome::Foreign(PointerAbstraction::unknown(
+            addr,
+        )))
     }
 
     /// Run a pointer through the validation pipeline under an explicit security context.

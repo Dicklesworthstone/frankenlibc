@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use crate::bravo::BravoRwLock;
 
@@ -26,6 +26,8 @@ const PAGES_PER_L2: usize = 4096;
 pub struct PageOracle {
     /// L2 bitmaps keyed by L1 index (chunk number).
     l2_maps: BravoRwLock<HashMap<usize, Arc<L2Bitmap>>>,
+    /// Number of pages currently marked owned across all L2 bitmaps.
+    owned_pages: AtomicUsize,
 }
 
 /// A bitmap covering PAGES_PER_L2 pages.
@@ -44,32 +46,30 @@ impl L2Bitmap {
         Self { counts }
     }
 
-    fn set(&self, page_within_chunk: usize) {
+    fn set(&self, page_within_chunk: usize) -> bool {
         // Saturating increment
-        let _ = self.counts[page_within_chunk].fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |x| Some(if x == u32::MAX { u32::MAX } else { x + 1 }),
-        );
+        self.counts[page_within_chunk]
+            .fetch_update(Ordering::Release, Ordering::Relaxed, |x| {
+                Some(if x == u32::MAX { u32::MAX } else { x + 1 })
+            })
+            .is_ok_and(|previous| previous == 0)
     }
 
     fn get(&self, page_within_chunk: usize) -> bool {
-        self.counts[page_within_chunk].load(Ordering::Relaxed) > 0
+        self.counts[page_within_chunk].load(Ordering::Acquire) > 0
     }
 
-    fn clear(&self, page_within_chunk: usize) {
+    fn clear(&self, page_within_chunk: usize) -> bool {
         // Saturating decrement
-        let _ = self.counts[page_within_chunk].fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |x| {
+        self.counts[page_within_chunk]
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |x| {
                 match x {
                     0 => Some(0),               // Should not happen if balanced
                     u32::MAX => Some(u32::MAX), // Saturated, sticky
                     _ => Some(x - 1),
                 }
-            },
-        );
+            })
+            .is_ok_and(|previous| previous == 1)
     }
 }
 
@@ -79,7 +79,15 @@ impl PageOracle {
     pub fn new() -> Self {
         Self {
             l2_maps: BravoRwLock::new(HashMap::new()),
+            owned_pages: AtomicUsize::new(0),
         }
+    }
+
+    /// Returns true if no pages are currently marked owned.
+    #[must_use]
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.owned_pages.load(Ordering::Acquire) == 0
     }
 
     /// Mark all pages covered by an allocation as owned.
@@ -98,7 +106,9 @@ impl PageOracle {
             {
                 let maps = self.l2_maps.read();
                 if let Some(bitmap) = maps.get(&l1_idx) {
-                    bitmap.set(l2_page);
+                    if bitmap.set(l2_page) {
+                        self.owned_pages.fetch_add(1, Ordering::Release);
+                    }
                     continue;
                 }
             }
@@ -108,7 +118,9 @@ impl PageOracle {
                 let bitmap = maps
                     .entry(l1_idx)
                     .or_insert_with(|| Arc::new(L2Bitmap::new()));
-                bitmap.set(l2_page);
+                if bitmap.set(l2_page) {
+                    self.owned_pages.fetch_add(1, Ordering::Release);
+                }
             });
         }
     }
@@ -137,8 +149,10 @@ impl PageOracle {
         let maps = self.l2_maps.read();
         for page in start_page..=end_page {
             let (l1_idx, l2_page) = Self::decompose(page);
-            if let Some(bitmap) = maps.get(&l1_idx) {
-                bitmap.clear(l2_page);
+            if let Some(bitmap) = maps.get(&l1_idx)
+                && bitmap.clear(l2_page)
+            {
+                self.owned_pages.fetch_sub(1, Ordering::Release);
             }
         }
     }
@@ -165,8 +179,10 @@ mod tests {
     fn insert_and_query() {
         let oracle = PageOracle::new();
         let base = 0x1000; // page-aligned
+        assert!(oracle.is_empty());
         oracle.insert(base, 4096);
 
+        assert!(!oracle.is_empty());
         assert!(oracle.query(base));
         assert!(oracle.query(base + 2048));
         assert!(!oracle.query(base + 8192));
@@ -208,6 +224,7 @@ mod tests {
         assert!(oracle.query(base));
 
         oracle.remove(base, 4096);
+        assert!(oracle.is_empty());
         assert!(!oracle.query(base));
     }
 
