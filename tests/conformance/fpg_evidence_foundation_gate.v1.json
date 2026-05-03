@@ -1,0 +1,304 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fpg-evidence-foundation-gate",
+  "bead": "bd-bp8fl.3.12",
+  "owner_family_group": "fpg-gap-summary-evidence-foundation",
+  "evidence_owner": "conformance, benchmark, ABI-symbol, and proof-binder owners",
+  "generated_utc": "2026-05-03T17:16:41Z",
+  "source_commit": "5df185a7b0403e4ee5d69ad24ec9f382c62c49ed",
+  "purpose": "Fail-closed gate for the seven foundation rows in the FEATURE_PARITY gap summary. These rows may stay IN_PROGRESS while evidence is partial, but they cannot advance to DONE or replacement level L1/L2/L3 unless every bound fixture, benchmark, version-script, proof-binder, runtime-math, guardrail, and strict/hardened membrane-mode anchor is current and machine-verifiable.",
+  "inputs": {
+    "feature_parity": "FEATURE_PARITY.md",
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "fixture_dir": "tests/conformance/fixtures/",
+    "perf_baseline_spec": "tests/conformance/perf_baseline_spec.json",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "proof_obligations_binder": "tests/conformance/proof_obligations_binder.v1.json",
+    "proof_traceability_check": "tests/conformance/proof_traceability_check.json",
+    "runtime_math_linkage": "tests/runtime_math/runtime_math_linkage.v1.json",
+    "risk_pareto_calibration": "tests/runtime_math/risk_pareto_calibration.v1.json",
+    "risk_pareto_gate": "scripts/check_runtime_math_risk_pareto_calibration.sh",
+    "membrane_mode_split_fixture": "tests/conformance/fixtures/membrane_mode_split.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "gap_id",
+    "section",
+    "feature_parity_line",
+    "foundation_surface",
+    "expected",
+    "actual",
+    "evidence_artifact",
+    "evidence_anchor",
+    "evidence_verdict",
+    "replacement_level",
+    "claim_decision",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_done_until_foundation_evidence_current",
+    "allow_status_without_full_closure": ["IN_PROGRESS"],
+    "block_status_without_all_anchors": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "missing_or_stale_result": "claim_blocked",
+    "fail_closed_message": "Foundation gap-summary rows cannot advertise DONE or advance beyond L0 unless every cited evidence anchor resolves in the source artifact."
+  },
+  "rows": [
+    {
+      "gap_id": "fp-gap-summary-7b67c9268b67",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "2",
+      "foundation_surface": "initial_conformance_fixtures",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 278,
+        "line_contains": "Initial conformance fixtures committed"
+      },
+      "claim_target": "Fixture-based conformance evidence exists while full capture remains pending.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.10",
+      "closure_blocker": "full_capture_pending",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/fixtures/",
+          "kind": "directory_file_count_min",
+          "expected_value_min": 1,
+          "rationale": "The foundation row requires committed fixture files, not prose-only fixture claims."
+        },
+        {
+          "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
+          "kind": "self_field_equals",
+          "field": "status",
+          "expected_value": "IN_PROGRESS",
+          "rationale": "The fixture foundation gap must remain visible until full capture evidence closes it."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-d643858a62b5",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "3",
+      "foundation_surface": "benchmark_baseline_thresholds",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 279,
+        "line_contains": "Benchmark harnesses exist"
+      },
+      "claim_target": "Benchmark harness and regression-threshold evidence is present but not fully closed.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.10",
+      "closure_blocker": "committed_baseline_thresholds_pending",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/perf_baseline_spec.json",
+          "kind": "json_field_min",
+          "field": "summary.total_benchmarks",
+          "expected_value_min": 1,
+          "rationale": "Benchmark claims require enumerated benchmark coverage."
+        },
+        {
+          "artifact": "tests/conformance/perf_baseline_spec.json",
+          "kind": "json_field_min",
+          "field": "summary.enforced_suites",
+          "expected_value_min": 1,
+          "rationale": "Regression thresholds must include at least one enforced suite before any claim advances."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-7c8a46cdcb5e",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "4",
+      "foundation_surface": "version_script_symbol_gate",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 280,
+        "line_contains": "Version script scaffold created"
+      },
+      "claim_target": "ABI version script scaffold exists while full symbol/version verification remains pending.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.10",
+      "closure_blocker": "full_symbol_version_verification_pending",
+      "evidence_anchors": [
+        {
+          "artifact": "crates/frankenlibc-abi/version_scripts/libc.map",
+          "kind": "path_exists",
+          "rationale": "The ABI version script must exist as the primary symbol/version evidence surface."
+        },
+        {
+          "artifact": "crates/frankenlibc-abi/version_scripts/libc.map",
+          "kind": "text_contains",
+          "expected_value_contains": "GLIBC_2.2.5",
+          "rationale": "The version script must expose at least the base glibc version namespace."
+        },
+        {
+          "artifact": "crates/frankenlibc-abi/version_scripts/libc.map",
+          "kind": "text_contains",
+          "expected_value_contains": "global:",
+          "rationale": "The version script must contain an export stanza."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-b04531fdcdde",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "5",
+      "foundation_surface": "proof_obligation_binder",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 281,
+        "line_contains": "formal proof artifacts"
+      },
+      "claim_target": "Proof artifacts and binder rows must be present before proof-based claims advance.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.10",
+      "closure_blocker": "proof_artifact_coverage_pending",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/proof_obligations_binder.v1.json",
+          "kind": "json_array_min",
+          "field": "obligations",
+          "expected_value_min": 1,
+          "rationale": "Proof claims require at least one machine-readable obligation row."
+        },
+        {
+          "artifact": "tests/conformance/proof_traceability_check.json",
+          "kind": "json_field_equals",
+          "field": "binder_valid",
+          "expected_value": true,
+          "rationale": "Proof traceability must be machine-valid before proof claims advance."
+        },
+        {
+          "artifact": "tests/conformance/proof_traceability_check.json",
+          "kind": "json_field_equals",
+          "field": "total_violations",
+          "expected_value": 0,
+          "rationale": "Stale or broken proof references must fail closed."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-3675b24bb188",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "6",
+      "foundation_surface": "runtime_math_kernel_wiring",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 282,
+        "line_contains": "Runtime math kernel is live"
+      },
+      "claim_target": "Runtime-math kernel evidence exists while cross-family ABI wiring remains incomplete.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.10",
+      "closure_blocker": "cross_family_abi_wiring_pending",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/runtime_math/runtime_math_linkage.v1.json",
+          "kind": "json_object_min",
+          "field": "modules",
+          "expected_value_min": 1,
+          "rationale": "Runtime-math wiring claims require a non-empty module linkage map."
+        },
+        {
+          "artifact": "tests/runtime_math/runtime_math_linkage.v1.json",
+          "kind": "json_field_equals",
+          "field": "source_mod_rs",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+          "rationale": "Runtime-math linkage evidence must point at the live orchestration module."
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
+          "kind": "path_exists",
+          "rationale": "The live runtime-math module must exist."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-e0624b12f6a0",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "7",
+      "foundation_surface": "sequential_statistical_guardrails",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 283,
+        "line_contains": "Sequential-statistical guardrails"
+      },
+      "claim_target": "Sequential guardrails have deterministic calibration evidence and an enforcing script.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.10",
+      "closure_blocker": "broader_guardrail_coverage_pending",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/runtime_math/risk_pareto_calibration.v1.json",
+          "kind": "json_field_min",
+          "field": "strict.action_summary.decisions",
+          "expected_value_min": 1,
+          "rationale": "Strict-mode calibration evidence must include at least one decision."
+        },
+        {
+          "artifact": "tests/runtime_math/risk_pareto_calibration.v1.json",
+          "kind": "json_field_min",
+          "field": "hardened.action_summary.decisions",
+          "expected_value_min": 1,
+          "rationale": "Hardened-mode calibration evidence must include at least one decision."
+        },
+        {
+          "artifact": "scripts/check_runtime_math_risk_pareto_calibration.sh",
+          "kind": "path_exists",
+          "rationale": "The calibration evidence must have an enforcing gate script."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-be0b24532a7e",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "8",
+      "foundation_surface": "membrane_mode_split_fixture",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 284,
+        "line_contains": "membrane_mode_split.json"
+      },
+      "claim_target": "Initial strict/hardened membrane-mode fixture evidence is committed while full differential campaign remains pending.",
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "owner_bead": "bd-w2c3.10",
+      "closure_blocker": "full_differential_campaign_pending",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/fixtures/membrane_mode_split.json",
+          "kind": "json_array_min",
+          "field": "cases",
+          "expected_value_min": 2,
+          "rationale": "Mode-split fixture evidence must include multiple cases."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/membrane_mode_split.json",
+          "kind": "json_array_objects_field_contains_all",
+          "field": "cases",
+          "object_field": "mode",
+          "expected_values": ["strict", "hardened"],
+          "rationale": "Mode-split fixture evidence must cover both strict and hardened modes."
+        }
+      ]
+    }
+  ]
+}
