@@ -1,0 +1,881 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.11",
+  "purpose": "Reusable definition-of-done templates for implementation agents. Templates preserve each workstream's ambition while making required evidence, tests, logs, freshness checks, claim gates, and closure commands explicit.",
+  "generated_from": [
+    "tests/conformance/log_schema.json",
+    "tests/conformance/closure_evidence_schema.json",
+    "tests/conformance/semantic_contract_symbol_join.v1.json",
+    "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+    ".beads/issues.jsonl"
+  ],
+  "claim_policy": {
+    "templates_are_minimums_not_scope_reductions": true,
+    "missing_required_evidence_blocks_closure": true,
+    "user_facing_claims_require_current_machine_evidence": true,
+    "known_limitations_must_be_recorded_not_hidden": true
+  },
+  "required_template_sections": [
+    "start_conditions",
+    "blocked_by_checks",
+    "expected_touched_files",
+    "required_unit_test_classes",
+    "required_e2e_fixture_harness_scripts",
+    "structured_log_fields",
+    "artifact_freshness_rules",
+    "user_facing_claim_gates",
+    "closure_commands",
+    "known_limitations_policy",
+    "non_goals"
+  ],
+  "required_structured_log_fields": [
+    "trace_id",
+    "bead_id",
+    "workstream",
+    "scenario_id",
+    "required_evidence",
+    "present_evidence",
+    "missing_evidence",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "templates": [
+    {
+      "workstream": "semantic_overlay",
+      "summary": "Keep semantic fallback, no-op, unsupported, bootstrap, and abort-only contracts visible after support-matrix joins.",
+      "start_conditions": [
+        "br --no-db show <bead-id> --json returns the target semantic-overlay bead",
+        "Semantic inventory and symbol-join artifacts parse as JSON",
+        "Adjacent semantic-overlay beads are not already in_progress"
+      ],
+      "blocked_by_checks": [
+        "Do not edit a row owned by another in_progress semantic-overlay bead",
+        "Block closure when support_matrix or version-script joins are stale",
+        "Block README or FEATURE_PARITY claim changes without matching semantic evidence"
+      ],
+      "expected_touched_files": [
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "tests/conformance/semantic_contract_inventory.v1.json",
+        "tests/conformance/semantic_contract_symbol_join.v1.json",
+        "scripts/check_semantic_contract_inventory.sh",
+        "scripts/check_semantic_contract_symbol_join.sh",
+        "crates/frankenlibc-harness/tests/semantic_contract_*_test.rs"
+      ],
+      "required_unit_test_classes": [
+        "valid overlay row",
+        "missing required semantic fields",
+        "duplicate symbol/version-node row",
+        "unknown semantic class",
+        "source path does not exist",
+        "claim promotion blocked by semantic divergence"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "bash scripts/check_semantic_contract_inventory.sh",
+        "bash scripts/check_semantic_contract_symbol_join.sh"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Regenerate reports under target/conformance before closure",
+        "Every semantic row must cite source_path and artifact_refs",
+        "Fresh source_commit in emitted logs must match git rev-parse HEAD"
+      ],
+      "user_facing_claim_gates": [
+        "README and FEATURE_PARITY may not count support taxonomy as semantic parity",
+        "Compatibility reports must expose fallback/no-op limitations",
+        "Full parity language is blocked until all joined rows are semantically full"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "bash scripts/check_semantic_contract_inventory.sh",
+        "bash scripts/check_semantic_contract_symbol_join.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test semantic_contract_inventory_test",
+        "rch exec -- cargo test -p frankenlibc-harness --test semantic_contract_symbol_join_test",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "Record unsupported, compat_noop, deterministic_fallback, limited_bootstrap, and abort_only rows explicitly",
+        "Open follow-up beads for newly discovered untracked contracts"
+      ],
+      "non_goals": [
+        "Do not implement missing libc behavior while only validating the overlay",
+        "Do not delete temporary contracts from artifacts to make a gate pass"
+      ]
+    },
+    {
+      "workstream": "tracker_repair",
+      "summary": "Separate tracker/tooling failures from code or parity failures so agents can safely continue implementation work.",
+      "start_conditions": [
+        "br --no-db list --status in_progress,claimed --json or direct JSONL inspection identifies live owners",
+        "Open/in_progress count is captured before edits",
+        "Current failure signature is recorded with exact command and exit status"
+      ],
+      "blocked_by_checks": [
+        "Do not run DB-backed br commands when the dispatch says DB is corrupt",
+        "Do not run br sync --flush-only when stale exports are known",
+        "Do not overwrite peer agent JSONL edits"
+      ],
+      "expected_touched_files": [
+        ".beads/issues.jsonl",
+        "tests/conformance/tracker_health_report.v1.json",
+        "scripts/check_tracker_health_report.sh",
+        "crates/frankenlibc-harness/tests/tracker_health_report_test.rs"
+      ],
+      "required_unit_test_classes": [
+        "healthy tracker snapshot",
+        "timeout signature",
+        "DB-vs-JSONL count mismatch",
+        "stale blocked cache",
+        "exact-ID split-brain",
+        "next_safe_action selection"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "bash scripts/check_tracker_health_report.sh",
+        "br --no-db show <bead-id> --json"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Report must include command, exit_status, duration_ms, and tracker_state for every probe",
+        "Report must identify implementation work that may safely continue despite tool failure",
+        "Generated timestamps must be newer than the latest tracker edit used as input"
+      ],
+      "user_facing_claim_gates": [
+        "Dashboards must not report zero-open if JSONL still has open parity work",
+        "Tracker repair closure cannot claim code quality improvement without code validation evidence"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "bash scripts/check_tracker_health_report.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test tracker_health_report_test",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "List stale commands and whether they block implementation",
+        "Preserve recovery artifacts and record why DB-backed commands were skipped"
+      ],
+      "non_goals": [
+        "Do not silently rebuild or delete tracker databases",
+        "Do not close parity beads based only on tracker health"
+      ]
+    },
+    {
+      "workstream": "feature_parity_audit",
+      "summary": "Convert feature-ledger gaps into executable evidence and prevent prose claims from outrunning artifacts.",
+      "start_conditions": [
+        "Feature parity ledger and reality-check backlog parse",
+        "Target owner family is scoped to one closable gap or closure group",
+        "Existing evidence artifacts for the family are identified"
+      ],
+      "blocked_by_checks": [
+        "Block closure when ledger row count or owner-family mapping is stale",
+        "Block docs/release claim advancement without current evidence",
+        "Do not collapse distinct parity gaps into one vague closure"
+      ],
+      "expected_touched_files": [
+        "tests/conformance/feature_parity_gap_ledger.v1.json",
+        "tests/conformance/reality_check_bridge_backlog.v1.json",
+        "scripts/check_feature_parity_drift_gate.sh",
+        "crates/frankenlibc-harness/tests/feature_parity_drift_gate_test.rs"
+      ],
+      "required_unit_test_classes": [
+        "valid ledger row",
+        "missing evidence path",
+        "stale source reference",
+        "owner family mismatch",
+        "duplicate gap id",
+        "claim-blocking unresolved gap"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "bash scripts/check_feature_parity_drift_gate.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test feature_parity_drift_gate_test"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Every closed gap cites current artifact_refs and source_commit",
+        "Missing proof/fixture rows remain visible as blockers",
+        "Generated reports fail when source artifacts are older than their inputs"
+      ],
+      "user_facing_claim_gates": [
+        "README, release notes, and FEATURE_PARITY cannot advance a family with unresolved ledger gaps",
+        "Owner-family summaries must include residual gaps and limitations"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "bash scripts/check_feature_parity_drift_gate.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test feature_parity_drift_gate_test",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "Open targeted follow-ups for any unclosed gap row",
+        "Record whether missing evidence is proof, fixture, user workload, or release-gate evidence"
+      ],
+      "non_goals": [
+        "Do not mark a ledger row done by moving it out of the source artifact",
+        "Do not broaden the bead past the selected owner family"
+      ]
+    },
+    {
+      "workstream": "fixture_packs",
+      "summary": "Turn fixture families into executable conformance coverage with direct and isolated-subprocess paths.",
+      "start_conditions": [
+        "Fixture family and symbol list are selected",
+        "Host-glibc oracle or golden artifact is available",
+        "Direct-vs-subprocess execution requirement is understood"
+      ],
+      "blocked_by_checks": [
+        "Block closure if fixture rows are only captured but never executed",
+        "Block closure if isolated-subprocess path is missing for crash/abort-prone cases",
+        "Do not hide skipped cases as passes"
+      ],
+      "expected_touched_files": [
+        "tests/conformance/fixtures/*.json",
+        "crates/frankenlibc-fixture-exec/src/*.rs",
+        "crates/frankenlibc-harness/tests/*fixture*_test.rs",
+        "scripts/check_*fixture*.sh"
+      ],
+      "required_unit_test_classes": [
+        "happy path fixture execution",
+        "empty input",
+        "boundary value",
+        "errno divergence",
+        "unsupported symbol",
+        "subprocess failure capture"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "rch exec -- cargo test -p frankenlibc-fixture-exec",
+        "rch exec -- cargo test -p frankenlibc-harness --test <fixture-test>"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Fixture manifest hash must match executed input",
+        "Subprocess transcripts must include exit_code, stderr summary, and failure_signature",
+        "Strict and hardened mode rows must be separate when behavior differs"
+      ],
+      "user_facing_claim_gates": [
+        "Fixture coverage can support conformance claims only for executed cases",
+        "Skipped optional host tools must remain visible in reports"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "rch exec -- cargo test -p frankenlibc-fixture-exec",
+        "rch exec -- cargo test -p frankenlibc-harness --test <fixture-test>",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "List unexecuted symbols and reasons",
+        "Open follow-ups for fixture families needing oracle expansion"
+      ],
+      "non_goals": [
+        "Do not rewrite fixture format without a migration bead",
+        "Do not claim broad symbol-family parity from one narrow fixture"
+      ]
+    },
+    {
+      "workstream": "hard_parts_parity",
+      "summary": "Advance difficult libc surfaces with user-visible workload evidence instead of papering over semantic complexity.",
+      "start_conditions": [
+        "Selected hard-part surface maps to a real workload or standards contract",
+        "Known glibc divergence is documented",
+        "Target crate and ABI module are scoped"
+      ],
+      "blocked_by_checks": [
+        "Block closure when only unit tests exist for externally visible process behavior",
+        "Block unsafe code without SAFETY comments at ABI boundaries",
+        "Do not replace complex semantics with compatibility shims"
+      ],
+      "expected_touched_files": [
+        "crates/frankenlibc-core/src/**",
+        "crates/frankenlibc-abi/src/**_abi.rs",
+        "tests/conformance/fixtures/*.json",
+        "tests/integration/**",
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "required_unit_test_classes": [
+        "happy path",
+        "invalid input",
+        "boundary input",
+        "errno behavior",
+        "stateful sequencing",
+        "strict-vs-hardened difference when applicable"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "rch exec -- cargo test -p frankenlibc-core",
+        "rch exec -- cargo test -p frankenlibc-abi",
+        "TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Conformance artifact must cite mode, symbol, oracle_kind, expected, actual, and errno",
+        "Smoke summaries must be regenerated after ABI changes",
+        "Known divergences must remain linked to beads"
+      ],
+      "user_facing_claim_gates": [
+        "User-workload support claims require successful preload or integration evidence",
+        "Documented limitations must appear in compatibility reports"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "rch exec -- cargo test -p frankenlibc-core",
+        "rch exec -- cargo test -p frankenlibc-abi",
+        "rch exec -- cargo clippy -p <crate> --all-targets -- -D warnings",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "Record glibc divergences with artifact_refs",
+        "Open follow-ups for workload failures outside the bead scope"
+      ],
+      "non_goals": [
+        "Do not line-by-line translate glibc",
+        "Do not broaden into unrelated hard surfaces"
+      ]
+    },
+    {
+      "workstream": "replacement_levels",
+      "summary": "Guard L0/L1/L2/L3 replacement claims with proof matrices, call-through scans, and standalone evidence.",
+      "start_conditions": [
+        "Target replacement level and affected claims are named",
+        "Replacement profile and call-through census parse",
+        "Current proof matrix row exists or a new row is added"
+      ],
+      "blocked_by_checks": [
+        "Block L1+ claims without replacement-level evidence",
+        "Block L2/L3 claims while forbidden host call-throughs remain",
+        "Block release tags when proof matrix rows are stale"
+      ],
+      "expected_touched_files": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "scripts/check_standalone_readiness_matrix.sh",
+        "scripts/check_replacement_guard.sh",
+        "crates/frankenlibc-harness/tests/standalone_readiness_matrix_test.rs",
+        "crates/frankenlibc-harness/tests/replacement_guard_test.rs"
+      ],
+      "required_unit_test_classes": [
+        "positive claim gate",
+        "negative missing-evidence gate",
+        "forbidden call-through",
+        "stale proof matrix",
+        "replacement level regression",
+        "release tag blocked"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "bash scripts/check_standalone_readiness_matrix.sh",
+        "bash scripts/check_replacement_guard.sh interpose",
+        "bash scripts/check_replacement_guard.sh replacement"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Call-through census must be regenerated after ABI source edits",
+        "Proof matrix source_commit must match HEAD for claim advancement",
+        "Replacement and interpose reports must stay separate"
+      ],
+      "user_facing_claim_gates": [
+        "Release notes cannot claim L1/L2/L3 without fresh proof rows",
+        "README examples must identify interpose-vs-standalone status"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "bash scripts/check_standalone_readiness_matrix.sh",
+        "bash scripts/check_replacement_guard.sh interpose",
+        "bash scripts/check_replacement_guard.sh replacement",
+        "rch exec -- cargo test -p frankenlibc-harness --test standalone_readiness_matrix_test",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "Record exact remaining forbidden call-through modules and symbols",
+        "Link L2/L3 blockers to follow-up beads"
+      ],
+      "non_goals": [
+        "Do not rename replacement levels",
+        "Do not mirror legacy branch names into docs"
+      ]
+    },
+    {
+      "workstream": "validation_hygiene",
+      "summary": "Keep fmt, check, clippy, test, UBS, and unrelated-failure state reproducible without hiding drift.",
+      "start_conditions": [
+        "Changed files are listed",
+        "Affected crates are identified",
+        "Known unrelated validation drift is cited before new edits"
+      ],
+      "blocked_by_checks": [
+        "Block closure if changed files lack targeted validation",
+        "Block closure if new UBS warnings are untriaged",
+        "Do not normalize unrelated failures as pass"
+      ],
+      "expected_touched_files": [
+        "tests/conformance/workspace_*_gate_health.v1.json",
+        "scripts/check_workspace_*_gate_health.sh",
+        "crates/frankenlibc-harness/tests/*gate*_test.rs"
+      ],
+      "required_unit_test_classes": [
+        "clean changed-surface pass",
+        "unrelated failure quarantine",
+        "bead-owned failure",
+        "stale gate artifact",
+        "missing UBS evidence",
+        "new fmt/clippy drift"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "ubs <changed-files>",
+        "rch exec -- cargo fmt --check",
+        "rch exec -- cargo clippy -p <crate> --all-targets -- -D warnings",
+        "rch exec -- cargo test -p <crate>"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Gate-health artifacts must include exact command, scope, exit status, and failure_signature",
+        "Targeted passing gates must be newer than the changed files",
+        "Workspace failures must name owning bead or explicit unknown owner"
+      ],
+      "user_facing_claim_gates": [
+        "Do not report green workspace validation if quarantined failures remain",
+        "Release claims require fresh changed-surface proof"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "rch exec -- cargo fmt --check",
+        "rch exec -- cargo test -p <crate>",
+        "rch exec -- cargo clippy -p <crate> --all-targets -- -D warnings",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "Record exact unrelated failures and owning beads",
+        "Open follow-up beads for unknown validation drift"
+      ],
+      "non_goals": [
+        "Do not reformat peer-owned files",
+        "Do not run broad workspace gates when a scoped crate gate is sufficient"
+      ]
+    },
+    {
+      "workstream": "performance_optimization",
+      "summary": "Optimize only after capturing baselines, budgets, and host-glibc comparisons for the selected hot path.",
+      "start_conditions": [
+        "Hot path and performance target are named",
+        "Baseline exists for current source_commit",
+        "Behavior proof or conformance fixture covers the optimized path"
+      ],
+      "blocked_by_checks": [
+        "Block optimization without a before/after benchmark",
+        "Block performance claims without correctness gates",
+        "Do not tune unrelated hot paths in the same bead"
+      ],
+      "expected_touched_files": [
+        "crates/frankenlibc-core/src/**",
+        "crates/frankenlibc-abi/src/**_abi.rs",
+        "crates/frankenlibc-bench/benches/**",
+        "tests/conformance/perf_*.v1.json",
+        "scripts/perf_gate.sh"
+      ],
+      "required_unit_test_classes": [
+        "behavior unchanged after optimization",
+        "boundary input",
+        "invalid input",
+        "strict/hardened mode if membrane-gated",
+        "baseline parser",
+        "regression threshold failure"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "bash scripts/perf_gate.sh",
+        "rch exec -- cargo test -p <crate>",
+        "rch exec -- cargo test -p frankenlibc-bench --benches --no-run"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Baseline and after reports must include source_commit and command",
+        "Benchmark target_dir must be isolated or recorded",
+        "Regression thresholds must fail closed"
+      ],
+      "user_facing_claim_gates": [
+        "Performance claims require host-glibc or prior-baseline comparison",
+        "Do not publish speedup without exact benchmark configuration"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "bash scripts/perf_gate.sh",
+        "rch exec -- cargo test -p <crate>",
+        "rch exec -- cargo clippy -p <crate> --all-targets -- -D warnings",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "Record noisy benchmarks and environment limits",
+        "Open follow-ups for unprofiled adjacent hot paths"
+      ],
+      "non_goals": [
+        "Do not optimize by weakening semantic checks",
+        "Do not claim global performance from one microbenchmark"
+      ]
+    },
+    {
+      "workstream": "formal_runtime_math_evidence",
+      "summary": "Keep runtime-math and formal proof claims grounded in executable controller evidence and stale-source guards.",
+      "start_conditions": [
+        "Runtime controller or proof binder surface is named",
+        "Manifest/report source path exists",
+        "Expected runtime decision law contribution is stated"
+      ],
+      "blocked_by_checks": [
+        "Block closure if proof artifacts are stale relative to source refs",
+        "Block runtime-math claims without live code or harness evidence",
+        "Do not substitute prose for executable guard output"
+      ],
+      "expected_touched_files": [
+        "crates/frankenlibc-membrane/src/runtime_math/**",
+        "tests/runtime_math/*.v1.json",
+        "tests/conformance/proof_traceability*.json",
+        "scripts/check_runtime_math_*.sh",
+        "crates/frankenlibc-harness/tests/runtime_math_*_test.rs"
+      ],
+      "required_unit_test_classes": [
+        "controller happy path",
+        "missing data fallback",
+        "stale source reference",
+        "strict budget bound",
+        "hardened repair/deny path",
+        "proof trace missing artifact"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "bash scripts/check_runtime_math_admission.sh",
+        "bash scripts/check_runtime_math_profile_gates.sh",
+        "rch exec -- cargo test -p frankenlibc-membrane runtime_math"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Manifest rows must cite source modules and fallback_when_data_missing",
+        "Proof traceability binder must fail stale source references",
+        "Runtime decision logs must include decision_path and replacement_level"
+      ],
+      "user_facing_claim_gates": [
+        "Formal/runtime-math claims require executable controller proof",
+        "Missing theorem machinery must be labeled as synthesis/proof-pipeline work"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "bash scripts/check_runtime_math_admission.sh",
+        "bash scripts/check_runtime_math_profile_gates.sh",
+        "rch exec -- cargo test -p frankenlibc-membrane runtime_math",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "Record unavailable proof artifacts separately from runtime code failures",
+        "Open follow-ups for missing controller-manifest rows"
+      ],
+      "non_goals": [
+        "Do not add unused high-math prose without a gate",
+        "Do not change runtime policy semantics while only updating evidence"
+      ]
+    },
+    {
+      "workstream": "user_workload_diagnostics",
+      "summary": "Tie compatibility and diagnostics claims to realistic workload bundles with visible fallback/mode decisions.",
+      "start_conditions": [
+        "Target user persona or workload bundle is selected",
+        "Mode requirements are named",
+        "Expected diagnostics and semantic fallback surfaces are identified"
+      ],
+      "blocked_by_checks": [
+        "Block release examples when workload evidence is missing",
+        "Block compatibility reports that hide semantic fallback decisions",
+        "Do not report optional-tool skips as passes"
+      ],
+      "expected_touched_files": [
+        "tests/conformance/real_program_smoke_suite.v1.json",
+        "tests/conformance/user_workload_*.v1.json",
+        "scripts/check_real_program_smoke_suite.sh",
+        "crates/frankenlibc-harness/tests/real_program_smoke_suite_test.rs",
+        "README.md",
+        "FEATURE_PARITY.md"
+      ],
+      "required_unit_test_classes": [
+        "diagnostic emitted for fallback",
+        "strict mode workload",
+        "hardened mode workload",
+        "unsupported optional tool skip",
+        "missing evidence blocks claim",
+        "compatibility report includes limitations"
+      ],
+      "required_e2e_fixture_harness_scripts": [
+        "bash scripts/check_real_program_smoke_suite.sh",
+        "TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test real_program_smoke_suite_test"
+      ],
+      "structured_log_fields": [
+        "trace_id",
+        "bead_id",
+        "workstream",
+        "scenario_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature"
+      ],
+      "artifact_freshness_rules": [
+        "Workload bundle must cite source_commit, mode, command, exit status, and semantic overlay rows",
+        "Compatibility report must be regenerated after workload or overlay changes",
+        "Fallback diagnostics must include symbol or api_family when available"
+      ],
+      "user_facing_claim_gates": [
+        "README examples require fresh workload evidence",
+        "Compatibility reports must distinguish pass, fail, skip, fallback, and unsupported",
+        "Release notes cannot promote workload support without current artifacts"
+      ],
+      "closure_commands": [
+        "ubs <changed-files>",
+        "bash scripts/check_real_program_smoke_suite.sh",
+        "TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh",
+        "rch exec -- cargo test -p frankenlibc-harness --test real_program_smoke_suite_test",
+        "br --no-db close <bead-id> --reason \"...\""
+      ],
+      "known_limitations_policy": [
+        "Record skipped optional tools with exact binary names",
+        "Open follow-up beads for failing realistic workloads"
+      ],
+      "non_goals": [
+        "Do not turn the README into a release claim without evidence",
+        "Do not add marketing-only workload prose"
+      ]
+    }
+  ],
+  "dry_run_examples": [
+    {
+      "scenario_id": "semantic_overlay_join_close_ready",
+      "bead_id": "bd-example-semantic",
+      "workstream": "semantic_overlay",
+      "required_evidence": [
+        "semantic inventory gate",
+        "symbol join gate",
+        "targeted harness tests",
+        "UBS changed-files scan"
+      ],
+      "present_evidence": [
+        "target/conformance/semantic_contract_inventory.report.json",
+        "target/conformance/semantic_contract_symbol_join.report.json",
+        "rch exec -- cargo test -p frankenlibc-harness --test semantic_contract_inventory_test",
+        "ubs tests/conformance/support_semantic_overlay.v1.json scripts/check_semantic_contract_inventory.sh"
+      ],
+      "missing_evidence": [],
+      "expected_outcome": "close_allowed",
+      "artifact_refs": [
+        "tests/conformance/semantic_contract_inventory.v1.json",
+        "tests/conformance/semantic_contract_symbol_join.v1.json"
+      ]
+    },
+    {
+      "scenario_id": "replacement_level_missing_guard",
+      "bead_id": "bd-example-replacement",
+      "workstream": "replacement_levels",
+      "required_evidence": [
+        "interpose replacement guard",
+        "replacement replacement guard",
+        "standalone proof matrix test",
+        "release claim gate"
+      ],
+      "present_evidence": [
+        "bash scripts/check_replacement_guard.sh interpose"
+      ],
+      "missing_evidence": [
+        "bash scripts/check_replacement_guard.sh replacement",
+        "rch exec -- cargo test -p frankenlibc-harness --test standalone_readiness_matrix_test",
+        "release claim gate"
+      ],
+      "expected_outcome": "close_blocked",
+      "artifact_refs": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ]
+    },
+    {
+      "scenario_id": "user_workload_optional_skip_visible",
+      "bead_id": "bd-example-workload",
+      "workstream": "user_workload_diagnostics",
+      "required_evidence": [
+        "real program smoke suite",
+        "strict and hardened mode rows",
+        "semantic fallback diagnostics",
+        "compatibility report limitations"
+      ],
+      "present_evidence": [
+        "target/conformance/real_program_smoke_suite.report.json",
+        "tests/conformance/real_program_smoke_suite.v1.json"
+      ],
+      "missing_evidence": [
+        "compatibility report limitations"
+      ],
+      "expected_outcome": "close_blocked",
+      "artifact_refs": [
+        "tests/conformance/support_semantic_overlay.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json"
+      ]
+    }
+  ],
+  "checklist_replay_scenarios": [
+    {
+      "scenario_id": "done_template_full_evidence",
+      "workstream": "validation_hygiene",
+      "required_evidence": [
+        "changed files listed",
+        "targeted rch test",
+        "targeted rch clippy",
+        "UBS scan",
+        "known unrelated failures recorded"
+      ],
+      "present_evidence": [
+        "changed files listed",
+        "targeted rch test",
+        "targeted rch clippy",
+        "UBS scan",
+        "known unrelated failures recorded"
+      ],
+      "missing_evidence": [],
+      "expected_outcome": "close_allowed"
+    },
+    {
+      "scenario_id": "missing_structured_logs_blocks_closure",
+      "workstream": "tracker_repair",
+      "required_evidence": [
+        "tracker command log",
+        "structured JSONL",
+        "next_safe_action",
+        "tool failure separated from code failure"
+      ],
+      "present_evidence": [
+        "tracker command log",
+        "next_safe_action"
+      ],
+      "missing_evidence": [
+        "structured JSONL",
+        "tool failure separated from code failure"
+      ],
+      "expected_outcome": "close_blocked"
+    },
+    {
+      "scenario_id": "stale_artifact_blocks_claim",
+      "workstream": "feature_parity_audit",
+      "required_evidence": [
+        "current source_commit",
+        "fresh feature parity report",
+        "missing gap rows listed"
+      ],
+      "present_evidence": [
+        "missing gap rows listed"
+      ],
+      "missing_evidence": [
+        "current source_commit",
+        "fresh feature parity report"
+      ],
+      "expected_outcome": "close_blocked"
+    }
+  ]
+}
