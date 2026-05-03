@@ -79,6 +79,7 @@ static MODE_STATE: AtomicU8 = AtomicU8::new(MODE_UNRESOLVED);
 static PANIC_HOOK_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_UNSET);
 static PANIC_HOOK_WRITE_STATE: AtomicU8 = AtomicU8::new(PANIC_HOOK_WRITE_IDLE);
 static PANIC_HOOK_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
+// Counts actual env-rescan samples; per-call cadence is thread-local.
 static MODE_SWITCH_CHECK_COUNTER: AtomicU64 = AtomicU64::new(0);
 static MODE_LOG_DECISION_SEQ: AtomicU64 = AtomicU64::new(0);
 static MODE_EVENT_LOGS: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
@@ -588,11 +589,21 @@ fn push_mode_event(
 }
 
 fn maybe_log_mode_switch_attempt(cached_mode: SafetyLevel) {
-    let sequence = MODE_SWITCH_CHECK_COUNTER.fetch_add(1, AtomicOrdering::Relaxed) + 1;
-    if !sequence.is_multiple_of(MODE_SWITCH_CHECK_STRIDE) {
+    let should_check = MODE_SWITCH_THREAD_LOCAL_COUNTER
+        .try_with(|counter| {
+            let next = counter.get().wrapping_add(1);
+            counter.set(next);
+            next.is_multiple_of(MODE_SWITCH_CHECK_STRIDE)
+        })
+        .unwrap_or_else(|_| {
+            let sequence = MODE_SWITCH_CHECK_COUNTER.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+            sequence.is_multiple_of(MODE_SWITCH_CHECK_STRIDE)
+        });
+    if !should_check {
         return;
     }
 
+    MODE_SWITCH_CHECK_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
     match parse_mode_from_environ() {
         Ok(Some(requested_mode)) if requested_mode != cached_mode => {
             push_mode_event(
@@ -786,6 +797,7 @@ impl DecisionExplainability {
 
 thread_local! {
     static MODE_THREAD_LOCAL_CACHE: Cell<u8> = const { Cell::new(MODE_UNRESOLVED) };
+    static MODE_SWITCH_THREAD_LOCAL_COUNTER: Cell<u64> = const { Cell::new(0) };
     static TRACE_COUNTER: Cell<u64> = const { Cell::new(0) };
     static DECISION_COUNTER: Cell<u64> = const { Cell::new(0) };
     static TRACE_CONTEXT: Cell<Option<TraceContext>> = const { Cell::new(None) };
@@ -1677,18 +1689,32 @@ mod tests {
     use std::time::Instant;
 
     struct ModeSwitchCounterGuard {
-        previous: u64,
+        previous_global: u64,
+        previous_thread_local: Option<u64>,
     }
 
     impl Drop for ModeSwitchCounterGuard {
         fn drop(&mut self) {
-            MODE_SWITCH_CHECK_COUNTER.store(self.previous, AtomicOrdering::SeqCst);
+            MODE_SWITCH_CHECK_COUNTER.store(self.previous_global, AtomicOrdering::SeqCst);
+            if let Some(previous) = self.previous_thread_local {
+                let _ = MODE_SWITCH_THREAD_LOCAL_COUNTER.try_with(|counter| counter.set(previous));
+            }
         }
     }
 
     fn set_mode_switch_counter_for_tests(value: u64) -> ModeSwitchCounterGuard {
-        let previous = MODE_SWITCH_CHECK_COUNTER.swap(value, AtomicOrdering::SeqCst);
-        ModeSwitchCounterGuard { previous }
+        let previous_global = MODE_SWITCH_CHECK_COUNTER.swap(value, AtomicOrdering::SeqCst);
+        let previous_thread_local = MODE_SWITCH_THREAD_LOCAL_COUNTER
+            .try_with(|counter| {
+                let previous = counter.get();
+                counter.set(value);
+                previous
+            })
+            .ok();
+        ModeSwitchCounterGuard {
+            previous_global,
+            previous_thread_local,
+        }
     }
 
     fn reset_cohomology_stage_hashes_for_tests() {
@@ -1904,6 +1930,31 @@ mod tests {
         assert_eq!(
             cached, MODE_HARDENED,
             "resolved mode should be cached in thread-local state"
+        );
+    }
+
+    #[test]
+    fn mode_switch_sampler_stays_thread_local_between_rescans() {
+        let _lock = env_lock();
+        clear_mode_event_log();
+        let _env = EnvVarGuard::set(Some("hardened"));
+        let _state = set_mode_state_for_tests(MODE_HARDENED);
+        let _counter = set_mode_switch_counter_for_tests(0);
+
+        for _ in 0..MODE_SWITCH_CHECK_STRIDE.saturating_sub(1) {
+            assert_eq!(mode(), SafetyLevel::Hardened);
+        }
+        assert_eq!(
+            MODE_SWITCH_CHECK_COUNTER.load(AtomicOrdering::SeqCst),
+            0,
+            "cached mode reads before the local stride must not bounce the global sampler"
+        );
+
+        assert_eq!(mode(), SafetyLevel::Hardened);
+        assert_eq!(
+            MODE_SWITCH_CHECK_COUNTER.load(AtomicOrdering::SeqCst),
+            1,
+            "global sampler should advance only for a real environment rescan"
         );
     }
 
