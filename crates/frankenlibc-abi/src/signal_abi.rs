@@ -1660,36 +1660,36 @@ pub unsafe extern "C" fn raise_default_signal(sig: c_int) -> c_int {
     let mut mask: libc::sigset_t = unsafe { std::mem::zeroed() };
     let mut omask: libc::sigset_t = unsafe { std::mem::zeroed() };
     unsafe {
-        libc::sigemptyset(&mut mask);
-        libc::sigaddset(&mut mask, sig);
+        sigemptyset(&mut mask);
+        sigaddset(&mut mask, sig);
     }
 
     // 1. Block sig.
-    if unsafe { libc::sigprocmask(libc::SIG_BLOCK, &mask, &mut omask) } == -1 {
+    if unsafe { sigprocmask(libc::SIG_BLOCK, &mask, &mut omask) } == -1 {
         return -1;
     }
 
     // 2. Install SIG_DFL, remembering the old handler.
     let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
     let mut oact: libc::sigaction = unsafe { std::mem::zeroed() };
-    unsafe { libc::sigemptyset(&mut act.sa_mask) };
+    unsafe { sigemptyset(&mut act.sa_mask) };
     act.sa_flags = 0;
     act.sa_sigaction = libc::SIG_DFL;
 
     let mut error: c_int = 0;
-    if unsafe { libc::sigaction(sig, &act, &mut oact) } == -1 {
+    if unsafe { sigaction(sig, &act, &mut oact) } == -1 {
         error = -1;
         // Fall through to restore the mask before returning.
     } else {
         // 3. Raise the signal (still blocked, so kernel queues it).
-        if unsafe { libc::raise(sig) } != 0 {
+        if unsafe { raise(sig) } != 0 {
             error = -1;
         }
     }
 
     // 4. Restore mask. If unblocking the queued sig terminates the
     //    process under SIG_DFL we never reach the next line.
-    if unsafe { libc::sigprocmask(libc::SIG_SETMASK, &omask, std::ptr::null_mut()) } == -1
+    if unsafe { sigprocmask(libc::SIG_SETMASK, &omask, std::ptr::null_mut()) } == -1
         && error == 0
     {
         error = -1;
@@ -1697,7 +1697,7 @@ pub unsafe extern "C" fn raise_default_signal(sig: c_int) -> c_int {
 
     // 5. Restore the saved handler. (Reached only if SIG_DFL was
     //    "ignore" for this sig.)
-    if unsafe { libc::sigaction(sig, &oact, std::ptr::null_mut()) } == -1 && error == 0 {
+    if unsafe { sigaction(sig, &oact, std::ptr::null_mut()) } == -1 && error == 0 {
         error = -1;
     }
 

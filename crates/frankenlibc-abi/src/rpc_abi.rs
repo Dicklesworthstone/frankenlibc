@@ -1152,10 +1152,8 @@ pub unsafe extern "C" fn xdr_bytes(
                 return XDR_FALSE;
             }
             if unsafe { (*sp).is_null() } {
-                // Caller frees via libc::free per RFC 1832 mem_free contract;
-                // raw_alloc may bump-fallback under parallel REENTRY pressure
-                // and produce pointers glibc cannot free. (bd-zgifl)
-                let buf = unsafe { libc::malloc(len as usize) as *mut c_char };
+                // Caller frees via free per RFC 1832 mem_free contract.
+                let buf = unsafe { crate::malloc_abi::malloc(len as usize) as *mut c_char };
                 if buf.is_null() {
                     return XDR_FALSE;
                 }
@@ -1169,7 +1167,7 @@ pub unsafe extern "C" fn xdr_bytes(
             let p = unsafe { *sp };
             if !p.is_null() {
                 unsafe {
-                    libc::free(p.cast());
+                    crate::malloc_abi::free(p.cast());
                     *sp = std::ptr::null_mut();
                 }
             }
@@ -1225,8 +1223,8 @@ pub unsafe extern "C" fn xdr_string(
         return XDR_FALSE;
     }
     if op == XDR_DECODE && unsafe { (*sp).is_null() } {
-        // mem_alloc semantics: caller frees via libc free (bd-zgifl).
-        let buf = unsafe { libc::malloc(size as usize + 1) as *mut c_char };
+        // mem_alloc semantics: caller frees via free.
+        let buf = unsafe { crate::malloc_abi::malloc(size as usize + 1) as *mut c_char };
         if buf.is_null() {
             return XDR_FALSE;
         }
@@ -1259,7 +1257,7 @@ pub unsafe extern "C" fn xdr_string(
         let p = unsafe { *sp };
         if !p.is_null() {
             unsafe {
-                libc::free(p.cast());
+                crate::malloc_abi::free(p.cast());
                 *sp = std::ptr::null_mut();
             }
         }
@@ -1325,8 +1323,8 @@ pub unsafe extern "C" fn xdr_array(
             Some(b) => b,
             None => return XDR_FALSE,
         };
-        // mem_alloc semantics: caller frees via libc free (bd-zgifl).
-        let buf = unsafe { libc::malloc(total_bytes) as *mut c_char };
+        // mem_alloc semantics: caller frees via free.
+        let buf = unsafe { crate::malloc_abi::malloc(total_bytes) as *mut c_char };
         if buf.is_null() {
             return XDR_FALSE;
         }
@@ -1349,7 +1347,7 @@ pub unsafe extern "C" fn xdr_array(
         let p = unsafe { *arrp };
         if !p.is_null() {
             unsafe {
-                libc::free(p.cast());
+                crate::malloc_abi::free(p.cast());
                 *arrp = std::ptr::null_mut();
             }
         }
@@ -1438,7 +1436,7 @@ pub unsafe extern "C" fn xdr_reference(
         // first xdr_pointer call on `&buf->next` reads uninitialized
         // memory as a "pointer" and tries to use it. Mirrors glibc's
         // xdr_reference + memset(buf, 0, size) idiom.
-        let buf = unsafe { libc::calloc(1, size as usize) as *mut c_char };
+        let buf = unsafe { crate::malloc_abi::calloc(1, size as usize) as *mut c_char };
         if buf.is_null() {
             let _ = XDR_REFERENCE_DEPTH.try_with(|c| c.set(c.get() - 1));
             return XDR_FALSE;
@@ -1453,7 +1451,7 @@ pub unsafe extern "C" fn xdr_reference(
         let p = unsafe { *pp };
         if !p.is_null() {
             unsafe {
-                libc::free(p.cast());
+                crate::malloc_abi::free(p.cast());
                 *pp = std::ptr::null_mut();
             }
         }

@@ -7989,7 +7989,7 @@ pub unsafe extern "C" fn strnunvis_netbsd(
 /// flag bits it names. Empty / unset env returns 0.
 fn vis_options_from_env() -> u32 {
     let key = c"VIS_OPTIONS";
-    let val_ptr = unsafe { libc::getenv(key.as_ptr()) };
+    let val_ptr = unsafe { crate::stdlib_abi::getenv(key.as_ptr()) };
     if val_ptr.is_null() {
         return 0;
     }

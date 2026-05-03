@@ -5262,10 +5262,8 @@ pub unsafe extern "C" fn realpath(
 
     let dst = if resolved_path.is_null() {
         // SAFETY: POSIX realpath(3) with resolved_path=NULL returns a buffer
-        // "allocated by malloc, which the caller should free with free()" —
-        // matched via libc::malloc so the caller's libc::free works in both
-        // LD_PRELOAD and non-preload contexts (bd-zgifl cluster).
-        let alloc = unsafe { libc::malloc(out.len() + 1) as *mut std::ffi::c_char };
+        // allocated by malloc, which the caller should free with free().
+        let alloc = unsafe { crate::malloc_abi::malloc(out.len() + 1) as *mut std::ffi::c_char };
         if alloc.is_null() {
             unsafe { set_abi_errno(errno::ENOMEM) };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 16, true);
@@ -6301,8 +6299,8 @@ pub unsafe extern "C" fn pidfile_write(pfh: *mut PidFh) -> c_int {
         return -1;
     }
     // Seek to start (lseek(fd, 0, SEEK_SET)) — truncate doesn't move
-    // the file position. Use the libc lseek for simplicity.
-    if unsafe { libc::lseek(fd, 0, libc::SEEK_SET) } < 0 {
+    // the file position.
+    if unsafe { crate::unistd_abi::lseek(fd, 0, libc::SEEK_SET) } < 0 {
         unsafe { set_abi_errno(*crate::errno_abi::__errno_location()) };
         return -1;
     }

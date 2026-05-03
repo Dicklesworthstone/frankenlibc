@@ -682,7 +682,7 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
     // PATH_MAX boundary glibc uses). If size > 0 we allocate exactly that.
     if buf.is_null() {
         let alloc_size = if size == 0 { 4096 } else { size };
-        let alloc = unsafe { libc::malloc(alloc_size) as *mut c_char };
+        let alloc = unsafe { crate::malloc_abi::malloc(alloc_size) as *mut c_char };
         if alloc.is_null() {
             unsafe { set_abi_errno(errno::ENOMEM) };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
@@ -694,7 +694,7 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
                 return alloc;
             }
             Err(e) => {
-                unsafe { libc::free(alloc as *mut libc::c_void) };
+                unsafe { crate::malloc_abi::free(alloc as *mut libc::c_void) };
                 unsafe { set_abi_errno(e) };
                 runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
                 return std::ptr::null_mut();
@@ -4982,10 +4982,10 @@ fn mq_convert_mono_to_real(mono_abs: libc::timespec) -> Option<libc::timespec> {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut mono_now) } != 0 {
+    if unsafe { crate::time_abi::clock_gettime(libc::CLOCK_MONOTONIC, &mut mono_now) } != 0 {
         return None;
     }
-    if unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut real_now) } != 0 {
+    if unsafe { crate::time_abi::clock_gettime(libc::CLOCK_REALTIME, &mut real_now) } != 0 {
         return None;
     }
     // delta = mono_abs - mono_now
@@ -9760,8 +9760,8 @@ pub unsafe extern "C" fn __libc_dynarray_at_failure(_size: usize, _index: usize)
     let msg: &[u8] = b"__libc_dynarray_at: index out of range\n";
     // SAFETY: writing to fd 2 is always safe.
     unsafe {
-        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-        libc::abort();
+        let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
+        crate::stdlib_abi::abort();
     }
 }
 
@@ -14265,7 +14265,7 @@ pub unsafe extern "C" fn get_current_dir_name() -> *mut c_char {
             // GNU get_current_dir_name returns a buffer the caller frees
             // with free() — libc::malloc so the pair matches in both
             // LD_PRELOAD and non-preload contexts (bd-zgifl).
-            let ptr = unsafe { libc::malloc(len + 1) as *mut c_char };
+            let ptr = unsafe { crate::malloc_abi::malloc(len + 1) as *mut c_char };
             if ptr.is_null() {
                 unsafe { set_abi_errno(libc::ENOMEM) };
                 return std::ptr::null_mut();
@@ -14537,7 +14537,7 @@ pub unsafe extern "C" fn tempnam(dir: *const c_char, pfx: *const c_char) -> *mut
     // POSIX tempnam(3) — caller frees with free(). Use libc::malloc so
     // alloc/free is consistent in both LD_PRELOAD and non-preload builds
     // (bd-zgifl).
-    let ptr = unsafe { libc::malloc(name.len() + 1) as *mut c_char };
+    let ptr = unsafe { crate::malloc_abi::malloc(name.len() + 1) as *mut c_char };
     if ptr.is_null() {
         return std::ptr::null_mut();
     }
@@ -15590,8 +15590,8 @@ pub unsafe extern "C" fn __cxa_finalize(dso_handle: *mut c_void) {
 pub unsafe extern "C" fn __cxa_pure_virtual() -> ! {
     let msg: &[u8] = b"pure virtual method called\n";
     unsafe {
-        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-        libc::abort();
+        let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
+        crate::stdlib_abi::abort();
     }
 }
 
@@ -15609,8 +15609,8 @@ pub unsafe extern "C" fn __cxa_pure_virtual() -> ! {
 pub unsafe extern "C" fn __cxa_throw_bad_array_new_length() -> ! {
     let msg: &[u8] = b"bad_array_new_length\n";
     unsafe {
-        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-        libc::abort();
+        let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
+        crate::stdlib_abi::abort();
     }
 }
 
@@ -15629,8 +15629,8 @@ pub unsafe extern "C" fn __cxa_call_unexpected(_exception_obj: *mut c_void) -> !
     let msg: &[u8] =
         b"terminate called after throwing an instance violating exception specification\n";
     unsafe {
-        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-        libc::abort();
+        let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
+        crate::stdlib_abi::abort();
     }
 }
 
@@ -15647,8 +15647,8 @@ pub unsafe extern "C" fn __cxa_call_unexpected(_exception_obj: *mut c_void) -> !
 pub unsafe extern "C" fn __cxa_call_terminate(_exc_obj: *mut c_void) -> ! {
     let msg: &[u8] = b"terminate called via __cxa_call_terminate\n";
     unsafe {
-        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-        libc::abort();
+        let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
+        crate::stdlib_abi::abort();
     }
 }
 
@@ -15661,8 +15661,8 @@ pub unsafe extern "C" fn __cxa_call_terminate(_exc_obj: *mut c_void) -> ! {
 pub unsafe extern "C" fn __cxa_deleted_virtual() -> ! {
     let msg: &[u8] = b"deleted virtual method called\n";
     unsafe {
-        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-        libc::abort();
+        let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
+        crate::stdlib_abi::abort();
     }
 }
 
@@ -15675,8 +15675,8 @@ pub unsafe extern "C" fn __cxa_deleted_virtual() -> ! {
 pub unsafe extern "C" fn __cxa_bad_cast() -> ! {
     let msg: &[u8] = b"std::bad_cast (via __cxa_bad_cast)\n";
     unsafe {
-        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-        libc::abort();
+        let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
+        crate::stdlib_abi::abort();
     }
 }
 
@@ -15689,8 +15689,8 @@ pub unsafe extern "C" fn __cxa_bad_cast() -> ! {
 pub unsafe extern "C" fn __cxa_bad_typeid() -> ! {
     let msg: &[u8] = b"std::bad_typeid (via __cxa_bad_typeid)\n";
     unsafe {
-        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-        libc::abort();
+        let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
+        crate::stdlib_abi::abort();
     }
 }
 
@@ -15704,8 +15704,8 @@ pub unsafe extern "C" fn __cxa_bad_typeid() -> ! {
 pub unsafe extern "C" fn __cxa_throw_bad_array_length() -> ! {
     let msg: &[u8] = b"bad_array_length\n";
     unsafe {
-        libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-        libc::abort();
+        let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
+        crate::stdlib_abi::abort();
     }
 }
 

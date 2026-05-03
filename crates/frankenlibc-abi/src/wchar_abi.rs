@@ -1348,11 +1348,9 @@ pub unsafe extern "C" fn wcsdup(s: *const u32) -> *mut u32 {
         let alloc_elems = len + 1;
         let alloc_bytes = alloc_elems * 4;
 
-        // libc::malloc (not raw_alloc) so the returned buffer can be freed
-        // with libc::free without hitting the bd-zgifl cross-allocator
-        // abort. raw_alloc's bump-heap fallback returns pointers outside
-        // glibc's arenas that glibc's free cannot validate.
-        let ptr = libc::malloc(alloc_bytes) as *mut u32;
+        // Route through FrankenLibC's allocator entrypoint so replacement
+        // builds do not retain a direct host libc allocation edge.
+        let ptr = crate::malloc_abi::malloc(alloc_bytes) as *mut u32;
         if ptr.is_null() {
             runtime_policy::observe(ApiFamily::StringMemory, decision.profile, 8, true);
             return std::ptr::null_mut();

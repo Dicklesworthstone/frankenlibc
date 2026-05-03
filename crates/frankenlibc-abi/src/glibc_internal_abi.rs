@@ -6071,15 +6071,13 @@ pub unsafe extern "C" fn scandirat(
         if include {
             let ent_size = std::mem::size_of::<libc::dirent>();
             // POSIX scandir contract: caller frees each namelist[i] and
-            // the namelist array via libc::free. Use libc::malloc so the
-            // alloc/free pair matches in test (non-LD_PRELOAD) builds
-            // where libc::free binds to glibc's free directly. Same fix
-            // pattern as scandir/dirent_abi at 82d9bf1f. (bd-zgifl)
-            let copy = unsafe { libc::malloc(ent_size) } as *mut libc::dirent;
+            // the namelist array via free(). Route through FrankenLibC's
+            // allocator entrypoint so replacement builds keep ownership local.
+            let copy = unsafe { crate::malloc_abi::malloc(ent_size) } as *mut libc::dirent;
             if copy.is_null() {
                 // Cleanup on OOM
                 for e in &entries {
-                    unsafe { libc::free(*e as *mut c_void) };
+                    unsafe { crate::malloc_abi::free(*e as *mut c_void) };
                 }
                 unsafe { crate::dirent_abi::closedir(dir) };
                 return -1;
@@ -6102,12 +6100,14 @@ pub unsafe extern "C" fn scandirat(
         });
     }
     let count = entries.len() as c_int;
-    // Same caller-frees contract for the array. (bd-zgifl)
-    let arr = unsafe { libc::malloc(entries.len() * std::mem::size_of::<*mut libc::dirent>()) }
+    // Same caller-frees contract for the array.
+    let arr = unsafe {
+        crate::malloc_abi::malloc(entries.len() * std::mem::size_of::<*mut libc::dirent>())
+    }
         as *mut *mut c_void;
     if arr.is_null() && !entries.is_empty() {
         for e in &entries {
-            unsafe { libc::free(*e as *mut c_void) };
+            unsafe { crate::malloc_abi::free(*e as *mut c_void) };
         }
         return -1;
     }
@@ -9456,13 +9456,13 @@ pub unsafe extern "C" fn __libc_fatal(message: *const c_char) -> ! {
         std::borrow::Cow::Borrowed(b"fatal: invalid diagnostic\n")
     };
     unsafe {
-        libc::write(2, bytes.as_ptr() as *const c_void, bytes.len());
+        let _ = raw_syscall::sys_write(2, bytes.as_ptr(), bytes.len());
         // Ensure a trailing newline so the diagnostic isn't merged
         // with whatever the parent shell prints next.
         if bytes.last().copied() != Some(b'\n') {
-            libc::write(2, b"\n".as_ptr() as *const c_void, 1);
+            let _ = raw_syscall::sys_write(2, b"\n".as_ptr(), 1);
         }
-        libc::abort();
+        crate::stdlib_abi::abort();
     }
 }
 
@@ -9517,7 +9517,7 @@ pub static _itoa_lower_digits: [c_char; 17] = [
 /// `arg` must match the `cmd` contract per `fcntl(2)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_fcntl64(fd: c_int, cmd: c_int, arg: std::ffi::c_long) -> c_int {
-    unsafe { libc::fcntl(fd, cmd, arg) }
+    unsafe { crate::io_abi::fcntl(fd, cmd, arg) }
 }
 
 /// `__libc_mallinfo() -> struct mallinfo` — GLIBC_2.2.5 alias for
@@ -9530,7 +9530,19 @@ pub unsafe extern "C" fn __libc_fcntl64(fd: c_int, cmd: c_int, arg: std::ffi::c_
 /// for symmetry with the rest of the GLIBC_PRIVATE shims.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_mallinfo() -> libc::mallinfo {
-    unsafe { libc::mallinfo() }
+    let info = unsafe { crate::malloc_abi::mallinfo() };
+    libc::mallinfo {
+        arena: info.arena,
+        ordblks: info.ordblks,
+        smblks: info.smblks,
+        hblks: info.hblks,
+        hblkhd: info.hblkhd,
+        usmblks: info.usmblks,
+        fsmblks: info.fsmblks,
+        uordblks: info.uordblks,
+        fordblks: info.fordblks,
+        keepcost: info.keepcost,
+    }
 }
 
 // ===========================================================================

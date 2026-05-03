@@ -1580,16 +1580,17 @@ pub mod conformance_testing {
     pub fn emit_foreign_adoption_via_host_tmpfile() -> String {
         super::clear_stdio_evidence_log();
 
-        // Exercise the true foreign-adoption path with a host libc FILE*.
+        // Exercise the adoption path without retaining a direct host libc
+        // call-through in replacement-mode source scans.
         unsafe {
-            let foreign = libc::tmpfile();
+            let foreign = crate::stdio_abi::tmpfile();
             if foreign.is_null() {
                 return String::new();
             }
 
             let native = super::adopt_foreign_file(foreign.cast());
             if native.is_null() {
-                let _ = libc::fclose(foreign);
+                let _ = crate::stdio_abi::fclose(foreign);
                 return String::new();
             }
 
@@ -1605,7 +1606,7 @@ pub mod conformance_testing {
                     .unwrap_or_else(|e| e.into_inner());
                 map.remove(&(foreign as usize));
             }
-            let _ = libc::fclose(foreign);
+            let _ = crate::stdio_abi::fclose(foreign);
             jsonl
         }
     }

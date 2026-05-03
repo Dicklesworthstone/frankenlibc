@@ -3532,7 +3532,7 @@ pub unsafe extern "C" fn strdup(s: *const c_char) -> *mut c_char {
         let (s_len, _) = scan_c_string(s, bound);
         let alloc_size = s_len + 1;
 
-        let dst = libc::malloc(alloc_size);
+        let dst = crate::malloc_abi::malloc(alloc_size);
         if dst.is_null() {
             record_string_stage_outcome(
                 &ordering,
@@ -3627,7 +3627,7 @@ pub unsafe extern "C" fn strndup(s: *const c_char, n: usize) -> *mut c_char {
         let copy_len = s_len.min(n);
         let alloc_size = copy_len + 1;
 
-        let dst = libc::malloc(alloc_size);
+        let dst = crate::malloc_abi::malloc(alloc_size);
         if dst.is_null() {
             record_string_stage_outcome(
                 &ordering,
@@ -6428,7 +6428,7 @@ pub unsafe extern "C" fn argz_create(
     // GNU argz contract: caller frees argz buffer via libc::free
     // (bd-zgifl); use libc::malloc for the alloc/free pair to match
     // in test (non-LD_PRELOAD) builds.
-    let buf = unsafe { libc::malloc(total_len) as *mut c_char };
+    let buf = unsafe { crate::malloc_abi::malloc(total_len) as *mut c_char };
     if buf.is_null() {
         return libc::ENOMEM;
     }
@@ -6484,7 +6484,7 @@ pub unsafe extern "C" fn argz_create_sep(
 
     let len: usize = entries.iter().map(|entry| entry.len() + 1).sum();
     // GNU argz: caller frees via libc::free (bd-zgifl).
-    let ptr = unsafe { libc::malloc(len) as *mut c_char };
+    let ptr = unsafe { crate::malloc_abi::malloc(len) as *mut c_char };
     if ptr.is_null() {
         return libc::ENOMEM;
     }
@@ -6586,7 +6586,7 @@ unsafe fn replace_owned_argz_buffer(
     if !old_buf.is_null() && old_len > 0 {
         // Pair with libc::malloc used by argz_create / argz_add /
         // argz_append / argz_insert / argz_replace. (bd-zgifl)
-        unsafe { libc::free(old_buf.cast()) };
+        unsafe { crate::malloc_abi::free(old_buf.cast()) };
     }
     unsafe {
         *argz = if new_len == 0 {
@@ -6611,7 +6611,7 @@ unsafe fn argz_add_bytes(argz: *mut *mut c_char, argz_len: *mut usize, bytes: &[
     let Some(new_len) = old_len.checked_add(entry_len) else {
         return libc::ENOMEM;
     };
-    let new_buf = unsafe { libc::malloc(new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::malloc(new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
@@ -6730,7 +6730,7 @@ pub unsafe extern "C" fn argz_append(
     let Some(new_len) = old_len.checked_add(buf_len) else {
         return libc::ENOMEM;
     };
-    let new_buf = unsafe { libc::malloc(new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::malloc(new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
@@ -6778,7 +6778,7 @@ pub unsafe extern "C" fn argz_delete(
     if new_len == 0 {
         unsafe {
             // Pair with libc::malloc used by argz_create. (bd-zgifl)
-            libc::free(az.cast());
+            crate::malloc_abi::free(az.cast());
             *argz = std::ptr::null_mut();
             *argz_len = 0;
         }
@@ -6841,7 +6841,7 @@ pub unsafe extern "C" fn argz_insert(
         return libc::ENOMEM;
     };
 
-    let new_buf = unsafe { libc::malloc(new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::malloc(new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }
@@ -6924,7 +6924,7 @@ pub unsafe extern "C" fn argz_replace(
     // Compute new length
     let new_len: usize = entries.iter().map(|e| e.len() + 1).sum();
 
-    let new_buf = unsafe { libc::malloc(new_len) as *mut c_char };
+    let new_buf = unsafe { crate::malloc_abi::malloc(new_len) as *mut c_char };
     if new_buf.is_null() {
         return libc::ENOMEM;
     }

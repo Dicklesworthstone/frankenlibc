@@ -5837,11 +5837,7 @@ pub unsafe extern "C" fn pthread_sigqueue(
                 Err(errno) => errno,
             }
         }
-        None => unsafe {
-            resolved_pthread_sigqueue_fn()
-                .map(|host_pthread_sigqueue| host_pthread_sigqueue(thread, sig, value))
-                .unwrap_or(libc::ESRCH)
-        },
+        None => libc::ESRCH,
     }
 }
 

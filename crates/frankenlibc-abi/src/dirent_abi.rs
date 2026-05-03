@@ -572,14 +572,12 @@ pub unsafe extern "C" fn scandir(
             let size = std::mem::size_of::<libc::dirent>();
             // POSIX scandir(3) contract: "The caller should free the memory
             // allocated for each of the returned directory entries and the
-            // array itself" — using libc::free. So allocate with libc::malloc
-            // to keep alloc/free matched (bd-zgifl cluster: raw_alloc's bump
-            // fallback returns pointers outside glibc's arenas that
-            // libc::free cannot validate under thread contention).
-            let copy = unsafe { libc::malloc(size) } as *mut libc::dirent;
+            // array itself". Route through FrankenLibC's allocator entrypoint
+            // so replacement builds do not retain a host libc escape hatch.
+            let copy = unsafe { crate::malloc_abi::malloc(size) } as *mut libc::dirent;
             if copy.is_null() {
                 for &e in &entries {
-                    unsafe { libc::free(e as *mut c_void) };
+                    unsafe { crate::malloc_abi::free(e as *mut c_void) };
                 }
                 unsafe { closedir(dir) };
                 unsafe { set_abi_errno(errno::ENOMEM) };
@@ -598,17 +596,17 @@ pub unsafe extern "C" fn scandir(
     // libc::dirent is large (~280 bytes), and namelist is an array of pointers.
     if count > (usize::MAX / std::mem::size_of::<*mut libc::dirent>()) {
         for &e in &entries {
-            unsafe { libc::free(e as *mut c_void) };
+            unsafe { crate::malloc_abi::free(e as *mut c_void) };
         }
         unsafe { set_abi_errno(errno::ENOMEM) };
         return -1;
     }
 
-    // Allocate the namelist array (libc::malloc so caller's libc::free works
-    // — bd-zgifl).
+    // Allocate the namelist array through our allocator so replacement-mode
+    // scans stay free of direct host libc calls.
     if count == 0 {
         // Empty result — allocate a minimal array
-        let array = unsafe { libc::malloc(std::mem::size_of::<*mut libc::dirent>()) }
+        let array = unsafe { crate::malloc_abi::malloc(std::mem::size_of::<*mut libc::dirent>()) }
             as *mut *mut libc::dirent;
         if array.is_null() {
             unsafe { set_abi_errno(errno::ENOMEM) };
@@ -619,10 +617,10 @@ pub unsafe extern "C" fn scandir(
     }
 
     let array_size = count * std::mem::size_of::<*mut libc::dirent>();
-    let array = unsafe { libc::malloc(array_size) } as *mut *mut libc::dirent;
+    let array = unsafe { crate::malloc_abi::malloc(array_size) } as *mut *mut libc::dirent;
     if array.is_null() {
         for &e in &entries {
-            unsafe { libc::free(e as *mut c_void) };
+            unsafe { crate::malloc_abi::free(e as *mut c_void) };
         }
         unsafe { set_abi_errno(errno::ENOMEM) };
         return -1;
