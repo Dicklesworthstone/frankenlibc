@@ -1,0 +1,219 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.2.4",
+  "generated_at_utc": "2026-05-03T21:55:00Z",
+  "trace_id": "bd-bp8fl-2-4-crypt-dashboard-reconciliation-v1",
+  "purpose": "Reconcile the historical bd-fd42da crypt divergence tracker row with zero-open dashboard claims without closing the crypt parity gap by assertion.",
+  "crypt_issue_id": "bd-fd42da",
+  "source_of_truth_policy": {
+    "primary_open_rows": "br --no-db list --status open --json",
+    "named_crypt_row": "br --no-db show bd-fd42da --json",
+    "dashboard_inputs": [
+      "bv --robot-triage",
+      "br/bv dashboard export",
+      ".beads/issues.jsonl"
+    ],
+    "crypt_evidence": "crates/frankenlibc-abi/tests/conformance_diff_crypt.rs",
+    "claim_rule": "A zero-open dashboard cannot hide a known crypt divergence; it is valid only when current crypt conformance evidence proves parity and the crypt issue row is closed.",
+    "fail_closed_rule": "Missing bd-fd42da, stale parity evidence, duplicate status rows, or exact-ID lookup failure blocks dashboard zero-open claims and points to the next safe tracker action."
+  },
+  "required_report_fields": [
+    "schema_version",
+    "bead",
+    "generated_at_utc",
+    "trace_id",
+    "source_commit",
+    "status",
+    "scenario_count",
+    "scenario_results",
+    "summary",
+    "artifact_refs"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "crypt_issue_id",
+    "source",
+    "expected_state",
+    "actual_state",
+    "dashboard_state",
+    "tracker_state",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "required_states": [
+    "crypt_gap_visible",
+    "reconciled_closed",
+    "crypt_gap_untracked",
+    "stale_evidence",
+    "duplicate_conflict",
+    "exact_id_split_brain"
+  ],
+  "required_failure_signatures": [
+    "ok",
+    "dashboard_zero_open_with_open_crypt_gap",
+    "missing_crypt_issue_record",
+    "stale_crypt_evidence",
+    "duplicate_crypt_issue_rows",
+    "exact_id_lookup_failure"
+  ],
+  "current_repo_observation": {
+    "observed_at_utc": "2026-05-03T21:55:00Z",
+    "bd_fd42da_row": "missing from .beads/issues.jsonl",
+    "crypt_evidence_ref": "crates/frankenlibc-abi/tests/conformance_diff_crypt.rs",
+    "crypt_evidence_state": "known_divergence",
+    "next_safe_action": "create_or_reopen_crypt_divergence_bead_or_refresh_current_conformance_before_any_zero-open claim"
+  },
+  "scenarios": [
+    {
+      "scenario_id": "open_crypt_gap_dashboard_zero",
+      "crypt_issue_id": "bd-fd42da",
+      "description": "br no-db shows the crypt divergence bead open while bv/dashboard claims zero open work.",
+      "inputs": {
+        "br_open_rows": [
+          {
+            "id": "bd-fd42da",
+            "status": "open",
+            "title": "crypt hashes diverge from glibc"
+          }
+        ],
+        "br_show_status": "open",
+        "br_show_exit_status": 0,
+        "bv_open_count": 0,
+        "dashboard_open_count": 0,
+        "crypt_evidence_state": "known_divergence",
+        "crypt_divergence_count": 15,
+        "evidence_current": true
+      },
+      "expected_state": "crypt_gap_visible",
+      "expected_dashboard_state": "contradictory_zero_open",
+      "expected_tracker_state": "tracker_failure",
+      "expected_failure_signature": "dashboard_zero_open_with_open_crypt_gap",
+      "expected_next_safe_action": "keep_crypt_issue_open_and_block_zero_open_dashboard",
+      "implementation_may_proceed_on_unrelated_beads": true
+    },
+    {
+      "scenario_id": "closed_with_current_parity_evidence",
+      "crypt_issue_id": "bd-fd42da",
+      "description": "The crypt row is closed only after current conformance evidence reports zero divergences.",
+      "inputs": {
+        "br_open_rows": [],
+        "br_show_status": "closed",
+        "br_show_exit_status": 0,
+        "bv_open_count": 0,
+        "dashboard_open_count": 0,
+        "crypt_evidence_state": "parity",
+        "crypt_divergence_count": 0,
+        "evidence_current": true
+      },
+      "expected_state": "reconciled_closed",
+      "expected_dashboard_state": "consistent",
+      "expected_tracker_state": "healthy",
+      "expected_failure_signature": "ok",
+      "expected_next_safe_action": "allow_zero_open_dashboard_for_crypt",
+      "implementation_may_proceed_on_unrelated_beads": true
+    },
+    {
+      "scenario_id": "missing_issue_known_divergence",
+      "crypt_issue_id": "bd-fd42da",
+      "description": "The named crypt row is missing, but crypt conformance evidence still documents divergence.",
+      "inputs": {
+        "br_open_rows": [],
+        "br_show_status": "missing",
+        "br_show_exit_status": 3,
+        "bv_open_count": 0,
+        "dashboard_open_count": 0,
+        "crypt_evidence_state": "known_divergence",
+        "crypt_divergence_count": 15,
+        "evidence_current": true
+      },
+      "expected_state": "crypt_gap_untracked",
+      "expected_dashboard_state": "contradictory_zero_open",
+      "expected_tracker_state": "tracker_failure",
+      "expected_failure_signature": "missing_crypt_issue_record",
+      "expected_next_safe_action": "create_or_reopen_crypt_divergence_bead",
+      "implementation_may_proceed_on_unrelated_beads": true
+    },
+    {
+      "scenario_id": "stale_parity_report",
+      "crypt_issue_id": "bd-fd42da",
+      "description": "A closed crypt row and zero-open dashboard are invalid when the parity report is stale.",
+      "inputs": {
+        "br_open_rows": [],
+        "br_show_status": "closed",
+        "br_show_exit_status": 0,
+        "bv_open_count": 0,
+        "dashboard_open_count": 0,
+        "crypt_evidence_state": "parity",
+        "crypt_divergence_count": 0,
+        "evidence_current": false
+      },
+      "expected_state": "stale_evidence",
+      "expected_dashboard_state": "stale_claim",
+      "expected_tracker_state": "tracker_failure",
+      "expected_failure_signature": "stale_crypt_evidence",
+      "expected_next_safe_action": "refresh_crypt_conformance_before_closure",
+      "implementation_may_proceed_on_unrelated_beads": false
+    },
+    {
+      "scenario_id": "duplicate_open_closed_rows",
+      "crypt_issue_id": "bd-fd42da",
+      "description": "Duplicate bd-fd42da rows disagree on status; dashboards must not choose the closed row silently.",
+      "inputs": {
+        "br_open_rows": [
+          {
+            "id": "bd-fd42da",
+            "status": "open",
+            "title": "crypt hashes diverge from glibc"
+          },
+          {
+            "id": "bd-fd42da",
+            "status": "closed",
+            "title": "crypt hashes diverge from glibc"
+          }
+        ],
+        "br_show_status": "duplicate",
+        "br_show_exit_status": 0,
+        "bv_open_count": 0,
+        "dashboard_open_count": 0,
+        "crypt_evidence_state": "known_divergence",
+        "crypt_divergence_count": 15,
+        "evidence_current": true
+      },
+      "expected_state": "duplicate_conflict",
+      "expected_dashboard_state": "duplicate_conflict",
+      "expected_tracker_state": "tracker_failure",
+      "expected_failure_signature": "duplicate_crypt_issue_rows",
+      "expected_next_safe_action": "dedupe_crypt_issue_rows_before_dashboard_claim",
+      "implementation_may_proceed_on_unrelated_beads": false
+    },
+    {
+      "scenario_id": "exact_id_lookup_failure",
+      "crypt_issue_id": "bd-fd42da",
+      "description": "br list exposes bd-fd42da, but br show by exact ID fails.",
+      "inputs": {
+        "br_open_rows": [
+          {
+            "id": "bd-fd42da",
+            "status": "open",
+            "title": "crypt hashes diverge from glibc"
+          }
+        ],
+        "br_show_status": "missing",
+        "br_show_exit_status": 3,
+        "bv_open_count": 1,
+        "dashboard_open_count": 1,
+        "crypt_evidence_state": "known_divergence",
+        "crypt_divergence_count": 15,
+        "evidence_current": true
+      },
+      "expected_state": "exact_id_split_brain",
+      "expected_dashboard_state": "exact_id_failure",
+      "expected_tracker_state": "tracker_failure",
+      "expected_failure_signature": "exact_id_lookup_failure",
+      "expected_next_safe_action": "repair_exact_id_lookup_before_claim_or_close",
+      "implementation_may_proceed_on_unrelated_beads": false
+    }
+  ]
+}
