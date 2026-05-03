@@ -1,0 +1,304 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fpg-claim-control-gate",
+  "bead": "bd-bp8fl.3.5",
+  "owner_family_group": "fpg-claim-control",
+  "evidence_owner": "docs/conformance release-gate owners",
+  "generated_utc": "2026-05-03T16:30:00Z",
+  "source_commit": "fc5838a3ca08c4d66c070bd39b0cbe18403b1691",
+  "purpose": "Fail-closed gate for the eight fpg-claim-control gaps drawn from tests/conformance/feature_parity_gap_ledger.v1.json. Every macro-coverage-target row in FEATURE_PARITY.md must remain bound to current machine evidence (support_matrix.json, replacement_levels.json, conformance_matrix.v1.json, hardened_repair_deny_matrix.v1.json, semantic_contract_inventory.v1.json, perf_baseline_spec.json, version_scripts/libc.map). Stale, missing, or contradictory evidence blocks claim advancement at any replacement level (L0/L1/L2/L3).",
+  "inputs": {
+    "feature_parity": "FEATURE_PARITY.md",
+    "support_matrix": "support_matrix.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "reality_report": "tests/conformance/reality_report.v1.json",
+    "semantic_contract_inventory": "tests/conformance/semantic_contract_inventory.v1.json",
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "hardened_repair_deny_matrix": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+    "perf_baseline_spec": "tests/conformance/perf_baseline_spec.json",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "gap_id",
+    "section",
+    "feature_parity_line",
+    "claimed_status",
+    "expected_status",
+    "actual_status",
+    "evidence_artifact",
+    "evidence_anchor",
+    "expected_value",
+    "actual_value",
+    "claim_decision",
+    "replacement_level",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_until_evidence_current",
+    "allow_status": ["IN_PROGRESS", "PLANNED"],
+    "block_status_without_evidence": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "fail_closed_message": "Macro coverage target row cannot advertise DONE or advance replacement_level without all bound evidence anchors being current in their cited source artifact."
+  },
+  "rows": [
+    {
+      "gap_id": "fp-macro-targets-fa7a23e18f01",
+      "kind": "feature_parity_row_status",
+      "section": "macro_targets",
+      "primary_key": "POSIX/GNU replacement completeness",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 38
+      },
+      "claim_target": "Remove WrapsHostLibc + GlibcCallThrough + Stub classes from critical surfaces",
+      "claimed_status": "IN_PROGRESS",
+      "owner_bead": "bd-w2c3.1",
+      "evidence_anchors": [
+        {
+          "artifact": "support_matrix.json",
+          "field": "summary.glibc_call_through",
+          "expected_value": 0,
+          "rationale": "POSIX/GNU completeness requires zero GlibcCallThrough exports."
+        },
+        {
+          "artifact": "support_matrix.json",
+          "field": "summary.wraps_host_libc",
+          "expected_value": 0,
+          "rationale": "POSIX/GNU completeness requires zero WrapsHostLibc exports."
+        },
+        {
+          "artifact": "support_matrix.json",
+          "field": "summary.stub",
+          "expected_value": 0,
+          "rationale": "POSIX/GNU completeness requires zero support-taxonomy Stub exports."
+        },
+        {
+          "artifact": "tests/conformance/semantic_contract_inventory.v1.json",
+          "field": "summary.entry_count",
+          "expected_value_min": 1,
+          "rationale": "Until the semantic-contract inventory is exhausted, fallback/no-op contracts remain and replacement is not complete; the row stays IN_PROGRESS."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-macro-targets-7b75050a0f03",
+      "kind": "feature_parity_row_status",
+      "section": "macro_targets",
+      "primary_key": "ABI symbol/version fidelity",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 39
+      },
+      "claim_target": "Preserve exported ABI and classify each exported symbol state",
+      "claimed_status": "IN_PROGRESS",
+      "owner_bead": "bd-w2c3.1",
+      "evidence_anchors": [
+        {
+          "artifact": "crates/frankenlibc-abi/version_scripts/libc.map",
+          "field": "exists",
+          "expected_value": true,
+          "rationale": "Version script must exist as the source of truth for exported ABI."
+        },
+        {
+          "artifact": "support_matrix.json",
+          "field": "summary.total",
+          "expected_value_min": 1,
+          "rationale": "Support matrix must enumerate the exported ABI."
+        },
+        {
+          "artifact": "support_matrix.json",
+          "field": "summary.implemented",
+          "expected_value_min": 1,
+          "rationale": "At least one row must classify ABI implementation status."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-macro-targets-025864627e97",
+      "kind": "feature_parity_row_status",
+      "section": "macro_targets",
+      "primary_key": "Strict mode conformance",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 40
+      },
+      "claim_target": "Differential parity on supported symbol set",
+      "claimed_status": "IN_PROGRESS",
+      "owner_bead": "bd-w2c3.1.2",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/conformance_matrix.v1.json",
+          "field": "summary.failed",
+          "expected_value": 0,
+          "rationale": "Strict-mode conformance matrix must show zero failed cases."
+        },
+        {
+          "artifact": "tests/conformance/conformance_matrix.v1.json",
+          "field": "summary.total_cases",
+          "expected_value_min": 1,
+          "rationale": "Strict-mode conformance matrix must contain at least one case."
+        },
+        {
+          "artifact": "support_matrix.json",
+          "field": "taxonomy.mode_contract.strict",
+          "expected_value_contains": "POSIX-correct",
+          "rationale": "Strict-mode contract must remain documented in support taxonomy."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-macro-targets-b1b8d5acbeff",
+      "kind": "feature_parity_row_status",
+      "section": "macro_targets",
+      "primary_key": "Hardened mode safety",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 41
+      },
+      "claim_target": "Deterministic repair/deny coverage on membrane-gated paths",
+      "claimed_status": "IN_PROGRESS",
+      "owner_bead": "bd-w2c3.1.2",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+          "field": "summary.entry_count",
+          "expected_value_min": 1,
+          "rationale": "Hardened-mode safety claim must be backed by a non-empty repair/deny matrix."
+        },
+        {
+          "artifact": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+          "field": "summary.covered_invalid_input_classes",
+          "expected_value_min": 1,
+          "rationale": "Hardened-mode safety claim must cover at least one invalid-input class."
+        },
+        {
+          "artifact": "support_matrix.json",
+          "field": "taxonomy.mode_contract.hardened",
+          "expected_value_contains": "TSM repair",
+          "rationale": "Hardened-mode contract must remain documented in support taxonomy."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-macro-targets-b1983d62901c",
+      "kind": "feature_parity_row_status",
+      "section": "macro_targets",
+      "primary_key": "Transparent Safety Membrane enforcement",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 42
+      },
+      "claim_target": "Pointer-sensitive APIs validated before dispatch",
+      "claimed_status": "IN_PROGRESS",
+      "owner_bead": "bd-w2c3.1.2",
+      "evidence_anchors": [
+        {
+          "artifact": "support_matrix.json",
+          "field": "taxonomy.mode_contract",
+          "expected_keys": ["strict", "hardened"],
+          "rationale": "Membrane enforcement must distinguish strict and hardened mode contracts."
+        },
+        {
+          "artifact": "tests/conformance/hardened_repair_deny_matrix.v1.json",
+          "field": "summary.repair_entries",
+          "expected_value_min": 1,
+          "rationale": "Membrane repair entries must be non-empty when hardened enforcement is claimed."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-macro-targets-556631616b22",
+      "kind": "feature_parity_row_status",
+      "section": "macro_targets",
+      "primary_key": "Conformance harness",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 43
+      },
+      "claim_target": "Fixture-driven validation + drift gates",
+      "claimed_status": "IN_PROGRESS",
+      "owner_bead": "bd-w2c3.1",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/conformance_matrix.v1.json",
+          "field": "total_fixture_sets",
+          "expected_value_min": 1,
+          "rationale": "Conformance harness claim requires at least one fixture set."
+        },
+        {
+          "artifact": "tests/conformance/conformance_matrix.v1.json",
+          "field": "summary.total_cases",
+          "expected_value_min": 1,
+          "rationale": "Conformance harness claim requires at least one case."
+        }
+      ]
+    },
+    {
+      "gap_id": "fp-macro-targets-1e330b896784",
+      "kind": "feature_parity_row_status",
+      "section": "macro_targets",
+      "primary_key": "Benchmark gates",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 44
+      },
+      "claim_target": "Regression-blocking + budget evidence",
+      "claimed_status": "IN_PROGRESS",
+      "owner_bead": "bd-w2c3.1",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/perf_baseline_spec.json",
+          "field": "summary.enforced_suites",
+          "expected_value_min": 1,
+          "rationale": "Benchmark gates require at least one enforced suite."
+        },
+        {
+          "artifact": "tests/conformance/perf_baseline_spec.json",
+          "field": "summary.total_benchmarks",
+          "expected_value_min": 1,
+          "rationale": "Benchmark gates require enumerated benchmark coverage."
+        }
+      ]
+    },
+    {
+      "gap_id": "gap-macro-fp-macro-targets-fa7a23e18f01",
+      "kind": "machine_delta_drift",
+      "section": "machine_delta",
+      "primary_key": "macro_targets row drift sentinel",
+      "feature_parity_provenance": {
+        "path": "FEATURE_PARITY.md",
+        "line": 38
+      },
+      "claim_target": "Detect machine-delta drift between FEATURE_PARITY macro_targets row and support_matrix counts",
+      "claimed_status": "drift",
+      "owner_bead": "bd-w2c3.1",
+      "linked_gap_id": "fp-macro-targets-fa7a23e18f01",
+      "evidence_anchors": [
+        {
+          "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
+          "field": "self.kind",
+          "expected_value": "machine_delta_drift",
+          "rationale": "Sentinel must remain visible in the gap ledger as a machine_delta_drift row until the linked POSIX/GNU completeness row can promote to DONE."
+        },
+        {
+          "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
+          "field": "self.status",
+          "expected_value": "drift",
+          "rationale": "Sentinel must remain in drift state until reality_report callthrough/stub counts no longer fund the row."
+        },
+        {
+          "artifact": "tests/conformance/feature_parity_gap_ledger.v1.json",
+          "field": "linked.kind",
+          "expected_value": "feature_parity_row_status",
+          "rationale": "Linked POSIX/GNU completeness row must remain a feature_parity_row_status entry."
+        }
+      ]
+    }
+  ]
+}
