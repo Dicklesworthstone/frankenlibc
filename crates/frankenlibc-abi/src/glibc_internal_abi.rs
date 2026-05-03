@@ -8005,10 +8005,10 @@ pub unsafe extern "C" fn __idna_to_dns_encoding(
     }
     output.push(0); // NUL terminator.
 
-    // glibc IDNA contract: caller frees `*result` via libc::free.
-    // (bd-zgifl) — match the alloc/free pair so non-LD_PRELOAD test
-    // builds don't abort with "free(): invalid size".
-    let buf = unsafe { libc::malloc(output.len()) } as *mut u8;
+    // glibc IDNA contract: caller frees `*result` via free. Route through the
+    // FrankenLibC allocator entrypoint so replacement mode has no direct host
+    // call-through while keeping the public alloc/free pair matched.
+    let buf = unsafe { crate::malloc_abi::malloc(output.len()) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }
@@ -8079,8 +8079,8 @@ pub unsafe extern "C" fn __idna_from_dns_encoding(
     let output_bytes = output.as_bytes();
     let alloc_len = output_bytes.len() + 1; // +1 for NUL.
 
-    // Same caller-frees contract as __idna_to_dns_encoding. (bd-zgifl)
-    let buf = unsafe { libc::malloc(alloc_len) } as *mut u8;
+    // Same caller-frees contract as __idna_to_dns_encoding.
+    let buf = unsafe { crate::malloc_abi::malloc(alloc_len) } as *mut u8;
     if buf.is_null() {
         return libc::EAI_FAIL;
     }

@@ -1871,7 +1871,7 @@ pub unsafe extern "C" fn xdr_pmaplist(xdrs: *mut c_void, rp: *mut c_void) -> c_i
         while !node.is_null() {
             // SAFETY: node is a valid PmapList pointer we're about to free.
             let next = unsafe { (*node).pml_next };
-            unsafe { libc::free(node.cast()) };
+            unsafe { crate::malloc_abi::free(node.cast()) };
             node = next;
         }
         return XDR_TRUE;
@@ -3051,17 +3051,11 @@ pub unsafe extern "C" fn host2netname(
         Err(_) => return 0,
     };
     let name = format!("unix.{}@{}\0", host_str, domain_str);
-    // POSIX host2netname returns a heap buffer that the CALLER frees with the
-    // standard free(). That means we must allocate through the allocator whose
-    // free() matches: when frankenlibc is linked as a normal dep (test build,
-    // no LD_PRELOAD), `libc::free` binds to host glibc's free, so the malloc
-    // side has to match. If we allocate via our internal raw_alloc (arena),
-    // the caller's free sees a non-glibc chunk header and aborts with
-    // `free(): invalid size` (bd-dqqh1 cluster). Using libc::malloc keeps the
-    // alloc/free pair consistent in both the LD_PRELOAD and non-preload
-    // contexts — under LD_PRELOAD the host libc::malloc is our own interposed
-    // symbol anyway.
-    let buf = unsafe { libc::malloc(name.len()) } as *mut c_char;
+    // POSIX host2netname returns a heap buffer that the caller frees with the
+    // standard free(). Route through the FrankenLibC allocator entrypoint so
+    // replacement mode has no direct host call-through while keeping the public
+    // alloc/free pair matched.
+    let buf = unsafe { crate::malloc_abi::malloc(name.len()) } as *mut c_char;
     if buf.is_null() {
         return 0;
     }
@@ -3187,10 +3181,10 @@ pub unsafe extern "C" fn user2netname(
         Err(_) => return 0,
     };
     let name = format!("unix.{}@{}\0", uid, domain_str);
-    // Sibling of host2netname (bd-dqqh1) — POSIX returns a buffer freed by
-    // the caller's free(), so use libc::malloc to keep the alloc/free pair
-    // consistent across LD_PRELOAD and non-preload contexts (bd-zgifl).
-    let buf = unsafe { libc::malloc(name.len()) } as *mut c_char;
+    // Sibling of host2netname: POSIX returns a buffer freed by the caller's
+    // free(), so use the FrankenLibC allocator entrypoint for a matched public
+    // alloc/free pair without a source-level host call-through.
+    let buf = unsafe { crate::malloc_abi::malloc(name.len()) } as *mut c_char;
     if buf.is_null() {
         return 0;
     }
