@@ -1,0 +1,262 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.3.3",
+  "generated_utc": "2026-05-03T21:55:00Z",
+  "purpose": "Map every feature-parity gap owner-family row to a concrete closure bead with source row, evidence type, test obligations, replay command, and fail-closed claim policy.",
+  "inputs": {
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "issues_jsonl": ".beads/issues.jsonl"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "source_row_id",
+    "created_issue_id",
+    "missing_evidence_type",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "missing_or_duplicate_source_row": "fail_closed",
+    "missing_created_issue": "fail_closed",
+    "closed_tracker_without_current_gate": "claim_blocked",
+    "missing_unit_or_e2e_obligation": "fail_closed",
+    "stale_source_group": "fail_closed"
+  },
+  "closure_rows": [
+    {
+      "source_row_id": "fpg-claim-control",
+      "created_issue_id": "bd-bp8fl.3.5",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "claim_reconciliation_gate",
+      "owner_area": "docs/conformance release-gate owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/fpg_claim_control_gate_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_fpg_claim_control_gate.sh --validate-only"
+      ],
+      "claim_surfaces": [
+        "FEATURE_PARITY.md",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/semantic_contract_inventory.v1.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.5 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.5 --reason <evidence>"
+      ]
+    },
+    {
+      "source_row_id": "fpg-reverse-runtime-core",
+      "created_issue_id": "bd-bp8fl.3.6",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "fixture_and_semantic_overlay",
+      "owner_area": "frankenlibc-core and frankenlibc-abi subsystem owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/conformance_fixture_pipeline_test.rs",
+        "crates/frankenlibc-harness/tests/semantic_contract_symbol_join_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_feature_parity_gap_groups.sh"
+      ],
+      "claim_surfaces": [
+        "tests/conformance/fixtures/membrane_mode_split.json",
+        "tests/conformance/symbol_fixture_coverage.v1.json",
+        "tests/conformance/semantic_contract_inventory.v1.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.6 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.6 --reason <evidence>"
+      ]
+    },
+    {
+      "source_row_id": "fpg-reverse-loader-process-abi",
+      "created_issue_id": "bd-bp8fl.3.7",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "link_run_and_versioned_symbol_gate",
+      "owner_area": "ABI, loader, syscall, process, and hard-parts harness owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/standalone_link_run_smoke_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_standalone_link_run_smoke.sh --run"
+      ],
+      "claim_surfaces": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "tests/conformance/standalone_link_run_smoke.v1.json",
+        "tests/conformance/conformance_matrix.v1.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.7 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.7 --reason <evidence>"
+      ]
+    },
+    {
+      "source_row_id": "fpg-proof-core-safety",
+      "created_issue_id": "bd-bp8fl.3.8",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "proof_binder_and_mode_contract",
+      "owner_area": "membrane proof and conformance-binder owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/fpg_proof_core_safety_gate_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_fpg_proof_core_safety_gate.sh --validate-only"
+      ],
+      "claim_surfaces": [
+        "tests/conformance/proof_obligations_binder.v1.json",
+        "tests/conformance/proof_binder_validation.v1.json",
+        "tests/conformance/mode_contract_lock.v1.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.8 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.8 --reason <evidence>"
+      ]
+    },
+    {
+      "source_row_id": "fpg-proof-online-control",
+      "created_issue_id": "bd-bp8fl.3.9",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "runtime_math_replay_and_budget_gate",
+      "owner_area": "runtime_math controller owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/runtime_math_profile_gates_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_runtime_math_profile_gates.sh"
+      ],
+      "claim_surfaces": [
+        "tests/conformance/runtime_env_inventory.v1.json",
+        "tests/conformance/perf_budget_policy.json",
+        "tests/conformance/optimization_proof_ledger.v1.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.9 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.9 --reason <evidence>"
+      ]
+    },
+    {
+      "source_row_id": "fpg-proof-coverage-interaction",
+      "created_issue_id": "bd-bp8fl.3.10",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "coverage_latency_and_equivalence_gate",
+      "owner_area": "coverage, performance, ABI-layout, and low-level kernel owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs",
+        "crates/frankenlibc-harness/tests/symbol_latency_baseline_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_fixture_coverage_prioritizer.sh"
+      ],
+      "claim_surfaces": [
+        "tests/conformance/branch_diversity_spec.v1.json",
+        "tests/conformance/perf_regression_prevention.v1.json",
+        "tests/conformance/symbol_latency_baseline.v1.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.10 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.10 --reason <evidence>"
+      ]
+    },
+    {
+      "source_row_id": "fpg-proof-algebraic-topological",
+      "created_issue_id": "bd-bp8fl.3.11",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "proof_traceability_and_monitor_fixture_gate",
+      "owner_area": "runtime_math algebraic/topological monitor owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/runtime_math_linkage_proofs_test.rs",
+        "crates/frankenlibc-harness/tests/posix_traceability_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_runtime_math_epic_closure.sh"
+      ],
+      "claim_surfaces": [
+        "tests/conformance/proof_traceability_check.json",
+        "tests/conformance/sheaf_coverage.v1.json",
+        "tests/conformance/math_value_proof.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.11 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.11 --reason <evidence>"
+      ]
+    },
+    {
+      "source_row_id": "fpg-gap-summary-evidence-foundation",
+      "created_issue_id": "bd-bp8fl.3.12",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "artifact_freshness_and_foundation_gate",
+      "owner_area": "conformance, benchmark, ABI-symbol, and proof-binder owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/fpg_evidence_foundation_gate_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_fpg_evidence_foundation_gate.sh --validate-only"
+      ],
+      "claim_surfaces": [
+        "tests/conformance/fixtures/",
+        "tests/conformance/perf_baseline_spec.json",
+        "tests/conformance/proof_obligations_binder.v1.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.12 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.12 --reason <evidence>"
+      ]
+    },
+    {
+      "source_row_id": "fpg-gap-summary-ported-surface-evidence",
+      "created_issue_id": "bd-bp8fl.3.13",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "per_symbol_fixture_and_performance_gate",
+      "owner_area": "ported core/ABI family owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/fpg_ported_surface_gate_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_fpg_ported_surface_gate.sh --validate-only"
+      ],
+      "claim_surfaces": [
+        "tests/conformance/symbol_fixture_coverage.v1.json",
+        "tests/conformance/per_symbol_fixture_tests.v1.json",
+        "tests/conformance/optimization_proof_ledger.v1.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.13 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.13 --reason <evidence>"
+      ]
+    },
+    {
+      "source_row_id": "fpg-gap-summary-runtime-monitor-evidence",
+      "created_issue_id": "bd-bp8fl.3.14",
+      "parent_issue_id": "bd-bp8fl.3",
+      "missing_evidence_type": "runtime_monitor_replay_and_calibration_gate",
+      "owner_area": "runtime_math monitor owners",
+      "required_unit_tests": [
+        "crates/frankenlibc-harness/tests/runtime_math_profile_gates_test.rs",
+        "crates/frankenlibc-harness/tests/observability_dashboard_test.rs"
+      ],
+      "required_e2e_scripts": [
+        "scripts/check_runtime_math_profile_gates.sh"
+      ],
+      "claim_surfaces": [
+        "tests/conformance/runtime_env_inventory.v1.json",
+        "tests/conformance/optimization_proof_ledger.v1.json",
+        "tests/conformance/proof_traceability_check.json"
+      ],
+      "br_commands": [
+        "br --no-db update bd-bp8fl.3.14 --status=in_progress",
+        "br --no-db close bd-bp8fl.3.14 --reason <evidence>"
+      ]
+    }
+  ],
+  "summary": {
+    "expected_source_rows": 10,
+    "expected_gap_count": 111,
+    "created_issue_count": 10,
+    "source_artifact_freshness": "validated_by_gate"
+  }
+}
