@@ -46,12 +46,298 @@ fn load_readme() -> String {
     std::fs::read_to_string(&path).expect("README.md should exist")
 }
 
+fn load_l1_crt_startup_tls_matrix() -> serde_json::Value {
+    let path = workspace_root().join("tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json");
+    let content =
+        std::fs::read_to_string(&path).expect("l1_crt_startup_tls_proof_matrix should exist");
+    serde_json::from_str(&content).expect("l1_crt_startup_tls_proof_matrix should be valid JSON")
+}
+
 fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock drifted before unix epoch")
         .as_nanos();
     std::env::temp_dir().join(format!("{prefix}-{}-{nanos}{suffix}", std::process::id()))
+}
+
+const L1_CRT_REQUIRED_LOG_FIELDS: &[&str] = &[
+    "trace_id",
+    "bead_id",
+    "proof_row_id",
+    "runtime_mode",
+    "replacement_level",
+    "expected_order",
+    "actual_order",
+    "expected_status",
+    "actual_status",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature",
+];
+
+const L1_CRT_REQUIRED_ROWS: &[&str] = &[
+    "process_startup",
+    "argc_argv_envp_handoff",
+    "tls_initialization",
+    "pthread_tls_keys",
+    "constructors",
+    "destructors",
+    "atexit_on_exit",
+    "init_fini_arrays",
+    "errno_tls_isolation",
+    "secure_mode",
+    "failure_diagnostics",
+];
+
+fn json_string_array(value: &serde_json::Value, field: &str) -> Result<Vec<String>, Vec<String>> {
+    value[field]
+        .as_array()
+        .ok_or_else(|| vec![format!("{field} must be an array")])?
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| vec![format!("{field} must contain only strings")])
+        })
+        .collect()
+}
+
+fn parse_date_ordinal(timestamp: &str) -> Result<i64, String> {
+    let date = timestamp
+        .split_once('T')
+        .map(|(date, _)| date)
+        .ok_or_else(|| format!("timestamp missing T separator: {timestamp}"))?;
+    let mut parts = date.split('-');
+    let year: i64 = parts
+        .next()
+        .ok_or_else(|| format!("timestamp missing year: {timestamp}"))?
+        .parse()
+        .map_err(|err| format!("timestamp year did not parse: {timestamp}: {err}"))?;
+    let month: usize = parts
+        .next()
+        .ok_or_else(|| format!("timestamp missing month: {timestamp}"))?
+        .parse()
+        .map_err(|err| format!("timestamp month did not parse: {timestamp}: {err}"))?;
+    let day: i64 = parts
+        .next()
+        .ok_or_else(|| format!("timestamp missing day: {timestamp}"))?
+        .parse()
+        .map_err(|err| format!("timestamp day did not parse: {timestamp}: {err}"))?;
+    if !(1..=12).contains(&month) {
+        return Err(format!("timestamp month out of range: {timestamp}"));
+    }
+    let month_offsets = [0_i64, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    let leap_days = year / 4 - year / 100 + year / 400;
+    Ok(year * 365 + leap_days + month_offsets[month - 1] + day)
+}
+
+fn validate_l1_crt_startup_tls_matrix(matrix: &serde_json::Value) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+
+    if matrix["schema_version"].as_str() != Some("v1") {
+        errors.push("schema_version must be v1".to_string());
+    }
+    if matrix["bead"].as_str() != Some("bd-bp8fl.6.3") {
+        errors.push("bead must be bd-bp8fl.6.3".to_string());
+    }
+    if matrix["claim_policy"]["replacement_level"].as_str() != Some("L1") {
+        errors.push("claim_policy.replacement_level must be L1".to_string());
+    }
+
+    let log_fields = json_string_array(matrix, "required_log_fields").unwrap_or_else(|errs| {
+        errors.extend(errs);
+        Vec::new()
+    });
+    let expected_log_fields: Vec<String> = L1_CRT_REQUIRED_LOG_FIELDS
+        .iter()
+        .map(|field| (*field).to_string())
+        .collect();
+    if log_fields != expected_log_fields {
+        errors.push(format!(
+            "required_log_fields mismatch: expected {expected_log_fields:?}, got {log_fields:?}"
+        ));
+    }
+
+    let required_ids = json_string_array(matrix, "required_proof_row_ids").unwrap_or_else(|errs| {
+        errors.extend(errs);
+        Vec::new()
+    });
+    let expected_required_ids: Vec<String> = L1_CRT_REQUIRED_ROWS
+        .iter()
+        .map(|row| (*row).to_string())
+        .collect();
+    if required_ids != expected_required_ids {
+        errors.push(format!(
+            "required_proof_row_ids mismatch: expected {expected_required_ids:?}, got {required_ids:?}"
+        ));
+    }
+
+    let generated_at = matrix["generated_at_utc"].as_str().unwrap_or("");
+    let generated_ordinal = match parse_date_ordinal(generated_at) {
+        Ok(value) => value,
+        Err(err) => {
+            errors.push(format!("generated_at_utc invalid: {err}"));
+            0
+        }
+    };
+    let max_age_days = matrix["claim_policy"]["max_evidence_age_days"]
+        .as_i64()
+        .unwrap_or(0);
+    if max_age_days <= 0 {
+        errors.push("claim_policy.max_evidence_age_days must be positive".to_string());
+    }
+
+    let rows = matrix["proof_rows"].as_array().unwrap_or_else(|| {
+        errors.push("proof_rows must be an array".to_string());
+        static EMPTY: Vec<serde_json::Value> = Vec::new();
+        &EMPTY
+    });
+    let mut seen_rows = HashSet::new();
+    let allowed_statuses: HashSet<&str> = ["pass", "blocked", "required"].into_iter().collect();
+    let allowed_decisions: HashSet<&str> = ["satisfied", "claim_blocked"].into_iter().collect();
+
+    for row in rows {
+        let id = row["id"].as_str().unwrap_or("<missing>");
+        if !seen_rows.insert(id.to_string()) {
+            errors.push(format!("duplicate proof row id {id}"));
+        }
+        if row["replacement_level"].as_str() != Some("L1") {
+            errors.push(format!("{id}: replacement_level must be L1"));
+        }
+
+        let modes = row["runtime_modes"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+        if !modes.contains("strict") || !modes.contains("hardened") {
+            errors.push(format!(
+                "{id}: runtime_modes must include strict and hardened"
+            ));
+        }
+
+        for field in [
+            "expected_order",
+            "actual_order",
+            "artifact_refs",
+            "check_commands",
+            "symbols",
+        ] {
+            if !row[field].is_array() {
+                errors.push(format!("{id}: {field} must be an array"));
+            }
+        }
+        if row["artifact_refs"]
+            .as_array()
+            .map(|items| items.is_empty())
+            .unwrap_or(true)
+        {
+            errors.push(format!("{id}: artifact_refs must not be empty"));
+        }
+        if row["check_commands"]
+            .as_array()
+            .map(|items| items.is_empty())
+            .unwrap_or(true)
+        {
+            errors.push(format!("{id}: check_commands must not be empty"));
+        }
+        if row["failure_signature"]
+            .as_str()
+            .map(|text| text.is_empty())
+            .unwrap_or(true)
+        {
+            errors.push(format!("{id}: failure_signature must be non-empty"));
+        }
+
+        let expected_status = row["expected_status"].as_str().unwrap_or("<missing>");
+        let actual_status = row["actual_status"].as_str().unwrap_or("<missing>");
+        let promotion_decision = row["promotion_decision"].as_str().unwrap_or("<missing>");
+        if !allowed_statuses.contains(expected_status) {
+            errors.push(format!(
+                "{id}: expected_status {expected_status:?} is invalid"
+            ));
+        }
+        if !allowed_statuses.contains(actual_status) {
+            errors.push(format!("{id}: actual_status {actual_status:?} is invalid"));
+        }
+        if !allowed_decisions.contains(promotion_decision) {
+            errors.push(format!(
+                "{id}: promotion_decision {promotion_decision:?} is invalid"
+            ));
+        }
+        let satisfied = promotion_decision == "satisfied";
+        if (actual_status == "pass") != satisfied {
+            errors.push(format!(
+                "{id}: actual_status={actual_status} contradicts promotion_decision={promotion_decision}"
+            ));
+        }
+
+        if satisfied {
+            match row["evidence_generated_at_utc"].as_str() {
+                Some(evidence_at) => match parse_date_ordinal(evidence_at) {
+                    Ok(evidence_ordinal) => {
+                        if generated_ordinal > 0
+                            && max_age_days > 0
+                            && generated_ordinal - evidence_ordinal > max_age_days
+                        {
+                            errors.push(format!(
+                                "{id}: evidence is stale by {} days",
+                                generated_ordinal - evidence_ordinal
+                            ));
+                        }
+                    }
+                    Err(err) => errors.push(format!("{id}: evidence timestamp invalid: {err}")),
+                },
+                None => errors.push(format!(
+                    "{id}: satisfied rows must include evidence_generated_at_utc"
+                )),
+            }
+        }
+    }
+
+    for required in L1_CRT_REQUIRED_ROWS {
+        if !seen_rows.contains(*required) {
+            errors.push(format!("missing required proof row {required}"));
+        }
+    }
+
+    let negative_tests = matrix["negative_claim_tests"]
+        .as_array()
+        .unwrap_or_else(|| {
+            errors.push("negative_claim_tests must be an array".to_string());
+            static EMPTY: Vec<serde_json::Value> = Vec::new();
+            &EMPTY
+        });
+    if negative_tests.len() < 3 {
+        errors.push("negative_claim_tests must include at least three cases".to_string());
+    }
+    for test in negative_tests {
+        let id = test["id"].as_str().unwrap_or("<missing>");
+        if test["expected_result"].as_str() != Some("claim_blocked") {
+            errors.push(format!(
+                "{id}: negative claim expected_result must be claim_blocked"
+            ));
+        }
+        if test["failure_signature"]
+            .as_str()
+            .map(|text| text.is_empty())
+            .unwrap_or(true)
+        {
+            errors.push(format!("{id}: negative claim missing failure_signature"));
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 #[test]
@@ -526,6 +812,75 @@ fn gate_script_exists_and_executable() {
 }
 
 #[test]
+fn l1_crt_startup_tls_proof_matrix_validates_required_rows() {
+    let matrix = load_l1_crt_startup_tls_matrix();
+    let errors = match validate_l1_crt_startup_tls_matrix(&matrix) {
+        Ok(()) => Vec::new(),
+        Err(errors) => errors,
+    };
+    assert!(
+        errors.is_empty(),
+        "L1 CRT/startup/TLS proof matrix should validate: {errors:?}"
+    );
+}
+
+#[test]
+fn l1_crt_startup_tls_proof_matrix_rejects_missing_required_row() {
+    let mut matrix = load_l1_crt_startup_tls_matrix();
+    let rows = matrix["proof_rows"].as_array_mut().unwrap();
+    rows.retain(|row| row["id"].as_str() != Some("secure_mode"));
+
+    let errors = validate_l1_crt_startup_tls_matrix(&matrix)
+        .expect_err("matrix missing a required proof row must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("missing required proof row secure_mode")),
+        "missing-row error not found: {errors:?}"
+    );
+}
+
+#[test]
+fn l1_crt_startup_tls_proof_matrix_rejects_stale_evidence() {
+    let mut matrix = load_l1_crt_startup_tls_matrix();
+    let rows = matrix["proof_rows"].as_array_mut().unwrap();
+    let startup = rows
+        .iter_mut()
+        .find(|row| row["id"].as_str() == Some("process_startup"))
+        .expect("process_startup row must exist");
+    startup["evidence_generated_at_utc"] = serde_json::json!("2000-01-01T00:00:00Z");
+
+    let errors = validate_l1_crt_startup_tls_matrix(&matrix)
+        .expect_err("stale evidence must fail validation");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("evidence is stale")),
+        "stale-evidence error not found: {errors:?}"
+    );
+}
+
+#[test]
+fn l1_crt_startup_tls_proof_matrix_rejects_contradictory_evidence() {
+    let mut matrix = load_l1_crt_startup_tls_matrix();
+    let rows = matrix["proof_rows"].as_array_mut().unwrap();
+    let startup = rows
+        .iter_mut()
+        .find(|row| row["id"].as_str() == Some("process_startup"))
+        .expect("process_startup row must exist");
+    startup["promotion_decision"] = serde_json::json!("claim_blocked");
+
+    let errors = validate_l1_crt_startup_tls_matrix(&matrix)
+        .expect_err("contradictory evidence must fail validation");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("contradicts promotion_decision")),
+        "contradictory-evidence error not found: {errors:?}"
+    );
+}
+
+#[test]
 fn gate_script_refreshes_l1_objective_gate_artifacts() {
     let root = workspace_root();
     let script = root.join("scripts/check_replacement_levels.sh");
@@ -584,8 +939,8 @@ fn gate_script_refreshes_l1_objective_gate_artifacts() {
         .expect("report.script_checks must be an array");
     assert_eq!(
         script_checks.len(),
-        6,
-        "expected six script checks in report"
+        7,
+        "expected seven script checks in report"
     );
     assert!(
         script_checks
@@ -604,8 +959,20 @@ fn gate_script_refreshes_l1_objective_gate_artifacts() {
         !rows.is_empty(),
         "replacement-level log should contain at least one structured row"
     );
+    let mut saw_l1_crt_matrix_row = false;
     for row in rows {
-        assert_eq!(row["bead_id"].as_str(), Some("bd-gtf.4"));
+        if row["source"].as_str() == Some("l1_crt_startup_tls_proof_matrix") {
+            saw_l1_crt_matrix_row = true;
+            assert_eq!(row["bead_id"].as_str(), Some("bd-bp8fl.6.3"));
+            for field in L1_CRT_REQUIRED_LOG_FIELDS {
+                assert!(
+                    row.get(*field).is_some(),
+                    "L1 CRT proof row missing required log field {field}: {row:?}"
+                );
+            }
+        } else {
+            assert_eq!(row["bead_id"].as_str(), Some("bd-gtf.4"));
+        }
         assert!(
             row["trace_id"].as_str().is_some(),
             "log row missing trace_id"
@@ -615,6 +982,10 @@ fn gate_script_refreshes_l1_objective_gate_artifacts() {
             "log row missing artifact_ref"
         );
     }
+    assert!(
+        saw_l1_crt_matrix_row,
+        "replacement-level log should include L1 CRT/startup/TLS proof matrix rows"
+    );
 
     let _ = std::fs::remove_file(report_path);
     let _ = std::fs::remove_file(log_path);

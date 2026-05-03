@@ -19,6 +19,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LEVELS="${ROOT}/tests/conformance/replacement_levels.json"
 MATRIX="${ROOT}/support_matrix.json"
 README="${ROOT}/README.md"
+L1_CRT_MATRIX="${ROOT}/tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
 DEFAULT_REPORT_PATH="${ROOT}/target/conformance/replacement_levels_l1_gate.report.json"
 DEFAULT_LOG_PATH="${ROOT}/target/conformance/replacement_levels_l1_gate.log.jsonl"
 
@@ -411,15 +412,175 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Check 7: Structured L1 objective gate artifacts
+# Check 7: L1 CRT/startup/TLS proof matrix
 # ---------------------------------------------------------------------------
-echo "--- Check 7: Structured L1 objective gate artifacts ---"
+echo "--- Check 7: L1 CRT/startup/TLS proof matrix ---"
+
+l1_crt_check=$(
+L1_CRT_MATRIX="${L1_CRT_MATRIX}" \
+python3 <<'PY'
+import json
+from pathlib import Path
+
+matrix_path = Path(__import__("os").environ["L1_CRT_MATRIX"])
+required_log_fields = [
+    "trace_id",
+    "bead_id",
+    "proof_row_id",
+    "runtime_mode",
+    "replacement_level",
+    "expected_order",
+    "actual_order",
+    "expected_status",
+    "actual_status",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature",
+]
+required_rows = [
+    "process_startup",
+    "argc_argv_envp_handoff",
+    "tls_initialization",
+    "pthread_tls_keys",
+    "constructors",
+    "destructors",
+    "atexit_on_exit",
+    "init_fini_arrays",
+    "errno_tls_isolation",
+    "secure_mode",
+    "failure_diagnostics",
+]
+
+def ordinal(ts):
+    try:
+        date = ts.split("T", 1)[0]
+        year_s, month_s, day_s = date.split("-")
+        year = int(year_s)
+        month = int(month_s)
+        day = int(day_s)
+    except Exception as exc:
+        raise ValueError(f"invalid timestamp {ts!r}: {exc}") from exc
+    if month < 1 or month > 12:
+        raise ValueError(f"invalid timestamp month in {ts!r}")
+    offsets = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    leap_days = year // 4 - year // 100 + year // 400
+    return year * 365 + leap_days + offsets[month - 1] + day
+
+errors = []
+try:
+    matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print("L1_CRT_ERRORS=1")
+    print(f"  failed to load {matrix_path}: {exc}")
+    raise SystemExit(0)
+
+if matrix.get("schema_version") != "v1":
+    errors.append("schema_version must be v1")
+if matrix.get("bead") != "bd-bp8fl.6.3":
+    errors.append("bead must be bd-bp8fl.6.3")
+claim_policy = matrix.get("claim_policy", {})
+if claim_policy.get("replacement_level") != "L1":
+    errors.append("claim_policy.replacement_level must be L1")
+if matrix.get("required_log_fields") != required_log_fields:
+    errors.append("required_log_fields mismatch")
+if matrix.get("required_proof_row_ids") != required_rows:
+    errors.append("required_proof_row_ids mismatch")
+
+try:
+    generated_at = ordinal(matrix.get("generated_at_utc", ""))
+except Exception as exc:
+    errors.append(str(exc))
+    generated_at = 0
+max_age_days = int(claim_policy.get("max_evidence_age_days", 0) or 0)
+if max_age_days <= 0:
+    errors.append("claim_policy.max_evidence_age_days must be positive")
+
+seen = set()
+for row in matrix.get("proof_rows", []):
+    row_id = row.get("id", "<missing>")
+    if row_id in seen:
+        errors.append(f"duplicate proof row id {row_id}")
+    seen.add(row_id)
+    if row.get("replacement_level") != "L1":
+        errors.append(f"{row_id}: replacement_level must be L1")
+    modes = set(row.get("runtime_modes", []))
+    if not {"strict", "hardened"}.issubset(modes):
+        errors.append(f"{row_id}: runtime_modes must include strict and hardened")
+    for field in ["expected_order", "actual_order", "artifact_refs", "check_commands", "symbols"]:
+        if not isinstance(row.get(field), list):
+            errors.append(f"{row_id}: {field} must be an array")
+    if not row.get("artifact_refs"):
+        errors.append(f"{row_id}: artifact_refs must not be empty")
+    if not row.get("check_commands"):
+        errors.append(f"{row_id}: check_commands must not be empty")
+    if not row.get("failure_signature"):
+        errors.append(f"{row_id}: failure_signature must be non-empty")
+    actual_status = row.get("actual_status")
+    decision = row.get("promotion_decision")
+    if actual_status not in {"pass", "blocked", "required"}:
+        errors.append(f"{row_id}: invalid actual_status {actual_status!r}")
+    if decision not in {"satisfied", "claim_blocked"}:
+        errors.append(f"{row_id}: invalid promotion_decision {decision!r}")
+    if (actual_status == "pass") != (decision == "satisfied"):
+        errors.append(f"{row_id}: actual_status contradicts promotion_decision")
+    if decision == "satisfied":
+        evidence_at = row.get("evidence_generated_at_utc")
+        if not evidence_at:
+            errors.append(f"{row_id}: satisfied row missing evidence_generated_at_utc")
+        else:
+            try:
+                age_days = generated_at - ordinal(evidence_at)
+            except Exception as exc:
+                errors.append(f"{row_id}: {exc}")
+            else:
+                if age_days > max_age_days:
+                    errors.append(f"{row_id}: evidence is stale by {age_days} days")
+
+for row_id in required_rows:
+    if row_id not in seen:
+        errors.append(f"missing required proof row {row_id}")
+
+negative_tests = matrix.get("negative_claim_tests", [])
+if len(negative_tests) < 3:
+    errors.append("negative_claim_tests must include at least three cases")
+for test in negative_tests:
+    test_id = test.get("id", "<missing>")
+    if test.get("expected_result") != "claim_blocked":
+        errors.append(f"{test_id}: expected_result must be claim_blocked")
+    if not test.get("failure_signature"):
+        errors.append(f"{test_id}: failure_signature must be non-empty")
+
+print(f"L1_CRT_ERRORS={len(errors)}")
+for error in errors:
+    print(f"  {error}")
+print(f"L1_CRT_ROWS={len(seen)}")
+PY
+)
+
+l1_crt_errs=$(echo "${l1_crt_check}" | grep '^L1_CRT_ERRORS=' | cut -d= -f2)
+
+if [[ "${l1_crt_errs}" -gt 0 ]]; then
+    echo "FAIL: ${l1_crt_errs} L1 CRT/startup/TLS proof matrix error(s):"
+    echo "${l1_crt_check}" | grep '  '
+    failures=$((failures + 1))
+else
+    rows=$(echo "${l1_crt_check}" | grep '^L1_CRT_ROWS=' | cut -d= -f2)
+    echo "PASS: L1 CRT/startup/TLS proof matrix is valid (${rows} rows)"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Check 8: Structured L1 objective gate artifacts
+# ---------------------------------------------------------------------------
+echo "--- Check 8: Structured L1 objective gate artifacts ---"
 
 artifact_output=$(
 ROOT="${ROOT}" \
 LEVELS="${LEVELS}" \
 MATRIX="${MATRIX}" \
 README="${README}" \
+L1_CRT_MATRIX="${L1_CRT_MATRIX}" \
 DEFAULT_REPORT_PATH="${DEFAULT_REPORT_PATH}" \
 DEFAULT_LOG_PATH="${DEFAULT_LOG_PATH}" \
 python3 <<'PY'
@@ -434,10 +595,131 @@ root = Path(os.environ["ROOT"])
 levels_path = Path(os.environ["LEVELS"])
 matrix_path = Path(os.environ["MATRIX"])
 readme_path = Path(os.environ["README"])
+l1_crt_matrix_path = Path(os.environ["L1_CRT_MATRIX"])
 default_report_path = Path(os.environ["DEFAULT_REPORT_PATH"])
 default_log_path = Path(os.environ["DEFAULT_LOG_PATH"])
 
 generated_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+L1_CRT_REQUIRED_LOG_FIELDS = [
+    "trace_id",
+    "bead_id",
+    "proof_row_id",
+    "runtime_mode",
+    "replacement_level",
+    "expected_order",
+    "actual_order",
+    "expected_status",
+    "actual_status",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature",
+]
+
+L1_CRT_REQUIRED_ROWS = [
+    "process_startup",
+    "argc_argv_envp_handoff",
+    "tls_initialization",
+    "pthread_tls_keys",
+    "constructors",
+    "destructors",
+    "atexit_on_exit",
+    "init_fini_arrays",
+    "errno_tls_isolation",
+    "secure_mode",
+    "failure_diagnostics",
+]
+
+
+def ordinal(timestamp: str) -> int:
+    date = timestamp.split("T", 1)[0]
+    year_s, month_s, day_s = date.split("-")
+    year = int(year_s)
+    month = int(month_s)
+    day = int(day_s)
+    if month < 1 or month > 12:
+        raise ValueError(f"invalid timestamp month in {timestamp!r}")
+    offsets = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    leap_days = year // 4 - year // 100 + year // 400
+    return year * 365 + leap_days + offsets[month - 1] + day
+
+
+def validate_l1_crt_matrix(matrix: dict) -> list[str]:
+    failures = []
+    if matrix.get("schema_version") != "v1":
+        failures.append("schema_version must be v1")
+    if matrix.get("bead") != "bd-bp8fl.6.3":
+        failures.append("bead must be bd-bp8fl.6.3")
+    claim_policy = matrix.get("claim_policy", {})
+    if claim_policy.get("replacement_level") != "L1":
+        failures.append("claim_policy.replacement_level must be L1")
+    if matrix.get("required_log_fields") != L1_CRT_REQUIRED_LOG_FIELDS:
+        failures.append("required_log_fields mismatch")
+    if matrix.get("required_proof_row_ids") != L1_CRT_REQUIRED_ROWS:
+        failures.append("required_proof_row_ids mismatch")
+    try:
+        generated_ordinal = ordinal(matrix.get("generated_at_utc", ""))
+    except Exception as exc:
+        failures.append(f"generated_at_utc invalid: {exc}")
+        generated_ordinal = 0
+    max_age_days = int(claim_policy.get("max_evidence_age_days", 0) or 0)
+    if max_age_days <= 0:
+        failures.append("claim_policy.max_evidence_age_days must be positive")
+
+    seen = set()
+    for row in matrix.get("proof_rows", []):
+        row_id = row.get("id", "<missing>")
+        if row_id in seen:
+            failures.append(f"duplicate proof row id {row_id}")
+        seen.add(row_id)
+        if row.get("replacement_level") != "L1":
+            failures.append(f"{row_id}: replacement_level must be L1")
+        modes = set(row.get("runtime_modes", []))
+        if not {"strict", "hardened"}.issubset(modes):
+            failures.append(f"{row_id}: runtime_modes must include strict and hardened")
+        for field in ["expected_order", "actual_order", "artifact_refs", "check_commands", "symbols"]:
+            if not isinstance(row.get(field), list):
+                failures.append(f"{row_id}: {field} must be an array")
+        if not row.get("artifact_refs"):
+            failures.append(f"{row_id}: artifact_refs must not be empty")
+        if not row.get("check_commands"):
+            failures.append(f"{row_id}: check_commands must not be empty")
+        if not row.get("failure_signature"):
+            failures.append(f"{row_id}: failure_signature must be non-empty")
+        actual_status = row.get("actual_status")
+        decision = row.get("promotion_decision")
+        if actual_status not in {"pass", "blocked", "required"}:
+            failures.append(f"{row_id}: invalid actual_status {actual_status!r}")
+        if decision not in {"satisfied", "claim_blocked"}:
+            failures.append(f"{row_id}: invalid promotion_decision {decision!r}")
+        if (actual_status == "pass") != (decision == "satisfied"):
+            failures.append(f"{row_id}: actual_status contradicts promotion_decision")
+        if decision == "satisfied":
+            evidence_at = row.get("evidence_generated_at_utc")
+            if not evidence_at:
+                failures.append(f"{row_id}: satisfied row missing evidence_generated_at_utc")
+            else:
+                try:
+                    age_days = generated_ordinal - ordinal(evidence_at)
+                except Exception as exc:
+                    failures.append(f"{row_id}: evidence timestamp invalid: {exc}")
+                else:
+                    if age_days > max_age_days:
+                        failures.append(f"{row_id}: evidence is stale by {age_days} days")
+    for row_id in L1_CRT_REQUIRED_ROWS:
+        if row_id not in seen:
+            failures.append(f"missing required proof row {row_id}")
+    negative_tests = matrix.get("negative_claim_tests", [])
+    if len(negative_tests) < 3:
+        failures.append("negative_claim_tests must include at least three cases")
+    for test in negative_tests:
+        test_id = test.get("id", "<missing>")
+        if test.get("expected_result") != "claim_blocked":
+            failures.append(f"{test_id}: expected_result must be claim_blocked")
+        if not test.get("failure_signature"):
+            failures.append(f"{test_id}: failure_signature must be non-empty")
+    return failures
 
 
 def rel(path: Path) -> str:
@@ -452,6 +734,8 @@ def level_for_outcome(outcome: str) -> str:
         "warning": "warning",
         "fail": "error",
         "error": "error",
+        "satisfied": "info",
+        "claim_blocked": "warning",
     }.get(outcome, "info")
 
 
@@ -464,6 +748,7 @@ log_path = default_log_path
 levels = None
 l1_entry = {}
 objective_gate = {}
+l1_crt_matrix = {}
 
 script_checks = []
 
@@ -736,6 +1021,14 @@ try:
         rel(readme_path),
         claim_failures,
     )
+
+    l1_crt_matrix = load_json(l1_crt_matrix_path)
+    add_check(
+        "l1_crt_startup_tls_proof_matrix",
+        "L1 CRT/startup/TLS proof matrix is complete and fail-closed",
+        rel(l1_crt_matrix_path),
+        validate_l1_crt_matrix(l1_crt_matrix),
+    )
 except Exception as exc:
     if not script_checks:
         add_check(
@@ -763,12 +1056,15 @@ log_path.parent.mkdir(parents=True, exist_ok=True)
 objective_outcomes = Counter(
     obligation.get("outcome", "unknown") for obligation in objective_obligations
 )
+l1_crt_rows = l1_crt_matrix.get("proof_rows", []) if isinstance(l1_crt_matrix, dict) else []
+l1_crt_outcomes = Counter(row.get("promotion_decision", "unknown") for row in l1_crt_rows)
 script_failure_count = sum(1 for check in script_checks if check["outcome"] != "pass")
 
 artifact_refs = [
     rel(levels_path),
     rel(matrix_path),
     rel(readme_path),
+    rel(l1_crt_matrix_path),
     rel(root / "scripts/check_replacement_levels.sh"),
 ]
 for artifact in evidence_bundle.get("artifact_refs", []):
@@ -789,14 +1085,28 @@ report = {
     "log_artifact_path": rel(log_path),
     "script_checks": script_checks,
     "objective_gate": objective_gate,
+    "l1_crt_startup_tls_proof_matrix": {
+        "artifact_ref": rel(l1_crt_matrix_path),
+        "bead_id": l1_crt_matrix.get("bead"),
+        "current_gate_status": l1_crt_matrix.get("summary", {}).get("current_gate_status"),
+        "blocker_reason": l1_crt_matrix.get("summary", {}).get("blocker_reason"),
+        "required_log_fields": l1_crt_matrix.get("required_log_fields", []),
+        "required_proof_row_ids": l1_crt_matrix.get("required_proof_row_ids", []),
+        "summary": l1_crt_matrix.get("summary", {}),
+    },
     "summary": {
         "script_check_count": len(script_checks),
         "script_failure_count": script_failure_count,
         "objective_obligation_count": len(objective_obligations),
         "objective_outcomes": dict(objective_outcomes),
+        "l1_crt_proof_row_count": len(l1_crt_rows),
+        "l1_crt_promotion_decisions": dict(l1_crt_outcomes),
     },
     "artifact_refs": artifact_refs,
 }
+
+source_commit = os.environ.get("SOURCE_COMMIT", "unknown")
+target_dir = os.environ.get("CARGO_TARGET_DIR", "target")
 
 log_rows = []
 for check in script_checks:
@@ -832,6 +1142,34 @@ for obligation in objective_obligations:
             "actual": obligation.get("actual"),
         }
     )
+
+for proof_row in l1_crt_rows:
+    outcome = proof_row.get("promotion_decision", "unknown")
+    runtime_modes = proof_row.get("runtime_modes", []) or ["unknown"]
+    for runtime_mode in runtime_modes:
+        log_rows.append(
+            {
+                "timestamp": generated_at,
+                "trace_id": f"bd-bp8fl.6.3::l1_crt_startup_tls::{proof_row.get('id', 'unknown')}::{runtime_mode}",
+                "level": level_for_outcome(outcome),
+                "outcome": outcome,
+                "artifact_ref": rel(l1_crt_matrix_path),
+                "source": "l1_crt_startup_tls_proof_matrix",
+                "bead_id": "bd-bp8fl.6.3",
+                "proof_row_id": proof_row.get("id"),
+                "runtime_mode": runtime_mode,
+                "replacement_level": proof_row.get("replacement_level"),
+                "expected_order": proof_row.get("expected_order", []),
+                "actual_order": proof_row.get("actual_order", []),
+                "expected_status": proof_row.get("expected_status"),
+                "actual_status": proof_row.get("actual_status"),
+                "artifact_refs": proof_row.get("artifact_refs", []),
+                "source_commit": source_commit,
+                "target_dir": target_dir,
+                "failure_signature": proof_row.get("failure_signature"),
+                "description": proof_row.get("title"),
+            }
+        )
 
 report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 with log_path.open("w", encoding="utf-8") as handle:

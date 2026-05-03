@@ -164,11 +164,26 @@
               "release_tag_policy.current_release_level": "L0"
             },
             "outcome": "blocked"
+          },
+          {
+            "id": "crt_startup_tls_proof_matrix",
+            "description": "Do not claim L1 until CRT startup, TLS initialization/destruction, init/fini ordering, errno isolation, secure-mode, and diagnostics obligations are represented and current in the L1 proof matrix.",
+            "artifact_ref": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+            "expected": {
+              "current_gate_status": "pass",
+              "blocked_row_count": 0
+            },
+            "actual": {
+              "current_gate_status": "blocked",
+              "blocked_row_count": 6
+            },
+            "outcome": "blocked"
           }
         ],
         "evidence_bundle": {
           "artifact_refs": [
             "tests/conformance/replacement_levels.json",
+            "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
             "tests/conformance/ld_preload_smoke_summary.v1.json",
             "tests/conformance/claim_reconciliation_report.v1.json",
             "tests/conformance/perf_regression_prevention.v1.json",
@@ -183,7 +198,8 @@
         }
       },
       "blockers": [
-        "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate."
+        "L1 claim promotion remains blocked until current_level and release_tag_policy.current_release_level move from L0 to L1 together under the bd-gtf.4 objective gate.",
+        "L1 CRT/startup/TLS proof matrix still blocks constructor/destructor, init/fini array, process TLS initialization, atexit/on_exit, and errno/TLS isolation obligations."
       ],
       "status": "in_progress"
     },
@@ -277,7 +293,8 @@
     "L0_to_L1": [
       "Maintain zero-stub taxonomy coverage in the replacement-level gate",
       "Validate hardened mode E2E",
-      "Complete E2E smoke harness"
+      "Complete E2E smoke harness",
+      "Complete the L1 CRT/startup/TLS proof matrix for startup, TLS, init/fini, destructors, errno isolation, secure mode, and diagnostics"
     ],
     "L1_to_L2": [
       "Maintain zero GlibcCallThrough symbols for the declared standalone subset",

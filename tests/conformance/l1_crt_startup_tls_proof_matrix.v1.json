@@ -1,0 +1,329 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.6.3",
+  "generated_at_utc": "2026-05-03T01:45:00Z",
+  "purpose": "Define the L1 CRT/startup/TLS/init/fini/destructor proof matrix so hardened-interpose claims cannot advance from symbol counts or broad smoke evidence alone.",
+  "inputs": {
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "startup_fixture": "tests/conformance/fixtures/startup_ops.json",
+    "pthread_tls_fixture": "tests/conformance/fixtures/pthread_tls_keys.json",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "claim_reconciliation": "tests/conformance/claim_reconciliation_report.v1.json",
+    "log_schema": "tests/conformance/log_schema.json",
+    "startup_abi": "crates/frankenlibc-abi/src/startup_abi.rs",
+    "pthread_tls_core": "crates/frankenlibc-core/src/pthread/tls.rs"
+  },
+  "claim_policy": {
+    "replacement_level": "L1",
+    "current_claim_status": "blocked",
+    "missing_evidence_result": "claim_blocked",
+    "stale_evidence_result": "claim_blocked",
+    "contradictory_evidence_result": "claim_blocked",
+    "symbol_counts_are_insufficient": true,
+    "max_evidence_age_days": 180
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "proof_row_id",
+    "runtime_mode",
+    "replacement_level",
+    "expected_order",
+    "actual_order",
+    "expected_status",
+    "actual_status",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "required_proof_row_ids": [
+    "process_startup",
+    "argc_argv_envp_handoff",
+    "tls_initialization",
+    "pthread_tls_keys",
+    "constructors",
+    "destructors",
+    "atexit_on_exit",
+    "init_fini_arrays",
+    "errno_tls_isolation",
+    "secure_mode",
+    "failure_diagnostics"
+  ],
+  "proof_rows": [
+    {
+      "id": "process_startup",
+      "dimension": "crt_startup",
+      "title": "__libc_start_main and phase-0 startup path",
+      "symbols": ["__libc_start_main", "__frankenlibc_startup_phase0"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["runtime_policy_decide", "validate_main", "scan_argv", "scan_envp", "scan_auxv", "classify_secure_mode", "call_init", "call_main", "call_fini"],
+      "actual_order": ["runtime_policy_decide", "validate_main", "scan_argv", "scan_envp", "scan_auxv", "classify_secure_mode", "call_init", "call_main", "call_fini"],
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-04-04T01:17:31Z",
+      "artifact_refs": [
+        "tests/conformance/fixtures/startup_ops.json",
+        "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs",
+        "tests/integration/fixture_startup.c"
+      ],
+      "check_commands": [
+        "cargo test -p frankenlibc-harness --test startup_ops_conformance_test",
+        "cargo test -p frankenlibc-abi --test startup_abi_test"
+      ],
+      "failure_signature": "l1_process_startup_evidence_missing"
+    },
+    {
+      "id": "argc_argv_envp_handoff",
+      "dimension": "crt_startup",
+      "title": "argc/argv/envp handoff invariants",
+      "symbols": ["__frankenlibc_startup_phase0", "__frankenlibc_startup_snapshot"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["normalize_argc", "scan_argv_until_null", "scan_envp_until_null", "snapshot_counts"],
+      "actual_order": ["normalize_argc", "scan_argv_until_null", "scan_envp_until_null", "snapshot_counts"],
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-04-04T01:17:31Z",
+      "artifact_refs": [
+        "tests/conformance/fixtures/startup_ops.json",
+        "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs",
+        "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs"
+      ],
+      "check_commands": [
+        "cargo test -p frankenlibc-harness --test startup_ops_conformance_test",
+        "cargo test -p frankenlibc-abi --test startup_abi_contract_test"
+      ],
+      "failure_signature": "l1_argc_argv_envp_handoff_missing"
+    },
+    {
+      "id": "tls_initialization",
+      "dimension": "tls",
+      "title": "Process and thread TLS initialization before L1 claim",
+      "symbols": ["__errno_location", "pthread_create", "pthread_join"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["startup_policy_gate", "thread_local_errno_ready", "pthread_thread_start", "tls_destructor_registration"],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "promotion_decision": "claim_blocked",
+      "artifact_refs": [
+        "tests/conformance/fixtures/pthread_tls_keys.json",
+        "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs",
+        "crates/frankenlibc-core/src/pthread/tls.rs"
+      ],
+      "check_commands": [
+        "cargo test -p frankenlibc-harness --test pthread_tls_keys_conformance_test"
+      ],
+      "failure_signature": "l1_tls_initialization_not_proven"
+    },
+    {
+      "id": "pthread_tls_keys",
+      "dimension": "tls",
+      "title": "pthread_key create/get/set/delete and destructor obligations",
+      "symbols": ["pthread_key_create", "pthread_key_delete", "pthread_getspecific", "pthread_setspecific"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["key_create", "setspecific", "getspecific", "thread_exit_destructor_pass", "key_delete"],
+      "actual_order": ["key_create", "setspecific", "getspecific", "thread_exit_destructor_pass", "key_delete"],
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-04-04T01:17:31Z",
+      "artifact_refs": [
+        "tests/conformance/fixtures/pthread_tls_keys.json",
+        "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
+      ],
+      "check_commands": [
+        "cargo test -p frankenlibc-harness --test pthread_tls_keys_conformance_test"
+      ],
+      "failure_signature": "l1_pthread_tls_keys_evidence_missing"
+    },
+    {
+      "id": "constructors",
+      "dimension": "init_fini",
+      "title": "ELF constructors run before main in the L1 startup envelope",
+      "symbols": ["__libc_start_main"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["preinit_array", "init_array", "main"],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "promotion_decision": "claim_blocked",
+      "artifact_refs": [
+        "tests/integration/fixture_startup.c",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ],
+      "check_commands": [
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "failure_signature": "l1_constructor_order_not_proven"
+    },
+    {
+      "id": "destructors",
+      "dimension": "init_fini",
+      "title": "ELF destructors and rtld_fini run after main in deterministic order",
+      "symbols": ["__libc_start_main"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["main_return", "fini_array", "rtld_fini"],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "promotion_decision": "claim_blocked",
+      "artifact_refs": [
+        "tests/integration/fixture_startup.c",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ],
+      "check_commands": [
+        "scripts/ld_preload_smoke.sh"
+      ],
+      "failure_signature": "l1_destructor_order_not_proven"
+    },
+    {
+      "id": "atexit_on_exit",
+      "dimension": "teardown",
+      "title": "atexit/on_exit callback ordering and status propagation",
+      "symbols": ["atexit", "on_exit", "__cxa_atexit", "__cxa_finalize"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["register_callbacks", "main_return", "callbacks_lifo", "status_propagated"],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "promotion_decision": "claim_blocked",
+      "artifact_refs": [
+        "crates/frankenlibc-abi/src/startup_abi.rs",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ],
+      "check_commands": [
+        "cargo test -p frankenlibc-abi --test startup_abi_test"
+      ],
+      "failure_signature": "l1_atexit_on_exit_not_proven"
+    },
+    {
+      "id": "init_fini_arrays",
+      "dimension": "init_fini",
+      "title": ".preinit_array/.init_array/.fini_array compatibility",
+      "symbols": ["__libc_start_main"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["preinit_array", "init_array", "main", "fini_array"],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "promotion_decision": "claim_blocked",
+      "artifact_refs": [
+        "tests/integration/fixture_startup.c",
+        "tests/conformance/replacement_levels.json"
+      ],
+      "check_commands": [
+        "scripts/check_replacement_levels.sh"
+      ],
+      "failure_signature": "l1_init_fini_arrays_not_proven"
+    },
+    {
+      "id": "errno_tls_isolation",
+      "dimension": "tls",
+      "title": "errno stays thread-local across startup, pthread, and teardown paths",
+      "symbols": ["__errno_location", "pthread_create", "pthread_join"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["thread_a_set_errno", "thread_b_set_errno", "join_threads", "main_errno_unchanged"],
+      "actual_order": [],
+      "expected_status": "required",
+      "actual_status": "blocked",
+      "promotion_decision": "claim_blocked",
+      "artifact_refs": [
+        "crates/frankenlibc-core/src/errno/mod.rs",
+        "tests/conformance/fixtures/pthread_tls_keys.json"
+      ],
+      "check_commands": [
+        "cargo test -p frankenlibc-core errno",
+        "cargo test -p frankenlibc-harness --test pthread_tls_keys_conformance_test"
+      ],
+      "failure_signature": "l1_errno_tls_isolation_not_proven"
+    },
+    {
+      "id": "secure_mode",
+      "dimension": "crt_startup",
+      "title": "auxv secure-mode classification gates startup policy",
+      "symbols": ["__libc_start_main", "__frankenlibc_startup_phase0"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["scan_auxv", "classify_secure_mode", "apply_startup_policy"],
+      "actual_order": ["scan_auxv", "classify_secure_mode", "apply_startup_policy"],
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-04-04T01:17:31Z",
+      "artifact_refs": [
+        "tests/conformance/fixtures/startup_ops.json",
+        "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs"
+      ],
+      "check_commands": [
+        "cargo test -p frankenlibc-harness --test startup_ops_conformance_test"
+      ],
+      "failure_signature": "l1_secure_mode_evidence_missing"
+    },
+    {
+      "id": "failure_diagnostics",
+      "dimension": "diagnostics",
+      "title": "Missing, stale, or contradictory startup/TLS evidence fails closed with structured diagnostics",
+      "symbols": ["replacement_levels_l1_gate"],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_level": "L1",
+      "expected_order": ["load_proof_matrix", "validate_required_rows", "validate_freshness", "classify_claim"],
+      "actual_order": ["load_proof_matrix", "validate_required_rows", "validate_freshness", "classify_claim"],
+      "expected_status": "pass",
+      "actual_status": "pass",
+      "promotion_decision": "satisfied",
+      "evidence_generated_at_utc": "2026-05-03T01:45:00Z",
+      "artifact_refs": [
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
+        "scripts/check_replacement_levels.sh",
+        "crates/frankenlibc-harness/tests/replacement_levels_test.rs"
+      ],
+      "check_commands": [
+        "cargo test -p frankenlibc-harness --test replacement_levels_test",
+        "scripts/check_replacement_levels.sh"
+      ],
+      "failure_signature": "l1_startup_tls_claim_gate_diagnostic_missing"
+    }
+  ],
+  "negative_claim_tests": [
+    {
+      "id": "neg-l1-missing-required-row",
+      "unsupported_condition": "A required CRT/startup/TLS proof row is absent from the matrix.",
+      "advertised_claim_blocked": "L1 hardened interpose",
+      "expected_result": "claim_blocked",
+      "failure_signature": "l1_required_proof_row_missing"
+    },
+    {
+      "id": "neg-l1-stale-evidence",
+      "unsupported_condition": "A satisfied proof row cites evidence older than claim_policy.max_evidence_age_days.",
+      "advertised_claim_blocked": "L1 hardened interpose",
+      "expected_result": "claim_blocked",
+      "failure_signature": "l1_proof_row_evidence_stale"
+    },
+    {
+      "id": "neg-l1-contradictory-evidence",
+      "unsupported_condition": "A row marks actual_status=pass while promotion_decision remains claim_blocked, or actual_status=blocked while promotion_decision=satisfied.",
+      "advertised_claim_blocked": "L1 hardened interpose",
+      "expected_result": "claim_blocked",
+      "failure_signature": "l1_proof_row_contradictory"
+    }
+  ],
+  "summary": {
+    "required_row_count": 11,
+    "satisfied_row_count": 5,
+    "blocked_row_count": 6,
+    "current_gate_status": "blocked",
+    "blocker_reason": "Constructor/destructor, init/fini array, process TLS initialization, atexit/on_exit, and errno/TLS isolation evidence remain explicit L1 blockers."
+  }
+}
