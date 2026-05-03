@@ -1,0 +1,82 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "proof-traceability-freshness-gate",
+  "bead": "bd-bp8fl.9.6",
+  "generated_utc": "2026-05-03T18:30:00Z",
+  "source_commit": "f4b4e21fbc761eb783b5845d7ef42417142207ea",
+  "purpose": "Fail-closed gate that re-validates every proof_obligations_binder.v1.json source_ref against the current working tree. The frozen proof_binder_validation.v1.json snapshot can grow stale silently as code moves; this gate refuses to advance README/FEATURE_PARITY/release proof claims until each binder source_ref points at a real file:line in the current commit and the snapshot itself reports a consistent envelope (binder_valid=true, total_violations=0, total_obligations matches the binder).",
+  "inputs": {
+    "proof_obligations_binder": "tests/conformance/proof_obligations_binder.v1.json",
+    "proof_binder_validation": "tests/conformance/proof_binder_validation.v1.json",
+    "proof_traceability_check": "tests/conformance/proof_traceability_check.json",
+    "feature_parity": "FEATURE_PARITY.md",
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "obligation_id",
+    "category",
+    "source_ref",
+    "ref_kind",
+    "freshness_state",
+    "verifier_status",
+    "expected",
+    "actual",
+    "claim_id",
+    "claim_decision",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "freshness_policy": {
+    "default_decision": "block_until_all_source_refs_resolve",
+    "ref_kinds_required": ["file_line", "file_only"],
+    "broken_ref_severities": {
+      "missing_file": "error",
+      "out_of_range_line": "error",
+      "malformed_ref": "error",
+      "snapshot_envelope_drift": "error",
+      "obligation_count_drift": "error",
+      "envelope_invalid": "error"
+    },
+    "envelope_requirements": {
+      "binder_valid": true,
+      "total_violations_max": 0,
+      "obligation_count_must_match_binder": true,
+      "categories_covered_must_match_binder": true
+    },
+    "rejected_evidence_kinds": [
+      "stale_source_ref",
+      "missing_file",
+      "out_of_range_line",
+      "binder_invalid",
+      "obligation_count_drift",
+      "envelope_violations"
+    ]
+  },
+  "categories_in_scope": [
+    "core_safety",
+    "determinism",
+    "statistical_guarantee",
+    "controller_safety",
+    "optimization_proof",
+    "robustness",
+    "concurrency",
+    "consistency",
+    "coverage",
+    "mode_semantics",
+    "formal_verification",
+    "performance",
+    "governance",
+    "release"
+  ],
+  "minimum_obligations_per_category": {
+    "core_safety": 2,
+    "determinism": 1
+  },
+  "doc_proof_dirs": [
+    "docs/proofs"
+  ],
+  "doc_proof_extension": ".md"
+}
