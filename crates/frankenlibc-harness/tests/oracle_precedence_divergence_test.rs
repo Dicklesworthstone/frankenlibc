@@ -21,6 +21,8 @@ const REQUIRED_LOG_FIELDS: &[&str] = &[
     "expected",
     "actual",
     "errno",
+    "status",
+    "oracle_precedence_path",
     "decision_path",
     "healing_action",
     "latency_ns",
@@ -46,6 +48,15 @@ const REQUIRED_CLASSES: &[&str] = &[
     "proof_gap",
     "safety_repair",
     "unsupported_contract",
+];
+
+const REQUIRED_OBSERVABLE_FIELDS: &[&str] = &["errno", "status", "stdout", "stderr"];
+
+const REQUIRED_REPLAY_KINDS: &[&str] = &[
+    "allowed_divergence",
+    "blocked_divergence",
+    "hardened_vs_strict_mode",
+    "stale_oracle",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -110,6 +121,17 @@ fn artifact_exists_and_declares_required_oracles_classes_and_logs() {
         .map(|field| field.as_str().unwrap())
         .collect();
     assert_eq!(log_fields, REQUIRED_LOG_FIELDS);
+
+    let observable_fields: HashSet<_> = artifact["observable_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|field| field.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        observable_fields,
+        REQUIRED_OBSERVABLE_FIELDS.iter().copied().collect()
+    );
 
     let oracles: HashSet<_> = artifact["oracle_kinds"]
         .as_array()
@@ -230,6 +252,25 @@ fn scenarios_cover_modes_levels_oracles_divergence_classes_and_negative_claims()
             let rel = artifact_ref.as_str().unwrap();
             assert!((root.join(rel)).exists(), "{id}: missing artifact {rel}");
         }
+        let expected_path: Vec<_> = std::iter::once(scenario["primary_oracle"].as_str().unwrap())
+            .chain(
+                scenario["fallback_oracles"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|oracle| oracle.as_str().unwrap()),
+            )
+            .collect();
+        let precedence_path: Vec<_> = scenario["oracle_precedence_path"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|oracle| oracle.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            precedence_path, expected_path,
+            "{id}: oracle_precedence_path must be primary followed by fallbacks"
+        );
         for negative in scenario["negative_claim_tests"].as_array().unwrap() {
             assert_eq!(
                 negative["expected_result"].as_str(),
@@ -271,6 +312,88 @@ fn scenarios_cover_modes_levels_oracles_divergence_classes_and_negative_claims()
 }
 
 #[test]
+fn replay_cases_cover_allowed_blocked_stale_and_mode_split_paths() {
+    let artifact = load_artifact();
+    let scenario_ids: HashSet<_> = artifact["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|scenario| scenario["scenario_id"].as_str().unwrap())
+        .collect();
+    let replay_kinds: HashSet<_> = artifact["replay_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["replay_kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        replay_kinds,
+        REQUIRED_REPLAY_KINDS.iter().copied().collect()
+    );
+
+    for replay in artifact["replay_cases"].as_array().unwrap() {
+        let id = replay["id"].as_str().unwrap();
+        let scenario_id = replay["scenario_id"].as_str().unwrap();
+        assert!(
+            scenario_ids.contains(scenario_id),
+            "{id}: replay references unknown scenario {scenario_id}"
+        );
+        assert_eq!(
+            replay["command"].as_str(),
+            Some("scripts/check_oracle_precedence_divergence.sh"),
+            "{id}: replay command must be deterministic gate script"
+        );
+        assert!(
+            REQUIRED_CLASSES.contains(&replay["expected_divergence_class"].as_str().unwrap()),
+            "{id}: replay must use known divergence class"
+        );
+        assert!(
+            !replay["expected_result"].as_str().unwrap().is_empty(),
+            "{id}: replay must name expected result"
+        );
+    }
+}
+
+#[test]
+fn negative_precedence_tests_block_lower_priority_overrides() {
+    let artifact = load_artifact();
+    let ranks: HashMap<_, _> = artifact["oracle_kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["id"].as_str().unwrap(),
+                row["precedence_rank"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let precedence_tests = artifact["negative_precedence_tests"].as_array().unwrap();
+    assert!(
+        !precedence_tests.is_empty(),
+        "negative precedence tests are required"
+    );
+    for row in precedence_tests {
+        let id = row["id"].as_str().unwrap();
+        let higher = row["higher_priority_oracle"].as_str().unwrap();
+        let lower = row["lower_priority_oracle"].as_str().unwrap();
+        assert!(
+            ranks[higher] < ranks[lower],
+            "{id}: higher priority oracle must have smaller rank than lower priority oracle"
+        );
+        assert_eq!(row["expected_result"].as_str(), Some("claim_blocked"));
+        assert!(
+            !row["failure_signature"].as_str().unwrap().is_empty(),
+            "{id}: failure signature is required"
+        );
+        assert!(
+            !row["conflict"].as_str().unwrap().is_empty(),
+            "{id}: conflict description is required"
+        );
+    }
+}
+
+#[test]
 fn gate_script_passes_and_emits_structured_report_and_log() {
     let root = workspace_root();
     let script = root.join("scripts/check_oracle_precedence_divergence.sh");
@@ -305,6 +428,7 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "json_parse",
         "artifact_shape",
         "required_log_fields",
+        "observable_field_coverage",
         "input_artifacts_exist",
         "oracle_kind_coverage",
         "oracle_precedence_unique",
@@ -314,6 +438,8 @@ fn gate_script_passes_and_emits_structured_report_and_log() {
         "scenario_divergence_coverage",
         "scenario_oracle_coverage",
         "scenario_schema_and_artifacts",
+        "replay_case_coverage",
+        "negative_precedence_tests",
         "summary_matches_artifact",
     ] {
         assert_eq!(
@@ -377,6 +503,85 @@ fn missing_required_divergence_class_blocks_gate() {
     assert_eq!(report["status"].as_str(), Some("fail"));
     assert_eq!(
         report["checks"]["divergence_class_coverage"].as_str(),
+        Some("fail")
+    );
+}
+
+#[test]
+fn missing_required_replay_case_blocks_gate() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_oracle_precedence_divergence.sh");
+    let canonical_path = root.join("tests/conformance/oracle_precedence_divergence.v1.json");
+    let mutated_path = unique_temp_path("oracle-precedence-missing-replay.json");
+    let mut artifact = load_json(&canonical_path);
+
+    artifact["replay_cases"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|row| row["replay_kind"].as_str() != Some("stale_oracle"));
+    std::fs::write(
+        &mutated_path,
+        serde_json::to_string_pretty(&artifact).unwrap() + "\n",
+    )
+    .expect("failed to write mutated oracle precedence artifact");
+
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .env("FLC_ORACLE_PRECEDENCE_ARTIFACT", &mutated_path)
+        .output()
+        .expect("failed to run oracle precedence gate with mutated artifact");
+    assert!(
+        !output.status.success(),
+        "missing stale_oracle replay should fail the gate\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = parse_stdout_report(&output);
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert_eq!(
+        report["checks"]["replay_case_coverage"].as_str(),
+        Some("fail")
+    );
+}
+
+#[test]
+fn lower_priority_override_precedence_inversion_blocks_gate() {
+    let root = workspace_root();
+    let script = root.join("scripts/check_oracle_precedence_divergence.sh");
+    let canonical_path = root.join("tests/conformance/oracle_precedence_divergence.v1.json");
+    let mutated_path = unique_temp_path("oracle-precedence-inversion.json");
+    let mut artifact = load_json(&canonical_path);
+
+    let first = artifact["negative_precedence_tests"]
+        .as_array_mut()
+        .unwrap()
+        .first_mut()
+        .unwrap();
+    first["higher_priority_oracle"] = serde_json::Value::String("host_glibc".to_string());
+    first["lower_priority_oracle"] = serde_json::Value::String("frankenlibc_contract".to_string());
+    std::fs::write(
+        &mutated_path,
+        serde_json::to_string_pretty(&artifact).unwrap() + "\n",
+    )
+    .expect("failed to write mutated oracle precedence artifact");
+
+    let output = Command::new(&script)
+        .current_dir(&root)
+        .env("FLC_ORACLE_PRECEDENCE_ARTIFACT", &mutated_path)
+        .output()
+        .expect("failed to run oracle precedence gate with mutated artifact");
+    assert!(
+        !output.status.success(),
+        "inverted oracle precedence should fail the gate\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = parse_stdout_report(&output);
+    assert_eq!(report["status"].as_str(), Some("fail"));
+    assert_eq!(
+        report["checks"]["negative_precedence_tests"].as_str(),
         Some("fail")
     );
 }

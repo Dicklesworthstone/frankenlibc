@@ -24,6 +24,8 @@
     "expected",
     "actual",
     "errno",
+    "status",
+    "oracle_precedence_path",
     "decision_path",
     "healing_action",
     "latency_ns",
@@ -31,6 +33,12 @@
     "source_commit",
     "target_dir",
     "failure_signature"
+  ],
+  "observable_fields": [
+    "errno",
+    "status",
+    "stdout",
+    "stderr"
   ],
   "oracle_kinds": [
     {
@@ -260,6 +268,10 @@
       "fallback_oracles": [
         "posix_text"
       ],
+      "oracle_precedence_path": [
+        "host_glibc",
+        "posix_text"
+      ],
       "divergence_class": "parity_match",
       "expected_claim_effect": "supports scoped L0/L1 parity only for this fixture family after logs pass",
       "artifact_refs": [
@@ -300,6 +312,11 @@
       ],
       "primary_oracle": "hardened_safety_policy",
       "fallback_oracles": [
+        "frankenlibc_contract",
+        "host_glibc"
+      ],
+      "oracle_precedence_path": [
+        "hardened_safety_policy",
         "frankenlibc_contract",
         "host_glibc"
       ],
@@ -345,6 +362,10 @@
       "fallback_oracles": [
         "host_glibc"
       ],
+      "oracle_precedence_path": [
+        "frankenlibc_contract",
+        "host_glibc"
+      ],
       "divergence_class": "allowed_divergence",
       "expected_claim_effect": "allows link or bootstrap compatibility wording but blocks full semantic parity wording",
       "artifact_refs": [
@@ -387,6 +408,10 @@
       "fallback_oracles": [
         "frankenlibc_contract"
       ],
+      "oracle_precedence_path": [
+        "linux_syscall",
+        "frankenlibc_contract"
+      ],
       "divergence_class": "unsupported_contract",
       "expected_claim_effect": "blocks support claims while allowing deterministic unsupported errno or fail-stop evidence",
       "artifact_refs": [
@@ -427,6 +452,11 @@
       ],
       "primary_oracle": "environment_probe",
       "fallback_oracles": [
+        "host_glibc",
+        "frankenlibc_contract"
+      ],
+      "oracle_precedence_path": [
+        "environment_probe",
         "host_glibc",
         "frankenlibc_contract"
       ],
@@ -474,6 +504,11 @@
         "frankenlibc_contract",
         "host_glibc"
       ],
+      "oracle_precedence_path": [
+        "posix_text",
+        "frankenlibc_contract",
+        "host_glibc"
+      ],
       "divergence_class": "proof_gap",
       "expected_claim_effect": "blocks claim until the missing fixture, workload, or proof artifact exists",
       "artifact_refs": [
@@ -495,6 +530,114 @@
           "failure_signature": "bootstrap_contract_overclaimed"
         }
       ]
+    },
+    {
+      "scenario_id": "stale-host-fixture-blocks-claim",
+      "description": "A host-glibc fixture whose source commit, environment probe, or capture metadata is stale relative to the claim surface.",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_levels": [
+        "L0",
+        "L1"
+      ],
+      "api_family": "fixture_freshness",
+      "symbols": [
+        "clock_gettime",
+        "strerror_r"
+      ],
+      "primary_oracle": "host_glibc",
+      "fallback_oracles": [
+        "posix_text",
+        "environment_probe"
+      ],
+      "oracle_precedence_path": [
+        "host_glibc",
+        "posix_text",
+        "environment_probe"
+      ],
+      "divergence_class": "proof_gap",
+      "expected_claim_effect": "blocks support claims until the stale host fixture is regenerated and replayed with current source_commit and environment metadata",
+      "artifact_refs": [
+        "tests/conformance/fixture_pipeline.v1.json",
+        "tests/conformance/log_schema.json",
+        "tests/conformance/symbol_fixture_coverage.v1.json"
+      ],
+      "negative_claim_tests": [
+        {
+          "id": "stale-host-fixture-not-current-proof",
+          "claim": "A stale host-glibc fixture can promote current replacement claims.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "stale_oracle_artifact"
+        },
+        {
+          "id": "lower-priority-success-not-primary-failure",
+          "claim": "A lower-priority matching fallback can override a failed or stale primary oracle.",
+          "expected_result": "claim_blocked",
+          "failure_signature": "lower_priority_oracle_override_blocked"
+        }
+      ]
+    }
+  ],
+  "replay_cases": [
+    {
+      "id": "allowed-divergence-replay",
+      "replay_kind": "allowed_divergence",
+      "scenario_id": "semantic-compat-noop-contract",
+      "command": "scripts/check_oracle_precedence_divergence.sh",
+      "expected_divergence_class": "allowed_divergence",
+      "expected_result": "claim_blocked_for_full_parity"
+    },
+    {
+      "id": "blocked-divergence-replay",
+      "replay_kind": "blocked_divergence",
+      "scenario_id": "historical-syscall-unsupported",
+      "command": "scripts/check_oracle_precedence_divergence.sh",
+      "expected_divergence_class": "unsupported_contract",
+      "expected_result": "support_claim_blocked"
+    },
+    {
+      "id": "stale-oracle-replay",
+      "replay_kind": "stale_oracle",
+      "scenario_id": "stale-host-fixture-blocks-claim",
+      "command": "scripts/check_oracle_precedence_divergence.sh",
+      "expected_divergence_class": "proof_gap",
+      "expected_result": "claim_blocked_until_replay"
+    },
+    {
+      "id": "hardened-strict-mode-split-replay",
+      "replay_kind": "hardened_vs_strict_mode",
+      "scenario_id": "hardened-invalid-pointer-repair",
+      "command": "scripts/check_oracle_precedence_divergence.sh",
+      "expected_divergence_class": "safety_repair",
+      "expected_result": "hardened_safety_claim_only"
+    }
+  ],
+  "negative_precedence_tests": [
+    {
+      "id": "contract-failure-blocks-host-success",
+      "higher_priority_oracle": "frankenlibc_contract",
+      "lower_priority_oracle": "host_glibc",
+      "conflict": "documented unsupported or fallback contract conflicts with host-glibc success",
+      "expected_result": "claim_blocked",
+      "failure_signature": "lower_priority_oracle_override_blocked"
+    },
+    {
+      "id": "stale-host-fixture-blocks-environment-success",
+      "higher_priority_oracle": "host_glibc",
+      "lower_priority_oracle": "environment_probe",
+      "conflict": "captured host fixture is stale even though the current environment probe happens to pass",
+      "expected_result": "claim_blocked",
+      "failure_signature": "stale_oracle_artifact"
+    },
+    {
+      "id": "hardened-repair-blocks-strict-parity-wording",
+      "higher_priority_oracle": "hardened_safety_policy",
+      "lower_priority_oracle": "host_glibc",
+      "conflict": "hardened repair evidence is being reused as strict host parity evidence",
+      "expected_result": "claim_blocked",
+      "failure_signature": "mode_claim_conflation"
     }
   ],
   "summary": {
@@ -502,13 +645,15 @@
     "divergence_class_count": 6,
     "decision_rule_count": 5,
     "semantic_class_mapping_count": 5,
-    "scenario_count": 6,
-    "negative_claim_test_count": 12,
+    "scenario_count": 7,
+    "replay_case_count": 4,
+    "negative_claim_test_count": 14,
+    "negative_precedence_test_count": 3,
     "by_divergence_class": {
       "allowed_divergence": 1,
       "flaky_environment": 1,
       "parity_match": 1,
-      "proof_gap": 1,
+      "proof_gap": 2,
       "safety_repair": 1,
       "unsupported_contract": 1
     },
@@ -516,7 +661,7 @@
       "environment_probe": 1,
       "frankenlibc_contract": 1,
       "hardened_safety_policy": 1,
-      "host_glibc": 1,
+      "host_glibc": 2,
       "linux_syscall": 1,
       "posix_text": 1
     },

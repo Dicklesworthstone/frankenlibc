@@ -37,6 +37,8 @@ required_log_fields = [
     "expected",
     "actual",
     "errno",
+    "status",
+    "oracle_precedence_path",
     "decision_path",
     "healing_action",
     "latency_ns",
@@ -60,6 +62,13 @@ required_classes = {
     "proof_gap",
     "safety_repair",
     "unsupported_contract",
+}
+required_observable_fields = {"errno", "status", "stdout", "stderr"}
+required_replay_kinds = {
+    "allowed_divergence",
+    "blocked_divergence",
+    "stale_oracle",
+    "hardened_vs_strict_mode",
 }
 
 errors = []
@@ -98,6 +107,15 @@ else:
     checks["required_log_fields"] = "fail"
     errors.append("required_log_fields must match the universal structured log contract")
 
+observable_fields = set(artifact.get("observable_fields", []))
+if observable_fields == required_observable_fields:
+    checks["observable_field_coverage"] = "pass"
+else:
+    checks["observable_field_coverage"] = "fail"
+    errors.append(
+        f"observable_fields must cover {sorted(required_observable_fields)}, got {sorted(observable_fields)}"
+    )
+
 inputs = artifact.get("inputs", {})
 loaded_inputs = {}
 if isinstance(inputs, dict) and inputs:
@@ -115,6 +133,11 @@ else:
 oracles = artifact.get("oracle_kinds", [])
 oracle_ids = [row.get("id") for row in oracles if isinstance(row, dict)]
 oracle_ranks = [row.get("precedence_rank") for row in oracles if isinstance(row, dict)]
+oracle_rank_by_id = {
+    row.get("id"): row.get("precedence_rank")
+    for row in oracles
+    if isinstance(row, dict)
+}
 if set(oracle_ids) == required_oracles and len(oracle_ids) == len(set(oracle_ids)):
     checks["oracle_kind_coverage"] = "pass"
 else:
@@ -185,6 +208,11 @@ for row in mappings:
         errors.append(f"{row_id}: semantic mapping must block overbroad claims")
 
 scenarios = artifact.get("scenarios", [])
+scenario_ids = {
+    scenario.get("scenario_id")
+    for scenario in scenarios
+    if isinstance(scenario, dict) and scenario.get("scenario_id")
+}
 by_divergence = Counter()
 by_primary = Counter()
 negative_claim_tests = 0
@@ -201,6 +229,11 @@ for scenario in scenarios:
     for oracle in scenario.get("fallback_oracles", []):
         if oracle not in required_oracles:
             errors.append(f"{scenario_id}: unknown fallback_oracle {oracle}")
+    expected_path = [primary] + list(scenario.get("fallback_oracles", []))
+    if scenario.get("oracle_precedence_path") != expected_path:
+        errors.append(
+            f"{scenario_id}: oracle_precedence_path must equal primary_oracle followed by fallback_oracles"
+        )
     if divergence not in required_classes:
         errors.append(f"{scenario_id}: unknown divergence_class {divergence}")
 
@@ -241,13 +274,67 @@ if len(errors) == scenario_errors_before:
 else:
     checks["scenario_schema_and_artifacts"] = "fail"
 
+replay_cases = artifact.get("replay_cases", [])
+replay_kinds = {
+    row.get("replay_kind")
+    for row in replay_cases
+    if isinstance(row, dict) and row.get("replay_kind")
+}
+if replay_kinds == required_replay_kinds:
+    checks["replay_case_coverage"] = "pass"
+else:
+    checks["replay_case_coverage"] = "fail"
+    errors.append(
+        f"replay_cases must cover {sorted(required_replay_kinds)}, got {sorted(replay_kinds)}"
+    )
+for replay in replay_cases:
+    replay_id = replay.get("id", "<missing>")
+    scenario_id = replay.get("scenario_id")
+    if scenario_id not in scenario_ids:
+        errors.append(f"{replay_id}: unknown replay scenario_id {scenario_id}")
+    if replay.get("command") != "scripts/check_oracle_precedence_divergence.sh":
+        errors.append(f"{replay_id}: replay command must be the deterministic gate script")
+    if replay.get("expected_divergence_class") not in required_classes:
+        errors.append(f"{replay_id}: unknown expected_divergence_class")
+    if not replay.get("expected_result"):
+        errors.append(f"{replay_id}: expected_result is required")
+
+negative_precedence_tests = artifact.get("negative_precedence_tests", [])
+negative_precedence_errors_before = len(errors)
+for row in negative_precedence_tests:
+    row_id = row.get("id", "<missing>")
+    higher = row.get("higher_priority_oracle")
+    lower = row.get("lower_priority_oracle")
+    higher_rank = oracle_rank_by_id.get(higher)
+    lower_rank = oracle_rank_by_id.get(lower)
+    if higher not in required_oracles or lower not in required_oracles:
+        errors.append(f"{row_id}: unknown precedence test oracle")
+    elif not (isinstance(higher_rank, int) and isinstance(lower_rank, int) and higher_rank < lower_rank):
+        errors.append(
+            f"{row_id}: higher_priority_oracle must have a smaller precedence_rank than lower_priority_oracle"
+        )
+    if row.get("expected_result") != "claim_blocked":
+        errors.append(f"{row_id}: negative precedence test must expect claim_blocked")
+    if not row.get("failure_signature"):
+        errors.append(f"{row_id}: negative precedence test missing failure_signature")
+    if not row.get("conflict"):
+        errors.append(f"{row_id}: negative precedence test missing conflict description")
+if negative_precedence_tests and len(errors) == negative_precedence_errors_before:
+    checks["negative_precedence_tests"] = "pass"
+else:
+    checks["negative_precedence_tests"] = "fail"
+    if not negative_precedence_tests:
+        errors.append("negative_precedence_tests must not be empty")
+
 summary_actual = {
     "oracle_kind_count": len(oracles),
     "divergence_class_count": len(classes),
     "decision_rule_count": len(rules),
     "semantic_class_mapping_count": len(mappings),
     "scenario_count": len(scenarios),
+    "replay_case_count": len(replay_cases),
     "negative_claim_test_count": negative_claim_tests,
+    "negative_precedence_test_count": len(negative_precedence_tests),
     "by_divergence_class": dict(sorted(by_divergence.items())),
     "by_primary_oracle": dict(sorted(by_primary.items())),
     "semantic_classes_mapped": sorted(mapped_classes),
@@ -295,6 +382,15 @@ log_event = {
     "expected": "all oracle kinds, divergence classes, semantic mappings, scenarios, negative claim tests, and artifact refs are current",
     "actual": status,
     "errno": None,
+    "status": status,
+    "oracle_precedence_path": [
+        "frankenlibc_contract",
+        "hardened_safety_policy",
+        "posix_text",
+        "linux_syscall",
+        "host_glibc",
+        "environment_probe",
+    ],
     "decision_path": list(checks.keys()),
     "healing_action": "none",
     "latency_ns": 0,
