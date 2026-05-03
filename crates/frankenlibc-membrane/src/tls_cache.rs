@@ -125,6 +125,32 @@ impl TlsValidationCache {
         }
     }
 
+    /// Look up a pointer and return only a valid hit.
+    ///
+    /// Unlike [`Self::lookup`], this intentionally does not count misses. It is
+    /// used by speculative fast paths that fall back to the full pipeline, where
+    /// the authoritative miss accounting still happens.
+    pub(crate) fn lookup_hit_only(&mut self, addr: usize) -> Option<CachedValidation> {
+        let idx = Self::index(addr);
+        let entry = &mut self.entries[idx];
+        let epoch = current_epoch();
+
+        if entry.valid && entry.addr == addr && entry.epoch == epoch {
+            self.hits += 1;
+            Some(CachedValidation {
+                user_base: entry.user_base,
+                user_size: entry.user_size,
+                generation: entry.generation,
+                state: entry.state,
+            })
+        } else {
+            if entry.valid && entry.addr == addr && entry.epoch != epoch {
+                entry.valid = false;
+            }
+            None
+        }
+    }
+
     /// Insert or update a cache entry.
     pub fn insert(&mut self, addr: usize, validation: CachedValidation, epoch: u64) {
         let idx = Self::index(addr);
@@ -253,6 +279,17 @@ mod tests {
         assert_eq!(result.user_size, 256);
         assert_eq!(result.state, SafetyState::Valid);
         assert_eq!(cache.hits(), 1);
+    }
+
+    #[test]
+    fn hit_only_probe_does_not_count_miss_before_fallback() {
+        let mut cache = TlsValidationCache::new();
+        assert!(cache.lookup_hit_only(0x1000).is_none());
+        assert_eq!(cache.hits(), 0);
+        assert_eq!(cache.misses(), 0);
+
+        assert!(cache.lookup(0x1000).is_none());
+        assert_eq!(cache.misses(), 1);
     }
 
     #[test]

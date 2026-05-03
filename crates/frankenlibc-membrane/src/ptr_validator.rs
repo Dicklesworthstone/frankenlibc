@@ -624,20 +624,19 @@ impl ValidationPipeline {
     /// @separation-frame: `F` (caller-owned heap and non-membrane regions remain untouched).
     /// @separation-alias: `validate_pointer`.
     pub fn validate(&self, addr: usize) -> ValidationOutcome {
-        if addr == 0
-            && !self.validation_logging_enabled()
-            && !self.runtime_math.validation_feedback_enabled()
-        {
-            return self.validate_null_without_trace_feedback();
-        }
-        if addr != 0
-            && self.page_oracle.is_empty()
-            && !self.validation_logging_enabled()
-            && !self.runtime_math.validation_feedback_enabled()
-            && let Some(outcome) =
-                self.try_validate_empty_oracle_foreign_without_trace_feedback(addr)
-        {
-            return outcome;
+        if !self.validation_logging_enabled() && !self.runtime_math.validation_feedback_enabled() {
+            if addr == 0 {
+                return self.validate_null_without_trace_feedback();
+            }
+            if let Some(outcome) = self.try_validate_cached_without_trace_feedback(addr) {
+                return outcome;
+            }
+            if self.page_oracle.is_empty()
+                && let Some(outcome) =
+                    self.try_validate_empty_oracle_foreign_without_trace_feedback(addr)
+            {
+                return outcome;
+            }
         }
 
         self.validate_with_security_context(
@@ -660,6 +659,28 @@ impl ValidationPipeline {
         } else {
             ValidationOutcome::Bypassed
         }
+    }
+
+    #[inline]
+    fn try_validate_cached_without_trace_feedback(&self, addr: usize) -> Option<ValidationOutcome> {
+        let mode = safety_level();
+        if !mode.validation_enabled() {
+            let metrics = global_metrics();
+            MembraneMetrics::inc(&metrics.validations);
+            return Some(ValidationOutcome::Bypassed);
+        }
+
+        let cached = with_tls_cache(|cache| cache.lookup_hit_only(addr));
+        if let Some(cv) = cached {
+            let metrics = global_metrics();
+            MembraneMetrics::inc(&metrics.validations);
+            MembraneMetrics::inc(&metrics.tls_cache_hits);
+            return Some(ValidationOutcome::CachedValid(
+                Self::abstraction_from_cached(addr, cv),
+            ));
+        }
+
+        None
     }
 
     #[inline]
@@ -890,25 +911,7 @@ impl ValidationPipeline {
                             0,
                             0,
                         );
-                        let (remaining, state) = if addr >= cv.user_base
-                            && addr < cv.user_base.saturating_add(cv.user_size)
-                        {
-                            (
-                                cv.user_base
-                                    .saturating_add(cv.user_size)
-                                    .saturating_sub(addr),
-                                cv.state,
-                            )
-                        } else {
-                            (0, crate::lattice::SafetyState::Invalid)
-                        };
-                        let abs = PointerAbstraction::validated(
-                            addr,
-                            state,
-                            cv.user_base,
-                            remaining,
-                            cv.generation,
-                        );
+                        let abs = Self::abstraction_from_cached(addr, cv);
                         // Cache hits replay a previously validated abstraction.
                         // Misses and deeper exits still train the sampled check oracle.
                         self.runtime_math.observe_validation_result(
@@ -1848,6 +1851,21 @@ impl ValidationPipeline {
         PointerAbstraction::validated(addr, state, slot.user_base, remaining, slot.generation)
     }
 
+    fn abstraction_from_cached(addr: usize, cv: CachedValidation) -> PointerAbstraction {
+        let (remaining, state) =
+            if addr >= cv.user_base && addr < cv.user_base.saturating_add(cv.user_size) {
+                (
+                    cv.user_base
+                        .saturating_add(cv.user_size)
+                        .saturating_sub(addr),
+                    cv.state,
+                )
+            } else {
+                (0, crate::lattice::SafetyState::Invalid)
+            };
+        PointerAbstraction::validated(addr, state, cv.user_base, remaining, cv.generation)
+    }
+
     fn cache_validation(&self, addr: usize, slot: &ArenaSlot, epoch: u64) {
         with_tls_cache(|cache| {
             cache.insert(
@@ -2139,6 +2157,34 @@ mod tests {
             // Second call — should hit TLS cache
             let outcome = pipeline.validate(addr);
             assert!(matches!(outcome, ValidationOutcome::CachedValid(_)));
+        }
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn default_cache_hit_fast_path_matches_logged_pipeline_hit() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(512).expect("alloc");
+        let addr = ptr as usize;
+
+        {
+            let _epoch_guard = lock_tls_cache_epoch_for_tests();
+            let _ = pipeline.validate(addr);
+
+            pipeline.clear_validation_logs();
+            pipeline.set_validation_logging_enabled(false);
+            let fast = pipeline.validate(addr);
+            assert!(matches!(fast, ValidationOutcome::CachedValid(_)));
+            assert!(pipeline.export_validation_log_jsonl().is_empty());
+
+            pipeline.clear_validation_logs();
+            pipeline.set_validation_logging_enabled(true);
+            let logged = pipeline.validate(addr);
+            assert_eq!(fast, logged);
+            assert!(!pipeline.export_validation_log_jsonl().is_empty());
+            pipeline.set_validation_logging_enabled(false);
         }
 
         let result = pipeline.free(ptr);
