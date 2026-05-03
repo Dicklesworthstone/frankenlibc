@@ -637,7 +637,6 @@ impl ValidationPipeline {
         security_context: ValidationSecurityContext,
     ) -> ValidationOutcome {
         let _validation_context = enter_validation_execution_context();
-        let _guard = self.pin_epoch();
         let metrics = global_metrics();
         MembraneMetrics::inc(&metrics.validations);
         let mode = safety_level();
@@ -705,19 +704,6 @@ impl ValidationPipeline {
             return ValidationOutcome::Bypassed;
         }
 
-        // Snapshot the cache epoch before validation starts.
-        // This prevents a TOCTOU race where a concurrent free() bumps the epoch
-        // *after* we look up the pointer's valid state in the arena but *before* we
-        // insert the CachedValid entry.
-        let validation_epoch = crate::tls_cache::current_epoch();
-
-        let aligned = addr & 0x7 == 0;
-        let recent_page = self.page_oracle.query(addr);
-        let raw_order =
-            self.runtime_math
-                .check_ordering(ApiFamily::PointerValidation, aligned, recent_page);
-        let ordering = Self::dependency_safe_order(raw_order);
-
         // Stage 1: Null check (~1ns)
         self.emit_validation_log(
             &trace,
@@ -745,15 +731,8 @@ impl ValidationPipeline {
                 1,
                 false,
             );
-            // Report outcome to bandit even for early exit (stage 0)
-            self.runtime_math.note_check_order_outcome(
-                mode,
-                ApiFamily::PointerValidation,
-                aligned,
-                recent_page,
-                &ordering,
-                Some(0),
-            );
+            // Null is dependency-forced before any adaptive ordering decision,
+            // so there is no sampled check order to feed back to the bandit.
             self.emit_terminal_transition(
                 &trace,
                 mode,
@@ -773,6 +752,13 @@ impl ValidationPipeline {
             );
             return ValidationOutcome::Null;
         }
+
+        let aligned = addr & 0x7 == 0;
+        let recent_page = self.page_oracle.query(addr);
+        let raw_order =
+            self.runtime_math
+                .check_ordering(ApiFamily::PointerValidation, aligned, recent_page);
+        let ordering = Self::dependency_safe_order(raw_order);
 
         if raw_order != ordering {
             self.emit_validation_log(
@@ -800,6 +786,8 @@ impl ValidationPipeline {
         let mut bloom_negative = false;
         let mut saw_fingerprint = false;
         let mut saw_canary = false;
+        let mut epoch_guard: Option<crate::ebr::EbrGuard<'_>> = None;
+        let mut validation_epoch = None;
 
         for (idx, stage) in ordering.iter().enumerate() {
             self.emit_validation_log(
@@ -1096,6 +1084,11 @@ impl ValidationPipeline {
                     if slot.is_some() {
                         continue;
                     }
+                    if epoch_guard.is_none() {
+                        epoch_guard = Some(self.pin_epoch());
+                    }
+                    let slot_validation_epoch =
+                        *validation_epoch.get_or_insert_with(crate::tls_cache::current_epoch);
                     elapsed_ns = elapsed_ns.saturating_add(u64::from(CheckStage::Arena.cost_ns()));
                     MembraneMetrics::inc(&metrics.arena_lookups);
                     let Some(found) = self.arena.lookup(addr) else {
@@ -1192,6 +1185,7 @@ impl ValidationPipeline {
                         return ValidationOutcome::TemporalViolation(abs);
                     }
                     slot = Some(found);
+                    debug_assert_eq!(validation_epoch, Some(slot_validation_epoch));
                 }
                 CheckStage::Fingerprint => {
                     if let Some(s) = slot {
@@ -1478,7 +1472,9 @@ impl ValidationPipeline {
         // Runtime-math fast profile in strict mode skips deep integrity checks.
         if !deep_decision.requires_full_validation() && !mode.heals_enabled() {
             let abs = self.abstraction_from_slot(addr, &slot);
-            self.cache_validation(addr, &slot, validation_epoch);
+            if let Some(validation_epoch) = validation_epoch {
+                self.cache_validation(addr, &slot, validation_epoch);
+            }
             self.runtime_math.note_check_order_outcome(
                 mode,
                 ApiFamily::PointerValidation,
@@ -1663,7 +1659,9 @@ impl ValidationPipeline {
         }
 
         let abs = self.abstraction_from_slot(addr, &slot);
-        self.cache_validation(addr, &slot, validation_epoch);
+        if let Some(validation_epoch) = validation_epoch {
+            self.cache_validation(addr, &slot, validation_epoch);
+        }
         self.runtime_math.note_check_order_outcome(
             mode,
             ApiFamily::PointerValidation,
@@ -1935,12 +1933,14 @@ mod tests {
     fn thread_local_ebr_handle_switches_collectors_between_pipelines() {
         let pipeline_a = ValidationPipeline::new();
         let pipeline_b = ValidationPipeline::new();
+        let ptr_a = pipeline_a.allocate(16).expect("alloc a");
+        let ptr_b = pipeline_b.allocate(16).expect("alloc b");
 
-        let _ = pipeline_a.validate(0);
+        let _ = pipeline_a.validate(ptr_a as usize);
         assert_eq!(pipeline_a.collector.diagnostics().active_threads, 1);
         assert_eq!(pipeline_b.collector.diagnostics().active_threads, 0);
 
-        let _ = pipeline_b.validate(0);
+        let _ = pipeline_b.validate(ptr_b as usize);
         assert_eq!(
             pipeline_b.collector.diagnostics().active_threads,
             1,
@@ -1951,6 +1951,39 @@ mod tests {
             0,
             "switching pipelines on one thread must release the stale collector handle",
         );
+
+        assert_eq!(pipeline_b.free(ptr_b), FreeResult::Freed);
+        assert_eq!(pipeline_a.free(ptr_a), FreeResult::Freed);
+    }
+
+    #[test]
+    fn null_pointer_validation_does_not_register_ebr_handle() {
+        let pipeline = ValidationPipeline::new();
+
+        let outcome = pipeline.validate(0);
+
+        assert!(matches!(outcome, ValidationOutcome::Null));
+        assert_eq!(
+            pipeline.collector.diagnostics().active_threads,
+            0,
+            "null validation must not enter the epoch collector"
+        );
+    }
+
+    #[test]
+    fn owned_pointer_validation_registers_ebr_handle() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(16).expect("alloc");
+
+        let outcome = pipeline.validate(ptr as usize);
+
+        assert!(outcome.can_read());
+        assert_eq!(
+            pipeline.collector.diagnostics().active_threads,
+            1,
+            "owned metadata validation must pin through arena/fingerprint/canary reads"
+        );
+        assert_eq!(pipeline.free(ptr), FreeResult::Freed);
     }
 
     #[test]
