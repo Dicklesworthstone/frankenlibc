@@ -1,0 +1,304 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.9.1",
+  "generated_at_utc": "2026-05-03T03:30:00Z",
+  "purpose": "Define a deterministic counterexample-to-fixture loop for proof failures, differential mismatches, runtime-math alarms, and conformance failures.",
+  "fixture_output_dir": "target/conformance/counterexample_fixture_loop/replay_fixtures",
+  "report_path": "target/conformance/counterexample_fixture_loop.report.json",
+  "log_path": "target/conformance/counterexample_fixture_loop.log.jsonl",
+  "required_sources": [
+    "proof_failure",
+    "differential_mismatch",
+    "runtime_math_alarm",
+    "conformance_failure"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "counterexample_id",
+    "symbol",
+    "api_family",
+    "minimization_state",
+    "fixture_id",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "counterexamples": [
+    {
+      "id": "ce-diff-strlen-empty",
+      "source": "differential_mismatch",
+      "title": "Minimized strlen empty-input return mismatch",
+      "symbol": "strlen",
+      "api_family": "string",
+      "oracle_kind": "glibc_fixture_oracle",
+      "runtime_mode": "strict",
+      "minimization_state": "minimized",
+      "minimized_input": {
+        "fixture_family": "string_ops",
+        "case_name": "strlen_empty",
+        "argv": [
+          "--family",
+          "string_ops",
+          "--case",
+          "strlen_empty"
+        ],
+        "stdin": "",
+        "environment": {}
+      },
+      "expected": {
+        "return_value": 0,
+        "errno": 0,
+        "stdout": ""
+      },
+      "actual": {
+        "return_value": 1,
+        "errno": 0,
+        "stdout": ""
+      },
+      "proof_link": "tests/conformance/oracle_precedence_divergence.v1.json",
+      "artifact_refs": [
+        "tests/conformance/oracle_precedence_divergence.v1.json",
+        "tests/conformance/fixtures/string_ops.json"
+      ],
+      "fixture_generation": "generate",
+      "fixture_id": "cfl-strlen-empty",
+      "fixture_path": "target/conformance/counterexample_fixture_loop/replay_fixtures/cfl-strlen-empty.json",
+      "replay_command": [
+        "bash",
+        "scripts/check_counterexample_fixture_loop.sh",
+        "--replay",
+        "ce-diff-strlen-empty",
+        "--expect",
+        "pass"
+      ],
+      "expected_replay_result": "pass",
+      "source_commit": "HEAD",
+      "failure_signature": "none"
+    },
+    {
+      "id": "ce-runtime-math-eprocess-alarm",
+      "source": "runtime_math_alarm",
+      "title": "Runtime math alarm preserved as failing replay fixture",
+      "symbol": "runtime_policy::observe",
+      "api_family": "runtime_math",
+      "oracle_kind": "runtime_math_alarm",
+      "runtime_mode": "hardened",
+      "minimization_state": "minimized",
+      "minimized_input": {
+        "fixture_family": "runtime_math",
+        "case_name": "eprocess_alarm_threshold",
+        "events": [
+          {
+            "family": "String",
+            "profile": "Fast",
+            "denied": false,
+            "latency_ns": 4
+          },
+          {
+            "family": "String",
+            "profile": "Fast",
+            "denied": true,
+            "latency_ns": 350
+          }
+        ]
+      },
+      "expected": {
+        "decision": "FullValidate",
+        "alarm": true
+      },
+      "actual": {
+        "decision": "Allow",
+        "alarm": false
+      },
+      "proof_link": "tests/conformance/math_governance.json",
+      "artifact_refs": [
+        "tests/conformance/math_governance.json",
+        "tests/runtime_math/golden/kernel_snapshot_smoke.v1.json"
+      ],
+      "fixture_generation": "generate",
+      "fixture_id": "cfl-runtime-math-eprocess-alarm",
+      "fixture_path": "target/conformance/counterexample_fixture_loop/replay_fixtures/cfl-runtime-math-eprocess-alarm.json",
+      "replay_command": [
+        "bash",
+        "scripts/check_counterexample_fixture_loop.sh",
+        "--replay",
+        "ce-runtime-math-eprocess-alarm",
+        "--expect",
+        "fail"
+      ],
+      "expected_replay_result": "fail",
+      "source_commit": "HEAD",
+      "failure_signature": "runtime_math_alarm:eprocess_threshold"
+    },
+    {
+      "id": "ce-proof-startup-argv-scan",
+      "source": "proof_failure",
+      "title": "Startup argv scan proof obligation converted into replay plan",
+      "symbol": "__libc_start_main",
+      "api_family": "startup",
+      "oracle_kind": "proof_obligation",
+      "runtime_mode": "strict",
+      "minimization_state": "minimized",
+      "minimized_input": {
+        "fixture_family": "startup_ops",
+        "case_name": "unterminated_argv_scan_bound",
+        "argc": 2,
+        "argv_layout": "unterminated_within_scan_bound"
+      },
+      "expected": {
+        "decision": "Deny",
+        "errno": 22
+      },
+      "actual": {
+        "decision": "Allow",
+        "errno": 0
+      },
+      "proof_link": "tests/conformance/proof_traceability_check.json",
+      "artifact_refs": [
+        "tests/conformance/proof_traceability_check.json",
+        "tests/conformance/standalone_link_run_smoke.v1.json"
+      ],
+      "fixture_generation": "plan_only",
+      "fixture_id": "cfl-startup-argv-scan",
+      "fixture_path": "target/conformance/counterexample_fixture_loop/replay_fixtures/cfl-startup-argv-scan.json",
+      "replay_command": [
+        "bash",
+        "scripts/check_counterexample_fixture_loop.sh",
+        "--replay",
+        "ce-proof-startup-argv-scan",
+        "--expect",
+        "fail"
+      ],
+      "expected_replay_result": "fail",
+      "source_commit": "HEAD",
+      "failure_signature": "planned_fixture:startup_argv_scan"
+    },
+    {
+      "id": "ce-conformance-pthread-timeout",
+      "source": "conformance_failure",
+      "title": "Threaded conformance timeout captured as replayable fixture plan",
+      "symbol": "pthread_cond_timedwait",
+      "api_family": "pthread",
+      "oracle_kind": "threaded_mode_pair_replay",
+      "runtime_mode": "hardened",
+      "minimization_state": "minimized",
+      "minimized_input": {
+        "fixture_family": "pthread_cond",
+        "case_name": "single_waiter_timeout",
+        "threads": 1,
+        "timeout_ms": 1
+      },
+      "expected": {
+        "return_value": 110,
+        "errno": 0
+      },
+      "actual": {
+        "return_value": 0,
+        "errno": 0
+      },
+      "proof_link": "tests/conformance/fixtures/pthread_cond.json",
+      "artifact_refs": [
+        "tests/conformance/fixtures/pthread_cond.json",
+        "tests/conformance/test_obligation_dashboard.v1.json"
+      ],
+      "fixture_generation": "plan_only",
+      "fixture_id": "cfl-pthread-cond-timeout",
+      "fixture_path": "target/conformance/counterexample_fixture_loop/replay_fixtures/cfl-pthread-cond-timeout.json",
+      "replay_command": [
+        "bash",
+        "scripts/check_counterexample_fixture_loop.sh",
+        "--replay",
+        "ce-conformance-pthread-timeout",
+        "--expect",
+        "fail"
+      ],
+      "expected_replay_result": "fail",
+      "source_commit": "HEAD",
+      "failure_signature": "planned_fixture:pthread_timeout"
+    },
+    {
+      "id": "ce-unsupported-rtld-hwcaps",
+      "source": "proof_failure",
+      "title": "Unsupported loader hwcaps counterexample is blocked rather than converted",
+      "symbol": "dlopen",
+      "api_family": "loader",
+      "oracle_kind": "unsupported_counterexample",
+      "runtime_mode": "strict",
+      "minimization_state": "unsupported",
+      "minimized_input": {
+        "fixture_family": "elf_loader",
+        "case_name": "hwcaps_directory_precedence",
+        "reason": "requires standalone loader artifact not present in L0"
+      },
+      "expected": {
+        "claim": "fixture_not_generated"
+      },
+      "actual": {
+        "claim": "unsupported_for_current_artifact"
+      },
+      "proof_link": "tests/conformance/replacement_levels.json",
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "fixture_generation": "blocked",
+      "fixture_id": null,
+      "fixture_path": null,
+      "replay_command": [],
+      "expected_replay_result": "blocked",
+      "source_commit": "HEAD",
+      "failure_signature": "unsupported_counterexample:loader_hwcaps_scope"
+    }
+  ],
+  "negative_tests": [
+    {
+      "id": "neg-duplicate-fixture",
+      "description": "Two generated counterexamples cannot claim the same fixture_id.",
+      "mutation": "duplicate fixture_id among fixture_generation=generate rows",
+      "expected_result": "gate_failed",
+      "expected_failure_signature": "duplicate_fixture_id"
+    },
+    {
+      "id": "neg-stale-proof-ref",
+      "description": "A proof_link that does not exist is stale evidence and blocks conversion.",
+      "mutation": "proof_link points at missing/proof.json",
+      "expected_result": "gate_failed",
+      "expected_failure_signature": "missing_proof_link"
+    },
+    {
+      "id": "neg-unsupported-generated",
+      "description": "Unsupported counterexamples must not emit replay fixtures.",
+      "mutation": "minimization_state=unsupported with fixture_generation=generate",
+      "expected_result": "gate_failed",
+      "expected_failure_signature": "unsupported_counterexample_generated"
+    },
+    {
+      "id": "neg-missing-replay-command",
+      "description": "Generated fixtures require a replay command naming the counterexample id.",
+      "mutation": "empty replay_command for fixture_generation=generate",
+      "expected_result": "gate_failed",
+      "expected_failure_signature": "missing_replay_command"
+    }
+  ],
+  "summary": {
+    "counterexample_count": 5,
+    "generated_fixture_count": 2,
+    "plan_only_fixture_count": 2,
+    "unsupported_count": 1,
+    "negative_test_count": 4,
+    "source_counts": {
+      "proof_failure": 2,
+      "differential_mismatch": 1,
+      "runtime_math_alarm": 1,
+      "conformance_failure": 1
+    },
+    "replay_expectations": {
+      "pass": 1,
+      "fail": 3,
+      "blocked": 1
+    }
+  }
+}
