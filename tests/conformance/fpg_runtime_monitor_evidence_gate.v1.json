@@ -1,0 +1,467 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "fpg-runtime-monitor-evidence-gate",
+  "bead": "bd-bp8fl.3.14",
+  "owner_family_group": "fpg-gap-summary-runtime-monitor-evidence",
+  "evidence_owner": "runtime_math monitor owners",
+  "generated_utc": "2026-05-03T23:05:00Z",
+  "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946",
+  "inputs": {
+    "feature_parity": "FEATURE_PARITY.md",
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "runtime_env_inventory": "tests/conformance/runtime_env_inventory.v1.json",
+    "optimization_proof_ledger": "tests/conformance/optimization_proof_ledger.v1.json",
+    "perf_regression_attribution": "tests/conformance/perf_regression_attribution.v1.json",
+    "proof_traceability_check": "tests/conformance/proof_traceability_check.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "gap_id",
+    "monitor_id",
+    "runtime_mode",
+    "expected_decision",
+    "actual_decision",
+    "calibration_state",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_done_until_runtime_monitor_replay_and_calibration_current",
+    "allow_status": ["IN_PROGRESS"],
+    "block_status_without_all_anchors": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "required_runtime_modes": ["strict", "hardened"],
+    "required_replay_fields": ["path", "source_commit", "strict_decision_path", "hardened_decision_path"],
+    "required_calibration_states": ["calibrated", "bounded", "replay_locked"],
+    "rejected_evidence_kinds": [
+      "summary_only_monitor_claim",
+      "missing_replay_artifact",
+      "missing_calibration_state",
+      "stale_source_commit",
+      "missing_failure_signature",
+      "missing_runtime_mode_path",
+      "prose_only"
+    ]
+  },
+  "rows": [
+    {
+      "gap_id": "fp-gap-summary-db582a1956fa",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "11",
+      "monitor_id": "tropical_latency",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/tropical_latency.rs"],
+      "feature_parity_provenance": {"line": 288, "line_contains": "Tropical latency compositor live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/tropical_latency.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:min_plus_latency_bound", "hardened_decision_path": "hardened:min_plus_latency_bound"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/tropical_latency.json", "state": "bounded", "threshold": "worst_case_bound_present"},
+      "failure_signature": "tropical_latency_bound_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/runtime_env_inventory.v1.json", "kind": "json_field_equals", "field": "summary.unknown_or_ambiguous_count", "expected_value": 0},
+        {"artifact": "tests/conformance/perf_regression_attribution.v1.json", "kind": "json_field_min", "field": "summary.mapped_benchmarks", "expected_value_min": 13}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-84240b59cfd1",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "11",
+      "monitor_id": "spectral_monitor",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/spectral_monitor.rs"],
+      "feature_parity_provenance": {"line": 289, "line_contains": "Spectral phase monitor live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/spectral_monitor.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:eigen_edge_replay", "hardened_decision_path": "hardened:eigen_edge_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/spectral_monitor.json", "state": "calibrated", "threshold": "phase_edge_threshold_present"},
+      "failure_signature": "spectral_phase_calibration_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/runtime_env_inventory.v1.json", "kind": "json_field_equals", "field": "summary.unknown_or_ambiguous_count", "expected_value": 0},
+        {"artifact": "tests/conformance/optimization_proof_ledger.v1.json", "kind": "json_field_min", "field": "summary.total_candidates", "expected_value_min": 3}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-70370851cacb",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "12",
+      "monitor_id": "rough_path",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/rough_path.rs"],
+      "feature_parity_provenance": {"line": 290, "line_contains": "Rough-path signature monitor live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/rough_path.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:path_signature_replay", "hardened_decision_path": "hardened:path_signature_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/rough_path.json", "state": "calibrated", "threshold": "signature_radius_present"},
+      "failure_signature": "rough_path_signature_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "binder_valid", "expected_value": true}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-205f8c297218",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "13",
+      "monitor_id": "persistence",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/persistence.rs"],
+      "feature_parity_provenance": {"line": 291, "line_contains": "Persistent homology detector live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/persistence.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:betti_zero_replay", "hardened_decision_path": "hardened:betti_zero_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/persistence.json", "state": "calibrated", "threshold": "betti_fragmentation_threshold_present"},
+      "failure_signature": "persistent_homology_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "binder_valid", "expected_value": true}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-a1d7fcc3399f",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "14",
+      "monitor_id": "schrodinger_bridge",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/schrodinger_bridge.rs"],
+      "feature_parity_provenance": {"line": 292, "line_contains": "bridge controller live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/schrodinger_bridge.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:sinkhorn_transition_replay", "hardened_decision_path": "hardened:sinkhorn_transition_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/schrodinger_bridge.json", "state": "bounded", "threshold": "transport_cost_bound_present"},
+      "failure_signature": "schrodinger_bridge_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/perf_regression_attribution.v1.json", "kind": "json_field_min", "field": "summary.required_log_fields", "expected_value_min": 13}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-10132dfe6278",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "15",
+      "monitor_id": "large_deviations",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/large_deviations.rs"],
+      "feature_parity_provenance": {"line": 293, "line_contains": "Large-deviations monitor live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/large_deviations.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:rate_function_replay", "hardened_decision_path": "hardened:rate_function_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/large_deviations.json", "state": "bounded", "threshold": "catastrophe_probability_bound_present"},
+      "failure_signature": "large_deviation_rate_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/perf_regression_attribution.v1.json", "kind": "json_field_min", "field": "summary.regression_classes", "expected_value_min": 5}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-b95fff14be76",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "16",
+      "monitor_id": "hji_reachability",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/hji_reachability.rs"],
+      "feature_parity_provenance": {"line": 294, "line_contains": "HJI reachability controller live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/hji_reachability.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:minimax_viability_replay", "hardened_decision_path": "hardened:minimax_viability_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/hji_reachability.json", "state": "replay_locked", "threshold": "viability_grid_locked"},
+      "failure_signature": "hji_viability_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "binder_valid", "expected_value": true}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-09fac08213b2",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "17",
+      "monitor_id": "mean_field_game",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/mean_field_game.rs"],
+      "feature_parity_provenance": {"line": 295, "line_contains": "Mean-field game contention controller live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/mean_field_game.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:picard_equilibrium_replay", "hardened_decision_path": "hardened:picard_equilibrium_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/mean_field_game.json", "state": "calibrated", "threshold": "congestion_collapse_threshold_present"},
+      "failure_signature": "mean_field_game_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/runtime_env_inventory.v1.json", "kind": "json_field_min", "field": "summary.keys_with_reads", "expected_value_min": 25}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-26353b43713e",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "19",
+      "monitor_id": "design",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/runtime_math/design.rs"],
+      "feature_parity_provenance": {"line": 297, "line_contains": "D-optimal probe scheduler live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/design.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:d_optimal_probe_replay", "hardened_decision_path": "hardened:d_optimal_probe_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/design.json", "state": "calibrated", "threshold": "information_gain_budget_present"},
+      "failure_signature": "design_probe_calibration_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/optimization_proof_ledger.v1.json", "kind": "json_field_equals", "field": "summary.waived", "expected_value": 0}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-5dd50f7bfbf2",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "20",
+      "monitor_id": "sparse",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/runtime_math/sparse.rs"],
+      "feature_parity_provenance": {"line": 298, "line_contains": "Sparse latent-cause recovery live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/sparse.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:ista_fault_replay", "hardened_decision_path": "hardened:ista_fault_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/sparse.json", "state": "bounded", "threshold": "latent_fault_l1_threshold_present"},
+      "failure_signature": "sparse_recovery_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "total_violations", "expected_value": 0}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-e9257a2a9c49",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "21",
+      "monitor_id": "fusion",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/runtime_math/fusion.rs"],
+      "feature_parity_provenance": {"line": 299, "line_contains": "Robust fusion controller live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/fusion.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:fusion_bonus_replay", "hardened_decision_path": "hardened:fusion_bonus_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/fusion.json", "state": "calibrated", "threshold": "coherent_signal_threshold_present"},
+      "failure_signature": "fusion_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/perf_regression_attribution.v1.json", "kind": "json_field_min", "field": "summary.triage_playbooks", "expected_value_min": 4}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-ca75128647d2",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "22",
+      "monitor_id": "equivariant",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/runtime_math/equivariant.rs"],
+      "feature_parity_provenance": {"line": 300, "line_contains": "Equivariant transport controller live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/equivariant.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:orbit_transport_replay", "hardened_decision_path": "hardened:orbit_transport_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/equivariant.json", "state": "calibrated", "threshold": "symmetry_break_threshold_present"},
+      "failure_signature": "equivariant_transport_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/runtime_env_inventory.v1.json", "kind": "json_field_min", "field": "summary.keys_with_writes", "expected_value_min": 23}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-a3aed10a522c",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "21",
+      "monitor_id": "padic_valuation",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/padic_valuation.rs"],
+      "feature_parity_provenance": {"line": 301, "line_contains": "P-adic valuation error calculus live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/padic_valuation.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:valuation_regime_replay", "hardened_decision_path": "hardened:valuation_regime_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/padic_valuation.json", "state": "bounded", "threshold": "ultrametric_regime_threshold_present"},
+      "failure_signature": "padic_valuation_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "binder_valid", "expected_value": true}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-03bcda968d0e",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "22",
+      "monitor_id": "symplectic_reduction",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/symplectic_reduction.rs"],
+      "feature_parity_provenance": {"line": 302, "line_contains": "Symplectic reduction IPC guard live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/symplectic_reduction.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:moment_map_replay", "hardened_decision_path": "hardened:moment_map_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/symplectic_reduction.json", "state": "replay_locked", "threshold": "ipc_quotient_policy_locked"},
+      "failure_signature": "symplectic_reduction_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/runtime_env_inventory.v1.json", "kind": "json_field_equals", "field": "summary.unknown_or_ambiguous_count", "expected_value": 0}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-3c88823923b9",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "23",
+      "monitor_id": "higher_topos",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs"],
+      "feature_parity_provenance": {"line": 305, "line_contains": "Higher-topos descent controller live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/higher_topos.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:descent_state_replay", "hardened_decision_path": "hardened:descent_state_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/higher_topos.json", "state": "calibrated", "threshold": "descent_violation_ewma_present"},
+      "failure_signature": "higher_topos_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "binder_valid", "expected_value": true}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-994260bdf05c",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "24",
+      "monitor_id": "commitment_audit",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/runtime_math/commitment_audit.rs"],
+      "feature_parity_provenance": {"line": 306, "line_contains": "Commitment-audit controller live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/commitment_audit.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:hash_chain_replay", "hardened_decision_path": "hardened:hash_chain_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/commitment_audit.json", "state": "replay_locked", "threshold": "session_ring_size_locked"},
+      "failure_signature": "commitment_audit_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/optimization_proof_ledger.v1.json", "kind": "json_field_min", "field": "summary.required_log_fields", "expected_value_min": 5}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-42c1bf789b12",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "25",
+      "monitor_id": "changepoint",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/runtime_math/changepoint.rs"],
+      "feature_parity_provenance": {"line": 307, "line_contains": "Bayesian change-point detector live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/changepoint.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:bocpd_replay", "hardened_decision_path": "hardened:bocpd_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/changepoint.json", "state": "calibrated", "threshold": "hazard_posterior_threshold_present"},
+      "failure_signature": "changepoint_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/perf_regression_attribution.v1.json", "kind": "json_field_min", "field": "summary.mapped_benchmarks", "expected_value_min": 13}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-e1b445fd58b5",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "26",
+      "monitor_id": "conformal",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/runtime_math/conformal.rs"],
+      "feature_parity_provenance": {"line": 308, "line_contains": "Conformal risk controller live"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/conformal.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:conformal_coverage_replay", "hardened_decision_path": "hardened:conformal_coverage_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/conformal.json", "state": "calibrated", "threshold": "miscoverage_window_present"},
+      "failure_signature": "conformal_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "total_violations", "expected_value": 0}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-b7a23cbbae29",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "28",
+      "monitor_id": "distribution_shift_bundle",
+      "monitor_paths": [
+        "crates/frankenlibc-membrane/src/runtime_math/malliavin_sensitivity.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/info_geometry.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/matrix_concentration.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/nerve_complex.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/wasserstein_drift.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/kernel_mmd.rs"
+      ],
+      "feature_parity_provenance": {"line": 310, "line_contains": "Six new runtime math monitors integrated"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/distribution_shift_bundle.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:distribution_shift_bundle_replay", "hardened_decision_path": "hardened:distribution_shift_bundle_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/distribution_shift_bundle.json", "state": "calibrated", "threshold": "multi_monitor_shift_thresholds_present"},
+      "failure_signature": "distribution_shift_bundle_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/perf_regression_attribution.v1.json", "kind": "json_field_min", "field": "summary.required_log_fields", "expected_value_min": 13},
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "binder_valid", "expected_value": true}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-99daf17ed425",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "30",
+      "monitor_id": "stein_discrepancy",
+      "monitor_paths": ["crates/frankenlibc-membrane/src/runtime_math/stein_discrepancy.rs"],
+      "feature_parity_provenance": {"line": 312, "line_contains": "Stein discrepancy monitor fixed"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/stein_discrepancy.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:kl_score_replay", "hardened_decision_path": "hardened:kl_score_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/stein_discrepancy.json", "state": "calibrated", "threshold": "frozen_model_kl_threshold_present"},
+      "failure_signature": "stein_discrepancy_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "total_violations", "expected_value": 0}
+      ]
+    },
+    {
+      "gap_id": "fp-gap-summary-b679d62602b3",
+      "kind": "feature_parity_row_status",
+      "section": "gap_summary",
+      "primary_key": "31",
+      "monitor_id": "verified_monitor_bundle",
+      "monitor_paths": [
+        "crates/frankenlibc-membrane/src/runtime_math/stein_discrepancy.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/pomdp_repair.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/sos_invariant.rs"
+      ],
+      "feature_parity_provenance": {"line": 313, "line_contains": "Five additional runtime math monitors verified"},
+      "claimed_status": "IN_PROGRESS",
+      "replacement_level": "L0",
+      "runtime_modes": ["strict", "hardened"],
+      "expected_decision": "keep_visible_block_promotion",
+      "replay_artifact": {"path": "target/conformance/runtime_monitor_replay/verified_monitor_bundle.jsonl", "source_commit": "e8a717ad579eabf2b77e92c729ff2faecaf8f946", "strict_decision_path": "strict:verified_monitor_bundle_replay", "hardened_decision_path": "hardened:verified_monitor_bundle_replay"},
+      "calibration_artifact": {"path": "target/conformance/runtime_monitor_calibration/verified_monitor_bundle.json", "state": "replay_locked", "threshold": "verified_monitor_sources_locked"},
+      "failure_signature": "verified_monitor_bundle_replay_missing_or_stale",
+      "evidence_anchors": [
+        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_field_equals", "field": "binder_valid", "expected_value": true},
+        {"artifact": "tests/conformance/optimization_proof_ledger.v1.json", "kind": "json_field_min", "field": "summary.verified", "expected_value_min": 1}
+      ]
+    }
+  ]
+}
