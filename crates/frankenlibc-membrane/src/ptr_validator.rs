@@ -853,14 +853,8 @@ impl ValidationPipeline {
                             remaining,
                             cv.generation,
                         );
-                        self.runtime_math.note_check_order_outcome(
-                            mode,
-                            ApiFamily::PointerValidation,
-                            aligned,
-                            recent_page,
-                            &ordering,
-                            Some(idx),
-                        );
+                        // Cache hits replay a previously validated abstraction.
+                        // Misses and deeper exits still train the sampled check oracle.
                         self.runtime_math.observe_validation_result(
                             mode,
                             ApiFamily::PointerValidation,
