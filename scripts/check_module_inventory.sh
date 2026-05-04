@@ -12,8 +12,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-AGENTS_MD="$REPO_ROOT/AGENTS.md"
-MOD_RS="$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/mod.rs"
+AGENTS_MD="${FRANKENLIBC_MODULE_INVENTORY_AGENTS:-$REPO_ROOT/AGENTS.md}"
+MOD_RS="${FRANKENLIBC_MODULE_INVENTORY_MOD:-$REPO_ROOT/crates/frankenlibc-membrane/src/runtime_math/mod.rs}"
+LIB_RS="${FRANKENLIBC_MODULE_INVENTORY_LIB:-$REPO_ROOT/crates/frankenlibc-membrane/src/lib.rs}"
 
 if [[ ! -f "$AGENTS_MD" ]]; then
     echo "ERROR: AGENTS.md not found at $AGENTS_MD" >&2
@@ -25,19 +26,63 @@ if [[ ! -f "$MOD_RS" ]]; then
 fi
 
 # --- Extract runtime_math module names from AGENTS.md Module Inventory ---
-# Matches lines like:  - `runtime_math/foo.rs` — description
-# in the section between "### frankenlibc-membrane" and "### frankenlibc-core"
-agents_modules=$(
-    sed -n '/^### frankenlibc-membrane/,/^### frankenlibc-core/p' "$AGENTS_MD" \
+# Matches both historical lines like:
+#   - `runtime_math/foo.rs` — description
+# and the current subsection format:
+#   **Runtime math control plane (`runtime_math/`):**
+#   - `foo.rs` — description
+# in the section between "### frankenlibc-membrane" and "### frankenlibc-core".
+agents_section=$(sed -n '/^### frankenlibc-membrane/,/^### frankenlibc-core/p' "$AGENTS_MD")
+agents_modules_prefixed=$(
+    echo "$agents_section" \
     | grep -oP '`runtime_math/\K[a-z_]+(?=\.rs`)' \
+    || true
+)
+agents_modules_subsection=$(
+    echo "$agents_section" \
+    | sed -n '/^\*\*Runtime math control plane (`runtime_math\/`):/,/^\*\*/p' \
+    | grep -oP '^- `\K[a-z_]+(?=\.rs`)' \
+    || true
+)
+agents_modules=$(
+    {
+        echo "$agents_modules_prefixed"
+        echo "$agents_modules_subsection"
+    } \
     | grep -v '^mod$' \
-    | sort -u
+    | grep -v '^$' \
+    | sort -u \
+    || true
 )
 
 # --- Extract pub mod declarations from mod.rs ---
 code_modules=$(
     grep -oP '^pub mod \K[a-z_]+' "$MOD_RS" \
-    | sort -u
+    || true
+)
+code_modules=$(echo "$code_modules" | grep -v '^$' | sort -u || true)
+
+if [[ -z "$agents_modules" ]]; then
+    echo "ERROR: no runtime_math modules found in AGENTS.md module inventory." >&2
+    echo "Checked section: ### frankenlibc-membrane through ### frankenlibc-core." >&2
+    echo "Expected either \`runtime_math/foo.rs\` entries or a Runtime math control plane (\`runtime_math/\`) subsection." >&2
+    exit 1
+fi
+
+if [[ -z "$code_modules" ]]; then
+    echo "ERROR: no runtime_math pub mod declarations found in $MOD_RS." >&2
+    exit 1
+fi
+
+top_level_modules=$(
+    grep -oP '^pub mod \K[a-z_]+' "$LIB_RS" 2>/dev/null \
+    || true
+)
+top_level_modules=$(
+    echo "$top_level_modules" \
+    | grep -v '^$' \
+    | sort -u \
+    || true
 )
 
 # --- Compare ---
@@ -92,13 +137,23 @@ fi
 
 # --- Also check mandatory live modules (lines 159-169) ---
 mandatory_live=$(
-    sed -n '/^Mandatory live modules/,/^$/p' "$AGENTS_MD" \
+    sed -n '/^Mandatory live modules/,/^Developer transparency/p' "$AGENTS_MD" \
     | grep -oP '`\K[a-z_]+(?=\.rs`)' \
-    | sort -u
+    || true
+)
+mandatory_live=$(echo "$mandatory_live" | grep -v '^$' | sort -u || true)
+mandatory_available=$(
+    {
+        echo "$code_modules"
+        echo "$top_level_modules"
+    } \
+    | grep -v '^$' \
+    | sort -u \
+    || true
 )
 
 if [[ -n "$mandatory_live" ]]; then
-    mandatory_missing=$(comm -23 <(echo "$mandatory_live") <(echo "$code_modules"))
+    mandatory_missing=$(comm -23 <(echo "$mandatory_live") <(echo "$mandatory_available"))
     if [[ -n "$mandatory_missing" ]]; then
         echo "=== CRITICAL: Mandatory live modules missing from code ==="
         while IFS= read -r mod; do
