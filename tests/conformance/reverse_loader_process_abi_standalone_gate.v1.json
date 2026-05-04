@@ -1,0 +1,732 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "reverse-loader-process-abi-standalone-gate",
+  "bead": "bd-bp8fl.3.7",
+  "owner_family_group": "fpg-reverse-loader-process-abi",
+  "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+  "generated_utc": "2026-05-04T14:22:00Z",
+  "purpose": "Bind every fpg-reverse-loader-process-abi feature-parity gap to direct-link standalone smoke rows, versioned-symbol checks, negative claim-blocking evidence, and structured logs.",
+  "inputs": {
+    "feature_parity_gap_ledger": "tests/conformance/feature_parity_gap_ledger.v1.json",
+    "feature_parity_gap_groups": "tests/conformance/feature_parity_gap_groups.v1.json",
+    "feature_parity_gap_owner_family_groups": "tests/conformance/feature_parity_gap_owner_family_groups.v1.md",
+    "standalone_link_run_smoke": "tests/conformance/standalone_link_run_smoke.v1.json",
+    "standalone_readiness_proof_matrix": "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+    "loader_dlfcn_relocation_tls_audit": "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json",
+    "math_fenv_softfp_fixture_pack": "tests/conformance/math_fenv_softfp_fixture_pack.v1.json",
+    "e2e_scenario_manifest": "tests/conformance/e2e_scenario_manifest.v1.json",
+    "hard_parts_e2e_failure_matrix": "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
+    "conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
+    "libc_version_script": "crates/frankenlibc-abi/version_scripts/libc.map"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "gap_id",
+    "api_family",
+    "symbol",
+    "replacement_level",
+    "runtime_mode",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "ld_preload_evidence_accepted": false,
+    "summary_only_claims_accepted": false,
+    "missing_positive_smoke_result": "claim_blocked",
+    "missing_negative_claim_row": "claim_blocked",
+    "missing_or_stale_standalone_artifact_result": "claim_blocked",
+    "replacement_levels_blocked_until_current": [
+      "L1",
+      "L2",
+      "L3"
+    ],
+    "rejected_evidence_kinds": [
+      "ld_preload_only",
+      "version_script_only",
+      "summary_only",
+      "stale_standalone_artifact",
+      "missing_negative_row",
+      "missing_gap_binding",
+      "host_callthrough_overclaim"
+    ]
+  },
+  "expected_gap_ids": [
+    "fp-reverse-core-0191894bf973",
+    "fp-reverse-core-c16c9c1ae7a4",
+    "fp-reverse-core-83ea12557c2f",
+    "fp-reverse-core-a764fe234295",
+    "fp-reverse-core-3ac0cb0d65a2",
+    "fp-reverse-core-757002295174",
+    "fp-reverse-core-8f05cebd7805",
+    "fp-reverse-core-b4b2f8e772cb",
+    "fp-reverse-core-44162ed23382",
+    "fp-reverse-core-a559b1461f71"
+  ],
+  "rows": [
+    {
+      "gap_id": "fp-reverse-core-0191894bf973",
+      "surface": "loader/symbol/IFUNC",
+      "api_family": "LoaderSymbol",
+      "symbol": "dlopen,dlsym,memcpy,getauxval",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.loader_symbol_bootstrap"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "dlopen",
+          "version": "GLIBC_2.34"
+        },
+        {
+          "symbol": "memcpy",
+          "version": "GLIBC_2.14"
+        },
+        {
+          "symbol": "getauxval",
+          "version": "GLIBC_2.16"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json",
+        "tests/conformance/fixtures/dlfcn_ops.json"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "owned rtld relocation remains claim_blocked until current direct-link artifact evidence exists",
+        "IFUNC hardware-capability resolver evidence is not satisfied by version-script presence alone",
+        "LD_PRELOAD smoke is explicitly rejected for L1/L2/L3 replacement promotion"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "direct-link loader-symbol bootstrap row is present and L2 promotion remains claim_blocked without a current standalone artifact",
+          "actual": "direct-link loader-symbol bootstrap row is present and L2 promotion remains claim_blocked without a current standalone artifact",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "scripts/check_standalone_link_run_smoke.sh",
+            "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "claim_blocked_until_current_standalone_artifact"
+        },
+        "hardened": {
+          "expected": "hardened direct-link loader-symbol bootstrap row is present and unsafe promotion remains claim_blocked",
+          "actual": "hardened direct-link loader-symbol bootstrap row is present and unsafe promotion remains claim_blocked",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "scripts/check_standalone_link_run_smoke.sh",
+            "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "claim_blocked_until_current_standalone_artifact"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-c16c9c1ae7a4",
+      "surface": "ABI/time64/layout bridges",
+      "api_family": "AbiLayoutTime64",
+      "symbol": "__libc_start_main,time_t,getauxval",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.loader_symbol_bootstrap"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "__libc_start_main",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "getauxval",
+          "version": "GLIBC_2.16"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/conformance/replacement_levels.json"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "time64 bridge invariants remain blocked until layout and direct-link startup evidence are current",
+        "process-startup layout claims must cite direct-link evidence, not support taxonomy rows",
+        "L2 and L3 replacement readiness remain blocked by the standalone readiness proof matrix"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "time64/layout bridge smoke is bound to loader_symbol_bootstrap and readiness proof blockers",
+          "actual": "time64/layout bridge smoke is bound to loader_symbol_bootstrap and readiness proof blockers",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+            "tests/conformance/replacement_levels.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_time64_layout_bridge_evidence_missing"
+        },
+        "hardened": {
+          "expected": "hardened time64/layout bridge promotion remains blocked by the same direct-link artifact requirement",
+          "actual": "hardened time64/layout bridge promotion remains blocked by the same direct-link artifact requirement",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+            "tests/conformance/replacement_levels.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_time64_layout_bridge_evidence_missing"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-83ea12557c2f",
+      "surface": "VM transitions",
+      "api_family": "VirtualMemory",
+      "symbol": "mmap,munmap,mprotect",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.vm_syscall_ipc"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "mmap",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "munmap",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "mprotect",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/fixtures/loader_edges.json",
+        "crates/frankenlibc-abi/src/mmap_abi.rs",
+        "crates/frankenlibc-core/src/mmap/mod.rs"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "unsafe protection trajectories remain claim_blocked until direct-link VM smoke is current",
+        "mmap support rows do not satisfy standalone replacement claims without candidate binary execution",
+        "hardened repair policies must not hide failed VM transition evidence"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "vm_syscall_ipc smoke binds mmap and munmap positive evidence while L2 promotion remains blocked without current artifact",
+          "actual": "vm_syscall_ipc smoke binds mmap and munmap positive evidence while L2 promotion remains blocked without current artifact",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/fixtures/loader_edges.json",
+            "crates/frankenlibc-abi/src/mmap_abi.rs",
+            "crates/frankenlibc-core/src/mmap/mod.rs"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_vm_transition_evidence_missing"
+        },
+        "hardened": {
+          "expected": "hardened vm transition promotion remains blocked unless direct-link VM smoke and negative claim row both pass",
+          "actual": "hardened vm transition promotion remains blocked unless direct-link VM smoke and negative claim row both pass",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/fixtures/loader_edges.json",
+            "crates/frankenlibc-abi/src/mmap_abi.rs",
+            "crates/frankenlibc-core/src/mmap/mod.rs"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_vm_transition_evidence_missing"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-a764fe234295",
+      "surface": "process bootstrap (`csu`, TLS init, auxv, secure mode)",
+      "api_family": "ProcessBootstrap",
+      "symbol": "__libc_start_main,getauxval,AT_SECURE",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.loader_symbol_bootstrap"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "__libc_start_main",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "getauxval",
+          "version": "GLIBC_2.16"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+        "tests/conformance/e2e_scenario_manifest.v1.json"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "secure-mode policy automaton is not promoted from static auxv checks alone",
+        "csu and TLS init ordering remain blocked until direct-link startup artifacts are current",
+        "host-interpose startup evidence is rejected for standalone process-bootstrap claims"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "process bootstrap smoke binds auxv and startup symbol evidence while secure-mode promotion remains blocked",
+          "actual": "process bootstrap smoke binds auxv and startup symbol evidence while secure-mode promotion remains blocked",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+            "tests/conformance/e2e_scenario_manifest.v1.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_process_bootstrap_evidence_missing"
+        },
+        "hardened": {
+          "expected": "hardened process bootstrap smoke is present and claim remains blocked until current startup artifact exists",
+          "actual": "hardened process bootstrap smoke is present and claim remains blocked until current startup artifact exists",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+            "tests/conformance/e2e_scenario_manifest.v1.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_process_bootstrap_evidence_missing"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-3ac0cb0d65a2",
+      "surface": "cross-ISA syscall glue (`sysdeps/*`)",
+      "api_family": "SyscallGlue",
+      "symbol": "syscall,getpid,clone,execve",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.vm_syscall_ipc"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "syscall",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "clone",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "execve",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/fixtures/process_ops.json",
+        "tests/conformance/fixtures/spawn_exec_ops.json",
+        "crates/frankenlibc-core/src/syscall/mod.rs",
+        "crates/frankenlibc-abi/src/process_abi.rs"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "cross-ISA clone tail-argument obligations require per-ISA evidence before promotion",
+        "syscall support rows are not enough without direct-link candidate execution",
+        "exec-family standalone claims remain blocked unless process fixture and direct-link smoke agree"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "vm_syscall_ipc smoke binds raw syscall getpid evidence and leaves cross-ISA obligations blocked",
+          "actual": "vm_syscall_ipc smoke binds raw syscall getpid evidence and leaves cross-ISA obligations blocked",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/fixtures/process_ops.json",
+            "tests/conformance/fixtures/spawn_exec_ops.json",
+            "crates/frankenlibc-core/src/syscall/mod.rs",
+            "crates/frankenlibc-abi/src/process_abi.rs"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_cross_isa_syscall_evidence_missing"
+        },
+        "hardened": {
+          "expected": "hardened syscall glue promotion remains blocked until current per-ISA direct-link evidence exists",
+          "actual": "hardened syscall glue promotion remains blocked until current per-ISA direct-link evidence exists",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/fixtures/process_ops.json",
+            "tests/conformance/fixtures/spawn_exec_ops.json",
+            "crates/frankenlibc-core/src/syscall/mod.rs",
+            "crates/frankenlibc-abi/src/process_abi.rs"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_cross_isa_syscall_evidence_missing"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-757002295174",
+      "surface": "System V IPC (`sysvipc`)",
+      "api_family": "SysvIpc",
+      "symbol": "ftok,semget,semop",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.vm_syscall_ipc"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "ftok",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "semget",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "semop",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/fixtures/sysv_ipc_ops.json",
+        "crates/frankenlibc-harness/tests/sysv_ipc_ops_conformance_test.rs"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "semaphore lifecycle and deadlock-cut certificates remain blocked until executable IPC cases are current",
+        "ftok key-generation smoke is positive evidence but not full SysV IPC lifecycle parity",
+        "capability drift claims remain blocked by the negative loader/process obligation row"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "vm_syscall_ipc binds ftok smoke and sysv IPC fixtures while semaphore lifecycle promotion remains blocked",
+          "actual": "vm_syscall_ipc binds ftok smoke and sysv IPC fixtures while semaphore lifecycle promotion remains blocked",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/fixtures/sysv_ipc_ops.json",
+            "crates/frankenlibc-harness/tests/sysv_ipc_ops_conformance_test.rs",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_sysv_ipc_lifecycle_evidence_missing"
+        },
+        "hardened": {
+          "expected": "hardened SysV IPC promotion remains blocked until direct-link IPC lifecycle evidence is current",
+          "actual": "hardened SysV IPC promotion remains blocked until direct-link IPC lifecycle evidence is current",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/fixtures/sysv_ipc_ops.json",
+            "crates/frankenlibc-harness/tests/sysv_ipc_ops_conformance_test.rs",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_sysv_ipc_lifecycle_evidence_missing"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-8f05cebd7805",
+      "surface": "diagnostics/unwinding (`debug`, backtrace)",
+      "api_family": "DiagnosticsUnwinding",
+      "symbol": "backtrace,backtrace_symbols,backtrace_symbols_fd",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.diagnostics_session"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "backtrace",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "backtrace_symbols",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "backtrace_symbols_fd",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/fixtures/backtrace_ops.json",
+        "tests/conformance/crash_bundle_spec.json",
+        "crates/frankenlibc-harness/tests/backtrace_ops_conformance_test.rs"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "safe frame-walk fallback matrix remains blocked until standalone diagnostics smoke is current",
+        "crash bundle backtrace presence is not enough without direct-link candidate execution",
+        "corrupted-stack hardened cases remain explicit negative evidence until executable replay exists"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "diagnostics_session smoke binds backtrace positive evidence and keeps unsafe frame-walk promotion blocked",
+          "actual": "diagnostics_session smoke binds backtrace positive evidence and keeps unsafe frame-walk promotion blocked",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/fixtures/backtrace_ops.json",
+            "tests/conformance/crash_bundle_spec.json",
+            "crates/frankenlibc-harness/tests/backtrace_ops_conformance_test.rs"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_diagnostics_unwinding_evidence_missing"
+        },
+        "hardened": {
+          "expected": "hardened diagnostics promotion remains blocked until corrupted-stack and direct-link evidence are current",
+          "actual": "hardened diagnostics promotion remains blocked until corrupted-stack and direct-link evidence are current",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/fixtures/backtrace_ops.json",
+            "tests/conformance/crash_bundle_spec.json",
+            "crates/frankenlibc-harness/tests/backtrace_ops_conformance_test.rs"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_diagnostics_unwinding_evidence_missing"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-b4b2f8e772cb",
+      "surface": "session accounting (`login`, `utmp/wtmp`)",
+      "api_family": "SessionAccounting",
+      "symbol": "getutxent,setutxent,endutxent,utmpxname",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.diagnostics_session"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "getutxent",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "setutxent",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "endutxent",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/e2e_scenario_manifest.v1.json",
+        "tests/conformance/hard_parts_e2e_failure_matrix.v1.json"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "mutable utmp/wtmp ledger writes remain blocked until deterministic session-ledger transitions are executable",
+        "read-path getutxent smoke is positive evidence but not full accounting parity",
+        "tamper and replay ambiguity remains a claim_blocked condition for L2/L3"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "diagnostics_session smoke binds utmpx read-path evidence while session-ledger mutation remains blocked",
+          "actual": "diagnostics_session smoke binds utmpx read-path evidence while session-ledger mutation remains blocked",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/e2e_scenario_manifest.v1.json",
+            "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_session_accounting_evidence_missing"
+        },
+        "hardened": {
+          "expected": "hardened session accounting promotion remains blocked until deterministic session-ledger evidence is current",
+          "actual": "hardened session accounting promotion remains blocked until deterministic session-ledger evidence is current",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/e2e_scenario_manifest.v1.json",
+            "tests/conformance/hard_parts_e2e_failure_matrix.v1.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_session_accounting_evidence_missing"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-44162ed23382",
+      "surface": "profiling hooks (`gmon`, sampling/probe paths)",
+      "api_family": "ProfilingHooks",
+      "symbol": "profil",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.profiling_fenv"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "profil",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/symbol_latency_baseline.v1.json",
+        "tests/conformance/standalone_readiness_proof_matrix.v1.json"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "probe-induced benchmark distortion remains blocked until deterministic debias weights are executable",
+        "profil disable-path smoke is positive evidence but not full gmon output parity",
+        "profiling L2/L3 claims require budget and standalone artifact freshness"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "profiling_fenv smoke binds profil disable-path evidence and keeps gmon parity blocked",
+          "actual": "profiling_fenv smoke binds profil disable-path evidence and keeps gmon parity blocked",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/symbol_latency_baseline.v1.json",
+            "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_profiling_hooks_evidence_missing"
+        },
+        "hardened": {
+          "expected": "hardened profiling promotion remains blocked until standalone artifact and benchmark distortion evidence are current",
+          "actual": "hardened profiling promotion remains blocked until standalone artifact and benchmark distortion evidence are current",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/symbol_latency_baseline.v1.json",
+            "tests/conformance/standalone_readiness_proof_matrix.v1.json",
+            "crates/frankenlibc-abi/version_scripts/libc.map"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_profiling_hooks_evidence_missing"
+        }
+      }
+    },
+    {
+      "gap_id": "fp-reverse-core-a559b1461f71",
+      "surface": "floating-point edges (`soft-fp`, `fenv` exceptional paths)",
+      "api_family": "FenvSoftFp",
+      "symbol": "feclearexcept,feraiseexcept,fetestexcept",
+      "source_status": "PLANNED",
+      "replacement_level": "L2",
+      "claim_replacement_levels": [
+        "L1",
+        "L2",
+        "L3"
+      ],
+      "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
+      "positive_smoke_ids": [
+        "standalone.profiling_fenv"
+      ],
+      "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
+      "versioned_symbol_requirements": [
+        {
+          "symbol": "feclearexcept",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "feraiseexcept",
+          "version": "GLIBC_2.2.5"
+        },
+        {
+          "symbol": "fetestexcept",
+          "version": "GLIBC_2.2.5"
+        }
+      ],
+      "semantic_or_fixture_refs": [
+        "tests/conformance/math_fenv_softfp_fixture_pack.v1.json",
+        "crates/frankenlibc-abi/src/fenv_abi.rs",
+        "crates/frankenlibc-harness/tests/math_fenv_softfp_fixture_pack_test.rs"
+      ],
+      "named_unsupported_or_blocked_cases": [
+        "denormal and NaN payload regime drift remains blocked until fenv fixtures and standalone smoke agree",
+        "soft-fp arch-sensitive paths remain blocked without per-ISA evidence",
+        "hardened numeric fallback kernels do not promote L2/L3 without direct-link fenv replay"
+      ],
+      "runtime_evidence": {
+        "strict": {
+          "expected": "profiling_fenv smoke binds FE_DIVBYZERO round-trip evidence and math fenv fixture pack remains the detailed oracle",
+          "actual": "profiling_fenv smoke binds FE_DIVBYZERO round-trip evidence and math fenv fixture pack remains the detailed oracle",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/math_fenv_softfp_fixture_pack.v1.json",
+            "crates/frankenlibc-abi/src/fenv_abi.rs",
+            "crates/frankenlibc-harness/tests/math_fenv_softfp_fixture_pack_test.rs"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_fenv_softfp_evidence_missing"
+        },
+        "hardened": {
+          "expected": "hardened fenv promotion remains blocked until standalone fenv replay and fixture pack evidence are current",
+          "actual": "hardened fenv promotion remains blocked until standalone fenv replay and fixture pack evidence are current",
+          "artifact_refs": [
+            "tests/conformance/standalone_link_run_smoke.v1.json",
+            "tests/conformance/math_fenv_softfp_fixture_pack.v1.json",
+            "crates/frankenlibc-abi/src/fenv_abi.rs",
+            "crates/frankenlibc-harness/tests/math_fenv_softfp_fixture_pack_test.rs"
+          ],
+          "source_commit": "ede44d6217f8422bcbb7bdd8d260a2aa6c4a1151",
+          "failure_signature": "standalone_fenv_softfp_evidence_missing"
+        }
+      }
+    }
+  ]
+}
