@@ -1,0 +1,233 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.7.3",
+  "generated_at_utc": "2026-05-04T12:18:00Z",
+  "source_commit": "618405fa5310aa9694f5417cc887158d9c17004e",
+  "trace_id": "bd-bp8fl-7-3-workspace-validation-dashboard-v1",
+  "purpose": "Record current workspace validation state without hiding unrelated drift or stale gate artifacts.",
+  "policy": {
+    "dashboard_rule": "A workspace gate is green only when every broad gate is pass and no failure ledger rows remain.",
+    "unrelated_failure_rule": "Unrelated failures must name an owner bead or next safe action instead of being normalized as pass.",
+    "stale_report_rule": "A stale quarantine or stale captured command is a dashboard failure until refreshed.",
+    "changed_surface_rule": "Changed files still need focused rustfmt, diff, UBS, test, and clippy evidence even when workspace gates are degraded."
+  },
+  "required_record_fields": [
+    "trace_id",
+    "bead_id",
+    "command",
+    "exit_status",
+    "validation_scope",
+    "owner",
+    "expected",
+    "actual",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "required_scopes": [
+    "workspace-fmt",
+    "workspace-check",
+    "workspace-clippy",
+    "workspace-test",
+    "changed-surface-ubs",
+    "br-bv-health"
+  ],
+  "dashboard_records": [
+    {
+      "id": "workspace_fmt_quarantine",
+      "status": "fail",
+      "command": "bash scripts/check_workspace_rustfmt_gate_health.sh",
+      "exit_status": 1,
+      "validation_scope": "workspace-fmt",
+      "owner": "bd-bp8fl.7.1",
+      "expected": "cargo fmt --check drift set matches tests/conformance/workspace_rustfmt_gate_health.v1.json",
+      "actual": "1 unquarantined rustfmt drift file and 14 stale quarantine entries",
+      "artifact_refs": [
+        "tests/conformance/workspace_rustfmt_gate_health.v1.json",
+        "target/conformance/workspace_rustfmt_gate_health.report.json",
+        "target/conformance/workspace_rustfmt_gate_health.log.jsonl"
+      ],
+      "source_commit": "618405fa5310aa9694f5417cc887158d9c17004e",
+      "target_dir": "target/conformance",
+      "failure_signature": "rustfmt_drift_set_mismatch"
+    },
+    {
+      "id": "workspace_check",
+      "status": "pass",
+      "command": "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bjask-workspace-check RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo check --workspace --all-targets",
+      "exit_status": 0,
+      "validation_scope": "workspace-check",
+      "owner": "bd-bjask",
+      "expected": "workspace check passes",
+      "actual": "pass",
+      "artifact_refs": [
+        "agent-mail:bd-bjask:25304"
+      ],
+      "source_commit": "5845c3d16bcf986a30710b1cc68a39c0ba2f8dbb",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-bjask-workspace-check",
+      "failure_signature": "ok"
+    },
+    {
+      "id": "workspace_clippy",
+      "status": "pass",
+      "command": "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bjask-workspace-clippy RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo clippy --workspace --all-targets -- -D warnings",
+      "exit_status": 0,
+      "validation_scope": "workspace-clippy",
+      "owner": "bd-bp8fl.7.2",
+      "expected": "no clippy error lines",
+      "actual": "pass; only frankenlibc-core SMT-solver build warning emitted",
+      "artifact_refs": [
+        "agent-mail:bd-bp8fl.7.2:25306"
+      ],
+      "source_commit": "5845c3d16bcf986a30710b1cc68a39c0ba2f8dbb",
+      "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-bjask-workspace-clippy",
+      "failure_signature": "ok"
+    },
+    {
+      "id": "workspace_test_sweep",
+      "status": "not_run",
+      "command": "cargo test --workspace --all-targets",
+      "exit_status": null,
+      "validation_scope": "workspace-test",
+      "owner": "bd-bp8fl.7.3",
+      "expected": "workspace test sweep status recorded",
+      "actual": "not run in this dashboard slice; targeted tests are recorded separately",
+      "artifact_refs": [
+        "tests/conformance/workspace_validation_dashboard.v1.json"
+      ],
+      "source_commit": "618405fa5310aa9694f5417cc887158d9c17004e",
+      "target_dir": "not-run",
+      "failure_signature": "workspace_test_sweep_not_refreshed"
+    },
+    {
+      "id": "changed_surface_ubs",
+      "status": "pass",
+      "command": "ubs crates/frankenlibc-abi/tests/conformance_diff_sym_table.rs && ubs crates/frankenlibc-abi/tests/conformance_diff_aligned_alloc.rs",
+      "exit_status": 0,
+      "validation_scope": "changed-surface-ubs",
+      "owner": "PearlForest",
+      "expected": "changed Rust test surfaces have no UBS critical findings and no clippy warnings",
+      "actual": "pass; existing test-hygiene/perf warning inventory only",
+      "artifact_refs": [
+        "agent-mail:bd-kwg77:25302",
+        "agent-mail:bd-bjask:25304"
+      ],
+      "source_commit": "5845c3d16bcf986a30710b1cc68a39c0ba2f8dbb",
+      "target_dir": "n/a",
+      "failure_signature": "ok"
+    },
+    {
+      "id": "br_bv_health",
+      "status": "pass",
+      "command": "br ready --no-db --json && br dep cycles --no-db --json",
+      "exit_status": 0,
+      "validation_scope": "br-bv-health",
+      "owner": "bd-bp8fl.7.3",
+      "expected": "ready queue and dependency graph are inspectable via no-db source of truth",
+      "actual": "bd-bp8fl.7.3 became ready after bd-bp8fl.7.2 closeout; dep cycles count is 0",
+      "artifact_refs": [
+        ".beads/issues.jsonl"
+      ],
+      "source_commit": "618405fa5310aa9694f5417cc887158d9c17004e",
+      "target_dir": "n/a",
+      "failure_signature": "ok"
+    }
+  ],
+  "failure_ledger": [
+    {
+      "failure_id": "fmt-unquarantined-runtime-evidence-replay-test",
+      "classification": "unrelated_failure",
+      "severity": "warning",
+      "owner": "bd-bp8fl.7.1",
+      "validation_scope": "workspace-fmt",
+      "file_path": "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_test.rs",
+      "expected": "not present in current rustfmt drift outside quarantine",
+      "actual": "present as unquarantined rustfmt drift",
+      "next_safe_action": "refresh the rustfmt quarantine artifact or format this file in a dedicated fmt bead",
+      "artifact_refs": [
+        "target/conformance/workspace_rustfmt_gate_health.report.json"
+      ],
+      "failure_signature": "unquarantined_rustfmt_drift"
+    },
+    {
+      "failure_id": "fmt-stale-quarantine-after-clippy-cleanup",
+      "classification": "stale_report",
+      "severity": "warning",
+      "owner": "bd-bp8fl.7.1",
+      "validation_scope": "workspace-fmt",
+      "file_count": 14,
+      "files": [
+        "crates/frankenlibc-abi/tests/conformance_diff_aligned_alloc.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_bsd_signal.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_dprintf.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_keyctl.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_mbrtowc.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_priority.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_strerror_np.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_sym_table.rs",
+        "crates/frankenlibc-abi/tests/conformance_diff_wcrtomb.rs",
+        "crates/frankenlibc-abi/tests/metamorphic_alphasort_versionsort.rs",
+        "crates/frankenlibc-abi/tests/metamorphic_ffs.rs",
+        "crates/frankenlibc-abi/tests/metamorphic_inet_aton_ntoa.rs",
+        "crates/frankenlibc-abi/tests/metamorphic_loc_codec.rs",
+        "crates/frankenlibc-abi/tests/metamorphic_strerror.rs"
+      ],
+      "expected": "quarantine entries still appear in current rustfmt drift",
+      "actual": "entries no longer appear after focused formatting slices",
+      "next_safe_action": "refresh tests/conformance/workspace_rustfmt_gate_health.v1.json in a dedicated rustfmt-quarantine update",
+      "artifact_refs": [
+        "tests/conformance/workspace_rustfmt_gate_health.v1.json",
+        "target/conformance/workspace_rustfmt_gate_health.report.json"
+      ],
+      "failure_signature": "stale_quarantine_entry"
+    },
+    {
+      "failure_id": "workspace-test-sweep-not-refreshed",
+      "classification": "not_run",
+      "severity": "info",
+      "owner": "bd-bp8fl.7.3",
+      "validation_scope": "workspace-test",
+      "expected": "workspace test status is current",
+      "actual": "full workspace test sweep was not run in this slice",
+      "next_safe_action": "run a dedicated rch workspace test sweep or create a focused test-sweep evidence bead",
+      "artifact_refs": [
+        "tests/conformance/workspace_validation_dashboard.v1.json"
+      ],
+      "failure_signature": "workspace_test_sweep_not_refreshed"
+    }
+  ],
+  "fixture_replay_scenarios": [
+    {
+      "scenario_id": "clean_all_gates",
+      "classification": "clean",
+      "expected_overall_status": "pass",
+      "expected_next_safe_action": "continue_ready_beads"
+    },
+    {
+      "scenario_id": "unrelated_fmt_failure",
+      "classification": "unrelated_failure",
+      "expected_overall_status": "degraded",
+      "expected_next_safe_action": "continue_unrelated_beads_with_targeted_validation"
+    },
+    {
+      "scenario_id": "bead_owned_clippy_failure",
+      "classification": "bead_owned_failure",
+      "expected_overall_status": "fail",
+      "expected_next_safe_action": "fix_touched_surface_before_closure"
+    },
+    {
+      "scenario_id": "stale_rustfmt_quarantine",
+      "classification": "stale_report",
+      "expected_overall_status": "fail",
+      "expected_next_safe_action": "refresh_gate_artifact_before_green_claim"
+    },
+    {
+      "scenario_id": "command_timeout",
+      "classification": "timeout",
+      "expected_overall_status": "inconclusive",
+      "expected_next_safe_action": "retry_with_tighter_scope_or_record_tool_failure"
+    }
+  ],
+  "next_safe_action": "Refresh the rustfmt quarantine artifact, then build the bead-closure checklist for changed-surface validation."
+}
