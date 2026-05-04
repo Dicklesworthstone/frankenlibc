@@ -1,0 +1,302 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "release-readme-example-workload-gate",
+  "bead": "bd-bp8fl.10.4",
+  "generated_utc": "2026-05-04T02:12:00Z",
+  "purpose": "Gate README and release-facing example claims on current user-workload evidence, support taxonomy rows, semantic-overlay caveats, smoke status, and compatibility reports.",
+  "inputs": {
+    "readme": "README.md",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "user_workload_acceptance_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "support_matrix": "support_matrix.json",
+    "semantic_overlay": "tests/conformance/support_semantic_overlay.v1.json",
+    "smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "compatibility_report": "tests/conformance/claim_reconciliation_report.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "claim_id",
+    "doc_surface",
+    "workload_id",
+    "replacement_level",
+    "runtime_mode",
+    "expected_decision",
+    "actual_decision",
+    "evidence_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_supported_example_decision": "block_until_workload_evidence_current",
+    "supported_claim_requires_current_or_green_evidence": true,
+    "unsupported_future_level_examples_must_be_explicit_known_limitations": true,
+    "blocked_signatures": [
+      "release_example_missing_workload_row",
+      "release_example_missing_doc_token",
+      "release_example_stale_smoke_evidence",
+      "release_example_unsupported_replacement_level",
+      "release_example_missing_support_matrix_row",
+      "release_example_missing_semantic_overlay_row",
+      "release_example_missing_compatibility_report"
+    ]
+  },
+  "ci_integration": {
+    "ci_file": "scripts/ci.sh",
+    "gate_script": "scripts/check_release_readme_example_workload_gate.sh",
+    "suite": "extended-gates",
+    "required": true
+  },
+  "claim_mappings": [
+    {
+      "claim_id": "readme-quickstart-ld-preload-echo",
+      "doc_surface": "README.md",
+      "doc_claim_kind": "quickstart_example",
+      "required_tokens": [
+        "LD_PRELOAD=\"$PWD/target/release/libfrankenlibc_abi.so\" /bin/echo \"hello from FrankenLibC\"",
+        "Current source of truth",
+        "Declared replacement level claim"
+      ],
+      "workload_id": "uwm-shell-coreutils",
+      "replacement_level": "L0",
+      "runtime_modes": [
+        "strict"
+      ],
+      "support_matrix_symbols": [
+        "write",
+        "strlen",
+        "close"
+      ],
+      "semantic_overlay_ids": [
+        "sem-stdio-vtable-helpers"
+      ],
+      "smoke_expectation": {
+        "overall_failed": false,
+        "required_mode_status": {
+          "strict": "green"
+        }
+      },
+      "freshness_state": "current",
+      "compatibility_report": "tests/conformance/claim_reconciliation_report.v1.json#status=pass",
+      "evidence_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/claim_reconciliation_report.v1.json",
+        "support_matrix.json",
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "advertises_support": true,
+      "expected_decision": "allow",
+      "expected_failure_signature": "none"
+    },
+    {
+      "claim_id": "readme-hardened-ld-preload-echo",
+      "doc_surface": "README.md",
+      "doc_claim_kind": "hardened_example",
+      "required_tokens": [
+        "FRANKENLIBC_MODE=hardened \\",
+        "LD_PRELOAD=\"$PWD/target/release/libfrankenlibc_abi.so\" /bin/echo hardened",
+        "Hardened mode exists now"
+      ],
+      "workload_id": "uwm-shell-coreutils",
+      "replacement_level": "L0",
+      "runtime_modes": [
+        "hardened"
+      ],
+      "support_matrix_symbols": [
+        "malloc",
+        "free",
+        "strlen",
+        "write"
+      ],
+      "semantic_overlay_ids": [
+        "sem-malloc-debug-hooks",
+        "sem-stdio-vtable-helpers"
+      ],
+      "smoke_expectation": {
+        "overall_failed": false,
+        "required_mode_status": {
+          "hardened": "green"
+        }
+      },
+      "freshness_state": "current",
+      "compatibility_report": "tests/conformance/claim_reconciliation_report.v1.json#status=pass",
+      "evidence_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/claim_reconciliation_report.v1.json",
+        "support_matrix.json",
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "advertises_support": true,
+      "expected_decision": "allow",
+      "expected_failure_signature": "none"
+    },
+    {
+      "claim_id": "readme-coreutils-smoke-battery",
+      "doc_surface": "README.md",
+      "doc_claim_kind": "smoke_matrix_example",
+      "required_tokens": [
+        "| Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/usr/bin/wc` |",
+        "The checked curated preload smoke battery is green in both strict and hardened modes"
+      ],
+      "workload_id": "uwm-shell-coreutils",
+      "replacement_level": "L0",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "support_matrix_symbols": [
+        "open",
+        "read",
+        "write",
+        "close"
+      ],
+      "semantic_overlay_ids": [
+        "sem-stdio-vtable-helpers",
+        "sem-argp-help-family"
+      ],
+      "smoke_expectation": {
+        "overall_failed": false,
+        "required_mode_status": {
+          "strict": "green",
+          "hardened": "green"
+        }
+      },
+      "freshness_state": "current",
+      "compatibility_report": "tests/conformance/claim_reconciliation_report.v1.json#status=pass",
+      "evidence_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/claim_reconciliation_report.v1.json",
+        "support_matrix.json",
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "advertises_support": true,
+      "expected_decision": "allow",
+      "expected_failure_signature": "none"
+    },
+    {
+      "claim_id": "readme-dynamic-runtime-smoke-battery",
+      "doc_surface": "README.md",
+      "doc_claim_kind": "smoke_matrix_example",
+      "required_tokens": [
+        "| Dynamic runtimes | `python3 -c 'print(1)'`, `busybox uname -a` |",
+        "Dynamic runtimes"
+      ],
+      "workload_id": "uwm-language-runtime",
+      "replacement_level": "L0",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "support_matrix_symbols": [
+        "dlopen",
+        "pthread_create",
+        "getaddrinfo",
+        "setlocale"
+      ],
+      "semantic_overlay_ids": [
+        "sem-pthread-cancel-private",
+        "sem-nss-configure-lookup"
+      ],
+      "smoke_expectation": {
+        "overall_failed": false,
+        "required_mode_status": {
+          "strict": "green",
+          "hardened": "green"
+        }
+      },
+      "freshness_state": "current",
+      "compatibility_report": "tests/conformance/claim_reconciliation_report.v1.json#status=pass",
+      "evidence_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/claim_reconciliation_report.v1.json",
+        "support_matrix.json",
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "advertises_support": true,
+      "expected_decision": "allow",
+      "expected_failure_signature": "none"
+    },
+    {
+      "claim_id": "readme-standalone-replacement-known-limitation",
+      "doc_surface": "README.md",
+      "doc_claim_kind": "known_limitation",
+      "required_tokens": [
+        "Full standalone replacement remains planned",
+        "Host glibc is still part of the deployment story",
+        "Full standalone replacement today"
+      ],
+      "workload_id": "uwm-startup-linking",
+      "replacement_level": "L2",
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "support_matrix_symbols": [
+        "__libc_start_main",
+        "execve",
+        "waitpid"
+      ],
+      "semantic_overlay_ids": [
+        "sem-elf-relocation-support",
+        "sem-nss-configure-lookup"
+      ],
+      "smoke_expectation": {
+        "overall_failed": false,
+        "required_mode_status": {
+          "strict": "green",
+          "hardened": "green"
+        }
+      },
+      "freshness_state": "known_limitation",
+      "compatibility_report": "tests/conformance/claim_reconciliation_report.v1.json#status=pass",
+      "known_limitation_token": "Full standalone replacement remains planned",
+      "evidence_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/claim_reconciliation_report.v1.json",
+        "support_matrix.json",
+        "tests/conformance/support_semantic_overlay.v1.json"
+      ],
+      "advertises_support": false,
+      "expected_decision": "allow_known_limitation",
+      "expected_failure_signature": "none"
+    }
+  ],
+  "negative_scenarios": [
+    {
+      "scenario_id": "missing-workload-row-blocks-readme-example",
+      "mutation": "workload_id=uwm-missing-row",
+      "expected_failure_signature": "release_example_missing_workload_row"
+    },
+    {
+      "scenario_id": "stale-smoke-blocks-supported-example",
+      "mutation": "freshness_state=stale",
+      "expected_failure_signature": "release_example_stale_smoke_evidence"
+    },
+    {
+      "scenario_id": "unsupported-l2-support-claim-blocked",
+      "mutation": "replacement_level=L2 and advertises_support=true",
+      "expected_failure_signature": "release_example_unsupported_replacement_level"
+    },
+    {
+      "scenario_id": "missing-semantic-overlay-row-blocks-example",
+      "mutation": "semantic_overlay_ids includes sem-missing-row",
+      "expected_failure_signature": "release_example_missing_semantic_overlay_row"
+    }
+  ],
+  "summary": {
+    "claim_mapping_count": 5,
+    "allowed_supported_count": 4,
+    "allowed_known_limitation_count": 1,
+    "blocked_scenario_count": 4
+  }
+}
