@@ -48,14 +48,14 @@ fn metamorphic_wctomb_then_mbtowc_round_trips_ascii() {
 
 #[test]
 fn metamorphic_mblen_zero_n_returns_minus_one() {
-    let buf = [b'X'];
+    let buf = b"X";
     let v = unsafe { fl::mblen(buf.as_ptr(), 0) };
     assert_eq!(v, -1, "mblen(_, 0) must be -1 per POSIX");
 }
 
 #[test]
 fn metamorphic_mbtowc_zero_n_returns_minus_one() {
-    let buf = [b'X'];
+    let buf = b"X";
     let mut wc: u32 = 0xff_ffff;
     let v = unsafe { fl::mbtowc(&mut wc, buf.as_ptr(), 0) };
     assert_eq!(v, -1, "mbtowc(_, _, 0) must be -1 per POSIX");
@@ -97,7 +97,7 @@ fn metamorphic_mbtowc_pwc_null_only_validates() {
     // Passing NULL for pwc is valid and means "validate but don't
     // write the wide char". Length must still match the consumed
     // bytes.
-    let buf = [b'A'];
+    let buf = b"A";
     let n = unsafe { fl::mbtowc(std::ptr::null_mut(), buf.as_ptr(), 1) };
     assert_eq!(n, 1, "mbtowc with NULL pwc should still validate");
 }
@@ -106,8 +106,7 @@ fn metamorphic_mbtowc_pwc_null_only_validates() {
 fn metamorphic_mblen_distinct_chars_distinct_outputs_nonzero_lengths() {
     // For 5 ASCII bytes, mblen returns 1 for all; just verify
     // they don't collide in some weird way.
-    let chars = [b'a', b'B', b'1', b'!', b'~'];
-    for &c in &chars {
+    for &c in b"aB1!~" {
         let buf = [c];
         let n = unsafe { fl::mblen(buf.as_ptr(), 1) };
         assert_eq!(n, 1, "mblen({c}) != 1");
