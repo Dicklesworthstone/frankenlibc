@@ -83,12 +83,20 @@ fn metamorphic_htonl_ntohl_round_trip_identity() {
     // For every random sample, htonl(ntohl(x)) must equal x and
     // vice versa.
     let samples: &[u32] = &[
-        0, 1, 0xff, 0xff00, 0xff_0000, 0xff00_0000,
-        0x12345678, 0xdeadbeef, 0xcafebabe, u32::MAX,
+        0,
+        1,
+        0xff,
+        0xff00,
+        0xff_0000,
+        0xff00_0000,
+        0x12345678,
+        0xdeadbeef,
+        0xcafebabe,
+        u32::MAX,
     ];
     for &v in samples {
-        let r1 = unsafe { fl::htonl(unsafe { fl::ntohl(v) }) };
-        let r2 = unsafe { fl::ntohl(unsafe { fl::htonl(v) }) };
+        let r1 = unsafe { fl::htonl(fl::ntohl(v)) };
+        let r2 = unsafe { fl::ntohl(fl::htonl(v)) };
         assert_eq!(r1, v, "htonl ∘ ntohl({v:#x})");
         assert_eq!(r2, v, "ntohl ∘ htonl({v:#x})");
     }
@@ -98,8 +106,8 @@ fn metamorphic_htonl_ntohl_round_trip_identity() {
 fn metamorphic_htons_ntohs_round_trip_identity() {
     let samples: &[u16] = &[0, 1, 0xff, 0xff00, 0x1234, 0xabcd, u16::MAX];
     for &v in samples {
-        let r1 = unsafe { fl::htons(unsafe { fl::ntohs(v) }) };
-        let r2 = unsafe { fl::ntohs(unsafe { fl::htons(v) }) };
+        let r1 = unsafe { fl::htons(fl::ntohs(v)) };
+        let r2 = unsafe { fl::ntohs(fl::htons(v)) };
         assert_eq!(r1, v, "htons ∘ ntohs({v:#x})");
         assert_eq!(r2, v, "ntohs ∘ htons({v:#x})");
     }
