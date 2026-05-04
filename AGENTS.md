@@ -1127,6 +1127,117 @@ br sync --flush-only  # Export to JSONL (NO git operations)
 4. **Complete**: Use `br close <id>`
 5. **Sync**: Run `br sync --flush-only` then manually commit
 
+### One-Bead Handoff Checklist
+
+Use this checklist before claiming any `bd-bp8fl` implementation bead. It is intentionally short and operational: the next agent should know the next safe action, the evidence target, and the exact validation lane without inventing process.
+
+1. **Onboard once**: Read `/dp/AGENTS.md`, this `AGENTS.md`, and `README.md`. Do not keep reading architecture docs unless the chosen bead points at a specific file.
+2. **Read the tracker from JSONL first when instructed**:
+   ```bash
+   br --no-db ready --json
+   br --no-db list --status in_progress --json
+   br --no-db show <id> --json
+   ```
+   If ready is empty, run:
+   ```bash
+   br --no-db list --status open --json
+   ```
+3. **Check graph health without blocking**:
+   ```bash
+   bv --robot-triage
+   bv --robot-insights
+   br --no-db dep cycles --json
+   ```
+   Record timeouts or disagreement as tracker state, not code failure.
+4. **Inspect dependencies and parent state**: `br --no-db show <id> --json` must show closed blockers or a deliberate no-db/stale-tracker reason for proceeding. Parent epics can stay open.
+5. **Claim one bead**:
+   ```bash
+   br --no-db update <id> --status=in_progress
+   ```
+   Work on that bead only until it is closed or a real blocker is surfaced.
+6. **Reserve the exact edit surface if Agent Mail works**: reserve only the files or globs you will edit, with `reason=<id>`. If Agent Mail is unavailable, keep moving and note the tool failure in closure.
+7. **Define the work surface before editing**: list touched files, expected generated artifacts, source-of-truth gates, required unit tests, and required e2e, fixture, or harness scripts. If the bead is docs-only, name the existing doc section as the artifact and state that no machine-readable checklist was introduced.
+8. **Use scoped remote validation**: never run bare `cargo` for build, test, check, or clippy in this repo. Use an isolated target dir and `rch exec -- cargo ... -p <crate>`.
+   ```bash
+   export CARGO_TARGET_DIR=/data/tmp/rch_target_frankenlibc_<agent>_<bead>
+   RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p <crate> <test_name> -- --nocapture
+   RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo clippy -p <crate> --all-targets -- -D warnings
+   RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo check -p <crate> --all-targets
+   ```
+   Use `cargo fmt --check` only through `rch exec -- cargo fmt --check` when formatting validation is needed.
+9. **Keep unrelated changes intact**: do not stash, revert, delete, overwrite, or tidy files changed by other agents. Mention unrelated dirty paths only if they affect the bead-owned validation result.
+10. **Close with evidence**: closure notes must include exact commands, artifact paths, source commit, target dir, known limitations, pre-existing failures, and a statement that unrelated user or agent changes were not reverted.
+11. **Commit and push**: set `AGENT_NAME` before committing. Include the bead id in the commit message.
+
+Every checklist log or closure note for this workflow must carry these fields where applicable:
+
+```text
+trace_id=<stable run id>
+bead_id=<bd-bp8fl.*>
+dependency_state=<closed|blocked|stale|unknown>
+tracker_state=<normal|stale_db|no_db_fallback|split_brain|timeout>
+workstream=<semantic-overlay|tracker-repair|feature-parity|fixture-pack|hard-parts|replacement-level|validation|performance|runtime-math|user-workload|workflow>
+required_tests=<unit or none>
+required_e2e=<script/harness path or none>
+artifact_refs=<paths>
+source_commit=<git rev-parse HEAD>
+target_dir=<CARGO_TARGET_DIR or none>
+failure_signature=<none or stable signature>
+next_safe_action=<claim|implement|validate|close|surface_blocker|pick_different_bead>
+```
+
+Branch decisions:
+
+| State | Required action |
+|---|---|
+| Normal tracker | Choose from `br --no-db ready --json`, skip IDs in `in_progress`, claim one bead, reserve files, implement. |
+| Ready empty | Use `br --no-db list --status open --json`, avoid blocked and in-progress IDs, then choose the narrowest concrete open bead. |
+| Stale DB or split-brain | Prefer `--no-db` read evidence. Try the exact `br --no-db update`; if it times out, record the timeout and proceed only when JSONL clearly shows the bead is unclaimed and ready. |
+| Already shipped but open dotted ID | Verify the claimed artifact or commit first. If shipped, close with exact evidence instead of duplicating work. |
+| Unrelated dirty files | Ignore them unless they overlap the claimed surface. Never revert or clean them. |
+| Pre-existing workspace failures | Run the smallest bead-owned gate. Record the pre-existing failure separately and do not attribute it to the bead. |
+| Blocked bead | Do not force it. Pick a different ready bead or create a specific repair bead only when the queue is genuinely empty. |
+
+Dry-run transcript: clean ready bead.
+
+```text
+$ br --no-db ready --json
+[
+  {"id":"bd-bp8fl.4.4","status":"open","priority":2,"title":"Expand low-risk high-count fixture families before hard-parts campaigns"}
+]
+$ br --no-db list --status in_progress --json
+{"issues":[]}
+$ br --no-db show bd-bp8fl.4.4 --json
+{"id":"bd-bp8fl.4.4","dependencies":[{"id":"bd-bp8fl.2.1","status":"closed"}],"parent":"bd-bp8fl"}
+$ bv --robot-triage | jq '.triage.quick_ref.top_picks | map(.id)'
+["bd-bp8fl.4.4"]
+$ br --no-db dep cycles --json
+{"cycles":[],"count":0}
+$ br --no-db update bd-bp8fl.4.4 --status=in_progress
+Updated bd-bp8fl.4.4: status: open -> in_progress
+next_safe_action=reserve exact files, implement fixture slice, validate with rch scoped to the touched crate.
+```
+
+Dry-run transcript: stale tracker fallback.
+
+```text
+$ br --no-db ready --json
+[]
+$ br --no-db list --status open --json
+[
+  {"id":"bd-bp8fl.12","status":"open","priority":1,"title":"Add agent handoff checklist for one-bead-at-a-time implementation"}
+]
+$ br --no-db list --status in_progress --json
+{"issues":[{"id":"bd-bp8fl.10.1","status":"in_progress"}]}
+$ br --no-db show bd-bp8fl.12 --json
+{"id":"bd-bp8fl.12","status":"open","dependencies":[{"id":"bd-bp8fl.11","status":"closed"},{"id":"bd-bp8fl.2.1","status":"closed"}]}
+$ bv --robot-insights | jq '{cycles: .advanced_insights.cycle_break.cycle_count, page_rank: .status.PageRank.state}'
+{"cycles":0,"page_rank":"computed"}
+$ br --no-db update bd-bp8fl.12 --status=in_progress
+Updated bd-bp8fl.12: status: open -> in_progress
+next_safe_action=reserve AGENTS.md, patch existing checklist section, validate docs diff, close with command transcript.
+```
+
 ### Key Concepts
 
 - **Dependencies**: Issues can block other issues. `br ready` shows only unblocked work.
