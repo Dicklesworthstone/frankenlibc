@@ -1,0 +1,414 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-bp8fl.5.4",
+  "gate_id": "loader-dlfcn-relocation-tls-audit-v1",
+  "generated_at_utc": "2026-05-04T07:20:00Z",
+  "purpose": "Define loader/dlfcn hard-parts fixture rows without narrowing dlopen/dlsym/dlclose/dlerror, versioned lookup, relocation startup, TLS access, init/fini, missing-symbol, or audit-boundary scope.",
+  "freshness": {
+    "required_source_commit": "current",
+    "source_commit_policy": "gate must fail stale artifacts when this marker is pinned to any non-current commit"
+  },
+  "sources": {
+    "dlfcn_abi": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+    "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
+    "dlfcn_fixture": "tests/conformance/fixtures/dlfcn_ops.json",
+    "dlfcn_boundary_policy": "tests/conformance/dlfcn_boundary_policy.v1.json",
+    "oracle_precedence_divergence": "tests/conformance/oracle_precedence_divergence.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "hard_parts_e2e_catalog": "tests/conformance/hard_parts_e2e_catalog.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "fixture_id",
+    "shared_object",
+    "symbol",
+    "version_node",
+    "replacement_level",
+    "runtime_mode",
+    "oracle_kind",
+    "expected_status",
+    "actual_status",
+    "loader_error",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "fixture_schema": {
+    "required_fields": [
+      "fixture_id",
+      "fixture_kind",
+      "shared_object",
+      "symbol",
+      "version_node",
+      "relocation_kind",
+      "tls_use",
+      "dl_sequence",
+      "runtime_mode",
+      "replacement_level",
+      "oracle_kind",
+      "expected",
+      "artifact_refs",
+      "source_commit_state",
+      "direct_runner",
+      "isolated_runner"
+    ],
+    "expected_required_fields": [
+      "status",
+      "errno",
+      "loader_error",
+      "user_diagnostic"
+    ],
+    "runner_required_fields": [
+      "runner_kind",
+      "command",
+      "artifact_refs"
+    ]
+  },
+  "required_fixture_kinds": [
+    "dlopen_success",
+    "dlopen_failure",
+    "dlsym_version_lookup",
+    "tls_symbol_access",
+    "relocation_startup",
+    "missing_symbol",
+    "audit_boundary",
+    "dlclose_error"
+  ],
+  "required_symbols": [
+    "dlopen",
+    "dlsym",
+    "dlvsym",
+    "dlclose",
+    "dlerror",
+    "__call_tls_dtors",
+    "relocation_startup",
+    "ld_audit"
+  ],
+  "required_runtime_modes": [
+    "strict",
+    "hardened"
+  ],
+  "required_replacement_levels": [
+    "L0"
+  ],
+  "required_loader_error_classes": [
+    "none",
+    "object_not_found",
+    "symbol_not_found",
+    "invalid_handle",
+    "unsupported_audit_boundary"
+  ],
+  "diagnostic_signatures": [
+    {
+      "id": "missing_field",
+      "trigger": "a fixture row, expected block, sequence, or runner omits a required field"
+    },
+    {
+      "id": "stale_artifact",
+      "trigger": "freshness.required_source_commit or row source_commit_state is pinned to a non-current commit"
+    },
+    {
+      "id": "missing_source_artifact",
+      "trigger": "a source path, runner artifact path, or row artifact_ref is absent"
+    },
+    {
+      "id": "missing_fixture_kind",
+      "trigger": "required fixture kinds, symbols, runtime modes, or replacement levels are absent"
+    },
+    {
+      "id": "symbol_version_classification",
+      "trigger": "versioned lookup rows omit a version node or expected version diagnostic"
+    },
+    {
+      "id": "loader_error_normalization",
+      "trigger": "error-path rows omit a normalized loader error class or success rows report an error"
+    },
+    {
+      "id": "unsupported_relocation_or_audit",
+      "trigger": "relocation or audit rows advertise support without explicit blocked/degraded diagnostics"
+    }
+  ],
+  "fixture_rows": [
+    {
+      "fixture_id": "loader.dlopen.self.strict",
+      "fixture_kind": "dlopen_success",
+      "shared_object": "self",
+      "symbol": "dlerror",
+      "version_node": "GLIBC_2.34",
+      "relocation_kind": "none",
+      "tls_use": "none",
+      "dl_sequence": ["dlopen(NULL, RTLD_NOW)", "dlerror()"],
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": {
+        "status": "pass",
+        "errno": "0",
+        "loader_error": "none",
+        "user_diagnostic": "main-program handle opens and leaves dlerror clear"
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/dlfcn_ops.json",
+        "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test dlfcn_conformance_test dlopen_self_strict -- --nocapture",
+        "artifact_refs": ["tests/conformance/fixtures/dlfcn_ops.json"]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_loader_dlfcn_relocation_tls_audit.sh",
+        "artifact_refs": ["scripts/check_loader_dlfcn_relocation_tls_audit.sh"]
+      }
+    },
+    {
+      "fixture_id": "loader.dlopen.missing.hardened",
+      "fixture_kind": "dlopen_failure",
+      "shared_object": "/no/such/libfrankenlibc_fixture_missing.so",
+      "symbol": "dlopen",
+      "version_node": "GLIBC_2.34",
+      "relocation_kind": "none",
+      "tls_use": "none",
+      "dl_sequence": ["dlopen(missing, RTLD_NOW)", "dlerror()"],
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "documented_frankenlibc_contract",
+      "expected": {
+        "status": "expected_failure",
+        "errno": "ENOENT",
+        "loader_error": "object_not_found",
+        "user_diagnostic": "missing shared object returns NULL and records a deterministic dlerror"
+      },
+      "artifact_refs": [
+        "tests/conformance/dlfcn_boundary_policy.v1.json",
+        "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test dlfcn_conformance_test dlopen_nonexistent_hardened -- --nocapture",
+        "artifact_refs": ["tests/conformance/fixtures/dlfcn_ops.json"]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_loader_dlfcn_relocation_tls_audit.sh",
+        "artifact_refs": ["scripts/check_loader_dlfcn_relocation_tls_audit.sh"]
+      }
+    },
+    {
+      "fixture_id": "loader.dlvsym.memcpy.strict",
+      "fixture_kind": "dlsym_version_lookup",
+      "shared_object": "RTLD_DEFAULT",
+      "symbol": "dlvsym",
+      "version_node": "GLIBC_2.14",
+      "relocation_kind": "jump_slot",
+      "tls_use": "none",
+      "dl_sequence": ["dlvsym(RTLD_DEFAULT, memcpy, GLIBC_2.14)", "dlerror()"],
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "posix_linux_contract",
+      "expected": {
+        "status": "pass",
+        "errno": "0",
+        "loader_error": "none",
+        "user_diagnostic": "versioned exported-symbol lookup keeps version node visible"
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-abi/version_scripts/libc.map",
+        "tests/conformance/dlfcn_boundary_policy.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi dlfcn_abi::tests::dlvsym_versioned_lookup -- --nocapture",
+        "artifact_refs": ["crates/frankenlibc-abi/src/dlfcn_abi.rs"]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_dlfcn_boundary_policy.sh",
+        "artifact_refs": ["scripts/check_dlfcn_boundary_policy.sh"]
+      }
+    },
+    {
+      "fixture_id": "loader.tls.dtor.hardened",
+      "fixture_kind": "tls_symbol_access",
+      "shared_object": "self",
+      "symbol": "__call_tls_dtors",
+      "version_node": "GLIBC_PRIVATE",
+      "relocation_kind": "tls_desc",
+      "tls_use": "thread_local_destructor_slot",
+      "dl_sequence": ["dlsym(RTLD_DEFAULT, __call_tls_dtors)", "invoke registered TLS destructor list"],
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "documented_frankenlibc_contract",
+      "expected": {
+        "status": "pass",
+        "errno": "0",
+        "loader_error": "none",
+        "user_diagnostic": "TLS destructor entrypoint remains native and replayable"
+      },
+      "artifact_refs": [
+        "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
+        "tests/conformance/symbol_universe_normalization.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-abi glibc_internal_abi::tests::call_tls_dtors -- --nocapture",
+        "artifact_refs": ["crates/frankenlibc-abi/src/glibc_internal_abi.rs"]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_loader_dlfcn_relocation_tls_audit.sh",
+        "artifact_refs": ["scripts/check_loader_dlfcn_relocation_tls_audit.sh"]
+      }
+    },
+    {
+      "fixture_id": "loader.relocation.jump_slot.strict",
+      "fixture_kind": "relocation_startup",
+      "shared_object": "libfrankenlibc_abi.so",
+      "symbol": "relocation_startup",
+      "version_node": "not_applicable",
+      "relocation_kind": "R_X86_64_JUMP_SLOT",
+      "tls_use": "none",
+      "dl_sequence": ["link-run fixture", "resolve PLT jump slot", "call resolved symbol"],
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "posix_linux_contract",
+      "expected": {
+        "status": "pass",
+        "errno": "0",
+        "loader_error": "none",
+        "user_diagnostic": "relocation-sensitive startup smoke resolves jump slots before first call"
+      },
+      "artifact_refs": [
+        "tests/conformance/standalone_link_run_smoke.v1.json",
+        "scripts/check_standalone_link_run_smoke.sh"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test standalone_link_run_smoke_test -- --nocapture",
+        "artifact_refs": ["crates/frankenlibc-harness/tests/standalone_link_run_smoke_test.rs"]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_standalone_link_run_smoke.sh",
+        "artifact_refs": ["scripts/check_standalone_link_run_smoke.sh"]
+      }
+    },
+    {
+      "fixture_id": "loader.dlsym.missing.strict",
+      "fixture_kind": "missing_symbol",
+      "shared_object": "RTLD_DEFAULT",
+      "symbol": "dlsym",
+      "version_node": "GLIBC_2.34",
+      "relocation_kind": "none",
+      "tls_use": "none",
+      "dl_sequence": ["dlsym(RTLD_DEFAULT, definitely_missing_frankenlibc_symbol)", "dlerror()"],
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "expected": {
+        "status": "expected_failure",
+        "errno": "0",
+        "loader_error": "symbol_not_found",
+        "user_diagnostic": "missing symbol returns NULL and populates thread-local dlerror"
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/dlfcn_ops.json",
+        "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test dlfcn_conformance_test dlsym_nonexistent_strict -- --nocapture",
+        "artifact_refs": ["tests/conformance/fixtures/dlfcn_ops.json"]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_loader_dlfcn_relocation_tls_audit.sh",
+        "artifact_refs": ["scripts/check_loader_dlfcn_relocation_tls_audit.sh"]
+      }
+    },
+    {
+      "fixture_id": "loader.audit.boundary.hardened",
+      "fixture_kind": "audit_boundary",
+      "shared_object": "LD_AUDIT",
+      "symbol": "ld_audit",
+      "version_node": "not_applicable",
+      "relocation_kind": "audit_hook",
+      "tls_use": "none",
+      "dl_sequence": ["LD_AUDIT fixture requested", "classify audit hook boundary"],
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "allowed_divergence",
+      "expected": {
+        "status": "blocked",
+        "errno": "ENOTSUP",
+        "loader_error": "unsupported_audit_boundary",
+        "user_diagnostic": "audit hooks remain blocked and cannot be advertised as loader parity"
+      },
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/dlfcn_boundary_policy.v1.json"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test loader_dlfcn_relocation_tls_audit_test audit_boundary_blocks_loader_parity_claim -- --nocapture",
+        "artifact_refs": ["tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json"]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_loader_dlfcn_relocation_tls_audit.sh",
+        "artifact_refs": ["scripts/check_loader_dlfcn_relocation_tls_audit.sh"]
+      }
+    },
+    {
+      "fixture_id": "loader.dlclose.invalid.hardened",
+      "fixture_kind": "dlclose_error",
+      "shared_object": "invalid-handle",
+      "symbol": "dlclose",
+      "version_node": "GLIBC_2.34",
+      "relocation_kind": "none",
+      "tls_use": "none",
+      "dl_sequence": ["dlclose(invalid handle)", "dlerror()"],
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "documented_frankenlibc_contract",
+      "expected": {
+        "status": "expected_failure",
+        "errno": "EINVAL",
+        "loader_error": "invalid_handle",
+        "user_diagnostic": "invalid handle is rejected deterministically and leaves dlerror evidence"
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/dlfcn_ops.json",
+        "crates/frankenlibc-abi/src/dlfcn_abi.rs"
+      ],
+      "source_commit_state": "current",
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test dlfcn_conformance_test dlclose_double_close_hardened -- --nocapture",
+        "artifact_refs": ["tests/conformance/fixtures/dlfcn_ops.json"]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_loader_dlfcn_relocation_tls_audit.sh",
+        "artifact_refs": ["scripts/check_loader_dlfcn_relocation_tls_audit.sh"]
+      }
+    }
+  ],
+  "summary": {
+    "fixture_row_count": 8,
+    "required_fixture_kind_count": 8,
+    "required_symbol_count": 8,
+    "runtime_mode_count": 2,
+    "replacement_level_count": 1
+  }
+}
