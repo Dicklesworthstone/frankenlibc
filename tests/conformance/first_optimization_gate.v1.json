@@ -1,0 +1,163 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.8.4",
+  "description": "First optimization gate for the baseline-first performance program. It selects one already verified optimization candidate only after profile, baseline, parity, and budget evidence are present.",
+  "source_refs": {
+    "hot_path_profile_report": "tests/conformance/hot_path_profile_report.v1.json",
+    "optimization_proof_ledger": "tests/conformance/optimization_proof_ledger.v1.json",
+    "perf_budget_policy": "tests/conformance/perf_budget_policy.json",
+    "isomorphism_protocol": "tests/conformance/isomorphism_proof_protocol.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "symbol",
+    "api_family",
+    "benchmark_id",
+    "before_value",
+    "after_value",
+    "threshold",
+    "parity_ref",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "selected_optimization": {
+    "selection_id": "first-opt-runtime-math-decide-strict",
+    "optimization_bead_id": "bd-30o.2",
+    "candidate_id": "cand-rtm-decide-fastpath",
+    "api_family": "runtime_math",
+    "symbol": "RuntimeMathKernel::decide",
+    "benchmark_id": "runtime_math_decide_strict_p50",
+    "runtime_mode": "strict",
+    "profile_ref": {
+      "path": "tests/conformance/hot_path_profile_report.v1.json",
+      "summary_field": "runtime_math_decide_p50_ns",
+      "observed_p50_ns": 187.404,
+      "selection_note": "The profile report keeps runtime-math decision latency visible while the proof ledger supplies the already executed before/after candidate."
+    },
+    "opportunity_score": {
+      "impact": 4.0,
+      "confidence": 4.0,
+      "effort": 2.0,
+      "score": 8.0,
+      "minimum_score": 2.0
+    },
+    "measurement": {
+      "metric": "p50_ns_op",
+      "before_value": 18.7,
+      "after_value": 15.4,
+      "improvement_pct": 17.65,
+      "minimum_improvement_pct": 2.0,
+      "source_candidate": "tests/conformance/optimization_proof_ledger.v1.json#cand-rtm-decide-fastpath"
+    },
+    "threshold": {
+      "p50_ns": 20.0,
+      "source": "tests/conformance/perf_budget_policy.json#budgets.strict_hotpath.strict_mode_ns",
+      "decision": "passes_budget"
+    },
+    "parity_ref": "tests/conformance/fixtures",
+    "behavior_invariants": [
+      {
+        "id": "ordering_preserved",
+        "status": "pass",
+        "reason": "Runtime decision ordering is unchanged; the verified candidate only reduces strict-path decision overhead."
+      },
+      {
+        "id": "tie_breaking_unchanged",
+        "status": "pass",
+        "reason": "No routing or threshold tie-break rule changes are admitted by this gate."
+      },
+      {
+        "id": "floating_point_behavior",
+        "status": "pass",
+        "reason": "N/A for the selected strict runtime decision path."
+      },
+      {
+        "id": "rng_seed_behavior",
+        "status": "pass",
+        "reason": "N/A; the selected candidate is deterministic and does not consume RNG state."
+      },
+      {
+        "id": "strict_hardened_guardrail",
+        "status": "pass",
+        "reason": "The proof ledger includes strict fixture parity and mode semantics guard checks."
+      }
+    ],
+    "behavior_checks": [
+      {
+        "check_id": "strict_fixture_parity",
+        "source": "tests/conformance/optimization_proof_ledger.v1.json",
+        "artifact_ref": "tests/conformance/fixtures",
+        "input_classes": [
+          "null_ptr",
+          "in_bounds"
+        ],
+        "status": "pass"
+      },
+      {
+        "check_id": "mode_semantics_guard",
+        "source": "tests/conformance/optimization_proof_ledger.v1.json",
+        "artifact_ref": "tests/conformance/mode_semantics_matrix.json",
+        "input_classes": [
+          "boundary",
+          "oversize"
+        ],
+        "status": "pass"
+      }
+    ],
+    "risk_analysis": {
+      "risk_level": "low",
+      "single_lever": true,
+      "rollback_plan": "git revert the optimization commit if a behavior or budget regression appears",
+      "diagnostic_plan": "rerun scripts/check_first_optimization_gate.sh, scripts/check_optimization_proof_ledger.sh, and the targeted harness tests before allowing follow-up optimization work"
+    },
+    "artifact_refs": [
+      "tests/conformance/first_optimization_gate.v1.json",
+      "tests/conformance/hot_path_profile_report.v1.json",
+      "tests/conformance/optimization_proof_ledger.v1.json",
+      "tests/conformance/perf_budget_policy.json",
+      "tests/conformance/mode_semantics_matrix.json",
+      "tests/conformance/fixtures",
+      "scripts/check_first_optimization_gate.sh"
+    ],
+    "failure_signature": "none"
+  },
+  "deferred_hot_paths": [
+    {
+      "profile_id": "membrane:strict:validate_foreign",
+      "reason": "Highest hotness score, but no verified before/after behavior-preserving optimization candidate is present yet."
+    },
+    {
+      "profile_id": "membrane:strict:validate_known",
+      "reason": "Deferred until a single-lever membrane validation patch has current parity proof and budget evidence."
+    },
+    {
+      "profile_id": "membrane:strict:validate_null",
+      "reason": "Deferred until a no-drift membrane fast-path candidate is proven."
+    },
+    {
+      "profile_id": "pthread:hardened:pthread_create",
+      "reason": "Raw host comparison exists, but thread churn artifacts currently justify no code change."
+    }
+  ],
+  "claim_guards": [
+    {
+      "id": "missing_verified_candidate_blocks_optimization",
+      "expected_failure_signature": "first_opt_missing_verified_candidate"
+    },
+    {
+      "id": "missing_behavior_coverage_blocks_optimization",
+      "expected_failure_signature": "first_opt_missing_behavior_coverage"
+    },
+    {
+      "id": "budget_regression_blocks_optimization",
+      "expected_failure_signature": "first_opt_budget_regression"
+    },
+    {
+      "id": "microbench_only_blocks_user_claim",
+      "expected_failure_signature": "first_opt_microbench_only_user_claim"
+    }
+  ]
+}
