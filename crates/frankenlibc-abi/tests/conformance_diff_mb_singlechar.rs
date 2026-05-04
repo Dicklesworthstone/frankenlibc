@@ -23,7 +23,7 @@ use frankenlibc_abi::wchar_abi as fl;
 
 #[test]
 fn diff_mblen_ascii_returns_one() {
-    for &b in &[b'a', b'Z', b'0', b' ', b'!'] {
+    for &b in b"aZ0 !" {
         let buf = [b];
         let fl_r = unsafe { fl::mblen(buf.as_ptr(), 1) };
         let lc_r = unsafe { mblen(buf.as_ptr() as *const c_char, 1) };
@@ -46,7 +46,7 @@ fn diff_mblen_zero_n_returns_minus_one() {
     // Zero bytes cannot constitute a complete multibyte character;
     // both impls must return -1 (incomplete sequence). Regression
     // gate for [bd-27e6p].
-    let buf = [b'a'];
+    let buf = b"a";
     let fl_r = unsafe { fl::mblen(buf.as_ptr(), 0) };
     let lc_r = unsafe { mblen(buf.as_ptr() as *const c_char, 0) };
     assert_eq!(fl_r, lc_r, "mblen(n=0): fl={fl_r} lc={lc_r}");
@@ -55,7 +55,7 @@ fn diff_mblen_zero_n_returns_minus_one() {
 
 #[test]
 fn diff_mbtowc_zero_n_returns_minus_one() {
-    let buf = [b'a'];
+    let buf = b"a";
     let mut fl_wc: i32 = 0;
     let mut lc_wc: i32 = 0;
     let fl_r = unsafe { fl::mbtowc(&mut fl_wc as *mut i32 as *mut u32, buf.as_ptr(), 0) };
@@ -76,7 +76,7 @@ fn diff_mblen_null_pointer_reports_state() {
 
 #[test]
 fn diff_mbtowc_ascii_round_trip() {
-    for &b in &[b'A', b'1', b'~', b' '] {
+    for &b in b"A1~ " {
         let in_buf = [b];
         let mut fl_wc: i32 = -1;
         let mut lc_wc: i32 = -1;
@@ -92,7 +92,7 @@ fn diff_mbtowc_ascii_round_trip() {
 fn diff_mbtowc_null_pwc_just_advances() {
     // Passing a NULL output pointer tells mbtowc just to validate the
     // input length without storing.
-    let in_buf = [b'X'];
+    let in_buf = b"X";
     let fl_r = unsafe { fl::mbtowc(std::ptr::null_mut(), in_buf.as_ptr(), 1) };
     let lc_r = unsafe { mbtowc(std::ptr::null_mut(), in_buf.as_ptr() as *const c_char, 1) };
     assert_eq!(fl_r, lc_r);
