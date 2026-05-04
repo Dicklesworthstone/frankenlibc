@@ -1,0 +1,515 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.12",
+  "trace_id": "bd-bp8fl-12-agent-handoff-checklist-v1",
+  "purpose": "Machine-readable implementation handoff checklist for one-bead-at-a-time bd-bp8fl work. The checklist preserves current project ambition while making the next safe action, evidence requirements, validation scope, and closure contract explicit.",
+  "source_of_truth_policy": {
+    "primary_ready_command": "br --no-db ready --json",
+    "fallback_open_command": "br --no-db list --status open --json",
+    "named_bead_command": "br --no-db show <bead-id> --json",
+    "cycle_command": "br --no-db dep cycles --json",
+    "bv_triage_command": "bv --robot-triage",
+    "bv_insights_command": "bv --robot-insights",
+    "tracker_precedence": "When DB-backed br, bv, or dashboard state disagrees with JSONL-visible no-db rows, treat no-db JSONL as source of truth and record the tracker_state.",
+    "dirty_worktree_policy": "Unrelated dirty files from users or peer agents must not be reverted, stashed, deleted, or used as a reason to idle."
+  },
+  "required_checklist_sections": [
+    "onboarding_docs",
+    "br_ready_list_show_state",
+    "bv_robot_triage_insights",
+    "dependency_parent_checks",
+    "stale_db_jsonl_symptoms",
+    "file_reservations",
+    "exact_work_surface",
+    "expected_artifacts",
+    "unit_tests",
+    "e2e_or_harness_scripts",
+    "structured_logs",
+    "rch_target_dir_policy",
+    "commit_push_expectations",
+    "closure_notes"
+  ],
+  "required_structured_log_fields": [
+    "trace_id",
+    "bead_id",
+    "dependency_state",
+    "tracker_state",
+    "workstream",
+    "required_tests",
+    "required_e2e",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature",
+    "next_safe_action"
+  ],
+  "checklist_sections": [
+    {
+      "section_id": "onboarding_docs",
+      "required_evidence": [
+        "Read /dp/AGENTS.md once in the current session",
+        "Read repo-local AGENTS.md once in the current session",
+        "Read README.md once in the current session"
+      ],
+      "closure_rule": "Do not claim a bd-bp8fl bead until docs are read or the session explicitly records that the same docs were already read."
+    },
+    {
+      "section_id": "br_ready_list_show_state",
+      "required_evidence": [
+        "br --no-db ready --json output",
+        "br --no-db list --status in_progress --json output",
+        "br --no-db show <bead-id> --json output after claim"
+      ],
+      "closure_rule": "Ready rows must not include already in_progress or peer-claimed beads; named show output must match the claimed bead."
+    },
+    {
+      "section_id": "bv_robot_triage_insights",
+      "required_evidence": [
+        "bv --robot-triage output or recorded tracker failure signature",
+        "bv --robot-insights output or recorded tracker failure signature"
+      ],
+      "closure_rule": "bv disagreement is tracker evidence, not proof that implementation work should idle when no-db rows are visible."
+    },
+    {
+      "section_id": "dependency_parent_checks",
+      "required_evidence": [
+        "dependencies from br --no-db show <bead-id> --json",
+        "parent bead id when present",
+        "br --no-db dep cycles --json or explicit unsupported-command signature"
+      ],
+      "closure_rule": "Blocked beads require a next_safe_action that avoids code edits until blockers are closed or the stale state is classified."
+    },
+    {
+      "section_id": "stale_db_jsonl_symptoms",
+      "required_evidence": [
+        "DB-vs-JSONL disagreement if observed",
+        "exact-ID split-brain if observed",
+        "timeout command and duration if observed",
+        "already-shipped-but-open dotted id if observed"
+      ],
+      "closure_rule": "Tool failure must be recorded separately from code failure, and the checklist must choose a concrete next action."
+    },
+    {
+      "section_id": "file_reservations",
+      "required_evidence": [
+        "Agent Mail identity",
+        "file_reservation_paths result for exact paths or glob surface",
+        "reservation conflict handling if any"
+      ],
+      "closure_rule": "Edit only reserved surfaces unless Agent Mail is unavailable; record the unavailability signature if reservations cannot be made."
+    },
+    {
+      "section_id": "exact_work_surface",
+      "required_evidence": [
+        "files or globs expected to change",
+        "crate affected by the bead",
+        "non-goals and adjacent peer-owned surfaces"
+      ],
+      "closure_rule": "Do not broaden scope to adjacent workstreams or unrelated cleanup."
+    },
+    {
+      "section_id": "expected_artifacts",
+      "required_evidence": [
+        "canonical artifact paths",
+        "generated target/conformance report paths",
+        "source_commit recorded in generated logs"
+      ],
+      "closure_rule": "A bead cannot close on prose-only evidence when acceptance asks for artifacts."
+    },
+    {
+      "section_id": "unit_tests",
+      "required_evidence": [
+        "unit tests for touched parser, schema, gate, runtime, or ABI logic",
+        "negative tests for missing evidence, missing artifacts, stale source-of-truth claims, and unsupported branches where applicable"
+      ],
+      "closure_rule": "If logic is machine-readable, each branch needs a positive validation row and relevant negative fixture coverage."
+    },
+    {
+      "section_id": "e2e_or_harness_scripts",
+      "required_evidence": [
+        "deterministic e2e script, harness script, fixture replay, or explicit justification why unit-only proof is sufficient",
+        "strict and hardened mode coverage when mode affects behavior"
+      ],
+      "closure_rule": "Externally visible behavior needs script or harness evidence, not just a unit test."
+    },
+    {
+      "section_id": "structured_logs",
+      "required_evidence": [
+        "trace_id",
+        "bead_id",
+        "dependency_state",
+        "tracker_state",
+        "workstream",
+        "required_tests",
+        "required_e2e",
+        "artifact_refs",
+        "source_commit",
+        "target_dir",
+        "failure_signature",
+        "next_safe_action"
+      ],
+      "closure_rule": "Generated checklist output and logs must include every required structured field."
+    },
+    {
+      "section_id": "rch_target_dir_policy",
+      "required_evidence": [
+        "rch exec -- cargo ... for all cargo checks",
+        "cargo command scoped with -p <crate>",
+        "unique CARGO_TARGET_DIR when a heavy cargo gate runs"
+      ],
+      "closure_rule": "Never run bare cargo; use no workspace cargo gates during swarm handoff unless the user explicitly asks."
+    },
+    {
+      "section_id": "commit_push_expectations",
+      "required_evidence": [
+        "AGENT_NAME exported before git commit",
+        "changed files staged without deleting or reverting peer work",
+        "git push origin main and git push origin main:master when a commit lands"
+      ],
+      "closure_rule": "A handoff is incomplete until the diff, bead status, validation evidence, and push status are recorded."
+    },
+    {
+      "section_id": "closure_notes",
+      "required_evidence": [
+        "exact commands run",
+        "generated artifact paths",
+        "known limitations",
+        "note that unrelated user or peer-agent changes were not reverted"
+      ],
+      "closure_rule": "Closure must name residual risk and follow-up beads without weakening current ambition."
+    }
+  ],
+  "branch_dispatch": [
+    {
+      "branch_id": "normal_tracker_state",
+      "tracker_state": "normal",
+      "dependency_state": "ready",
+      "workstream": "implementation",
+      "commands": [
+        "br --no-db ready --json",
+        "br --no-db list --status in_progress --json",
+        "br --no-db update <bead-id> --status=in_progress",
+        "br --no-db show <bead-id> --json",
+        "bv --robot-triage",
+        "bv --robot-insights"
+      ],
+      "required_tests": [
+        "unit tests for touched logic",
+        "ubs <changed-files>",
+        "rch exec -- cargo test -p <crate> <targeted-test>"
+      ],
+      "required_e2e": [
+        "deterministic script or harness command named in the bead acceptance criteria"
+      ],
+      "artifact_refs": [
+        "target/conformance/<bead-id>.report.json",
+        "target/conformance/<bead-id>.log.jsonl"
+      ],
+      "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
+      "failure_signature": "ok",
+      "next_safe_action": "claim_ready_bead_reserve_files_and_implement"
+    },
+    {
+      "branch_id": "stale_tracker_state",
+      "tracker_state": "stale_db_jsonl_disagreement",
+      "dependency_state": "unknown_until_no_db_show",
+      "workstream": "tracker_tolerant_implementation",
+      "commands": [
+        "br --no-db ready --json",
+        "br --no-db list --status open --json",
+        "br --no-db show <bead-id> --json",
+        "br --no-db list --status in_progress --json",
+        "bv --robot-triage",
+        "bv --robot-insights"
+      ],
+      "required_tests": [
+        "unit tests for touched logic",
+        "ubs <changed-files>",
+        "targeted validation separated from tracker failure"
+      ],
+      "required_e2e": [
+        "deterministic replay or current snapshot proving no-db source-of-truth selection"
+      ],
+      "artifact_refs": [
+        "target/conformance/tracker_state_<bead-id>.report.json",
+        "target/conformance/tracker_state_<bead-id>.log.jsonl"
+      ],
+      "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
+      "failure_signature": "stale_db_jsonl_disagreement",
+      "next_safe_action": "use_no_db_jsonl_claim_one_unowned_bead_and_record_tracker_failure"
+    },
+    {
+      "branch_id": "no_db_fallback",
+      "tracker_state": "ready_empty_open_visible",
+      "dependency_state": "inspect_open_rows",
+      "workstream": "no_db_fallback",
+      "commands": [
+        "br --no-db ready --json",
+        "br --no-db list --status open --json",
+        "br --no-db show <bead-id> --json",
+        "br --no-db update <bead-id> --status=in_progress"
+      ],
+      "required_tests": [
+        "unit tests for touched logic",
+        "ubs <changed-files>",
+        "targeted crate validation only"
+      ],
+      "required_e2e": [
+        "record why the selected open bead is unblocked or why the blocker is a tracker artifact"
+      ],
+      "artifact_refs": [
+        "target/conformance/no_db_fallback_<bead-id>.json"
+      ],
+      "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
+      "failure_signature": "ready_empty_open_visible",
+      "next_safe_action": "select_lowest_risk_open_unowned_bead_or_file_tracker_repair"
+    },
+    {
+      "branch_id": "already_shipped_but_open_dotted_id",
+      "tracker_state": "already_shipped_open",
+      "dependency_state": "requires_evidence_reconciliation",
+      "workstream": "bead_reconciliation",
+      "commands": [
+        "br --no-db show <dotted-bead-id> --json",
+        "git log --oneline --grep <dotted-bead-id>",
+        "rg -n \"<dotted-bead-id>\" tests scripts docs .beads/issues.jsonl"
+      ],
+      "required_tests": [
+        "existing evidence commands from the shipped commit",
+        "new tests only if the shipped evidence is stale or insufficient"
+      ],
+      "required_e2e": [
+        "deterministic evidence replay if the bead is closed in this session"
+      ],
+      "artifact_refs": [
+        "target/conformance/reconciled_<dotted-bead-id>.json"
+      ],
+      "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<dotted-bead-id>",
+      "failure_signature": "already_shipped_but_open",
+      "next_safe_action": "verify_existing_evidence_then_close_or_reopen_with_current_blocker"
+    },
+    {
+      "branch_id": "unrelated_dirty_files",
+      "tracker_state": "normal_or_stale",
+      "dependency_state": "unchanged",
+      "workstream": "workspace_hygiene",
+      "commands": [
+        "git status --short --branch",
+        "git diff --name-only",
+        "git diff -- <reserved-paths>"
+      ],
+      "required_tests": [
+        "tests for own changed files only",
+        "ubs <changed-files>"
+      ],
+      "required_e2e": [
+        "not applicable unless the bead changes externally visible behavior"
+      ],
+      "artifact_refs": [
+        "target/conformance/unrelated_dirty_files_<bead-id>.json"
+      ],
+      "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
+      "failure_signature": "unrelated_dirty_files_present",
+      "next_safe_action": "ignore_peer_changes_and_do_not_revert_stash_or_delete_them"
+    },
+    {
+      "branch_id": "pre_existing_workspace_failures",
+      "tracker_state": "normal_or_stale",
+      "dependency_state": "ready",
+      "workstream": "validation_triage",
+      "commands": [
+        "rch exec -- cargo test -p <crate> <targeted-test>",
+        "rch exec -- cargo clippy -p <crate> --all-targets -- -D warnings",
+        "cargo fmt --check or rustfmt --check on changed Rust files"
+      ],
+      "required_tests": [
+        "targeted command proving bead-owned files are clean",
+        "failure classifier for pre-existing workspace diagnostics"
+      ],
+      "required_e2e": [
+        "record pre-existing failure separately from bead-owned validation"
+      ],
+      "artifact_refs": [
+        "target/conformance/pre_existing_failures_<bead-id>.json"
+      ],
+      "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
+      "failure_signature": "pre_existing_workspace_failure",
+      "next_safe_action": "fix_bead_owned_failures_and_record_unrelated_workspace_failures"
+    },
+    {
+      "branch_id": "blocked_bead",
+      "tracker_state": "blocked",
+      "dependency_state": "blocked",
+      "workstream": "blocked_bead",
+      "commands": [
+        "br --no-db show <bead-id> --json",
+        "br --no-db dep tree <bead-id>",
+        "br --no-db list --status open --json"
+      ],
+      "required_tests": [
+        "no code tests until a blocker-clearing bead is selected",
+        "tracker evidence proving why the bead is blocked"
+      ],
+      "required_e2e": [
+        "not applicable until blocker is selected"
+      ],
+      "artifact_refs": [
+        "target/conformance/blocked_<bead-id>.json"
+      ],
+      "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
+      "failure_signature": "blocked_dependency",
+      "next_safe_action": "select_blocker_or_next_ready_unowned_bead_without_editing_blocked_surface"
+    }
+  ],
+  "dry_run_transcripts": [
+    {
+      "scenario_id": "clean_ready_handoff",
+      "branch_id": "normal_tracker_state",
+      "bead_id": "bd-example.clean",
+      "tracker_state": "normal",
+      "dependency_state": "ready",
+      "workstream": "implementation",
+      "required_tests": [
+        "ubs <changed-files>",
+        "rch exec -- cargo test -p frankenlibc-harness --test example_gate_test"
+      ],
+      "required_e2e": [
+        "bash scripts/check_example_gate.sh"
+      ],
+      "artifact_refs": [
+        "target/conformance/example_gate.report.json",
+        "target/conformance/example_gate.log.jsonl"
+      ],
+      "target_dir": "/tmp/rch_target_frankenlibc_RainyLeopard_bd-example.clean",
+      "failure_signature": "ok",
+      "next_safe_action": "claim_ready_bead_reserve_files_and_implement",
+      "commands": [
+        {
+          "command": "br --no-db ready --json",
+          "exit_status": 0,
+          "expected": "bd-example.clean appears open and unowned",
+          "actual": "bd-example.clean listed as ready",
+          "failure_signature": "ok"
+        },
+        {
+          "command": "br --no-db list --status in_progress --json",
+          "exit_status": 0,
+          "expected": "bd-example.clean absent from in_progress list",
+          "actual": "bd-example.clean absent",
+          "failure_signature": "ok"
+        },
+        {
+          "command": "br --no-db update bd-example.clean --status=in_progress",
+          "exit_status": 0,
+          "expected": "status changes to in_progress",
+          "actual": "status changed",
+          "failure_signature": "ok"
+        },
+        {
+          "command": "bv --robot-triage",
+          "exit_status": 0,
+          "expected": "no higher-priority unclaimed conflict",
+          "actual": "graph healthy for selected bead",
+          "failure_signature": "ok"
+        }
+      ]
+    },
+    {
+      "scenario_id": "stale_tracker_handoff",
+      "branch_id": "stale_tracker_state",
+      "bead_id": "bd-example.stale",
+      "tracker_state": "stale_db_jsonl_disagreement",
+      "dependency_state": "unknown_until_no_db_show",
+      "workstream": "tracker_tolerant_implementation",
+      "required_tests": [
+        "ubs <changed-files>",
+        "targeted validation for own changed files"
+      ],
+      "required_e2e": [
+        "record no-db fallback report"
+      ],
+      "artifact_refs": [
+        "target/conformance/tracker_state_bd-example.stale.report.json",
+        "target/conformance/tracker_state_bd-example.stale.log.jsonl"
+      ],
+      "target_dir": "/tmp/rch_target_frankenlibc_RainyLeopard_bd-example.stale",
+      "failure_signature": "stale_db_jsonl_disagreement",
+      "next_safe_action": "use_no_db_jsonl_claim_one_unowned_bead_and_record_tracker_failure",
+      "commands": [
+        {
+          "command": "br ready --json",
+          "exit_status": 124,
+          "expected": "ready list or explicit failure",
+          "actual": "DB-backed ready timed out",
+          "failure_signature": "tracker_timeout"
+        },
+        {
+          "command": "br --no-db list --status open --json",
+          "exit_status": 0,
+          "expected": "open rows visible in JSONL",
+          "actual": "open rows visible",
+          "failure_signature": "ok"
+        },
+        {
+          "command": "br --no-db show bd-example.stale --json",
+          "exit_status": 0,
+          "expected": "named bead is readable and unowned",
+          "actual": "named bead readable and unowned",
+          "failure_signature": "ok"
+        },
+        {
+          "command": "br --no-db update bd-example.stale --status=in_progress",
+          "exit_status": 0,
+          "expected": "status changes to in_progress in JSONL",
+          "actual": "status changed in JSONL",
+          "failure_signature": "ok"
+        }
+      ]
+    }
+  ],
+  "negative_test_cases": [
+    {
+      "case_id": "missing_evidence_blocks_closure",
+      "branch_id": "normal_tracker_state",
+      "mutation": "clear required_tests",
+      "expected_decision": "close_blocked",
+      "failure_signature": "missing_required_tests"
+    },
+    {
+      "case_id": "missing_artifact_blocks_closure",
+      "branch_id": "normal_tracker_state",
+      "mutation": "clear artifact_refs",
+      "expected_decision": "close_blocked",
+      "failure_signature": "missing_artifact_refs"
+    },
+    {
+      "case_id": "stale_source_of_truth_blocks_closure",
+      "branch_id": "stale_tracker_state",
+      "mutation": "replace next_safe_action with ask_user_to_decide",
+      "expected_decision": "close_blocked",
+      "failure_signature": "stale_source_of_truth_no_next_action"
+    }
+  ],
+  "closure_contract": {
+    "exact_commands": [
+      "br --no-db ready --json",
+      "br --no-db list --status in_progress --json",
+      "br --no-db show <bead-id> --json",
+      "bv --robot-triage",
+      "bv --robot-insights",
+      "file_reservation_paths(project_key, agent_name, paths, reason=<bead-id>)",
+      "ubs <changed-files>",
+      "rch exec -- cargo test -p <crate> <targeted-test>",
+      "br --no-db close <bead-id> --reason \"...\"",
+      "AGENT_NAME=<agent> git commit -m \"... <bead-id>\"",
+      "git push origin main",
+      "git push origin main:master"
+    ],
+    "generated_artifacts": [
+      "tests/conformance/agent_handoff_checklist.v1.json",
+      "target/conformance/agent_handoff_checklist.report.json",
+      "target/conformance/agent_handoff_checklist.log.jsonl"
+    ],
+    "unrelated_changes_note": "Unrelated user or peer-agent changes are left untouched and are not reverted, stashed, deleted, or used as a reason to stop."
+  }
+}
