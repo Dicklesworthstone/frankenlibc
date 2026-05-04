@@ -1,0 +1,642 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.10.7",
+  "purpose": "Cross-environment and architecture acceptance matrix for user-facing workload evidence. The matrix keeps weak current support explicit by separating required coverage obligations from blocked, skipped, flaky, unsupported, and stale evidence states.",
+  "inputs": {
+    "workload_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "real_program_smoke_suite": "tests/conformance/real_program_smoke_suite.v1.json",
+    "user_compatibility_report": "tests/conformance/user_compatibility_report.v1.json",
+    "vertical_slice": "tests/conformance/user_workload_vertical_slice.v1.json"
+  },
+  "required_row_fields": [
+    "environment_id",
+    "architecture",
+    "os_kernel_assumptions",
+    "runtime_mode",
+    "replacement_level",
+    "workload_id",
+    "locale_env_variables",
+    "network_state",
+    "filesystem_permission_model",
+    "thread_count",
+    "build_profile",
+    "state",
+    "reason_code",
+    "owner_bead"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "environment_id",
+    "workload_id",
+    "architecture",
+    "runtime_mode",
+    "replacement_level",
+    "scenario_id",
+    "expected",
+    "actual",
+    "errno",
+    "status",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "reason_code",
+    "failure_signature"
+  ],
+  "state_values": [
+    "required",
+    "optional",
+    "skipped",
+    "blocked"
+  ],
+  "evidence_states": [
+    "claim_blocked",
+    "current",
+    "flaky",
+    "skipped",
+    "stale",
+    "unsupported"
+  ],
+  "reason_codes": [
+    {
+      "id": "interpose_artifact_missing",
+      "category": "blocked",
+      "support_merge_allowed": false,
+      "description": "Current tree has no built libfrankenlibc_abi.so or libfrankenlibc_replace.so artifact for the row."
+    },
+    {
+      "id": "aarch64_bringup_missing",
+      "category": "blocked",
+      "support_merge_allowed": false,
+      "description": "Aarch64 is an explicit bring-up obligation but has no current runner evidence."
+    },
+    {
+      "id": "l1_claim_control_blocked",
+      "category": "blocked",
+      "support_merge_allowed": false,
+      "description": "L1 remains blocked until replacement-level claim-control promotes current and release levels together."
+    },
+    {
+      "id": "resolver_online_external_network",
+      "category": "flaky",
+      "support_merge_allowed": false,
+      "description": "Online resolver behavior depends on external network state and cannot be merged into supported status without current deterministic evidence."
+    },
+    {
+      "id": "resolver_offline_fixture_missing",
+      "category": "blocked",
+      "support_merge_allowed": false,
+      "description": "Offline resolver behavior is required but no current direct workload replay artifact proves it."
+    },
+    {
+      "id": "locale_fixture_only_no_interpose",
+      "category": "blocked",
+      "support_merge_allowed": false,
+      "description": "Locale fixture evidence exists, but user workload interpose evidence is still missing."
+    },
+    {
+      "id": "filesystem_permission_fixture_missing",
+      "category": "blocked",
+      "support_merge_allowed": false,
+      "description": "Filesystem permission variation is required but no current workload replay proves it."
+    },
+    {
+      "id": "pthread_fixture_only_no_workload_smoke",
+      "category": "blocked",
+      "support_merge_allowed": false,
+      "description": "Threading fixture evidence exists, but no user workload smoke row proves this environment."
+    },
+    {
+      "id": "package_manager_evidence_stale",
+      "category": "stale",
+      "support_merge_allowed": false,
+      "description": "Package-manager style workload evidence is intentionally stale until regenerated from current artifacts."
+    },
+    {
+      "id": "standalone_l2_unproven",
+      "category": "unsupported",
+      "support_merge_allowed": false,
+      "description": "Standalone L2 replacement is not supported until startup, host-dependency, and direct-link evidence is current."
+    },
+    {
+      "id": "optional_dependency_absent",
+      "category": "skipped",
+      "support_merge_allowed": false,
+      "description": "Optional dependency row is tracked but intentionally skipped in the current environment."
+    }
+  ],
+  "coverage_requirements": {
+    "architectures": [
+      "x86_64",
+      "aarch64"
+    ],
+    "runtime_modes": [
+      "strict",
+      "hardened"
+    ],
+    "replacement_levels": [
+      "L0",
+      "L1"
+    ],
+    "states": [
+      "required",
+      "blocked",
+      "optional",
+      "skipped"
+    ],
+    "evidence_states": [
+      "claim_blocked",
+      "flaky",
+      "skipped",
+      "stale",
+      "unsupported"
+    ],
+    "environment_patterns": [
+      "x86_64_l0_strict",
+      "x86_64_l0_hardened",
+      "aarch64_blocked_or_bringup",
+      "resolver_online",
+      "resolver_offline",
+      "locale_variant",
+      "filesystem_permission",
+      "threaded_workload",
+      "debug_profile"
+    ]
+  },
+  "freshness_policy": {
+    "source_commit": "current",
+    "reject_stale_rows_as_supported": true,
+    "reject_skipped_rows_as_supported": true,
+    "reject_blocked_rows_as_supported": true,
+    "reject_flaky_rows_as_supported": true,
+    "reject_unsupported_rows_as_supported": true,
+    "stale_failure_signature": "environment_matrix_stale_source_commit"
+  },
+  "rows": [
+    {
+      "environment_id": "env-x86_64-l0-strict-shell-coreutils",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with host glibc and LD_PRELOAD available",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "workload_id": "uwm-shell-coreutils",
+      "locale_env_variables": {
+        "LC_ALL": "C",
+        "LANG": "C"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "read_write_tmp",
+      "thread_count": 1,
+      "build_profile": "release",
+      "state": "required",
+      "reason_code": "interpose_artifact_missing",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "shell_coreutils_sort_pipeline_l0_strict",
+      "expected": "status=0 stdout=abc stderr=",
+      "actual": "claim_blocked",
+      "errno": null,
+      "status": "claim_blocked",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json",
+        "tests/conformance/user_workload_vertical_slice.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "interpose_artifact_missing",
+      "evidence_state": "claim_blocked",
+      "support_status": "claim_blocked",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l0-hardened-shell-coreutils",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with host glibc and FRANKENLIBC_MODE=hardened",
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "workload_id": "uwm-shell-coreutils",
+      "locale_env_variables": {
+        "LC_ALL": "C",
+        "LANG": "C"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "read_write_tmp",
+      "thread_count": 1,
+      "build_profile": "release",
+      "state": "required",
+      "reason_code": "interpose_artifact_missing",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "shell_coreutils_sort_pipeline_l1_hardened",
+      "expected": "status=0 stdout=abc stderr=",
+      "actual": "claim_blocked",
+      "errno": null,
+      "status": "claim_blocked",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json",
+        "tests/conformance/user_workload_vertical_slice.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "interpose_artifact_missing",
+      "evidence_state": "claim_blocked",
+      "support_status": "claim_blocked",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l1-hardened-build-toolchain",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with host glibc and hardened preload",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "workload_id": "uwm-build-toolchain",
+      "locale_env_variables": {
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "workspace_read_write",
+      "thread_count": 4,
+      "build_profile": "release",
+      "state": "blocked",
+      "reason_code": "l1_claim_control_blocked",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "build_tool_compiler_version_l1_hardened",
+      "expected": "build tool smoke succeeds under hardened L1",
+      "actual": "claim_blocked",
+      "errno": null,
+      "status": "claim_blocked",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/user_compatibility_report.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "l1_claim_control_blocked",
+      "evidence_state": "claim_blocked",
+      "support_status": "claim_blocked",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-aarch64-l0-strict-shell-coreutils",
+      "architecture": "aarch64",
+      "os_kernel_assumptions": "Linux aarch64 bring-up runner required",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "workload_id": "uwm-shell-coreutils",
+      "locale_env_variables": {
+        "LC_ALL": "C",
+        "LANG": "C"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "read_write_tmp",
+      "thread_count": 1,
+      "build_profile": "release",
+      "state": "blocked",
+      "reason_code": "aarch64_bringup_missing",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "shell_coreutils_sort_pipeline_aarch64_l0_strict",
+      "expected": "aarch64 strict L0 shell/coreutils replay exists",
+      "actual": "blocked",
+      "errno": null,
+      "status": "blocked",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "aarch64_bringup_missing",
+      "evidence_state": "unsupported",
+      "support_status": "unsupported",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l0-strict-resolver-online",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with host glibc and external DNS/network available",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "workload_id": "uwm-resolver-nss",
+      "locale_env_variables": {
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8"
+      },
+      "network_state": "online",
+      "filesystem_permission_model": "read_only_hosts",
+      "thread_count": 1,
+      "build_profile": "release",
+      "state": "required",
+      "reason_code": "resolver_online_external_network",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "resolver_nss_localhost_online_l0_strict",
+      "expected": "online resolver replay has deterministic DNS/NSS answer",
+      "actual": "flaky_external_network",
+      "errno": null,
+      "status": "flaky",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "resolver_online_external_network",
+      "evidence_state": "flaky",
+      "support_status": "flaky",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l0-hardened-resolver-offline",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with network namespace or offline resolver fixture",
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "workload_id": "uwm-resolver-nss",
+      "locale_env_variables": {
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "read_only_hosts",
+      "thread_count": 1,
+      "build_profile": "release",
+      "state": "required",
+      "reason_code": "resolver_offline_fixture_missing",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "resolver_nss_localhost_offline_l0_hardened",
+      "expected": "offline resolver replay uses deterministic hosts/NSS fixtures",
+      "actual": "claim_blocked",
+      "errno": null,
+      "status": "claim_blocked",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/real_program_smoke_suite.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "resolver_offline_fixture_missing",
+      "evidence_state": "claim_blocked",
+      "support_status": "claim_blocked",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l0-hardened-locale-c-utf8",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with C.UTF-8 locale installed",
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "workload_id": "uwm-locale-iconv",
+      "locale_env_variables": {
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "read_write_tmp",
+      "thread_count": 1,
+      "build_profile": "release",
+      "state": "required",
+      "reason_code": "locale_fixture_only_no_interpose",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "locale_iconv_list_l0_hardened_c_utf8",
+      "expected": "locale and iconv user replay proves C.UTF-8 behavior",
+      "actual": "claim_blocked",
+      "errno": null,
+      "status": "claim_blocked",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "locale_fixture_only_no_interpose",
+      "evidence_state": "claim_blocked",
+      "support_status": "claim_blocked",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l0-strict-stdio-readonly-fs",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with read-only fixture directory mounted or simulated",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "workload_id": "uwm-stdio-libio",
+      "locale_env_variables": {
+        "LC_ALL": "C",
+        "LANG": "C"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "read_only_fixture_dir",
+      "thread_count": 1,
+      "build_profile": "release",
+      "state": "required",
+      "reason_code": "filesystem_permission_fixture_missing",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "stdio_file_roundtrip_readonly_fs_l0_strict",
+      "expected": "stdio fixture reports read-only filesystem errno and stderr deterministically",
+      "actual": "claim_blocked",
+      "errno": "EACCES",
+      "status": "claim_blocked",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/stdio_libio_buffering_fixture_pack.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "filesystem_permission_fixture_missing",
+      "evidence_state": "claim_blocked",
+      "support_status": "claim_blocked",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l0-hardened-threaded-service",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with pthread/futex support and host glibc",
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "workload_id": "uwm-threaded-service",
+      "locale_env_variables": {
+        "LC_ALL": "C",
+        "LANG": "C"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "read_write_tmp",
+      "thread_count": 8,
+      "build_profile": "release",
+      "state": "required",
+      "reason_code": "pthread_fixture_only_no_workload_smoke",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "threaded_service_python_smoke_l0_hardened",
+      "expected": "threaded service workload passes hardened L0 replay",
+      "actual": "claim_blocked",
+      "errno": null,
+      "status": "claim_blocked",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "pthread_fixture_only_no_workload_smoke",
+      "evidence_state": "claim_blocked",
+      "support_status": "claim_blocked",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l0-strict-package-debug",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with package-manager fixtures and debug build",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "workload_id": "uwm-package-manager",
+      "locale_env_variables": {
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8"
+      },
+      "network_state": "online",
+      "filesystem_permission_model": "workspace_read_write",
+      "thread_count": 2,
+      "build_profile": "debug",
+      "state": "optional",
+      "reason_code": "package_manager_evidence_stale",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "package_manager_debug_l0_strict",
+      "expected": "package-manager debug workload has current evidence",
+      "actual": "stale",
+      "errno": null,
+      "status": "stale",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/user_compatibility_report.v1.json"
+      ],
+      "source_commit": "stale",
+      "target_dir": "target/conformance",
+      "failure_signature": "package_manager_evidence_stale",
+      "evidence_state": "stale",
+      "support_status": "stale",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l2-strict-shell-standalone",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Standalone direct-link or system libc replacement",
+      "runtime_mode": "strict",
+      "replacement_level": "L2",
+      "workload_id": "uwm-shell-coreutils",
+      "locale_env_variables": {
+        "LC_ALL": "C",
+        "LANG": "C"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "read_write_tmp",
+      "thread_count": 1,
+      "build_profile": "release",
+      "state": "blocked",
+      "reason_code": "standalone_l2_unproven",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "shell_coreutils_standalone_l2_strict",
+      "expected": "standalone shell/coreutils replacement has direct-link evidence",
+      "actual": "unsupported",
+      "errno": null,
+      "status": "unsupported",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/user_compatibility_report.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "standalone_l2_unproven",
+      "evidence_state": "unsupported",
+      "support_status": "unsupported",
+      "support_claim_allowed": false
+    },
+    {
+      "environment_id": "env-x86_64-l0-strict-package-optional-sqlite",
+      "architecture": "x86_64",
+      "os_kernel_assumptions": "Linux >=5.15 with optional sqlite-backed package fixture installed",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "workload_id": "uwm-package-manager",
+      "locale_env_variables": {
+        "LC_ALL": "C",
+        "LANG": "C"
+      },
+      "network_state": "offline",
+      "filesystem_permission_model": "workspace_read_write",
+      "thread_count": 1,
+      "build_profile": "release",
+      "state": "skipped",
+      "reason_code": "optional_dependency_absent",
+      "owner_bead": "bd-bp8fl.10.7",
+      "scenario_id": "package_manager_optional_sqlite_l0_strict",
+      "expected": "optional sqlite package fixture is installed",
+      "actual": "skipped",
+      "errno": null,
+      "status": "skipped",
+      "latency_ns": 0,
+      "artifact_refs": [
+        "tests/conformance/real_program_smoke_suite.v1.json",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json"
+      ],
+      "source_commit": "current",
+      "target_dir": "target/conformance",
+      "failure_signature": "optional_dependency_absent",
+      "evidence_state": "skipped",
+      "support_status": "skipped",
+      "support_claim_allowed": false
+    }
+  ],
+  "negative_tests": [
+    {
+      "id": "missing_aarch64_coverage",
+      "mutation": "rows[env-aarch64-l0-strict-shell-coreutils].architecture=x86_64",
+      "expected_failure_signature": "environment_matrix_missing_architecture_coverage"
+    },
+    {
+      "id": "invalid_reason_code",
+      "mutation": "rows[0].reason_code=unknown_reason",
+      "expected_failure_signature": "environment_matrix_invalid_reason_code"
+    },
+    {
+      "id": "blocked_row_promoted_to_supported",
+      "mutation": "rows[3].support_status=supported and support_claim_allowed=true",
+      "expected_failure_signature": "environment_matrix_bad_support_merge"
+    },
+    {
+      "id": "stale_source_commit",
+      "mutation": "freshness_policy.source_commit=deadbeef",
+      "expected_failure_signature": "environment_matrix_stale_source_commit"
+    },
+    {
+      "id": "missing_required_log_field",
+      "mutation": "required_log_fields remove reason_code",
+      "expected_failure_signature": "environment_matrix_log_contract_missing"
+    }
+  ],
+  "expected_current_summary": {
+    "row_count": 12,
+    "required_count": 7,
+    "blocked_count": 3,
+    "optional_count": 1,
+    "skipped_count": 1,
+    "architecture_count": 2,
+    "workload_count": 7,
+    "support_claim_allowed_count": 0,
+    "claim_blocked_count": 7,
+    "flaky_count": 1,
+    "skipped_evidence_count": 1,
+    "stale_count": 1,
+    "unsupported_count": 2
+  }
+}
