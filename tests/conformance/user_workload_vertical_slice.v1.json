@@ -1,0 +1,220 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.10.6",
+  "purpose": "First end-to-end vertical slice through user workload evidence gates. The slice selects exactly one workload from bd-bp8fl.10.1 and binds it to current matrix, smoke, failure-bundle, compatibility, freshness, and claim-gate artifacts.",
+  "selected_workload": {
+    "id": "uwm-shell-coreutils",
+    "source_artifact": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "source_bead": "bd-bp8fl.10.1",
+    "why_real_user_decision": "Shell and coreutils commands are the first sanity check a user runs before trusting LD_PRELOAD interpose or future standalone libc replacement claims.",
+    "expected_primary_domain": "shell_coreutils",
+    "expected_coverage_domains": [
+      "shell_coreutils",
+      "stdio_libio",
+      "locale_iconv",
+      "startup_linking"
+    ],
+    "expected_runtime_modes": [
+      "strict",
+      "hardened"
+    ],
+    "expected_replacement_levels": [
+      "L0",
+      "L1",
+      "L2",
+      "L3"
+    ],
+    "api_families": [
+      "process",
+      "stdio",
+      "unistd",
+      "dirent",
+      "locale",
+      "startup"
+    ],
+    "representative_symbols": [
+      "printf",
+      "write",
+      "read",
+      "opendir",
+      "readdir",
+      "setlocale",
+      "__libc_start_main"
+    ]
+  },
+  "replay_bindings": [
+    {
+      "id": "direct_l0_strict",
+      "path_kind": "direct",
+      "script": "scripts/check_real_program_smoke_suite.sh",
+      "args": [
+        "--run"
+      ],
+      "source_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "source_bead": "bd-bp8fl.10.2",
+      "smoke_workload_id": "shell_coreutils.sort_pipeline",
+      "case_id": "shell_coreutils_sort_pipeline_l0_strict",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "expected_status": "claim_blocked",
+      "expected_failure_signature": "interpose_artifact_missing",
+      "oracle_kind": "status_stdout_stderr_exact"
+    },
+    {
+      "id": "isolated_l1_hardened",
+      "path_kind": "isolated",
+      "script": "scripts/check_real_program_smoke_suite.sh",
+      "args": [
+        "--dry-run"
+      ],
+      "source_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
+      "source_bead": "bd-bp8fl.10.2",
+      "smoke_workload_id": "shell_coreutils.sort_pipeline",
+      "case_id": "shell_coreutils_sort_pipeline_l1_hardened",
+      "runtime_mode": "hardened",
+      "replacement_level": "L1",
+      "expected_status": "claim_blocked",
+      "expected_failure_signature": "interpose_artifact_missing",
+      "oracle_kind": "status_stdout_stderr_exact"
+    }
+  ],
+  "fixture_evidence": [
+    {
+      "id": "stdio_libio_fixture_pack",
+      "domain": "stdio_libio",
+      "source_bead": "bd-bp8fl.5.5",
+      "manifest": "tests/conformance/stdio_libio_buffering_fixture_pack.v1.json",
+      "checker": "scripts/check_stdio_libio_buffering_fixture_pack.sh"
+    },
+    {
+      "id": "locale_catalog_fixture_pack",
+      "domain": "locale_iconv",
+      "source_bead": "bd-bp8fl.5.2",
+      "manifest": "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
+      "checker": "scripts/check_locale_catalog_transliteration_fixture_pack.sh"
+    },
+    {
+      "id": "loader_dlfcn_fixture_pack",
+      "domain": "startup_linking",
+      "source_bead": "bd-bp8fl.5.4",
+      "manifest": "tests/conformance/loader_dlfcn_relocation_tls_audit.v1.json",
+      "checker": "scripts/check_loader_dlfcn_relocation_tls_audit.sh"
+    }
+  ],
+  "claim_gates": [
+    {
+      "id": "compatibility_report",
+      "source_bead": "bd-bp8fl.10.8",
+      "artifact": "tests/conformance/user_compatibility_report.v1.json",
+      "command": "scripts/generate_user_compatibility_report.sh",
+      "blocks_missing_or_stale": true
+    },
+    {
+      "id": "readme_feature_parity_claim_gate",
+      "source_bead": "bd-bp8fl.1.4",
+      "artifact": "tests/conformance/docs_semantic_claims.v1.json",
+      "command": "scripts/check_docs_semantic_claims.sh",
+      "blocks_missing_or_stale": true
+    },
+    {
+      "id": "release_readme_example_gate",
+      "source_bead": "bd-bp8fl.10.4",
+      "artifact": "tests/conformance/release_readme_example_workload_gate.v1.json",
+      "command": "scripts/check_release_readme_example_workload_gate.sh",
+      "blocks_missing_or_stale": true
+    },
+    {
+      "id": "artifact_precedence_freshness",
+      "source_bead": "bd-bp8fl.7.7",
+      "artifact": "tests/conformance/artifact_precedence.v1.json",
+      "command": "scripts/check_artifact_precedence.sh",
+      "blocks_missing_or_stale": true
+    }
+  ],
+  "source_of_truth_inputs": [
+    "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "tests/conformance/real_program_smoke_suite.v1.json",
+    "tests/conformance/user_visible_diagnostics.v1.json",
+    "tests/conformance/user_compatibility_report.v1.json",
+    "tests/conformance/support_semantic_overlay.v1.json",
+    "tests/conformance/oracle_precedence_divergence.v1.json",
+    "support_matrix.json",
+    "tests/conformance/replacement_levels.json",
+    "FEATURE_PARITY.md",
+    "README.md"
+  ],
+  "freshness_policy": {
+    "source_commit": "current",
+    "reject_stale_artifacts": true,
+    "reject_contradictory_claims": true,
+    "stale_failure_signature": "vertical_slice_stale_source_commit",
+    "contradictory_failure_signature": "vertical_slice_contradictory_claim"
+  },
+  "expected_current_decision": {
+    "status": "claim_blocked",
+    "support_claimed": false,
+    "failure_signature": "interpose_artifact_missing",
+    "reason": "Current checked run has no libfrankenlibc_abi.so or libfrankenlibc_replace.so artifact, so user-facing support and replacement claims stay blocked."
+  },
+  "benchmark_policy": {
+    "hot_path_required": false,
+    "rationale": "The selected shell/coreutils row is an acceptance/diagnostics proving slice. Performance budget linkage is covered by bd-bp8fl.8.6 and must not be inferred from this smoke-only artifact."
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "scenario_id",
+    "workload_id",
+    "runtime_mode",
+    "replacement_level",
+    "api_family",
+    "symbol",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "decision_path",
+    "healing_action",
+    "latency_ns",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "negative_tests": [
+    {
+      "id": "missing_selected_workload",
+      "mutation": "selected_workload.id=uwm-missing-row",
+      "expected_failure_signature": "vertical_slice_missing_workload"
+    },
+    {
+      "id": "stale_source_commit",
+      "mutation": "freshness_policy.source_commit=deadbeef",
+      "expected_failure_signature": "vertical_slice_stale_source_commit"
+    },
+    {
+      "id": "contradictory_claim",
+      "mutation": "expected_current_decision.support_claimed=true while status=claim_blocked",
+      "expected_failure_signature": "vertical_slice_contradictory_claim"
+    },
+    {
+      "id": "missing_smoke_case",
+      "mutation": "replay_bindings[0].case_id=missing_case",
+      "expected_failure_signature": "vertical_slice_missing_smoke_case"
+    }
+  ],
+  "artifact_index": {
+    "path": "target/conformance/user_workload_vertical_slice.artifact_index.json",
+    "must_include_kinds": [
+      "manifest",
+      "report",
+      "log",
+      "workload_matrix",
+      "smoke_suite",
+      "failure_bundle_policy",
+      "compatibility_report",
+      "claim_gate",
+      "fixture_gate"
+    ]
+  }
+}

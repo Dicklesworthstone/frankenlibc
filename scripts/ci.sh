@@ -162,6 +162,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- user workload vertical slice gate ---"
+    scripts/check_user_workload_vertical_slice.sh
+    echo "PASS"
+    echo ""
+
     echo "--- README/FEATURE_PARITY semantic claim gate ---"
     scripts/check_docs_semantic_claims.sh
     echo "PASS"
