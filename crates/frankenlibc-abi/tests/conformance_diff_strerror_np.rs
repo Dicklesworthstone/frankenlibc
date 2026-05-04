@@ -9,7 +9,7 @@
 //!
 //! Filed under [bd-3ce894, bd-xn6p8].
 
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{CStr, c_char, c_int};
 
 use frankenlibc_abi::string_abi as fl;
 
@@ -41,13 +41,13 @@ fn render_divs(divs: &[Divergence]) -> String {
 fn diff_strerrordesc_np_known_errnos() {
     let mut divs = Vec::new();
     let errnos: &[c_int] = &[
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20,
-        21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+        26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
         // Unknown errnos — both should return NULL.
         200, 1000, -1,
     ];
     for &e in errnos {
-        let p_fl = unsafe { fl::strerrordesc_np(e) };
+        let p_fl = fl::strerrordesc_np(e);
         let p_lc = unsafe { strerrordesc_np(e) };
         if p_fl.is_null() != p_lc.is_null() {
             divs.push(Divergence {
@@ -72,19 +72,22 @@ fn diff_strerrordesc_np_known_errnos() {
             });
         }
     }
-    assert!(divs.is_empty(), "strerrordesc_np divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strerrordesc_np divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
 fn diff_strerrorname_np_known_errnos() {
     let mut divs = Vec::new();
     let errnos: &[c_int] = &[
-        1, 2, 3, 9, 13, 17, 22, 32, 38, 39, 40,
-        // Unknown errnos
+        1, 2, 3, 9, 13, 17, 22, 32, 38, 39, 40, // Unknown errnos
         200, 1000, -1,
     ];
     for &e in errnos {
-        let p_fl = unsafe { fl::strerrorname_np(e) };
+        let p_fl = fl::strerrorname_np(e);
         let p_lc = unsafe { strerrorname_np(e) };
         if p_fl.is_null() != p_lc.is_null() {
             divs.push(Divergence {
@@ -109,7 +112,11 @@ fn diff_strerrorname_np_known_errnos() {
             });
         }
     }
-    assert!(divs.is_empty(), "strerrorname_np divergences:\n{}", render_divs(&divs));
+    assert!(
+        divs.is_empty(),
+        "strerrorname_np divergences:\n{}",
+        render_divs(&divs)
+    );
 }
 
 #[test]
