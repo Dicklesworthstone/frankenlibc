@@ -32,6 +32,10 @@ fn sig_guard() -> MutexGuard<'static, ()> {
 
 extern "C" fn dummy_handler(_sig: c_int) {}
 
+fn dummy_handler_value() -> libc::sighandler_t {
+    dummy_handler as *const () as libc::sighandler_t
+}
+
 #[test]
 fn diff_bsd_signal_install_default_then_restore() {
     let _g = sig_guard();
@@ -47,19 +51,20 @@ fn diff_bsd_signal_install_default_then_restore() {
 #[test]
 fn diff_bsd_signal_swap_returns_previous() {
     let _g = sig_guard();
+    let dummy = dummy_handler_value();
     // Install dummy via fl, then swap to SIG_DFL — should get dummy back.
-    let fl_first = unsafe { fl::bsd_signal(libc::SIGUSR1, dummy_handler as libc::sighandler_t) };
+    let fl_first = unsafe { fl::bsd_signal(libc::SIGUSR1, dummy) };
     let fl_back = unsafe { fl::bsd_signal(libc::SIGUSR1, libc::SIG_DFL) };
     assert_ne!(fl_back, libc::SIG_ERR, "fl bsd_signal swap should succeed");
-    assert_eq!(fl_back, dummy_handler as libc::sighandler_t, "fl: swap returns prior handler");
+    assert_eq!(fl_back, dummy, "fl: swap returns prior handler");
     // Restore to original.
     let _ = unsafe { fl::bsd_signal(libc::SIGUSR1, fl_first) };
 
     // Same for lc on a different signal.
-    let lc_first = unsafe { bsd_signal(libc::SIGUSR2, dummy_handler as libc::sighandler_t) };
+    let lc_first = unsafe { bsd_signal(libc::SIGUSR2, dummy) };
     let lc_back = unsafe { bsd_signal(libc::SIGUSR2, libc::SIG_DFL) };
     assert_ne!(lc_back, libc::SIG_ERR);
-    assert_eq!(lc_back, dummy_handler as libc::sighandler_t, "lc: swap returns prior handler");
+    assert_eq!(lc_back, dummy, "lc: swap returns prior handler");
     let _ = unsafe { bsd_signal(libc::SIGUSR2, lc_first) };
 }
 
@@ -81,11 +86,12 @@ fn diff_bsd_signal_invalid_signal_returns_sig_err() {
 #[test]
 fn diff_bsd_signal_uncatchable_signals_rejected() {
     let _g = sig_guard();
+    let dummy = dummy_handler_value();
     // SIGKILL and SIGSTOP cannot have handlers set. Both impls
     // must reject with SIG_ERR.
     for &sig in &[libc::SIGKILL, libc::SIGSTOP] {
-        let fl_v = unsafe { fl::bsd_signal(sig, dummy_handler as libc::sighandler_t) };
-        let lc_v = unsafe { bsd_signal(sig, dummy_handler as libc::sighandler_t) };
+        let fl_v = unsafe { fl::bsd_signal(sig, dummy) };
+        let lc_v = unsafe { bsd_signal(sig, dummy) };
         assert_eq!(fl_v, libc::SIG_ERR, "fl: signal {sig} should be rejected");
         assert_eq!(lc_v, libc::SIG_ERR, "lc: signal {sig} should be rejected");
     }
