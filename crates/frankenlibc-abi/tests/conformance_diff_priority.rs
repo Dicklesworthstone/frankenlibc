@@ -42,8 +42,14 @@ fn diff_getpriority_self() {
     }
     let lc_p = unsafe { getpriority(0, 0) };
     let lc_e = unsafe { *libc::__errno_location() };
-    assert_eq!(fl_p, lc_p, "getpriority value mismatch: fl={fl_p} lc={lc_p}");
-    assert_eq!(fl_e, lc_e, "getpriority errno mismatch: fl={fl_e} lc={lc_e}");
+    assert_eq!(
+        fl_p, lc_p,
+        "getpriority value mismatch: fl={fl_p} lc={lc_p}"
+    );
+    assert_eq!(
+        fl_e, lc_e,
+        "getpriority errno mismatch: fl={fl_e} lc={lc_e}"
+    );
 }
 
 #[test]
@@ -72,6 +78,26 @@ fn diff_setpriority_zero_delta_succeeds() {
     let lc_r = unsafe { setpriority(0, 0, cur) };
     assert_eq!(fl_r, lc_r, "setpriority self mismatch: fl={fl_r} lc={lc_r}");
     assert_eq!(fl_r, 0, "setpriority(self, current) should succeed");
+}
+
+#[test]
+fn diff_nice_zero_delta_matches_glibc() {
+    // nice(0) returns the current nice value without changing priority.
+    let before = unsafe { getpriority(0, 0) };
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let fl_r = unsafe { fl::nice(0) };
+    let fl_e = unsafe { *libc::__errno_location() };
+    unsafe {
+        *libc::__errno_location() = 0;
+    }
+    let lc_r = unsafe { nice(0) };
+    let lc_e = unsafe { *libc::__errno_location() };
+    let after = unsafe { getpriority(0, 0) };
+    assert_eq!(fl_r, lc_r, "nice(0) return mismatch: fl={fl_r} lc={lc_r}");
+    assert_eq!(fl_e, lc_e, "nice(0) errno mismatch: fl={fl_e} lc={lc_e}");
+    assert_eq!(after, before, "nice(0) must not change process priority");
 }
 
 #[test]
