@@ -49,10 +49,30 @@ fn with_utf8<F: FnOnce() -> R, R>(f: F) -> R {
 fn encode_both(wc: u32) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
     let mut fl_buf = [0u8; 8];
     let mut lc_buf = [0u8; 8];
-    let fl_n = unsafe { fl::wcrtomb(fl_buf.as_mut_ptr() as *mut c_char, wc as i32, std::ptr::null_mut()) };
-    let lc_n = unsafe { wcrtomb(lc_buf.as_mut_ptr() as *mut c_char, wc as i32, std::ptr::null_mut()) };
-    let fl_o = if fl_n == usize::MAX { None } else { Some(fl_buf[..fl_n].to_vec()) };
-    let lc_o = if lc_n == usize::MAX { None } else { Some(lc_buf[..lc_n].to_vec()) };
+    let fl_n = unsafe {
+        fl::wcrtomb(
+            fl_buf.as_mut_ptr() as *mut c_char,
+            wc as i32,
+            std::ptr::null_mut(),
+        )
+    };
+    let lc_n = unsafe {
+        wcrtomb(
+            lc_buf.as_mut_ptr() as *mut c_char,
+            wc as i32,
+            std::ptr::null_mut(),
+        )
+    };
+    let fl_o = if fl_n == usize::MAX {
+        None
+    } else {
+        Some(fl_buf[..fl_n].to_vec())
+    };
+    let lc_o = if lc_n == usize::MAX {
+        None
+    } else {
+        Some(lc_buf[..lc_n].to_vec())
+    };
     (fl_o, lc_o)
 }
 
@@ -78,8 +98,8 @@ fn diff_wcrtomb_2byte_range() {
             assert_eq!(fl_o, lc_o, "wcrtomb({wc:#x})");
             if let Some(b) = fl_o {
                 assert_eq!(b.len(), 2, "expected 2-byte encoding for U+{wc:04X}");
-                assert!(b[0] >= 0xC0 && b[0] < 0xE0);
-                assert!(b[1] >= 0x80 && b[1] < 0xC0);
+                assert!((0xC0..0xE0).contains(&b[0]));
+                assert!((0x80..0xC0).contains(&b[1]));
             }
         }
     });
@@ -93,9 +113,9 @@ fn diff_wcrtomb_3byte_range_including_cjk() {
             assert_eq!(fl_o, lc_o, "wcrtomb({wc:#x}) bytes differ");
             if let Some(b) = fl_o {
                 assert_eq!(b.len(), 3, "expected 3-byte encoding for U+{wc:04X}");
-                assert!(b[0] >= 0xE0 && b[0] < 0xF0);
-                assert!(b[1] >= 0x80 && b[1] < 0xC0);
-                assert!(b[2] >= 0x80 && b[2] < 0xC0);
+                assert!((0xE0..0xF0).contains(&b[0]));
+                assert!((0x80..0xC0).contains(&b[1]));
+                assert!((0x80..0xC0).contains(&b[2]));
             }
         }
     });
@@ -109,9 +129,9 @@ fn diff_wcrtomb_4byte_range_supplementary_planes() {
             assert_eq!(fl_o, lc_o, "wcrtomb({wc:#x}) bytes differ");
             if let Some(b) = fl_o {
                 assert_eq!(b.len(), 4, "expected 4-byte encoding for U+{wc:06X}");
-                assert!(b[0] >= 0xF0 && b[0] < 0xF8);
+                assert!((0xF0..0xF8).contains(&b[0]));
                 for &c in &b[1..] {
-                    assert!(c >= 0x80 && c < 0xC0);
+                    assert!((0x80..0xC0).contains(&c));
                 }
             }
         }
@@ -129,7 +149,11 @@ fn fl_wcrtomb_invalid_codepoints_rejected_per_rfc_3629() {
         for wc in [0x110000u32, 0x12_3456, 0xFFFF_FFFF] {
             let mut fl_buf = [0u8; 8];
             let fl_n = unsafe {
-                fl::wcrtomb(fl_buf.as_mut_ptr() as *mut c_char, wc as i32, std::ptr::null_mut())
+                fl::wcrtomb(
+                    fl_buf.as_mut_ptr() as *mut c_char,
+                    wc as i32,
+                    std::ptr::null_mut(),
+                )
             };
             assert_eq!(
                 fl_n,
