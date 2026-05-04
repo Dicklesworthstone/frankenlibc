@@ -1,0 +1,667 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-bp8fl.5.2",
+  "gate_id": "locale-catalog-transliteration-fixture-pack-v1",
+  "generated_at_utc": "2026-05-04T06:58:00Z",
+  "purpose": "Define locale fixture rows for collation, LC category switching, message catalog fallback, transliteration boundaries, invalid locale names, and threaded locale-sensitive reads without reducing coverage to the C locale.",
+  "freshness": {
+    "required_source_commit": "current",
+    "source_commit_policy": "gate must compare this marker to git rev-parse HEAD and fail stale artifacts when pinned to any other commit"
+  },
+  "supported_architectures": [
+    "x86_64",
+    "aarch64"
+  ],
+  "sources": {
+    "locale_ops_fixture": "tests/conformance/fixtures/locale_ops.json",
+    "iconv_phase1_fixture": "tests/conformance/fixtures/iconv_phase1.json",
+    "oracle_precedence_divergence": "tests/conformance/oracle_precedence_divergence.v1.json",
+    "hard_parts_failure_replay_gate": "tests/conformance/hard_parts_failure_replay_gate.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "fixture_id",
+    "locale",
+    "category",
+    "runtime_mode",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "fixture_schema": {
+    "required_fields": [
+      "fixture_id",
+      "fixture_class",
+      "locale",
+      "category",
+      "input_strings",
+      "catalog_lookup",
+      "env_vars",
+      "runtime_modes",
+      "replacement_level",
+      "oracle_kind",
+      "allowed_divergence",
+      "expected",
+      "locale_data",
+      "artifact_refs",
+      "direct_runner",
+      "isolated_runner",
+      "determinism",
+      "cleanup"
+    ],
+    "expected_required_fields": [
+      "bytes",
+      "text",
+      "errno",
+      "status",
+      "decision_path"
+    ],
+    "runner_required_fields": [
+      "runner_kind",
+      "command",
+      "artifact_refs"
+    ],
+    "catalog_lookup_required_fields": [
+      "catalog",
+      "set_id",
+      "message_id",
+      "default_text"
+    ]
+  },
+  "required_fixture_classes": [
+    "c_locale_collation",
+    "utf8_locale_category_switch",
+    "missing_locale_data",
+    "collation_order",
+    "catalog_lookup",
+    "transliteration_boundary",
+    "invalid_locale_name",
+    "threaded_locale_read"
+  ],
+  "diagnostic_signatures": [
+    {
+      "id": "stale_artifact",
+      "trigger": "manifest source_commit is pinned to a commit other than current HEAD or a source artifact bead/schema no longer matches"
+    },
+    {
+      "id": "missing_locale_data",
+      "trigger": "locale_data.path or required locale fixture source cannot be resolved from the workspace"
+    },
+    {
+      "id": "invalid_locale_name",
+      "trigger": "locale name is malformed rather than a declared unavailable or unsupported locale case"
+    },
+    {
+      "id": "missing_catalog_fixture",
+      "trigger": "catalog_lookup omits the catalog id, set id, message id, or default fallback text"
+    },
+    {
+      "id": "oracle_mismatch",
+      "trigger": "oracle_kind or allowed_divergence is not declared by oracle_precedence_divergence.v1.json"
+    },
+    {
+      "id": "nondeterministic_output",
+      "trigger": "scenario determinism guard is absent or requires fewer than two stable replay iterations"
+    },
+    {
+      "id": "unsupported_fixture_class",
+      "trigger": "fixture_class is outside the locale fixture pack classes required by bd-bp8fl.5.2"
+    },
+    {
+      "id": "missing_field",
+      "trigger": "scenario, runner, catalog lookup, or expected outcome omits a required schema field"
+    }
+  ],
+  "scenarios": [
+    {
+      "fixture_id": "locale.c.collation.byte-order",
+      "fixture_class": "c_locale_collation",
+      "locale": "C",
+      "category": "LC_COLLATE",
+      "input_strings": [
+        "a",
+        "B",
+        "z"
+      ],
+      "catalog_lookup": {
+        "catalog": "none",
+        "set_id": 0,
+        "message_id": 0,
+        "default_text": "not_applicable"
+      },
+      "env_vars": {
+        "LC_ALL": "C",
+        "LANG": "C",
+        "NLSPATH": "unset"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "posix_text",
+      "allowed_divergence": "parity_match",
+      "expected": {
+        "bytes": "42 61 7a",
+        "text": "B,a,z",
+        "errno": "0",
+        "status": "fixture_defined",
+        "decision_path": "locale_ops->posix_text->bytewise_collation"
+      },
+      "locale_data": {
+        "path": "tests/conformance/fixtures/locale_ops.json",
+        "required": true
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/locale_ops.json",
+        "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs"
+      ],
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test locale_ops_conformance_test locale_ops_fixture_valid_schema -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs",
+          "tests/conformance/fixtures/locale_ops.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+        "artifact_refs": [
+          "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+          "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+        ]
+      },
+      "determinism": {
+        "replay_key": "locale-c-collation-byte-order-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "same sorted byte order and errno over two replays"
+      },
+      "cleanup": {
+        "state": "locale_env_restored",
+        "required": true
+      }
+    },
+    {
+      "fixture_id": "locale.utf8.category-switch.codeset",
+      "fixture_class": "utf8_locale_category_switch",
+      "locale": "C.UTF-8",
+      "category": "LC_CTYPE",
+      "input_strings": [
+        "CODESET",
+        "RADIXCHAR"
+      ],
+      "catalog_lookup": {
+        "catalog": "none",
+        "set_id": 0,
+        "message_id": 0,
+        "default_text": "not_applicable"
+      },
+      "env_vars": {
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8",
+        "NLSPATH": "unset"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "environment_probe",
+      "allowed_divergence": "flaky_environment",
+      "expected": {
+        "bytes": "55 54 46 2d 38",
+        "text": "UTF-8",
+        "errno": "0",
+        "status": "blocked_until_locale_probe_replayed",
+        "decision_path": "locale_ops->environment_probe->codeset"
+      },
+      "locale_data": {
+        "path": "tests/conformance/fixtures/locale_ops.json",
+        "required": true
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/locale_ops.json",
+        "tests/conformance/oracle_precedence_divergence.v1.json"
+      ],
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test locale_ops_conformance_test locale_ops_covers_nl_langinfo -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs",
+          "tests/conformance/fixtures/locale_ops.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+        "artifact_refs": [
+          "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+          "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+        ]
+      },
+      "determinism": {
+        "replay_key": "locale-utf8-category-switch-codeset-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "locale availability must be logged before claims advance"
+      },
+      "cleanup": {
+        "state": "locale_env_restored",
+        "required": true
+      }
+    },
+    {
+      "fixture_id": "locale.missing-data.fr-fr",
+      "fixture_class": "missing_locale_data",
+      "locale": "fr_FR.UTF-8",
+      "category": "LC_ALL",
+      "input_strings": [
+        "decimal_point",
+        "thousands_sep"
+      ],
+      "catalog_lookup": {
+        "catalog": "none",
+        "set_id": 0,
+        "message_id": 0,
+        "default_text": "not_applicable"
+      },
+      "env_vars": {
+        "LC_ALL": "fr_FR.UTF-8",
+        "LANG": "fr_FR.UTF-8",
+        "NLSPATH": "unset"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "environment_probe",
+      "allowed_divergence": "flaky_environment",
+      "expected": {
+        "bytes": "environment-dependent",
+        "text": "locale_available_or_blocked",
+        "errno": "0_OR_ENOENT",
+        "status": "blocked_until_locale_data_present",
+        "decision_path": "locale_ops->environment_probe->missing_locale_data"
+      },
+      "locale_data": {
+        "path": "tests/conformance/fixtures/locale_ops.json",
+        "required": true
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/locale_ops.json",
+        "tests/conformance/hard_parts_failure_replay_gate.v1.json"
+      ],
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test locale_ops_conformance_test locale_ops_fixture_valid_schema -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs",
+          "tests/conformance/fixtures/locale_ops.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+        "artifact_refs": [
+          "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+          "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+        ]
+      },
+      "determinism": {
+        "replay_key": "locale-missing-data-fr-fr-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "missing locale data blocks support claims instead of becoming a parity pass"
+      },
+      "cleanup": {
+        "state": "locale_env_restored",
+        "required": true
+      }
+    },
+    {
+      "fixture_id": "locale.collation.strxfrm.prefix",
+      "fixture_class": "collation_order",
+      "locale": "C",
+      "category": "LC_COLLATE",
+      "input_strings": [
+        "aa",
+        "ab",
+        "b"
+      ],
+      "catalog_lookup": {
+        "catalog": "none",
+        "set_id": 0,
+        "message_id": 0,
+        "default_text": "not_applicable"
+      },
+      "env_vars": {
+        "LC_ALL": "C",
+        "LANG": "C",
+        "NLSPATH": "unset"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "allowed_divergence": "parity_match",
+      "expected": {
+        "bytes": "61 61 00 61 62 00 62",
+        "text": "aa,ab,b",
+        "errno": "0",
+        "status": "fixture_defined",
+        "decision_path": "locale_ops->host_glibc->strxfrm_prefix_order"
+      },
+      "locale_data": {
+        "path": "tests/conformance/fixtures/locale_ops.json",
+        "required": true
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/locale_ops.json",
+        "tests/conformance/oracle_precedence_divergence.v1.json"
+      ],
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test locale_ops_conformance_test locale_ops_covers_setlocale -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs",
+          "tests/conformance/fixtures/locale_ops.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+        "artifact_refs": [
+          "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+          "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+        ]
+      },
+      "determinism": {
+        "replay_key": "locale-collation-strxfrm-prefix-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "strxfrm order and errno remain stable across direct and isolated replay"
+      },
+      "cleanup": {
+        "state": "locale_env_restored",
+        "required": true
+      }
+    },
+    {
+      "fixture_id": "locale.catalog.missing-default",
+      "fixture_class": "catalog_lookup",
+      "locale": "C",
+      "category": "LC_MESSAGES",
+      "input_strings": [
+        "fallback message"
+      ],
+      "catalog_lookup": {
+        "catalog": "frankenlibc_missing_catalog",
+        "set_id": 1,
+        "message_id": 42,
+        "default_text": "fallback message"
+      },
+      "env_vars": {
+        "LC_ALL": "C",
+        "LANG": "C",
+        "NLSPATH": "/nonexistent/%N"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "posix_text",
+      "allowed_divergence": "allowed_divergence",
+      "expected": {
+        "bytes": "66 61 6c 6c 62 61 63 6b 20 6d 65 73 73 61 67 65",
+        "text": "fallback message",
+        "errno": "ENOENT_OR_UNCHANGED",
+        "status": "catalog_default_returned",
+        "decision_path": "catalog_lookup->posix_text->default_message"
+      },
+      "locale_data": {
+        "path": "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
+        "required": true
+      },
+      "artifact_refs": [
+        "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json",
+        "tests/conformance/oracle_precedence_divergence.v1.json"
+      ],
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test locale_catalog_transliteration_fixture_pack_test manifest_defines_locale_fixture_schema_and_required_classes -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/locale_catalog_transliteration_fixture_pack_test.rs",
+          "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+        "artifact_refs": [
+          "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+          "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+        ]
+      },
+      "determinism": {
+        "replay_key": "locale-catalog-missing-default-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "missing catalog returns the same default text and claim classification"
+      },
+      "cleanup": {
+        "state": "nlspath_env_restored",
+        "required": true
+      }
+    },
+    {
+      "fixture_id": "locale.transliteration.utf8-to-ascii",
+      "fixture_class": "transliteration_boundary",
+      "locale": "C.UTF-8",
+      "category": "LC_CTYPE",
+      "input_strings": [
+        "fa\\u00e7ade",
+        "na\\u00efve"
+      ],
+      "catalog_lookup": {
+        "catalog": "none",
+        "set_id": 0,
+        "message_id": 0,
+        "default_text": "not_applicable"
+      },
+      "env_vars": {
+        "LC_ALL": "C.UTF-8",
+        "LANG": "C.UTF-8",
+        "GCONV_PATH": "unset"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "allowed_divergence": "proof_gap",
+      "expected": {
+        "bytes": "66 61 63 61 64 65 00 6e 61 69 76 65",
+        "text": "facade,naive",
+        "errno": "0_OR_EILSEQ",
+        "status": "blocked_until_iconv_transliteration_fixture",
+        "decision_path": "iconv_phase1->host_glibc->transliteration_boundary"
+      },
+      "locale_data": {
+        "path": "tests/conformance/fixtures/iconv_phase1.json",
+        "required": true
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/iconv_phase1.json",
+        "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs"
+      ],
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+        "artifact_refs": [
+          "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+          "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+        ]
+      },
+      "determinism": {
+        "replay_key": "locale-transliteration-utf8-ascii-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "transliteration claims remain blocked until the iconv fixture owns the exact byte result"
+      },
+      "cleanup": {
+        "state": "locale_env_restored",
+        "required": true
+      }
+    },
+    {
+      "fixture_id": "locale.invalid-name.rejected",
+      "fixture_class": "invalid_locale_name",
+      "locale": "xx_INVALID.UTF-8",
+      "category": "LC_ALL",
+      "input_strings": [
+        "setlocale"
+      ],
+      "catalog_lookup": {
+        "catalog": "none",
+        "set_id": 0,
+        "message_id": 0,
+        "default_text": "not_applicable"
+      },
+      "env_vars": {
+        "LC_ALL": "xx_INVALID.UTF-8",
+        "LANG": "C",
+        "NLSPATH": "unset"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "hardened_safety_policy",
+      "allowed_divergence": "safety_repair",
+      "expected": {
+        "bytes": "43",
+        "text": "C",
+        "errno": "0_OR_EINVAL",
+        "status": "hardened_fallback_or_strict_reject",
+        "decision_path": "locale_ops->hardened_safety_policy->invalid_locale_fallback"
+      },
+      "locale_data": {
+        "path": "tests/conformance/fixtures/locale_ops.json",
+        "required": true
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/locale_ops.json",
+        "tests/conformance/hard_parts_failure_replay_gate.v1.json"
+      ],
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test locale_ops_conformance_test locale_ops_error_codes_valid -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs",
+          "tests/conformance/fixtures/locale_ops.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+        "artifact_refs": [
+          "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+          "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+        ]
+      },
+      "determinism": {
+        "replay_key": "locale-invalid-name-rejected-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "invalid locale classification is explicit and never promoted to full locale support"
+      },
+      "cleanup": {
+        "state": "locale_env_restored",
+        "required": true
+      }
+    },
+    {
+      "fixture_id": "locale.threaded.read-stability",
+      "fixture_class": "threaded_locale_read",
+      "locale": "C",
+      "category": "LC_ALL",
+      "input_strings": [
+        "thread_a:nl_langinfo(CODESET)",
+        "thread_b:localeconv(decimal_point)"
+      ],
+      "catalog_lookup": {
+        "catalog": "none",
+        "set_id": 0,
+        "message_id": 0,
+        "default_text": "not_applicable"
+      },
+      "env_vars": {
+        "LC_ALL": "C",
+        "LANG": "C",
+        "NLSPATH": "unset"
+      },
+      "runtime_modes": [
+        "strict",
+        "hardened"
+      ],
+      "replacement_level": "L0",
+      "oracle_kind": "posix_text",
+      "allowed_divergence": "parity_match",
+      "expected": {
+        "bytes": "41 4e 53 49 5f 58 33 2e 34 2d 31 39 36 38 00 2e",
+        "text": "ANSI_X3.4-1968|.",
+        "errno": "0",
+        "status": "threaded_reads_stable",
+        "decision_path": "locale_ops->posix_text->threaded_read_stability"
+      },
+      "locale_data": {
+        "path": "tests/conformance/fixtures/locale_ops.json",
+        "required": true
+      },
+      "artifact_refs": [
+        "tests/conformance/fixtures/locale_ops.json",
+        "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs"
+      ],
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test locale_ops_conformance_test locale_ops_covers_posix_2008_functions -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/locale_ops_conformance_test.rs",
+          "tests/conformance/fixtures/locale_ops.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+        "artifact_refs": [
+          "scripts/check_locale_catalog_transliteration_fixture_pack.sh",
+          "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
+        ]
+      },
+      "determinism": {
+        "replay_key": "locale-threaded-read-stability-v1",
+        "stability_iterations": 2,
+        "nondeterminism_guard": "threaded locale reads return stable values and restore process locale state"
+      },
+      "cleanup": {
+        "state": "locale_env_restored",
+        "required": true
+      }
+    }
+  ]
+}
