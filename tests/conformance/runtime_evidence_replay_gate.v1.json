@@ -1,0 +1,193 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "runtime-evidence-replay-gate",
+  "bead": "bd-bp8fl.9.4",
+  "generated_utc": "2026-05-04T08:35:00Z",
+  "source_commit": "bf04cadcb6494dee04c1e1f2bd359f698867201f",
+  "inputs": {
+    "stdio_evidence_module": "crates/frankenlibc-membrane/src/evidence.rs",
+    "runtime_symbol_evidence_module": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
+    "fpg_runtime_monitor_gate": "tests/conformance/fpg_runtime_monitor_evidence_gate.v1.json",
+    "fpg_evidence_foundation_gate": "tests/conformance/fpg_evidence_foundation_gate.v1.json",
+    "log_schema": "tests/conformance/log_schema.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "replay_id",
+    "symbol",
+    "runtime_mode",
+    "replacement_level",
+    "expected_decision",
+    "actual_decision",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "claim_policy": {
+    "default_decision": "block_done_until_runtime_evidence_replay_gate_passes",
+    "required_decisions": ["Allow", "FullValidate", "Repair", "Deny"],
+    "required_modes": ["strict", "hardened"],
+    "required_replay_fields": [
+      "replay_id",
+      "symbol",
+      "runtime_mode",
+      "replacement_level",
+      "expected_decision",
+      "actual_decision",
+      "artifact_refs",
+      "source_commit_state",
+      "failure_signature"
+    ],
+    "required_negative_cases": [
+      "missing_event",
+      "stale_ring_buffer_snapshot",
+      "out_of_order_event",
+      "redacted_required_field",
+      "decision_mismatch"
+    ],
+    "fail_closed_signatures": [
+      "runtime_replay_missing_event",
+      "runtime_replay_stale_snapshot",
+      "runtime_replay_out_of_order",
+      "runtime_replay_redacted_required_field",
+      "runtime_replay_decision_mismatch"
+    ]
+  },
+  "replay_records": [
+    {
+      "replay_id": "runtime-replay-allow-strict",
+      "symbol": "strlen",
+      "api_family": "string",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "decision_path": ["policy_decide", "validation_fast_path", "allow"],
+      "healing_action": "None",
+      "evidence_snapshot": {
+        "ring_sequence_start": 1001,
+        "ring_sequence_end": 1003,
+        "event_ids": ["ev-1001-policy", "ev-1002-fast-path", "ev-1003-allow"],
+        "snapshot_age_state": "current",
+        "redaction_state": "none"
+      },
+      "expected_decision": "Allow",
+      "actual_decision": "Allow",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/evidence.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs"
+      ],
+      "source_commit_state": "current",
+      "failure_signature": "none"
+    },
+    {
+      "replay_id": "runtime-replay-fullvalidate-hardened",
+      "symbol": "memcpy",
+      "api_family": "string",
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "decision_path": ["policy_decide", "risk_budget_check", "full_validate"],
+      "healing_action": "None",
+      "evidence_snapshot": {
+        "ring_sequence_start": 1010,
+        "ring_sequence_end": 1013,
+        "event_ids": ["ev-1010-policy", "ev-1011-risk", "ev-1012-budget", "ev-1013-full-validate"],
+        "snapshot_age_state": "current",
+        "redaction_state": "none"
+      },
+      "expected_decision": "FullValidate",
+      "actual_decision": "FullValidate",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/evidence.rs",
+        "tests/conformance/fpg_runtime_monitor_evidence_gate.v1.json"
+      ],
+      "source_commit_state": "current",
+      "failure_signature": "none"
+    },
+    {
+      "replay_id": "runtime-replay-repair-hardened",
+      "symbol": "free",
+      "api_family": "malloc",
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "decision_path": ["policy_decide", "arena_generation_check", "repair"],
+      "healing_action": "IgnoreDoubleFree",
+      "evidence_snapshot": {
+        "ring_sequence_start": 1020,
+        "ring_sequence_end": 1024,
+        "event_ids": ["ev-1020-policy", "ev-1021-arena", "ev-1022-generation", "ev-1023-heal", "ev-1024-repair"],
+        "snapshot_age_state": "current",
+        "redaction_state": "none"
+      },
+      "expected_decision": "Repair",
+      "actual_decision": "Repair",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/evidence.rs",
+        "crates/frankenlibc-membrane/src/runtime_math/evidence.rs"
+      ],
+      "source_commit_state": "current",
+      "failure_signature": "none"
+    },
+    {
+      "replay_id": "runtime-replay-deny-strict",
+      "symbol": "longjmp",
+      "api_family": "setjmp",
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "decision_path": ["policy_decide", "context_validation", "deny"],
+      "healing_action": "None",
+      "evidence_snapshot": {
+        "ring_sequence_start": 1030,
+        "ring_sequence_end": 1033,
+        "event_ids": ["ev-1030-policy", "ev-1031-context", "ev-1032-fail-closed", "ev-1033-deny"],
+        "snapshot_age_state": "current",
+        "redaction_state": "none"
+      },
+      "expected_decision": "Deny",
+      "actual_decision": "Deny",
+      "artifact_refs": [
+        "crates/frankenlibc-membrane/src/evidence.rs",
+        "tests/conformance/fpg_evidence_foundation_gate.v1.json"
+      ],
+      "source_commit_state": "current",
+      "failure_signature": "none"
+    }
+  ],
+  "negative_replay_cases": [
+    {
+      "case_id": "missing-event-blocks-replay",
+      "mutation": "missing_event",
+      "target_replay_id": "runtime-replay-allow-strict",
+      "expected_failure_signature": "runtime_replay_missing_event"
+    },
+    {
+      "case_id": "stale-ring-buffer-snapshot-blocks-replay",
+      "mutation": "stale_ring_buffer_snapshot",
+      "target_replay_id": "runtime-replay-fullvalidate-hardened",
+      "expected_failure_signature": "runtime_replay_stale_snapshot"
+    },
+    {
+      "case_id": "out-of-order-event-blocks-replay",
+      "mutation": "out_of_order_event",
+      "target_replay_id": "runtime-replay-repair-hardened",
+      "expected_failure_signature": "runtime_replay_out_of_order"
+    },
+    {
+      "case_id": "redacted-required-field-blocks-replay",
+      "mutation": "redacted_required_field",
+      "target_replay_id": "runtime-replay-deny-strict",
+      "expected_failure_signature": "runtime_replay_redacted_required_field"
+    },
+    {
+      "case_id": "decision-mismatch-blocks-replay",
+      "mutation": "decision_mismatch",
+      "target_replay_id": "runtime-replay-repair-hardened",
+      "expected_failure_signature": "runtime_replay_decision_mismatch"
+    }
+  ],
+  "summary": {
+    "replay_record_count": 4,
+    "required_decision_count": 4,
+    "negative_case_count": 5,
+    "required_log_field_count": 11
+  }
+}
