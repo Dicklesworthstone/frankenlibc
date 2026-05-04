@@ -367,6 +367,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- signal/setjmp async-cancellation fixture pack gate ---"
+    scripts/check_signal_setjmp_async_cancellation_fixture_pack.sh
+    echo "PASS"
+    echo ""
+
     echo "--- unified stub/TODO debt census gate ---"
     scripts/check_stub_todo_debt_census.sh
     echo "PASS"
