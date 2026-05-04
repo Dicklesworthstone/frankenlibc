@@ -157,6 +157,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- user compatibility report gate ---"
+    scripts/generate_user_compatibility_report.sh
+    echo "PASS"
+    echo ""
+
     echo "--- README/FEATURE_PARITY semantic claim gate ---"
     scripts/check_docs_semantic_claims.sh
     echo "PASS"

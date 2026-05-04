@@ -1,0 +1,169 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.10.8",
+  "generated_at_utc": "2026-05-04T05:35:00Z",
+  "purpose": "Manifest for generating a user-facing compatibility report from workload, semantic, support, replacement-level, oracle, freshness, smoke, performance, README, and release-note evidence.",
+  "inputs": {
+    "workload_matrix": "tests/conformance/user_workload_acceptance_matrix.v1.json",
+    "artifact_precedence": "tests/conformance/artifact_precedence.v1.json",
+    "semantic_contract_symbol_join": "tests/conformance/semantic_contract_symbol_join.v1.json",
+    "support_matrix": "support_matrix.json",
+    "oracle_precedence": "tests/conformance/oracle_precedence_divergence.v1.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json",
+    "ld_preload_smoke_summary": "tests/conformance/ld_preload_smoke_summary.v1.json",
+    "perf_regression_prevention": "tests/conformance/perf_regression_prevention.v1.json",
+    "readme": "README.md",
+    "release_notes": "CHANGELOG.md"
+  },
+  "required_report_fields": [
+    "workload_id",
+    "environment_id",
+    "runtime_mode",
+    "replacement_level",
+    "support_status",
+    "semantic_status",
+    "support_matrix_row",
+    "oracle_kind",
+    "failure_bundle_refs",
+    "performance_budget_refs",
+    "freshness_state",
+    "known_limitations",
+    "user_recommendation",
+    "regeneration_command"
+  ],
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "report_id",
+    "workload_id",
+    "environment_id",
+    "runtime_mode",
+    "replacement_level",
+    "oracle_kind",
+    "expected_status",
+    "actual_status",
+    "evidence_refs",
+    "freshness_state",
+    "user_recommendation",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "environment": {
+    "environment_id": "host-l0-preload-current",
+    "runtime_modes": [
+      "strict",
+      "hardened"
+    ],
+    "replacement_level": "L0"
+  },
+  "support_status_rules": {
+    "current_level_supported_if": [
+      "replacement_levels.current_level == environment.replacement_level",
+      "ld_preload_smoke_summary.summary.overall_failed == false",
+      "perf_regression_prevention.summary.total_issues == 0"
+    ],
+    "standalone_claims_blocked_if": [
+      "semantic_contract_symbol_join.summary.semantic_parity_blocker_count > 0",
+      "replacement_levels.current_level != L2",
+      "replacement_levels.current_level != L3"
+    ]
+  },
+  "prose_forbidden_patterns": [
+    {
+      "id": "full_standalone_replacement_today",
+      "pattern": "full standalone (libc )?replacement (today|now)",
+      "allowed_if_line_contains": [
+        "not ",
+        "planned",
+        "remains"
+      ]
+    },
+    {
+      "id": "all_workloads_fully_supported",
+      "pattern": "all workloads (are )?(fully )?supported",
+      "allowed_if_line_contains": [
+        "not ",
+        "cannot",
+        "planned"
+      ]
+    }
+  ],
+  "replay_cases": [
+    {
+      "id": "clean_current_report",
+      "kind": "clean",
+      "command": "scripts/generate_user_compatibility_report.sh",
+      "expected_status": "pass"
+    },
+    {
+      "id": "degraded_l0_with_limitations",
+      "kind": "degraded",
+      "command": "scripts/generate_user_compatibility_report.sh",
+      "expected_status": "pass",
+      "expected_support_status": "ready_l0_with_limitations",
+      "expected_user_recommendation": "try_l0_strict_or_hardened_with_limitations"
+    },
+    {
+      "id": "blocked_full_semantic_replacement",
+      "kind": "blocked",
+      "command": "scripts/generate_user_compatibility_report.sh",
+      "expected_status": "pass",
+      "expected_semantic_status": "blocked_full_semantic_replacement"
+    },
+    {
+      "id": "missing_workload_evidence",
+      "kind": "missing_evidence",
+      "command": "FLC_COMPATIBILITY_WORKLOAD_MATRIX=<fixture-missing-workload> scripts/generate_user_compatibility_report.sh",
+      "expected_status": "fail",
+      "failure_signature": "missing_workload_evidence"
+    },
+    {
+      "id": "stale_smoke_evidence",
+      "kind": "stale_evidence",
+      "command": "FLC_COMPATIBILITY_SMOKE_SUMMARY=<fixture-stale-smoke> scripts/generate_user_compatibility_report.sh",
+      "expected_status": "fail",
+      "failure_signature": "stale_smoke_evidence"
+    },
+    {
+      "id": "contradictory_semantic_support_rows",
+      "kind": "contradictory_evidence",
+      "command": "FLC_COMPATIBILITY_SEMANTIC_JOIN=<fixture-contradictory-join> scripts/generate_user_compatibility_report.sh",
+      "expected_status": "fail",
+      "failure_signature": "contradictory_semantic_support"
+    },
+    {
+      "id": "unsupported_replacement_level",
+      "kind": "unsupported_workload",
+      "command": "FLC_COMPATIBILITY_REPLACEMENT_LEVELS=<fixture-l2-current> scripts/generate_user_compatibility_report.sh",
+      "expected_status": "fail",
+      "failure_signature": "unsupported_replacement_level"
+    },
+    {
+      "id": "prose_override_attempt",
+      "kind": "prose_override",
+      "command": "FLC_COMPATIBILITY_README=<fixture-prose-override> scripts/generate_user_compatibility_report.sh",
+      "expected_status": "fail",
+      "failure_signature": "prose_override_claim"
+    },
+    {
+      "id": "release_prose_override_attempt",
+      "kind": "prose_override",
+      "command": "FLC_COMPATIBILITY_RELEASE_NOTES=<fixture-prose-override> scripts/generate_user_compatibility_report.sh",
+      "expected_status": "fail",
+      "failure_signature": "prose_override_claim"
+    }
+  ],
+  "expected_current_summary": {
+    "workload_count": 11,
+    "report_row_count": 11,
+    "fresh_evidence_count": 8,
+    "blocked_semantic_claim_count": 11,
+    "ready_l0_with_limitations_count": 11,
+    "unsupported_workload_count": 0,
+    "missing_evidence_count": 0,
+    "stale_evidence_count": 0,
+    "contradictory_evidence_count": 0,
+    "prose_override_claim_count": 0
+  }
+}
