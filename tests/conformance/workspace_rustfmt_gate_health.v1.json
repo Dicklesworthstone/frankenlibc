@@ -30,12 +30,11 @@
   "quarantine": {
     "owner_bead": "bd-bp8fl.7.1",
     "reason": "pre-existing repo-wide rustfmt drift spans shared ABI source and conformance test files; bulk formatting would touch a broad multi-agent surface",
-    "file_count": 81,
+    "file_count": 80,
     "files": [
       "crates/frankenlibc-abi/src/signal_abi.rs",
       "crates/frankenlibc-abi/src/unistd_abi.rs",
       "crates/frankenlibc-abi/src/wchar_abi.rs",
-      "crates/frankenlibc-abi/tests/conformance_diff_adjtimex.rs",
       "crates/frankenlibc-abi/tests/conformance_diff_aligned_alloc.rs",
       "crates/frankenlibc-abi/tests/conformance_diff_argz.rs",
       "crates/frankenlibc-abi/tests/conformance_diff_arpa_inet.rs",

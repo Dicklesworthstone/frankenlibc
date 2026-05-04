@@ -60,7 +60,11 @@ fn diff_adjtimex_query_returns_consistent_state() {
     assert!(fl_v >= 0, "should not fail with query mode");
 
     // status field tells us about clock state — must match.
-    assert_eq!(fl_t.status, lc_t.status, "status: fl={} lc={}", fl_t.status, lc_t.status);
+    assert_eq!(
+        fl_t.status, lc_t.status,
+        "status: fl={} lc={}",
+        fl_t.status, lc_t.status
+    );
     // tick is the kernel's tick rate — must match.
     assert_eq!(fl_t.tick, lc_t.tick);
     // tolerance and precision are read-only kernel constants.
@@ -71,9 +75,7 @@ fn diff_adjtimex_query_returns_consistent_state() {
 #[test]
 fn diff_ntp_adjtime_alias_matches_adjtimex() {
     let mut fl_t = TimexQuery::default();
-    let fl_v = unsafe {
-        fl::ntp_adjtime(&mut fl_t as *mut TimexQuery as *mut std::ffi::c_void)
-    };
+    let fl_v = unsafe { fl::ntp_adjtime(&mut fl_t as *mut TimexQuery as *mut std::ffi::c_void) };
     let mut lc_t = TimexQuery::default();
     let lc_v = unsafe { ntp_adjtime(&mut lc_t) };
     assert_eq!(fl_v, lc_v);
