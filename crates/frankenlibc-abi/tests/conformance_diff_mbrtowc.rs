@@ -61,16 +61,8 @@ fn decode_both(bytes: &[u8]) -> ((isize, u32), (isize, u32)) {
             std::ptr::null_mut(),
         )
     };
-    let fl_signed = if fl_n == usize::MAX || fl_n == usize::MAX - 1 {
-        fl_n as isize
-    } else {
-        fl_n as isize
-    };
-    let lc_signed = if lc_n == usize::MAX || lc_n == usize::MAX - 1 {
-        lc_n as isize
-    } else {
-        lc_n as isize
-    };
+    let fl_signed = fl_n as isize;
+    let lc_signed = lc_n as isize;
     ((fl_signed, fl_wc as u32), (lc_signed, lc_wc as u32))
 }
 
@@ -135,12 +127,7 @@ fn fl_mbrtowc_incomplete_returns_minus_two_per_posix() {
     // were already loaded. fl's behavior is fully deterministic
     // and POSIX-correct; that's what we lock in.
     with_utf8(|| {
-        let cases: &[&[u8]] = &[
-            &[0xC2],
-            &[0xE4, 0xB8],
-            &[0xF0, 0x9F],
-            &[0xF0],
-        ];
+        let cases: &[&[u8]] = &[&[0xC2], &[0xE4, 0xB8], &[0xF0, 0x9F], &[0xF0]];
         for buf in cases {
             let mut fl_wc: i32 = -1;
             let fl_n = unsafe {
@@ -165,21 +152,19 @@ fn diff_mbrtowc_invalid_sequences_return_minus_one() {
     // (size_t)-1 means invalid sequence.
     with_utf8(|| {
         let cases: &[&[u8]] = &[
-            &[0xC0, 0x80],         // overlong NUL
-            &[0xC1, 0xBF],         // overlong ASCII
-            &[0xE0, 0x80, 0x80],   // overlong 3-byte form of U+0
-            &[0xED, 0xA0, 0x80],   // surrogate U+D800 in UTF-8 form
+            &[0xC0, 0x80],                   // overlong NUL
+            &[0xC1, 0xBF],                   // overlong ASCII
+            &[0xE0, 0x80, 0x80],             // overlong 3-byte form of U+0
+            &[0xED, 0xA0, 0x80],             // surrogate U+D800 in UTF-8 form
             &[0xF8, 0x80, 0x80, 0x80, 0x80], // 5-byte form (illegal)
-            &[0xFF],               // never valid
+            &[0xFF],                         // never valid
         ];
         for buf in cases {
             let (fl_r, lc_r) = decode_both(buf);
             assert_eq!(
-                fl_r.0,
-                lc_r.0,
+                fl_r.0, lc_r.0,
                 "invalid {buf:?}: fl={} lc={}",
-                fl_r.0,
-                lc_r.0
+                fl_r.0, lc_r.0
             );
             assert_eq!(fl_r.0, -1, "invalid sequence must return -1");
         }
@@ -210,17 +195,33 @@ fn fl_mbrtowc_nul_byte_returns_zero() {
 #[test]
 fn diff_mbrtowc_n_zero_returns_minus_two() {
     with_utf8(|| {
-        let buf = [b'a'];
+        let buf = b"a";
         let mut fl_wc: i32 = -1;
         let mut lc_wc: i32 = -1;
         let fl_n = unsafe {
-            fl::mbrtowc(&mut fl_wc, buf.as_ptr() as *const c_char, 0, std::ptr::null_mut())
+            fl::mbrtowc(
+                &mut fl_wc,
+                buf.as_ptr() as *const c_char,
+                0,
+                std::ptr::null_mut(),
+            )
         };
-        let lc_n = unsafe { mbrtowc(&mut lc_wc, buf.as_ptr() as *const c_char, 0, std::ptr::null_mut()) };
+        let lc_n = unsafe {
+            mbrtowc(
+                &mut lc_wc,
+                buf.as_ptr() as *const c_char,
+                0,
+                std::ptr::null_mut(),
+            )
+        };
         assert_eq!(fl_n, lc_n, "n=0: fl={fl_n} lc={lc_n}");
         // Both should return (size_t)-2 (incomplete) or 0.
         // glibc returns -2; fl matches.
-        assert_eq!(fl_n, usize::MAX - 1, "n=0 with non-NUL byte should return -2");
+        assert_eq!(
+            fl_n,
+            usize::MAX - 1,
+            "n=0 with non-NUL byte should return -2"
+        );
     });
 }
 
