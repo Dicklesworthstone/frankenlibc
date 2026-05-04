@@ -10,7 +10,7 @@
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{c_char, c_int, c_long, c_ulong, c_void, CStr, CString};
+use std::ffi::{CString, c_int, c_long, c_ulong, c_void};
 
 use frankenlibc_abi::unistd_abi as fl;
 
@@ -215,5 +215,4 @@ fn keyctl_diff_coverage_report() {
     eprintln!(
         "{{\"family\":\"libc add_key + request_key + keyctl\",\"reference\":\"glibc-syscall\",\"functions\":3,\"divergences\":0}}",
     );
-    let _ = (CStr::from_bytes_with_nul(b"\0").unwrap(), 0u8 as c_char);
 }
