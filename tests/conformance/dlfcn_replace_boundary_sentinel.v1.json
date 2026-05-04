@@ -1,0 +1,170 @@
+{
+  "schema_version": "v1",
+  "manifest_id": "dlfcn-replace-boundary-sentinel",
+  "bead": "bd-b92jd.5.2",
+  "generated_utc": "2026-05-04T18:00:00Z",
+  "source_commit": "40dfe9af552077c363ea4a1e5a630b1084f8ff9e",
+  "purpose": "Fail-closed sentinel for the dlfcn replace boundary. While current_level remains L0, dlfcn_abi.rs is permitted to delegate to host dlopen/dlsym/dlvsym/dlclose under documented L0 interpose paths (bootstrap pass-through, host-handle round-tripping, RTLD_DEFAULT/RTLD_NEXT lookups). When current_level promotes to L1+, every host-delegation call site must either be removed (replaced by a native loader) or carry an explicit `replace_mode_native_required` annotation that ships a native fallback. The sentinel inventories every host-delegation site, refuses promotion past L0 while any site is still annotated `interpose_only` or `host_handle_passthrough`, and detects any new unannotated host call appearing in dlfcn_abi.rs.",
+  "subject": {
+    "module": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+    "policy_artifact": "tests/conformance/dlfcn_boundary_policy.v1.json",
+    "owner_bead": "bd-b92jd.5"
+  },
+  "inputs": {
+    "dlfcn_source": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+    "dlfcn_boundary_policy": "tests/conformance/dlfcn_boundary_policy.v1.json",
+    "support_matrix": "support_matrix.json",
+    "replacement_levels": "tests/conformance/replacement_levels.json"
+  },
+  "verification_command": "rch exec -- cargo test -p frankenlibc-harness --test dlfcn_replace_boundary_sentinel_test",
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "callsite_id",
+    "handle_type",
+    "resolution_path",
+    "host_symbol",
+    "annotation",
+    "expected_replacement_level",
+    "actual_replacement_level",
+    "decision",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "policy": {
+    "default_decision": "block_until_replace_mode_evidence_current",
+    "max_total_host_callsites_at_L1": 0,
+    "allowed_at_L0": [
+      "interpose_only",
+      "host_handle_passthrough",
+      "bootstrap_passthrough"
+    ],
+    "rejected_evidence_kinds": [
+      "unannotated_host_callsite",
+      "host_callsite_count_drift",
+      "interpose_only_after_L0",
+      "missing_native_handle_guard",
+      "support_matrix_drift",
+      "replacement_level_drift_without_evidence"
+    ]
+  },
+  "host_callsites": [
+    {
+      "callsite_id": "host_dlvsym_next_raw_dlvsym_default_call",
+      "host_symbol": "dlvsym",
+      "resolution_path": "host_resolve::host_dlvsym_next_raw",
+      "annotation": "interpose_only",
+      "guard": "explicit RTLD_NEXT walk; no native equivalent yet",
+      "source_pattern": "    unsafe { crate::host_resolve::host_dlvsym_next_raw(symbol, version) }",
+      "context_anchor": "pub(crate) unsafe fn dlvsym_next(symbol: *const c_char, version: *const c_char) -> *mut c_void {",
+      "rationale": "Versioned symbol lookup walks RTLD_NEXT via host resolver; native loader does not enumerate version chains."
+    },
+    {
+      "callsite_id": "host_dlsym_helper",
+      "host_symbol": "dlsym",
+      "resolution_path": "host_resolve::resolve_host_symbol_raw(\"dlsym\")",
+      "annotation": "interpose_only",
+      "guard": "wrapper used by host-handle delegation",
+      "source_pattern": "    let addr = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\")?;",
+      "context_anchor": "unsafe fn host_dlsym(handle: *mut c_void, symbol: *const c_char) -> Option<*mut c_void> {",
+      "rationale": "Helper called by host_handle delegation paths; will be removed once native dlsym lands."
+    },
+    {
+      "callsite_id": "host_dlvsym_helper",
+      "host_symbol": "dlvsym",
+      "resolution_path": "host_resolve::resolve_host_symbol_raw(\"dlvsym\")",
+      "annotation": "interpose_only",
+      "guard": "wrapper used by host-handle dlvsym delegation",
+      "source_pattern": "    let addr = crate::host_resolve::resolve_host_symbol_raw(\"dlvsym\")?;",
+      "context_anchor": "unsafe fn host_dlvsym(",
+      "rationale": "Helper called only by host_handle dlvsym paths; will be removed once native dlvsym lands."
+    },
+    {
+      "callsite_id": "dlopen_bootstrap_passthrough",
+      "host_symbol": "dlopen",
+      "resolution_path": "host_resolve::resolve_host_symbol_raw(\"dlopen\")",
+      "annotation": "bootstrap_passthrough",
+      "guard": "runtime_policy::bootstrap_passthrough_active() in dlopen()",
+      "source_pattern": "        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {",
+      "context_anchor": "        // During bootstrap, delegate to host dlopen for actual .so loading.",
+      "rationale": "Bootstrap pass-through must stay until native loader is online; gated by bootstrap_passthrough_active()."
+    },
+    {
+      "callsite_id": "dlopen_post_bootstrap",
+      "host_symbol": "dlopen",
+      "resolution_path": "host_resolve::resolve_host_symbol_raw(\"dlopen\")",
+      "annotation": "interpose_only",
+      "guard": "post-bootstrap path with name validation",
+      "source_pattern": "            if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") {",
+      "context_anchor": "            // Delegate to host libc's dlopen for actual shared object loading.",
+      "rationale": "Native dlopen would load ELF dependencies; until then host loader is required."
+    },
+    {
+      "callsite_id": "dlsym_post_bootstrap_host_handle",
+      "host_symbol": "dlsym",
+      "resolution_path": "host_resolve::resolve_host_symbol_raw(\"dlsym\")",
+      "annotation": "host_handle_passthrough",
+      "guard": "if !is_native_handle(handle) in dlsym()",
+      "source_pattern": "        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") {",
+      "context_anchor": "        // Handle is from host dlopen — delegate to host dlsym.",
+      "rationale": "Host handles obtained via host dlopen must round-trip back to host dlsym; only a native loader can replace this."
+    },
+    {
+      "callsite_id": "dlclose_bootstrap_passthrough",
+      "host_symbol": "dlclose",
+      "resolution_path": "host_resolve::resolve_host_symbol_raw(\"dlclose\")",
+      "annotation": "bootstrap_passthrough",
+      "guard": "runtime_policy::bootstrap_passthrough_active() in dlclose()",
+      "source_pattern": "        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlclose\") {",
+      "context_anchor": "        // Non-main-program handle during bootstrap: delegate to host dlclose.",
+      "rationale": "Closes host-loaded handles during bootstrap; must remain until native loader replaces dlopen."
+    },
+    {
+      "callsite_id": "dlclose_post_bootstrap_host_handle",
+      "host_symbol": "dlclose",
+      "resolution_path": "host_resolve::resolve_host_symbol_raw(\"dlclose\")",
+      "annotation": "host_handle_passthrough",
+      "guard": "if !is_native_handle(handle) in dlclose()",
+      "source_pattern": "        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlclose\") {",
+      "context_anchor": "        // Handle from host dlopen — delegate to host dlclose.",
+      "rationale": "Host handles must close via host dlclose; replaced only by native loader."
+    }
+  ],
+  "expected_callsite_counts": {
+    "total": 8,
+    "by_host_symbol": {
+      "dlopen": 2,
+      "dlsym": 2,
+      "dlvsym": 2,
+      "dlclose": 2
+    },
+    "by_annotation": {
+      "interpose_only": 4,
+      "bootstrap_passthrough": 2,
+      "host_handle_passthrough": 2
+    },
+    "resolve_host_symbol_raw_calls_in_source": 7,
+    "host_dlvsym_next_raw_calls": 1
+  },
+  "required_native_handle_guards": [
+    "fn is_native_handle(handle: *mut c_void)",
+    "if !is_native_handle(handle) {",
+    "runtime_policy::bootstrap_passthrough_active()"
+  ],
+  "support_matrix_required_status": {
+    "dlfcn_abi": {
+      "dlopen": "Implemented",
+      "dlsym": "Implemented",
+      "dlvsym": "Implemented",
+      "dlclose": "Implemented",
+      "dlerror": "Implemented",
+      "dl_iterate_phdr": "Implemented",
+      "dladdr": "Implemented"
+    }
+  },
+  "consuming_gates": [
+    "tests/conformance/dlfcn_boundary_policy.v1.json",
+    "tests/conformance/replacement_levels.json"
+  ]
+}
