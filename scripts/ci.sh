@@ -352,6 +352,11 @@ if [[ "${FRANKENLIBC_EXTENDED_GATES:-0}" == "1" ]]; then
     echo "PASS"
     echo ""
 
+    echo "--- iconv stateful codec fixture pack gate ---"
+    scripts/check_iconv_stateful_codec_fixture_pack.sh
+    echo "PASS"
+    echo ""
+
     echo "--- unified stub/TODO debt census gate ---"
     scripts/check_stub_todo_debt_census.sh
     echo "PASS"

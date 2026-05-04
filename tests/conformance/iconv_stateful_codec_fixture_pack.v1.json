@@ -1,0 +1,745 @@
+{
+  "schema_version": "v1",
+  "bead_id": "bd-bp8fl.5.3",
+  "gate_id": "iconv-stateful-codec-fixture-pack-v1",
+  "generated_at_utc": "2026-05-04T07:12:00Z",
+  "purpose": "Define iconv fixture rows for phase-1 valid conversion, output-buffer progress, invalid and incomplete sequences, reset semantics, deferred stateful codecs, transliteration/ignore flags, unsupported codecs, and generated table provenance without narrowing full iconv ambition.",
+  "freshness": {
+    "required_source_commit": "current",
+    "source_commit_policy": "gate must fail stale artifacts when pinned to any non-current commit"
+  },
+  "sources": {
+    "iconv_phase1_fixture": "tests/conformance/fixtures/iconv_phase1.json",
+    "iconv_codec_scope_ledger": "tests/conformance/iconv_codec_scope_ledger.v1.json",
+    "iconv_table_pack": "tests/conformance/iconv_table_pack.v1.json",
+    "iconv_table_checksums": "tests/conformance/iconv_table_checksums.v1.json",
+    "oracle_precedence_divergence": "tests/conformance/oracle_precedence_divergence.v1.json",
+    "hard_parts_failure_replay_gate": "tests/conformance/hard_parts_failure_replay_gate.v1.json",
+    "hard_parts_e2e_catalog": "tests/conformance/hard_parts_e2e_catalog.v1.json"
+  },
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "fixture_id",
+    "from_encoding",
+    "to_encoding",
+    "runtime_mode",
+    "oracle_kind",
+    "expected",
+    "actual",
+    "errno",
+    "consumed",
+    "produced",
+    "artifact_refs",
+    "source_commit",
+    "target_dir",
+    "failure_signature"
+  ],
+  "fixture_schema": {
+    "required_fields": [
+      "fixture_id",
+      "scenario_kind",
+      "from_encoding",
+      "to_encoding",
+      "input_bytes",
+      "chunking",
+      "state_reset",
+      "flags",
+      "expected",
+      "runtime_mode",
+      "replacement_level",
+      "oracle_kind",
+      "allowed_divergence",
+      "source_fixture_case",
+      "codec_classification",
+      "table_provenance",
+      "direct_runner",
+      "isolated_runner"
+    ],
+    "expected_required_fields": [
+      "output_bytes",
+      "errno",
+      "consumed",
+      "produced",
+      "status",
+      "user_diagnostic"
+    ],
+    "runner_required_fields": [
+      "runner_kind",
+      "command",
+      "artifact_refs"
+    ]
+  },
+  "required_scenario_kinds": [
+    "valid_conversion",
+    "output_buffer_progress",
+    "invalid_sequence",
+    "incomplete_sequence",
+    "state_reset",
+    "stateful_codec",
+    "transliteration_ignore",
+    "unsupported_codec"
+  ],
+  "required_errno_mappings": [
+    {
+      "errno": "0",
+      "name": "OK",
+      "reason_code": "conversion_complete"
+    },
+    {
+      "errno": "7",
+      "name": "E2BIG",
+      "reason_code": "output_buffer_too_small"
+    },
+    {
+      "errno": "22",
+      "name": "EINVAL",
+      "reason_code": "incomplete_or_unsupported"
+    },
+    {
+      "errno": "84",
+      "name": "EILSEQ",
+      "reason_code": "invalid_sequence"
+    }
+  ],
+  "required_codec_classifications": [
+    "included_phase1",
+    "excluded_stateful",
+    "excluded_table_deferred",
+    "unsupported_unknown",
+    "unsupported_flag"
+  ],
+  "diagnostic_signatures": [
+    {
+      "id": "missing_field",
+      "trigger": "a fixture row, expected block, codec classification, table provenance, or runner omits a required field"
+    },
+    {
+      "id": "stale_artifact",
+      "trigger": "freshness.required_source_commit is pinned to a non-current commit or summary counts drift"
+    },
+    {
+      "id": "missing_source_artifact",
+      "trigger": "a source, source_fixture_case, or runner artifact path is absent"
+    },
+    {
+      "id": "missing_fixture_case",
+      "trigger": "required scenario kinds, runtime modes, or fixture rows are absent"
+    },
+    {
+      "id": "invalid_sequence_mapping",
+      "trigger": "invalid or incomplete byte sequence rows do not map to EILSEQ or EINVAL as specified"
+    },
+    {
+      "id": "state_reset_contract",
+      "trigger": "reset rows omit reset behavior or claim unsupported reset completion"
+    },
+    {
+      "id": "unsupported_codec_classification",
+      "trigger": "stateful, transliteration/ignore, deferred-table, or unknown codec rows are not classified as blocked/deferred"
+    },
+    {
+      "id": "table_provenance",
+      "trigger": "included/deferred codec rows do not cite table pack and checksum artifacts"
+    },
+    {
+      "id": "oracle_mismatch",
+      "trigger": "oracle_kind or allowed_divergence is not declared by oracle_precedence_divergence.v1.json"
+    }
+  ],
+  "fixture_rows": [
+    {
+      "fixture_id": "iconv.valid.utf8_to_utf16le.strict",
+      "scenario_kind": "valid_conversion",
+      "from_encoding": "UTF-8",
+      "to_encoding": "UTF-16LE",
+      "input_bytes": [65, 66],
+      "chunking": {
+        "chunks": [[65, 66]],
+        "streaming": false
+      },
+      "state_reset": {
+        "required": false,
+        "behavior": "not_applicable"
+      },
+      "flags": [],
+      "expected": {
+        "output_bytes": [65, 0, 66, 0],
+        "errno": "0",
+        "consumed": 2,
+        "produced": 4,
+        "status": "pass",
+        "user_diagnostic": "phase-1 UTF-8 to UTF-16LE conversion is supported for strict mode"
+      },
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "allowed_divergence": "parity_match",
+      "source_fixture_case": "strict_utf8_to_utf16le_basic",
+      "codec_classification": {
+        "classification": "included_phase1",
+        "claim_status": "supported_phase1",
+        "user_diagnostic": "both encodings are in the phase-1 included codec ledger"
+      },
+      "table_provenance": {
+        "required": true,
+        "artifact_refs": [
+          "tests/conformance/iconv_table_pack.v1.json",
+          "tests/conformance/iconv_table_checksums.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "fixture_id": "iconv.valid.latin1_to_utf8.strict",
+      "scenario_kind": "valid_conversion",
+      "from_encoding": "ISO-8859-1",
+      "to_encoding": "UTF-8",
+      "input_bytes": [72, 233],
+      "chunking": {
+        "chunks": [[72, 233]],
+        "streaming": false
+      },
+      "state_reset": {
+        "required": false,
+        "behavior": "not_applicable"
+      },
+      "flags": [],
+      "expected": {
+        "output_bytes": [72, 195, 169],
+        "errno": "0",
+        "consumed": 2,
+        "produced": 3,
+        "status": "pass",
+        "user_diagnostic": "phase-1 ISO-8859-1 to UTF-8 conversion remains byte-count stable"
+      },
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "allowed_divergence": "parity_match",
+      "source_fixture_case": "strict_latin1_to_utf8_multibyte",
+      "codec_classification": {
+        "classification": "included_phase1",
+        "claim_status": "supported_phase1",
+        "user_diagnostic": "single-byte phase-1 conversion is supported"
+      },
+      "table_provenance": {
+        "required": true,
+        "artifact_refs": [
+          "tests/conformance/iconv_table_pack.v1.json",
+          "tests/conformance/iconv_table_checksums.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "fixture_id": "iconv.output_buffer_progress.e2big.strict",
+      "scenario_kind": "output_buffer_progress",
+      "from_encoding": "UTF-8",
+      "to_encoding": "UTF-16LE",
+      "input_bytes": [65, 66],
+      "chunking": {
+        "chunks": [[65, 66]],
+        "streaming": false
+      },
+      "state_reset": {
+        "required": false,
+        "behavior": "not_applicable"
+      },
+      "flags": [],
+      "expected": {
+        "output_bytes": [65, 0],
+        "errno": "7",
+        "consumed": 1,
+        "produced": 2,
+        "status": "blocked_claim",
+        "user_diagnostic": "E2BIG preserves partial progress and must not be collapsed into conversion success"
+      },
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "allowed_divergence": "parity_match",
+      "source_fixture_case": "strict_e2big_preserves_progress",
+      "codec_classification": {
+        "classification": "included_phase1",
+        "claim_status": "supported_error_contract",
+        "user_diagnostic": "included codec path with bounded output failure"
+      },
+      "table_provenance": {
+        "required": true,
+        "artifact_refs": [
+          "tests/conformance/iconv_table_pack.v1.json",
+          "tests/conformance/iconv_table_checksums.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "fixture_id": "iconv.invalid_sequence.eilseq.strict",
+      "scenario_kind": "invalid_sequence",
+      "from_encoding": "UTF-8",
+      "to_encoding": "UTF-16LE",
+      "input_bytes": [195, 40],
+      "chunking": {
+        "chunks": [[195, 40]],
+        "streaming": false
+      },
+      "state_reset": {
+        "required": false,
+        "behavior": "not_applicable"
+      },
+      "flags": [],
+      "expected": {
+        "output_bytes": [],
+        "errno": "84",
+        "consumed": 0,
+        "produced": 0,
+        "status": "blocked_claim",
+        "user_diagnostic": "invalid UTF-8 maps to EILSEQ with no consumed or produced bytes"
+      },
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "allowed_divergence": "parity_match",
+      "source_fixture_case": "strict_eilseq_invalid_utf8",
+      "codec_classification": {
+        "classification": "included_phase1",
+        "claim_status": "supported_error_contract",
+        "user_diagnostic": "included codec path with invalid-sequence failure"
+      },
+      "table_provenance": {
+        "required": true,
+        "artifact_refs": [
+          "tests/conformance/iconv_table_pack.v1.json",
+          "tests/conformance/iconv_table_checksums.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "fixture_id": "iconv.incomplete_sequence.einval.strict",
+      "scenario_kind": "incomplete_sequence",
+      "from_encoding": "UTF-8",
+      "to_encoding": "UTF-16LE",
+      "input_bytes": [226, 130],
+      "chunking": {
+        "chunks": [[226], [130]],
+        "streaming": true
+      },
+      "state_reset": {
+        "required": false,
+        "behavior": "caller supplies no complete final byte before input exhaustion"
+      },
+      "flags": [],
+      "expected": {
+        "output_bytes": [],
+        "errno": "22",
+        "consumed": 0,
+        "produced": 0,
+        "status": "blocked_claim",
+        "user_diagnostic": "incomplete multibyte input maps to EINVAL and remains distinct from EILSEQ"
+      },
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "allowed_divergence": "parity_match",
+      "source_fixture_case": "strict_einval_incomplete_utf8",
+      "codec_classification": {
+        "classification": "included_phase1",
+        "claim_status": "supported_error_contract",
+        "user_diagnostic": "included codec path with incomplete-sequence failure"
+      },
+      "table_provenance": {
+        "required": true,
+        "artifact_refs": [
+          "tests/conformance/iconv_table_pack.v1.json",
+          "tests/conformance/iconv_table_checksums.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "fixture_id": "iconv.state_reset.utf32_bom.strict",
+      "scenario_kind": "state_reset",
+      "from_encoding": "UTF-8",
+      "to_encoding": "UTF-32",
+      "input_bytes": [65],
+      "chunking": {
+        "chunks": [[65], []],
+        "streaming": true
+      },
+      "state_reset": {
+        "required": true,
+        "behavior": "reset emits deterministic BOM/state boundary before payload"
+      },
+      "flags": [],
+      "expected": {
+        "output_bytes": [255, 254, 0, 0, 65, 0, 0, 0],
+        "errno": "0",
+        "consumed": 1,
+        "produced": 8,
+        "status": "pass",
+        "user_diagnostic": "UTF-32 reset/BOM behavior is explicit phase-1 evidence"
+      },
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "host_glibc",
+      "allowed_divergence": "parity_match",
+      "source_fixture_case": "strict_utf8_to_utf32_with_bom",
+      "codec_classification": {
+        "classification": "included_phase1",
+        "claim_status": "supported_phase1",
+        "user_diagnostic": "UTF-32 is included with explicit reset/BOM evidence"
+      },
+      "table_provenance": {
+        "required": true,
+        "artifact_refs": [
+          "tests/conformance/iconv_table_pack.v1.json",
+          "tests/conformance/iconv_table_checksums.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "fixture_id": "iconv.stateful_codec.iso2022jp.deferred.hardened",
+      "scenario_kind": "stateful_codec",
+      "from_encoding": "ISO-2022-JP",
+      "to_encoding": "UTF-8",
+      "input_bytes": [27, 36, 66, 36, 34],
+      "chunking": {
+        "chunks": [[27, 36], [66, 36, 34]],
+        "streaming": true
+      },
+      "state_reset": {
+        "required": true,
+        "behavior": "stateful escape-sequence reset deferred until table generation provenance lands"
+      },
+      "flags": [],
+      "expected": {
+        "output_bytes": [],
+        "errno": "22",
+        "consumed": 0,
+        "produced": 0,
+        "status": "blocked_claim",
+        "user_diagnostic": "ISO-2022-JP stateful codec remains excluded in phase-1"
+      },
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "frankenlibc_contract",
+      "allowed_divergence": "unsupported_contract",
+      "source_fixture_case": "hardened_unsupported_encoding_denied",
+      "codec_classification": {
+        "classification": "excluded_stateful",
+        "claim_status": "blocked_until_table_generation",
+        "user_diagnostic": "stateful escape codec is visible as unsupported, not silently dropped"
+      },
+      "table_provenance": {
+        "required": true,
+        "artifact_refs": [
+          "tests/conformance/iconv_codec_scope_ledger.v1.json",
+          "tests/conformance/iconv_table_pack.v1.json",
+          "tests/conformance/iconv_table_checksums.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "fixture_id": "iconv.transliteration.ignore.flag.blocked.strict",
+      "scenario_kind": "transliteration_ignore",
+      "from_encoding": "UTF-8",
+      "to_encoding": "ASCII",
+      "input_bytes": [195, 169],
+      "chunking": {
+        "chunks": [[195, 169]],
+        "streaming": false
+      },
+      "state_reset": {
+        "required": false,
+        "behavior": "not_applicable"
+      },
+      "flags": ["TRANSLIT", "IGNORE"],
+      "expected": {
+        "output_bytes": [],
+        "errno": "22",
+        "consumed": 0,
+        "produced": 0,
+        "status": "blocked_claim",
+        "user_diagnostic": "TRANSLIT/IGNORE behavior is not phase-1 support and remains blocked"
+      },
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "frankenlibc_contract",
+      "allowed_divergence": "unsupported_contract",
+      "source_fixture_case": "iconv_open_unsupported",
+      "codec_classification": {
+        "classification": "unsupported_flag",
+        "claim_status": "blocked_until_transliteration_parity",
+        "user_diagnostic": "flagged transliteration/ignore behavior requires separate parity evidence"
+      },
+      "table_provenance": {
+        "required": true,
+        "artifact_refs": [
+          "tests/conformance/iconv_codec_scope_ledger.v1.json",
+          "tests/conformance/iconv_table_pack.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "fixture_id": "iconv.table_deferred.gb18030.blocked.hardened",
+      "scenario_kind": "unsupported_codec",
+      "from_encoding": "GB18030",
+      "to_encoding": "UTF-8",
+      "input_bytes": [
+        129,
+        48,
+        129,
+        48
+      ],
+      "chunking": {
+        "chunks": [
+          [
+            129,
+            48,
+            129,
+            48
+          ]
+        ],
+        "streaming": false
+      },
+      "state_reset": {
+        "required": false,
+        "behavior": "not_applicable"
+      },
+      "flags": [],
+      "expected": {
+        "output_bytes": [],
+        "errno": "22",
+        "consumed": 0,
+        "produced": 0,
+        "status": "blocked_claim",
+        "user_diagnostic": "GB18030 remains excluded until generated table provenance and checksum gates admit it"
+      },
+      "runtime_mode": "hardened",
+      "replacement_level": "L0",
+      "oracle_kind": "frankenlibc_contract",
+      "allowed_divergence": "unsupported_contract",
+      "source_fixture_case": "hardened_unsupported_encoding_denied",
+      "codec_classification": {
+        "classification": "excluded_table_deferred",
+        "claim_status": "blocked_until_table_generation",
+        "user_diagnostic": "large generated codec tables are visible as deferred, not silently treated as supported"
+      },
+      "table_provenance": {
+        "required": true,
+        "artifact_refs": [
+          "tests/conformance/iconv_codec_scope_ledger.v1.json",
+          "tests/conformance/iconv_table_pack.v1.json",
+          "tests/conformance/iconv_table_checksums.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    },
+    {
+      "fixture_id": "iconv.unsupported_codec.unknown.strict",
+      "scenario_kind": "unsupported_codec",
+      "from_encoding": "NONEXISTENT-ENCODING",
+      "to_encoding": "UTF-8",
+      "input_bytes": [65],
+      "chunking": {
+        "chunks": [[65]],
+        "streaming": false
+      },
+      "state_reset": {
+        "required": false,
+        "behavior": "not_applicable"
+      },
+      "flags": [],
+      "expected": {
+        "output_bytes": [],
+        "errno": "22",
+        "consumed": 0,
+        "produced": 0,
+        "status": "blocked_claim",
+        "user_diagnostic": "unknown codecs must fail iconv_open with EINVAL"
+      },
+      "runtime_mode": "strict",
+      "replacement_level": "L0",
+      "oracle_kind": "frankenlibc_contract",
+      "allowed_divergence": "unsupported_contract",
+      "source_fixture_case": "iconv_open_unsupported",
+      "codec_classification": {
+        "classification": "unsupported_unknown",
+        "claim_status": "unsupported_phase1",
+        "user_diagnostic": "unknown codec is deliberately unsupported"
+      },
+      "table_provenance": {
+        "required": false,
+        "artifact_refs": [
+          "tests/conformance/iconv_codec_scope_ledger.v1.json"
+        ]
+      },
+      "direct_runner": {
+        "runner_kind": "direct",
+        "command": "rch exec -- cargo test -p frankenlibc-harness --test iconv_phase1_conformance_test iconv_phase1_fixture_executes_via_isolated_harness -- --nocapture",
+        "artifact_refs": [
+          "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
+          "tests/conformance/fixtures/iconv_phase1.json"
+        ]
+      },
+      "isolated_runner": {
+        "runner_kind": "isolated",
+        "command": "scripts/check_hard_parts_e2e.sh",
+        "artifact_refs": [
+          "scripts/check_hard_parts_e2e.sh",
+          "tests/conformance/hard_parts_e2e_catalog.v1.json"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "fixture_count": 10,
+    "required_scenario_kind_count": 8,
+    "runtime_mode_count": 2,
+    "included_phase1_count": 6,
+    "blocked_or_deferred_count": 7,
+    "table_provenance_required_count": 9,
+    "direct_runner_count": 10,
+    "isolated_runner_count": 10
+  }
+}
