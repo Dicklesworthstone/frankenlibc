@@ -19,7 +19,7 @@ TMP_DIR="$(mktemp -d)"
 LOG_PATH="${TMP_DIR}/optimization_proof_ledger.log.jsonl"
 
 cleanup() {
-    rm -rf "${TMP_DIR}"
+    echo "INFO: leaving temp dir for inspection: ${TMP_DIR}" >&2
 }
 trap cleanup EXIT
 

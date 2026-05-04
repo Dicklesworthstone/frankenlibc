@@ -48,7 +48,10 @@ echo "PASS: spec file valid"
 
 # 3. Gate produces valid JSON
 TMPDIR=$(mktemp -d)
-trap "rm -rf ${TMPDIR}" EXIT
+cleanup_tmpdir() {
+  echo "INFO: leaving temp dir for inspection: ${TMPDIR}" >&2
+}
+trap cleanup_tmpdir EXIT
 
 RC=0
 python3 "${SCRIPT}" --dry-run --format json \

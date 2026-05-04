@@ -26,7 +26,10 @@ echo "PASS: script syntax valid"
 
 # 2. Dry-run produces valid terminal output
 TMPDIR=$(mktemp -d)
-trap "rm -rf ${TMPDIR}" EXIT
+cleanup_tmpdir() {
+  echo "INFO: leaving temp dir for inspection: ${TMPDIR}" >&2
+}
+trap cleanup_tmpdir EXIT
 
 python3 "${SCRIPT}" --mode dry-run > "${TMPDIR}/terminal.txt" 2>&1 \
   || fail "dry-run terminal mode failed"

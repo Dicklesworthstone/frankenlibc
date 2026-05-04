@@ -51,7 +51,10 @@ echo "PASS: baseline.json schema valid"
 
 # 3. Dry-run regression detection
 TMPDIR=$(mktemp -d)
-trap "rm -rf ${TMPDIR}" EXIT
+cleanup_tmpdir() {
+  echo "INFO: leaving temp dir for inspection: ${TMPDIR}" >&2
+}
+trap cleanup_tmpdir EXIT
 
 RC=0
 python3 "${REGRESSION_SCRIPT}" --dry-run \

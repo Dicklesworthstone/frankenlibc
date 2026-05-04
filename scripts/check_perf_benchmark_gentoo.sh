@@ -26,7 +26,10 @@ echo "PASS: perf-benchmark.py syntax valid"
 
 # 2. Dry-run produces valid JSON
 TMPDIR=$(mktemp -d)
-trap "rm -rf ${TMPDIR}" EXIT
+cleanup_tmpdir() {
+  echo "INFO: leaving temp dir for inspection: ${TMPDIR}" >&2
+}
+trap cleanup_tmpdir EXIT
 
 python3 "${BENCHMARK_SCRIPT}" \
   --mode dry-run \

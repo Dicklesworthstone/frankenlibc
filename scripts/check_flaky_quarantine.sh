@@ -48,7 +48,10 @@ echo "PASS: quarantine.json schema valid"
 
 # 3. Dry-run detection
 TMPDIR=$(mktemp -d)
-trap "rm -rf ${TMPDIR}" EXIT
+cleanup_tmpdir() {
+  echo "INFO: leaving temp dir for inspection: ${TMPDIR}" >&2
+}
+trap cleanup_tmpdir EXIT
 
 python3 "${DETECTOR}" --dry-run --package sys-apps/coreutils \
   --output "${TMPDIR}/report.json" > /dev/null 2>&1 \
