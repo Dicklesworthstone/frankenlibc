@@ -1,0 +1,440 @@
+{
+  "schema_version": "v1",
+  "bead": "bd-bp8fl.9.2",
+  "plan_id": "conformance-interaction-fixture-plan-v1",
+  "purpose": "Schedule deterministic conformance fixtures with covering-array style interaction coverage across modes, symbol families, environment state, invalid-input classes, replacement levels, risk, fixture inventory, and workload exposure.",
+  "required_log_fields": [
+    "trace_id",
+    "bead_id",
+    "plan_id",
+    "interaction_tuple",
+    "coverage_level",
+    "selected",
+    "reason",
+    "artifact_refs",
+    "source_commit",
+    "failure_signature"
+  ],
+  "scheduler_inputs": {
+    "symbols": [
+      "__strdup",
+      "_IO_ferror",
+      "_IO_peekc_locked",
+      "dlvsym",
+      "__pthread_getspecific",
+      "gethostbyaddr",
+      "__isoc23_swscanf",
+      "_Exit",
+      "__pthread_cleanup_routine",
+      "dl_iterate_phdr"
+    ],
+    "modes": [
+      "strict",
+      "hardened"
+    ],
+    "locale_env_thread_state": [
+      "c_posix_single_thread",
+      "c_posix_multi_thread",
+      "c_locale_multi_thread",
+      "dns_env",
+      "secure_env",
+      "signal_handler"
+    ],
+    "invalid_input_classes": [
+      "valid_input",
+      "invalid_pointer",
+      "stdio_error_state",
+      "symbol_version_failure",
+      "cancellation_race",
+      "dns_negative",
+      "invalid_encoding"
+    ],
+    "replacement_levels": [
+      "L0",
+      "L1"
+    ],
+    "risk_weights": {
+      "semantic_divergence": 9,
+      "hard_parts": 8,
+      "performance_sensitive": 7,
+      "resolver_nss": 8,
+      "locale_iconv": 7
+    },
+    "fixture_inventory": {
+      "artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
+      "expected_campaign_count": 18,
+      "expected_top_campaign_id": "fcq-unistd-process-filesystem"
+    },
+    "user_workload_exposure": [
+      "shell_coreutils",
+      "build_tools",
+      "package_manager",
+      "startup_linking",
+      "performance_sensitive",
+      "language_runtimes",
+      "threaded_services",
+      "resolver_nss",
+      "locale_iconv"
+    ]
+  },
+  "selection_policy": {
+    "score_formula": "risk_weight*100 + user_workload_exposure*10 + fixture_gap_weight + hard_parts_weight",
+    "max_selected": 8,
+    "tie_break": "candidate_id",
+    "feasibility_rule": "Only candidates with feasible=true can be selected; blocked combinations must remain visible as diagnostics."
+  },
+  "candidates": [
+    {
+      "candidate_id": "ca-001",
+      "symbol": "__strdup",
+      "campaign_id": "fcq-string-memory-hotpaths",
+      "symbol_family": "string_memory",
+      "runtime_mode": "hardened",
+      "locale_env_thread_state": "c_posix_single_thread",
+      "invalid_input_class": "invalid_pointer",
+      "replacement_level": "L0",
+      "risk_weight": 9,
+      "user_workload_exposure": 9,
+      "fixture_gap_weight": 109,
+      "hard_parts_weight": 4,
+      "priority_score": 1103,
+      "feasible": true,
+      "reason": "High-risk string/memory invalid-pointer fixture covers hardened membrane repair pressure without displacing hard-parts rows."
+    },
+    {
+      "candidate_id": "ca-002",
+      "symbol": "_IO_ferror",
+      "campaign_id": "fcq-stdio-libio",
+      "symbol_family": "stdio_libio",
+      "runtime_mode": "strict",
+      "locale_env_thread_state": "c_posix_single_thread",
+      "invalid_input_class": "valid_input",
+      "replacement_level": "L0",
+      "risk_weight": 9,
+      "user_workload_exposure": 9,
+      "fixture_gap_weight": 97,
+      "hard_parts_weight": 3,
+      "priority_score": 1090,
+      "feasible": true,
+      "reason": "Strict-mode libio status check anchors stream-state parity for shell and package-manager workloads."
+    },
+    {
+      "candidate_id": "ca-003",
+      "symbol": "_IO_peekc_locked",
+      "campaign_id": "fcq-stdio-libio",
+      "symbol_family": "stdio_libio",
+      "runtime_mode": "hardened",
+      "locale_env_thread_state": "c_locale_multi_thread",
+      "invalid_input_class": "stdio_error_state",
+      "replacement_level": "L0",
+      "risk_weight": 9,
+      "user_workload_exposure": 8,
+      "fixture_gap_weight": 97,
+      "hard_parts_weight": 3,
+      "priority_score": 1080,
+      "feasible": true,
+      "reason": "Hardened libio fixture exercises locale and locked stream interaction coverage."
+    },
+    {
+      "candidate_id": "ca-004",
+      "symbol": "dlvsym",
+      "campaign_id": "fcq-dlfcn-loader",
+      "symbol_family": "loader_symbol",
+      "runtime_mode": "strict",
+      "locale_env_thread_state": "secure_env",
+      "invalid_input_class": "symbol_version_failure",
+      "replacement_level": "L1",
+      "risk_weight": 9,
+      "user_workload_exposure": 7,
+      "fixture_gap_weight": 50,
+      "hard_parts_weight": 5,
+      "priority_score": 1025,
+      "feasible": true,
+      "reason": "Versioned-symbol lookup fixture keeps L1 replacement ambition visible while staying deterministic."
+    },
+    {
+      "candidate_id": "ca-005",
+      "symbol": "__pthread_getspecific",
+      "campaign_id": "fcq-pthread-sync",
+      "symbol_family": "pthread_cancellation",
+      "runtime_mode": "strict",
+      "locale_env_thread_state": "c_posix_multi_thread",
+      "invalid_input_class": "cancellation_race",
+      "replacement_level": "L0",
+      "risk_weight": 8,
+      "user_workload_exposure": 9,
+      "fixture_gap_weight": 76,
+      "hard_parts_weight": 5,
+      "priority_score": 971,
+      "feasible": true,
+      "reason": "Thread-local lookup fixture covers pthread and cancellation-adjacent state without nondeterministic signal replay."
+    },
+    {
+      "candidate_id": "ca-006",
+      "symbol": "gethostbyaddr",
+      "campaign_id": "fcq-resolver-nss-core",
+      "symbol_family": "resolver_nss",
+      "runtime_mode": "strict",
+      "locale_env_thread_state": "dns_env",
+      "invalid_input_class": "dns_negative",
+      "replacement_level": "L0",
+      "risk_weight": 8,
+      "user_workload_exposure": 8,
+      "fixture_gap_weight": 65,
+      "hard_parts_weight": 5,
+      "priority_score": 950,
+      "feasible": true,
+      "reason": "Negative resolver fixture covers NSS/DNS workload exposure with deterministic oracle behavior."
+    },
+    {
+      "candidate_id": "ca-007",
+      "symbol": "__isoc23_swscanf",
+      "campaign_id": "fcq-wchar-locale-encoding",
+      "symbol_family": "locale_iconv",
+      "runtime_mode": "hardened",
+      "locale_env_thread_state": "c_locale_multi_thread",
+      "invalid_input_class": "invalid_encoding",
+      "replacement_level": "L0",
+      "risk_weight": 7,
+      "user_workload_exposure": 8,
+      "fixture_gap_weight": 55,
+      "hard_parts_weight": 4,
+      "priority_score": 839,
+      "feasible": true,
+      "reason": "Wide-scanf locale fixture covers invalid encoding and locale-thread interaction."
+    },
+    {
+      "candidate_id": "ca-008",
+      "symbol": "_Exit",
+      "campaign_id": "fcq-unistd-process-filesystem",
+      "symbol_family": "process_exit",
+      "runtime_mode": "strict",
+      "locale_env_thread_state": "c_posix_single_thread",
+      "invalid_input_class": "valid_input",
+      "replacement_level": "L0",
+      "risk_weight": 7,
+      "user_workload_exposure": 7,
+      "fixture_gap_weight": 48,
+      "hard_parts_weight": 3,
+      "priority_score": 821,
+      "feasible": true,
+      "reason": "Process-exit fixture preserves startup/linking workload exposure and anchors the top inventory campaign."
+    },
+    {
+      "candidate_id": "ca-009",
+      "symbol": "__pthread_cleanup_routine",
+      "campaign_id": "fcq-pthread-sync",
+      "symbol_family": "pthread_cancellation",
+      "runtime_mode": "hardened",
+      "locale_env_thread_state": "signal_handler",
+      "invalid_input_class": "cancellation_race",
+      "replacement_level": "L0",
+      "risk_weight": 10,
+      "user_workload_exposure": 9,
+      "fixture_gap_weight": 76,
+      "hard_parts_weight": 8,
+      "priority_score": 1174,
+      "feasible": false,
+      "blocked_reason": "signal_handler_cancellation_replay_not_deterministic",
+      "reason": "Kept as a visible blocked high-score interaction until deterministic signal/cancellation replay exists."
+    },
+    {
+      "candidate_id": "ca-010",
+      "symbol": "dl_iterate_phdr",
+      "campaign_id": "fcq-dlfcn-loader",
+      "symbol_family": "loader_symbol",
+      "runtime_mode": "hardened",
+      "locale_env_thread_state": "secure_env",
+      "invalid_input_class": "symbol_version_failure",
+      "replacement_level": "L1",
+      "risk_weight": 10,
+      "user_workload_exposure": 8,
+      "fixture_gap_weight": 50,
+      "hard_parts_weight": 8,
+      "priority_score": 1138,
+      "feasible": false,
+      "blocked_reason": "L1_standalone_loader_evidence_missing",
+      "reason": "Kept as a visible blocked loader interaction until standalone loader evidence is available."
+    }
+  ],
+  "selected_plan": [
+    "ca-001",
+    "ca-002",
+    "ca-003",
+    "ca-004",
+    "ca-005",
+    "ca-006",
+    "ca-007",
+    "ca-008"
+  ],
+  "blocked_combinations": [
+    {
+      "candidate_id": "ca-009",
+      "symbol_family": "pthread_cancellation",
+      "runtime_mode": "hardened",
+      "locale_env_thread_state": "signal_handler",
+      "invalid_input_class": "cancellation_race",
+      "replacement_level": "L0",
+      "blocked_reason": "signal_handler_cancellation_replay_not_deterministic"
+    },
+    {
+      "candidate_id": "ca-010",
+      "symbol_family": "loader_symbol",
+      "runtime_mode": "hardened",
+      "locale_env_thread_state": "secure_env",
+      "invalid_input_class": "symbol_version_failure",
+      "replacement_level": "L1",
+      "blocked_reason": "L1_standalone_loader_evidence_missing"
+    }
+  ],
+  "required_pairwise_interactions": [
+    {
+      "axes": [
+        "symbol_family",
+        "runtime_mode"
+      ],
+      "values": [
+        "string_memory",
+        "hardened"
+      ]
+    },
+    {
+      "axes": [
+        "symbol_family",
+        "runtime_mode"
+      ],
+      "values": [
+        "stdio_libio",
+        "strict"
+      ]
+    },
+    {
+      "axes": [
+        "symbol_family",
+        "runtime_mode"
+      ],
+      "values": [
+        "stdio_libio",
+        "hardened"
+      ]
+    },
+    {
+      "axes": [
+        "runtime_mode",
+        "replacement_level"
+      ],
+      "values": [
+        "strict",
+        "L1"
+      ]
+    },
+    {
+      "axes": [
+        "locale_env_thread_state",
+        "invalid_input_class"
+      ],
+      "values": [
+        "c_locale_multi_thread",
+        "stdio_error_state"
+      ]
+    },
+    {
+      "axes": [
+        "symbol_family",
+        "invalid_input_class"
+      ],
+      "values": [
+        "resolver_nss",
+        "dns_negative"
+      ]
+    },
+    {
+      "axes": [
+        "symbol_family",
+        "invalid_input_class"
+      ],
+      "values": [
+        "locale_iconv",
+        "invalid_encoding"
+      ]
+    },
+    {
+      "axes": [
+        "symbol_family",
+        "replacement_level"
+      ],
+      "values": [
+        "process_exit",
+        "L0"
+      ]
+    }
+  ],
+  "required_twise_interactions": [
+    {
+      "axes": [
+        "symbol_family",
+        "runtime_mode",
+        "invalid_input_class"
+      ],
+      "values": [
+        "string_memory",
+        "hardened",
+        "invalid_pointer"
+      ]
+    },
+    {
+      "axes": [
+        "symbol_family",
+        "locale_env_thread_state",
+        "runtime_mode"
+      ],
+      "values": [
+        "stdio_libio",
+        "c_locale_multi_thread",
+        "hardened"
+      ]
+    },
+    {
+      "axes": [
+        "symbol_family",
+        "invalid_input_class",
+        "replacement_level"
+      ],
+      "values": [
+        "loader_symbol",
+        "symbol_version_failure",
+        "L1"
+      ]
+    },
+    {
+      "axes": [
+        "symbol_family",
+        "invalid_input_class",
+        "runtime_mode"
+      ],
+      "values": [
+        "pthread_cancellation",
+        "cancellation_race",
+        "strict"
+      ]
+    }
+  ],
+  "follow_up_fixture_beads": [
+    {
+      "fixture_bead_hint": "bd-bp8fl.9.2.followup.string-memory-invalid-pointer",
+      "candidate_id": "ca-001",
+      "artifact_refs": [
+        "tests/conformance/conformance_interaction_fixture_plan.v1.json",
+        "tests/conformance/fixture_coverage_prioritizer.v1.json"
+      ]
+    },
+    {
+      "fixture_bead_hint": "bd-bp8fl.9.2.followup.loader-l1-versioned-symbol",
+      "candidate_id": "ca-004",
+      "artifact_refs": [
+        "tests/conformance/conformance_interaction_fixture_plan.v1.json",
+        "tests/conformance/fixture_coverage_prioritizer.v1.json"
+      ]
+    }
+  ]
+}
